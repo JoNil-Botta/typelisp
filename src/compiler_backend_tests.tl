@@ -34,8 +34,117 @@
 (import compiler_str_cat as str_cat)
 (import stdlib.text_buf)
 (import stdlib.arena)
+(import stdlib.comptime)
 
 (extern (compiler-backend-test-runtime-alloc [bytes : i64]) : i64 (:symbol "tl_alloc"))
+
+;; Emitted-text assertions. `(asm-has? text s ...)` holds when `text` contains
+;; every `s` and `(asm-lacks? text s ...)` when it contains none of them; each
+;; check is one `compiler-backend-string-contains?` call, in order.
+(defmacro (asm-has? [text : comptime.Expr] [needles : comptime.Expr ...]) : bool
+  (let
+    [checks : comptime.ExprList (comptime.expr-list-empty)]
+    [i : i64 (comptime.expr-list-length needles)]
+    (begin
+      (while (> i 0)
+        (begin
+          (set! i (- i 1))
+          (set!
+            checks
+            (comptime.expr-list-cons
+              `(backend.compiler-backend-string-contains?
+                ,text
+                ,(comptime.expr-list-nth needles i))
+              checks))))
+      `(and ,@checks))))
+
+(defmacro (asm-lacks? [text : comptime.Expr] [needles : comptime.Expr ...]) : bool
+  (let
+    [checks : comptime.ExprList (comptime.expr-list-empty)]
+    [i : i64 (comptime.expr-list-length needles)]
+    (begin
+      (while (> i 0)
+        (begin
+          (set! i (- i 1))
+          (set!
+            checks
+            (comptime.expr-list-cons
+              `(not
+                (backend.compiler-backend-string-contains?
+                  ,text
+                  ,(comptime.expr-list-nth needles i)))
+              checks))))
+      `(and ,@checks))))
+
+;; `(asm-ok? result (has s ...) (lacks s ...) ...)` holds when `result` is Ok
+;; and its text passes every clause in order: a `has` clause as asm-has?, a
+;; `lacks` clause as asm-lacks?. An Err result fails.
+(defmacro (asm-ok? [result : comptime.Expr] [clauses : comptime.Expr ...]) : bool
+  (let
+    [text : String (comptime.syntax-name-fresh "asm")]
+    [checks : comptime.ExprList (comptime.expr-list-empty)]
+    [i : i64 (comptime.expr-list-length clauses)]
+    (begin
+      (while (> i 0)
+        (begin
+          (set! i (- i 1))
+          (match (comptime.expr-list-nth clauses i)
+            [(comptime.Expr.Call head needles)
+              (let
+                [lacks : bool
+                  (match head
+                    [(comptime.Expr.Var name)
+                      (if (string-eq name "lacks")
+                        true
+                        (if (string-eq name "has")
+                          false
+                          (comptime.comptime-error
+                            "asm-ok? clauses are (has s ...) or (lacks s ...)")))]
+                    [_
+                      (comptime.comptime-error
+                        "asm-ok? clauses are (has s ...) or (lacks s ...)")])]
+                [j : i64 (comptime.expr-list-length needles)]
+                (while (> j 0)
+                  (begin
+                    (set! j (- j 1))
+                    (let
+                      [check : comptime.Expr
+                        `(backend.compiler-backend-string-contains?
+                          ,(comptime.expr-var text)
+                          ,(comptime.expr-list-nth needles j))]
+                      (set!
+                        checks
+                        (comptime.expr-list-cons
+                          (if lacks
+                            (comptime.expr-not check)
+                            check)
+                          checks))))))]
+            [_
+              (comptime.comptime-error
+                "asm-ok? clauses are (has s ...) or (lacks s ...)")])))
+      (comptime.expr-match
+        result
+        (comptime.match-arm-list-cons
+          (comptime.match-arm
+            (comptime.pattern-variant
+              "backend.ResultCompilerBackend.Ok"
+              (comptime.pattern-list-cons
+                (comptime.pattern-binding text)
+                (comptime.pattern-list-empty)))
+            (comptime.expr-list-fold-if
+              checks
+              (comptime.expr-bool true)
+              (comptime.expr-bool false)
+              true))
+          (comptime.match-arm-list-cons
+            (comptime.match-arm
+              (comptime.pattern-variant
+                "backend.ResultCompilerBackend.Err"
+                (comptime.pattern-list-cons
+                  (comptime.pattern-wildcard)
+                  (comptime.pattern-list-empty)))
+              (comptime.expr-bool false))
+            (comptime.match-arm-list-empty)))))))
 
 (define (compiler-backend-resetting-entry-live-session-guard-ok?) : bool
   (let
@@ -786,47 +895,18 @@
       0)))")
 
 (define (compiler-backend-atomic-no-helper-calls? [asm : (& asm str)]) : bool
-  (and
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i64_load_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i64_store_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i64_add_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i64_fetch_add_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i64_cas_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i32_load_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i32_store_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i32_add_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i32_fetch_add_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_atomic_i32_cas_ptr\n"))))
+  (asm-lacks?
+    asm
+    "    call tl_atomic_i64_load_ptr\n"
+    "    call tl_atomic_i64_store_ptr\n"
+    "    call tl_atomic_i64_add_ptr\n"
+    "    call tl_atomic_i64_fetch_add_ptr\n"
+    "    call tl_atomic_i64_cas_ptr\n"
+    "    call tl_atomic_i32_load_ptr\n"
+    "    call tl_atomic_i32_store_ptr\n"
+    "    call tl_atomic_i32_add_ptr\n"
+    "    call tl_atomic_i32_fetch_add_ptr\n"
+    "    call tl_atomic_i32_cas_ptr\n"))
 
 (define (compiler-backend-atomic-count-at-least?
   [asm : (& asm str)]
@@ -946,23 +1026,12 @@
       0)))")
 
 (define (compiler-backend-volatile-no-helper-calls? [asm : (& asm str)]) : bool
-  (and
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_volatile_i64_load_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_volatile_i64_store_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_volatile_i32_load_ptr\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_volatile_i32_store_ptr\n"))))
+  (asm-lacks?
+    asm
+    "    call tl_volatile_i64_load_ptr\n"
+    "    call tl_volatile_i64_store_ptr\n"
+    "    call tl_volatile_i32_load_ptr\n"
+    "    call tl_volatile_i32_store_ptr\n"))
 
 (define (compiler-backend-volatile-intrinsic-linux-asm-ok? [asm : String]) : bool
   (and
@@ -971,8 +1040,7 @@
     (compiler-backend-atomic-count-at-least? asm "    movq %rsi, (%rdi)\n" 1)
     (compiler-backend-atomic-count-at-least? asm "    movl (%rdi), %eax\n" 2)
     (compiler-backend-atomic-count-at-least? asm "    movl %esi, (%rdi)\n" 1)
-    (not (backend.compiler-backend-string-contains? asm "    xchgq "))
-    (not (backend.compiler-backend-string-contains? asm "    xchgl "))))
+    (asm-lacks? asm "    xchgq " "    xchgl ")))
 
 (define (compiler-backend-volatile-intrinsic-windows-asm-ok? [asm : String]) : bool
   (and
@@ -981,8 +1049,7 @@
     (compiler-backend-atomic-count-at-least? asm "    movq %rdx, (%rcx)\n" 1)
     (compiler-backend-atomic-count-at-least? asm "    movl (%rcx), %eax\n" 2)
     (compiler-backend-atomic-count-at-least? asm "    movl %edx, (%rcx)\n" 1)
-    (not (backend.compiler-backend-string-contains? asm "    xchgq "))
-    (not (backend.compiler-backend-string-contains? asm "    xchgl "))))
+    (asm-lacks? asm "    xchgq " "    xchgl ")))
 
 (define (compiler-backend-volatile-intrinsic-shape-ok?) : bool
   (match (backend.compiler-backend-emit-source-for-target
@@ -1105,70 +1172,32 @@
       (backend.ResultCompilerBackend.Err diag)]))
 
 (define (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? [asm : String]) : bool
-  (and
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_load_ptr:\n    movq (%rdi), %rax\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_store_ptr:\n    xchgq %rsi, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_add_ptr:\n    lock addq %rsi, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_fetch_add_ptr:\n    movq %rsi, %rax\n    lock xaddq %rax, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_cas_ptr:\n    movq %rsi, %rax\n    lock cmpxchgq %rdx, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_load_ptr:\n    movl (%rdi), %eax\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_store_ptr:\n    xchgl %esi, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_add_ptr:\n    lock addl %esi, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_fetch_add_ptr:\n    movl %esi, %eax\n    lock xaddl %eax, (%rdi)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_cas_ptr:\n    movl %esi, %eax\n    lock cmpxchgl %edx, (%rdi)\n    ret\n")))
+  (asm-has?
+    asm
+    "tl_atomic_i64_load_ptr:\n    movq (%rdi), %rax\n    ret\n"
+    "tl_atomic_i64_store_ptr:\n    xchgq %rsi, (%rdi)\n    ret\n"
+    "tl_atomic_i64_add_ptr:\n    lock addq %rsi, (%rdi)\n    ret\n"
+    "tl_atomic_i64_fetch_add_ptr:\n    movq %rsi, %rax\n    lock xaddq %rax, (%rdi)\n    ret\n"
+    "tl_atomic_i64_cas_ptr:\n    movq %rsi, %rax\n    lock cmpxchgq %rdx, (%rdi)\n    ret\n"
+    "tl_atomic_i32_load_ptr:\n    movl (%rdi), %eax\n    ret\n"
+    "tl_atomic_i32_store_ptr:\n    xchgl %esi, (%rdi)\n    ret\n"
+    "tl_atomic_i32_add_ptr:\n    lock addl %esi, (%rdi)\n    ret\n"
+    "tl_atomic_i32_fetch_add_ptr:\n    movl %esi, %eax\n    lock xaddl %eax, (%rdi)\n    ret\n"
+    "tl_atomic_i32_cas_ptr:\n    movl %esi, %eax\n    lock cmpxchgl %edx, (%rdi)\n    ret\n"))
 
 (define (compiler-backend-runtime-atomic-windows-wrapper-asm-ok? [asm : String]) : bool
-  (and
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_load_ptr:\n    movq (%rcx), %rax\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_store_ptr:\n    xchgq %rdx, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_add_ptr:\n    lock addq %rdx, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_fetch_add_ptr:\n    movq %rdx, %rax\n    lock xaddq %rax, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i64_cas_ptr:\n    movq %rdx, %rax\n    lock cmpxchgq %r8, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_load_ptr:\n    movl (%rcx), %eax\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_store_ptr:\n    xchgl %edx, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_add_ptr:\n    lock addl %edx, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_fetch_add_ptr:\n    movl %edx, %eax\n    lock xaddl %eax, (%rcx)\n    ret\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "tl_atomic_i32_cas_ptr:\n    movl %edx, %eax\n    lock cmpxchgl %r8d, (%rcx)\n    ret\n")))
+  (asm-has?
+    asm
+    "tl_atomic_i64_load_ptr:\n    movq (%rcx), %rax\n    ret\n"
+    "tl_atomic_i64_store_ptr:\n    xchgq %rdx, (%rcx)\n    ret\n"
+    "tl_atomic_i64_add_ptr:\n    lock addq %rdx, (%rcx)\n    ret\n"
+    "tl_atomic_i64_fetch_add_ptr:\n    movq %rdx, %rax\n    lock xaddq %rax, (%rcx)\n    ret\n"
+    "tl_atomic_i64_cas_ptr:\n    movq %rdx, %rax\n    lock cmpxchgq %r8, (%rcx)\n    ret\n"
+    "tl_atomic_i32_load_ptr:\n    movl (%rcx), %eax\n    ret\n"
+    "tl_atomic_i32_store_ptr:\n    xchgl %edx, (%rcx)\n    ret\n"
+    "tl_atomic_i32_add_ptr:\n    lock addl %edx, (%rcx)\n    ret\n"
+    "tl_atomic_i32_fetch_add_ptr:\n    movl %edx, %eax\n    lock xaddl %eax, (%rcx)\n    ret\n"
+    "tl_atomic_i32_cas_ptr:\n    movl %edx, %eax\n    lock cmpxchgl %r8d, (%rcx)\n    ret\n"))
 
 (define (compiler-backend-runtime-atomic-wrapper-asm-ok?) : bool
   (match (compiler-backend-emit-runtime-atomic-wrapper-source
@@ -1219,33 +1248,22 @@
 
 (define (compiler-backend-runtime-tls-linux-wrapper-asm-ok? [asm : String]) : bool
   (and
-    (backend.compiler-backend-string-contains?
+    (asm-has?
       asm
-      "    movq %fs:tl_current_arena@tpoff, %rax\n")
-    (backend.compiler-backend-string-contains?
-      asm
+      "    movq %fs:tl_current_arena@tpoff, %rax\n"
       "    movq %rdi, %fs:tl_current_arena@tpoff\n")
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_tls_current_arena_load\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_tls_current_arena_store\n"))))
+    (asm-lacks?
+      asm
+      "    call tl_tls_current_arena_load\n"
+      "    call tl_tls_current_arena_store\n")))
 
 (define (compiler-backend-runtime-tls-windows-wrapper-asm-ok? [asm : String]) : bool
   (and
-    (backend.compiler-backend-string-contains? asm "    movq %gs:0x28, %rax\n")
-    (backend.compiler-backend-string-contains? asm "    movq %rcx, %gs:0x28\n")
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_tls_current_arena_load\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_tls_current_arena_store\n"))))
+    (asm-has? asm "    movq %gs:0x28, %rax\n" "    movq %rcx, %gs:0x28\n")
+    (asm-lacks?
+      asm
+      "    call tl_tls_current_arena_load\n"
+      "    call tl_tls_current_arena_store\n")))
 
 (define (compiler-backend-runtime-tls-wrapper-asm-ok?) : bool
   (match (compiler-backend-emit-runtime-tls-wrapper-source
@@ -1341,45 +1359,35 @@
     (+ a b)))")
 
 (define (compiler-backend-smoke-function-symbol-ok? [asm : (& asm str)]) : bool
-  (or
-    (backend.compiler-backend-string-contains? asm ".globl _tl_inc")
-    (backend.compiler-backend-string-contains? asm ".globl _tl_f")))
+  (or (asm-has? asm ".globl _tl_inc") (asm-has? asm ".globl _tl_f")))
 
 (define (compiler-backend-smoke-function-call-ok? [asm : (& asm str)]) : bool
-  (or
-    (backend.compiler-backend-string-contains? asm "    call _tl_inc")
-    (backend.compiler-backend-string-contains? asm "    call _tl_f")))
+  (or (asm-has? asm "    call _tl_inc") (asm-has? asm "    call _tl_f")))
 
 (define (compiler-backend-call-or-jmp-ok? [asm : (& asm str)] [symbol : String]) : bool
   (or
     (let
       [needle (str_cat.str-cat "    call " symbol "\n")]
-      (backend.compiler-backend-string-contains? asm needle))
+      (asm-has? asm needle))
     (let
       [needle (str_cat.str-cat "    jmp " symbol "\n")]
-      (backend.compiler-backend-string-contains? asm needle))))
+      (asm-has? asm needle))))
 
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (backend.backend-and8
-      (backend.compiler-backend-string-contains? asm ".data\n")
-      (backend.compiler-backend-string-contains? asm ".text\n")
-      (backend.compiler-backend-string-contains? asm ".globl _tl_start\n")
-      (backend.compiler-backend-string-contains? asm "_tl_start:\n")
-      (backend.compiler-backend-string-contains? asm "main:\n")
+      (asm-has? asm ".data\n")
+      (asm-has? asm ".text\n")
+      (asm-has? asm ".globl _tl_start\n")
+      (asm-has? asm "_tl_start:\n")
+      (asm-has? asm "main:\n")
       (compiler-backend-smoke-function-symbol-ok? asm)
-      (or
-        (backend.compiler-backend-string-contains? asm "_tl_inc")
-        (backend.compiler-backend-string-contains? asm "_tl_f"))
+      (or (asm-has? asm "_tl_inc") (asm-has? asm "_tl_f"))
       (compiler-backend-smoke-function-call-ok? asm))
     (backend.backend-and4
-      (backend.compiler-backend-string-contains?
-        asm
-        "    jge .Lf1_while_exit.2\n")
-      (backend.compiler-backend-string-contains? asm "    jle .Lf1_if_else.4\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    jmp .Lf1_while_header.0\n")
+      (asm-has? asm "    jge .Lf1_while_exit.2\n")
+      (asm-has? asm "    jle .Lf1_if_else.4\n")
+      (asm-has? asm "    jmp .Lf1_while_header.0\n")
       true)))
 
 (define (compiler-backend-alloc-generic-call-text [size : i64] [reg : String]) : String
@@ -1402,14 +1410,14 @@
       (let
         [needle
           (str_cat.str-cat "    leaq " (string.int->string size) "(%rax), ")]
-        (backend.compiler-backend-string-contains? asm needle))
+        (asm-has? asm needle))
       (let
         [needle
           (str_cat.str-cat
             "_slow:\n    call .L_tl_alloc"
             (string.int->string size)
             "\n")]
-        (backend.compiler-backend-string-contains? asm needle)))
+        (asm-has? asm needle)))
     false))
 
 (define (compiler-backend-string-contains-alloc-size?
@@ -1418,13 +1426,13 @@
   (or
     (let
       [needle (compiler-backend-alloc-generic-call-text size "%rdi")]
-      (backend.compiler-backend-string-contains? asm needle))
+      (asm-has? asm needle))
     (let
       [needle (compiler-backend-alloc-generic-call-text size "%rcx")]
-      (backend.compiler-backend-string-contains? asm needle))
+      (asm-has? asm needle))
     (let
       [needle (compiler-backend-alloc-fixed-call-text size)]
-      (backend.compiler-backend-string-contains? asm needle))
+      (asm-has? asm needle))
     (compiler-backend-string-contains-inline-alloc-size? asm size)))
 
 (define (compiler-backend-alloc-call-count [asm : (& asm str)]) : i64
@@ -2249,27 +2257,24 @@
           (backend.backend-and8
             (let
               [needle (str_cat.str-cat base-label ":\n" "")]
-              (backend.compiler-backend-string-contains? asm needle))
+              (asm-has? asm needle))
             (>= (backend.compiler-backend-string-count asm "    .quad 0\n") 2)
             (not
               (let
                 [needle (str_cat.str-cat " - " base-label "\n")]
-                (backend.compiler-backend-string-contains? asm needle)))
+                (asm-has? asm needle)))
             (not
               (let
                 [needle (backend.compiler-backend-pic-quad-pattern data-label)]
-                (backend.compiler-backend-string-contains? asm needle)))
+                (asm-has? asm needle)))
             (not
               (let
                 [needle (backend.compiler-backend-pic-quad-pattern fat-label)]
-                (backend.compiler-backend-string-contains? asm needle)))
-            (backend.compiler-backend-string-contains?
-              fixups
-              "typelisp-pic-fixups v1\n")
-            (backend.compiler-backend-string-contains? fixups "data ")
-            (backend.compiler-backend-string-contains? fixups "rodata "))
-          (backend.compiler-backend-string-contains? fixups data-label)
-          (backend.compiler-backend-string-contains? fixups fat-label)))]
+                (asm-has? asm needle)))
+            (asm-has? fixups "typelisp-pic-fixups v1\n")
+            (asm-has? fixups "data ")
+            (asm-has? fixups "rodata "))
+          (asm-has? fixups data-label fat-label)))]
     [(backend.ResultCompilerBackendPic.Err _) false]))
 
 (define (compiler-backend-pic-extern-reject-ok?) : bool
@@ -2279,9 +2284,7 @@
     [(backend.ResultCompilerBackendPic.Err diag)
       (let
         [text (cdiag.compiler-diagnostic-render (deref diag))]
-        (backend.compiler-backend-string-contains?
-          text
-          "backend: --pic supports only internal references"))]))
+        (asm-has? text "backend: --pic supports only internal references"))]))
 
 (define (compiler-backend-pic-object-helper-ok?) : bool
   (let
@@ -2984,28 +2987,26 @@
 
 (define (compiler-backend-implicit-main-linux-entry-ok? [asm : String]) : bool
   (backend.backend-and8
-    (backend.compiler-backend-string-contains? asm ".globl _tl_start\n")
-    (backend.compiler-backend-string-contains? asm "_tl_start:\n")
-    (backend.compiler-backend-string-contains? asm ".globl main\n")
-    (backend.compiler-backend-string-contains? asm "main:\n")
-    (backend.compiler-backend-string-contains? asm "    call main\n")
-    (backend.compiler-backend-string-contains? asm "    xorl %eax, %eax\n")
-    (backend.compiler-backend-string-contains? asm ".text\n")
+    (asm-has? asm ".globl _tl_start\n")
+    (asm-has? asm "_tl_start:\n")
+    (asm-has? asm ".globl main\n")
+    (asm-has? asm "main:\n")
+    (asm-has? asm "    call main\n")
+    (asm-has? asm "    xorl %eax, %eax\n")
+    (asm-has? asm ".text\n")
     true))
 
 (define (compiler-backend-implicit-main-linux-no-entry-ok? [asm : String]) : bool
   (and
-    (backend.compiler-backend-string-contains? asm ".text\n")
-    (not (backend.compiler-backend-string-contains? asm ".globl _tl_start\n"))
-    (not (backend.compiler-backend-string-contains? asm "_tl_start:\n"))
-    (not (backend.compiler-backend-string-contains? asm "main:\n"))))
+    (asm-has? asm ".text\n")
+    (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n" "main:\n")))
 
 (define (compiler-backend-implicit-main-windows-entry-ok? [asm : String]) : bool
   (backend.backend-and4
-    (backend.compiler-backend-string-contains? asm ".globl main\n")
-    (backend.compiler-backend-string-contains? asm "main:\n")
-    (backend.compiler-backend-string-contains? asm "    xorl %eax, %eax\n")
-    (not (backend.compiler-backend-string-contains? asm "\n_start:\n"))))
+    (asm-has? asm ".globl main\n")
+    (asm-has? asm "main:\n")
+    (asm-has? asm "    xorl %eax, %eax\n")
+    (asm-lacks? asm "\n_start:\n")))
 
 (define (compiler-backend-implicit-main-ok?) : bool
   (match (lower.lower-compiler-source (compiler-backend-implicit-main-source))
@@ -3041,27 +3042,16 @@
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-string-ok?) : bool
-  (match (backend.compiler-backend-emit-source (compiler-backend-string-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_str_data_l2_13861_13991:")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_str_l2_13861_13991:")
-        (backend.compiler-backend-string-contains? asm "    .string \"hi\"\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .quad .L_tl_str_data_l2_13861_13991\n")
-        (backend.compiler-backend-string-contains? asm "    .quad 2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq .L_tl_str_l2_13861_13991(%rip), %rax\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source (compiler-backend-string-source))
+    (has
+      ".L_tl_str_data_l2_13861_13991:"
+      ".L_tl_str_l2_13861_13991:"
+      "    .string \"hi\"\n"
+      "    .quad .L_tl_str_data_l2_13861_13991\n"
+      "    .quad 2\n"
+      "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n"
+      "    leaq .L_tl_str_l2_13861_13991(%rip), %rax\n")))
 
 ;; Backend-owned replacement for the string runtime helper emission tests:
 ;; non-allocating string parsing/equality still use backend
@@ -3106,89 +3096,57 @@
       (let
         [ok : bool true]
         (begin
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_string_eq\n")
+          (if (asm-has? asm ".globl tl_string_eq\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_eq\n")
+          (if (asm-has? asm "    call tl_string_eq\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_string_eq\n")
+          (if (asm-has? asm ".extern tl_string_eq\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_string_to_int\n")
+          (if (asm-has? asm ".globl tl_string_to_int\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            "tl_string_to_int:\n")
+          (if (asm-has? asm "tl_string_to_int:\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_to_int\n")
+          (if (asm-has? asm "    call tl_string_to_int\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_string_to_int\n")
+          (if (asm-has? asm ".extern tl_string_to_int\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_int_to_string\n")
+          (if (asm-has? asm ".globl tl_int_to_string\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_int_to_string\n")
+          (if (asm-has? asm "    call tl_int_to_string\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_int_to_string\n")
+          (if (asm-has? asm ".extern tl_int_to_string\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_substring\n")
+          (if (asm-has? asm ".globl tl_substring\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_substring\n")
+          (if (asm-has? asm "    call tl_substring\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_substring\n")
+          (if (asm-has? asm ".extern tl_substring\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_string_concat\n")
+          (if (asm-has? asm ".globl tl_string_concat\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_concat\n")
+          (if (asm-has? asm "    call tl_string_concat\n")
             (set! ok false)
             unit)
-          (if (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_string_concat\n")
+          (if (asm-has? asm ".extern tl_string_concat\n")
             (set! ok false)
             unit)
           (if (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
             (set! ok false)
             unit)
           ok))]
@@ -3254,42 +3212,20 @@
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and4
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_string_eq\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call tl_string_eq\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_string_eq\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_string_to_int\n")))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_to_int\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_string_to_int\n"))
-        (backend.compiler-backend-string-contains?
+          (asm-lacks? asm ".globl tl_string_eq\n")
+          (asm-lacks? asm "    call tl_string_eq\n")
+          (asm-lacks? asm ".extern tl_string_eq\n")
+          (asm-lacks? asm ".globl tl_string_to_int\n"))
+        (asm-lacks?
           asm
-          "    call _tl_string_append\n")
-        (backend.compiler-backend-string-contains? asm "_tl_string_append\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_string_concat\n"))
+          "    call tl_string_to_int\n"
+          ".extern tl_string_to_int\n")
+        (asm-has? asm "    call _tl_string_append\n" "_tl_string_append\n")
+        (asm-lacks? asm "    call tl_string_concat\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-external-call-source) : String
@@ -3315,27 +3251,17 @@
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern external_emit_string\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call external_emit_string\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl external_emit_string\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "\nexternal_emit_string:\n"))
+        (asm-has? asm ".extern external_emit_string\n")
+        (asm-has? asm "    call external_emit_string\n")
+        (asm-lacks? asm ".globl external_emit_string\n")
+        (asm-lacks? asm "\nexternal_emit_string:\n")
         true
         true
-        (not (backend.compiler-backend-string-contains? asm ".extern _write\n"))
+        (asm-lacks? asm ".extern _write\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
@@ -3401,42 +3327,23 @@
     (backend.CompilerBackendTarget.Linux))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_color_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_color_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_color_make\n")
+        (asm-has? asm ".extern tl_cabi_color_make\n")
+        (asm-has? asm ".extern tl_cabi_color_use\n")
+        (asm-has? asm "    call tl_cabi_color_make\n")
         (or
           (let
             [needle (compiler-backend-alloc-generic-call-text 4 "%rdi")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (compiler-backend-string-contains-alloc-size? asm 8))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movl %r8d, (%r10)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movl (%r10), %r8d\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_color_use\n")
+        (asm-has? asm "    movl %r8d, (%r10)\n")
+        (asm-has? asm "    movl (%r10), %r8d\n")
+        (asm-has? asm "    call tl_cabi_color_use\n")
         (and
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl %eax, (%r10)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl (%r10), %eax\n"))))]
+              (asm-has? asm needle)))
+          (asm-lacks? asm "    movl %eax, (%r10)\n" "    movl (%r10), %eax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-aggregate-windows-ok?) : bool
@@ -3445,42 +3352,23 @@
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_color_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_color_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_color_make\n")
+        (asm-has? asm ".extern tl_cabi_color_make\n")
+        (asm-has? asm ".extern tl_cabi_color_use\n")
+        (asm-has? asm "    call tl_cabi_color_make\n")
         (or
           (let
             [needle (compiler-backend-alloc-generic-call-text 4 "%rcx")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (compiler-backend-string-contains-alloc-size? asm 8))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movl %r8d, (%r10)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movl (%r10), %r8d\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_color_use\n")
+        (asm-has? asm "    movl %r8d, (%r10)\n")
+        (asm-has? asm "    movl (%r10), %r8d\n")
+        (asm-has? asm "    call tl_cabi_color_use\n")
         (and
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl %eax, (%r10)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl (%r10), %eax\n"))))]
+              (asm-has? asm needle)))
+          (asm-lacks? asm "    movl %eax, (%r10)\n" "    movl (%r10), %eax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-aggregate-ok?) : bool
@@ -3522,7 +3410,7 @@
 ;; as a scalar-pointer hidden first arg) and materializes the result back into
 ;; the 2-word register group (see lower-c-abi-finish-call-result). Assert the
 (define (compiler-backend-register-indirect-call? [asm : (& asm str)]) : bool
-  (backend.compiler-backend-string-contains? asm "    call *%"))
+  (asm-has? asm "    call *%"))
 
 ;; sret codegen IS emitted -- both the direct call and the indirect register
 ;; call site -- and that nothing is rejected as unsupported.
@@ -3533,24 +3421,15 @@
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_cabi_wide_make\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_cabi_wide_make_ptr\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_cabi_wide_make\n")
+          (asm-has? asm ".extern tl_cabi_wide_make\n")
+          (asm-has? asm ".extern tl_cabi_wide_make_ptr\n")
+          (asm-has? asm "    call tl_cabi_wide_make\n")
           (compiler-backend-register-indirect-call? asm))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "unsupported windows-x86_64 C aggregate ABI"))
+        (asm-lacks? asm "unsupported windows-x86_64 C aggregate ABI")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle)))
+            (asm-has? asm needle)))
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -3577,15 +3456,9 @@
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_wide_arg_score\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_wide_arg_score_ptr\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_wide_arg_score\n")
+        (asm-has? asm ".extern tl_cabi_wide_arg_score\n")
+        (asm-has? asm ".extern tl_cabi_wide_arg_score_ptr\n")
+        (asm-has? asm "    call tl_cabi_wide_arg_score\n")
         (compiler-backend-register-indirect-call? asm)
         ;; A WideArg construction is built in inline storage, and the
         ;; by-reference copy the Win64 ABI requires at each of the two call
@@ -3593,14 +3466,11 @@
         ;; allocator call and no inline 16-byte arena bump.
         (= (compiler-backend-alloc-call-count asm) 0)
         (not (compiler-backend-string-contains-alloc-size? asm 16))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "lower: unsupported windows-x86_64 C aggregate ABI"))
+        (asm-lacks? asm "lower: unsupported windows-x86_64 C aggregate ABI")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-win64-enum-aggregate-source) : String
@@ -3662,31 +3532,15 @@
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_win64_status_pick\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_win64_small_score\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_win64_wide_score\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_win64_return_choice_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_win64_status_pick\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_win64_small_score\n")
+        (asm-has? asm ".extern tl_win64_status_pick\n")
+        (asm-has? asm ".extern tl_win64_small_score\n")
+        (asm-has? asm ".extern tl_win64_wide_score\n")
+        (asm-has? asm ".extern tl_win64_return_choice_make\n")
+        (asm-has? asm "    call tl_win64_status_pick\n")
+        (asm-has? asm "    call tl_win64_small_score\n")
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_win64_wide_score\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_win64_return_choice_make\n")
+          (asm-has? asm "    call tl_win64_wide_score\n")
+          (asm-has? asm "    call tl_win64_return_choice_make\n")
           (compiler-backend-register-indirect-call? asm)
           ;; The by-reference `SmallChoice` (16 bytes) and `WideChoice` (24
           ;; bytes) arguments are frame temporaries (#7885). The only
@@ -3694,14 +3548,11 @@
           ;; `ReturnChoice` results (#7990).
           (not (compiler-backend-string-contains-alloc-size? asm 16))
           (compiler-backend-string-contains-alloc-size? asm 24)
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "unsupported windows-x86_64 C aggregate ABI"))
+          (asm-lacks? asm "unsupported windows-x86_64 C aggregate ABI")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
+              (asm-has? asm needle)))
           (= (compiler-backend-alloc-call-count asm) 2))
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -3731,45 +3582,23 @@
     (backend.CompilerBackendTarget.Linux))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_outer_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_mixed_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_vec2_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_vec2_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_outer_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_mixed_use\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_vec2_use\n")
+        (asm-has? asm ".extern tl_cabi_outer_use\n")
+        (asm-has? asm ".extern tl_cabi_mixed_use\n")
+        (asm-has? asm ".extern tl_cabi_vec2_use\n")
+        (asm-has? asm ".extern tl_cabi_vec2_make\n")
+        (asm-has? asm "    call tl_cabi_outer_use\n")
+        (asm-has? asm "    call tl_cabi_mixed_use\n")
+        (asm-has? asm "    call tl_cabi_vec2_use\n")
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_cabi_vec2_make\n")
-          (backend.compiler-backend-string-contains? asm "%xmm")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "unsupported linux-x86_64 C aggregate ABI"))
+          (asm-has? asm "    call tl_cabi_vec2_make\n")
+          (asm-has? asm "%xmm")
+          (asm-lacks? asm "unsupported linux-x86_64 C aggregate ABI")
           (and
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "two-register aggregate return ABI"))
+            (asm-lacks? asm "two-register aggregate return ABI")
             (not
               (let
                 [needle (compiler-backend-todo-marker)]
-                (backend.compiler-backend-string-contains? asm needle))))))]
+                (asm-has? asm needle))))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-sysv-memory-aggregate-source) : String
@@ -3817,63 +3646,30 @@
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_cabi_wide_mem_score\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_cabi_wide_mem_score_ptr\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_cabi_wide_mem_make\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_cabi_nested_mem_score\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_cabi_wide_mem_score\n")
+          (asm-has? asm ".extern tl_cabi_wide_mem_score\n")
+          (asm-has? asm ".extern tl_cabi_wide_mem_score_ptr\n")
+          (asm-has? asm ".extern tl_cabi_wide_mem_make\n")
+          (asm-has? asm ".extern tl_cabi_nested_mem_score\n")
+          (asm-has? asm "    call tl_cabi_wide_mem_score\n")
           (compiler-backend-register-indirect-call? asm)
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_cabi_wide_mem_make\n")
+          (asm-has? asm "    call tl_cabi_wide_mem_make\n")
           (backend.backend-and8
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call tl_cabi_nested_mem_score\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has? asm "    call tl_cabi_nested_mem_score\n")
+            (asm-has? body "    movups (%r10), %xmm2\n")
+            (asm-has? body "    movups %xmm2, 0(%rsp)\n")
+            (asm-has? body "    movq 16(%r10), %xmm2\n")
+            (asm-has? body "    movq %xmm2, 16(%rsp)\n")
+            (asm-lacks?
               body
-              "    movups (%r10), %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              body
-              "    movups %xmm2, 0(%rsp)\n")
-            (backend.compiler-backend-string-contains?
-              body
-              "    movq 16(%r10), %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              body
-              "    movq %xmm2, 16(%rsp)\n")
-            (and
-              (not
-                (backend.compiler-backend-string-contains?
-                  body
-                  "    leaq 0(%rsp), %r10\n"))
-              (not (backend.compiler-backend-string-contains? body "16(%r11)"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  body
-                  "    subq $32, %rsp\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  body
-                  "    addq $32, %rsp\n")))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "unsupported linux-x86_64 C aggregate ABI"))
+              "    leaq 0(%rsp), %r10\n"
+              "16(%r11)"
+              "    subq $32, %rsp\n"
+              "    addq $32, %rsp\n")
+            (asm-lacks? asm "unsupported linux-x86_64 C aggregate ABI")
             (not
               (let
                 [needle (compiler-backend-todo-marker)]
-                (backend.compiler-backend-string-contains? asm needle))))))]
+                (asm-has? asm needle))))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String
@@ -3905,40 +3701,21 @@
     (backend.CompilerBackendTarget.Linux))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_pair_i64_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_pair_i64_make_ptr\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_mix_if_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_pair_f64_make\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_pair_i64_make\n")
+        (asm-has? asm ".extern tl_cabi_pair_i64_make\n")
+        (asm-has? asm ".extern tl_cabi_pair_i64_make_ptr\n")
+        (asm-has? asm ".extern tl_cabi_mix_if_make\n")
+        (asm-has? asm ".extern tl_cabi_pair_f64_make\n")
+        (asm-has? asm "    call tl_cabi_pair_i64_make\n")
         (compiler-backend-register-indirect-call? asm)
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rdx, 8(%r11)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm0, 8(%r11)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm1, 8(%r11)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "two-register aggregate return ABI"))
+          (asm-has? asm "    movq %rdx, 8(%r11)\n")
+          (asm-has? asm "    movsd %xmm0, 8(%r11)\n")
+          (asm-has? asm "    movsd %xmm1, 8(%r11)\n")
+          (asm-lacks? asm "two-register aggregate return ABI")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
+              (asm-has? asm needle)))
           true
           true
           true)
@@ -3952,9 +3729,9 @@
       (backend.CompilerBackendTarget.Linux))
       [(backend.ResultCompilerBackend.Ok asm)
         (backend.backend-and4
-          (backend.compiler-backend-string-contains? asm ".extern snprintf\n")
-          (backend.compiler-backend-string-contains? asm "    movb $1, %al\n")
-          (backend.compiler-backend-string-contains? asm "    call snprintf\n")
+          (asm-has? asm ".extern snprintf\n")
+          (asm-has? asm "    movb $1, %al\n")
+          (asm-has? asm "    call snprintf\n")
           true)]
       [(backend.ResultCompilerBackend.Err _) false])
     (match (backend.compiler-backend-emit-source-for-target
@@ -3962,11 +3739,9 @@
       (backend.CompilerBackendTarget.Windows))
       [(backend.ResultCompilerBackend.Ok asm)
         (backend.backend-and4
-          (backend.compiler-backend-string-contains? asm ".extern _snprintf\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %xmm3, %r9\n")
-          (backend.compiler-backend-string-contains? asm "    call _snprintf\n")
+          (asm-has? asm ".extern _snprintf\n")
+          (asm-has? asm "    movq %xmm3, %r9\n")
+          (asm-has? asm "    call _snprintf\n")
           true)]
       [(backend.ResultCompilerBackend.Err _) false])))
 
@@ -3978,16 +3753,13 @@
     (regalloc.compiler-reg-assignment-table-empty)))
 
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
-  (and
-    (backend.compiler-backend-string-contains? asm "    movzbq %al, %rax\n")
-    (backend.compiler-backend-string-contains? asm "    movq %rax, %r12\n")))
+  (asm-has? asm "    movzbq %al, %rax\n" "    movq %rax, %r12\n"))
 
 (define (compiler-backend-typelisp-call-result-store-bool-asm-ok?
   [asm : String]) : bool
   (and
-    (not
-      (backend.compiler-backend-string-contains? asm "    movzbq %al, %rax\n"))
-    (backend.compiler-backend-string-contains? asm "    movq %rax, %r12\n")))
+    (asm-lacks? asm "    movzbq %al, %rax\n")
+    (asm-has? asm "    movq %rax, %r12\n")))
 
 (define (compiler-backend-c-abi-call-result-store-bool-ok?) : bool
   (match (backend.compiler-backend-emit-c-abi-call-result-store
@@ -4057,19 +3829,14 @@
   (if (foreign-bool) 42 1))")
 
 (define (compiler-backend-c-abi-direct-bool-return-ok?) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-c-abi-bool-return-source)
-    (backend.CompilerBackendTarget.Linux))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_bool_return\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_bool_return\n")
-        (backend.compiler-backend-string-contains? asm "    movzbq %al, %rax\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-c-abi-bool-return-source)
+      (backend.CompilerBackendTarget.Linux))
+    (has
+      ".extern tl_cabi_bool_return\n"
+      "    call tl_cabi_bool_return\n"
+      "    movzbq %al, %rax\n")))
 
 (define (compiler-backend-c-abi-bool-return-ok?) : bool
   (backend.backend-and4
@@ -4094,28 +3861,17 @@
     target)
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_test_raw_value\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_test_raw_fn\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_test_direct_fn\n")
+        (asm-has? asm ".extern tl_test_raw_value\n")
+        (asm-has? asm ".extern tl_test_raw_fn\n")
+        (asm-has? asm ".extern tl_test_direct_fn\n")
         (compiler-backend-register-indirect-call? asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_test_direct_fn\n")
-        (backend.compiler-backend-string-contains? asm "tl_test_raw_fn(%rip)")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_test_raw_fn\n"))
+        (asm-has? asm "    call tl_test_direct_fn\n")
+        (asm-has? asm "tl_test_raw_fn(%rip)")
+        (asm-lacks? asm "    call tl_test_raw_fn\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-extern-value-fnptr-ok?) : bool
@@ -4134,16 +3890,11 @@
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_invoke")]
         (and
-          (backend.compiler-backend-string-contains? body "_tl_callback(%rip)")
-          (backend.compiler-backend-string-contains? body "    call *(")
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    call _tl_callback\n"))
+          (asm-has? body "_tl_callback(%rip)")
+          (asm-has? body "    call *(")
+          (asm-lacks? body "    call _tl_callback\n")
           ;; Ordinary named function definitions remain direct-call targets.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_invoke\n")))]
+          (asm-has? asm "    call _tl_invoke\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-mutable-global-function-value-ok?) : bool
@@ -4263,82 +4014,56 @@
 
 (define (compiler-backend-indirect-c-call-callee-home-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (compiler-backend-indirect-c-call-shape-asm
-    target
-    (ir.CompilerIrValue.Var 1)
-    (compiler-backend-indirect-c-call-reg-assignments cabi.compiler-reg-id-r12))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    call *%r12\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r12, %rax\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%rax\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-indirect-c-call-shape-asm
+      target
+      (ir.CompilerIrValue.Var 1)
+      (compiler-backend-indirect-c-call-reg-assignments
+        cabi.compiler-reg-id-r12))
+    (has "    call *%r12\n")
+    (lacks "    movq %r12, %rax\n" "    call *%rax\n")))
 
 (define (compiler-backend-indirect-c-call-caller-home-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (compiler-backend-indirect-c-call-shape-asm
-    target
-    (ir.CompilerIrValue.Var 1)
-    (compiler-backend-indirect-c-call-reg-assignments cabi.compiler-reg-id-rcx))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq %rcx, %r10\n")
-        (backend.compiler-backend-string-contains? asm "    call *%r10\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, %r12\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, %r11\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%rax\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%r12\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%r11\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%rcx\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-indirect-c-call-shape-asm
+      target
+      (ir.CompilerIrValue.Var 1)
+      (compiler-backend-indirect-c-call-reg-assignments
+        cabi.compiler-reg-id-rcx))
+    (has "    movq %rcx, %r10\n" "    call *%r10\n")
+    (lacks
+      "    movq %rcx, %rax\n"
+      "    movq %rcx, %r12\n"
+      "    movq %rcx, %r11\n"
+      "    call *%rax\n"
+      "    call *%r12\n"
+      "    call *%r11\n"
+      "    call *%rcx\n")))
 
 (define (compiler-backend-indirect-c-call-stack-home-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (compiler-backend-indirect-c-call-shape-asm
-    target
-    (ir.CompilerIrValue.Var 1)
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 1 (regalloc.CompilerRegLocation.Spill 16))
+  (asm-ok?
+    (compiler-backend-indirect-c-call-shape-asm
+      target
+      (ir.CompilerIrValue.Var 1)
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          2
-          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r13))
-        (regalloc.compiler-reg-assignment-table-empty))))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 16(%rbp), %r10\n")
-        (backend.compiler-backend-string-contains? asm "    call *%r10\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 16(%rbp), %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 16(%rbp), %r12\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 16(%rbp), %r11\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%rax\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%r12\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%r11\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+          1
+          (regalloc.CompilerRegLocation.Spill 16))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            2
+            (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r13))
+          (regalloc.compiler-reg-assignment-table-empty))))
+    (has "    movq 16(%rbp), %r10\n" "    call *%r10\n")
+    (lacks
+      "    movq 16(%rbp), %rax\n"
+      "    movq 16(%rbp), %r12\n"
+      "    movq 16(%rbp), %r11\n"
+      "    call *%rax\n"
+      "    call *%r12\n"
+      "    call *%r11\n")))
 
 (define (compiler-backend-indirect-c-abi-store-result-call-shape-asm
   [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
@@ -4469,24 +4194,16 @@
 
 (define (compiler-backend-indirect-c-abi-store-result-call-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (compiler-backend-indirect-c-abi-store-result-call-shape-asm target)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq %rcx, %r10\n")
-        (backend.compiler-backend-string-contains? asm "    call *%r10\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, %r13\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%r13\n"))
-        (not (backend.compiler-backend-string-contains? asm "    call *%rax\n"))
-        (not (backend.compiler-backend-string-contains? asm "    subq $"))
-        (not (backend.compiler-backend-string-contains? asm "    addq $")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-indirect-c-abi-store-result-call-shape-asm target)
+    (has "    movq %rcx, %r10\n" "    call *%r10\n")
+    (lacks
+      "    movq %rcx, %rax\n"
+      "    movq %rcx, %r13\n"
+      "    call *%r13\n"
+      "    call *%rax\n"
+      "    subq $"
+      "    addq $")))
 
 (define (compiler-backend-c-abi-return-store-two-int-slots) : ir.CompilerIrCAbiReturnSlotSeq
   (let
@@ -4574,20 +4291,12 @@
         backend-state)]
     [result : bool
       (and
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
-          "    movq 0(%rsp), %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rax, 0(%r9)\n")
-        (backend.compiler-backend-string-contains?
-          asm
+          "    movq 0(%rsp), %r9\n"
+          "    movq %rax, 0(%r9)\n"
           "    movq %rdx, 8(%r9)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 0(%rsp), %r11\n"))
-        (not (backend.compiler-backend-string-contains? asm "(%r11)")))]
+        (asm-lacks? asm "    movq 0(%rsp), %r11\n" "(%r11)"))]
     [_restore : unit
       (begin
         (backend.compiler-backend-set-scavenge-ctx-ready!
@@ -4639,23 +4348,14 @@
     (compiler-backend-program-argv-entry-capture-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains? asm "_tl_start:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq (%rsp), %rax\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rax, .L_tl_argc(%rip)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq 8(%rsp), %rax\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rax, .L_tl_argv(%rip)\n")
-        (backend.compiler-backend-string-contains? asm "    call strlen\n")
-        (not
-          (backend.compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
-        (not (backend.compiler-backend-string-contains? asm ".L_tl_arg:\n")))]
+        (asm-has? asm "_tl_start:\n")
+        (asm-has? asm "    movq (%rsp), %rax\n")
+        (asm-has? asm "    movq %rax, .L_tl_argc(%rip)\n")
+        (asm-has? asm "    leaq 8(%rsp), %rax\n")
+        (asm-has? asm "    movq %rax, .L_tl_argv(%rip)\n")
+        (asm-has? asm "    call strlen\n")
+        (asm-lacks? asm ".L_tl_arg_count:\n")
+        (asm-lacks? asm ".L_tl_arg:\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String
@@ -4673,60 +4373,30 @@
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (backend.backend-and8
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern _u2eL_tl_arg\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _u2eL_tl_arg\n")
-            (not (backend.compiler-backend-string-contains? asm ".L_tl_arg:\n"))
-            (not
-              (backend.compiler-backend-string-contains? asm ".L_tl_abort:\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".L_tl_arg_oob_msg:\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    call .L_tl_abort\n"))
-            (not (backend.compiler-backend-string-contains? asm "tl_alloc:\n"))
-            (backend.compiler-backend-string-contains? asm ".L_tl_argc:\n"))
-          (backend.compiler-backend-string-contains? asm ".L_tl_argv:\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern .L_tl_abort\n")))]
+            (asm-has? asm ".extern _u2eL_tl_arg\n")
+            (asm-has? asm "    call _u2eL_tl_arg\n")
+            (asm-lacks? asm ".L_tl_arg:\n")
+            (asm-lacks? asm ".L_tl_abort:\n")
+            (asm-lacks? asm ".L_tl_arg_oob_msg:\n")
+            (asm-lacks? asm "    call .L_tl_abort\n")
+            (asm-lacks? asm "tl_alloc:\n")
+            (asm-has? asm ".L_tl_argc:\n"))
+          (asm-has? asm ".L_tl_argv:\n")
+          (asm-lacks? asm ".extern .L_tl_abort\n"))]
       [(backend.ResultCompilerBackend.Err _) false])
     (match (backend.compiler-backend-emit-source-for-target
       (compiler-backend-arg-runtime-source)
       (backend.CompilerBackendTarget.Windows))
       [(backend.ResultCompilerBackend.Ok asm)
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_arg\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call _u2eL_tl_arg\n")
-          (not (backend.compiler-backend-string-contains? asm ".L_tl_arg:\n"))
-          (not (backend.compiler-backend-string-contains? asm ".L_tl_abort:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_arg_oob_msg:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call .L_tl_abort\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    .extern _write\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern .L_tl_abort\n")))]
+          (asm-has? asm ".extern _u2eL_tl_arg\n")
+          (asm-has? asm "    call _u2eL_tl_arg\n")
+          (asm-lacks? asm ".L_tl_arg:\n")
+          (asm-lacks? asm ".L_tl_abort:\n")
+          (asm-lacks? asm ".L_tl_arg_oob_msg:\n")
+          (asm-lacks? asm "    call .L_tl_abort\n")
+          (asm-lacks? asm "    .extern _write\n")
+          (asm-lacks? asm ".extern .L_tl_abort\n"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 ;; Backend-owned replacement for the Rust `string.string-ref` emit-shape checks:
@@ -4744,49 +4414,28 @@
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_str_data_l2_12961_16211:")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_str_l2_12961_16211:")
-          (backend.compiler-backend-string-contains? asm "    .string \"az\"\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .L_tl_str_data_l2_12961_16211\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    cmpq %r11, %rax\n"))
+          (asm-has? asm ".L_tl_str_data_l2_12961_16211:")
+          (asm-has? asm ".L_tl_str_l2_12961_16211:")
+          (asm-has? asm "    .string \"az\"\n")
+          (asm-has? asm "    .quad .L_tl_str_data_l2_12961_16211\n")
+          (asm-lacks? asm "    cmpq %r11, %rax\n")
           ;; COLD-1: the passing check falls through; the abort stub is
           ;; out of line at the end of the function.
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
             "    jae .Lf0_str_bounds_ok.0.cold\n.Lf0_str_bounds_ok.0:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_oob_abort")
-          (not
-            (backend.compiler-backend-string-contains? asm "tl_oob_abort:\n")))
+          (asm-has? asm "    call tl_oob_abort")
+          (asm-lacks? asm "tl_oob_abort:\n"))
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%r10), %r8\n")
-          (backend.compiler-backend-string-contains? asm "(%r10)")
-          (backend.compiler-backend-string-contains? asm "movzbq")
-          (not (backend.compiler-backend-string-contains? asm "movsbq (%r10)")))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%r10), %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jge .Lf0_str_bounds_ok"))
+          (asm-has? asm "    movq 8(%r10), %r8\n")
+          (asm-has? asm "(%r10)")
+          (asm-has? asm "movzbq")
+          (asm-lacks? asm "movsbq (%r10)"))
+        (asm-lacks? asm "    movq 8(%r10), %rax\n" "    jge .Lf0_str_bounds_ok")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-aggregate-ok?) : bool
@@ -4798,35 +4447,17 @@
           ;; sret ABI: aggregate returns write the caller's sret slot
           ;; instead of arena-allocating a 16-byte object.
           (not (compiler-backend-string-contains-alloc-size? asm 16))
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl _tl___enum_obj_Shape_Nothing\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $1, (%r10)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $2, (%r10)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_Point\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_Nothing\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_Circle\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_Pair\n")))
+          (asm-has? asm ".globl _tl___enum_obj_Shape_Nothing\n")
+          (asm-has? asm "    movq $1, (%r10)\n")
+          (asm-has? asm "    movq $2, (%r10)\n")
+          (asm-lacks? asm "    call _tl_Point\n")
+          (asm-lacks? asm "    call _tl_Nothing\n")
+          (asm-lacks? asm "    call _tl_Circle\n")
+          (asm-lacks? asm "    call _tl_Pair\n"))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-pack-immediate-word-shape-ok?) : bool
@@ -4856,22 +4487,13 @@
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok reg-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               stack-asm
-              "    movq $7, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              stack-asm
+              "    movq $7, -16(%rbp)\n"
               "    movq $1, -24(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              reg-asm
-              "    movl $9, %r12d\n")
-            (backend.compiler-backend-string-contains?
-              reg-asm
-              "    movl $65, %r13d\n")
-            (not (backend.compiler-backend-string-contains? stack-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? stack-asm "%rdx"))
-            (not (backend.compiler-backend-string-contains? reg-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? reg-asm "%rdx")))]
+            (asm-has? reg-asm "    movl $9, %r12d\n" "    movl $65, %r13d\n")
+            (asm-lacks? stack-asm "%rax" "%rdx")
+            (asm-lacks? reg-asm "%rax" "%rdx"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -4927,34 +4549,16 @@
           [(backend.ResultCompilerBackend.Ok xmm-asm)
             (and
               (backend.backend-and8
-                (backend.compiler-backend-string-contains?
-                  gp-asm
-                  "    movq %r12, %r8\n")
-                (backend.compiler-backend-string-contains?
-                  gp-asm
-                  "    movq %r13, %r9\n")
-                (backend.compiler-backend-string-contains?
-                  gp-asm
-                  "    movq %r8, -16(%rbp)\n")
-                (backend.compiler-backend-string-contains?
-                  gp-asm
-                  "    movq %r9, -24(%rbp)\n")
-                (backend.compiler-backend-string-contains?
-                  xmm-asm
-                  "    movsd %xmm3, %xmm2\n")
-                (backend.compiler-backend-string-contains?
-                  xmm-asm
-                  "    movsd %xmm4, %xmm3\n")
-                (backend.compiler-backend-string-contains?
-                  xmm-asm
-                  "    movsd %xmm2, -16(%rbp)\n")
-                (backend.compiler-backend-string-contains?
-                  xmm-asm
-                  "    movsd %xmm3, -24(%rbp)\n"))
-              (not (backend.compiler-backend-string-contains? gp-asm "%rax"))
-              (not (backend.compiler-backend-string-contains? gp-asm "%rdx"))
-              (not (backend.compiler-backend-string-contains? xmm-asm "%xmm0"))
-              (not (backend.compiler-backend-string-contains? xmm-asm "%xmm1")))]
+                (asm-has? gp-asm "    movq %r12, %r8\n")
+                (asm-has? gp-asm "    movq %r13, %r9\n")
+                (asm-has? gp-asm "    movq %r8, -16(%rbp)\n")
+                (asm-has? gp-asm "    movq %r9, -24(%rbp)\n")
+                (asm-has? xmm-asm "    movsd %xmm3, %xmm2\n")
+                (asm-has? xmm-asm "    movsd %xmm4, %xmm3\n")
+                (asm-has? xmm-asm "    movsd %xmm2, -16(%rbp)\n")
+                (asm-has? xmm-asm "    movsd %xmm3, -24(%rbp)\n"))
+              (asm-lacks? gp-asm "%rax" "%rdx")
+              (asm-lacks? xmm-asm "%xmm0" "%xmm1"))]
           [(backend.ResultCompilerBackend.Err _) false])]
       [(backend.ResultCompilerBackend.Err _) false])))
 
@@ -4981,18 +4585,16 @@
           ;; caller-provided sret slot -- no per-return arena allocation.
           (= (compiler-backend-alloc-call-count asm) 0)
           (not (compiler-backend-string-contains-alloc-size? asm 16))
-          (backend.compiler-backend-string-contains? asm "movq $7,")
-          (backend.compiler-backend-string-contains? asm "movq $1,")
-          (backend.compiler-backend-string-contains? asm "movq $2,")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_str_data_l2_13861_13991:")
-          (backend.compiler-backend-string-contains? asm "    .quad 2\n")
+          (asm-has? asm "movq $7,")
+          (asm-has? asm "movq $1,")
+          (asm-has? asm "movq $2,")
+          (asm-has? asm ".L_tl_str_data_l2_13861_13991:")
+          (asm-has? asm "    .quad 2\n")
           true)
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-aggregate-global-init-source) : String
@@ -5029,44 +4631,44 @@
         (or
           (let
             [needle (str_cat.str-cat "    .comm " symbol ", 8, 8\n")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (let
             [needle (str_cat.str-cat "    .comm " symbol ", 16, 8\n")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (let
             [needle (str_cat.str-cat "    .comm " symbol ", 24, 8\n")]
-            (backend.compiler-backend-string-contains? asm needle)))
+            (asm-has? asm needle)))
         (let
           [needle (str_cat.str-cat "    call " init-symbol "\n")]
-          (backend.compiler-backend-string-contains? asm needle))
+          (asm-has? asm needle))
         ;; The startup sequence installs the initializer result: a pointer
         ;; store for a boxed cell, or the IAG-1 byte copy for an inline
         ;; aggregate cell.
         (or
           (let
             [needle (str_cat.str-cat "    movq %rax, " symbol "(%rip)\n")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (let
             [needle
               (str_cat.str-cat
                 "    movups (%rax), %xmm0\n    movups %xmm0, "
                 symbol
                 "(%rip)\n")]
-            (backend.compiler-backend-string-contains? asm needle)))
+            (asm-has? asm needle)))
         (let
           [needle (str_cat.str-cat init-symbol ":\n" "")]
-          (backend.compiler-backend-string-contains? asm needle)))
+          (asm-has? asm needle)))
       (or
         (let
           [needle (str_cat.str-cat "    movq " symbol "(%rip), %rax\n")]
-          (backend.compiler-backend-string-contains? asm needle))
+          (asm-has? asm needle))
         (let
           [needle (str_cat.str-cat "    movq " symbol "(%rip), %r10\n")]
-          (backend.compiler-backend-string-contains? asm needle))
+          (asm-has? asm needle))
         ;; A register-group global is read via its address.
         (let
           [needle (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n")]
-          (backend.compiler-backend-string-contains? asm needle))))))
+          (asm-has? asm needle))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
   (match (backend.compiler-backend-emit-source
@@ -5079,21 +4681,16 @@
           (compiler-backend-runtime-global-shape-ok? asm "pair")
           (compiler-backend-runtime-global-shape-ok? asm "cells")
           (compiler-backend-runtime-global-shape-ok? asm "nested")
-          (backend.compiler-backend-string-contains? asm "_tl_start:\n")
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    js .L_tl_main_stack_abort\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_main_stack_abort:\n    movq $1, %rax\n"))
+          (asm-has? asm "_tl_start:\n")
+          (asm-has?
+            asm
+            "    js .L_tl_main_stack_abort\n"
+            ".ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"\n"
+            ".L_tl_main_stack_abort:\n    movq $1, %rax\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle))))
+              (asm-has? asm needle))))
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -5146,33 +4743,20 @@
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm "_tl_f")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_desc___tl_lambda_main_0:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_entry___tl_lambda_main_0:\n")
-          (backend.compiler-backend-string-contains? asm "    call _tl_f")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
+          (asm-has? asm "_tl_f")
+          (asm-has? asm ".L_tl_fn_desc___tl_lambda_main_0:\n")
+          (asm-has? asm "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
+          (asm-has? asm ".L_tl_fn_entry___tl_lambda_main_0:\n")
+          (asm-has? asm "    call _tl_f")
+          (asm-has? asm "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
           (compiler-backend-call-or-jmp-ok? asm "*(%r10)")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq (%r10), %rax\n")))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 8(%r10), %rdi\n")
+          (asm-lacks? asm "    movq (%r10), %rax\n"))
+        (asm-has? asm "    movq 8(%r10), %rdi\n")
         (not (compiler-backend-call-or-jmp-ok? asm "*(%r11)"))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-closure-inferred-shape-ok?) : bool
@@ -5180,13 +4764,13 @@
     (compiler-backend-closure-inferred-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
-        (backend.compiler-backend-string-contains? asm "_tl_f")
-        (backend.compiler-backend-string-contains? asm "    call _tl_f")
+        (asm-has? asm "_tl_f")
+        (asm-has? asm "    call _tl_f")
         (compiler-backend-call-or-jmp-ok? asm "*(%r10)")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-closure-aggregate-return-shape-ok?) : bool
@@ -5196,48 +4780,24 @@
       (and
         (backend.backend-and8
           (>= (backend.compiler-backend-string-count asm ".globl _tl_f") 4)
-          (backend.compiler-backend-string-contains? asm "_tl_f")
-          (backend.compiler-backend-string-contains? asm "    call _tl_f")
-          (backend.compiler-backend-string-contains? asm "main:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_desc___tl_lambda_main_0:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_desc___tl_lambda_main_1:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_desc___tl_lambda_main_2:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_desc___tl_lambda_main_3:\n"))
+          (asm-has? asm "_tl_f")
+          (asm-has? asm "    call _tl_f")
+          (asm-has? asm "main:\n")
+          (asm-has? asm ".L_tl_fn_desc___tl_lambda_main_0:\n")
+          (asm-has? asm ".L_tl_fn_desc___tl_lambda_main_1:\n")
+          (asm-has? asm ".L_tl_fn_desc___tl_lambda_main_2:\n")
+          (asm-has? asm ".L_tl_fn_desc___tl_lambda_main_3:\n"))
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_entry___tl_lambda_main_0:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_entry___tl_lambda_main_1:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_entry___tl_lambda_main_2:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_fn_entry___tl_lambda_main_3:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .L_tl_fn_entry___tl_lambda_main_1\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .L_tl_fn_entry___tl_lambda_main_2\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .L_tl_fn_entry___tl_lambda_main_3\n"))
+          (asm-has? asm ".L_tl_fn_entry___tl_lambda_main_0:\n")
+          (asm-has? asm ".L_tl_fn_entry___tl_lambda_main_1:\n")
+          (asm-has? asm ".L_tl_fn_entry___tl_lambda_main_2:\n")
+          (asm-has? asm ".L_tl_fn_entry___tl_lambda_main_3:\n")
+          (asm-has? asm "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
+          (asm-has? asm "    .quad .L_tl_fn_entry___tl_lambda_main_1\n")
+          (asm-has? asm "    .quad .L_tl_fn_entry___tl_lambda_main_2\n")
+          (asm-has? asm "    .quad .L_tl_fn_entry___tl_lambda_main_3\n"))
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm "tl_alloc:\n")
+          (asm-has? asm "tl_alloc:\n")
           ;; sret ABI: only the heap-backed (Array) closure return
           ;; still allocates; Box/Pair/String returns use sret/static data.
           (>= (compiler-backend-alloc-call-count asm) 1)
@@ -5247,10 +4807,7 @@
               (backend.compiler-backend-string-count asm "    jmp *(%r10)\n"))
             4)
           (and
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq (%r10), %rax\n"))
+            (asm-lacks? asm "    movq (%r10), %rax\n")
             (=
               (+
                 (backend.compiler-backend-string-count asm "    call *(%r11)\n")
@@ -5259,7 +4816,7 @@
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
+              (asm-has? asm needle)))
           true
           true
           true)
@@ -5303,24 +4860,18 @@
     (compiler-backend-enum-match-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
-        (or
-          (backend.compiler-backend-string-contains? asm "_tl_score")
-          (backend.compiler-backend-string-contains? asm "_tl_f"))
-        (backend.compiler-backend-string-contains? asm "_match_arm.")
-        (not
-          (backend.compiler-backend-string-contains? asm "    call _tl_None\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    call _tl_Some\n")))]
+        (or (asm-has? asm "_tl_score") (asm-has? asm "_tl_f"))
+        (asm-has? asm "_match_arm.")
+        (asm-lacks? asm "    call _tl_None\n")
+        (asm-lacks? asm "    call _tl_Some\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-never-branch-register-group-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    (compiler-backend-never-branch-register-group-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "main:\n")
-        (not (backend.compiler-backend-string-contains? asm "register-group")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      (compiler-backend-never-branch-register-group-source))
+    (has "main:\n")
+    (lacks "register-group")))
 
 ;; Scalar backend emission intentionally uses the stack-only plan by default for
 ;; cold compile speed; allocator behavior is still covered in compiler_regalloc.tl
@@ -5330,26 +4881,16 @@
     (compiler-backend-regalloc-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (or
-          (backend.compiler-backend-string-contains? asm "_tl_calc")
-          (backend.compiler-backend-string-contains? asm "_tl_f"))
+        (or (asm-has? asm "_tl_calc") (asm-has? asm "_tl_f"))
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
         ;; this call-free leaf's frame in the red zone. Parameter identities
         ;; stay pinned at -8/-16 while lifetime coloring compacts the sum into
         ;; -32 and lets the later constant/product share -24.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rdi, -8(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rsi, -16(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -24(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    imulq -24(%rsp), %r8\n")
-        (not (backend.compiler-backend-string-contains? asm "    movq %r12, -"))
+        (asm-has? asm "    movq %rdi, -8(%rsp)\n")
+        (asm-has? asm "    movq %rsi, -16(%rsp)\n")
+        (asm-has? asm "    movq %r8, -24(%rsp)\n")
+        (asm-has? asm "    imulq -24(%rsp), %r8\n")
+        (asm-lacks? asm "    movq %r12, -")
         true
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -5362,31 +4903,17 @@
         ;; T1-6 (a) red-zone frame slots. Without scalar-register web
         ;; coalescing, the stack-only path keeps the two copied operands at
         ;; -16/-24 while reusing the staging -8 slot for the sum.
-        (backend.compiler-backend-string-contains? asm "main:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd -8(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    addsd -24(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd %xmm2, -8(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd -8(%rsp), %xmm0\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addsd %xmm1, %xmm0\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd -16(%rsp), %xmm0\n"))
+        (asm-has? asm "main:\n")
+        (asm-has? asm "    movsd -8(%rsp), %xmm2\n")
+        (asm-has? asm "    addsd -24(%rsp), %xmm2\n")
+        (asm-has? asm "    movsd %xmm2, -8(%rsp)\n")
+        (asm-has? asm "    movsd -8(%rsp), %xmm0\n")
+        (asm-lacks? asm "    addsd %xmm1, %xmm0\n")
+        (asm-lacks? asm "    movsd -16(%rsp), %xmm0\n")
         (not
           (let
             [text (compiler-backend-asm-function-body asm "main")]
-            (backend.compiler-backend-string-contains? text "%xmm3"))))]
+            (asm-has? text "%xmm3"))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-test-global-builder-push!
@@ -5731,23 +5258,14 @@
         [(backend.ResultCompilerBackend.Err _) ""])]
     [a-shape-ok : bool
       (and
-        (backend.compiler-backend-string-contains?
-          a1
-          "    call _tl_side_effect\n")
+        (asm-has? a1 "    call _tl_side_effect\n")
         ;; The unified greedy keeps the call-spanning value in a callee-saved
         ;; register and rematerialises the cold immediates after the call, so
         ;; there should be no caller-saved %r9 save/restore wrapper around it.
-        (not
-          (backend.compiler-backend-string-contains?
-            a1
-            "    movq %r9, %rax\n    movq %rax, -"))
-        (not (backend.compiler-backend-string-contains? a1 "(%rbp), %r9\n"))
-        (backend.compiler-backend-string-contains?
-          a1
-          "    movq %r12, _tl_g5(%rip)\n")
-        (backend.compiler-backend-string-contains?
-          a1
-          "    movq %r12, _tl_g5b(%rip)\n")
+        (asm-lacks? a1 "    movq %r9, %rax\n    movq %rax, -")
+        (asm-lacks? a1 "(%rbp), %r9\n")
+        (asm-has? a1 "    movq %r12, _tl_g5(%rip)\n")
+        (asm-has? a1 "    movq %r12, _tl_g5b(%rip)\n")
         ;; %rbp is now the 6th callee-saved register (M-G3 stage 2), so the
         ;; call-spanning var 4 is homed in %rbp; var 6 remains rematerialised
         ;; after the call. W3 step (a): the literal recompute is now decided
@@ -5755,8 +5273,8 @@
         ;; into the register the use scavenges (%r8d) instead of the fixed
         ;; %r9 the use-site rewrite pipeline reserved. Same two instructions,
         ;; one fewer constraint on the scavenger.
-        (backend.compiler-backend-string-contains? a1 "    movl $4, %ebp\n")
-        (backend.compiler-backend-string-contains? a1 "    movl $6, %r8d\n"))]
+        (asm-has? a1 "    movl $4, %ebp\n")
+        (asm-has? a1 "    movl $6, %r8d\n"))]
     (and
       (match a1-result
         [(backend.ResultCompilerBackend.Ok _) true]
@@ -5906,15 +5424,13 @@
             "    subq $544, %rsp\n"
             "    subq $520, %rsp\n")]
         (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "#t _tl_f0 _tl_stack_only_branch_storage\n")
-          (backend.compiler-backend-string-contains? body frame)
-          (not (backend.compiler-backend-string-contains? body uncolored-frame))
+          (asm-has? asm "#t _tl_f0 _tl_stack_only_branch_storage\n")
+          (asm-has? body frame)
+          (asm-lacks? body uncolored-frame)
           ;; The stack-only policy is unchanged: compaction must not smuggle
           ;; scalar allocation or callee-saved homes into opt0/opt1.
-          (not (backend.compiler-backend-string-contains? body "%r12"))
-          (not (backend.compiler-backend-string-contains? body "%r13"))))]
+          (asm-lacks? body "%r12")
+          (asm-lacks? body "%r13")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-stack-only-frame-color-ok?) : bool
@@ -5937,7 +5453,7 @@
   [reg : String]) : bool
   (let
     [needle (str_cat.str-cat "    cmpq " reg ", " reg "\n")]
-    (backend.compiler-backend-string-contains? body needle)))
+    (asm-has? body needle)))
 
 (define (compiler-backend-immediate-lhs-r9-compare-win64-ok?) : bool
   (let
@@ -5968,17 +5484,9 @@
           (and
             ;; `0 < %r9` is emitted as `%r9 > 0`; the zero compare now uses
             ;; the register self-test form and needs no scratch at all.
-            (backend.compiler-backend-string-contains?
-              asm
-              "    testq %r9, %r9\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    cmpq $0, %r9\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    cmpq %r9, %r9\n")))]
+            (asm-has? asm "    testq %r9, %r9\n")
+            (asm-lacks? asm "    cmpq $0, %r9\n")
+            (asm-lacks? asm "    cmpq %r9, %r9\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [_linux : unit
       (backend.compiler-backend-set-current-fn-linux! backend-state)]
@@ -6087,16 +5595,13 @@
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         ;; The chain became one bit test.
-        (backend.compiler-backend-string-contains? asm "    btq ")
+        (asm-has? asm "    btq ")
         ;; The mask reaches the emitter as its own `Mov`, spelled with the plain
         ;; `movq $imm` form -- it is materialized once where that Mov landed.
-        (backend.compiler-backend-string-contains? asm "    movq $146028910097")
+        (asm-has? asm "    movq $146028910097")
         ;; ...and never as an operand materialization at the test itself, which
         ;; is what folding the literal into the shift used to emit per entry.
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "movabsq $146028910097")))]
+        (asm-lacks? asm "movabsq $146028910097"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; A loop-wide literal home is injected just after its resolved preheader label.
@@ -6158,17 +5663,12 @@
     target)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm "    call tl_alloc\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_array_zero\n")
+        (asm-has? asm "    call tl_alloc\n")
+        (asm-has? asm "    call tl_array_zero\n")
         ;; A declined hoist rematerializes at the loop use. The ordinary use
         ;; spelling is `movq`; `movabsq` is unique to the preheader injection.
-        (backend.compiler-backend-string-contains? asm "    movq $4294967296")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movabsq $4294967296")))]
+        (asm-has? asm "    movq $4294967296")
+        (asm-lacks? asm "    movabsq $4294967296"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-callful-preheader-wide-literal-ok?) : bool
@@ -6191,40 +5691,23 @@
           ;; No callee-saved register is saved OR restored: the plan's CSR set is
           ;; empty, so the tail-jump tail (compiler-backend-tail-jump-tail, which
           ;; derives its restores from that same plan) emits none either.
-          (not (backend.compiler-backend-string-contains? body "    pushq "))
-          (not (backend.compiler-backend-string-contains? body "    popq "))
+          (asm-lacks? body "    pushq ")
+          (asm-lacks? body "    popq ")
           ;; The parameters are read straight out of their incoming ABI registers
           ;; instead of being copied to callee-saved homes in the prologue.
-          (backend.compiler-backend-string-contains?
-            body
-            "    testq %rdi, %rdi\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    movq %rdi, %r12\n"))
+          (asm-has? body "    testq %rdi, %rdi\n")
+          (asm-lacks? body "    movq %rdi, %r12\n")
           ;; Arm 1's %rsi/%rdx 2-cycle is broken through a scratch register
           ;; instead of being emitted as two moves that overwrite a source
           ;; before it is read: %rdx is staged into %r9, %rsi lands in %rdx, and
           ;; the staged copy lands in %rsi.
-          (backend.compiler-backend-string-contains?
-            body
-            "    movq %rdx, %r9\n")
-          (backend.compiler-backend-string-contains?
-            body
-            "    movq %rsi, %rdx\n")
-          (backend.compiler-backend-string-contains?
-            body
-            "    movq %r9, %rsi\n")
+          (asm-has? body "    movq %rdx, %r9\n")
+          (asm-has? body "    movq %rsi, %rdx\n")
+          (asm-has? body "    movq %r9, %rsi\n")
           ;; Every arm still leaves through a jmp, not a call/ret pair.
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp _tl_tc_arm_a\n")
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp _tl_tc_arm_b\n")
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp _tl_tc_arm_c\n")))]
+          (asm-has? body "    jmp _tl_tc_arm_a\n")
+          (asm-has? body "    jmp _tl_tc_arm_b\n")
+          (asm-has? body "    jmp _tl_tc_arm_c\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; M9: both `if`s test the same comparison, so GVN leaves ONE compare with two
@@ -6263,9 +5746,9 @@
           (>= (backend.compiler-backend-string-count body "    cmpq ") 2)
           ;; The boolean is never materialised, so neither half of the
           ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
-          (not (backend.compiler-backend-string-contains? body "    setl "))
-          (not (backend.compiler-backend-string-contains? body "    movzbq "))
-          (not (backend.compiler-backend-string-contains? body "    testq "))))]
+          (asm-lacks? body "    setl ")
+          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    testq ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Flags reuse. Every `flag` below is stored to a global as well as branched on,
@@ -6370,14 +5853,10 @@
         [body : String (compiler-backend-asm-function-body asm "_tl_fr_lt")]
         (and
           (not (string.eq body ""))
-          (backend.compiler-backend-string-contains? body setcc)
-          (backend.compiler-backend-string-contains? body materialize)
+          (asm-has? body setcc materialize)
           (if reused?
-            (and
-              (backend.compiler-backend-string-contains? body jcc)
-              (not
-                (backend.compiler-backend-string-contains? body "    testq ")))
-            (backend.compiler-backend-string-contains? body "    testq "))))]
+            (and (asm-has? body jcc) (asm-lacks? body "    testq "))
+            (asm-has? body "    testq "))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-flags-reuse-branch-ok?) : bool
@@ -6483,7 +5962,7 @@
               (compiler-backend-asm-function-body asm "_tl_array_zero_count")]
             (and
               (not (string.eq body ""))
-              (backend.compiler-backend-string-contains? body "    sarq $3,")
+              (asm-has? body "    sarq $3,")
               ;; The full regalloc path may spill either compare operand, so
               ;; its exact register choice is intentionally not asserted
               ;; here. No emitted compare may instead test a register against
@@ -6891,8 +6370,8 @@
             "_tl_next"
             shared-state)
           "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    jmp _tl_next\n")
-        (backend.compiler-backend-string-contains? shared "    popq %rbx\n"))
-      (backend.compiler-backend-string-contains? shared "    leave\n    ret\n")
+        (asm-has? shared "    popq %rbx\n"))
+      (asm-has? shared "    leave\n    ret\n")
       (not (string.eq shared "")))))
 
 (define (compiler-backend-callee-save-push-prologue-rebase-ok?) : bool
@@ -6959,10 +6438,7 @@
     popq %r12
     ret
 ")
-      (not (backend.compiler-backend-string-contains? rebased "-32(%rbp)"))
-      (not (backend.compiler-backend-string-contains? rebased "-40(%rbp)"))
-      (not (backend.compiler-backend-string-contains? rebased "-48(%rbp)"))
-      (not (backend.compiler-backend-string-contains? rebased "    leave\n")))))
+      (asm-lacks? rebased "-32(%rbp)" "-40(%rbp)" "-48(%rbp)" "    leave\n"))))
 
 ;; BE-4: an INDEXED `(%rbp,idx,s)` operand is a pool base of an rbp-planned
 ;; function -- the emitter never spells a frame slot with an index -- so the
@@ -7174,19 +6650,17 @@
       ;; The control: before the trim the pop run restores all three.
       (= push-count 3)
       untrimmed.ok
-      (backend.compiler-backend-string-contains?
-        untrimmed-text
-        "    popq %r13\n")
+      (asm-has? untrimmed-text "    popq %r13\n")
       ;; The body names %r12 and %r14 and not %r13.
       (= trim-count 2)
       (string.eq trimmed-slot1 "")
       trimmed.ok
       ;; Neither half of the pair survives, and the register is named nowhere.
-      (not (backend.compiler-backend-string-contains? trimmed-text "%r13"))
+      (asm-lacks? trimmed-text "%r13")
       ;; The saves the classification set still deleted.
-      (not (backend.compiler-backend-string-contains? trimmed-text "(%rbp)"))
-      (backend.compiler-backend-string-contains? trimmed-text "    popq %r14\n")
-      (backend.compiler-backend-string-contains? trimmed-text "    popq %r12\n")
+      (asm-lacks? trimmed-text "(%rbp)")
+      (asm-has? trimmed-text "    popq %r14\n")
+      (asm-has? trimmed-text "    popq %r12\n")
       ;; ALIGNMENT. The frame adjustment follows the push count: two pushes are
       ;; an even run, so the 8-byte pad comes back and the prologue's total
       ;; displacement D = 8*pushes + sub stays at D % 16 == 8 -- the offset a
@@ -7199,9 +6673,7 @@
     subq $72, %rsp
 ")
       (= (bit-and (+ (* 8 trim-count) 72) 15) 8)
-      (backend.compiler-backend-string-contains?
-        trimmed-text
-        "    addq $72, %rsp\n"))))
+      (asm-has? trimmed-text "    addq $72, %rsp\n"))))
 
 ;; The negative: a register named only through a narrow spelling is USED, and
 ;; nothing is trimmed.
@@ -7325,9 +6797,8 @@
     popq %r12
     ret
 ")
-      (not (backend.compiler-backend-string-contains? dead-rebased "%rbp"))
-      (not
-        (backend.compiler-backend-string-contains? dead-rebased "    leave\n")))))
+      (asm-lacks? dead-rebased "%rbp")
+      (asm-lacks? dead-rebased "    leave\n"))))
 
 (define (compiler-backend-win64-callee-save-homes-ok?) : bool
   (let
@@ -7366,16 +6837,12 @@
         (string.eq
           restore
           "    movq -80(%rbp), %rdi\n    movq -72(%rbp), %rsi\n    movq -32(%rbp), %r12\n")
-        (not (backend.compiler-backend-string-contains? restore "popq"))
-        (not (backend.compiler-backend-string-contains? full-restore "popq"))
-        (backend.compiler-backend-string-contains?
+        (asm-lacks? restore "popq")
+        (asm-lacks? full-restore "popq")
+        (asm-has?
           full-restore
-          "    movq -64(%rbp), %rdi\n")
-        (backend.compiler-backend-string-contains?
-          full-restore
-          "    movq -56(%rbp), %rsi\n")
-        (backend.compiler-backend-string-contains?
-          full-restore
+          "    movq -64(%rbp), %rdi\n"
+          "    movq -56(%rbp), %rsi\n"
           "    movq -48(%rbp), %rbx\n"))]
     [_linux : unit
       (backend.compiler-backend-set-current-fn-linux! backend-state)]
@@ -7459,32 +6926,21 @@
               assignments
               1
               backend-state)]
-          (backend.compiler-backend-string-contains?
-            text
-            "    movq %rbp, -72(%rbp)\n"))
+          (asm-has? text "    movq %rbp, -72(%rbp)\n"))
         (= (backend.compiler-backend-string-count prologue "    pushq %") 8)
         (=
           (backend.compiler-backend-string-count prologue "    .seh_pushreg %")
           8)
-        (backend.compiler-backend-string-contains? prologue "    pushq %rbp\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           prologue
-          "    .seh_pushreg %rbp\n")
-        (backend.compiler-backend-string-contains?
-          prologue
-          "    .seh_stackalloc 88\n")
-        (backend.compiler-backend-string-contains?
-          prologue
+          "    pushq %rbp\n"
+          "    .seh_pushreg %rbp\n"
+          "    .seh_stackalloc 88\n"
           "    .seh_endprologue\n")
-        (not
-          (backend.compiler-backend-string-contains? prologue ".seh_setframe"))
-        (not
-          (backend.compiler-backend-string-contains? prologue "movq %rsp, %rbp"))
+        (asm-lacks? prologue ".seh_setframe" "movq %rsp, %rbp")
         safe-result.ok
-        (not (backend.compiler-backend-string-contains? safe-rebased "(%rbp)"))
-        (backend.compiler-backend-string-contains?
-          safe-rebased
-          "    popq %rbp\n")
+        (asm-lacks? safe-rebased "(%rbp)")
+        (asm-has? safe-rebased "    popq %rbp\n")
         unsafe-rejected)]
     [_linux : unit
       (backend.compiler-backend-set-current-fn-linux! backend-state)]
@@ -7595,10 +7051,8 @@
         (regalloc.compiler-reg-location-register?
           (regalloc.compiler-reg-assignment-lookup planned 0)
           (cabi.compiler-abi-xmm-register-id 6))
-        (backend.compiler-backend-string-contains?
-          planned-save
-          "    movdqu %xmm6, ")
-        (not (backend.compiler-backend-string-contains? planned-save "%xmm7"))
+        (asm-has? planned-save "    movdqu %xmm6, ")
+        (asm-lacks? planned-save "%xmm7")
         (backend.compiler-backend-plan-uses-callee-regs? sparse backend-state)
         (= frame 240)
         (= (backend.compiler-backend-frame-slots 3 sparse backend-state) 30)
@@ -7641,12 +7095,10 @@
         (string.eq
           restore
           "    movdqu -240(%rbp), %xmm15\n    movdqu -96(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           entry
-          "    subq $240, %rsp\n")
-        (backend.compiler-backend-string-contains? entry save)
-        (backend.compiler-backend-string-contains?
-          entry
+          "    subq $240, %rsp\n"
+          save
           "    .seh_savexmm %xmm15, 0\n    .seh_endprologue\n")
         (= full-frame 224)
         (=
@@ -7666,40 +7118,30 @@
             (regalloc.compiler-reg-assignment-table-empty)
             backend-state)
           3)
-        (not (backend.compiler-backend-string-contains? empty-entry "movdqu"))
-        (not
-          (backend.compiler-backend-string-contains? empty-entry ".seh_savexmm"))
+        (asm-lacks? empty-entry "movdqu" ".seh_savexmm")
         (= large-frame 5024)
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           large-entry
-          "    callq __chkstk\n")
-        (backend.compiler-backend-string-contains?
-          large-entry
+          "    callq __chkstk\n"
           "    movdqu %xmm15, -5024(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (=
           (backend.compiler-backend-string-count
             inline-tail
             "movdqu -240(%rbp), %xmm15")
           1)
-        (backend.compiler-backend-string-contains?
-          inline-tail
-          "    leave\n    ret\n")
+        (asm-has? inline-tail "    leave\n    ret\n")
         (=
           (backend.compiler-backend-string-count
             jump-tail
             "movdqu -240(%rbp), %xmm15")
           1)
-        (backend.compiler-backend-string-contains?
-          jump-tail
-          "    leave\n    jmp _tl_xmm_target\n")
+        (asm-has? jump-tail "    leave\n    jmp _tl_xmm_target\n")
         (=
           (backend.compiler-backend-string-count
             shared-tail
             "movdqu -240(%rbp), %xmm15")
           1)
-        (backend.compiler-backend-string-contains?
-          shared-tail
-          ".L_tl_xmm_shared_return:"))]
+        (asm-has? shared-tail ".L_tl_xmm_shared_return:"))]
     [_linux : unit
       (backend.compiler-backend-set-current-fn-linux! backend-state)]
     (and
@@ -7892,7 +7334,7 @@
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movslq %r12d, %r13\n")
-            (not (backend.compiler-backend-string-contains? asm "%rax")))]
+            (asm-lacks? asm "%rax"))]
         [(backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-direct-immediate-mov-ok?) : bool
@@ -7961,44 +7403,30 @@
             (cabi.compiler-abi-xmm-register-id 3)))
         (regalloc.compiler-reg-assignment-table-empty))]
     (and
-      (match (backend.compiler-backend-emit-mov
-        (ast.ast-node-pool-reader-type-segment-bases)
-        int-assignments
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.I64)
-        index
-        2
-        index.backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -24(%rbp), %r8\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r8, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? asm "%rax")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-mov
-        (ast.ast-node-pool-reader-type-segment-bases)
-        float-assignments
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.F64)
-        index
-        2
-        index.backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movsd %xmm3, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movsd %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-mov
+          (ast.ast-node-pool-reader-type-segment-bases)
+          int-assignments
+          1
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.I64)
+          index
+          2
+          index.backend-state)
+        (has "    movq -24(%rbp), %r8\n" "    movq %r8, -16(%rbp)\n")
+        (lacks "%rax"))
+      (asm-ok?
+        (backend.compiler-backend-emit-mov
+          (ast.ast-node-pool-reader-type-segment-bases)
+          float-assignments
+          1
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.F64)
+          index
+          2
+          index.backend-state)
+        (has "    movsd %xmm3, %xmm2\n" "    movsd %xmm2, -16(%rbp)\n")
+        (lacks "%xmm0")))))
 
 ;; P7b: a Mov from a REGISTER-homed value to a MEMORY-homed one is a single
 ;; store. x86 stores a register into a frame slot in one instruction, so routing
@@ -8663,72 +8091,30 @@
       (= stack-count 3)
       (= stack-count9 2)
       (= stack-count11 2)
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         asm-text
-        "    movq %r12, %r14\n")
-      (backend.compiler-backend-string-contains?
-        asm-text
-        "    movups (%r14), %xmm11\n")
-      (backend.compiler-backend-string-contains?
-        asm-text
-        "    movups %xmm11, 0(%rsp)\n")
-      (backend.compiler-backend-string-contains?
-        asm-text
-        "    movq 16(%r14), %xmm11\n")
-      (backend.compiler-backend-string-contains?
-        asm-text
+        "    movq %r12, %r14\n"
+        "    movups (%r14), %xmm11\n"
+        "    movups %xmm11, 0(%rsp)\n"
+        "    movq 16(%r14), %xmm11\n"
         "    movq %xmm11, 16(%rsp)\n")
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         asm9-text
-        "    movb 8(%r14), %r14b\n")
-      (backend.compiler-backend-string-contains?
-        asm9-text
+        "    movb 8(%r14), %r14b\n"
         "    movb %r14b, 8(%rsp)\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          asm9-text
-          "    movd 8(%r14),"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm9-text
-          "    movd %xmm11, 8(%rsp)"))
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? asm9-text "    movd 8(%r14)," "    movd %xmm11, 8(%rsp)")
+      (asm-has?
         asm11-text
-        "    movq %r12, %r14\n")
-      (backend.compiler-backend-string-contains?
-        asm11-text
-        "    movw 8(%r14), %r14w\n")
-      (backend.compiler-backend-string-contains?
-        asm11-text
-        "    movw %r14w, 8(%rsp)\n")
-      (backend.compiler-backend-string-contains?
-        asm11-text
-        "    movq %r14, %xmm11\n")
-      (backend.compiler-backend-string-contains?
-        asm11-text
-        "    movq %xmm11, %r14\n")
-      (backend.compiler-backend-string-contains?
-        asm11-text
-        "    movb 10(%r14), %r14b\n")
-      (backend.compiler-backend-string-contains?
-        asm11-text
+        "    movq %r12, %r14\n"
+        "    movw 8(%r14), %r14w\n"
+        "    movw %r14w, 8(%rsp)\n"
+        "    movq %r14, %xmm11\n"
+        "    movq %xmm11, %r14\n"
+        "    movb 10(%r14), %r14b\n"
         "    movb %r14b, 10(%rsp)\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          asm11-text
-          "    movd 8(%r14),"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm11-text
-          "    movd 10(%r14),"))
-      (backend.compiler-backend-string-contains?
-        param-text
-        "    movq %rdi, %r13\n")
-      (backend.compiler-backend-string-contains?
-        param-text
-        "    leaq 16(%rbp), %r12\n")
-      (not
-        (backend.compiler-backend-string-contains? param-text "movq 16(%rbp),")))))
+      (asm-lacks? asm11-text "    movd 8(%r14)," "    movd 10(%r14),")
+      (asm-has? param-text "    movq %rdi, %r13\n" "    leaq 16(%rbp), %r12\n")
+      (asm-lacks? param-text "movq 16(%rbp),"))))
 
 ;; Structural borrowed-slice ABI classification must not depend on a nominal
 ;; aggregate map entry.  The private type pool below has no Pack-producing
@@ -9363,20 +8749,9 @@
     [_group-disable : unit
       (backend.compiler-backend-group-vars-disable! index.backend-state)]
     (and
-      (match packed
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains? asm "$123, -8(%rbp)")
-            (backend.compiler-backend-string-contains? asm "$42, -16(%rbp)"))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match data
-        [(backend.ResultCompilerBackend.Ok asm)
-          (backend.compiler-backend-string-contains? asm "-8(%rbp), %r12")]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match length
-        [(backend.ResultCompilerBackend.Ok asm)
-          (backend.compiler-backend-string-contains? asm "-16(%rbp), %r13")]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok? packed (has "$123, -8(%rbp)" "$42, -16(%rbp)"))
+      (asm-ok? data (has "-8(%rbp), %r12"))
+      (asm-ok? length (has "-16(%rbp), %r13")))))
 
 (define (compiler-backend-descriptor-pair-register-order-ok?) : bool
   (let
@@ -9472,28 +8847,10 @@
     [_group-disable : unit
       (backend.compiler-backend-group-vars-disable! index.backend-state)]
     (and
-      (match packed
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains? asm "$123, %r12")
-            (backend.compiler-backend-string-contains? asm "$42, %r13"))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match data
-        [(backend.ResultCompilerBackend.Ok asm)
-          (backend.compiler-backend-string-contains? asm "%r12, %rbx")]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match length
-        [(backend.ResultCompilerBackend.Ok asm)
-          (backend.compiler-backend-string-contains? asm "%r13, %rsi")]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match copied
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains? asm "%r12, %rax")
-            (backend.compiler-backend-string-contains? asm "%rax, %r14")
-            (backend.compiler-backend-string-contains? asm "%r13, %rdx")
-            (backend.compiler-backend-string-contains? asm "%rdx, %r15"))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok? packed (has "$123, %r12" "$42, %r13"))
+      (asm-ok? data (has "%r12, %rbx"))
+      (asm-ok? length (has "%r13, %rsi"))
+      (asm-ok? copied (has "%r12, %rax" "%rax, %r14" "%r13, %rdx" "%rdx, %r15")))))
 
 (define (compiler-backend-descriptor-pair-object-main) : ir.CompilerIrFunction
   (let
@@ -9610,12 +8967,11 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           program-index
           (ast.AstType.String)))
-      (match (backend.compiler-backend-emit-program-for-target
-        (owned_view.compiler-owned-shared-view program)
-        target)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (backend.compiler-backend-string-contains? asm "    call _tl_f1\n")]
-        [(backend.ResultCompilerBackend.Err _) false])
+      (asm-ok?
+        (backend.compiler-backend-emit-program-for-target
+          (owned_view.compiler-owned-shared-view program)
+          target)
+        (has "    call _tl_f1\n"))
       (match (backend.compiler-backend-emit-program-object-image-target
         program
         target
@@ -10558,41 +9914,20 @@
                         (ci.intern-compat-state-capture-active)))
                       [(backend.ResultCompilerBackend.Ok branch-asm)
                         (and
-                          (backend.compiler-backend-string-contains?
-                            add-asm
-                            "    leaq 5(%r12), %r13\n")
-                          (not
-                            (backend.compiler-backend-string-contains?
-                              add-asm
-                              "    addq $5, %rax\n"))
-                          (backend.compiler-backend-string-contains?
-                            mul-asm
-                            "    leaq (%r12,%r12,2), %r13\n")
-                          (not
-                            (backend.compiler-backend-string-contains?
-                              mul-asm
-                              "    imulq $3, %rax\n"))
-                          (backend.compiler-backend-string-contains?
-                            shl-asm
-                            "    shlq $2, %r13\n")
-                          (not
-                            (backend.compiler-backend-string-contains?
-                              shl-asm
-                              "    movq $2, %r8\n"))
-                          (backend.compiler-backend-string-contains?
+                          (asm-has? add-asm "    leaq 5(%r12), %r13\n")
+                          (asm-lacks? add-asm "    addq $5, %rax\n")
+                          (asm-has? mul-asm "    leaq (%r12,%r12,2), %r13\n")
+                          (asm-lacks? mul-asm "    imulq $3, %rax\n")
+                          (asm-has? shl-asm "    shlq $2, %r13\n")
+                          (asm-lacks? shl-asm "    movq $2, %r8\n")
+                          (asm-has?
                             cmp-asm
                             "    cmpq $10, %r13\n    setl %r13b\n")
-                          (backend.compiler-backend-string-contains?
+                          (asm-has? branch-asm "    testq %r12, %r12\n    jne ")
+                          (asm-lacks?
                             branch-asm
-                            "    testq %r12, %r12\n    jne ")
-                          (not
-                            (backend.compiler-backend-string-contains?
-                              branch-asm
-                              "    movq %r12, %rax\n"))
-                          (not
-                            (backend.compiler-backend-string-contains?
-                              branch-asm
-                              "    cmpq $0, %rax\n    jne ")))]
+                            "    movq %r12, %rax\n"
+                            "    cmpq $0, %rax\n    jne "))]
                       [(backend.ResultCompilerBackend.Err _) false])]
                   [(backend.ResultCompilerBackend.Err _) false])]
               [(backend.ResultCompilerBackend.Err _) false])]
@@ -11843,25 +11178,13 @@
       (compiler-backend-peephole-flags-branch-case
         "    subq $1, %rsi\n    testq %rdi, %rdi\n    jge .Lf\n    movq %rsi, %rax\n.Lf:\n")]
     (and
-      (backend.compiler-backend-string-contains?
-        ge
-        "    subq $1, %rsi\n    jns .La\n")
-      (not (backend.compiler-backend-string-contains? ge "testq"))
-      (backend.compiler-backend-string-contains?
-        lt
-        "    addq %rdx, %rcx\n    js .Lb\n")
-      (backend.compiler-backend-string-contains?
-        eq
-        "    xorq %rdx, %r9\n    jne .Lc\n")
-      (backend.compiler-backend-string-contains?
-        gt
-        "    testq %rsi, %rsi\n    jg .Ld\n")
-      (backend.compiler-backend-string-contains?
-        label
-        "    testq %rsi, %rsi\n    jge .Le\n")
-      (backend.compiler-backend-string-contains?
-        other
-        "    testq %rdi, %rdi\n    jge .Lf\n"))))
+      (asm-has? ge "    subq $1, %rsi\n    jns .La\n")
+      (asm-lacks? ge "testq")
+      (asm-has? lt "    addq %rdx, %rcx\n    js .Lb\n")
+      (asm-has? eq "    xorq %rdx, %r9\n    jne .Lc\n")
+      (asm-has? gt "    testq %rsi, %rsi\n    jg .Ld\n")
+      (asm-has? label "    testq %rsi, %rsi\n    jge .Le\n")
+      (asm-has? other "    testq %rdi, %rdi\n    jge .Lf\n"))))
 
 ;; The grouped TextBuf path must preserve pairs that cross arbitrary physical
 ;; chunks, while splitting safely at the following function's `.globl` chunk.
@@ -11927,45 +11250,40 @@
       (backend.compiler-backend-string-find-from out "    .size f, . - f\n" 0)]
     (and
       ;; Named continuation: the passing check falls through.
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         out
         "    cmpq %r9, %rdi\n    jae .Lf0_bounds_ok.1.cold\n.Lf0_bounds_ok.1:\n    testq %r8, %r8\n")
       ;; Numeric `1:` without a site label: named after the closest preceding
       ;; label, with `1:` kept in place.
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         out
         "    je .Lf0_bounds_ok.1.stub1.cold\n1:\n    cmpq $0, %rax\n")
       ;; A guard whose skipped text holds a conditional jump is no stub; the
       ;; inner guard it skips is one, and still moves. A returning call in the
       ;; skipped text disqualifies it, and an ordinary branch is no guard:
       ;; both stay exactly as emitted.
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         out
         "    jb .Lf0_mixed\n    testq %rcx, %rcx\n    je .Lf0_mixed.cold\n.Lf0_mixed:\n")
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         out
         "    jb .Lf0_calls\n    call helper\n    call tl_oob_abort\n.Lf0_calls:\n")
-      (backend.compiler-backend-string-contains?
-        out
-        "    jne .Lf0_keep\n    movq $1, %rax\n")
+      (asm-has? out "    jne .Lf0_keep\n    movq $1, %rax\n")
       ;; The stubs, descriptor data included, sit after the last hot
       ;; instruction and inside the function's `.size` range. The abort call
       ;; never returns, so nothing follows it but the descriptor: no jump over
       ;; the descriptor, no jump back to the continuation, and no `.back`
       ;; label for one.
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         out
         "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
-      (not (backend.compiler-backend-string-contains? out "_bounds_end"))
-      (not (backend.compiler-backend-string-contains? out ".back"))
+      (asm-lacks? out "_bounds_end")
+      (asm-lacks? out ".back")
       (> ret-at 0)
       (> bounds-stub-at ret-at)
       (> div-stub-at bounds-stub-at)
       (> size-at div-stub-at)
-      (not
-        (backend.compiler-backend-string-contains?
-          out
-          "    jb .Lf0_bounds_ok.1\n")))))
+      (asm-lacks? out "    jb .Lf0_bounds_ok.1\n"))))
 
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
@@ -12225,20 +11543,13 @@
       (ir.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-call-arg-rax-group-consumer-not-forwardable?) : bool
-  (match (compiler-backend-emit-rax-forward-test-instrs-with-index
-    (compiler-backend-call-arg-rax-group-consumer-instrs)
-    2
-    (compiler-backend-call-arg-rax-group-consumer-index))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call _tl_consume_group\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, %rdi\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-emit-rax-forward-test-instrs-with-index
+      (compiler-backend-call-arg-rax-group-consumer-instrs)
+      2
+      (compiler-backend-call-arg-rax-group-consumer-index))
+    (has "    call _tl_consume_group\n")
+    (lacks "    movq %rax, %rdi\n")))
 
 (define (compiler-backend-emit-rax-forward-test-instrs-with-index
   [instrs : ir.CompilerIrInstrSeq]
@@ -12323,30 +11634,17 @@
             2)
             [(backend.ResultCompilerBackend.Ok shift-asm)
               (and
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   chain-asm
-                  "    imulq $3, %rax\n")
-                (backend.compiler-backend-string-contains?
-                  chain-asm
-                  "    addq $7, %rax\n")
-                (backend.compiler-backend-string-contains?
-                  chain-asm
+                  "    imulq $3, %rax\n"
+                  "    addq $7, %rax\n"
                   "    addq $11, %rax\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    chain-asm
-                    "    movq %rax, -8(%rbp)\n"))
-                (not
-                  (backend.compiler-backend-string-contains?
-                    chain-asm
-                    "    movq %rax, -16(%rbp)\n"))
-                (not
-                  (backend.compiler-backend-string-contains?
-                    chain-asm
-                    "    movq %rax, -24(%rbp)\n"))
-                (backend.compiler-backend-string-contains?
-                  multi-use-asm
-                  "    movq %r8, -8(%rbp)\n"))]
+                (asm-lacks?
+                  chain-asm
+                  "    movq %rax, -8(%rbp)\n"
+                  "    movq %rax, -16(%rbp)\n"
+                  "    movq %rax, -24(%rbp)\n")
+                (asm-has? multi-use-asm "    movq %r8, -8(%rbp)\n"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -12365,34 +11663,17 @@
             2)
             [(backend.ResultCompilerBackend.Ok nonleading-asm)
               (and
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   direct-asm
-                  "    call _tl_producer\n")
-                (backend.compiler-backend-string-contains?
-                  direct-asm
-                  "    movq %rax, -8(%rbp)\n")
-                (backend.compiler-backend-string-contains?
-                  direct-asm
+                  "    call _tl_producer\n"
+                  "    movq %rax, -8(%rbp)\n"
                   "    movq %rax, %rdi\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    direct-asm
-                    "    movq -8(%rbp), %rdi\n"))
-                (backend.compiler-backend-string-contains?
-                  indirect-asm
-                  "    movq %rax, %rsi\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    indirect-asm
-                    "    movq -8(%rbp), %rsi\n"))
-                (backend.compiler-backend-string-contains?
-                  nonleading-asm
-                  "    movq -8(%rbp), %rsi\n")
+                (asm-lacks? direct-asm "    movq -8(%rbp), %rdi\n")
+                (asm-has? indirect-asm "    movq %rax, %rsi\n")
+                (asm-lacks? indirect-asm "    movq -8(%rbp), %rsi\n")
+                (asm-has? nonleading-asm "    movq -8(%rbp), %rsi\n")
                 (compiler-backend-call-arg-rax-group-consumer-not-forwardable?)
-                (not
-                  (backend.compiler-backend-string-contains?
-                    nonleading-asm
-                    "    movq %rax, %rsi\n")))]
+                (asm-lacks? nonleading-asm "    movq %rax, %rsi\n"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -12443,41 +11724,36 @@
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
-    (match (compiler-backend-test-emit-instrs-text
-      (backend.CompilerBackendEmissionContext
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.compiler-backend-target-policy-new
-          backend.CompilerBackendTarget.Linux)
-        "_tl_test"
-        test-id
-        blocks
-        (ir.compiler-ir-label "entry")
-        (regalloc.compiler-reg-assignment-table-empty)
-        compiler-backend-long-block-instr-count
-        (regalloc.compiler-reg-var-types-empty)
-        (backend.CompilerBackendGlobalTypeTable.Empty)
-        (ast.AstType.I64)
-        (compiler-backend-runtime-helper-full-plan)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty)
-        program-index
-        (ir.compiler-source-spans-empty)
-        (backend.compiler-backend-source-span-index-build-with-backend-state
+    (asm-ok?
+      (compiler-backend-test-emit-instrs-text
+        (backend.CompilerBackendEmissionContext
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (backend.compiler-backend-target-policy-new
+            backend.CompilerBackendTarget.Linux)
+          "_tl_test"
+          test-id
+          blocks
+          (ir.compiler-ir-label "entry")
+          (regalloc.compiler-reg-assignment-table-empty)
+          compiler-backend-long-block-instr-count
+          (regalloc.compiler-reg-var-types-empty)
+          (backend.CompilerBackendGlobalTypeTable.Empty)
+          (ast.AstType.I64)
+          (compiler-backend-runtime-helper-full-plan)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty)
+          program-index
+          (ir.compiler-source-spans-empty)
+          (backend.compiler-backend-source-span-index-build-with-backend-state
+            backend-state
+            (ir.compiler-source-spans-empty))
+          (cdiag.compiler-diagnostic-at-start "" "")
+          use-counts
           backend-state
-          (ir.compiler-source-spans-empty))
-        (cdiag.compiler-diagnostic-at-start "" "")
-        use-counts
-        backend-state
-        (backend.compiler-backend-state-function-state backend-state))
-      (backend.CompilerBackendMaybeLabel.No)
-      instrs)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movl $4095, %eax\n")
-          (backend.compiler-backend-string-contains? asm "    ret\n"))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+          (backend.compiler-backend-state-function-state backend-state))
+        (backend.CompilerBackendMaybeLabel.No)
+        instrs)
+      (has "    movl $4095, %eax\n" "    ret\n"))))
 
 (define (compiler-backend-binop-operand-folding-ok?) : bool
   (let
@@ -12524,20 +11800,10 @@
             (ci.intern-compat-state-capture-active)))
           [(backend.ResultCompilerBackend.Ok cmp-asm)
             (and
-              (backend.compiler-backend-string-contains?
-                add-asm
-                "    addq -16(%rbp), %r8\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  add-asm
-                  "    movq -16(%rbp), %r9\n"))
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    cmpq -16(%rbp), %r8\n    setl %r8b\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  cmp-asm
-                  "    movq -16(%rbp), %r9\n"))
+              (asm-has? add-asm "    addq -16(%rbp), %r8\n")
+              (asm-lacks? add-asm "    movq -16(%rbp), %r9\n")
+              (asm-has? cmp-asm "    cmpq -16(%rbp), %r8\n    setl %r8b\n")
+              (asm-lacks? cmp-asm "    movq -16(%rbp), %r9\n")
               (string.eq
                 (let
                   [op (ir.CompilerIrBinOp.And)]
@@ -12590,28 +11856,16 @@
           3)
           [(backend.ResultCompilerBackend.Ok spill-asm)
             (and
-              (backend.compiler-backend-string-contains?
+              (asm-has? imm-asm "    cmpq $3, %r12\n")
+              (asm-lacks?
                 imm-asm
-                "    cmpq $3, %r12\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  imm-asm
-                  "    movq %r12, %rax\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  imm-asm
-                  "    movl $3, %r11d\n"))
-              (backend.compiler-backend-string-contains?
+                "    movq %r12, %rax\n"
+                "    movl $3, %r11d\n")
+              (asm-has? spill-asm "    cmpq -16(%rbp), %r12\n")
+              (asm-lacks?
                 spill-asm
-                "    cmpq -16(%rbp), %r12\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  spill-asm
-                  "    movq %r12, %rax\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  spill-asm
-                  "    movq -16(%rbp), %r11\n")))]
+                "    movq %r12, %rax\n"
+                "    movq -16(%rbp), %r11\n"))]
           [(backend.ResultCompilerBackend.Err _) false])]
       [(backend.ResultCompilerBackend.Err _) false])))
 
@@ -12662,12 +11916,10 @@
     result))
 
 (define (compiler-backend-bounds-direct-pressure-ok?) : bool
-  (match (compiler-backend-bounds-direct-pressure-asm)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    cmpq %rcx, %r9\n")
-        (not (backend.compiler-backend-string-contains? asm "-512(%rbp)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-bounds-direct-pressure-asm)
+    (has "    cmpq %rcx, %r9\n")
+    (lacks "-512(%rbp)")))
 
 ;; Direct register binops need no scratch. Keep every scavenger candidate live
 ;; across the instruction so an eager fallback selection is observable as an
@@ -12711,16 +11963,10 @@
         (ir.CompilerIrBinOp.BitXor))
         [(backend.ResultCompilerBackend.Ok xor-asm)
           (and
-            (backend.compiler-backend-string-contains?
-              add-asm
-              "    leaq (%r9,%rcx), %rdx\n")
-            (backend.compiler-backend-string-contains?
-              xor-asm
-              "    movq %r9, %rdx\n    xorq %rcx, %rdx\n")
-            (not
-              (backend.compiler-backend-string-contains? add-asm "-512(%rbp)"))
-            (not
-              (backend.compiler-backend-string-contains? xor-asm "-512(%rbp)")))]
+            (asm-has? add-asm "    leaq (%r9,%rcx), %rdx\n")
+            (asm-has? xor-asm "    movq %r9, %rdx\n    xorq %rcx, %rdx\n")
+            (asm-lacks? add-asm "-512(%rbp)")
+            (asm-lacks? xor-asm "-512(%rbp)"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -12750,13 +11996,8 @@
           ;; length (in %rax) is never clobbered, so no degenerate
           ;; `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    cmpq $0, %rax\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    cmpq %rax, %rax\n")))]
+            (asm-has? asm "    cmpq $0, %rax\n")
+            (asm-lacks? asm "    cmpq %rax, %rax\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     ok))
 
@@ -12792,13 +12033,8 @@
           ;; invariant is unchanged: the RHS in %rax is never clobbered, so no
           ;; degenerate `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    cmpq %rax, -8(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    cmpq %rax, %rax\n")))]
+            (asm-has? asm "    cmpq %rax, -8(%rbp)\n")
+            (asm-lacks? asm "    cmpq %rax, %rax\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [_linux : unit
       (backend.compiler-backend-set-current-fn-linux! backend-state)]
@@ -14015,14 +13251,11 @@ g:
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-fallthrough-jump-ok?) : bool
-  (match (backend.compiler-backend-emit-program-linux
-    (compiler-backend-fallthrough-program))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm ".Lf0_done:\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    jmp .Lf0_done\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-linux
+      (compiler-backend-fallthrough-program))
+    (has ".Lf0_done:\n")
+    (lacks "    jmp .Lf0_done\n")))
 
 (define (compiler-backend-branch-fallthrough-ok?) : bool
   (let
@@ -14049,20 +13282,10 @@ g:
             (ci.intern-compat-state-capture-active)))
           [(backend.ResultCompilerBackend.Ok true-fallthrough)
             (and
-              (backend.compiler-backend-string-contains?
-                false-fallthrough
-                "    jne .Lbranch_then\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  false-fallthrough
-                  "    jmp .Lbranch_else\n"))
-              (backend.compiler-backend-string-contains?
-                true-fallthrough
-                "    je .Lbranch_else\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  true-fallthrough
-                  "    jmp .Lbranch_then\n")))]
+              (asm-has? false-fallthrough "    jne .Lbranch_then\n")
+              (asm-lacks? false-fallthrough "    jmp .Lbranch_else\n")
+              (asm-has? true-fallthrough "    je .Lbranch_else\n")
+              (asm-lacks? true-fallthrough "    jmp .Lbranch_then\n"))]
           [(backend.ResultCompilerBackend.Err _) false])]
       [(backend.ResultCompilerBackend.Err _) false])))
 
@@ -14078,106 +13301,85 @@ g:
 
 (define (compiler-backend-zero-compare-ok?) : bool
   (and
-    (match (backend.compiler-backend-emit-binop
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (regalloc.compiler-reg-var-types-empty)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      (compiler-backend-peephole-assignments)
-      2
-      (ir.CompilerIrBinOp.Eq)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 0)
-      (ast.AstType.I64)
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    testq %r13, %r13\n    sete %r13b\n")
-          (not (backend.compiler-backend-string-contains? asm "    cmpq $0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (backend.compiler-backend-emit-binop
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (regalloc.compiler-reg-var-types-empty)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      (compiler-backend-peephole-assignments)
-      2
-      (ir.CompilerIrBinOp.Gt)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 0)
-      (ast.AstType.I64)
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    testq %r13, %r13\n    setg %r13b\n")
-          (not (backend.compiler-backend-string-contains? asm "    cmpq $0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (backend.compiler-backend-emit-binop
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (regalloc.compiler-reg-var-types-empty)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      (compiler-backend-peephole-assignments)
-      2
-      (ir.CompilerIrBinOp.BitTestNe)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 1)
-      (ast.AstType.I64)
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    testq $1, %r13\n    setne %r13b\n")
-          (not (backend.compiler-backend-string-contains? asm "    andq $1")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (regalloc.compiler-reg-var-types-empty)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        (compiler-backend-peephole-assignments)
+        2
+        (ir.CompilerIrBinOp.Eq)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.I64)
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has "    testq %r13, %r13\n    sete %r13b\n")
+      (lacks "    cmpq $0"))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (regalloc.compiler-reg-var-types-empty)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        (compiler-backend-peephole-assignments)
+        2
+        (ir.CompilerIrBinOp.Gt)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.I64)
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has "    testq %r13, %r13\n    setg %r13b\n")
+      (lacks "    cmpq $0"))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (regalloc.compiler-reg-var-types-empty)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        (compiler-backend-peephole-assignments)
+        2
+        (ir.CompilerIrBinOp.BitTestNe)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 1)
+        (ast.AstType.I64)
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has "    testq $1, %r13\n    setne %r13b\n")
+      (lacks "    andq $1"))))
 
 (define (compiler-backend-scalar-select-ok?) : bool
   (and
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.ir-instr-select
-          2
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 7)
-          (ir.CompilerIrValue.I64 9)
-          0
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty))
-      (compiler-backend-peephole-assignments)
-      3)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    testq %r12, %r12\n")
-          (backend.compiler-backend-string-contains? asm "    cmovne ")
-          (not (backend.compiler-backend-string-contains? asm "    cmove ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.ir-instr-select
+            2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 7)
+            (ir.CompilerIrValue.I64 9)
+            0
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-seq-empty))
+        (compiler-backend-peephole-assignments)
+        3)
+      (has "    testq %r12, %r12\n" "    cmovne ")
+      (lacks "    cmove "))
     ;; x86 has no byte cmov: Bool still uses a target-independent qword cmovne.
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.ir-instr-select
-          2
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Bool true)
-          (ir.CompilerIrValue.Bool false)
-          0
-          (ast.AstType.Bool))
-        (ir.compiler-ir-instr-seq-empty))
-      (compiler-backend-peephole-assignments)
-      3)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmovne %r8, %r13\n")
-          (not (backend.compiler-backend-string-contains? asm "cmovne %r8b")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.ir-instr-select
+            2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Bool true)
+            (ir.CompilerIrValue.Bool false)
+            0
+            (ast.AstType.Bool))
+          (ir.compiler-ir-instr-seq-empty))
+        (compiler-backend-peephole-assignments)
+        3)
+      (has "    cmovne %r8, %r13\n")
+      (lacks "cmovne %r8b"))))
 
 ;; SS-P5 fixtures. Var 1 is a SPILLED gep base (which is what routes the gep to
 ;; the staged path at all), var 2 the index, var 3 the gep result.
@@ -14300,23 +13502,17 @@ g:
       (backend.compiler-backend-address-base-filter-sib "%r12" 8)
       "%r12")
     ;; end to end: a byte load off a %rbp base reads its home in place
-    (match (compiler-backend-gep-rbp-base-load-asm (ast.AstType.U8))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "(%r13,%rbp,1)")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %rbp, ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-rbp-base-load-asm (ast.AstType.U8))
+      (has "(%r13,%rbp,1)")
+      (lacks "    movq %rbp, "))
     ;; ...and a word load reads it in place too (BE-4): `(%rbp,idx,8)` is a
     ;; pool base with an index, which the rsp-rebase audit steps over in an
     ;; rbp-planned function, so nothing stages the base first
-    (match (compiler-backend-gep-rbp-base-load-asm (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "(%rbp,%r13,8)")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %rbp, ")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-gep-rbp-base-load-asm (ast.AstType.I64))
+      (has "(%rbp,%r13,8)")
+      (lacks "    movq %rbp, "))))
 
 ;; SS-P5(a). A register-homed index is READ by the composing instruction --
 ;; `addq idx, base` at scale 1, `leaq (base,idx,s), base` at 2/4/8 -- so the
@@ -14326,83 +13522,54 @@ g:
 (define (compiler-backend-gep-direct-index-ok?) : bool
   (and
     ;; scale 1 -> addq, with no `movq %r13, <scratch>` staging copy left.
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-direct-index-assignments)
-      (ast.AstType.U8))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq %r13, %r12\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %r13, ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-direct-index-assignments)
+        (ast.AstType.U8))
+      (has "    addq %r13, %r12\n")
+      (lacks "    movq %r13, "))
     ;; scale 8 -> one leaq straight off the index home.
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-direct-index-assignments)
-      (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq (%r12,%r13,8), %r12\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %r13, ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-direct-index-assignments)
+        (ast.AstType.I64))
+      (has "    leaq (%r12,%r13,8), %r12\n")
+      (lacks "    movq %r13, "))
     ;; scale 4 -> the same SIB form at the narrower stride.
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-direct-index-assignments)
-      (ast.AstType.I32))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq (%r12,%r13,4), %r12\n")]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-direct-index-assignments)
+        (ast.AstType.I32))
+      (has "    leaq (%r12,%r13,4), %r12\n"))
     ;; scale 2 -> likewise.
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-direct-index-assignments)
-      (ast.AstType.I16))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq (%r12,%r13,2), %r12\n")]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-direct-index-assignments)
+        (ast.AstType.I16))
+      (has "    leaq (%r12,%r13,2), %r12\n"))
     ;; BE-1: an index homed in %rbp is read from the SIB index slot and the
     ;; add operand like any other register -- `(base,%rbp,s)` is not the frame
     ;; spelling `off(%rbp)` the rebase pass and the peephole recognise -- so it
     ;; stages no copy either.
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-rbp-index-assignments)
-      (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq (%r12,%rbp,8), %r12\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %rbp, ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-rbp-index-assignments)
-      (ast.AstType.U8))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq %rbp, %r12\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %rbp, ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-rbp-index-assignments)
+        (ast.AstType.I64))
+      (has "    leaq (%r12,%rbp,8), %r12\n")
+      (lacks "    movq %rbp, "))
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-rbp-index-assignments)
+        (ast.AstType.U8))
+      (has "    addq %rbp, %r12\n")
+      (lacks "    movq %rbp, "))
     ;; A spilled index still stages: the slot is reloaded, and the composing
     ;; instruction reads the staging register rather than a home.
-    (match (compiler-backend-gep-staged-asm
-      (compiler-backend-gep-spilled-index-assignments)
-      (ast.AstType.U8))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "48(%rbp), ")
-          (backend.compiler-backend-string-contains? asm ", %r12\n"))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-gep-staged-asm
+        (compiler-backend-gep-spilled-index-assignments)
+        (ast.AstType.U8))
+      (has "48(%rbp), " ", %r12\n"))
     ;; The displacement is the SIB form's own field at every spellable scale,
     ;; and only there: a non-SIB stride keeps the separate `addq $D`.
     (string.eq
@@ -14417,7 +13584,7 @@ g:
     (let
       [text
         (backend.compiler-backend-gep-index-base-asm-disp 16 "%r12" 24 "%r13")]
-      (backend.compiler-backend-string-contains? text "    addq $16, %r12\n"))))
+      (asm-has? text "    addq $16, %r12\n"))))
 
 ;; SS-P5(b)/(c) fixtures. var 0 and var 1 are the comparison's operands (and,
 ;; in the `min` shape, the select's two arms); var 3 is the mask; var 4 is the
@@ -14480,46 +13647,35 @@ g:
 (define (compiler-backend-select-on-flags-ok?) : bool
   (and
     ;; unsigned lt -> cmovb, and no boolean is materialised at all.
-    (match (compiler-backend-select-flags-asm
-      (ast.AstType.U64)
-      cabi.compiler-reg-id-r15
-      (ir.compiler-ir-instr-seq-empty))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
-          (not (backend.compiler-backend-string-contains? asm "setb"))
-          (not (backend.compiler-backend-string-contains? asm "movzbq"))
-          (not (backend.compiler-backend-string-contains? asm "    testq ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-select-flags-asm
+        (ast.AstType.U64)
+        cabi.compiler-reg-id-r15
+        (ir.compiler-ir-instr-seq-empty))
+      (has "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
+      (lacks "setb" "movzbq" "    testq "))
     ;; signed lt -> cmovl off the same operands.
-    (match (compiler-backend-select-flags-asm
-      (ast.AstType.I64)
-      cabi.compiler-reg-id-r15
-      (ir.compiler-ir-instr-seq-empty))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq %rcx, %r13\n    cmovl %r13, %r15\n")
-          (not (backend.compiler-backend-string-contains? asm "    cmovb ")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-select-flags-asm
+        (ast.AstType.I64)
+        cabi.compiler-reg-id-r15
+        (ir.compiler-ir-instr-seq-empty))
+      (has "    cmpq %rcx, %r13\n    cmovl %r13, %r15\n")
+      (lacks "    cmovb "))
     ;; A second use of the mask forces it to materialise, and the select falls
     ;; back to the test-and-cmovne form.
-    (match (compiler-backend-select-flags-asm
-      (ast.AstType.U64)
-      cabi.compiler-reg-id-r15
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Mov 5 (ir.CompilerIrValue.Var 3) (ast.AstType.Bool))
-        (ir.compiler-ir-instr-seq-empty)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "    setb ")
-          (backend.compiler-backend-string-contains? asm "    testq ")
-          (backend.compiler-backend-string-contains? asm "    cmovne ")
-          (not (backend.compiler-backend-string-contains? asm "    cmovb ")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-select-flags-asm
+        (ast.AstType.U64)
+        cabi.compiler-reg-id-r15
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Mov
+            5
+            (ir.CompilerIrValue.Var 3)
+            (ast.AstType.Bool))
+          (ir.compiler-ir-instr-seq-empty)))
+      (has "    setb " "    testq " "    cmovne ")
+      (lacks "    cmovb "))))
 
 ;; SS-P5(c). When the allocator homed the select result where the false operand
 ;; already lives, the `cmov`'s destination is loaded by construction and the
@@ -14528,44 +13684,30 @@ g:
 ;; and emitted.
 (define (compiler-backend-select-false-home-result-ok?) : bool
   (and
-    (match (compiler-backend-select-flags-asm
-      (ast.AstType.U64)
-      cabi.compiler-reg-id-rcx
-      (ir.compiler-ir-instr-seq-empty))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq %rcx, %r13\n    cmovb %r13, %rcx\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rcx, %rcx\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (compiler-backend-select-flags-asm
+        (ast.AstType.U64)
+        cabi.compiler-reg-id-rcx
+        (ir.compiler-ir-instr-seq-empty))
+      (has "    cmpq %rcx, %r13\n    cmovb %r13, %rcx\n")
+      (lacks "    movq %rcx, %rcx\n"))
     ;; The same rule on the materialising path: an isolated select whose result
     ;; home is the false operand's home copies nothing.
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.ir-instr-select
-          4
-          (ir.CompilerIrValue.Var 3)
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 1)
-          0
-          (ast.AstType.U64))
-        (ir.compiler-ir-instr-seq-empty))
-      (compiler-backend-select-flags-assignments cabi.compiler-reg-id-rcx)
-      6)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmovne %r13, %rcx\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rcx, %rcx\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.ir-instr-select
+            4
+            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1)
+            0
+            (ast.AstType.U64))
+          (ir.compiler-ir-instr-seq-empty))
+        (compiler-backend-select-flags-assignments cabi.compiler-reg-id-rcx)
+        6)
+      (has "    cmovne %r13, %rcx\n")
+      (lacks "    movq %rcx, %rcx\n"))))
 
 (define (compiler-backend-global-immediate-store-ok?) : bool
   (compiler-backend-instr-contains?
@@ -14577,68 +13719,50 @@ g:
 
 (define (compiler-backend-word-scratch-staging-ok?) : bool
   (and
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Word
-          1
-          (ir.CompilerIrValue.Var 2)
-          0
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignment-table-empty)
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -24(%rbp), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, -16(%rbp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%rax")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Word
-          1
-          (ir.CompilerIrValue.Var 2)
-          0
-          (ast.AstType.F64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignment-table-empty)
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd -24(%rbp), %xmm2\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -16(%rbp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Word
-          1
-          (ir.CompilerIrValue.Var 2)
-          0
-          (ast.AstType.F64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          1
-          (regalloc.CompilerRegLocation.Register
-            (cabi.compiler-abi-xmm-register-id 3)))
-        (regalloc.compiler-reg-assignment-table-empty))
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd -24(%rbp), %xmm3\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Word
+            1
+            (ir.CompilerIrValue.Var 2)
+            0
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignment-table-empty)
+        4)
+      (has "    movq -24(%rbp), %r8\n" "    movq %r8, -16(%rbp)\n")
+      (lacks "%rax"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Word
+            1
+            (ir.CompilerIrValue.Var 2)
+            0
+            (ast.AstType.F64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignment-table-empty)
+        4)
+      (has "    movsd -24(%rbp), %xmm2\n" "    movsd %xmm2, -16(%rbp)\n")
+      (lacks "%xmm0"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Word
+            1
+            (ir.CompilerIrValue.Var 2)
+            0
+            (ast.AstType.F64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Register
+              (cabi.compiler-abi-xmm-register-id 3)))
+          (regalloc.compiler-reg-assignment-table-empty))
+        4)
+      (has "    movsd -24(%rbp), %xmm3\n")
+      (lacks "%xmm0"))))
 
 (define (compiler-backend-scratch-staging-direct-shapes-ok?) : bool
   (let
@@ -14716,30 +13840,24 @@ g:
       (string.eq
         (backend.compiler-backend-bit-length-reg-asm false "%r9")
         "    testq %r9, %r9\n    je 1f\n    bsrq %r9, %r9\n    addq $1, %r9\n    jmp 2f\n1:\n    xorq %r9, %r9\n2:\n")
-      (match (backend.compiler-backend-emit-unop
-        (regalloc.compiler-reg-assignment-table-empty)
-        1
-        (ir.CompilerIrUnOp.BitLength)
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.I64)
-        backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    jle 1f\n    bsrq ")
-            (backend.compiler-backend-string-contains? asm "\n2:\n"))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-unop
-        (regalloc.compiler-reg-assignment-table-empty)
-        1
-        (ir.CompilerIrUnOp.BitLength)
-        (ir.CompilerIrValue.Var 0)
-        (ast.AstType.U64)
-        backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (backend.compiler-backend-string-contains? asm "    je 1f\n    bsrq ")]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-unop
+          (regalloc.compiler-reg-assignment-table-empty)
+          1
+          (ir.CompilerIrUnOp.BitLength)
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.I64)
+          backend-state)
+        (has "    jle 1f\n    bsrq " "\n2:\n"))
+      (asm-ok?
+        (backend.compiler-backend-emit-unop
+          (regalloc.compiler-reg-assignment-table-empty)
+          1
+          (ir.CompilerIrUnOp.BitLength)
+          (ir.CompilerIrValue.Var 0)
+          (ast.AstType.U64)
+          backend-state)
+        (has "    je 1f\n    bsrq ")))))
 
 (define (compiler-backend-call-return-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
@@ -14789,16 +13907,12 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (or
-          (backend.compiler-backend-string-contains? asm "    call _tl_callee")
-          (backend.compiler-backend-string-contains? asm "    call _tl_f"))
+          (asm-has? asm "    call _tl_callee")
+          (asm-has? asm "    call _tl_f"))
         (not
           (or
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_callee\n    movq %rax,")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_f\n    movq %rax,"))))]
+            (asm-has? asm "    call _tl_callee\n    movq %rax,")
+            (asm-has? asm "    call _tl_f\n    movq %rax,"))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : regalloc.CompilerRegAssignmentTable
@@ -15095,16 +14209,14 @@ g:
   [save : String]
   [restore : String]) : bool
   (and
-    (backend.compiler-backend-string-contains? asm save)
-    (backend.compiler-backend-string-contains?
+    (asm-has?
       asm
-      "    movsd -24(%rbp), %xmm2\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "    movsd %xmm2, -16(%rbp)\n")
-    (backend.compiler-backend-string-contains? asm restore)
+      save
+      "    movsd -24(%rbp), %xmm2\n"
+      "    movsd %xmm2, -16(%rbp)\n"
+      restore)
     (= (backend.compiler-backend-string-count asm "-128(%rbp)") 2)
-    (not (backend.compiler-backend-string-contains? asm "-512(%rbp)"))))
+    (asm-lacks? asm "-512(%rbp)")))
 
 (define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
   (match (compiler-backend-phi-xmm-stage-edge-asm
@@ -15169,13 +14281,10 @@ g:
                             placed
                             "    movdqu %xmm2, -128(%rbp)\n"
                             "    movdqu -128(%rbp), %xmm2\n")
-                          (backend.compiler-backend-string-contains?
+                          (asm-has?
                             safe
                             "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
-                          (not
-                            (backend.compiler-backend-string-contains?
-                              safe
-                              "movdqu"))))]
+                          (asm-lacks? safe "movdqu")))]
                     [(backend.ResultCompilerBackend.Err _) false])]
                 [(backend.ResultCompilerBackend.Err _) false])]
             [(backend.ResultCompilerBackend.Err _) false])]
@@ -15199,31 +14308,22 @@ g:
       (backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
         (backend.compiler-backend-state-function-state backend-state)
         -128)
-      (match (backend.compiler-backend-emit-mov-phi-copy-edge
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (compiler-backend-phi-xmm-stage-fused-assignments)
-        blocks
-        (ir.compiler-ir-label "join")
-        (ir.compiler-ir-label "entry")
-        2
-        (ir.CompilerIrValue.Var 4)
-        program-index
-        5)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movdqu %xmm2, -128(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movsd -32(%rbp), %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movsd %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movdqu -128(%rbp), %xmm2\n"))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-mov-phi-copy-edge
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-phi-xmm-stage-fused-assignments)
+          blocks
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "entry")
+          2
+          (ir.CompilerIrValue.Var 4)
+          program-index
+          5)
+        (has
+          "    movdqu %xmm2, -128(%rbp)\n"
+          "    movsd -32(%rbp), %xmm2\n"
+          "    movsd %xmm2, -16(%rbp)\n"
+          "    movdqu -128(%rbp), %xmm2\n")))))
 
 (define (compiler-backend-phi-group-cycle-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
@@ -15469,57 +14569,33 @@ g:
         (and
           ;; `1 < %r14` is emitted as `%r14 > 1`, so the false edge uses
           ;; the reversed predicate (`jle`) while retaining the phi-copy edge.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jle .Lphi_edge_exit\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    jl .Lphi_edge_entry_branch_true\n"))
-          (backend.compiler-backend-string-contains?
-            asm
-            ".Lphi_edge_entry_branch_true:\n")
-          (backend.compiler-backend-string-contains? asm "    movl $1, %r12d\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rax, %r12\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".Lphi_edge_entry_branch_false:\n"))
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jmp .Lphi_edge_body\n"))]
+          (asm-has? asm "    jle .Lphi_edge_exit\n")
+          (asm-lacks? asm "    jl .Lphi_edge_entry_branch_true\n")
+          (asm-has? asm ".Lphi_edge_entry_branch_true:\n")
+          (asm-has? asm "    movl $1, %r12d\n")
+          (asm-lacks? asm "    movq %rax, %r12\n")
+          (asm-lacks? asm ".Lphi_edge_entry_branch_false:\n")
+          (asm-has? asm "    jmp .Lphi_edge_body\n"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-phi-immediate-stack-copy-ok?) : bool
-  (match (backend.compiler-backend-emit-phi-edge-copies
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (regalloc.compiler-reg-assignment-table-empty)
-    (compiler-backend-branch-phi-blocks)
-    (ir.compiler-ir-label "body")
-    (ir.compiler-ir-label "entry")
-    (backend.compiler-backend-program-index-build
+  (asm-ok?
+    (backend.compiler-backend-emit-phi-edge-copies
       (ast.ast-node-pool-reader-type-segment-bases)
-      (ir.compiler-ir-function-seq-empty)
-      (ir.compiler-ir-extern-seq-empty))
-    4
-    ""
-    ""
-    "")
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq $1, -8(%rbp)\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    movl $1, %eax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -8(%rbp)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+      (regalloc.compiler-reg-assignment-table-empty)
+      (compiler-backend-branch-phi-blocks)
+      (ir.compiler-ir-label "body")
+      (ir.compiler-ir-label "entry")
+      (backend.compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))
+      4
+      ""
+      ""
+      "")
+    (has "    movq $1, -8(%rbp)\n")
+    (lacks "    movl $1, %eax\n" "    movq %rax, -8(%rbp)\n")))
 
 (define (compiler-backend-phi-direct-scalar-copy-ok?) : bool
   (match (backend.compiler-backend-emit-phi-edge-copies
@@ -15593,27 +14669,12 @@ g:
             "")
             [(backend.ResultCompilerBackend.Ok reg-spill)
               (and
-                (backend.compiler-backend-string-contains?
-                  reg-reg
-                  "    movq %r13, %r12\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    reg-reg
-                    "    movq %r13, %rax\n"))
-                (backend.compiler-backend-string-contains?
-                  spill-reg
-                  "    movq -16(%rbp), %r12\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    spill-reg
-                    "    movq -16(%rbp), %rax\n"))
-                (backend.compiler-backend-string-contains?
-                  reg-spill
-                  "    movq %r13, -8(%rbp)\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    reg-spill
-                    "    movq %r13, %rax\n")))]
+                (asm-has? reg-reg "    movq %r13, %r12\n")
+                (asm-lacks? reg-reg "    movq %r13, %rax\n")
+                (asm-has? spill-reg "    movq -16(%rbp), %r12\n")
+                (asm-lacks? spill-reg "    movq -16(%rbp), %rax\n")
+                (asm-has? reg-spill "    movq %r13, -8(%rbp)\n")
+                (asm-lacks? reg-spill "    movq %r13, %rax\n"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -15708,25 +14769,17 @@ g:
       (regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-single-phi-return-shortcut-ok?) : bool
-  (match (compiler-backend-phi-return-entry-asm
-    (compiler-backend-single-phi-return-blocks)
-    (compiler-backend-single-phi-return-entry-instrs)
-    (compiler-backend-single-phi-return-assignments)
-    2)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movl $7, %eax\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    movl $7, %r14d\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r14, %r12\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jmp .L_tl_test_join\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-phi-return-entry-asm
+      (compiler-backend-single-phi-return-blocks)
+      (compiler-backend-single-phi-return-entry-instrs)
+      (compiler-backend-single-phi-return-assignments)
+      2)
+    (has "    movl $7, %eax\n")
+    (lacks
+      "    movl $7, %r14d\n"
+      "    movq %r14, %r12\n"
+      "    jmp .L_tl_test_join\n")))
 
 (define (compiler-backend-multi-phi-return-entry-instrs) : ir.CompilerIrInstrSeq
   (compiler-backend-test-instr-seq-prepend
@@ -15802,26 +14855,17 @@ g:
             (regalloc.compiler-reg-assignment-table-empty)))))))
 
 (define (compiler-backend-multi-phi-return-shortcut-ok?) : bool
-  (match (compiler-backend-phi-return-entry-asm
-    (compiler-backend-multi-phi-return-blocks)
-    (compiler-backend-multi-phi-return-entry-instrs)
-    (compiler-backend-multi-phi-return-assignments)
-    5)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movl $7, %r14d\n")
-        (backend.compiler-backend-string-contains? asm "    movq %r14, %rax\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r14, %r13\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    movl $99, %ebx\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jmp .L_tl_test_join\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-phi-return-entry-asm
+      (compiler-backend-multi-phi-return-blocks)
+      (compiler-backend-multi-phi-return-entry-instrs)
+      (compiler-backend-multi-phi-return-assignments)
+      5)
+    (has "    movl $7, %r14d\n" "    movq %r14, %rax\n")
+    (lacks
+      "    movq %r14, %r13\n"
+      "    movl $99, %ebx\n"
+      "    jmp .L_tl_test_join\n")))
 
 (define (compiler-backend-phi-return-work-join-instrs) : ir.CompilerIrInstrSeq
   (compiler-backend-test-instr-seq-prepend
@@ -15866,22 +14910,14 @@ g:
         (regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-phi-return-rejects-work-ok?) : bool
-  (match (compiler-backend-phi-return-entry-asm
-    (compiler-backend-phi-return-work-blocks)
-    (compiler-backend-single-phi-return-entry-instrs)
-    (compiler-backend-phi-return-work-assignments)
-    3)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movl $7, %r12d\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    jmp .L_tl_test_join\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r14, %rax\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-phi-return-entry-asm
+      (compiler-backend-phi-return-work-blocks)
+      (compiler-backend-single-phi-return-entry-instrs)
+      (compiler-backend-phi-return-work-assignments)
+      3)
+    (has "    movl $7, %r12d\n" "    jmp .L_tl_test_join\n")
+    (lacks "    movq %r14, %rax\n")))
 
 (define (compiler-backend-mov-phi-copy-entry-instrs) : ir.CompilerIrInstrSeq
   (compiler-backend-test-instr-seq-prepend
@@ -15946,49 +14982,38 @@ g:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState program-index.backend-state]
-    (match (compiler-backend-test-emit-instrs-text
-      (backend.CompilerBackendEmissionContext
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.compiler-backend-target-policy-new
-          backend.CompilerBackendTarget.Linux)
-        "_tl_test"
-        test-id
-        blocks
-        (ir.compiler-ir-label "entry")
-        (compiler-backend-mov-phi-copy-assignments)
-        3
-        (regalloc.compiler-reg-var-types-empty)
-        (backend.CompilerBackendGlobalTypeTable.Empty)
-        (ast.AstType.I64)
-        (compiler-backend-runtime-helper-full-plan)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty)
-        program-index
-        (ir.compiler-source-spans-empty)
-        (backend.compiler-backend-source-span-index-build-with-backend-state
+    (asm-ok?
+      (compiler-backend-test-emit-instrs-text
+        (backend.CompilerBackendEmissionContext
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (backend.compiler-backend-target-policy-new
+            backend.CompilerBackendTarget.Linux)
+          "_tl_test"
+          test-id
+          blocks
+          (ir.compiler-ir-label "entry")
+          (compiler-backend-mov-phi-copy-assignments)
+          3
+          (regalloc.compiler-reg-var-types-empty)
+          (backend.CompilerBackendGlobalTypeTable.Empty)
+          (ast.AstType.I64)
+          (compiler-backend-runtime-helper-full-plan)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty)
+          program-index
+          (ir.compiler-source-spans-empty)
+          (backend.compiler-backend-source-span-index-build-with-backend-state
+            backend-state
+            (ir.compiler-source-spans-empty))
+          (cdiag.compiler-diagnostic-at-start "" "")
+          use-counts
           backend-state
-          (ir.compiler-source-spans-empty))
-        (cdiag.compiler-diagnostic-at-start "" "")
-        use-counts
-        backend-state
-        (backend.compiler-backend-state-function-state backend-state))
-      (backend.CompilerBackendMaybeLabel.No)
-      (compiler-backend-mov-phi-copy-entry-instrs))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "    movl $7, %r12d\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl $7, %r14d\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r14, %r12\n"))
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jmp .L_tl_test_join\n"))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+          (backend.compiler-backend-state-function-state backend-state))
+        (backend.CompilerBackendMaybeLabel.No)
+        (compiler-backend-mov-phi-copy-entry-instrs))
+      (has "    movl $7, %r12d\n")
+      (lacks "    movl $7, %r14d\n" "    movq %r14, %r12\n")
+      (has "    jmp .L_tl_test_join\n"))))
 
 ;; The cycle fixture's "back" -> "join" edge is a BACK edge: "join" is the first
 ;; (and only) block, so its P22-B target point is 0, and `emit-instr-post-base`
@@ -16051,35 +15076,20 @@ g:
             [(backend.ResultCompilerBackend.Ok cycle)
               (and
                 (string.eq same-home "")
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movq -8(%rbp), %r10\n")
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movq %r10, -512(%rbp)\n")
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movq -512(%rbp), %r10\n")
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movq %r10, -16(%rbp)\n")
+                (asm-has? cycle "    movq -8(%rbp), %r10\n")
+                (asm-has? cycle "    movq %r10, -512(%rbp)\n")
+                (asm-has? cycle "    movq -512(%rbp), %r10\n")
+                (asm-has? cycle "    movq %r10, -16(%rbp)\n")
                 ;; The spilled mem->mem copy of the break stages through the
                 ;; scavenged GP register. It used to carry a pushq/popq bracket
                 ;; around the staging register; #phi-staged-copy proves the
                 ;; register free per edge (no register homes exist in this
                 ;; assignment table, and no copy dst homes one), so the bracket is
                 ;; gone and the pair itself is what the shape asserts.
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movq -16(%rbp), %r8\n")
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movq %r8, -8(%rbp)\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    cycle
-                    "    pushq %r8\n"))
-                (not (backend.compiler-backend-string-contains? cycle "%rax")))]
+                (asm-has? cycle "    movq -16(%rbp), %r8\n")
+                (asm-has? cycle "    movq %r8, -8(%rbp)\n")
+                (asm-lacks? cycle "    pushq %r8\n")
+                (asm-lacks? cycle "%rax"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
     [_restore : unit
@@ -16131,38 +15141,24 @@ g:
           backend-state
           0))]
     [ok : bool
-      (match (backend.compiler-backend-emit-phi-edge-copies
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (regalloc.compiler-reg-assignment-table-empty)
-        (compiler-backend-phi-cycle-blocks)
-        (ir.compiler-ir-label "join")
-        (ir.compiler-ir-label "back")
-        program-index
-        0
-        ""
-        ""
-        "")
-        [(backend.ResultCompilerBackend.Ok cycle)
-          (and
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq -8(%rbp), %r10\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq %r10, -512(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq -512(%rbp), %r10\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq %r10, -16(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    pushq %r8\n"))
-            (not
-              (backend.compiler-backend-string-contains? cycle "    popq %r8\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (regalloc.compiler-reg-assignment-table-empty)
+          (compiler-backend-phi-cycle-blocks)
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "back")
+          program-index
+          0
+          ""
+          ""
+          "")
+        (has
+          "    movq -8(%rbp), %r10\n"
+          "    movq %r10, -512(%rbp)\n"
+          "    movq -512(%rbp), %r10\n"
+          "    movq %r10, -16(%rbp)\n")
+        (lacks "    pushq %r8\n" "    popq %r8\n"))]
     [_restore : unit
       (begin
         (backend.compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
@@ -16196,42 +15192,26 @@ g:
           (backend.compiler-backend-state-function-state backend-state)
           -512))]
     [ok : bool
-      (match (backend.compiler-backend-emit-phi-edge-copies
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (compiler-backend-phi-group-cycle-assignments)
-        (compiler-backend-phi-group-cycle-blocks)
-        (ir.compiler-ir-label "join")
-        (ir.compiler-ir-label "back")
-        program-index
-        4
-        ""
-        ""
-        "")
-        [(backend.ResultCompilerBackend.Ok cycle)
-          (and
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq %r12, -512(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq %r13, -520(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq %r14, %r12\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq %r15, %r13\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq -520(%rbp), %r15\n")
-            (backend.compiler-backend-string-contains?
-              cycle
-              "    movq -512(%rbp), %r14\n")
-            (not (backend.compiler-backend-string-contains? cycle "pushq"))
-            (not (backend.compiler-backend-string-contains? cycle "popq"))
-            (not (backend.compiler-backend-string-contains? cycle "%rax"))
-            (not (backend.compiler-backend-string-contains? cycle "%rdx")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-phi-group-cycle-assignments)
+          (compiler-backend-phi-group-cycle-blocks)
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "back")
+          program-index
+          4
+          ""
+          ""
+          "")
+        (has
+          "    movq %r12, -512(%rbp)\n"
+          "    movq %r13, -520(%rbp)\n"
+          "    movq %r14, %r12\n"
+          "    movq %r15, %r13\n"
+          "    movq -520(%rbp), %r15\n"
+          "    movq -512(%rbp), %r14\n")
+        (lacks "pushq" "popq" "%rax" "%rdx"))]
     [_restore : unit
       (begin
         (backend.compiler-backend-function-scratch-fixture-set-cycle-temp-used-count!
@@ -16325,121 +15305,79 @@ g:
         unit)]
     [ok : bool
       (and
-        (match (backend.compiler-backend-emit-phi-edge-copies
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-phi-f64-cycle-assignments)
-          (compiler-backend-phi-f64-cycle-blocks)
-          (ir.compiler-ir-label "join")
-          (ir.compiler-ir-label "back")
-          index
-          2
-          ""
-          ""
-          "%xmm4")
-          [(backend.ResultCompilerBackend.Ok cycle)
-            (and
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movsd %xmm2, %xmm4\n")
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movsd %xmm4, %xmm3\n")
-              (not
-                (backend.compiler-backend-string-contains? cycle "-512(%rbp)"))
-              (not (backend.compiler-backend-string-contains? cycle "%rsp"))
-              (not (backend.compiler-backend-string-contains? cycle "%xmm0"))
-              (not (backend.compiler-backend-string-contains? cycle "%xmm14"))
-              (not (backend.compiler-backend-string-contains? cycle "%xmm15")))]
-          [(backend.ResultCompilerBackend.Err _) false])
-        (match (backend.compiler-backend-emit-phi-edge-copies
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-phi-f64-cycle-assignments)
-          (compiler-backend-phi-f64-cycle-blocks)
-          (ir.compiler-ir-label "join")
-          (ir.compiler-ir-label "back")
-          index
-          2
-          ""
-          ""
-          "")
-          [(backend.ResultCompilerBackend.Ok fallback)
-            (and
-              (backend.compiler-backend-string-contains?
-                fallback
-                "    movsd %xmm2, -512(%rbp)\n")
-              (backend.compiler-backend-string-contains?
-                fallback
-                "    movsd -512(%rbp), %xmm3\n"))]
-          [(backend.ResultCompilerBackend.Err _) false])
-        (match (backend.compiler-backend-emit-phi-edge-copies
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-phi-f32-three-cycle-assignments)
-          (compiler-backend-phi-f32-three-cycle-blocks)
-          (ir.compiler-ir-label "join")
-          (ir.compiler-ir-label "back")
-          index
-          3
-          ""
-          ""
-          "%xmm4")
-          [(backend.ResultCompilerBackend.Ok cycle)
-            (and
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movss %xmm2, %xmm4\n")
-              (backend.compiler-backend-string-contains? cycle "%xmm4")
-              (not
-                (backend.compiler-backend-string-contains? cycle "-512(%rbp)"))
-              (not (backend.compiler-backend-string-contains? cycle "movsd")))]
-          [(backend.ResultCompilerBackend.Err _) false])
-        (match (backend.compiler-backend-emit-phi-edge-copies
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-phi-f64-spill-cycle-assignments)
-          (compiler-backend-phi-f64-cycle-blocks)
-          (ir.compiler-ir-label "join")
-          (ir.compiler-ir-label "back")
-          index
-          2
-          ""
-          ""
-          "%xmm4")
-          [(backend.ResultCompilerBackend.Ok cycle)
-            (and
-              (backend.compiler-backend-string-contains? cycle "-512(%rbp)")
-              (not
-                (backend.compiler-backend-string-contains?
-                  cycle
-                  "    movsd -16(%rbp), %xmm4\n")))]
-          [(backend.ResultCompilerBackend.Err _) false])
-        (match (backend.compiler-backend-emit-phi-edge-copies
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler-backend-phi-group-f64-cycle-assignments)
-          (compiler-backend-phi-group-f64-cycle-blocks)
-          (ir.compiler-ir-label "join")
-          (ir.compiler-ir-label "back")
-          (compiler-backend-register-group-f64-test-index)
-          4
-          ""
-          ""
-          "")
-          [(backend.ResultCompilerBackend.Ok cycle)
-            (and
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movq %xmm2, -512(%rbp)\n")
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movq %xmm3, -520(%rbp)\n")
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movq -520(%rbp), %xmm5\n")
-              (backend.compiler-backend-string-contains?
-                cycle
-                "    movq -512(%rbp), %xmm4\n")
-              (not (backend.compiler-backend-string-contains? cycle "%rsp"))
-              (not (backend.compiler-backend-string-contains? cycle "%xmm14"))
-              (not (backend.compiler-backend-string-contains? cycle "%xmm15")))]
-          [(backend.ResultCompilerBackend.Err _) false])
+        (asm-ok?
+          (backend.compiler-backend-emit-phi-edge-copies
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (compiler-backend-phi-f64-cycle-assignments)
+            (compiler-backend-phi-f64-cycle-blocks)
+            (ir.compiler-ir-label "join")
+            (ir.compiler-ir-label "back")
+            index
+            2
+            ""
+            ""
+            "%xmm4")
+          (has "    movsd %xmm2, %xmm4\n" "    movsd %xmm4, %xmm3\n")
+          (lacks "-512(%rbp)" "%rsp" "%xmm0" "%xmm14" "%xmm15"))
+        (asm-ok?
+          (backend.compiler-backend-emit-phi-edge-copies
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (compiler-backend-phi-f64-cycle-assignments)
+            (compiler-backend-phi-f64-cycle-blocks)
+            (ir.compiler-ir-label "join")
+            (ir.compiler-ir-label "back")
+            index
+            2
+            ""
+            ""
+            "")
+          (has "    movsd %xmm2, -512(%rbp)\n" "    movsd -512(%rbp), %xmm3\n"))
+        (asm-ok?
+          (backend.compiler-backend-emit-phi-edge-copies
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (compiler-backend-phi-f32-three-cycle-assignments)
+            (compiler-backend-phi-f32-three-cycle-blocks)
+            (ir.compiler-ir-label "join")
+            (ir.compiler-ir-label "back")
+            index
+            3
+            ""
+            ""
+            "%xmm4")
+          (has "    movss %xmm2, %xmm4\n" "%xmm4")
+          (lacks "-512(%rbp)" "movsd"))
+        (asm-ok?
+          (backend.compiler-backend-emit-phi-edge-copies
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (compiler-backend-phi-f64-spill-cycle-assignments)
+            (compiler-backend-phi-f64-cycle-blocks)
+            (ir.compiler-ir-label "join")
+            (ir.compiler-ir-label "back")
+            index
+            2
+            ""
+            ""
+            "%xmm4")
+          (has "-512(%rbp)")
+          (lacks "    movsd -16(%rbp), %xmm4\n"))
+        (asm-ok?
+          (backend.compiler-backend-emit-phi-edge-copies
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (compiler-backend-phi-group-f64-cycle-assignments)
+            (compiler-backend-phi-group-f64-cycle-blocks)
+            (ir.compiler-ir-label "join")
+            (ir.compiler-ir-label "back")
+            (compiler-backend-register-group-f64-test-index)
+            4
+            ""
+            ""
+            "")
+          (has
+            "    movq %xmm2, -512(%rbp)\n"
+            "    movq %xmm3, -520(%rbp)\n"
+            "    movq -520(%rbp), %xmm5\n"
+            "    movq -512(%rbp), %xmm4\n")
+          (lacks "%rsp" "%xmm14" "%xmm15"))
         (cfg
           test
           (and
@@ -16485,15 +15423,11 @@ g:
                 backend-state)]
             [asm : String (str_cat.str-cat save-asm restore-asm)]
             (and
-              (backend.compiler-backend-string-contains?
+              (asm-has?
                 asm
-                "    movq %rdi, -512(%rbp)\n")
-              (backend.compiler-backend-string-contains?
-                asm
+                "    movq %rdi, -512(%rbp)\n"
                 "    movq -512(%rbp), %rsi\n")
-              (not (backend.compiler-backend-string-contains? asm "pushq"))
-              (not (backend.compiler-backend-string-contains? asm "popq"))
-              (not (backend.compiler-backend-string-contains? asm "%rsp"))))]
+              (asm-lacks? asm "pushq" "popq" "%rsp")))]
         [(backend.ResultCompilerBackend.Err _) false])]
     ok))
 
@@ -16513,33 +15447,30 @@ g:
       (ir.CompilerIrCallArgs.Two
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
-    (match (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      assignments
-      args
-      (compiler-backend-i64-type-list8)
-      false
-      0
-      1
-      0
-      1
-      0
-      ""
-      (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-program-index-build
+    (asm-ok?
+      (backend.compiler-backend-emit-call-args
         (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty))
-      2
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm ", %rsi\n")
-          (backend.compiler-backend-string-contains? asm ", %rdx\n")
-          (not (backend.compiler-backend-string-contains? asm "%rdi")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        args
+        (compiler-backend-i64-type-list8)
+        false
+        0
+        1
+        0
+        1
+        0
+        ""
+        (cdiag.compiler-diagnostic-at-start "" "")
+        (backend.compiler-backend-program-index-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty))
+        2
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has ", %rsi\n" ", %rdx\n")
+      (lacks "%rdi"))))
 
 (define (compiler-backend-base1-arg-env-source-ok?) : bool
   (let
@@ -16557,32 +15488,29 @@ g:
       (ir.CompilerIrCallArgs.Two
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
-    (match (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      assignments
-      args
-      (compiler-backend-i64-type-list8)
-      false
-      0
-      1
-      0
-      1
-      0
-      ""
-      (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-program-index-build
+    (asm-ok?
+      (backend.compiler-backend-emit-call-args
         (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty))
-      2
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rsi, %rdx\n    movq %rdi, %rsi\n")]
-      [(backend.ResultCompilerBackend.Err _) false])))
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        args
+        (compiler-backend-i64-type-list8)
+        false
+        0
+        1
+        0
+        1
+        0
+        ""
+        (cdiag.compiler-diagnostic-at-start "" "")
+        (backend.compiler-backend-program-index-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty))
+        2
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has "    movq %rsi, %rdx\n    movq %rdi, %rsi\n"))))
 
 (define (compiler-backend-c-abi-arg-cycle-ok?) : bool
   (let
@@ -16600,36 +15528,30 @@ g:
       (ir.CompilerIrCallArgs.Two
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
-    (match (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      assignments
-      args
-      (compiler-backend-i64-type-list8)
-      true
-      0
-      0
-      0
-      0
-      0
-      ""
-      (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-program-index-build
+    (asm-ok?
+      (backend.compiler-backend-emit-call-args
         (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty))
-      2
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm ", %rdi\n")
-          (backend.compiler-backend-string-contains? asm ", %rsi\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rsi, %rdi\n    movq %rdi, %rsi\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        args
+        (compiler-backend-i64-type-list8)
+        true
+        0
+        0
+        0
+        0
+        0
+        ""
+        (cdiag.compiler-diagnostic-at-start "" "")
+        (backend.compiler-backend-program-index-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty))
+        2
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has ", %rdi\n" ", %rsi\n")
+      (lacks "    movq %rsi, %rdi\n    movq %rdi, %rsi\n"))))
 
 (define (compiler-backend-reg-is?
   [r : backend.ResultBackendReg]
@@ -16681,13 +15603,13 @@ g:
         (backend.compiler-backend-target-entry-text
           (backend.CompilerBackendTarget.Linux)
           true)]
-      (backend.compiler-backend-string-contains? text "_tl_start"))
+      (asm-has? text "_tl_start"))
     (let
       [text
         (backend.compiler-backend-target-entry-text
           (backend.CompilerBackendTarget.Windows)
           true)]
-      (backend.compiler-backend-string-contains? text ".globl main"))
+      (asm-has? text ".globl main"))
     (compiler-backend-target-linux-no-entry-ok?
       (owned_view.compiler-owned-shared-view src))
     (compiler-backend-target-linux-crt-entry-ok?)
@@ -16711,21 +15633,14 @@ g:
 (define (compiler-backend-target-linux-no-entry-ok? [src : String]) : bool
   (match (lower.lower-compiler-source src)
     [(lower.ResultCompilerLower.Ok program spans)
-      (match (backend.compiler-backend-emit-program-with-spans-for-target-and-entry
-        program
-        spans
-        (backend.CompilerBackendTarget.Linux)
-        false)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains? asm ".text\n")
-            (backend.compiler-backend-string-contains? asm "main:\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".globl _tl_start\n"))
-            (not (backend.compiler-backend-string-contains? asm "_tl_start:\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-program-with-spans-for-target-and-entry
+          program
+          spans
+          (backend.CompilerBackendTarget.Linux)
+          false)
+        (has ".text\n" "main:\n")
+        (lacks ".globl _tl_start\n" "_tl_start:\n"))]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-target-linux-crt-entry-source) : String
@@ -16755,19 +15670,13 @@ g:
                   (backend.CompilerBackendTarget.Linux)
                   true
                   true)]
-              (backend.compiler-backend-string-contains? text ".globl main"))
-            (backend.compiler-backend-string-contains? asm "main:\n")
-            (backend.compiler-backend-string-contains?
+              (asm-has? text ".globl main"))
+            (asm-has?
               asm
-              "    movq %rdi, .L_tl_argc(%rip)\n")
-            (backend.compiler-backend-string-contains?
-              asm
+              "main:\n"
+              "    movq %rdi, .L_tl_argc(%rip)\n"
               "    call _tl___global_init_")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".globl _tl_start\n"))
-            (not (backend.compiler-backend-string-contains? asm "_tl_start:\n")))]
+            (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -16784,13 +15693,14 @@ g:
           backend.CompilerBackendTarget.Linux)
         4800)]
     (and
-      (backend.compiler-backend-string-contains? win "    movl $4800, %eax\n")
-      (backend.compiler-backend-string-contains? win "    callq __chkstk\n")
-      (backend.compiler-backend-string-contains? win "    subq %rax, %rsp\n")
-      (not
-        (backend.compiler-backend-string-contains? win "    subq $4800, %rsp\n"))
-      (backend.compiler-backend-string-contains? linux "    subq $4800, %rsp\n")
-      (not (backend.compiler-backend-string-contains? linux "__chkstk")))))
+      (asm-has?
+        win
+        "    movl $4800, %eax\n"
+        "    callq __chkstk\n"
+        "    subq %rax, %rsp\n")
+      (asm-lacks? win "    subq $4800, %rsp\n")
+      (asm-has? linux "    subq $4800, %rsp\n")
+      (asm-lacks? linux "__chkstk"))))
 
 (define (compiler-backend-target-windows-abi-source) : String
   "(extern (ext [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64]) : i64)
@@ -16806,34 +15716,19 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm ".globl main\n")
-          (not (backend.compiler-backend-string-contains? asm "\n_start:\n"))
-          (not (backend.compiler-backend-string-contains? asm "syscall\n"))
+          (asm-has? asm ".globl main\n")
+          (asm-lacks? asm "\n_start:\n")
+          (asm-lacks? asm "syscall\n")
           ;; Win64 FPO rebases both local slots and the positive incoming
           ;; stack argument against the constant post-prologue %rsp.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, 88(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rdx, 80(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, 72(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r9, 64(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 144(%rsp), %r8\n"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 32(%rsp)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r11, 32(%rsp)\n"))
-        (backend.compiler-backend-string-contains? asm "    call ext\n"))]
+          (asm-has? asm "    movq %rcx, 88(%rsp)\n")
+          (asm-has? asm "    movq %rdx, 80(%rsp)\n")
+          (asm-has? asm "    movq %r8, 72(%rsp)\n")
+          (asm-has? asm "    movq %r9, 64(%rsp)\n")
+          (asm-has? asm "    movq 144(%rsp), %r8\n"))
+        (asm-has? asm "    movq %r10, 32(%rsp)\n")
+        (asm-lacks? asm "    movq %r11, 32(%rsp)\n")
+        (asm-has? asm "    call ext\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-target-windows-callee-save-ok?) : bool
@@ -16863,20 +15758,8 @@ g:
                       (compiler-backend-asm-function-body asm "_tl_heavy")]
                     (and
                       (not (string.eq body ""))
-                      (backend.compiler-backend-string-contains?
-                        body
-                        ".seh_stackalloc ")
-                      (backend.compiler-backend-string-contains?
-                        body
-                        ".seh_endprologue\n")
-                      (not
-                        (backend.compiler-backend-string-contains?
-                          body
-                          ".seh_setframe"))
-                      (not
-                        (backend.compiler-backend-string-contains?
-                          body
-                          "movq %rsp, %rbp"))))]
+                      (asm-has? body ".seh_stackalloc " ".seh_endprologue\n")
+                      (asm-lacks? body ".seh_setframe" "movq %rsp, %rbp")))]
                 [(backend.ResultCompilerBackend.Err _) false])))]
         [(lower.ResultCompilerLower.Err _) false])]
     ok))
@@ -16893,104 +15776,48 @@ g:
           ;; tail-jumps to the `tl_oom_abort` runtime-prelude handler —
           ;; it no longer inlines a kernel32 WriteFile for the OOM message.
           (backend.backend-and4
-            (backend.compiler-backend-string-contains? asm ".globl tl_alloc\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call VirtualAlloc\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has? asm ".globl tl_alloc\n")
+            (asm-has? asm "    call VirtualAlloc\n")
+            (asm-has?
               asm
               ".L_tl_alloc_abort:\n    sub $32, %rsp\n    call tl_oom_abort\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    call _write\n")))]
+            (asm-lacks? asm "    call _write\n"))]
         [no-process-runtime : bool
           (backend.backend-and4
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    call _lseeki64\n"))
-            (not
-              (backend.compiler-backend-string-contains? asm "    call _read\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "tl_process_output:\n"))
-            (not (backend.compiler-backend-string-contains? asm "tmpfile:\n")))]
+            (asm-lacks? asm "    call _lseeki64\n")
+            (asm-lacks? asm "    call _read\n")
+            (asm-lacks? asm "tl_process_output:\n")
+            (asm-lacks? asm "tmpfile:\n"))]
         [string-runtime : bool
           (backend.backend-and8
-            (backend.compiler-backend-string-contains?
+            (asm-has? asm "    call tl_substring\n")
+            (asm-has? asm "    call tl_string_concat\n")
+            (asm-lacks?
               asm
-              "    call tl_substring\n")
-            (backend.compiler-backend-string-contains?
+              "tl_substring:\n"
+              "tl_string_concat:\n"
+              "tl_int_to_string:\n")
+            (asm-lacks? asm "tl_string_eq:\n" "tl_string_to_int:\n")
+            (asm-lacks?
               asm
-              "    call tl_string_concat\n")
-            (and
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "tl_substring:\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "tl_string_concat:\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "tl_int_to_string:\n")))
-            (and
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "tl_string_eq:\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "tl_string_to_int:\n")))
-            (and
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  ".extern tl_substring\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  ".extern tl_string_concat\n"))
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  ".extern tl_int_to_string\n")))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "tl_random_system_seed:\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".extern tl_random_system_seed\n"))
+              ".extern tl_substring\n"
+              ".extern tl_string_concat\n"
+              ".extern tl_int_to_string\n")
+            (asm-lacks? asm "tl_random_system_seed:\n")
+            (asm-lacks? asm ".extern tl_random_system_seed\n")
             (backend.compiler-backend-no-stdlib-forwarding-labels?
               (owned_view.compiler-owned-shared-view asm)))]
         [entry-shape : bool
           (backend.backend-and4
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rcx, .L_tl_argc(%rip)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    .extern VirtualAlloc\n")
-            (not (backend.compiler-backend-string-contains? asm "syscall\n"))
-            (not
-              (backend.compiler-backend-string-contains? asm ".globl _start\n")))]
+            (asm-has? asm "    movq %rcx, .L_tl_argc(%rip)\n")
+            (asm-has? asm "    .extern VirtualAlloc\n")
+            (asm-lacks? asm "syscall\n")
+            (asm-lacks? asm ".globl _start\n"))]
         [private-file-handles : bool
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_file_handle_next:\n"))]
+          (asm-lacks? asm ".L_tl_file_handle_next:\n")]
         [driver-runtime : bool
           (backend.compiler-backend-windows-driver-runtime-ok?)]
-        [no-advapi-random : bool
-          (not
-            (backend.compiler-backend-string-contains? asm "SystemFunction036"))]
+        [no-advapi-random : bool (asm-lacks? asm "SystemFunction036")]
         (backend.backend-and8
           kernel-io
           true
@@ -17017,54 +15844,38 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm "tl_alloc:\n")
-          (backend.compiler-backend-string-contains?
+          (asm-has? asm "tl_alloc:\n")
+          (asm-has?
             asm
             "    testq %rcx, %rcx\n    jnz .L_tl_alloc_win_size_ready\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    testq %rcx, %rcx\n    jg .L_tl_alloc_win_size_ready\n"))
-          (backend.compiler-backend-string-contains?
+          (asm-lacks?
             asm
-            "    jc .L_tl_alloc_enter_abort\n")
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_region_reset_win_invalid:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    sub $32, %rsp\n    call tl_region_abort\n"))
+            "    testq %rcx, %rcx\n    jg .L_tl_alloc_win_size_ready\n")
+          (asm-has? asm "    jc .L_tl_alloc_enter_abort\n")
+          (asm-has?
+            asm
+            ".L_tl_region_reset_win_invalid:\n"
+            "    sub $32, %rsp\n    call tl_region_abort\n")
           ;; The allocator still delegates to the `tl_oom_abort`
           ;; runtime-prelude handler. The direct GetStdHandle/WriteFile paths
           ;; left in the backend runtime report main-fiber reservation failure
           ;; before user code starts and an unhandled stack overflow.
           (backend.backend-and4
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               asm
               ".L_tl_alloc_abort:\n    sub $32, %rsp\n    call tl_oom_abort\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".L_tl_win_write_abort"))
-            (backend.compiler-backend-string-contains?
+            (asm-lacks? asm ".L_tl_win_write_abort")
+            (asm-has?
               asm
               ".L_tl_main_stack_reservation_failed:\n    movl $-12, %ecx\n    call GetStdHandle\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               asm
               "    call WriteFile\n    movl $134, %ecx\n    call ExitProcess\n"))
-          (backend.compiler-backend-string-contains?
+          (asm-has? asm "    push %r14\n    movq %rcx, %r12\n")
+          (asm-lacks?
             asm
-            "    push %r14\n    movq %rcx, %r12\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    push %r14\n    sub $8, %rsp\n    movq %rcx, %r12\n")))
-        (not (backend.compiler-backend-string-contains? asm "syscall\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    .extern _write\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    .extern exit\n")))]
+            "    push %r14\n    sub $8, %rsp\n    movq %rcx, %r12\n"))
+        (asm-lacks? asm "syscall\n" "    .extern _write\n" "    .extern exit\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-syscall-source) : String
@@ -17089,18 +15900,19 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm "    syscall\n")
-          (backend.compiler-backend-string-contains? asm ", %rax\n")
-          (backend.compiler-backend-string-contains? asm ", %rdi\n")
-          (backend.compiler-backend-string-contains? asm ", %rsi\n")
-          (backend.compiler-backend-string-contains? asm ", %rdx\n")
-          (backend.compiler-backend-string-contains? asm "    movq $231,")
-          (backend.compiler-backend-string-contains? asm "    movq $42,")
+          (asm-has? asm "    syscall\n")
+          (asm-has? asm ", %rax\n")
+          (asm-has? asm ", %rdi\n")
+          (asm-has? asm ", %rsi\n")
+          (asm-has? asm ", %rdx\n")
+          (asm-has? asm "    movq $231,")
+          (asm-has? asm "    movq $42,")
           true)
-        (not (backend.compiler-backend-string-contains? asm "    pushq %rax\n"))
-        (not (backend.compiler-backend-string-contains? asm "    popq %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm ".extern syscall\n")))]
+        (asm-lacks?
+          asm
+          "    pushq %rax\n"
+          "    popq %rax\n"
+          ".extern syscall\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-syscall-source-windows-guard-ok?) : bool
@@ -17136,16 +15948,10 @@ g:
     [(backend.ResultCompilerBackend.Ok _) false]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
-  (match (backend.compiler-backend-emit-source src)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (backend.compiler-backend-string-contains? asm needle)]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok? (backend.compiler-backend-emit-source src) (has needle)))
 
 (define (compiler-backend-source-not-contains? [src : String] [needle : String]) : bool
-  (match (backend.compiler-backend-emit-source src)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (not (backend.compiler-backend-string-contains? asm needle))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok? (backend.compiler-backend-emit-source src) (lacks needle)))
 
 (define (compiler-backend-test-span [line : i64] [col : i64]) : ast.AstSourceSpan
   (ast.ast-source-span line col line col))
@@ -17386,50 +16192,27 @@ g:
     [previous-debug : bool (ir.compiler-debug-info-enabled?)]
     [_disable : unit (ir.compiler-debug-info-set-enabled! false)]
     [disabled-ok : bool
-      (match (backend.compiler-backend-emit-source "(define (main) : i64 0)")
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "tl_backtrace_map_data_begin"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "tl_backtrace_map_begin:")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-source "(define (main) : i64 0)")
+        (lacks "tl_backtrace_map_data_begin" "tl_backtrace_map_begin:"))]
     [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
     [linux-ok : bool
-      (match (backend.compiler-backend-emit-source "(define (main) : i64 0)")
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              ".section .typelisp_backtrace,\"a\",@progbits")
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_backtrace_string_data_begin:")
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_backtrace_map_data_end:")
-            (backend.compiler-backend-string-contains? asm ".quad main"))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-source "(define (main) : i64 0)")
+        (has
+          ".section .typelisp_backtrace,\"a\",@progbits"
+          "tl_backtrace_string_data_begin:"
+          "tl_backtrace_map_data_end:"
+          ".quad main"))]
     [windows-ok : bool
-      (match (backend.compiler-backend-emit-source-for-target
-        "(define (main) : i64 0)"
-        (backend.CompilerBackendTarget.Windows))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              ".section .rdata$TLBT,\"dr\"")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".section .rdata$TLBS,\"dr\"")
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_backtrace_map_begin:"))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-source-for-target
+          "(define (main) : i64 0)"
+          (backend.CompilerBackendTarget.Windows))
+        (has
+          ".section .rdata$TLBT,\"dr\""
+          ".section .rdata$TLBS,\"dr\""
+          "tl_backtrace_map_begin:"))]
     [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
     (and disabled-ok linux-ok windows-ok)))
 
@@ -17653,9 +16436,7 @@ g:
   [text : String]
   [own : (& own str)]
   [other : (& other str)]) : bool
-  (and
-    (backend.compiler-backend-string-contains? text own)
-    (not (backend.compiler-backend-string-contains? text other))))
+  (and (asm-has? text own) (asm-lacks? text other)))
 
 (define (compiler-backend-explicit-state-install!
   [intern-state : ci.InternCompatState]
@@ -18180,9 +16961,7 @@ g:
         [(backend.ResultCompilerBackendBuffer.Err diag)
           (let
             [text (cdiag.compiler-diagnostic-message (__tl-box-place diag))]
-            (backend.compiler-backend-string-contains?
-              text
-              "duplicate emitted function symbol"))]
+            (asm-has? text "duplicate emitted function symbol"))]
         [(backend.ResultCompilerBackendBuffer.Ok _) false])]
     [duplicate-stream-retired : bool
       (and
@@ -18207,7 +16986,7 @@ g:
         [(backend.ResultCompilerBackendBuffer.Ok buf)
           (let
             [text (text_buf.render buf)]
-            (backend.compiler-backend-string-contains? text "_tl_dup_abort"))]
+            (asm-has? text "_tl_dup_abort"))]
         [(backend.ResultCompilerBackendBuffer.Err _) false])]
     (begin
       (ci.intern-compat-state-install! active-before)
@@ -18543,13 +17322,8 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_f0")]
         (and
-          (backend.compiler-backend-string-contains? body "_switch_table")
-          (not (backend.compiler-backend-string-contains? body "    cmpq $5"))
-          (not (backend.compiler-backend-string-contains? body "    ja "))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "match_total_trap(%rip)"))))]
+          (asm-has? body "_switch_table")
+          (asm-lacks? body "    cmpq $5" "    ja " "match_total_trap(%rip)")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-total-switch-asm-ok?) : bool
@@ -18559,22 +17333,10 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
-          (not (backend.compiler-backend-string-contains? body "    cmpq $5"))
-          (not (backend.compiler-backend-string-contains? body "    ja "))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "leaq .Lf0_match_total_trap"))
+          (asm-has? body "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")
           (= (backend.compiler-backend-string-count asm "    .quad .Lf0_") 6)
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .Lf0_zero\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad .Lf0_five\n")))]
+          (asm-has? asm "    .quad .Lf0_zero\n" "    .quad .Lf0_five\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-forwarded-total-switch-asm-ok?) : bool
@@ -18584,11 +17346,8 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
-          (not (backend.compiler-backend-string-contains? body "    cmpq $5"))
-          (not (backend.compiler-backend-string-contains? body "    ja "))))]
+          (asm-has? body "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (asm-lacks? body "    cmpq $5" "    ja ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-total-switch-pic-asm-ok?) : bool
@@ -18603,16 +17362,11 @@ g:
         [asm : String output.asm]
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             body
-            "    leaq .Lf0_entry_switch_table(%rip), ")
-          (backend.compiler-backend-string-contains? body "    jmp *(")
-          (not (backend.compiler-backend-string-contains? body "    cmpq $5"))
-          (not (backend.compiler-backend-string-contains? body "    ja "))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "leaq .Lf0_match_total_trap"))))]
+            "    leaq .Lf0_entry_switch_table(%rip), "
+            "    jmp *(")
+          (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")))]
     [(backend.ResultCompilerBackendPic.Err _) false]))
 
 (define (compiler-backend-total-switch-object-image-ok?) : bool
@@ -18643,13 +17397,10 @@ g:
 
 (define (compiler-backend-spoofed-total-switch-stays-checked?) : bool
   (and
-    (match (backend.compiler-backend-emit-program-linux
-      (compiler-backend-spoofed-total-switch-test-program))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "    cmpq $5")
-          (backend.compiler-backend-string-contains? asm "    ja "))]
-      [(backend.ResultCompilerBackend.Err _) false])
+    (asm-ok?
+      (backend.compiler-backend-emit-program-linux
+        (compiler-backend-spoofed-total-switch-test-program))
+      (has "    cmpq $5" "    ja "))
     (match (backend.compiler-backend-emit-program-object-image-linux
       (compiler-backend-spoofed-total-switch-test-program)
       (ir.compiler-source-spans-empty))
@@ -18666,29 +17417,18 @@ g:
       (and
         ;; T1-6 (a): `main` is a call-free leaf, so the switch scrutinee
         ;; loads from a red-zone slot (-8(%rsp)).
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rsp), %r8\n")
-        (backend.compiler-backend-string-contains? asm "    cmpq $2, %r8\n")
-        (backend.compiler-backend-string-contains? asm "    ja .Lf0_other\n")
+        (asm-has? asm "    movq -8(%rsp), %r8\n")
+        (asm-has? asm "    cmpq $2, %r8\n")
+        (asm-has? asm "    ja .Lf0_other\n")
         ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
-        (backend.compiler-backend-string-contains?
-          asm
-          "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jmp *(%r11,%rax,8)\n"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .section .rodata\n    .balign 8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_table:\n")
-        (backend.compiler-backend-string-contains? asm "    .quad .Lf0_zero\n")
-        (backend.compiler-backend-string-contains? asm "    .quad .Lf0_one\n")
-        (backend.compiler-backend-string-contains? asm "    .quad .Lf0_two\n")
-        (backend.compiler-backend-string-contains? asm ".text\n"))]
+        (asm-has? asm "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+        (asm-lacks? asm "    jmp *(%r11,%rax,8)\n")
+        (asm-has? asm "    .section .rodata\n    .balign 8\n")
+        (asm-has? asm ".Lf0_entry_switch_table:\n")
+        (asm-has? asm "    .quad .Lf0_zero\n")
+        (asm-has? asm "    .quad .Lf0_one\n")
+        (asm-has? asm "    .quad .Lf0_two\n")
+        (asm-has? asm ".text\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-switch-base-test-program) : ir.CompilerIrProgram
@@ -18745,20 +17485,13 @@ g:
       (and
         ;; T1-6 (a): `main` is a call-free leaf, so the switch scrutinee
         ;; loads from a red-zone slot (-8(%rsp)).
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rsp), %r8\n")
-        (backend.compiler-backend-string-contains? asm "    subq $4, %r8\n")
-        (backend.compiler-backend-string-contains? asm "    cmpq $1, %r8\n")
-        (backend.compiler-backend-string-contains? asm "    ja .Lf0_other\n")
+        (asm-has? asm "    movq -8(%rsp), %r8\n")
+        (asm-has? asm "    subq $4, %r8\n")
+        (asm-has? asm "    cmpq $1, %r8\n")
+        (asm-has? asm "    ja .Lf0_other\n")
         ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
-        (backend.compiler-backend-string-contains?
-          asm
-          "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    jmp *(%r11,%rax,8)\n")))]
+        (asm-has? asm "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+        (asm-lacks? asm "    jmp *(%r11,%rax,8)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-switch-bad-shape-program) : ir.CompilerIrProgram
@@ -18838,33 +17571,18 @@ g:
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-phi-edge-copy-ok?) : bool
-  (match (backend.compiler-backend-emit-program-linux
-    (compiler-backend-switch-phi-program))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    ja .Lf0_entry_switch_default\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_table:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .quad .Lf0_entry_switch_case_0\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .quad .Lf0_entry_switch_case_1\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_case_0:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_case_1:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_default:\n")
-        (backend.compiler-backend-string-contains? asm "    jmp .Lf0_join\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-linux
+      (compiler-backend-switch-phi-program))
+    (has
+      "    ja .Lf0_entry_switch_default\n"
+      ".Lf0_entry_switch_table:\n"
+      "    .quad .Lf0_entry_switch_case_0\n"
+      "    .quad .Lf0_entry_switch_case_1\n"
+      ".Lf0_entry_switch_case_0:\n"
+      ".Lf0_entry_switch_case_1:\n"
+      ".Lf0_entry_switch_default:\n"
+      "    jmp .Lf0_join\n")))
 
 ;; --- negative dense-switch case keys (#6570) ---------------------------------
 ;;
@@ -18929,33 +17647,19 @@ g:
     (compiler-backend-switch-negative-case-program))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_table:\n")
+        (asm-has? asm ".Lf0_entry_switch_table:\n")
         ;; The negative key spells with `m`, in the table and at the block.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .quad .Lf0_entry_switch_case_m1\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_case_m1:\n")
+        (asm-has? asm "    .quad .Lf0_entry_switch_case_m1\n")
+        (asm-has? asm ".Lf0_entry_switch_case_m1:\n")
         ;; A non-negative key is spelled exactly as it always was.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .quad .Lf0_entry_switch_case_0\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_case_0:\n")
+        (asm-has? asm "    .quad .Lf0_entry_switch_case_0\n")
+        (asm-has? asm ".Lf0_entry_switch_case_0:\n")
         ;; Equal-magnitude signed keys remain distinct.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .quad .Lf0_entry_switch_case_1\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".Lf0_entry_switch_case_1:\n")
+        (asm-has? asm "    .quad .Lf0_entry_switch_case_1\n")
+        (asm-has? asm ".Lf0_entry_switch_case_1:\n")
         ;; No `-` reaches a symbol name anywhere in the emission.
-        (not (backend.compiler-backend-string-contains? asm "switch_case_-"))
-        (backend.compiler-backend-string-contains? asm "    jmp .Lf0_join\n"))]
+        (asm-lacks? asm "switch_case_-")
+        (asm-has? asm "    jmp .Lf0_join\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-switch-object-image-ok?) : bool
@@ -19175,7 +17879,7 @@ g:
               (let
                 [needle
                   (str_cat.str-cat "    .section .rodata\n" align label ":\n")]
-                (backend.compiler-backend-string-contains? asm needle))
+                (asm-has? asm needle))
               (=
                 (let
                   [needle (str_cat.str-cat label ":\n")]
@@ -19189,11 +17893,8 @@ g:
               (not
                 (let
                   [needle (str_cat.str-cat label ":\n" load)]
-                  (backend.compiler-backend-string-contains? asm needle))))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+                  (asm-has? asm needle))))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -19253,14 +17954,11 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and4
-              (backend.compiler-backend-string-contains? asm "    vzeroupper\n")
-              (backend.compiler-backend-string-contains? asm move)
-              (backend.compiler-backend-string-contains? asm op)
-              (backend.compiler-backend-string-contains? asm "%ymm"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+              (asm-has? asm "    vzeroupper\n")
+              (asm-has? asm move)
+              (asm-has? asm op)
+              (asm-has? asm "%ymm"))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -19296,17 +17994,12 @@ g:
             [loop : String (compiler-backend-avx2-loop-body body)]
             (and
               (backend.backend-and8
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "    vzeroupper\n")
-                (backend.compiler-backend-string-contains? asm move)
-                (backend.compiler-backend-string-contains? asm op)
-                (backend.compiler-backend-string-contains? asm broadcast)
-                (backend.compiler-backend-string-contains? asm "%ymm")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    asm
-                    "vector/mask IR emission is not implemented"))
+                (asm-has? asm "    vzeroupper\n")
+                (asm-has? asm move)
+                (asm-has? asm op)
+                (asm-has? asm broadcast)
+                (asm-has? asm "%ymm")
+                (asm-lacks? asm "vector/mask IR emission is not implemented")
                 (= (backend.compiler-backend-string-count loop broadcast) 0)
                 true)
               true))]
@@ -19327,18 +18020,13 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq ")
-              (backend.compiler-backend-string-contains? asm "    vpmuludq ")
-              (backend.compiler-backend-string-contains? asm "    vpsllq $32, ")
-              (backend.compiler-backend-string-contains? asm "    vpaddq ")
-              (backend.compiler-backend-string-contains? asm "    vmovdqu ")
-              (backend.compiler-backend-string-contains? asm "%ymm")
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "vector/mask IR emission is not implemented"))
+              (asm-has? asm "    vpbroadcastq ")
+              (asm-has? asm "    vpmuludq ")
+              (asm-has? asm "    vpsllq $32, ")
+              (asm-has? asm "    vpaddq ")
+              (asm-has? asm "    vmovdqu ")
+              (asm-has? asm "%ymm")
+              (asm-lacks? asm "vector/mask IR emission is not implemented")
               true)
             true)]
         [(backend.ResultCompilerBackend.Err _) false])]
@@ -19481,8 +18169,7 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (string.eq asm "    vpbroadcastq -16(%rbp), %ymm6\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+        (asm-lacks? asm "%rax" "%xmm0"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-stack-splat-f64-spill-ok?) : bool
@@ -19498,7 +18185,7 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (string.eq asm "    vbroadcastsd -40(%rbp), %ymm6\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+        (asm-lacks? asm "%xmm0"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-i64-ok?) : bool
@@ -19514,8 +18201,7 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (string.eq asm "    vpbroadcastq -16(%rbp), %zmm6\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+        (asm-lacks? asm "%rax" "%xmm0"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-f64-spill-ok?) : bool
@@ -19531,7 +18217,7 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (string.eq asm "    vbroadcastsd -40(%rbp), %zmm6\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+        (asm-lacks? asm "%xmm0"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-splat-fallback-ok?) : bool
@@ -19551,8 +18237,7 @@ g:
           (string.eq
             asm
             "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
-          (not (backend.compiler-backend-string-contains? asm "%rax"))
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+          (asm-lacks? asm "%rax" "%xmm0"))]
       [(backend.ResultCompilerBackend.Err _) false])
     (match (backend.compiler-backend-emit-avx2-splat
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -19569,7 +18254,7 @@ g:
           (string.eq
             asm
             "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+          (asm-lacks? asm "%xmm0"))]
       [(backend.ResultCompilerBackend.Err _) false])
     (match (backend.compiler-backend-emit-avx512-splat
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -19584,7 +18269,7 @@ g:
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (string.eq asm "    movq %r12, %r8\n    vpbroadcastq %r8, %zmm6\n")
-          (not (backend.compiler-backend-string-contains? asm "%rax")))]
+          (asm-lacks? asm "%rax"))]
       [(backend.ResultCompilerBackend.Err _) false])
     (match (backend.compiler-backend-emit-avx512-splat
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -19601,7 +18286,7 @@ g:
           (string.eq
             asm
             "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %zmm6\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+          (asm-lacks? asm "%xmm0"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-stack-splat-broadcast-ok?) : bool
@@ -19762,50 +18447,40 @@ g:
             asm
             "    vpblendvb %ymm7, %ymm6, %ymm8, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
         [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-avx2-predicated-load
-        (ast.ast-node-pool-reader-type-segment-bases)
-        "narrow_mask"
-        (ir.compiler-ir-label "entry")
-        assignments
-        3
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 0)
-        (ir.CompilerIrValue.Var 4)
-        16
-        (ast.AstType.I16)
-        (owned_view.compiler-owned-shared-view diag)
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpmovmskb %ymm7, %r11d\n")
-            (backend.compiler-backend-string-contains? asm "_load_skip_15")
-            (not (backend.compiler-backend-string-contains? asm "vpmaskmov")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-avx2-predicated-store
-        (ast.ast-node-pool-reader-type-segment-bases)
-        "narrow_mask"
-        (ir.compiler-ir-label "entry")
-        assignments
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 0)
-        (ir.CompilerIrValue.Var 2)
-        (ir.CompilerIrValue.Var 4)
-        16
-        (ast.AstType.I16)
-        diag
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpmovmskb %ymm7, %r11d\n")
-            (backend.compiler-backend-string-contains? asm "_store_skip_15")
-            (not (backend.compiler-backend-string-contains? asm "vpmaskmov")))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx2-predicated-load
+          (ast.ast-node-pool-reader-type-segment-bases)
+          "narrow_mask"
+          (ir.compiler-ir-label "entry")
+          assignments
+          3
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 0)
+          (ir.CompilerIrValue.Var 4)
+          16
+          (ast.AstType.I16)
+          (owned_view.compiler-owned-shared-view diag)
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has "    vpmovmskb %ymm7, %r11d\n" "_load_skip_15")
+        (lacks "vpmaskmov"))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx2-predicated-store
+          (ast.ast-node-pool-reader-type-segment-bases)
+          "narrow_mask"
+          (ir.compiler-ir-label "entry")
+          assignments
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 0)
+          (ir.CompilerIrValue.Var 2)
+          (ir.CompilerIrValue.Var 4)
+          16
+          (ast.AstType.I16)
+          diag
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has "    vpmovmskb %ymm7, %r11d\n" "_store_skip_15")
+        (lacks "vpmaskmov")))))
 
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
   (match (backend.compiler-backend-emit-avx2-vector-load
@@ -19871,210 +18546,153 @@ g:
         (regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-prefix
-    (compiler-backend-vector-prefix-spill-assignments)
-    2
-    (ir.CompilerIrVectorPrefixOp.Min)
-    (ir.CompilerIrValue.Var 0)
-    (ir.CompilerIrValue.Var 1)
-    4
-    (ast.AstType.I64)
-    "%r14"
-    "%xmm14"
-    "%xmm0"
-    "%xmm1"
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu %ymm6, %ymm14\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpslldq $8, %ymm14, %ymm0\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vperm2i128 $0, %ymm14, %ymm14, %ymm0\n")
-        (backend.compiler-backend-string-contains? asm "    vpcmpgtq ")
-        (backend.compiler-backend-string-contains? asm "    vpandn ")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovq %r14, %xmm0\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu %ymm14, -64(%rbp)\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx2-vector-prefix
+      (compiler-backend-vector-prefix-spill-assignments)
+      2
+      (ir.CompilerIrVectorPrefixOp.Min)
+      (ir.CompilerIrValue.Var 0)
+      (ir.CompilerIrValue.Var 1)
+      4
+      (ast.AstType.I64)
+      "%r14"
+      "%xmm14"
+      "%xmm0"
+      "%xmm1"
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vmovdqu %ymm6, %ymm14\n"
+      "    vpslldq $8, %ymm14, %ymm0\n"
+      "    vperm2i128 $0, %ymm14, %ymm14, %ymm0\n"
+      "    vpcmpgtq "
+      "    vpandn "
+      "    vmovq %r14, %xmm0\n"
+      "    vmovdqu %ymm14, -64(%rbp)\n")))
 
 (define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
-      (match (backend.compiler-backend-emit-avx2-vector-prefix
-        assignments
-        2
-        (ir.CompilerIrVectorPrefixOp.Sum)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        4
-        (ast.AstType.I64)
-        "%r14"
-        "%xmm14"
-        "%xmm0"
-        "%xmm1"
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vmovdqu -64(%rbp), %ymm7\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpbroadcastq -8(%rbp), %ymm0\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vmovdqu %ymm7, -64(%rbp)\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-avx2-vector-prefix
-        assignments
-        2
-        (ir.CompilerIrVectorPrefixOp.Any)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        32
-        (ast.AstType.Bool)
-        "%r14"
-        "%xmm14"
-        "%xmm0"
-        "%xmm1"
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vmovdqu -64(%rbp), %ymm7\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r14\n")
-            (backend.compiler-backend-string-contains? asm "    setne %r14b\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpbroadcastb %xmm0, %ymm0\n"))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx2-vector-prefix
+          assignments
+          2
+          (ir.CompilerIrVectorPrefixOp.Sum)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 1)
+          4
+          (ast.AstType.I64)
+          "%r14"
+          "%xmm14"
+          "%xmm0"
+          "%xmm1"
+          (cdiag.compiler-diagnostic-at-start "" "")
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has
+          "    vmovdqu -64(%rbp), %ymm7\n"
+          "    vpbroadcastq -8(%rbp), %ymm0\n")
+        (lacks "    vmovdqu %ymm7, -64(%rbp)\n"))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx2-vector-prefix
+          assignments
+          2
+          (ir.CompilerIrVectorPrefixOp.Any)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 1)
+          32
+          (ast.AstType.Bool)
+          "%r14"
+          "%xmm14"
+          "%xmm0"
+          "%xmm1"
+          (cdiag.compiler-diagnostic-at-start "" "")
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has
+          "    vmovdqu -64(%rbp), %ymm7\n"
+          "    movq -8(%rbp), %r14\n"
+          "    setne %r14b\n"
+          "    vpbroadcastb %xmm0, %ymm0\n")))))
 
 (define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-prefix
-    (compiler-backend-vector-prefix-spill-assignments)
-    2
-    (ir.CompilerIrVectorPrefixOp.All)
-    (ir.CompilerIrValue.Var 0)
-    (ir.CompilerIrValue.Var 1)
-    32
-    (ast.AstType.Bool)
-    "%r14"
-    "%xmm14"
-    "%xmm0"
-    "%xmm1"
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpslldq $1, %ymm14, %ymm0\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpslldq $8, %ymm14, %ymm0\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpbroadcastb %xmm0, %ymm0\n")
-        (backend.compiler-backend-string-contains? asm "    setne %r14b\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpand %ymm0, %ymm14, %ymm14\n")
-        (not (backend.compiler-backend-string-contains? asm "%al"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu %ymm14, -64(%rbp)\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx2-vector-prefix
+      (compiler-backend-vector-prefix-spill-assignments)
+      2
+      (ir.CompilerIrVectorPrefixOp.All)
+      (ir.CompilerIrValue.Var 0)
+      (ir.CompilerIrValue.Var 1)
+      32
+      (ast.AstType.Bool)
+      "%r14"
+      "%xmm14"
+      "%xmm0"
+      "%xmm1"
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vpslldq $1, %ymm14, %ymm0\n"
+      "    vpslldq $8, %ymm14, %ymm0\n"
+      "    vpbroadcastb %xmm0, %ymm0\n"
+      "    setne %r14b\n"
+      "    vpand %ymm0, %ymm14, %ymm14\n")
+    (lacks "%al")
+    (has "    vmovdqu %ymm14, -64(%rbp)\n")))
 
 (define (compiler-backend-avx512-vector-prefix-numeric-spill-ok?) : bool
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
-      (match (backend.compiler-backend-emit-avx512-vector-prefix
-        assignments
-        2
-        (ir.CompilerIrVectorPrefixOp.Min)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        8
-        (ast.AstType.I64)
-        "%r14"
-        "%xmm14"
-        "%xmm0"
-        "%xmm1"
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vmovdqu64 %zmm6, %zmm14\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    valignq $7, %zmm1, %zmm14, %zmm0\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kshiftlw $4, %k7, %k7\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpminsq %zmm0, %zmm14, %zmm14{%k7}\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpbroadcastq %r14, %zmm0\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vmovdqu64 %zmm14, -64(%rbp)\n"))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-avx512-vector-prefix
-        assignments
-        2
-        (ir.CompilerIrVectorPrefixOp.Max)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        16
-        (ast.AstType.I32)
-        "%r14"
-        "%xmm14"
-        "%xmm0"
-        "%xmm1"
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    valignd $15, %zmm1, %zmm14, %zmm0\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    valignd $8, %zmm1, %zmm14, %zmm0\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpmaxsd %zmm0, %zmm14, %zmm14{%k7}\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpbroadcastd %r14d, %zmm0\n"))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx512-vector-prefix
+          assignments
+          2
+          (ir.CompilerIrVectorPrefixOp.Min)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 1)
+          8
+          (ast.AstType.I64)
+          "%r14"
+          "%xmm14"
+          "%xmm0"
+          "%xmm1"
+          (cdiag.compiler-diagnostic-at-start "" "")
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has
+          "    vmovdqu64 %zmm6, %zmm14\n"
+          "    valignq $7, %zmm1, %zmm14, %zmm0\n"
+          "    kshiftlw $4, %k7, %k7\n"
+          "    vpminsq %zmm0, %zmm14, %zmm14{%k7}\n"
+          "    vpbroadcastq %r14, %zmm0\n"
+          "    vmovdqu64 %zmm14, -64(%rbp)\n"))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx512-vector-prefix
+          assignments
+          2
+          (ir.CompilerIrVectorPrefixOp.Max)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 1)
+          16
+          (ast.AstType.I32)
+          "%r14"
+          "%xmm14"
+          "%xmm0"
+          "%xmm1"
+          (cdiag.compiler-diagnostic-at-start "" "")
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has
+          "    valignd $15, %zmm1, %zmm14, %zmm0\n"
+          "    valignd $8, %zmm1, %zmm14, %zmm0\n"
+          "    vpmaxsd %zmm0, %zmm14, %zmm14{%k7}\n"
+          "    vpbroadcastd %r14d, %zmm0\n")))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
@@ -20108,83 +18726,55 @@ g:
   (let
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     (and
-      (match (backend.compiler-backend-emit-avx512-vector-prefix
-        (compiler-backend-avx512-vector-prefix-bool-assignments)
-        2
-        (ir.CompilerIrVectorPrefixOp.All)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        64
-        (ast.AstType.Bool)
-        "%r14"
-        "%r13"
-        "%xmm0"
-        "%xmm1"
-        (owned_view.compiler-owned-shared-view diag)
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovq %k2, %r13\n")
-            (backend.compiler-backend-string-contains? asm "    notq %r13\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    shlq $32, %r14\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rax, %r14\n")
-            (backend.compiler-backend-string-contains? asm "    setne %r14b\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    andq %r14, %r13\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovq %r13, %k7\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovq %k7, -64(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    kmovq %k2, %rax\n"))
-            (not (backend.compiler-backend-string-contains? asm "%zmm")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-avx512-vector-prefix
-        (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
-        2
-        (ir.CompilerIrVectorPrefixOp.Any)
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 1)
-        64
-        (ast.AstType.Bool)
-        "%r14"
-        "%r13"
-        "%xmm0"
-        "%xmm1"
-        diag
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovq -64(%rbp), %k7\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovq %k7, %r13\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r14\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    orq %r14, %r13\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovq %r13, %k3\n")
-            (not (backend.compiler-backend-string-contains? asm "%rax")))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx512-vector-prefix
+          (compiler-backend-avx512-vector-prefix-bool-assignments)
+          2
+          (ir.CompilerIrVectorPrefixOp.All)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 1)
+          64
+          (ast.AstType.Bool)
+          "%r14"
+          "%r13"
+          "%xmm0"
+          "%xmm1"
+          (owned_view.compiler-owned-shared-view diag)
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has
+          "    kmovq %k2, %r13\n"
+          "    notq %r13\n"
+          "    shlq $32, %r14\n"
+          "    movq %rax, %r14\n"
+          "    setne %r14b\n"
+          "    andq %r14, %r13\n"
+          "    kmovq %r13, %k7\n"
+          "    kmovq %k7, -64(%rbp)\n")
+        (lacks "    kmovq %k2, %rax\n" "%zmm"))
+      (asm-ok?
+        (backend.compiler-backend-emit-avx512-vector-prefix
+          (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
+          2
+          (ir.CompilerIrVectorPrefixOp.Any)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 1)
+          64
+          (ast.AstType.Bool)
+          "%r14"
+          "%r13"
+          "%xmm0"
+          "%xmm1"
+          diag
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active)))
+        (has
+          "    kmovq -64(%rbp), %k7\n"
+          "    kmovq %k7, %r13\n"
+          "    movq -8(%rbp), %r14\n"
+          "    orq %r14, %r13\n"
+          "    kmovq %r13, %k3\n")
+        (lacks "%rax")))))
 
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
   (match (backend.compiler-backend-emit-avx512-predicated-load
@@ -20223,48 +18813,40 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-reduce-spill-source-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-spill-assignments)
-    5
-    (ir.CompilerIrVectorReduceOp.Sum)
-    (ir.CompilerIrValue.Var 3)
-    4
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu -64(%rbp), %ymm14\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti128 $1, %ymm14, ")
-        (backend.compiler-backend-string-contains? asm "    vmovq "))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx2-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-spill-assignments)
+      5
+      (ir.CompilerIrVectorReduceOp.Sum)
+      (ir.CompilerIrValue.Var 3)
+      4
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vmovdqu -64(%rbp), %ymm14\n"
+      "    vextracti128 $1, %ymm14, "
+      "    vmovq ")))
 
 (define (compiler-backend-avx512-vector-reduce-spill-source-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-spill-assignments)
-    5
-    (ir.CompilerIrVectorReduceOp.Sum)
-    (ir.CompilerIrValue.Var 3)
-    8
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu64 -64(%rbp), %zmm14\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti64x4 $1, %zmm14, ")
-        (backend.compiler-backend-string-contains? asm "    vmovq "))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-spill-assignments)
+      5
+      (ir.CompilerIrVectorReduceOp.Sum)
+      (ir.CompilerIrValue.Var 3)
+      8
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vmovdqu64 -64(%rbp), %zmm14\n"
+      "    vextracti64x4 $1, %zmm14, "
+      "    vmovq ")))
 
 (define (compiler-backend-vector-spill-reload-ok?) : bool
   (and
@@ -20327,24 +18909,17 @@ g:
     (compiler-backend-vector-spill-pressure-source)
     lower-mode)
     [(lower.ResultCompilerLower.Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        backend-mode
-        spans
-        true)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains? asm scratch)
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector spills are not implemented"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector register home unavailable")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-program-target-with-mode
+          program
+          (backend.CompilerBackendTarget.Linux)
+          backend-mode
+          spans
+          true)
+        (has scratch)
+        (lacks
+          "vector spills are not implemented"
+          "vector register home unavailable"))]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-vector-spill-pressure-ok?) : bool
@@ -20597,30 +19172,24 @@ g:
           (regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-avx512-select-true-alias-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-select
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-avx512-select-alias-assignments)
-    0
-    (ir.CompilerIrValue.Var 1)
-    (ir.CompilerIrValue.Var 2)
-    (ir.CompilerIrValue.Var 3)
-    8
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu64 %zmm6, %zmm8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu64 %zmm7, %zmm6\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu64 %zmm8, %zmm6{%k1}\n")
-        (not (backend.compiler-backend-string-contains? asm "%zmm15")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-select
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-avx512-select-alias-assignments)
+      0
+      (ir.CompilerIrValue.Var 1)
+      (ir.CompilerIrValue.Var 2)
+      (ir.CompilerIrValue.Var 3)
+      8
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vmovdqu64 %zmm6, %zmm8\n"
+      "    vmovdqu64 %zmm7, %zmm6\n"
+      "    vmovdqu64 %zmm8, %zmm6{%k1}\n")
+    (lacks "%zmm15")))
 
 (define (compiler-backend-avx512-select-false-alias-ok?) : bool
   (match (backend.compiler-backend-emit-avx512-select
@@ -20656,30 +19225,23 @@ g:
         (regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-mask-load-temp-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-load
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-avx512-mask-load-temp-assignments)
-    0
-    (ir.CompilerIrValue.Var 2)
-    (ir.CompilerIrValue.I64 0)
-    (ir.CompilerIrValue.Var 1)
-    8
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu8 (%r12), %zmm6{%k2}{z}\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpxord %zmm7, %zmm7, %zmm7\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpcmpub $4, %zmm7, %zmm6, %k1\n")
-        (not (backend.compiler-backend-string-contains? asm "%zmm14"))
-        (not (backend.compiler-backend-string-contains? asm "%zmm15")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-mask-load
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-avx512-mask-load-temp-assignments)
+      0
+      (ir.CompilerIrValue.Var 2)
+      (ir.CompilerIrValue.I64 0)
+      (ir.CompilerIrValue.Var 1)
+      8
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vmovdqu8 (%r12), %zmm6{%k2}{z}\n"
+      "    vpxord %zmm7, %zmm7, %zmm7\n"
+      "    vpcmpub $4, %zmm7, %zmm6, %k1\n")
+    (lacks "%zmm14" "%zmm15")))
 
 (define (compiler-backend-avx512-mask-store-temp-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
@@ -20699,36 +19261,26 @@ g:
         (regalloc.compiler-reg-assignment-table-empty)))))
 
 (define (compiler-backend-avx512-mask-store-temp-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-store
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-avx512-mask-store-temp-assignments)
-    (ir.CompilerIrValue.Var 2)
-    (ir.CompilerIrValue.I64 0)
-    (ir.CompilerIrValue.Var 0)
-    (ir.CompilerIrValue.Var 1)
-    8
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpxord %zmm6, %zmm6, %zmm6\n")
-        (backend.compiler-backend-string-contains? asm "    pushq $1\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpbroadcastb (%rsp), %zmm7\n")
-        (backend.compiler-backend-string-contains? asm "    addq $8, %rsp\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu8 %zmm7, %zmm6{%k1}\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu8 %zmm6, (%r12){%k2}\n")
-        (not (backend.compiler-backend-string-contains? asm "%edx"))
-        (not (backend.compiler-backend-string-contains? asm "%zmm14"))
-        (not (backend.compiler-backend-string-contains? asm "%zmm15")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-mask-store
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-avx512-mask-store-temp-assignments)
+      (ir.CompilerIrValue.Var 2)
+      (ir.CompilerIrValue.I64 0)
+      (ir.CompilerIrValue.Var 0)
+      (ir.CompilerIrValue.Var 1)
+      8
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vpxord %zmm6, %zmm6, %zmm6\n"
+      "    pushq $1\n"
+      "    vpbroadcastb (%rsp), %zmm7\n"
+      "    addq $8, %rsp\n"
+      "    vmovdqu8 %zmm7, %zmm6{%k1}\n"
+      "    vmovdqu8 %zmm6, (%r12){%k2}\n")
+    (lacks "%edx" "%zmm14" "%zmm15")))
 
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
@@ -20749,18 +19301,15 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm move)
-              (backend.compiler-backend-string-contains? asm op)
-              (backend.compiler-backend-string-contains? asm "%zmm")
-              (backend.compiler-backend-string-contains? asm "%k")
-              (backend.compiler-backend-string-contains? asm "tail_mask_")
-              (backend.compiler-backend-string-contains? asm "}{z}")
-              (backend.compiler-backend-string-contains? asm mask-move)
-              (backend.compiler-backend-string-contains? asm mask-shift))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+              (asm-has? asm move)
+              (asm-has? asm op)
+              (asm-has? asm "%zmm")
+              (asm-has? asm "%k")
+              (asm-has? asm "tail_mask_")
+              (asm-has? asm "}{z}")
+              (asm-has? asm mask-move)
+              (asm-has? asm mask-shift))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -20778,20 +19327,15 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm "    vpcmpq $1,")
-              (backend.compiler-backend-string-contains? asm "    kandw ")
-              (backend.compiler-backend-string-contains? asm "    kandnw ")
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq ")
-              (backend.compiler-backend-string-contains? asm "}{z}")
-              (backend.compiler-backend-string-contains? asm "tail_mask_")
-              (backend.compiler-backend-string-contains? asm "%k")
-              (backend.compiler-backend-string-contains? asm "    vmovdqu64 "))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+              (asm-has? asm "    vpcmpq $1,")
+              (asm-has? asm "    kandw ")
+              (asm-has? asm "    kandnw ")
+              (asm-has? asm "    vpbroadcastq ")
+              (asm-has? asm "}{z}")
+              (asm-has? asm "tail_mask_")
+              (asm-has? asm "%k")
+              (asm-has? asm "    vmovdqu64 "))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -20809,26 +19353,21 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm "    vpcmpq $1,")
-              (backend.compiler-backend-string-contains? asm "    kandw ")
-              (backend.compiler-backend-string-contains? asm "    kandnw ")
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq ")
-              (backend.compiler-backend-string-contains? asm "tail_mask_")
-              (backend.compiler-backend-string-contains? asm "lane_id_")
-              (backend.compiler-backend-string-contains? asm "    vpaddq ")
+              (asm-has? asm "    vpcmpq $1,")
+              (asm-has? asm "    kandw ")
+              (asm-has? asm "    kandnw ")
+              (asm-has? asm "    vpbroadcastq ")
+              (asm-has? asm "tail_mask_")
+              (asm-has? asm "lane_id_")
+              (asm-has? asm "    vpaddq ")
               (let
                 [needle
                   (str_cat.str-cat
                     "    vmovdqa64 "
                     (backend.compiler-backend-avx512-i64-lane-id-label)
                     "(%rip), ")]
-                (backend.compiler-backend-string-contains? asm needle)))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+                (asm-has? asm needle)))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -20846,26 +19385,21 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm "    vpcmpq $0,")
-              (backend.compiler-backend-string-contains? asm "    kandw ")
-              (backend.compiler-backend-string-contains? asm "    kandnw ")
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq ")
-              (backend.compiler-backend-string-contains? asm "tail_mask_")
-              (backend.compiler-backend-string-contains? asm "lane_id_")
-              (backend.compiler-backend-string-contains? asm "    vpandq ")
+              (asm-has? asm "    vpcmpq $0,")
+              (asm-has? asm "    kandw ")
+              (asm-has? asm "    kandnw ")
+              (asm-has? asm "    vpbroadcastq ")
+              (asm-has? asm "tail_mask_")
+              (asm-has? asm "lane_id_")
+              (asm-has? asm "    vpandq ")
               (let
                 [needle
                   (str_cat.str-cat
                     "    vmovdqa64 "
                     (backend.compiler-backend-avx512-i64-lane-id-label)
                     "(%rip), ")]
-                (backend.compiler-backend-string-contains? asm needle)))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+                (asm-has? asm needle)))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -20883,22 +19417,15 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm "    vpcmpq $1,")
-              (backend.compiler-backend-string-contains? asm "    kandw ")
-              (backend.compiler-backend-string-contains? asm "    kandnw ")
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq ")
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vmovdqu64 %zmm")
-              (backend.compiler-backend-string-contains? asm "{%k")
-              (backend.compiler-backend-string-contains? asm "tail_mask_")
-              (backend.compiler-backend-string-contains? asm "%k"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+              (asm-has? asm "    vpcmpq $1,")
+              (asm-has? asm "    kandw ")
+              (asm-has? asm "    kandnw ")
+              (asm-has? asm "    vpbroadcastq ")
+              (asm-has? asm "    vmovdqu64 %zmm")
+              (asm-has? asm "{%k")
+              (asm-has? asm "tail_mask_")
+              (asm-has? asm "%k"))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -20984,17 +19511,14 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm move)
-              (backend.compiler-backend-string-contains? asm op)
-              (backend.compiler-backend-string-contains? asm broadcast)
-              (backend.compiler-backend-string-contains? asm "%zmm")
-              (backend.compiler-backend-string-contains? asm "%k")
-              (backend.compiler-backend-string-contains? asm "tail_mask_")
-              (backend.compiler-backend-string-contains? asm "}{z}")
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "vector/mask IR emission is not implemented")))
+              (asm-has? asm move)
+              (asm-has? asm op)
+              (asm-has? asm broadcast)
+              (asm-has? asm "%zmm")
+              (asm-has? asm "%k")
+              (asm-has? asm "tail_mask_")
+              (asm-has? asm "}{z}")
+              (asm-lacks? asm "vector/mask IR emission is not implemented"))
             true)]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
@@ -21013,18 +19537,13 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq ")
-              (backend.compiler-backend-string-contains? asm "    vpmullq ")
-              (backend.compiler-backend-string-contains? asm "    vpaddq ")
-              (backend.compiler-backend-string-contains? asm "    vmovdqu64 ")
-              (backend.compiler-backend-string-contains? asm "%zmm")
-              (backend.compiler-backend-string-contains? asm "%k")
-              (not
-                (backend.compiler-backend-string-contains?
-                  asm
-                  "vector/mask IR emission is not implemented"))
+              (asm-has? asm "    vpbroadcastq ")
+              (asm-has? asm "    vpmullq ")
+              (asm-has? asm "    vpaddq ")
+              (asm-has? asm "    vmovdqu64 ")
+              (asm-has? asm "%zmm")
+              (asm-has? asm "%k")
+              (asm-lacks? asm "vector/mask IR emission is not implemented")
               true)
             true)]
         [(backend.ResultCompilerBackend.Err _) false])]
@@ -21093,18 +19612,15 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm "    vzeroupper\n")
-              (backend.compiler-backend-string-contains? asm extract)
-              (backend.compiler-backend-string-contains? asm horizontal)
-              (backend.compiler-backend-string-contains? asm op)
-              (backend.compiler-backend-string-contains? asm store)
-              (backend.compiler-backend-string-contains? asm "%ymm")
-              (backend.compiler-backend-string-contains? asm "spmd_reduce_avx2")
-              (backend.compiler-backend-string-contains? asm "spmd_reduce_tail"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+              (asm-has? asm "    vzeroupper\n")
+              (asm-has? asm extract)
+              (asm-has? asm horizontal)
+              (asm-has? asm op)
+              (asm-has? asm store)
+              (asm-has? asm "%ymm")
+              (asm-has? asm "spmd_reduce_avx2")
+              (asm-has? asm "spmd_reduce_tail"))
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -21117,22 +19633,19 @@ g:
   [register : String]) : bool
   (match (lower.lower-compiler-source-with-mode src lower-mode)
     [(lower.ResultCompilerLower.Ok program spans)
-      (match (backend.compiler-backend-emit-program-target-with-mode
-        program
-        (backend.CompilerBackendTarget.Linux)
-        backend-mode
-        spans
-        true)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "spmd_reduce_avx2_body")
-            (backend.compiler-backend-string-contains? asm reduce-op)
-            (backend.compiler-backend-string-contains? asm result-op)
-            (backend.compiler-backend-string-contains? asm register)
-            (backend.compiler-backend-string-contains? asm "spmd_reduce_tail"))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-program-target-with-mode
+          program
+          (backend.CompilerBackendTarget.Linux)
+          backend-mode
+          spans
+          true)
+        (has
+          "spmd_reduce_avx2_body"
+          reduce-op
+          result-op
+          register
+          "spmd_reduce_tail"))]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-shuffle-asm-function-body
@@ -21161,10 +19674,8 @@ g:
     [body : String
       (compiler-backend-shuffle-asm-function-body src lower-mode backend-mode)]
     (and
-      (backend.compiler-backend-string-contains? body loop-label)
-      (not (backend.compiler-backend-string-contains? body "vector_shuffle_"))
-      (not (backend.compiler-backend-string-contains? body "vpermd"))
-      (not (backend.compiler-backend-string-contains? body "vpermq")))))
+      (asm-has? body loop-label)
+      (asm-lacks? body "vector_shuffle_" "vpermd" "vpermq"))))
 
 (define (compiler-backend-varying-shuffle-vector-check?
   [src : String]
@@ -21178,13 +19689,13 @@ g:
     [body : String
       (compiler-backend-shuffle-asm-function-body src lower-mode backend-mode)]
     (backend.backend-and8
-      (backend.compiler-backend-string-contains? body opcode)
-      (backend.compiler-backend-string-contains? body compare-op)
-      (backend.compiler-backend-string-contains? body reduce-op)
-      (backend.compiler-backend-string-contains? body extra)
-      (backend.compiler-backend-string-contains? body "    call tl_oob_abort")
-      (backend.compiler-backend-string-contains? body "vector_shuffle_")
-      (not (backend.compiler-backend-string-contains? body "_skip_"))
+      (asm-has? body opcode)
+      (asm-has? body compare-op)
+      (asm-has? body reduce-op)
+      (asm-has? body extra)
+      (asm-has? body "    call tl_oob_abort")
+      (asm-has? body "vector_shuffle_")
+      (asm-lacks? body "_skip_")
       (> (string.string-length body) 0))))
 
 (define (compiler-backend-shuffle-vector-check-reduction-ok?) : bool
@@ -21211,7 +19722,7 @@ g:
         (= (backend.compiler-backend-string-count avx2 "vpmovmskb") 4)
         (= (backend.compiler-backend-string-count avx2 "    jne .L_abort\n") 1)
         (= (backend.compiler-backend-string-count avx2 "    testl ") 1)
-        (not (backend.compiler-backend-string-contains? avx2 "    cmpq "))
+        (asm-lacks? avx2 "    cmpq ")
         (= (backend.compiler-backend-string-count avx512 "vpcmpuq $6") 2)
         (= (backend.compiler-backend-string-count avx512 "kmovw") 2)
         (=
@@ -21301,20 +19812,14 @@ g:
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm compare)
-        (not (backend.compiler-backend-string-contains? asm ", %xmm6\n"))
-        (not (backend.compiler-backend-string-contains? asm ", %ymm6\n"))
+        (asm-has? asm compare)
+        (asm-lacks? asm ", %xmm6\n" ", %ymm6\n")
         (if spilled
           (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vmovdqu -64(%rbp), %ymm14\n")
-            (not
-              (backend.compiler-backend-string-contains? asm ", -64(%rbp)\n")))
+            (asm-has? asm "    vmovdqu -64(%rbp), %ymm14\n")
+            (asm-lacks? asm ", -64(%rbp)\n"))
           true)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovq %xmm2, %r12\n"))]
+        (asm-has? asm "    vmovq %xmm2, %r12\n"))]
     [_ false]))
 
 (define (compiler-backend-avx2-i64-reduce-storage-cases-ok? [spilled : bool]) : bool
@@ -21394,7 +19899,7 @@ g:
             asm
             "    vmovdqu -64(%rbp), %ymm14\n")
           2)
-        (not (backend.compiler-backend-string-contains? asm ", -64(%rbp)\n")))]
+        (asm-lacks? asm ", -64(%rbp)\n"))]
     [_ false]))
 
 (define (compiler-backend-i64-reduce-call-ok?) : bool
@@ -21496,18 +20001,15 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains? asm extract)
-              (backend.compiler-backend-string-contains? asm horizontal)
-              (backend.compiler-backend-string-contains? asm op)
-              (backend.compiler-backend-string-contains? asm store)
-              (backend.compiler-backend-string-contains? asm "%zmm")
-              (backend.compiler-backend-string-contains? asm "%ymm")
-              (backend.compiler-backend-string-contains? asm "spmd_reduce_avx2")
+              (asm-has? asm extract)
+              (asm-has? asm horizontal)
+              (asm-has? asm op)
+              (asm-has? asm store)
+              (asm-has? asm "%zmm")
+              (asm-has? asm "%ymm")
+              (asm-has? asm "spmd_reduce_avx2")
               true)
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "vector/mask IR emission is not implemented")))]
+            (asm-lacks? asm "vector/mask IR emission is not implemented"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -21599,33 +20101,26 @@ g:
   [lanes : i64]
   [mnemonic : String]
   [last-shift : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-reduce-direct-assignments
-      (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
-    1
-    (ir.CompilerIrVectorReduceOp.Min)
-    (ir.CompilerIrValue.Var 0)
-    lanes
-    elem-ty
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti64x4 $1, %zmm6, %ymm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti128 $1, %ymm2, %xmm3\n")
-        (backend.compiler-backend-string-contains? asm mnemonic)
-        (backend.compiler-backend-string-contains? asm last-shift)
-        (backend.compiler-backend-string-contains? asm "    vmovq %xmm2, ")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "unsupported AVX-512 vector reduction")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-reduce-direct-assignments
+        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r10))
+      1
+      (ir.CompilerIrVectorReduceOp.Min)
+      (ir.CompilerIrValue.Var 0)
+      lanes
+      elem-ty
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    vextracti64x4 $1, %zmm6, %ymm2\n"
+      "    vextracti128 $1, %ymm2, %xmm3\n"
+      mnemonic
+      last-shift
+      "    vmovq %xmm2, ")
+    (lacks "unsupported AVX-512 vector reduction")))
 
 (define (compiler-backend-avx512-vector-reduce-narrow-ok?) : bool
   (and
@@ -21651,134 +20146,86 @@ g:
       "    vpsrldq $1, ")))
 
 (define (compiler-backend-avx2-vector-reduce-direct-stack-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-reduce-direct-assignments
-      (regalloc.CompilerRegLocation.Spill -40))
-    1
-    (ir.CompilerIrVectorReduceOp.Sum)
-    (ir.CompilerIrValue.Var 0)
-    4
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti128 $1, %ymm6, %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovq %xmm2, -40(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm1"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovq %xmm0, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -40(%rbp)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx2-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-reduce-direct-assignments
+        (regalloc.CompilerRegLocation.Spill -40))
+      1
+      (ir.CompilerIrVectorReduceOp.Sum)
+      (ir.CompilerIrValue.Var 0)
+      4
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    vextracti128 $1, %ymm6, %xmm2\n" "    vmovq %xmm2, -40(%rbp)\n")
+    (lacks
+      "%xmm0"
+      "%xmm1"
+      "    vmovq %xmm0, %rax\n"
+      "    movq %rax, -40(%rbp)\n")))
 
 (define (compiler-backend-avx2-vector-reduce-direct-register-ok?) : bool
-  (match (backend.compiler-backend-emit-avx2-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-reduce-direct-assignments
-      (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-    1
-    (ir.CompilerIrVectorReduceOp.Sum)
-    (ir.CompilerIrValue.Var 0)
-    4
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti128 $1, %ymm6, %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovq %xmm2, %r12\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm1"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovq %xmm0, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, %r12\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx2-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-reduce-direct-assignments
+        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+      1
+      (ir.CompilerIrVectorReduceOp.Sum)
+      (ir.CompilerIrValue.Var 0)
+      4
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    vextracti128 $1, %ymm6, %xmm2\n" "    vmovq %xmm2, %r12\n")
+    (lacks "%xmm0" "%xmm1" "    vmovq %xmm0, %rax\n" "    movq %rax, %r12\n")))
 
 (define (compiler-backend-avx512-vector-reduce-direct-stack-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-reduce-direct-assignments
-      (regalloc.CompilerRegLocation.Spill -40))
-    1
-    (ir.CompilerIrVectorReduceOp.Sum)
-    (ir.CompilerIrValue.Var 0)
-    8
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti64x4 $1, %zmm6, %ymm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovq %xmm2, -40(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm1"))
-        (not (backend.compiler-backend-string-contains? asm "%ymm0"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovq %xmm0, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -40(%rbp)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-reduce-direct-assignments
+        (regalloc.CompilerRegLocation.Spill -40))
+      1
+      (ir.CompilerIrVectorReduceOp.Sum)
+      (ir.CompilerIrValue.Var 0)
+      8
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    vextracti64x4 $1, %zmm6, %ymm2\n" "    vmovq %xmm2, -40(%rbp)\n")
+    (lacks
+      "%xmm0"
+      "%xmm1"
+      "%ymm0"
+      "    vmovq %xmm0, %rax\n"
+      "    movq %rax, -40(%rbp)\n")))
 
 (define (compiler-backend-avx512-vector-reduce-direct-register-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-vector-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-vector-reduce-direct-assignments
-      (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-    1
-    (ir.CompilerIrVectorReduceOp.Sum)
-    (ir.CompilerIrValue.Var 0)
-    8
-    (ast.AstType.I64)
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vextracti64x4 $1, %zmm6, %ymm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovq %xmm2, %r12\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm1"))
-        (not (backend.compiler-backend-string-contains? asm "%ymm0"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovq %xmm0, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, %r12\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-vector-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-vector-reduce-direct-assignments
+        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+      1
+      (ir.CompilerIrVectorReduceOp.Sum)
+      (ir.CompilerIrValue.Var 0)
+      8
+      (ast.AstType.I64)
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    vextracti64x4 $1, %zmm6, %ymm2\n" "    vmovq %xmm2, %r12\n")
+    (lacks
+      "%xmm0"
+      "%xmm1"
+      "%ymm0"
+      "    vmovq %xmm0, %rax\n"
+      "    movq %rax, %r12\n")))
 
 (define (compiler-backend-vector-reduce-direct-store-ok?) : bool
   (and
@@ -21833,31 +20280,19 @@ g:
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (compiler-backend-avx2-vector-homes-ok?) : bool
-  (match (backend.compiler-backend-emit-program-target-with-mode
-    (compiler-backend-vector-home-program
-      (reg_tests.compiler-reg-vector-home-function))
-    (backend.CompilerBackendTarget.Linux)
-    (backend.CompilerBackendMode.Avx2)
-    (ir.compiler-source-spans-empty)
-    true)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    vmovdqu ")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpaddq 32(%r8), %ymm6, %ymm7\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpaddq %ymm7, %ymm6, %ymm6\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vpaddq 32(%rax), %ymm6, %ymm7\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "register home unavailable")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-target-with-mode
+      (compiler-backend-vector-home-program
+        (reg_tests.compiler-reg-vector-home-function))
+      (backend.CompilerBackendTarget.Linux)
+      (backend.CompilerBackendMode.Avx2)
+      (ir.compiler-source-spans-empty)
+      true)
+    (has
+      "    vmovdqu "
+      "    vpaddq 32(%r8), %ymm6, %ymm7\n"
+      "    vpaddq %ymm7, %ymm6, %ymm6\n")
+    (lacks "    vpaddq 32(%rax), %ymm6, %ymm7\n" "register home unavailable")))
 
 (define (compiler-backend-xmm-family-conversion-ok?) : bool
   (and
@@ -21908,51 +20343,28 @@ g:
       "")))
 
 (define (compiler-backend-avx512-select-false-home-asm-ok?) : bool
-  (match (backend.compiler-backend-emit-program-target-with-mode
-    (compiler-backend-vector-home-program
-      (reg_tests.compiler-reg-vector-select-false-home-function))
-    (backend.CompilerBackendTarget.Linux)
-    (backend.CompilerBackendMode.Avx512)
-    (ir.compiler-source-spans-empty)
-    true)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu64 %zmm8, %zmm7{%k1}\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu64 %zmm7, %zmm7\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "register home unavailable")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-target-with-mode
+      (compiler-backend-vector-home-program
+        (reg_tests.compiler-reg-vector-select-false-home-function))
+      (backend.CompilerBackendTarget.Linux)
+      (backend.CompilerBackendMode.Avx512)
+      (ir.compiler-source-spans-empty)
+      true)
+    (has "    vmovdqu64 %zmm8, %zmm7{%k1}\n")
+    (lacks "    vmovdqu64 %zmm7, %zmm7\n" "register home unavailable")))
 
 (define (compiler-backend-avx512-mask-homes-ok?) : bool
-  (match (backend.compiler-backend-emit-program-target-with-mode
-    (compiler-backend-vector-home-program
-      (reg_tests.compiler-reg-mask-home-function))
-    (backend.CompilerBackendTarget.Linux)
-    (backend.CompilerBackendMode.Avx512)
-    (ir.compiler-source-spans-empty)
-    true)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kandw %k2, %k1, %k1\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kandnw %k7, %k1, %k1\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    knotw %k1, %k1\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "register home unavailable")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-target-with-mode
+      (compiler-backend-vector-home-program
+        (reg_tests.compiler-reg-mask-home-function))
+      (backend.CompilerBackendTarget.Linux)
+      (backend.CompilerBackendMode.Avx512)
+      (ir.compiler-source-spans-empty)
+      true)
+    (has "    kandw %k2, %k1, %k1\n" "    kandnw %k7, %k1, %k1\n")
+    (lacks "    knotw %k1, %k1\n" "register home unavailable")))
 
 (define (compiler-backend-avx512-tail-mask-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
@@ -21990,34 +20402,27 @@ g:
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-tail-mask
-    (ast.ast-node-pool-reader-type-segment-bases)
-    "_tl_tail"
-    (ir.compiler-ir-label "entry")
-    (compiler-backend-avx512-tail-mask-assignments)
-    0
-    (ir.CompilerIrValue.Var 1)
-    (ir.CompilerIrValue.Var 2)
-    8
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq %r13, %rcx\n")
-        (backend.compiler-backend-string-contains? asm "    subq %r12, %rcx\n")
-        (backend.compiler-backend-string-contains? asm "    movl $1, %r9d\n")
-        (backend.compiler-backend-string-contains? asm "    shll %cl, %r9d\n")
-        (backend.compiler-backend-string-contains? asm "    kmovw %r9d, %k1\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kxorw %k1, %k1, %k1\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax"))
-        (not (backend.compiler-backend-string-contains? asm "%eax"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    xorl %eax, %eax\n    kmovw %eax, %k1\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-tail-mask
+      (ast.ast-node-pool-reader-type-segment-bases)
+      "_tl_tail"
+      (ir.compiler-ir-label "entry")
+      (compiler-backend-avx512-tail-mask-assignments)
+      0
+      (ir.CompilerIrValue.Var 1)
+      (ir.CompilerIrValue.Var 2)
+      8
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    movq %r13, %rcx\n"
+      "    subq %r12, %rcx\n"
+      "    movl $1, %r9d\n"
+      "    shll %cl, %r9d\n"
+      "    kmovw %r9d, %k1\n"
+      "    kxorw %k1, %k1, %k1\n")
+    (lacks "%rax" "%eax" "    xorl %eax, %eax\n    kmovw %eax, %k1\n")))
 
 (define (compiler-backend-avx512-tail-mask-ok?) : bool
   (and
@@ -22078,36 +20483,30 @@ g:
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (backend.backend-and4
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpbroadcastq %xmm0, %ymm0\n")
+            (asm-has? asm "    vpbroadcastq %xmm0, %ymm0\n")
             (let
               [needle
                 (str_cat.str-cat
                   "    vpaddq "
                   (backend.compiler-backend-avx2-i64-lane-id-label)
                   "(%rip), %ymm0, %ymm0\n")]
-              (backend.compiler-backend-string-contains? asm needle))
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpcmpgtq %ymm0, %ymm1, %ymm6\n")
-            (not (backend.compiler-backend-string-contains? asm "(%rsp)")))
-          (not (backend.compiler-backend-string-contains? asm "_tail_skip_")))]
+              (asm-has? asm needle))
+            (asm-has? asm "    vpcmpgtq %ymm0, %ymm1, %ymm6\n")
+            (asm-lacks? asm "(%rsp)"))
+          (asm-lacks? asm "_tail_skip_"))]
       [(backend.ResultCompilerBackend.Err _) false])
     (match (compiler-backend-avx2-tail-mask-emits 8)
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (backend.backend-and4
-            (backend.compiler-backend-string-contains?
-              asm
-              "    subq $32, %rsp\n")
-            (backend.compiler-backend-string-contains? asm "_tail_skip_0")
-            (backend.compiler-backend-string-contains? asm "    movl $-1, ")
+            (asm-has? asm "    subq $32, %rsp\n")
+            (asm-has? asm "_tail_skip_0")
+            (asm-has? asm "    movl $-1, ")
             (not
               (let
                 [needle (backend.compiler-backend-avx2-i64-lane-id-label)]
-                (backend.compiler-backend-string-contains? asm needle))))
-          (not (backend.compiler-backend-string-contains? asm "    vpcmpgtq ")))]
+                (asm-has? asm needle))))
+          (asm-lacks? asm "    vpcmpgtq "))]
       [(backend.ResultCompilerBackend.Err _) false])
     (let
       [qword : backend.CompilerBackendProgramCollections
@@ -22312,28 +20711,20 @@ g:
         (backend.compiler-backend-state-function-state backend-state)
         (backend.CompilerBackendMode.Avx512))]
     [ok : bool
-      (match (backend.compiler-backend-emit-vector-compare
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (compiler-backend-avx512-mask-spill-compare-assignments)
-        2
-        (ir.CompilerIrBinOp.Eq)
-        (ir.CompilerIrValue.Var 4)
-        (ir.CompilerIrValue.Var 5)
-        8
-        (ast.AstType.I64)
-        (cdiag.compiler-diagnostic-at-start "" "")
-        backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    vpcmpq $0, %zmm7, %zmm6, %k7\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    kmovw %k7, -24(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? asm "%ymm"))
-            (not (backend.compiler-backend-string-contains? asm "%k0")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+      (asm-ok?
+        (backend.compiler-backend-emit-vector-compare
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-avx512-mask-spill-compare-assignments)
+          2
+          (ir.CompilerIrBinOp.Eq)
+          (ir.CompilerIrValue.Var 4)
+          (ir.CompilerIrValue.Var 5)
+          8
+          (ast.AstType.I64)
+          (cdiag.compiler-diagnostic-at-start "" "")
+          backend-state)
+        (has "    vpcmpq $0, %zmm7, %zmm6, %k7\n" "    kmovw %k7, -24(%rbp)\n")
+        (lacks "%ymm" "%k0"))]
     (begin
       (backend.compiler-backend-set-current-mode!
         (backend.compiler-backend-state-function-state backend-state)
@@ -22341,76 +20732,62 @@ g:
       ok)))
 
 (define (compiler-backend-avx512-mask-spill-binop-emits-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-binop
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-avx512-mask-spill-assignments)
-    2
-    (ir.CompilerIrMaskBinOp.And)
-    (ir.CompilerIrValue.Var 0)
-    (ir.CompilerIrValue.Var 1)
-    8
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kmovw -8(%rbp), %k7\n")
-        (backend.compiler-backend-string-contains? asm "    kmovw %k7, %eax\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kmovw -16(%rbp), %k7\n")
-        (backend.compiler-backend-string-contains? asm "    kmovw %k7, %r10d\n")
-        (backend.compiler-backend-string-contains? asm "    andl %r10d, %eax\n")
-        (backend.compiler-backend-string-contains? asm "    kmovw %eax, %k7\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kmovw %k7, -24(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%k0")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-mask-binop
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-avx512-mask-spill-assignments)
+      2
+      (ir.CompilerIrMaskBinOp.And)
+      (ir.CompilerIrValue.Var 0)
+      (ir.CompilerIrValue.Var 1)
+      8
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    kmovw -8(%rbp), %k7\n"
+      "    kmovw %k7, %eax\n"
+      "    kmovw -16(%rbp), %k7\n"
+      "    kmovw %k7, %r10d\n"
+      "    andl %r10d, %eax\n"
+      "    kmovw %eax, %k7\n"
+      "    kmovw %k7, -24(%rbp)\n")
+    (lacks "%k0")))
 
 (define (compiler-backend-avx512-mask-spill-not-emits-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-not
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-avx512-mask-spill-assignments)
-    2
-    (ir.CompilerIrValue.Var 0)
-    8
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kmovw -8(%rbp), %k7\n")
-        (backend.compiler-backend-string-contains? asm "    xorl $255, %eax\n")
-        (backend.compiler-backend-string-contains? asm "    kmovw %eax, %k7\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kmovw %k7, -24(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%k0")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-mask-not
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-avx512-mask-spill-assignments)
+      2
+      (ir.CompilerIrValue.Var 0)
+      8
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    kmovw -8(%rbp), %k7\n"
+      "    xorl $255, %eax\n"
+      "    kmovw %eax, %k7\n"
+      "    kmovw %k7, -24(%rbp)\n")
+    (lacks "%k0")))
 
 (define (compiler-backend-avx512-mask-spill-reduce-emits-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-reduce
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (compiler-backend-avx512-mask-spill-assignments)
-    3
-    (ir.CompilerIrMaskReduceOp.Any)
-    (ir.CompilerIrValue.Var 0)
-    8
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kmovw -8(%rbp), %k7\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    kortestw %k7, %k7\n")
-        (backend.compiler-backend-string-contains? asm "    movq %rax, %r12\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-avx512-mask-reduce
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler-backend-avx512-mask-spill-assignments)
+      3
+      (ir.CompilerIrMaskReduceOp.Any)
+      (ir.CompilerIrValue.Var 0)
+      8
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    kmovw -8(%rbp), %k7\n"
+      "    kortestw %k7, %k7\n"
+      "    movq %rax, %r12\n")))
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
   (match (backend.compiler-backend-emit-avx512-mask-load
@@ -22437,23 +20814,15 @@ g:
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok store-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               load-asm
-              "    kmovw -16(%rbp), %k7\n")
-            (backend.compiler-backend-string-contains?
-              load-asm
-              "    vpcmpub $4, ")
-            (backend.compiler-backend-string-contains?
-              load-asm
+              "    kmovw -16(%rbp), %k7\n"
+              "    vpcmpub $4, "
               "    kmovw %k7, -24(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               store-asm
-              "    kmovw -8(%rbp), %k7\n")
-            (backend.compiler-backend-string-contains?
-              store-asm
-              "    kmovw -16(%rbp), %k7\n")
-            (backend.compiler-backend-string-contains?
-              store-asm
+              "    kmovw -8(%rbp), %k7\n"
+              "    kmovw -16(%rbp), %k7\n"
               "    vmovdqu8 %zmm"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -22593,11 +20962,8 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-avx512-mask-spill-plan-ok?)
-        (backend.compiler-backend-string-contains? asm "kmovw")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "mask spills are not implemented")))]
+        (asm-has? asm "kmovw")
+        (asm-lacks? asm "mask spills are not implemented"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-mask-spill-ok?) : bool
@@ -22759,28 +21125,19 @@ g:
     (compiler-backend-mask-copy-paths-ok?)))
 
 (define (compiler-backend-vector-call-lifetime-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-program-target-with-mode
-    (compiler-backend-vector-home-program
-      (compiler-backend-vector-call-lifetime-function))
-    (backend.CompilerBackendTarget.Linux)
-    (backend.CompilerBackendMode.Avx2)
-    (ir.compiler-source-spans-empty)
-    true)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call _tl_side_effect\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu %ymm14, 16(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vmovdqu 16(%rsp), %ymm14\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    vpaddq 16(%rsp), %ymm14, %ymm6\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-program-target-with-mode
+      (compiler-backend-vector-home-program
+        (compiler-backend-vector-call-lifetime-function))
+      (backend.CompilerBackendTarget.Linux)
+      (backend.CompilerBackendMode.Avx2)
+      (ir.compiler-source-spans-empty)
+      true)
+    (has
+      "    call _tl_side_effect\n"
+      "    vmovdqu %ymm14, 16(%rsp)\n"
+      "    vmovdqu 16(%rsp), %ymm14\n"
+      "    vpaddq 16(%rsp), %ymm14, %ymm6\n")))
 
 (define (compiler-backend-vector-load-binop-fold-function
   [name : String]
@@ -22847,13 +21204,12 @@ g:
       (and
         (let
           [needle (str_cat.str-cat "    " mnemonic " (%r8), ")]
-          (backend.compiler-backend-string-contains? asm needle))
-        (not
-          (backend.compiler-backend-string-contains? asm "    vmovdqu (%r8), "))
+          (asm-has? asm needle))
+        (asm-lacks? asm "    vmovdqu (%r8), ")
         (not
           (let
             [needle (str_cat.str-cat "    " mnemonic " (%rax), ")]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-load-binop-does-not-fold?
@@ -22868,13 +21224,12 @@ g:
     true)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm "    vmovdqu (%r8), ")
+        (asm-has? asm "    vmovdqu (%r8), ")
         (not
           (let
             [needle (str_cat.str-cat "    " mnemonic " (%r8), ")]
-            (backend.compiler-backend-string-contains? asm needle)))
-        (not
-          (backend.compiler-backend-string-contains? asm "    vmovdqu (%rax), ")))]
+            (asm-has? asm needle)))
+        (asm-lacks? asm "    vmovdqu (%rax), "))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-load-binop-folding-ok?) : bool
@@ -23039,14 +21394,14 @@ g:
                 "    subq $"
                 (string.int->string stack-bytes)
                 ", %rsp\n")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (let
             [needle
               (str_cat.str-cat
                 "    addq $"
                 (string.int->string stack-bytes)
                 ", %rsp\n")]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (= (backend.compiler-backend-string-count asm "vpsrld $24") 1))
         (= (backend.compiler-backend-string-count asm "movl $50462976") 1)
         (= (backend.compiler-backend-string-count asm "movl $117835012") 1)
@@ -23054,20 +21409,16 @@ g:
           (and
             (= (backend.compiler-backend-string-count asm "movl $185207048") 1)
             (= (backend.compiler-backend-string-count asm "movl $252579084") 1)
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               asm
-              "    vpsrld $2, %zmm0, %zmm0\n")
-            (backend.compiler-backend-string-contains?
-              asm
+              "    vpsrld $2, %zmm0, %zmm0\n"
               "    vpslld $30, %zmm8, %zmm8\n"))
           (and
             (= (backend.compiler-backend-string-count asm "movl $185207048") 0)
             (= (backend.compiler-backend-string-count asm "movl $252579084") 0)
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               asm
-              "    vpsrld $1, %ymm0, %ymm0\n")
-            (backend.compiler-backend-string-contains?
-              asm
+              "    vpsrld $1, %ymm0, %ymm0\n"
               "    vpslld $31, %ymm8, %ymm8\n"))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -23112,26 +21463,16 @@ g:
         (ci.intern-compat-state-capture-active))))
     [(backend.ResultCompilerBackend.Ok asm)
       (if avx512
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu8 -64(%rbp), %zmm14\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu8 -128(%rbp), %zmm15\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq $448, %rsp\n    vmovdqu8 %zmm14, -192(%rbp)\n"))
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu -64(%rbp), %ymm14\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu -128(%rbp), %ymm15\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq $224, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
+        (asm-has?
+          asm
+          "    vmovdqu8 -64(%rbp), %zmm14\n"
+          "    vmovdqu8 -128(%rbp), %zmm15\n"
+          "    addq $448, %rsp\n    vmovdqu8 %zmm14, -192(%rbp)\n")
+        (asm-has?
+          asm
+          "    vmovdqu -64(%rbp), %ymm14\n"
+          "    vmovdqu -128(%rbp), %ymm15\n"
+          "    addq $224, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-word-vector-shift-shape?
@@ -23157,24 +21498,16 @@ g:
           (= (backend.compiler-backend-string-count asm shift) 2)
           (= (backend.compiler-backend-string-count asm "vpackusdw") 1)
           (= (backend.compiler-backend-string-count asm "vpermq") 1)
-          (backend.compiler-backend-string-contains?
-            asm
-            "    subq $128, %rsp\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq $128, %rsp\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vpsrld $16, %ymm0, %ymm0\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vpermq $216, %ymm1, %ymm8\n"))
+          (asm-has? asm "    subq $128, %rsp\n")
+          (asm-has? asm "    addq $128, %rsp\n")
+          (asm-has? asm "    vpsrld $16, %ymm0, %ymm0\n")
+          (asm-has? asm "    vpermq $216, %ymm1, %ymm8\n"))
         (let
           [needle (str_cat.str-cat "    " widen " (%rsp), %ymm0\n")]
-          (backend.compiler-backend-string-contains? asm needle))
+          (asm-has? asm needle))
         (let
           [needle (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")]
-          (backend.compiler-backend-string-contains? asm needle)))]
+          (asm-has? asm needle)))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
@@ -23205,26 +21538,16 @@ g:
         (ci.intern-compat-state-capture-active))))
     [(backend.ResultCompilerBackend.Ok asm)
       (if avx512
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu16 -64(%rbp), %zmm14\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vpsllvw -128(%rbp), %zmm14, %zmm14\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu16 %zmm14, -192(%rbp)\n"))
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu -64(%rbp), %ymm14\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    vmovdqu -128(%rbp), %ymm15\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq $128, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n")))]
+        (asm-has?
+          asm
+          "    vmovdqu16 -64(%rbp), %zmm14\n"
+          "    vpsllvw -128(%rbp), %zmm14, %zmm14\n"
+          "    vmovdqu16 %zmm14, -192(%rbp)\n")
+        (asm-has?
+          asm
+          "    vmovdqu -64(%rbp), %ymm14\n"
+          "    vmovdqu -128(%rbp), %ymm15\n"
+          "    addq $128, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool
@@ -23519,21 +21842,14 @@ g:
                         loop
                         "    vmovdqu %ymm6")
                       1)
-                    (backend.compiler-backend-string-contains?
-                      body
-                      "foreach_avx2_body")
-                    (backend.compiler-backend-string-contains?
-                      body
-                      "foreach_tail")
+                    (asm-has? body "foreach_avx2_body")
+                    (asm-has? body "foreach_tail")
                     (=
                       (backend.compiler-backend-string-count
                         loop
                         "    vpaddq %ymm6, %ymm6, %ymm6")
                       1))
-                  (not
-                    (backend.compiler-backend-string-contains?
-                      loop
-                      "vector/mask IR emission is not implemented"))))]
+                  (asm-lacks? loop "vector/mask IR emission is not implemented")))]
             [(backend.ResultCompilerBackend.Err _) false])])]
     [(lower.ResultCompilerLower.Err _) false]))
 
@@ -23947,7 +22263,7 @@ g:
       instr)
       [(backend.ResultCompilerBackend.Ok asm)
         (let
-          [hit : bool (backend.compiler-backend-string-contains? asm needle)]
+          [hit : bool (asm-has? asm needle)]
           [_restore : unit
             (begin
               (backend.compiler-backend-set-scavenge-ctx-ready!
@@ -25072,32 +23388,22 @@ g:
       (runtime_windows.compiler-backend-runtime-memchr-functions)]
     (and
       (backend.backend-and4
-        (backend.compiler-backend-string-contains?
-          linux
-          "    .globl tl_memchr\n")
-        (backend.compiler-backend-string-contains? linux "tl_memchr:\n")
-        (backend.compiler-backend-string-contains?
-          linux
-          "    cmpb %dl, (%rdi,%rax)\n")
-        (backend.compiler-backend-string-contains? linux "    movq $-1, %rax\n"))
+        (asm-has? linux "    .globl tl_memchr\n")
+        (asm-has? linux "tl_memchr:\n")
+        (asm-has? linux "    cmpb %dl, (%rdi,%rax)\n")
+        (asm-has? linux "    movq $-1, %rax\n"))
       (backend.backend-and4
-        (backend.compiler-backend-string-contains?
-          windows
-          "    .globl tl_memchr\n")
-        (backend.compiler-backend-string-contains? windows "tl_memchr:\n")
-        (backend.compiler-backend-string-contains?
-          windows
-          "    cmpb %r8b, (%rcx,%rax)\n")
-        (backend.compiler-backend-string-contains?
-          windows
-          "    movq $-1, %rax\n")))))
+        (asm-has? windows "    .globl tl_memchr\n")
+        (asm-has? windows "tl_memchr:\n")
+        (asm-has? windows "    cmpb %r8b, (%rcx,%rax)\n")
+        (asm-has? windows "    movq $-1, %rax\n")))))
 
 (define (compiler-backend-runtime-global-symbol-ok?
   [asm : (& asm str)]
   [name : String]) : bool
   (let
     [needle (str_cat.str-cat "    .globl " name "\n")]
-    (backend.compiler-backend-string-contains? asm needle)))
+    (asm-has? asm needle)))
 
 (define (compiler-backend-runtime-common-global-symbols-ok? [asm : (& asm str)]) : bool
   (and
@@ -25208,18 +23514,15 @@ g:
         (backend.CompilerBackendTarget.Linux))]
     (and
       (backend.backend-and8
-        (backend.compiler-backend-string-contains? asm "tl_alloc:\n")
-        (backend.compiler-backend-string-contains? asm "tl_region_mark:\n")
-        (backend.compiler-backend-string-contains? asm "tl_region_reset:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_make:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_current:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_set:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_destroy:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "tl_arena_poison_enable:\n"))
-      (backend.compiler-backend-string-contains? asm "tl_alloc_aligned:\n")
-      (backend.compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
+        (asm-has? asm "tl_alloc:\n")
+        (asm-has? asm "tl_region_mark:\n")
+        (asm-has? asm "tl_region_reset:\n")
+        (asm-has? asm "tl_arena_make:\n")
+        (asm-has? asm "tl_arena_current:\n")
+        (asm-has? asm "tl_arena_set:\n")
+        (asm-has? asm "tl_arena_destroy:\n")
+        (asm-has? asm "tl_arena_poison_enable:\n"))
+      (asm-has? asm "tl_alloc_aligned:\n" "tl_arena_make_atomic:\n")
       (backend.backend-and4
         (=
           (backend.compiler-backend-string-count
@@ -25237,11 +23540,8 @@ g:
             asm
             "    movq $60, %rax\n    movq $134, %rdi\n    syscall\n")
           3))
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq $158, %rax\n    syscall\n")
-      (not (backend.compiler-backend-string-contains? asm "VirtualAlloc"))
-      (not (backend.compiler-backend-string-contains? asm "VirtualFree")))))
+      (asm-has? asm "    movq $158, %rax\n    syscall\n")
+      (asm-lacks? asm "VirtualAlloc" "VirtualFree"))))
 
 (define (compiler-backend-runtime-page-call-inventory-windows-ok?) : bool
   (let
@@ -25250,18 +23550,15 @@ g:
         (backend.CompilerBackendTarget.Windows))]
     (and
       (backend.backend-and8
-        (backend.compiler-backend-string-contains? asm "tl_alloc:\n")
-        (backend.compiler-backend-string-contains? asm "tl_region_mark:\n")
-        (backend.compiler-backend-string-contains? asm "tl_region_reset:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_make:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_current:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_set:\n")
-        (backend.compiler-backend-string-contains? asm "tl_arena_destroy:\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "tl_arena_poison_enable:\n"))
-      (backend.compiler-backend-string-contains? asm "tl_alloc_aligned:\n")
-      (backend.compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
+        (asm-has? asm "tl_alloc:\n")
+        (asm-has? asm "tl_region_mark:\n")
+        (asm-has? asm "tl_region_reset:\n")
+        (asm-has? asm "tl_arena_make:\n")
+        (asm-has? asm "tl_arena_current:\n")
+        (asm-has? asm "tl_arena_set:\n")
+        (asm-has? asm "tl_arena_destroy:\n")
+        (asm-has? asm "tl_arena_poison_enable:\n"))
+      (asm-has? asm "tl_alloc_aligned:\n" "tl_arena_make_atomic:\n")
       (backend.backend-and4
         (and
           (=
@@ -25283,25 +23580,22 @@ g:
               asm
               "    call tl_windows_allocation_abort\n")
             13))
-        (not (backend.compiler-backend-string-contains? asm "    syscall\n"))
+        (asm-lacks? asm "    syscall\n")
         (and
           (=
             (backend.compiler-backend-string-count asm "    call WriteFile\n")
             2)
-          (not (backend.compiler-backend-string-contains? asm "    ud2\n"))))
-      (backend.compiler-backend-string-contains?
+          (asm-lacks? asm "    ud2\n")))
+      (asm-has?
         asm
-        ".L_tl_alloc_win_commit_to:\n")
-      (backend.compiler-backend-string-contains? asm "    movq $0x2000, %r8\n")
-      (backend.compiler-backend-string-contains? asm "    movq $0x1000, %r8\n")
-      (backend.compiler-backend-string-contains? asm "    movq $0x4000, %r8\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "tl_arena_poison_enable:\n    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
-      (backend.compiler-backend-string-contains? asm "    cmpq 64(%r8), %r10\n")
-      (backend.compiler-backend-string-contains? asm "    movq %gs:0x28, %r8\n")
-      (not (backend.compiler-backend-string-contains? asm "    call _write\n"))
-      (not (backend.compiler-backend-string-contains? asm "SystemFunction036")))))
+        ".L_tl_alloc_win_commit_to:\n"
+        "    movq $0x2000, %r8\n"
+        "    movq $0x1000, %r8\n"
+        "    movq $0x4000, %r8\n"
+        "tl_arena_poison_enable:\n    movq $1, .L_tl_arena_poison_enabled(%rip)\n"
+        "    cmpq 64(%r8), %r10\n"
+        "    movq %gs:0x28, %r8\n")
+      (asm-lacks? asm "    call _write\n" "SystemFunction036"))))
 
 (define (compiler-backend-runtime-windows-allocation-provenance-ok?) : bool
   (let
@@ -25313,34 +23607,31 @@ g:
         (backend.CompilerBackendTarget.Linux))]
     (and
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_arena_make_win_reserve_os_fail:\n    call GetLastError\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_arena_make_win_initial_commit_os_fail:\n    call GetLastError\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_arena_make_atomic_win_reserve_os_fail:\n    call GetLastError\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_arena_make_atomic_win_initial_commit_os_fail:\n    call GetLastError\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_alloc_atomic_reserve_os_fail:\n    call GetLastError\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_alloc_atomic_initial_commit_os_fail:\n    call GetLastError\n")
-        (and
-          (backend.compiler-backend-string-contains?
-            windows
-            ".L_tl_alloc_reserve_os_fail:\n    call GetLastError\n")
-          (backend.compiler-backend-string-contains?
-            windows
-            ".L_tl_alloc_initial_commit_os_fail:\n    call GetLastError\n")))
+        (asm-has?
+          windows
+          ".L_tl_alloc_reserve_os_fail:\n    call GetLastError\n"
+          ".L_tl_alloc_initial_commit_os_fail:\n    call GetLastError\n"))
       (backend.backend-and4
         (and
           (=
@@ -25353,21 +23644,18 @@ g:
               windows
               "    call VirtualFree\n    movq -48(%rbp), %rax\n    movq -40(%rbp), %r8\n    movq %rax, 40(%rsp)\n")
             2)
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             windows
             ".L_tl_arena_make_win_initial_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n    movq %rbx, %rcx\n    xorq %rdx, %rdx\n    movq $0x8000, %r8\n    call VirtualFree\n    movq $0, 32(%rsp)\n    xorq %rcx, %rcx\n    movq $1, %rdx\n    movq $0x400000, %r8\n    movq %rsi, %r9\n    call tl_windows_allocation_abort\n"))
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           windows
           "    movq $2, %rdx\n    call tl_windows_allocation_abort\n")
         (and
-          (not (backend.compiler-backend-string-contains? windows "    ud2\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              linux
-              "tl_windows_allocation_abort")))))))
+          (asm-lacks? windows "    ud2\n")
+          (asm-lacks? linux "tl_windows_allocation_abort"))))))
 
 (define (compiler-backend-runtime-page-call-inventory-ok?) : bool
   (and
@@ -25381,20 +23669,13 @@ g:
       (compiler-backend-test-runtime-functions-for-target
         (backend.CompilerBackendTarget.Linux))]
     (and
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 64(%rax), %r8\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n")
-      (backend.compiler-backend-string-contains?
-        asm
+        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 64(%rax), %r8\n"
+        "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, %fs:tl_current_arena@tpoff\n"))
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? asm "    movq %r8, %fs:tl_current_arena@tpoff\n")
+      (asm-has?
         asm
         "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
 
@@ -25404,20 +23685,13 @@ g:
       (compiler-backend-test-runtime-functions-for-target
         (backend.CompilerBackendTarget.Windows))]
     (and
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %r8, %gs:0x28\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n")
-      (backend.compiler-backend-string-contains?
-        asm
+        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %r8, %gs:0x28\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n"
+        "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r13, %gs:0x28\n"))
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? asm "    movq %r13, %gs:0x28\n")
+      (asm-has?
         asm
         "    movq 56(%r12), %r14\n    testq %r14, %r14\n    jnz .L_tl_region_reset_win_all_head_ready\n    movq %r12, %r14\n.L_tl_region_reset_win_all_head_ready:\n.L_tl_region_reset_win_all_retired_ready:\n    movq 32(%r12), %r12\n"))))
 
@@ -25426,32 +23700,22 @@ g:
     [asm : String
       (compiler-backend-test-runtime-functions-for-target
         (backend.CompilerBackendTarget.Linux))]
-    (and
-      (backend.compiler-backend-string-contains?
-        asm
-        "tl_arena_make_small:\n    movq $0x1000000, %rsi\n.L_tl_arena_make_sized:\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq $0, 48(%rax)\n    movq %rax, 56(%rax)\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq %rax, %rcx\n    addq %rsi, %rcx\n    movq %rcx, 24(%rax)\n"))))
+    (asm-has?
+      asm
+      "tl_arena_make_small:\n    movq $0x1000000, %rsi\n.L_tl_arena_make_sized:\n"
+      "    movq $0, 48(%rax)\n    movq %rax, 56(%rax)\n"
+      "    movq %rax, %rcx\n    addq %rsi, %rcx\n    movq %rcx, 24(%rax)\n")))
 
 (define (compiler-backend-runtime-small-arena-windows-ok?) : bool
   (let
     [asm : String
       (compiler-backend-test-runtime-functions-for-target
         (backend.CompilerBackendTarget.Windows))]
-    (and
-      (backend.compiler-backend-string-contains?
-        asm
-        "tl_arena_make_small:\n    push %rbp\n    mov %rsp, %rbp\n    push %rbx\n    push %rsi\n    sub $48, %rsp\n    movq $0x1000000, %rsi\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq %rsi, 40(%rsp)\n    xorq %rcx, %rcx\n    movq %rsi, %rdx\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    movq %rbx, %rcx\n    addq 40(%rsp), %rcx\n    movq %rcx, 24(%rbx)\n"))))
+    (asm-has?
+      asm
+      "tl_arena_make_small:\n    push %rbp\n    mov %rsp, %rbp\n    push %rbx\n    push %rsi\n    sub $48, %rsp\n    movq $0x1000000, %rsi\n"
+      "    movq %rsi, 40(%rsp)\n    xorq %rcx, %rcx\n    movq %rsi, %rdx\n"
+      "    movq %rbx, %rcx\n    addq 40(%rsp), %rcx\n    movq %rcx, 24(%rbx)\n")))
 
 (define (compiler-backend-runtime-small-arena-ok?) : bool
   (and
@@ -25508,307 +23772,232 @@ g:
 
 (define (compiler-backend-scalar-load-scratch-ok?) : bool
   (and
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 1) (ast.AstType.U64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          4
-          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-        (regalloc.compiler-reg-assignment-table-empty))
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10), %r12\n")
-          (not (backend.compiler-backend-string-contains? asm "%rax")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 1) (ast.AstType.U64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignment-table-empty)
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, -40(%rbp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%rax")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          2
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 1)
-          (ast.AstType.U64))
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Load
-            3
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.U64))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignment-table-empty)
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%r10), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, -32(%rbp)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 8(%r10), %rax\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          3
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 2)
-          (ast.AstType.U64))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
           (ir.CompilerIrInstr.Load
             4
-            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 1)
             (ast.AstType.U64))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignment-table-empty)
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10,%r8,8), %r9\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r9, -40(%rbp)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq (%r10,%r8,8), %rax\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            4
+            (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+          (regalloc.compiler-reg-assignment-table-empty))
+        5)
+      (has "    movq (%r10), %r12\n")
+      (lacks "%rax"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Load
+            4
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.U64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignment-table-empty)
+        5)
+      (has "    movq (%r10), %r8\n" "    movq %r8, -40(%rbp)\n")
+      (lacks "%rax"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Gep
+            2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 1)
+            (ast.AstType.U64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              3
+              (ir.CompilerIrValue.Var 2)
+              (ast.AstType.U64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignment-table-empty)
+        4)
+      (has "    movq 8(%r10), %r8\n" "    movq %r8, -32(%rbp)\n")
+      (lacks "    movq 8(%r10), %rax\n"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Gep
+            3
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.U64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              4
+              (ir.CompilerIrValue.Var 3)
+              (ast.AstType.U64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignment-table-empty)
+        5)
+      (has "    movq (%r10,%r8,8), %r9\n" "    movq %r9, -40(%rbp)\n")
+      (lacks "    movq (%r10,%r8,8), %rax\n"))))
 
 (define (compiler-backend-float-load-scratch-ok?) : bool
   (and
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 1) (ast.AstType.F64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          4
-          (regalloc.CompilerRegLocation.Register
-            (cabi.compiler-abi-xmm-register-id 3)))
-        (regalloc.compiler-reg-assignment-table-empty))
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd (%r10), %xmm3\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 4 (ir.CompilerIrValue.Var 1) (ast.AstType.F64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignment-table-empty)
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd (%r10), %xmm2\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -40(%rbp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
-
-(define (compiler-backend-gep-float-load-scratch-ok?) : bool
-  (and
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          2
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 1)
-          (ast.AstType.U64))
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Load
-            3
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.F64))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          3
-          (regalloc.CompilerRegLocation.Register
-            (cabi.compiler-abi-xmm-register-id 3)))
-        (regalloc.compiler-reg-assignment-table-empty))
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd 8(%r10), %xmm3\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          2
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 1)
-          (ast.AstType.U64))
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Load
-            3
-            (ir.CompilerIrValue.Var 2)
-            (ast.AstType.F64))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignment-table-empty)
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd 8(%r10), %xmm2\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -32(%rbp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          3
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 2)
-          (ast.AstType.U64))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
           (ir.CompilerIrInstr.Load
             4
-            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 1)
             (ast.AstType.F64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            4
+            (regalloc.CompilerRegLocation.Register
+              (cabi.compiler-abi-xmm-register-id 3)))
+          (regalloc.compiler-reg-assignment-table-empty))
+        5)
+      (has "    movsd (%r10), %xmm3\n")
+      (lacks "%xmm0"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Load
+            4
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.F64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignment-table-empty)
+        5)
+      (has "    movsd (%r10), %xmm2\n" "    movsd %xmm2, -40(%rbp)\n")
+      (lacks "%xmm0"))))
+
+(define (compiler-backend-gep-float-load-scratch-ok?) : bool
+  (and
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Gep
+            2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 1)
+            (ast.AstType.U64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              3
+              (ir.CompilerIrValue.Var 2)
+              (ast.AstType.F64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            3
+            (regalloc.CompilerRegLocation.Register
+              (cabi.compiler-abi-xmm-register-id 3)))
+          (regalloc.compiler-reg-assignment-table-empty))
+        4)
+      (has "    movsd 8(%r10), %xmm3\n")
+      (lacks "%xmm0"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Gep
+            2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 1)
+            (ast.AstType.U64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              3
+              (ir.CompilerIrValue.Var 2)
+              (ast.AstType.F64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignment-table-empty)
+        4)
+      (has "    movsd 8(%r10), %xmm2\n" "    movsd %xmm2, -32(%rbp)\n")
+      (lacks "%xmm0"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Gep
+            3
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.U64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              4
+              (ir.CompilerIrValue.Var 3)
+              (ast.AstType.F64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            4
+            (regalloc.CompilerRegLocation.Register
+              (cabi.compiler-abi-xmm-register-id 3)))
+          (regalloc.compiler-reg-assignment-table-empty))
+        5)
+      (has "    movsd (%r10,%r8,8), %xmm3\n")
+      (lacks "%xmm0"))))
+
+(define (compiler-backend-addr-of-forwarding-shape-ok?) : bool
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.AddrOf 2 1)
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 2)
+            (ir.CompilerIrValue.I64 7)
+            (ast.AstType.I64))
           (ir.compiler-ir-instr-seq-empty)))
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          4
-          (regalloc.CompilerRegLocation.Register
-            (cabi.compiler-abi-xmm-register-id 3)))
+          2
+          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
         (regalloc.compiler-reg-assignment-table-empty))
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd (%r10,%r8,8), %xmm3\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
-
-(define (compiler-backend-addr-of-forwarding-shape-ok?) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.AddrOf 2 1)
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.StorePtr
-          (ir.CompilerIrValue.Var 2)
-          (ir.CompilerIrValue.I64 7)
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty)))
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        2
-        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-      (regalloc.compiler-reg-assignment-table-empty))
-    4)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq -16(%rbp), %r10\n")
-        (backend.compiler-backend-string-contains? asm "    movq $7, (%r10)\n")
-        (not (backend.compiler-backend-string-contains? asm "%r12"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -24(%rbp)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -24(%rbp), %r10\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+      4)
+    (has "    leaq -16(%rbp), %r10\n" "    movq $7, (%r10)\n")
+    (lacks "%r12" "    movq %rax, -24(%rbp)\n" "    movq -24(%rbp), %r10\n")))
 
 (define (compiler-backend-addr-of-forwarding-typed-load-shape-ok?) : bool
   (and
     ;; The forwarded AddrOf has one use, but its typed-copy destination has two.
     ;; The defining AddrOf is suppressed, so the Mov must materialize the local
     ;; address instead of reading the uninitialized allocator home for var 2.
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.AddrOf 2 1)
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Mov
-            3
-            (ir.CompilerIrValue.Var 2)
-            (ast.ast-ty-mut-ptr (ast.AstType.I32)))
+          (ir.CompilerIrInstr.AddrOf 2 1)
           (compiler-backend-test-instr-seq-prepend
-            (ir.CompilerIrInstr.StorePtr
-              (ir.CompilerIrValue.Var 3)
-              (ir.CompilerIrValue.I64 7)
-              (ast.AstType.I32))
+            (ir.CompilerIrInstr.Mov
+              3
+              (ir.CompilerIrValue.Var 2)
+              (ast.ast-ty-mut-ptr (ast.AstType.I32)))
             (compiler-backend-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Load
-                4
+              (ir.CompilerIrInstr.StorePtr
                 (ir.CompilerIrValue.Var 3)
+                (ir.CompilerIrValue.I64 7)
                 (ast.AstType.I32))
-              (ir.compiler-ir-instr-seq-empty)))))
-      (regalloc.compiler-reg-assignment-table-empty)
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq -16(%rbp), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, -32(%rbp)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -24(%rbp), %r8\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])
+              (compiler-backend-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Load
+                  4
+                  (ir.CompilerIrValue.Var 3)
+                  (ast.AstType.I32))
+                (ir.compiler-ir-instr-seq-empty)))))
+        (regalloc.compiler-reg-assignment-table-empty)
+        5)
+      (has "    leaq -16(%rbp), %r8\n" "    movq %r8, -32(%rbp)\n")
+      (lacks "    movq -24(%rbp), %r8\n"))
     ;; The implicit typed return loader must honor the same forwarding map.
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.AddrOf 2 1)
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignment-table-empty)
-      3)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq -16(%rbp), %rax\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -24(%rbp), %rax\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+          (ir.CompilerIrInstr.AddrOf 2 1)
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Return
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignment-table-empty)
+        3)
+      (has "    leaq -16(%rbp), %rax\n")
+      (lacks "    movq -24(%rbp), %rax\n"))))
 
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let
@@ -25829,22 +24018,15 @@ g:
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-addr-of-spill-scratch-shape-ok?) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.AddrOf 2 1)
-      (ir.compiler-ir-instr-seq-empty))
-    (regalloc.compiler-reg-assignment-table-empty)
-    4)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq -16(%rbp), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -24(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.AddrOf 2 1)
+        (ir.compiler-ir-instr-seq-empty))
+      (regalloc.compiler-reg-assignment-table-empty)
+      4)
+    (has "    leaq -16(%rbp), %r8\n" "    movq %r8, -24(%rbp)\n")
+    (lacks "%rax")))
 
 (define (compiler-backend-gep-copy-bytes-const-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
@@ -25864,77 +24046,42 @@ g:
     5)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rbp), %r10\n")
+        (asm-has? asm "    movq -8(%rbp), %r10\n")
         ;; GAP2a folds the const gep displacement (+8) directly into every
         ;; CopyBytes chunk DST address, so explicit address staging disappears.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movups %xmm2, 8(%r10)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -16(%rbp), %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movups (%r9), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 16(%r9), %r8\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm15"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -24(%rbp)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -24(%rbp), %r10\n")))]
+        (asm-has? asm "    movups %xmm2, 8(%r10)\n")
+        (asm-has? asm "    movq -16(%rbp), %r9\n")
+        (asm-has? asm "    movups (%r9), %xmm2\n")
+        (asm-has? asm "    movq 16(%r9), %r8\n")
+        (asm-lacks? asm "%xmm15")
+        (asm-lacks? asm "    movq %rax, -24(%rbp)\n")
+        (asm-lacks? asm "    movq -24(%rbp), %r10\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-gep-copy-bytes-index-shape-ok?) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Gep
-        3
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.Var 2)
-        (ast.AstType.U64))
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
       (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.CopyBytes
-          (ir.CompilerIrValue.Var 3)
-          (ir.CompilerIrValue.Var 1)
-          16)
-        (ir.compiler-ir-instr-seq-empty)))
-    (regalloc.compiler-reg-assignment-table-empty)
-    6)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rbp), %r10\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -24(%rbp), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq (%r10,%r8,8), %r10\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -16(%rbp), %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movups (%r9), %xmm2\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm15"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -32(%rbp)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -32(%rbp), %r10\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+        (ir.CompilerIrInstr.Gep
+          3
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.Var 2)
+          (ast.AstType.U64))
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.CopyBytes
+            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 1)
+            16)
+          (ir.compiler-ir-instr-seq-empty)))
+      (regalloc.compiler-reg-assignment-table-empty)
+      6)
+    (has
+      "    movq -8(%rbp), %r10\n"
+      "    movq -24(%rbp), %r8\n"
+      "    leaq (%r10,%r8,8), %r10\n"
+      "    movq -16(%rbp), %r9\n"
+      "    movups (%r9), %xmm2\n")
+    (lacks "%xmm15" "    movq %rax, -32(%rbp)\n" "    movq -32(%rbp), %r10\n")))
 
 (define (compiler-backend-win64-gep-offset-rax-home-ok?) : bool
   (let
@@ -25972,13 +24119,8 @@ g:
           ;; into the shared index/result home %rax before the leaq consumes the
           ;; index, so no clobbering `movq %rsi, %rax` is emitted.
           (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    leaq (%rsi,%rax,8), %rax\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq %rsi, %rax\n")))]
+            (asm-has? asm "    leaq (%rsi,%rax,8), %rax\n")
+            (asm-lacks? asm "    movq %rsi, %rax\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     ok))
 
@@ -26013,28 +24155,17 @@ g:
             asm
             "    movq -8(%rbp), %r10\n")
           1)
-        (backend.compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
-          "    movq %r8, -32(%rbp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 8(%r10), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
+          "    movq (%r10), %r8\n"
+          "    movq %r8, -32(%rbp)\n"
+          "    movq 8(%r10), %r8\n"
           "    movq %r8, -48(%rbp)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10), %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%r10), %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -40(%rbp), %r10\n")))]
+        (asm-lacks?
+          asm
+          "    movq (%r10), %rax\n"
+          "    movq 8(%r10), %rax\n"
+          "    movq -40(%rbp), %r10\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-gep-float-load-r10-reuse-shape-ok?) : bool
@@ -26068,111 +24199,56 @@ g:
             asm
             "    movq -8(%rbp), %r10\n")
           1)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd (%r10), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd 8(%r10), %xmm2\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -40(%rbp), %r10\n")))]
+        (asm-has? asm "    movsd (%r10), %xmm2\n" "    movsd 8(%r10), %xmm2\n")
+        (asm-lacks? asm "%xmm0" "    movq -40(%rbp), %r10\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Gep
-        2
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 0)
-        (ast.AstType.U64))
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
       (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 3 (ir.CompilerIrValue.Var 2) (ast.AstType.U64))
+        (ir.CompilerIrInstr.Gep
+          2
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.U64))
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Gep
-            4
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 1)
+          (ir.CompilerIrInstr.Load
+            3
+            (ir.CompilerIrValue.Var 2)
             (ast.AstType.U64))
           (compiler-backend-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Load
-              5
-              (ir.CompilerIrValue.Var 4)
+            (ir.CompilerIrInstr.Gep
+              4
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.I64 1)
               (ast.AstType.U64))
             (compiler-backend-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BinOp
-                7
-                (ir.CompilerIrBinOp.Eq)
-                (ir.CompilerIrValue.Var 5)
-                (ir.CompilerIrValue.Var 6)
-                (ast.AstType.I64))
+              (ir.CompilerIrInstr.Load
+                5
+                (ir.CompilerIrValue.Var 4)
+                (ast.AstType.U64))
               (compiler-backend-test-instr-seq-prepend
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Var 7)
-                  (ir.compiler-ir-label "eq")
-                  (ir.compiler-ir-label "ne"))
-                (ir.compiler-ir-instr-seq-empty)))))))
-    (regalloc.compiler-reg-assignment-table-empty)
-    9)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq %r8, 8(%r10)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%r10), %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -48(%rbp)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+                (ir.CompilerIrInstr.BinOp
+                  7
+                  (ir.CompilerIrBinOp.Eq)
+                  (ir.CompilerIrValue.Var 5)
+                  (ir.CompilerIrValue.Var 6)
+                  (ast.AstType.I64))
+                (compiler-backend-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Branch
+                    (ir.CompilerIrValue.Var 7)
+                    (ir.compiler-ir-label "eq")
+                    (ir.compiler-ir-label "ne"))
+                  (ir.compiler-ir-instr-seq-empty)))))))
+      (regalloc.compiler-reg-assignment-table-empty)
+      9)
+    (has "    cmpq %r8, 8(%r10)\n")
+    (lacks "    movq 8(%r10), %rax\n" "    movq %rax, -48(%rbp)\n")))
 
 (define (compiler-backend-load-load-pointer-chase-shape-ok?) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Load
-        1
-        (ir.CompilerIrValue.Var 0)
-        (ast.ast-ty-mut-ptr (ast.AstType.U8)))
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 2 (ir.CompilerIrValue.Var 1) (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty)))
-    (regalloc.compiler-reg-assignment-table-empty)
-    4)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rbp), %r10\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r10), %r10\n")
-        (backend.compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -24(%rbp)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10), %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -16(%rbp)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -16(%rbp), %r10\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
-
-(define (compiler-backend-load-load-float-pointer-chase-shape-ok?) : bool
-  (and
-    (match (compiler-backend-emit-test-instrs
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
       (compiler-backend-test-instr-seq-prepend
         (ir.CompilerIrInstr.Load
           1
@@ -26182,46 +24258,61 @@ g:
           (ir.CompilerIrInstr.Load
             2
             (ir.CompilerIrValue.Var 1)
-            (ast.AstType.F64))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          2
-          (regalloc.CompilerRegLocation.Register
-            (cabi.compiler-abi-xmm-register-id 3)))
-        (regalloc.compiler-reg-assignment-table-empty))
-      4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd (%r10), %xmm3\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load
-          1
-          (ir.CompilerIrValue.Var 0)
-          (ast.ast-ty-mut-ptr (ast.AstType.U8)))
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Load
-            2
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.F64))
+            (ast.AstType.I64))
           (ir.compiler-ir-instr-seq-empty)))
       (regalloc.compiler-reg-assignment-table-empty)
       4)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd (%r10), %xmm2\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -24(%rbp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (has
+      "    movq -8(%rbp), %r10\n"
+      "    movq (%r10), %r10\n"
+      "    movq (%r10), %r8\n"
+      "    movq %r8, -24(%rbp)\n")
+    (lacks
+      "    movq (%r10), %rax\n"
+      "    movq %rax, -16(%rbp)\n"
+      "    movq -16(%rbp), %r10\n")))
+
+(define (compiler-backend-load-load-float-pointer-chase-shape-ok?) : bool
+  (and
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Load
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.ast-ty-mut-ptr (ast.AstType.U8)))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              2
+              (ir.CompilerIrValue.Var 1)
+              (ast.AstType.F64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            2
+            (regalloc.CompilerRegLocation.Register
+              (cabi.compiler-abi-xmm-register-id 3)))
+          (regalloc.compiler-reg-assignment-table-empty))
+        4)
+      (has "    movsd (%r10), %xmm3\n")
+      (lacks "%xmm0"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Load
+            1
+            (ir.CompilerIrValue.Var 0)
+            (ast.ast-ty-mut-ptr (ast.AstType.U8)))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Load
+              2
+              (ir.CompilerIrValue.Var 1)
+              (ast.AstType.F64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignment-table-empty)
+        4)
+      (has "    movsd (%r10), %xmm2\n" "    movsd %xmm2, -24(%rbp)\n")
+      (lacks "%xmm0"))))
 
 (define (compiler-backend-store-ptr-pair-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
@@ -26251,16 +24342,11 @@ g:
             asm
             "    movq -8(%rbp), %r10\n")
           1)
-        (backend.compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
-        (backend.compiler-backend-string-contains? asm "    movq $2, 8(%r10)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, -24(%rbp)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -24(%rbp), %r10\n")))]
+        (asm-has? asm "    movq $1, (%r10)\n" "    movq $2, 8(%r10)\n")
+        (asm-lacks?
+          asm
+          "    movq %rax, -24(%rbp)\n"
+          "    movq -24(%rbp), %r10\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; StorePtr consumes the same fused Gep address forms as Load: zero and
@@ -26293,22 +24379,20 @@ g:
   [offset : ir.CompilerIrValue]
   [elem-ty : ast.AstType]
   [expected : String]) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Gep 3 (ir.CompilerIrValue.Var 0) offset elem-ty)
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
       (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.StorePtr
-          (ir.CompilerIrValue.Var 3)
-          (ir.CompilerIrValue.Var 1)
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty)))
-    (compiler-backend-gep-store-fold-test-assignments)
-    5)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm expected)
-        (not (backend.compiler-backend-string-contains? asm "    leaq ")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+        (ir.CompilerIrInstr.Gep 3 (ir.CompilerIrValue.Var 0) offset elem-ty)
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-seq-empty)))
+      (compiler-backend-gep-store-fold-test-assignments)
+      5)
+    (has expected)
+    (lacks "    leaq ")))
 
 (define (compiler-backend-gep-store-fold-shapes-ok?) : bool
   (and
@@ -26324,135 +24408,95 @@ g:
       (ir.CompilerIrValue.Var 2)
       (ast.AstType.I64)
       "    movq %rax, (%rsi,%rdi,8)\n")
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          3
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.I64 8)
-          (ast.AstType.U8))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.StorePtr
-            (ir.CompilerIrValue.Var 3)
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Gep
+            3
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.I64 8)
+            (ast.AstType.U8))
           (compiler-backend-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              4
-              (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrInstr.StorePtr
               (ir.CompilerIrValue.Var 3)
-              (ir.CompilerIrValue.I64 1)
+              (ir.CompilerIrValue.Var 1)
               (ast.AstType.I64))
-            (ir.compiler-ir-instr-seq-empty))))
-      (compiler-backend-gep-store-fold-test-assignments)
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq 8(%rsi), %rcx\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, (%rcx)\n"))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.BinOp
+                4
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 3)
+                (ir.CompilerIrValue.I64 1)
+                (ast.AstType.I64))
+              (ir.compiler-ir-instr-seq-empty))))
+        (compiler-backend-gep-store-fold-test-assignments)
+        5)
+      (has "    leaq 8(%rsi), %rcx\n" "    movq %rax, (%rcx)\n"))))
 
 (define (compiler-backend-store-value-scratch-shape-ok?) : bool
   (and
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.StorePtr
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 1)
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          1
-          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
-        (regalloc.compiler-reg-assignment-table-empty))
-      3)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r12, (%r10)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r12, %rax\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.StorePtr
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 1)
-          (ast.AstType.I64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignment-table-empty)
-      3)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -16(%rbp), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, (%r10)\n")
-          (not (backend.compiler-backend-string-contains? asm "%rax")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.StorePtr
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 1)
-          (ast.AstType.F64))
-        (ir.compiler-ir-instr-seq-empty))
-      (regalloc.compiler-reg-assignment-table-empty)
-      3)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd -16(%rbp), %xmm2\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, (%r10)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-      [(backend.ResultCompilerBackend.Err _) false])
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          3
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 2)
-          (ast.AstType.U64))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
           (ir.CompilerIrInstr.StorePtr
-            (ir.CompilerIrValue.Var 3)
+            (ir.CompilerIrValue.Var 0)
             (ir.CompilerIrValue.Var 1)
             (ast.AstType.I64))
-          (ir.compiler-ir-instr-seq-empty)))
-      (regalloc.compiler-reg-assignment-table-empty)
-      5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %r10\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -24(%rbp), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -16(%rbp), %r9\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r9, (%r10,%r8,8)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -16(%rbp), %rax\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+          (regalloc.compiler-reg-assignment-table-empty))
+        3)
+      (has "    movq %r12, (%r10)\n")
+      (lacks "    movq %r12, %rax\n"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.I64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignment-table-empty)
+        3)
+      (has "    movq -16(%rbp), %r8\n" "    movq %r8, (%r10)\n")
+      (lacks "%rax"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.StorePtr
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.F64))
+          (ir.compiler-ir-instr-seq-empty))
+        (regalloc.compiler-reg-assignment-table-empty)
+        3)
+      (has "    movsd -16(%rbp), %xmm2\n" "    movsd %xmm2, (%r10)\n")
+      (lacks "%xmm0"))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Gep
+            3
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.U64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.StorePtr
+              (ir.CompilerIrValue.Var 3)
+              (ir.CompilerIrValue.Var 1)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-seq-empty)))
+        (regalloc.compiler-reg-assignment-table-empty)
+        5)
+      (has
+        "    movq -8(%rbp), %r10\n"
+        "    movq -24(%rbp), %r8\n"
+        "    movq -16(%rbp), %r9\n"
+        "    movq %r9, (%r10,%r8,8)\n")
+      (lacks "    movq -16(%rbp), %rax\n"))))
 
 (define (compiler-backend-gep-store-index-home-preserved-ok?) : bool
   (let
@@ -26486,16 +24530,8 @@ g:
         ;; store indexed by %r9 itself, no staging copy out of %r9, and the
         ;; base never reloaded over the index home.
         (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %r")
-          (backend.compiler-backend-string-contains? asm ",%r9,8)\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    movq %r9, %r"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r9\n")))]
+          (asm-has? asm "    movq -8(%rbp), %r" ",%r9,8)\n")
+          (asm-lacks? asm "    movq %r9, %r" "    movq -8(%rbp), %r9\n"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-store-address-source-home-preserved-ok?) : bool
@@ -26547,42 +24583,32 @@ g:
     ;; The pair case leaves var 1 unassigned. The modeled plan gives the base and
     ;; spilled source independent homes, while var 2's %r8 home stays untouched.
     [pair-ok : bool
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.StorePtr
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 1)
-            (ast.AstType.I64))
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
           (compiler-backend-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Gep
-              3
+            (ir.CompilerIrInstr.StorePtr
               (ir.CompilerIrValue.Var 0)
-              (ir.CompilerIrValue.I64 1)
-              (ast.AstType.U64))
+              (ir.CompilerIrValue.Var 1)
+              (ast.AstType.I64))
             (compiler-backend-test-instr-seq-prepend
-              (ir.CompilerIrInstr.StorePtr
-                (ir.CompilerIrValue.Var 3)
-                (ir.CompilerIrValue.Var 2)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-seq-empty))))
-        pair-assignments
-        4)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r10\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -16(%rbp), ")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r8, 8(%r10)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq -8(%rbp), %r8\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+              (ir.CompilerIrInstr.Gep
+                3
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 1)
+                (ast.AstType.U64))
+              (compiler-backend-test-instr-seq-prepend
+                (ir.CompilerIrInstr.StorePtr
+                  (ir.CompilerIrValue.Var 3)
+                  (ir.CompilerIrValue.Var 2)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-seq-empty))))
+          pair-assignments
+          4)
+        (has
+          "    movq -8(%rbp), %r10\n"
+          "    movq -16(%rbp), "
+          "    movq %r8, 8(%r10)\n")
+        (lacks "    movq -8(%rbp), %r8\n"))]
     (backend.backend-and4 plain-ok gep-ok pair-ok true)))
 
 (define (compiler-backend-store-home-base-shape-ok?) : bool
@@ -26614,9 +24640,7 @@ g:
         index
         index.backend-state)
         [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (string.eq asm "    movq $7, (%r12)\n")
-            (not (backend.compiler-backend-string-contains? asm "%r10")))]
+          (and (string.eq asm "    movq $7, (%r12)\n") (asm-lacks? asm "%r10"))]
         [(backend.ResultCompilerBackend.Err _) false])
       (match (backend.compiler-backend-emit-store-to-gep
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -26630,9 +24654,7 @@ g:
         0
         index.backend-state)
         [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (string.eq asm "    movq $9, 8(%r12)\n")
-            (not (backend.compiler-backend-string-contains? asm "%r10")))]
+          (and (string.eq asm "    movq $9, 8(%r12)\n") (asm-lacks? asm "%r10"))]
         [(backend.ResultCompilerBackend.Err _) false])
       (match (backend.compiler-backend-emit-store-ptr
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -26645,10 +24667,7 @@ g:
         [(backend.ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $11, (%r11)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq %r11, %r10\n")))]
+            (asm-lacks? asm "    movq %r11, %r10\n"))]
         [(backend.ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-gep-load-store-order-shape-ok?) : bool
@@ -26698,13 +24717,13 @@ g:
           (>= load-pos 0)
           (>= dst-base-pos 0)
           (< dst-base-pos load-pos)
-          (backend.compiler-backend-string-contains? asm "    movb ")
+          (asm-has? asm "    movb ")
           (< bad-rcx-pos 0)
           (< bad-r8-pos 0)
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
+              (asm-has? asm needle)))
           true))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -26750,21 +24769,12 @@ g:
       6)
       [(backend.ResultCompilerBackend.Ok asm)
         (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movzbq (%r12,%r8,1), %rcx\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r8, %r9\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r12, %r10\n"))
+          (asm-has? asm "    movzbq (%r12,%r8,1), %rcx\n")
+          (asm-lacks? asm "    movq %r8, %r9\n" "    movq %r12, %r10\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle))))]
+              (asm-has? asm needle))))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-gep-load-live-through-home-asm) : backend.ResultCompilerBackend
@@ -26888,28 +24898,14 @@ g:
     result))
 
 (define (compiler-backend-gep-load-live-through-home-preserved-ok?) : bool
-  (match (compiler-backend-gep-load-live-through-home-asm)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movl $5, %r9d\n")
-        (backend.compiler-backend-string-contains? asm "    movq %r9, (")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %r10\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 192(%r9), %rcx\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 192(%r10), %rcx\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-gep-load-live-through-home-asm)
+    (has "    movl $5, %r9d\n" "    movq %r9, (")
+    (lacks
+      "    movq -8(%rbp), %r9\n"
+      "    movq -8(%rbp), %r10\n"
+      "    movq 192(%r9), %rcx\n"
+      "    movq 192(%r10), %rcx\n")))
 
 (define (compiler-backend-gep-load-multi-emergency-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
@@ -27213,12 +25209,12 @@ g:
   (match (compiler-backend-gep-load-multi-emergency-asm)
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains? asm "    movq %r9, %xmm4\n")
-        (backend.compiler-backend-string-contains? asm "    movq %xmm4, %r9\n")
-        (backend.compiler-backend-string-contains? asm "    movq %rcx, %xmm5\n")
-        (backend.compiler-backend-string-contains? asm "    movq %xmm5, %rcx\n")
-        (not (backend.compiler-backend-string-contains? asm "-512(%rbp)"))
-        (not (backend.compiler-backend-string-contains? asm "-576(%rbp)"))
+        (asm-has? asm "    movq %r9, %xmm4\n")
+        (asm-has? asm "    movq %xmm4, %r9\n")
+        (asm-has? asm "    movq %rcx, %xmm5\n")
+        (asm-has? asm "    movq %xmm5, %rcx\n")
+        (asm-lacks? asm "-512(%rbp)")
+        (asm-lacks? asm "-576(%rbp)")
         true
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -27236,26 +25232,16 @@ g:
       (backend.backend-and8
         ;; The base is materialised into a SCAVENGED register (%r9 here --
         ;; the preferred %r10 is occupied at this point), never a fixed one.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -8(%rbp), %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 192(%r9), %rcx\n")
+        (asm-has? asm "    movq -8(%rbp), %r9\n")
+        (asm-has? asm "    movq 192(%r9), %rcx\n")
         ;; Both borrowed registers are parked in free XMM registers ...
-        (backend.compiler-backend-string-contains? asm "    movq %r9, %xmm4\n")
-        (backend.compiler-backend-string-contains? asm "    movq %xmm4, %r9\n")
-        (backend.compiler-backend-string-contains? asm "    movq %rcx, %xmm5\n")
-        (backend.compiler-backend-string-contains? asm "    movq %xmm5, %rcx\n")
+        (asm-has? asm "    movq %r9, %xmm4\n")
+        (asm-has? asm "    movq %xmm4, %r9\n")
+        (asm-has? asm "    movq %rcx, %xmm5\n")
+        (asm-has? asm "    movq %xmm5, %rcx\n")
         ;; ... and neither one is stored into the emergency frame region.
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r9, -512(%rbp)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, -576(%rbp)\n")))]
+        (asm-lacks? asm "    movq %r9, -512(%rbp)\n")
+        (asm-lacks? asm "    movq %rcx, -576(%rbp)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
@@ -27282,27 +25268,15 @@ g:
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (backend.backend-and4
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movups (%r13), %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movups %xmm2, (%r12)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 16(%r13), %r8\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r8, 16(%r12)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r12, %r10\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r13, %r11\n"))
-          (not (backend.compiler-backend-string-contains? asm "%xmm15")))]
+            (asm-has? asm "    movups (%r13), %xmm2\n")
+            (asm-has? asm "    movups %xmm2, (%r12)\n")
+            (asm-has? asm "    movq 16(%r13), %r8\n")
+            (asm-has? asm "    movq %r8, 16(%r12)\n"))
+          (asm-lacks?
+            asm
+            "    movq %r12, %r10\n"
+            "    movq %r13, %r11\n"
+            "%xmm15"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-copy-bytes-live-through-asm) : backend.ResultCompilerBackend
@@ -27416,22 +25390,12 @@ g:
         ;; needed. P7b makes the store that reads it ONE register-to-slot movq
         ;; in either cfg -- there is no scratch left to stage it through, so
         ;; neither staging spelling may appear.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r9, -32(%rbp)\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    movq %r9, %rax\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    movq %r9, %r8\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -16(%rbp), %r9\n"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm15")))]
+        (asm-has? asm "    movq %r9, -32(%rbp)\n")
+        (asm-lacks? asm "    movq %r9, %rax\n")
+        (asm-lacks? asm "    movq %r9, %r8\n")
+        (asm-lacks? asm "    movq -8(%rbp), %r9\n")
+        (asm-lacks? asm "    movq -16(%rbp), %r9\n")
+        (asm-lacks? asm "%xmm15"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-copy-bytes-run-protect-asm) : backend.ResultCompilerBackend
@@ -27554,44 +25518,19 @@ g:
     result))
 
 (define (compiler-backend-copy-bytes-run-protect-shape-ok?) : bool
-  (match (compiler-backend-copy-bytes-run-protect-asm)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "%r9")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -16(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -24(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -32(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -40(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -48(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -56(%rbp), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -64(%rbp), %r9\n"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm15")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-copy-bytes-run-protect-asm)
+    (has "%r9")
+    (lacks
+      "    movq -8(%rbp), %r9\n"
+      "    movq -16(%rbp), %r9\n"
+      "    movq -24(%rbp), %r9\n"
+      "    movq -32(%rbp), %r9\n"
+      "    movq -40(%rbp), %r9\n"
+      "    movq -48(%rbp), %r9\n"
+      "    movq -56(%rbp), %r9\n"
+      "    movq -64(%rbp), %r9\n"
+      "%xmm15")))
 
 (define (compiler-backend-widening-cast-direct-home-shape-ok?) : bool
   (let
@@ -27659,67 +25598,42 @@ g:
           (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
         (regalloc.compiler-reg-assignment-table-empty))]
     (and
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ci.intern "g")
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.I32))
-          (ir.compiler-ir-instr-seq-empty))
-        assignments
-        2)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl %r12d, _tl_g(%rip)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq %r12, %rax\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq %rax, _tl_g(%rip)\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ci.intern "g")
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.I64))
-          (ir.compiler-ir-instr-seq-empty))
-        (regalloc.compiler-reg-assignment-table-empty)
-        2)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r8\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r8, _tl_g(%rip)\n")
-            (not (backend.compiler-backend-string-contains? asm "%rax")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Store
-            (ci.intern "g")
-            (ir.CompilerIrValue.Var 0)
-            (ast.AstType.F64))
-          (ir.compiler-ir-instr-seq-empty))
-        (regalloc.compiler-reg-assignment-table-empty)
-        2)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movsd -8(%rbp), %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movsd %xmm2, _tl_g(%rip)\n")
-            (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Store
+              (ci.intern "g")
+              (ir.CompilerIrValue.Var 0)
+              (ast.AstType.I32))
+            (ir.compiler-ir-instr-seq-empty))
+          assignments
+          2)
+        (has "    movl %r12d, _tl_g(%rip)\n")
+        (lacks "    movq %r12, %rax\n" "    movq %rax, _tl_g(%rip)\n"))
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Store
+              (ci.intern "g")
+              (ir.CompilerIrValue.Var 0)
+              (ast.AstType.I64))
+            (ir.compiler-ir-instr-seq-empty))
+          (regalloc.compiler-reg-assignment-table-empty)
+          2)
+        (has "    movq -8(%rbp), %r8\n" "    movq %r8, _tl_g(%rip)\n")
+        (lacks "%rax"))
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Store
+              (ci.intern "g")
+              (ir.CompilerIrValue.Var 0)
+              (ast.AstType.F64))
+            (ir.compiler-ir-instr-seq-empty))
+          (regalloc.compiler-reg-assignment-table-empty)
+          2)
+        (has "    movsd -8(%rbp), %xmm2\n" "    movsd %xmm2, _tl_g(%rip)\n")
+        (lacks "%xmm0")))))
 
 (define (compiler-backend-pack-direct-home-shape-ok?) : bool
   (let
@@ -27898,17 +25812,10 @@ g:
               (ir.CompilerIrValue.Var 3)
               (ast.AstType.I64))
             (ir.compiler-ir-instr-seq-empty))))]
-    (match (compiler-backend-emit-test-instrs instrs assignments 5)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq (%r13,%rax,1), %rax\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%rax), %rax\n")
-          (not (backend.compiler-backend-string-contains? asm "(%rbp)")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs instrs assignments 5)
+      (has "    leaq (%r13,%rax,1), %rax\n" "    movq 8(%rax), %rax\n")
+      (lacks "(%rbp)"))))
 
 ;; GAP8: `Gep; Load(single-use, 8-byte); BinOp Add x v` folds the load into
 ;; the ALU memory operand: `addq (base,idx,8), dst` with no separate movq.
@@ -27961,17 +25868,12 @@ g:
       7)
       [(backend.ResultCompilerBackend.Ok asm)
         (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addq (%r12,%r8,8), %r14\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq (%r12,%r8,8)"))
+          (asm-has? asm "    addq (%r12,%r8,8), %r14\n")
+          (asm-lacks? asm "    movq (%r12,%r8,8)")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle))))]
+              (asm-has? asm needle))))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 ;; GAP8-B: the mirrored operand order. A COMMUTATIVE op whose LEFT operand is
@@ -28036,31 +25938,21 @@ g:
       (and
         (let
           [needle (str_cat.str-cat "    " mnem "q (%r12,%r8,8), %r14\n")]
-          (backend.compiler-backend-string-contains? asm needle))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r12,%r8,8)"))
+          (asm-has? asm needle))
+        (asm-lacks? asm "    movq (%r12,%r8,8)")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Sub is NOT commutative: `MEM - x` is not `x - MEM`, so the mirrored order
 ;; keeps the load and the register-form subtract.
 (define (compiler-backend-gep-load-alu-commuted-rejects-sub-ok?) : bool
-  (match (compiler-backend-gep-load-alu-commuted-asm
-    (ir.CompilerIrBinOp.Sub)
-    true)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq (%r12,%r8,8)")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    subq (%r12,%r8,8), %r14\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-gep-load-alu-commuted-asm (ir.CompilerIrBinOp.Sub) true)
+    (has "    movq (%r12,%r8,8)")
+    (lacks "    subq (%r12,%r8,8), %r14\n")))
 
 (define (compiler-backend-gep-load-alu-commuted-shapes-ok?) : bool
   (and
@@ -28281,9 +26173,8 @@ g:
           backend-state)
           [(backend.ResultCompilerBackend.Ok asm)
             (and
-              (backend.compiler-backend-string-contains? asm want)
-              (not (backend.compiler-backend-string-contains? asm forbid-a))
-              (not (backend.compiler-backend-string-contains? asm forbid-b))
+              (asm-has? asm want)
+              (asm-lacks? asm forbid-a forbid-b)
               (not
                 (backend.compiler-backend-gep-fold-drift?
                   (backend.compiler-backend-state-function-state backend-state))))]
@@ -28310,17 +26201,15 @@ g:
       (if (backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
         backend-state)
         false
-        (match (compiler-backend-emit-test-instrs-target-with-backend-state
-          (compiler-backend-gep-fold-test-entry-instrs folded)
-          (compiler-backend-gep-fold-test-assignments)
-          8
-          (backend.CompilerBackendTarget.Linux)
-          backend-state)
-          [(backend.ResultCompilerBackend.Ok asm)
-            (and
-              (backend.compiler-backend-string-contains? asm "(%r12,")
-              (not (backend.compiler-backend-string-contains? asm "8(%r12,")))]
-          [(backend.ResultCompilerBackend.Err _) false]))]
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target-with-backend-state
+            (compiler-backend-gep-fold-test-entry-instrs folded)
+            (compiler-backend-gep-fold-test-assignments)
+            8
+            (backend.CompilerBackendTarget.Linux)
+            backend-state)
+          (has "(%r12,")
+          (lacks "8(%r12,")))]
     (begin
       (backend.compiler-backend-gep-fold-disable!
         (backend.compiler-backend-state-function-state backend-state))
@@ -28341,7 +26230,7 @@ g:
     (let
       [text
         (backend.compiler-backend-gep-index-base-asm-disp 24 "%rax" 32 "%rcx")]
-      (backend.compiler-backend-string-contains? text "    addq $24, %rax\n"))))
+      (asm-has? text "    addq $24, %rax\n"))))
 
 ;; Consuming an ordinal with the wrong shape poisons the function (the
 ;; emit-function gate turns this into a hard backend error).
@@ -28402,40 +26291,36 @@ g:
                   (regalloc.CompilerRegLocation.Register
                     cabi.compiler-reg-id-r14))
                 (regalloc.compiler-reg-assignment-table-empty))))))]
-    (match (compiler-backend-emit-test-instrs
-      (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Gep
-          2
-          (ir.CompilerIrValue.Var 0)
-          (ir.CompilerIrValue.Var 1)
-          (ast.AstType.U8))
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Load
-            3
-            (ir.CompilerIrValue.Var 2)
+          (ir.CompilerIrInstr.Gep
+            2
+            (ir.CompilerIrValue.Var 0)
+            (ir.CompilerIrValue.Var 1)
             (ast.AstType.U8))
           (compiler-backend-test-instr-seq-prepend
-            (ir.CompilerIrInstr.BinOp
-              5
-              (ir.CompilerIrBinOp.Add)
-              (ir.CompilerIrValue.Var 4)
-              (ir.CompilerIrValue.Var 3)
-              (ast.AstType.I64))
+            (ir.CompilerIrInstr.Load
+              3
+              (ir.CompilerIrValue.Var 2)
+              (ast.AstType.U8))
             (compiler-backend-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Mov
-                6
-                (ir.CompilerIrValue.Var 5)
+              (ir.CompilerIrInstr.BinOp
+                5
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 4)
+                (ir.CompilerIrValue.Var 3)
                 (ast.AstType.I64))
-              (ir.compiler-ir-instr-seq-empty)))))
-      assignments
-      7)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movzbq (%r12,%r8,1), %rcx\n")
-          (not (backend.compiler-backend-string-contains? asm "    addq (%r12")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+              (compiler-backend-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Mov
+                  6
+                  (ir.CompilerIrValue.Var 5)
+                  (ast.AstType.I64))
+                (ir.compiler-ir-instr-seq-empty)))))
+        assignments
+        7)
+      (has "    movzbq (%r12,%r8,1), %rcx\n")
+      (lacks "    addq (%r12"))))
 
 ;; M6: folding a single-use load into the comparing instruction's memory
 ;; operand. Shared homes for the fixtures below: base %r12, gep index %r8, the
@@ -28518,34 +26403,26 @@ g:
 ;; A zero-extending byte load whose literal is inside `0 .. 255` folds to a
 ;; BYTE compare: `movzbq (mem), %r ; cmpq $10, %r` becomes `cmpb $10, (mem)`.
 (define (compiler-backend-cmp-mem-byte-fold-shape-ok?) : bool
-  (match (compiler-backend-cmp-mem-narrow-asm
-    (ast.AstType.U8)
-    (ast.AstType.U8)
-    (ir.CompilerIrBinOp.Eq)
-    10)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpb $10, (%r12,%r8,1)\n")
-        (not (backend.compiler-backend-string-contains? asm "    movzbq ")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-narrow-asm
+      (ast.AstType.U8)
+      (ast.AstType.U8)
+      (ir.CompilerIrBinOp.Eq)
+      10)
+    (has "    cmpb $10, (%r12,%r8,1)\n")
+    (lacks "    movzbq ")))
 
 ;; The same at WORD width, and with a literal above the byte range so the width
 ;; is load-bearing rather than incidental.
 (define (compiler-backend-cmp-mem-word-fold-shape-ok?) : bool
-  (match (compiler-backend-cmp-mem-narrow-asm
-    (ast.AstType.U16)
-    (ast.AstType.U16)
-    (ir.CompilerIrBinOp.Eq)
-    300)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpw $300, (%r12,%r8,2)\n")
-        (not (backend.compiler-backend-string-contains? asm "    movzwq ")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-narrow-asm
+      (ast.AstType.U16)
+      (ast.AstType.U16)
+      (ir.CompilerIrBinOp.Eq)
+      300)
+    (has "    cmpw $300, (%r12,%r8,2)\n")
+    (lacks "    movzwq ")))
 
 ;; Signedness/width refusal: a SIGN-extending byte load cannot produce 200, so
 ;; `ext(mem) == 200` is constant-false while `cmpb $200, (mem)` would be true
@@ -28562,12 +26439,9 @@ g:
         ;; then claims the pair the refusal leaves behind, giving the load the
         ;; WIDENING CAST's home (%r9) instead of the loaded value's own (%r13)
         ;; and retiring the separate re-extension. Both halves are asserted.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsbq (%r12,%r8,1), %r9\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    movsbq %r13b, "))
-        (not (backend.compiler-backend-string-contains? asm "    cmpb ")))]
+        (asm-has? asm "    movsbq (%r12,%r8,1), %r9\n")
+        (asm-lacks? asm "    movsbq %r13b, ")
+        (asm-lacks? asm "    cmpb "))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Ordered narrow comparisons are refused outright: a zero-extended byte
@@ -28585,12 +26459,9 @@ g:
         ;; declines the ordered narrow compare, M6-G folds the re-extension the
         ;; refusal leaves behind, so the surviving load writes the widening
         ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movzbq (%r12,%r8,1), %r9\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    movzbq %r13b, "))
-        (not (backend.compiler-backend-string-contains? asm "    cmpb ")))]
+        (asm-has? asm "    movzbq (%r12,%r8,1), %r9\n")
+        (asm-lacks? asm "    movzbq %r13b, ")
+        (asm-lacks? asm "    cmpb "))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; M6-J: `gep ; load ; compare AT THE LOAD'S OWN WIDTH ; branch` -- no widening
@@ -28627,7 +26498,7 @@ g:
 (define (compiler-backend-cmp-mem-direct-has?
   [asm : (& asm str)]
   [want : String]) : bool
-  (backend.compiler-backend-string-contains? asm want))
+  (asm-has? asm want))
 
 ;; A `char` compared with a char literal reads the byte in place:
 ;; `movzbq (mem), %r13 ; cmpb $47, %r13b` becomes `cmpb $47, (mem)`.
@@ -28745,71 +26616,62 @@ g:
     8))
 
 (define (compiler-backend-cmp-mem-bounds-fold-shape-ok?) : bool
-  (match (compiler-backend-cmp-mem-bounds-asm (ir.compiler-ir-instr-seq-empty))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq 8(%r12), %r14\n")
-        (not (backend.compiler-backend-string-contains? asm "    movq 8(%r12)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-bounds-asm (ir.compiler-ir-instr-seq-empty))
+    (has "    cmpq 8(%r12), %r14\n")
+    (lacks "    movq 8(%r12)")))
 
 ;; A second use of the loaded length keeps the load: the home register is read
 ;; again, so it must actually be written.
 (define (compiler-backend-cmp-mem-bounds-second-use-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-bounds-asm
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Mov 7 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
-      (ir.compiler-ir-instr-seq-empty)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 8(%r12), %r13\n")
-        (not (backend.compiler-backend-string-contains? asm "    cmpq 8(%r12)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-bounds-asm
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Mov 7 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
+        (ir.compiler-ir-instr-seq-empty)))
+    (has "    movq 8(%r12), %r13\n")
+    (lacks "    cmpq 8(%r12)")))
 
 ;; The `(& str)` spelling puts two width-preserving casts between the `.len`
 ;; load and its bounds check (`i64 -> u64` for the length and for the index).
 ;; Both emit nothing -- the index cast's operands share a home -- so the walk
 ;; steps over them and the fold still fires.
 (define (compiler-backend-cmp-mem-bounds-cast-fold-ok?) : bool
-  (match (compiler-backend-emit-test-instrs
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Gep
-        2
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
+  (asm-ok?
+    (compiler-backend-emit-test-instrs
       (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Load 3 (ir.CompilerIrValue.Var 2) (ast.AstType.I64))
+        (ir.CompilerIrInstr.Gep
+          2
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 1)
+          (ast.AstType.I64))
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Cast
-            7
-            (ir.CompilerIrValue.Var 4)
-            (ast.AstType.I64)
-            (ast.AstType.U64))
+          (ir.CompilerIrInstr.Load
+            3
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.I64))
           (compiler-backend-test-instr-seq-prepend
             (ir.CompilerIrInstr.Cast
-              6
-              (ir.CompilerIrValue.Var 3)
+              7
+              (ir.CompilerIrValue.Var 4)
               (ast.AstType.I64)
               (ast.AstType.U64))
             (compiler-backend-test-instr-seq-prepend
-              (ir.CompilerIrInstr.BoundsCheck
-                (ir.CompilerIrValue.Var 7)
-                (ir.CompilerIrValue.Var 6)
-                (ir.compiler-ir-label "ok"))
-              (ir.compiler-ir-instr-seq-empty))))))
-    (compiler-backend-cmp-mem-fold-assignments)
-    8)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq 8(%r12), %r14\n")
-        (not (backend.compiler-backend-string-contains? asm "    movq 8(%r12)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+              (ir.CompilerIrInstr.Cast
+                6
+                (ir.CompilerIrValue.Var 3)
+                (ast.AstType.I64)
+                (ast.AstType.U64))
+              (compiler-backend-test-instr-seq-prepend
+                (ir.CompilerIrInstr.BoundsCheck
+                  (ir.CompilerIrValue.Var 7)
+                  (ir.CompilerIrValue.Var 6)
+                  (ir.compiler-ir-label "ok"))
+                (ir.compiler-ir-instr-seq-empty))))))
+      (compiler-backend-cmp-mem-fold-assignments)
+      8)
+    (has "    cmpq 8(%r12), %r14\n")
+    (lacks "    movq 8(%r12)")))
 
 ;; M6-B tail: `compare ; branch`. `mem-on-rhs?` puts the loaded value on the
 ;; compare's RIGHT so the address takes the AT&T SOURCE slot instead of the
@@ -28896,17 +26758,12 @@ g:
     (compiler-backend-cmp-mem-staged-assignments true false))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq %r14, (%r13,%r8,8)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r13,%r8,8)"))
+        (asm-has? asm "    cmpq %r14, (%r13,%r8,8)\n")
+        (asm-lacks? asm "    movq (%r13,%r8,8)")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; The mirror: a spilled INDEX stages into the same home and the register-homed
@@ -28917,115 +26774,86 @@ g:
     (compiler-backend-cmp-mem-staged-assignments false true))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq %r14, (%r12,%r13,8)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r12,%r13,8)"))
+        (asm-has? asm "    cmpq %r14, (%r12,%r13,8)\n")
+        (asm-lacks? asm "    movq (%r12,%r13,8)")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Both components spilled would need two staging registers; the fold owns one,
 ;; so it declines and the ordinary load path emits the compare's operand.
 (define (compiler-backend-cmp-mem-staged-both-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-wide-asm-with
-    (compiler-backend-cmp-mem-wide-tail false)
-    (compiler-backend-cmp-mem-staged-assignments true true))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    cmpq %r14, %r13\n")
-        (not (backend.compiler-backend-string-contains? asm "    cmpq %r14, (")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-wide-asm-with
+      (compiler-backend-cmp-mem-wide-tail false)
+      (compiler-backend-cmp-mem-staged-assignments true true))
+    (has "    cmpq %r14, %r13\n")
+    (lacks "    cmpq %r14, (")))
 
 ;; A SECOND use of the loaded value keeps it in its home: the fold would drop
 ;; the only definition the later use reads.
 (define (compiler-backend-cmp-mem-staged-second-use-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-wide-asm-with
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.BinOp
-        5
-        (ir.CompilerIrBinOp.Lt)
-        (ir.CompilerIrValue.Var 3)
-        (ir.CompilerIrValue.Var 4)
-        (ast.AstType.I64))
+  (asm-ok?
+    (compiler-backend-cmp-mem-wide-asm-with
       (compiler-backend-test-instr-seq-prepend
-        (ir.CompilerIrInstr.Mov 6 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))
+        (ir.CompilerIrInstr.BinOp
+          5
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrValue.Var 3)
+          (ir.CompilerIrValue.Var 4)
+          (ast.AstType.I64))
         (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var 5)
-            (ir.compiler-ir-label "lt")
-            (ir.compiler-ir-label "ge"))
-          (ir.compiler-ir-instr-seq-empty))))
-    (compiler-backend-cmp-mem-staged-assignments true false))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq %r14, (%r13,%r8,8)\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+          (ir.CompilerIrInstr.Mov
+            6
+            (ir.CompilerIrValue.Var 3)
+            (ast.AstType.I64))
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 5)
+              (ir.compiler-ir-label "lt")
+              (ir.compiler-ir-label "ge"))
+            (ir.compiler-ir-instr-seq-empty))))
+      (compiler-backend-cmp-mem-staged-assignments true false))
+    (lacks "    cmpq %r14, (%r13,%r8,8)\n")))
 
 (define (compiler-backend-cmp-mem-wide-rhs-fold-ok?) : bool
-  (match (compiler-backend-cmp-mem-wide-asm
-    (compiler-backend-cmp-mem-wide-tail true))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq (%r12,%r8,8), %r14\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r12,%r8,8)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-wide-asm
+      (compiler-backend-cmp-mem-wide-tail true))
+    (has "    cmpq (%r12,%r8,8), %r14\n")
+    (lacks "    movq (%r12,%r8,8)")))
 
 ;; A memory write between the load and the compare stops the walk: the folded
 ;; operand would be read after the store instead of before it.
 (define (compiler-backend-cmp-mem-store-between-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-wide-asm
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.StorePtr
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 7)
-        (ast.AstType.I64))
-      (compiler-backend-cmp-mem-wide-tail false)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r12,%r8,8), %r13\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq (%r12,%r8,8)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-wide-asm
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.StorePtr
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.I64))
+        (compiler-backend-cmp-mem-wide-tail false)))
+    (has "    movq (%r12,%r8,8), %r13\n")
+    (lacks "    cmpq (%r12,%r8,8)")))
 
 ;; So does a flag writer: the compare must be the instruction that sets the
 ;; flags the branch reads.
 (define (compiler-backend-cmp-mem-flags-between-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-wide-asm
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.BinOp
-        6
-        (ir.CompilerIrBinOp.Sub)
-        (ir.CompilerIrValue.Var 4)
-        (ir.CompilerIrValue.I64 1)
-        (ast.AstType.I64))
-      (compiler-backend-cmp-mem-wide-tail false)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r12,%r8,8), %r13\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq (%r12,%r8,8)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-wide-asm
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.BinOp
+          6
+          (ir.CompilerIrBinOp.Sub)
+          (ir.CompilerIrValue.Var 4)
+          (ir.CompilerIrValue.I64 1)
+          (ast.AstType.I64))
+        (compiler-backend-cmp-mem-wide-tail false)))
+    (has "    movq (%r12,%r8,8), %r13\n")
+    (lacks "    cmpq (%r12,%r8,8)")))
 
 ;; M6-F: a SPILLED compare operand on the side that takes the AT&T SOURCE slot
 ;; is a legal memory operand as long as the other side is a register, so the
@@ -29062,16 +26890,14 @@ g:
       ;; straight into the compare's source slot instead of being reloaded --
       ;; exactly one memory operand, which is all x86 allows.
       (and
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
-          "    movq (%r12,%r8,8), %r13\n")
-        (backend.compiler-backend-string-contains?
-          asm
+          "    movq (%r12,%r8,8), %r13\n"
           "    cmpq 32(%rbp), %r13\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; M6-E must read scratch registers from the Branch's real plan slot when the
@@ -29100,12 +26926,10 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_probe")]
         (backend.backend-and4
-          (backend.compiler-backend-string-contains? body "    cmpb $10, (")
-          (backend.compiler-backend-string-contains?
-            body
-            "    xorl %esi, %esi\n")
-          (not (backend.compiler-backend-string-contains? body "    movzbq "))
-          (not (backend.compiler-backend-string-contains? body "    cmpq "))))]
+          (asm-has? body "    cmpb $10, (")
+          (asm-has? body "    xorl %esi, %esi\n")
+          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    cmpq ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; M6-I: a scalar GLOBAL read (`Mov dst @g`, rendered `movq g(%rip), %r`)
@@ -29160,162 +26984,105 @@ g:
     (compiler-backend-cmp-mem-wide-tail false))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq %r14, _tl_m6i_gen(%rip)\n")
-        (backend.compiler-backend-string-contains? asm "    jl ")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_m6i_gen(%rip)"))
+        (asm-has? asm "    cmpq %r14, _tl_m6i_gen(%rip)\n" "    jl ")
+        (asm-lacks? asm "    movq _tl_m6i_gen(%rip)")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; The mirror: the read is the compare's RIGHT operand, so the rip-relative
 ;; operand takes the SOURCE slot and the register operand the destination one.
 ;; The jcc is unchanged, because the AT&T operand order flipped with it.
 (define (compiler-backend-cmp-mem-global-rhs-fold-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-cmp-mem-wide-tail true))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq _tl_m6i_gen(%rip), %r14\n")
-        (backend.compiler-backend-string-contains? asm "    jl ")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_m6i_gen(%rip)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm
+      (compiler-backend-cmp-mem-wide-tail true))
+    (has "    cmpq _tl_m6i_gen(%rip), %r14\n" "    jl ")
+    (lacks "    movq _tl_m6i_gen(%rip)")))
 
 ;; An equality compare against a literal folds from either side: the operands
 ;; may be exchanged, so the literal reaches the source slot and the cell the
 ;; destination one.
 (define (compiler-backend-cmp-mem-global-imm-fold-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-cmp-mem-global-imm-tail (ir.CompilerIrBinOp.Eq) true))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq $7, _tl_m6i_gen(%rip)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_m6i_gen(%rip)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm
+      (compiler-backend-cmp-mem-global-imm-tail (ir.CompilerIrBinOp.Eq) true))
+    (has "    cmpq $7, _tl_m6i_gen(%rip)\n")
+    (lacks "    movq _tl_m6i_gen(%rip)")))
 
 ;; An ORDERED compare with the literal on the side the memory operand does not
 ;; occupy cannot be exchanged, so the fold declines and the read survives.
 (define (compiler-backend-cmp-mem-global-imm-ordered-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-cmp-mem-global-imm-tail (ir.CompilerIrBinOp.Lt) true))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_m6i_gen(%rip), %r13\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq $7, _tl_m6i_gen(%rip)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm
+      (compiler-backend-cmp-mem-global-imm-tail (ir.CompilerIrBinOp.Lt) true))
+    (has "    movq _tl_m6i_gen(%rip), %r13\n")
+    (lacks "    cmpq $7, _tl_m6i_gen(%rip)\n")))
 
 ;; A SECOND use of the moved value keeps the read: the fold would drop the only
 ;; definition that use reads. The extra use sits behind the branch so the
 ;; compare/branch run itself is untouched and the single-use gate is the only
 ;; thing that can refuse.
 (define (compiler-backend-cmp-mem-global-second-use-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm
-    (ir.compiler-ir-instr-seq3
-      (ir.CompilerIrInstr.BinOp
-        5
-        (ir.CompilerIrBinOp.Lt)
-        (ir.CompilerIrValue.Var 3)
-        (ir.CompilerIrValue.Var 4)
-        (ast.AstType.I64))
-      (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var 5)
-        (ir.compiler-ir-label "lt")
-        (ir.compiler-ir-label "ge"))
-      (ir.CompilerIrInstr.Mov 6 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_m6i_gen(%rip), %r13\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq %r14, _tl_m6i_gen(%rip)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm
+      (ir.compiler-ir-instr-seq3
+        (ir.CompilerIrInstr.BinOp
+          5
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrValue.Var 3)
+          (ir.CompilerIrValue.Var 4)
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var 5)
+          (ir.compiler-ir-label "lt")
+          (ir.compiler-ir-label "ge"))
+        (ir.CompilerIrInstr.Mov 6 (ir.CompilerIrValue.Var 3) (ast.AstType.I64))))
+    (has "    movq _tl_m6i_gen(%rip), %r13\n")
+    (lacks "    cmpq %r14, _tl_m6i_gen(%rip)\n")))
 
 ;; A memory write between the read and the compare ends the fold walk at
 ;; itself, so the probe finds no compare there and declines: the folded operand
 ;; would otherwise be read AFTER the store instead of before it.
 (define (compiler-backend-cmp-mem-global-store-between-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.StorePtr
-        (ir.CompilerIrValue.Var 0)
-        (ir.CompilerIrValue.I64 7)
-        (ast.AstType.I64))
-      (compiler-backend-cmp-mem-wide-tail false)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_m6i_gen(%rip), %r13\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq %r14, _tl_m6i_gen(%rip)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.StorePtr
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.I64))
+        (compiler-backend-cmp-mem-wide-tail false)))
+    (has "    movq _tl_m6i_gen(%rip), %r13\n")
+    (lacks "    cmpq %r14, _tl_m6i_gen(%rip)\n")))
 
 ;; A store to the CELL ITSELF between the read and the compare is refused for
 ;; the same reason: the fold walk admits only size-preserving casts, so the
 ;; store ends it and the probe finds no compare there. Folding across it would
 ;; read the cell AFTER the write instead of before it.
 (define (compiler-backend-cmp-mem-global-self-store-refused-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-test-instr-seq-prepend
-      (ir.CompilerIrInstr.Store
-        (ci.intern "m6i_gen")
-        (ir.CompilerIrValue.I64 7)
-        (ast.AstType.I64))
-      (compiler-backend-cmp-mem-wide-tail false)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_m6i_gen(%rip), %r13\n")
-        (backend.compiler-backend-string-contains? asm "_tl_m6i_gen(%rip)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq %r14, _tl_m6i_gen(%rip)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm
+      (compiler-backend-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Store
+          (ci.intern "m6i_gen")
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.I64))
+        (compiler-backend-cmp-mem-wide-tail false)))
+    (has "    movq _tl_m6i_gen(%rip), %r13\n" "_tl_m6i_gen(%rip)\n")
+    (lacks "    cmpq %r14, _tl_m6i_gen(%rip)\n")))
 
 ;; Win64 spells a global read `g(%rip)` exactly as SysV does, so the fold is
 ;; target-independent and the Windows body must carry the same folded compare.
 (define (compiler-backend-cmp-mem-global-windows-fold-ok?) : bool
-  (match (compiler-backend-cmp-mem-global-asm-target
-    (compiler-backend-cmp-mem-wide-tail false)
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq %r14, _tl_m6i_gen(%rip)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_m6i_gen(%rip)")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-cmp-mem-global-asm-target
+      (compiler-backend-cmp-mem-wide-tail false)
+      (backend.CompilerBackendTarget.Windows))
+    (has "    cmpq %r14, _tl_m6i_gen(%rip)\n")
+    (lacks "    movq _tl_m6i_gen(%rip)")))
 
 (define (compiler-backend-cmp-mem-global-fold-shapes-ok?) : bool
   (and
@@ -29383,33 +27150,25 @@ g:
     3))
 
 (define (compiler-backend-mul-pow2-lea-shape-ok?) : bool
-  (match (compiler-backend-mul-pow2-test-asm 8 cabi.compiler-reg-id-rcx)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq (,%r12,8), %rcx\n")
-        (not (backend.compiler-backend-string-contains? asm "imulq")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-mul-pow2-test-asm 8 cabi.compiler-reg-id-rcx)
+    (has "    leaq (,%r12,8), %rcx\n")
+    (lacks "imulq")))
 
 (define (compiler-backend-mul-pow2-shl-shape-ok?) : bool
-  (match (compiler-backend-mul-pow2-test-asm 32 cabi.compiler-reg-id-r12)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    shlq $5, %r12\n")
-        (not (backend.compiler-backend-string-contains? asm "imulq")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-mul-pow2-test-asm 32 cabi.compiler-reg-id-r12)
+    (has "    shlq $5, %r12\n")
+    (lacks "imulq")))
 
 (define (compiler-backend-mul-scale-add-shape-ok?
   [factor : i64]
   [dst-reg : i64]
   [expected : String]) : bool
-  (match (compiler-backend-mul-pow2-test-asm factor dst-reg)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm expected)
-        (not (backend.compiler-backend-string-contains? asm "imulq")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-mul-pow2-test-asm factor dst-reg)
+    (has expected)
+    (lacks "imulq")))
 
 (define (compiler-backend-mul-scale-add-shapes-ok?) : bool
   (and
@@ -29445,12 +27204,9 @@ g:
       "    imulq $9, %rbp, %rbp\n")))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
-  (match (compiler-backend-mul-pow2-test-asm 24 cabi.compiler-reg-id-rcx)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (backend.compiler-backend-string-contains?
-        asm
-        "    imulq $24, %r12, %rcx\n")]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-mul-pow2-test-asm 24 cabi.compiler-reg-id-rcx)
+    (has "    imulq $24, %r12, %rcx\n")))
 
 (define (compiler-backend-full-syscall-instr) : ir.CompilerIrInstr
   (ir.CompilerIrInstr.Syscall
@@ -29535,40 +27291,16 @@ g:
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (backend.backend-and4
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_argc(%rip), %r12\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_argv(%rip), %r13\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_envp(%rip), %r14\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_argc(%rip), %rax\n")))
+            (asm-has? asm "    movq .L_tl_argc(%rip), %r12\n")
+            (asm-has? asm "    movq .L_tl_argv(%rip), %r13\n")
+            (asm-has? asm "    movq .L_tl_envp(%rip), %r14\n")
+            (asm-lacks? asm "    movq .L_tl_argc(%rip), %rax\n"))
           (backend.backend-and4
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_argv(%rip), %rax\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_envp(%rip), %rax\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq %rax, %r12\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq %rax, %r13\n")))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rax, %r14\n")))]
+            (asm-lacks? asm "    movq .L_tl_argv(%rip), %rax\n")
+            (asm-lacks? asm "    movq .L_tl_envp(%rip), %rax\n")
+            (asm-lacks? asm "    movq %rax, %r12\n")
+            (asm-lacks? asm "    movq %rax, %r13\n"))
+          (asm-lacks? asm "    movq %rax, %r14\n"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-entry-load-fallbacks-ok?) : bool
@@ -29598,96 +27330,52 @@ g:
             (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r11))
           (regalloc.compiler-reg-assignment-table-empty)))]
     [no-location-ok? : bool
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.EntryArgc 0)
-          (ir.compiler-ir-instr-seq-empty))
-        (regalloc.compiler-reg-assignment-table-empty)
-        1)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_argc(%rip), %r11\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r11, -8(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_argc(%rip), %rax\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
-    [spill-ok? : bool
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.EntryArgv 0)
-          (ir.compiler-ir-instr-seq-empty))
-        spill-assignments
-        1)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_argv(%rip), %r11\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r11, -16(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_argv(%rip), %rax\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
-    [pair-ok? : bool
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.EntryEnvp 0)
-          (ir.compiler-ir-instr-seq-empty))
-        pair-assignments
-        1)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_envp(%rip), %r11\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r11, %r12\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_envp(%rip), %r12\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_envp(%rip), %rax\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
-    [r11-occupied-ok? : bool
-      (match (compiler-backend-emit-test-instrs
-        (compiler-backend-test-instr-seq-prepend
-          (ir.CompilerIrInstr.EntryArgc 0)
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
           (compiler-backend-test-instr-seq-prepend
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-            (ir.compiler-ir-instr-seq-empty)))
-        r11-occupied-assignments
-        2)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq .L_tl_argc(%rip), %r9\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r9, -16(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_argc(%rip), %r11\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq .L_tl_argc(%rip), %rax\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])]
+            (ir.CompilerIrInstr.EntryArgc 0)
+            (ir.compiler-ir-instr-seq-empty))
+          (regalloc.compiler-reg-assignment-table-empty)
+          1)
+        (has "    movq .L_tl_argc(%rip), %r11\n" "    movq %r11, -8(%rbp)\n")
+        (lacks "    movq .L_tl_argc(%rip), %rax\n"))]
+    [spill-ok? : bool
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.EntryArgv 0)
+            (ir.compiler-ir-instr-seq-empty))
+          spill-assignments
+          1)
+        (has "    movq .L_tl_argv(%rip), %r11\n" "    movq %r11, -16(%rbp)\n")
+        (lacks "    movq .L_tl_argv(%rip), %rax\n"))]
+    [pair-ok? : bool
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.EntryEnvp 0)
+            (ir.compiler-ir-instr-seq-empty))
+          pair-assignments
+          1)
+        (has "    movq .L_tl_envp(%rip), %r11\n" "    movq %r11, %r12\n")
+        (lacks
+          "    movq .L_tl_envp(%rip), %r12\n"
+          "    movq .L_tl_envp(%rip), %rax\n"))]
+    [r11-occupied-ok? : bool
+      (asm-ok?
+        (compiler-backend-emit-test-instrs
+          (compiler-backend-test-instr-seq-prepend
+            (ir.CompilerIrInstr.EntryArgc 0)
+            (compiler-backend-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
+              (ir.compiler-ir-instr-seq-empty)))
+          r11-occupied-assignments
+          2)
+        (has "    movq .L_tl_argc(%rip), %r9\n" "    movq %r9, -16(%rbp)\n")
+        (lacks
+          "    movq .L_tl_argc(%rip), %r11\n"
+          "    movq .L_tl_argc(%rip), %rax\n"))]
     (and no-location-ok? spill-ok? pair-ok? r11-occupied-ok?)))
 
 (define (compiler-backend-cpuid-eax-direct-ok?) : bool
@@ -29820,14 +27508,11 @@ g:
         cabi.compiler-reg-id-rdi
         cabi.compiler-reg-id-rsi)]
     (and
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         win64-wrapper
         "    movq %rcx, %rax\n    movq %rdx, %rcx\n    movq %rbx, %r14\n    cpuid\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          win64-wrapper
-          "    movq %rdx, %rcx\n    movq %rcx, %rax\n"))
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? win64-wrapper "    movq %rdx, %rcx\n    movq %rcx, %rax\n")
+      (asm-has?
         sysv-wrapper
         "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r14\n    cpuid\n")
       (compiler-backend-cpuid-operand-boundaries-ok?))))
@@ -29866,24 +27551,18 @@ g:
         (ir.CompilerIrValue.I64 7)
         (ir.CompilerIrValue.Var 1))]
     (and
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         swap
         "    movq %rax, %r9\n    movq %rcx, %rax\n    movq %r9, %rcx\n    movq %rbx, %r14\n    cpuid\n")
-      (not (backend.compiler-backend-string-contains? in-place ", %rcx\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          in-place
-          "    movq %rcx, %rax\n"))
-      (backend.compiler-backend-string-contains?
-        in-place
-        "    movq %rbx, %r14\n    cpuid\n")
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? in-place ", %rcx\n" "    movq %rcx, %rax\n")
+      (asm-has? in-place "    movq %rbx, %r14\n    cpuid\n")
+      (asm-has?
         subleaf-in-rax
         "    movq %rax, %rcx\n    movq %rdx, %rax\n    movq %rbx, %r14\n    cpuid\n")
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         literal-subleaf
         "    movq %rcx, %rax\n    xorl %ecx, %ecx\n    movq %rbx, %r14\n    cpuid\n")
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         literal-leaf
         "    movq %rax, %rcx\n    movl $7, %eax\n    movq %rbx, %r14\n    cpuid\n"))))
 
@@ -30073,20 +27752,16 @@ g:
         (ast.AstType.F64))
         [(backend.ResultCompilerBackend.Ok widen-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               narrow-asm
-              "    movsd %xmm2, %xmm3\n")
-            (backend.compiler-backend-string-contains?
-              narrow-asm
+              "    movsd %xmm2, %xmm3\n"
               "    cvtsd2ss %xmm3, %xmm3\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               widen-asm
-              "    movss %xmm2, %xmm3\n")
-            (backend.compiler-backend-string-contains?
-              widen-asm
+              "    movss %xmm2, %xmm3\n"
               "    cvtss2sd %xmm3, %xmm3\n")
-            (not (backend.compiler-backend-string-contains? narrow-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? widen-asm "%xmm0")))]
+            (asm-lacks? narrow-asm "%xmm0")
+            (asm-lacks? widen-asm "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30129,26 +27804,18 @@ g:
         (ast.AstType.F64))
         [(backend.ResultCompilerBackend.Ok widen-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               narrow-asm
-              "    movsd %xmm3, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              narrow-asm
-              "    cvtsd2ss %xmm2, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              narrow-asm
+              "    movsd %xmm3, %xmm2\n"
+              "    cvtsd2ss %xmm2, %xmm2\n"
               "    movss %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               widen-asm
-              "    movss %xmm3, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              widen-asm
-              "    cvtss2sd %xmm2, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              widen-asm
+              "    movss %xmm3, %xmm2\n"
+              "    cvtss2sd %xmm2, %xmm2\n"
               "    movsd %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? narrow-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? widen-asm "%xmm0")))]
+            (asm-lacks? narrow-asm "%xmm0")
+            (asm-lacks? widen-asm "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30185,16 +27852,12 @@ g:
       (match (compiler-backend-direct-int-to-float-cast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
-              f64-asm
-              "    cvtsi2sdq %r12, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
-              "    cvtsi2ssq %r12, %xmm2\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-has? f64-asm "    cvtsi2sdq %r12, %xmm2\n")
+            (asm-has? f32-asm "    cvtsi2ssq %r12, %xmm2\n")
+            (asm-lacks? f64-asm "%rax")
+            (asm-lacks? f32-asm "%rax")
+            (asm-lacks? f64-asm "%xmm0")
+            (asm-lacks? f32-asm "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30230,22 +27893,16 @@ g:
       (match (compiler-backend-spill-int-to-float-cast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f64-asm
-              "    cvtsi2sdq %r12, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
+              "    cvtsi2sdq %r12, %xmm2\n"
               "    movsd %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f32-asm
-              "    cvtsi2ssq %r12, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
+              "    cvtsi2ssq %r12, %xmm2\n"
               "    movss %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-lacks? f64-asm "%rax" "%xmm0")
+            (asm-lacks? f32-asm "%rax" "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30281,34 +27938,20 @@ g:
       (match (compiler-backend-spill-u64-to-float-cast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f64-asm
-              "    movq %r12, %r8\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
-              "    testq %r8, %r8\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
-              "    cvtsi2sdq %r8, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
-              "    addsd %xmm2, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
+              "    movq %r12, %r8\n"
+              "    testq %r8, %r8\n"
+              "    cvtsi2sdq %r8, %xmm2\n"
+              "    addsd %xmm2, %xmm2\n"
               "    movsd %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f32-asm
-              "    cvtsi2ssq %r8, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
-              "    addss %xmm2, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
+              "    cvtsi2ssq %r8, %xmm2\n"
+              "    addss %xmm2, %xmm2\n"
               "    movss %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-lacks? f64-asm "%rax" "%xmm0")
+            (asm-lacks? f32-asm "%rax" "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30345,16 +27988,12 @@ g:
       (match (compiler-backend-direct-float-to-int-cast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
-              f64-asm
-              "    cvttsd2siq %xmm2, %r12\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
-              "    cvttss2siq %xmm2, %r12\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-has? f64-asm "    cvttsd2siq %xmm2, %r12\n")
+            (asm-has? f32-asm "    cvttss2siq %xmm2, %r12\n")
+            (asm-lacks? f64-asm "%rax")
+            (asm-lacks? f32-asm "%rax")
+            (asm-lacks? f64-asm "%xmm0")
+            (asm-lacks? f32-asm "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30391,22 +28030,16 @@ g:
       (match (compiler-backend-spill-float-to-int-cast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f64-asm
-              "    cvttsd2siq %xmm3, %r8\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
+              "    cvttsd2siq %xmm3, %r8\n"
               "    movq %r8, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f32-asm
-              "    cvttss2siq %xmm3, %r8\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
+              "    cvttss2siq %xmm3, %r8\n"
               "    movq %r8, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-lacks? f64-asm "%rax" "%xmm0")
+            (asm-lacks? f32-asm "%rax" "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30484,21 +28117,17 @@ g:
   (match result
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm load)
+        (asm-has? asm load)
         (let
           [needle (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f")]
-          (backend.compiler-backend-string-contains? asm needle))
+          (asm-has? asm needle))
         (let
           [needle (str_cat.str-cat "    sub" op " .L_tl_f")]
-          (backend.compiler-backend-string-contains? asm needle))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
+          (asm-has? asm needle))
+        (asm-has? asm "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
         (= (backend.compiler-backend-string-count asm convert) 2)
-        (backend.compiler-backend-string-contains? asm "    btsq $63, ")
-        (backend.compiler-backend-string-contains? asm store)
-        (not (backend.compiler-backend-string-contains? asm "%rax"))
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
+        (asm-has? asm "    btsq $63, " store)
+        (asm-lacks? asm "%rax" "%xmm0"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-float-to-u64-cast-homes-ok?) : bool
@@ -30627,40 +28256,34 @@ g:
       (= (__tl-project-field (array-ref floats.slots 1) bits) 1593835520))))
 
 (define (compiler-backend-spill-int-cast-home-ok?) : bool
-  (match (backend.compiler-backend-emit-cast
-    (ast.ast-node-pool-reader-type-segment-bases)
-    "test_cast"
-    (ir.compiler-ir-label "entry")
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        0
-        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+  (asm-ok?
+    (backend.compiler-backend-emit-cast
+      (ast.ast-node-pool-reader-type-segment-bases)
+      "test_cast"
+      (ir.compiler-ir-label "entry")
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          1
-          (regalloc.CompilerRegLocation.Spill -16))
-        (regalloc.compiler-reg-assignment-table-empty)))
-    1
-    (ir.CompilerIrValue.Var 0)
-    (ast.AstType.I32)
-    (ast.AstType.I64)
-    (backend.compiler-backend-program-index-build
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (ir.compiler-ir-function-seq-empty)
-      (ir.compiler-ir-extern-seq-empty))
-    ""
-    ""
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movslq %r12d, %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -16(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+          0
+          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Spill -16))
+          (regalloc.compiler-reg-assignment-table-empty)))
+      1
+      (ir.CompilerIrValue.Var 0)
+      (ast.AstType.I32)
+      (ast.AstType.I64)
+      (backend.compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))
+      ""
+      ""
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    movslq %r12d, %r8\n" "    movq %r8, -16(%rbp)\n")
+    (lacks "%rax")))
 
 (define (compiler-backend-bitcast-shape-ok?) : bool
   (and
@@ -30755,50 +28378,18 @@ g:
                 [(backend.ResultCompilerBackend.Ok int-to-f64)
                   (and
                     (backend.backend-and4
-                      (backend.compiler-backend-string-contains?
-                        f32-to-int
-                        "    movd %xmm2, %r12d\n")
-                      (backend.compiler-backend-string-contains?
-                        f64-to-int
-                        "    movq %xmm2, %r12\n")
-                      (backend.compiler-backend-string-contains?
-                        int-to-f32
-                        "    movd %r12d, %xmm2\n")
-                      (backend.compiler-backend-string-contains?
-                        int-to-f64
-                        "    movq %r12, %xmm2\n"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        f32-to-int
-                        "%rax"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        f64-to-int
-                        "%rax"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        int-to-f32
-                        "%rax"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        int-to-f64
-                        "%rax"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        f32-to-int
-                        "%xmm0"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        f64-to-int
-                        "%xmm0"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        int-to-f32
-                        "%xmm0"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        int-to-f64
-                        "%xmm0")))]
+                      (asm-has? f32-to-int "    movd %xmm2, %r12d\n")
+                      (asm-has? f64-to-int "    movq %xmm2, %r12\n")
+                      (asm-has? int-to-f32 "    movd %r12d, %xmm2\n")
+                      (asm-has? int-to-f64 "    movq %r12, %xmm2\n"))
+                    (asm-lacks? f32-to-int "%rax")
+                    (asm-lacks? f64-to-int "%rax")
+                    (asm-lacks? int-to-f32 "%rax")
+                    (asm-lacks? int-to-f64 "%rax")
+                    (asm-lacks? f32-to-int "%xmm0")
+                    (asm-lacks? f64-to-int "%xmm0")
+                    (asm-lacks? int-to-f32 "%xmm0")
+                    (asm-lacks? int-to-f64 "%xmm0"))]
                 [(backend.ResultCompilerBackend.Err _) false])]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
@@ -30834,22 +28425,16 @@ g:
       (match (compiler-backend-spill-float-to-int-bitcast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f64-asm
-              "    movq %xmm3, %r8\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
+              "    movq %xmm3, %r8\n"
               "    movq %r8, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f32-asm
-              "    movd %xmm3, %r8d\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
+              "    movd %xmm3, %r8d\n"
               "    movq %r8, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-lacks? f64-asm "%rax" "%xmm0")
+            (asm-lacks? f32-asm "%rax" "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30881,22 +28466,16 @@ g:
       (match (compiler-backend-spill-int-to-float-bitcast-asm (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f64-asm
-              "    movq %r12, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
+              "    movq %r12, %xmm2\n"
               "    movsd %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f32-asm
-              "    movd %r12d, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
+              "    movd %r12d, %xmm2\n"
               "    movss %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-lacks? f64-asm "%rax" "%xmm0")
+            (asm-lacks? f32-asm "%rax" "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -30930,52 +28509,44 @@ g:
         (ast.AstType.F32))
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f64-asm
-              "    movsd %xmm3, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f64-asm
+              "    movsd %xmm3, %xmm2\n"
               "    movsd %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
+            (asm-has?
               f32-asm
-              "    movss %xmm3, %xmm2\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
+              "    movss %xmm3, %xmm2\n"
               "    movss %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0")))]
+            (asm-lacks? f64-asm "%xmm0")
+            (asm-lacks? f32-asm "%xmm0"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-spill-int-to-int-bitcast-home-ok?) : bool
-  (match (backend.compiler-backend-emit-bitcast
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        0
-        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+  (asm-ok?
+    (backend.compiler-backend-emit-bitcast
+      (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          1
-          (regalloc.CompilerRegLocation.Spill -16))
-        (regalloc.compiler-reg-assignment-table-empty)))
-    1
-    (ir.CompilerIrValue.Var 0)
-    (ast.AstType.I64)
-    (ast.AstType.U64)
-    (backend.compiler-backend-program-index-build
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (ir.compiler-ir-function-seq-empty)
-      (ir.compiler-ir-extern-seq-empty))
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq %r12, %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -16(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+          0
+          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Spill -16))
+          (regalloc.compiler-reg-assignment-table-empty)))
+      1
+      (ir.CompilerIrValue.Var 0)
+      (ast.AstType.I64)
+      (ast.AstType.U64)
+      (backend.compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    movq %r12, %r8\n" "    movq %r8, -16(%rbp)\n")
+    (lacks "%rax")))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap reaches the backend as a location-aware `call tl_oob_abort_at`.
@@ -30984,11 +28555,10 @@ g:
 (define (main) : i64 0)")
 
 (define (compiler-backend-array-access-asm-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    (compiler-backend-array-access-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (backend.compiler-backend-string-contains? asm "call tl_oob_abort_at")]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      (compiler-backend-array-access-source))
+    (has "call tl_oob_abort_at")))
 
 ;; Fixed-size array set/ref emit-shape coverage. The source takes the
 ;; fixed array as a parameter; a separate literal source below covers the
@@ -31006,43 +28576,24 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (or
-            (backend.compiler-backend-string-contains? asm "_tl_use_fixed")
-            (backend.compiler-backend-string-contains? asm "_tl_f"))
+          (or (asm-has? asm "_tl_use_fixed") (asm-has? asm "_tl_f"))
           ;; The fixed-array bounds check now materialises the index in
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
-          (backend.compiler-backend-string-contains? asm "    cmpq $3, %r10\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movl $3, %r11d\n"))
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_oob_abort_at\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r9, (%r10,%r8,8)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10,%r8,8), %r9\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    leaq (%rax,%r8,8), %rax\n"))
-          (not
-            (backend.compiler-backend-string-contains? asm "tl_oob_abort:\n")))
+          (asm-has? asm "    cmpq $3, %r10\n")
+          (asm-lacks? asm "    movl $3, %r11d\n")
+          (asm-has? asm "    call tl_oob_abort_at\n")
+          (asm-has? asm "    movq %r9, (%r10,%r8,8)\n")
+          (asm-has? asm "    movq (%r10,%r8,8), %r9\n")
+          (asm-lacks? asm "    leaq (%rax,%r8,8), %rax\n")
+          (asm-lacks? asm "tl_oob_abort:\n"))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle)))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, (%r10,%r8,8)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10,%r8,8), %rax\n")))]
+            (asm-has? asm needle)))
+        (asm-lacks?
+          asm
+          "    movq %rax, (%r10,%r8,8)\n"
+          "    movq (%r10,%r8,8), %rax\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-fixed-array-literal-source) : String
@@ -31056,15 +28607,13 @@ g:
     (compiler-backend-fixed-array-literal-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm "main:\n")
+        (asm-has? asm "main:\n")
         (= (backend.compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_oob_abort_at\n")
+        (asm-has? asm "    call tl_oob_abort_at\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-make-array-source) : String
@@ -31081,10 +28630,12 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_make_u32")]
         (and
-          (backend.compiler-backend-string-contains? asm "main:\n")
-          (backend.compiler-backend-string-contains? body "    call tl_alloc\n")
-          (backend.compiler-backend-string-contains? body "call tl_oob_abort")
-          (backend.compiler-backend-string-contains? body "make_array_len_ok")
+          (asm-has? asm "main:\n")
+          (asm-has?
+            body
+            "    call tl_alloc\n"
+            "call tl_oob_abort"
+            "make_array_len_ok")
           (>= (backend.compiler-backend-string-count body "    cmpq ") 2)
           (= (backend.compiler-backend-string-count body "    cmpl ") 0)))]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -31103,57 +28654,31 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (let
         [calls : bool
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call tl_region_mark\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call tl_region_reset\n"))]
+          (asm-has?
+            asm
+            "    call tl_region_mark\n"
+            "    call tl_region_reset\n")]
         [runtime : bool
           (backend.backend-and4
-            (backend.compiler-backend-string-contains? asm "tl_region_mark:\n")
-            (backend.compiler-backend-string-contains? asm "tl_region_reset:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_region_reset_msg:")
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_current_arena:\n"))]
+            (asm-has? asm "tl_region_mark:\n")
+            (asm-has? asm "tl_region_reset:\n")
+            (asm-has? asm ".L_tl_region_reset_msg:")
+            (asm-has? asm "tl_current_arena:\n"))]
         [poison : bool
           (backend.backend-and8
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_arena_poison_enabled:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_arena_poison_enable:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_region_reset_drop_newer_retire:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_region_reset_restore_set:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_region_reset_all_unmap:\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movb $0xA5, %al\n")
+            (asm-has? asm ".L_tl_arena_poison_enabled:\n")
+            (asm-has? asm "tl_arena_poison_enable:\n")
+            (asm-has? asm "    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
+            (asm-has? asm ".L_tl_region_reset_drop_newer_retire:\n")
+            (asm-has? asm ".L_tl_region_reset_restore_set:\n")
+            (asm-has? asm ".L_tl_region_reset_all_unmap:\n")
+            (asm-has? asm "    movb $0xA5, %al\n")
             (>= (backend.compiler-backend-string-count asm "    rep stosb\n") 4))]
         [no-externs : bool
-          (and
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".extern tl_region_mark\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                ".extern tl_region_reset\n")))]
+          (asm-lacks?
+            asm
+            ".extern tl_region_mark\n"
+            ".extern tl_region_reset\n")]
         (backend.backend-and4 calls runtime poison no-externs))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -31169,59 +28694,35 @@ g:
 (define (compiler-backend-process-fallback-labels-absent? [asm : (& asm str)]) : bool
   (and
     (backend.backend-and8
-      (not
-        (backend.compiler-backend-string-contains? asm "tl_process_output:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm "tl_process_start:\n"))
-      (not (backend.compiler-backend-string-contains? asm "tl_process_wait:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_process_read_all:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_process_exec_marker:"))
-      (not (backend.compiler-backend-string-contains? asm "tmpfile:\n"))
-      (not (backend.compiler-backend-string-contains? asm "_fileno:\n"))
-      (not (backend.compiler-backend-string-contains? asm "_get_osfhandle:\n")))
+      (asm-lacks? asm "tl_process_output:\n")
+      (asm-lacks? asm "tl_process_start:\n")
+      (asm-lacks? asm "tl_process_wait:\n")
+      (asm-lacks? asm ".L_tl_process_read_all:\n")
+      (asm-lacks? asm ".L_tl_process_exec_marker:")
+      (asm-lacks? asm "tmpfile:\n")
+      (asm-lacks? asm "_fileno:\n")
+      (asm-lacks? asm "_get_osfhandle:\n"))
     (backend.backend-and4
-      (not (backend.compiler-backend-string-contains? asm "fclose:\n"))
-      (not (backend.compiler-backend-string-contains? asm "__p__environ:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm "    call _lseeki64\n"))
-      (not (backend.compiler-backend-string-contains? asm "    call _read\n")))))
+      (asm-lacks? asm "fclose:\n")
+      (asm-lacks? asm "__p__environ:\n")
+      (asm-lacks? asm "    call _lseeki64\n")
+      (asm-lacks? asm "    call _read\n"))))
 
 (define (compiler-backend-process-output-fallback-absent-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-process-fallback-labels-absent? asm)
-    (backend.compiler-backend-string-contains?
-      asm
-      ".extern tl_process_output\n")
-    (backend.compiler-backend-string-contains?
-      asm
-      "    call tl_process_output\n")
-    (not
-      (backend.compiler-backend-string-contains? asm "_tl_tl_process_output"))))
+    (asm-has? asm ".extern tl_process_output\n" "    call tl_process_output\n")
+    (asm-lacks? asm "_tl_tl_process_output")))
 
 (define (compiler-backend-process-async-fallback-absent-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-process-fallback-labels-absent? asm)
     (backend.backend-and4
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern tl_process_start\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern tl_process_wait\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_process_start\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call tl_process_wait\n"))
-    (not (backend.compiler-backend-string-contains? asm "_tl_tl_process_start"))
-    (not (backend.compiler-backend-string-contains? asm "_tl_tl_process_wait"))))
+      (asm-has? asm ".extern tl_process_start\n")
+      (asm-has? asm ".extern tl_process_wait\n")
+      (asm-has? asm "    call tl_process_start\n")
+      (asm-has? asm "    call tl_process_wait\n"))
+    (asm-lacks? asm "_tl_tl_process_start" "_tl_tl_process_wait")))
 
 (define (compiler-backend-process-fallback-absent-ok?) : bool
   (match (backend.compiler-backend-emit-source
@@ -31270,51 +28771,27 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_env_var_exists\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_env_var_value\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern path_separator\n")
-          (not (backend.compiler-backend-string-contains? asm "\ntl_alloc:\n")))
+          (asm-has? asm ".extern tl_env_var_exists\n")
+          (asm-has? asm ".extern tl_env_var_value\n")
+          (asm-has? asm ".extern path_separator\n")
+          (asm-lacks? asm "\ntl_alloc:\n"))
         (backend.backend-and4
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "\ntl_env_var_exists:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "\ntl_env_var_value:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "\npath_separator:\n"))
+          (asm-lacks? asm "\ntl_env_var_exists:\n")
+          (asm-lacks? asm "\ntl_env_var_value:\n")
+          (asm-lacks? asm "\npath_separator:\n")
           true))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-env-runtime-ok?) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-env-runtime-source)
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "\ntl_env_var_exists:\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "\ntl_env_var_value:\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    call getenv\n"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    call strlen\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-env-runtime-source)
+      (backend.CompilerBackendTarget.Windows))
+    (lacks
+      "\ntl_env_var_exists:\n"
+      "\ntl_env_var_value:\n"
+      "    call getenv\n"
+      "    call strlen\n")))
 
 (define (compiler-backend-stdlib-env-runtime-source) : String
   "(module stdlib.env.test)
@@ -31341,30 +28818,16 @@ g:
 
 (define (compiler-backend-stdlib-env-runtime-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-stdlib-env-runtime-source)
-    target)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm ".extern getenv\n")
-        (backend.compiler-backend-string-contains? asm ".extern strlen\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "\ntl_env_var_exists:\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "\ntl_env_var_value:\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "_tl_env_path_separator:\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "tl_env_path_separator:\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-stdlib-env-runtime-source)
+      target)
+    (has ".extern getenv\n" ".extern strlen\n")
+    (lacks
+      "\ntl_env_var_exists:\n"
+      "\ntl_env_var_value:\n"
+      "_tl_env_path_separator:\n"
+      "tl_env_path_separator:\n")))
 
 (define (compiler-backend-stdlib-env-runtime-ok?) : bool
   (and
@@ -31374,22 +28837,12 @@ g:
       (backend.CompilerBackendTarget.Windows))))
 
 (define (compiler-backend-append-file-status-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    "(extern (raw-append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      "(extern (raw-append-file-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_append_file_status\"))
 (define (main) : i64 (raw-append-file-status \"out.txt\" \"x\"))")
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_append_file_status:\n"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_append_file_status\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_append_file_status\n"))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+    (lacks ".L_tl_append_file_status:\n")
+    (has "    call tl_append_file_status\n" ".extern tl_append_file_status\n")))
 
 (define (compiler-backend-no-public-runtime-symbol?
   [asm : (& asm str)]
@@ -31398,11 +28851,11 @@ g:
     (not
       (let
         [needle (str_cat.str-cat ".globl " name "\n")]
-        (backend.compiler-backend-string-contains? asm needle)))
+        (asm-has? asm needle)))
     (not
       (let
         [needle (str_cat.str-cat "\n" name ":\n")]
-        (backend.compiler-backend-string-contains? asm needle)))))
+        (asm-has? asm needle)))))
 
 (define (compiler-backend-no-public-io-fs-runtime-symbols? [asm : String]) : bool
   (and
@@ -31539,61 +28992,23 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_read_file\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_write_file\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_file_exists\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_file_open_status\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_fs_mkdir_status\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_fs_process_id\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_read_stdin_line\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern _u2eL_tl_flush_stdout\n"))
+          (asm-has? asm ".extern _u2eL_tl_read_file\n")
+          (asm-has? asm ".extern _u2eL_tl_write_file\n")
+          (asm-has? asm ".extern _u2eL_tl_file_exists\n")
+          (asm-has? asm ".extern _u2eL_tl_file_open_status\n")
+          (asm-has? asm ".extern _u2eL_tl_fs_mkdir_status\n")
+          (asm-has? asm ".extern _u2eL_tl_fs_process_id\n")
+          (asm-has? asm ".extern _u2eL_tl_read_stdin_line\n")
+          (asm-has? asm ".extern _u2eL_tl_flush_stdout\n"))
         (backend.backend-and8
-          (not
-            (backend.compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_write_file:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_file_exists:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_file_open_status:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_fs_mkdir_status:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_fs_process_id:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_read_stdin_line:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_flush_stdout:\n")))
+          (asm-lacks? asm ".L_tl_read_file:\n")
+          (asm-lacks? asm ".L_tl_write_file:\n")
+          (asm-lacks? asm ".L_tl_file_exists:\n")
+          (asm-lacks? asm ".L_tl_file_open_status:\n")
+          (asm-lacks? asm ".L_tl_fs_mkdir_status:\n")
+          (asm-lacks? asm ".L_tl_fs_process_id:\n")
+          (asm-lacks? asm ".L_tl_read_stdin_line:\n")
+          (asm-lacks? asm ".L_tl_flush_stdout:\n"))
         (compiler-backend-no-public-io-fs-runtime-symbols? asm))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -31607,72 +29022,32 @@ g:
 (define (compiler-backend-public-fs-externs? [asm : (& asm str)]) : bool
   (and
     (backend.backend-and4
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern tl_fs_process_id\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern tl_fs_mkdir_status\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern tl_fs_remove_file_status\n")
-      (backend.compiler-backend-string-contains?
-        asm
-        ".extern tl_fs_remove_dir_status\n"))
-    (backend.compiler-backend-string-contains?
-      asm
-      ".extern tl_fs_rename_status\n")))
+      (asm-has? asm ".extern tl_fs_process_id\n")
+      (asm-has? asm ".extern tl_fs_mkdir_status\n")
+      (asm-has? asm ".extern tl_fs_remove_file_status\n")
+      (asm-has? asm ".extern tl_fs_remove_dir_status\n"))
+    (asm-has? asm ".extern tl_fs_rename_status\n")))
 
 (define (compiler-backend-no-private-fs-runtime? [asm : String]) : bool
   (and
     (backend.backend-and8
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_mkdir_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_remove_file_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_remove_dir_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_rename_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".globl tl_fs_process_id\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".globl tl_fs_mkdir_status\n"))
-      (not (backend.compiler-backend-string-contains? asm "    call _mkdir\n")))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        "    call GetCurrentProcessId\n"))
-    (not
-      (backend.compiler-backend-string-contains?
-        asm
-        ".L_tl_fs_read_dir_status:\n"))
-    (not (backend.compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n"))
+      (asm-lacks? asm ".L_tl_fs_mkdir_status:\n")
+      (asm-lacks? asm ".L_tl_fs_remove_file_status:\n")
+      (asm-lacks? asm ".L_tl_fs_remove_dir_status:\n")
+      (asm-lacks? asm ".L_tl_fs_rename_status:\n")
+      (asm-lacks? asm ".L_tl_fs_process_id:\n")
+      (asm-lacks? asm ".globl tl_fs_process_id\n")
+      (asm-lacks? asm ".globl tl_fs_mkdir_status\n")
+      (asm-lacks? asm "    call _mkdir\n"))
+    (asm-lacks?
+      asm
+      "    call GetCurrentProcessId\n"
+      ".L_tl_fs_read_dir_status:\n"
+      ".L_tl_fs_read_dir:\n")
     (backend.backend-and4
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_file_kind_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          asm
-          ".L_tl_fs_file_size_status:\n"))
-      (not
-        (backend.compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n"))
+      (asm-lacks? asm ".L_tl_fs_file_kind_status:\n")
+      (asm-lacks? asm ".L_tl_fs_file_size_status:\n")
+      (asm-lacks? asm ".L_tl_fs_file_size:\n")
       true)))
 
 (define (compiler-backend-fs-runtime-source) : String
@@ -31748,25 +29123,18 @@ g:
   (match (backend.compiler-backend-emit-source source)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
-          ".extern tl_fs_current_dir_status\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          ".extern tl_fs_current_dir\n")
-        (backend.compiler-backend-string-contains?
-          asm
+          ".extern tl_fs_current_dir_status\n"
+          ".extern tl_fs_current_dir\n"
           "    call tl_fs_current_dir_status\n")
         (backend.backend-and4
           (compiler-backend-no-public-runtime-symbol?
             asm
             "tl_fs_current_dir_status")
           (compiler-backend-no-public-runtime-symbol? asm "tl_fs_current_dir")
-          (not (backend.compiler-backend-string-contains? asm "getcwd:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_fs_mkdir_status:\n"))))]
+          (asm-lacks? asm "getcwd:\n")
+          (asm-lacks? asm ".L_tl_fs_mkdir_status:\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-fs-current-dir-extern-only-ok?) : bool
@@ -31783,26 +29151,18 @@ g:
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
-          ".extern tl_fs_current_dir_status\n")
-        (backend.compiler-backend-string-contains?
-          asm
+          ".extern tl_fs_current_dir_status\n"
           ".extern tl_fs_current_dir\n")
         (compiler-backend-no-public-runtime-symbol?
           asm
           "tl_fs_current_dir_status")
         (backend.backend-and4
           (compiler-backend-no-public-runtime-symbol? asm "tl_fs_current_dir")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq $38, %rax\n"))
-          (not (backend.compiler-backend-string-contains? asm "    syscall"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".L_tl_fs_mkdir_status:\n"))))]
+          (asm-lacks? asm "    movq $38, %rax\n")
+          (asm-lacks? asm "    syscall")
+          (asm-lacks? asm ".L_tl_fs_mkdir_status:\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-fs-current-dir-extern-only-ok?) : bool
@@ -31832,10 +29192,8 @@ g:
     (compiler-backend-literal-payload-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (or
-          (backend.compiler-backend-string-contains? asm "_tl_classify")
-          (backend.compiler-backend-string-contains? asm "_tl_f"))
-        (backend.compiler-backend-string-contains? asm "_payload_ok"))]
+        (or (asm-has? asm "_tl_classify") (asm-has? asm "_tl_f"))
+        (asm-has? asm "_payload_ok"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-f64-source) : String
@@ -31857,24 +29215,18 @@ g:
             (backend.compiler-backend-float-bits-directive
               (ast.AstType.F64)
               (compiler-backend-test-f64-bits "1.5"))]
-          (backend.compiler-backend-string-contains? asm needle))
-        (not (backend.compiler-backend-string-contains? asm "    .double "))
-        (backend.compiler-backend-string-contains? asm "    movsd %xmm0, ")
-        (backend.compiler-backend-string-contains? asm "    movsd %xmm1, ")
+          (asm-has? asm needle))
+        (asm-lacks? asm "    .double ")
+        (asm-has? asm "    movsd %xmm0, ")
+        (asm-has? asm "    movsd %xmm1, ")
         ;; T1-6 (a): these three leaves are call-free with a frame inside the
         ;; red zone, so the y param spills BELOW %rsp (-16(%rsp)) and the
         ;; prologue moves no stack pointer at all.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    addsd -16(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    subsd -16(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    ucomisd -16(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains? asm "    setb %r8b\n")
-        (not (backend.compiler-backend-string-contains? asm "    setb %al\n")))]
+        (asm-has? asm "    addsd -16(%rsp), %xmm2\n")
+        (asm-has? asm "    subsd -16(%rsp), %xmm2\n")
+        (asm-has? asm "    ucomisd -16(%rsp), %xmm2\n")
+        (asm-has? asm "    setb %r8b\n")
+        (asm-lacks? asm "    setb %al\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-f64-neg-source) : String
@@ -31894,42 +29246,23 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
+          (asm-has? asm "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
           (=
             (backend.compiler-backend-string-count asm ".L_tl_f64_sign_bit:\n")
             1)
-          (backend.compiler-backend-string-contains? asm "    .balign 16\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad 0x8000000000000000\n")
-          (backend.compiler-backend-string-contains? asm "    .quad 0\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movabsq $0x8000000000000000, %rax\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rax, %xmm1\n"))
+          (asm-has? asm "    .balign 16\n")
+          (asm-has? asm "    .quad 0x8000000000000000\n")
+          (asm-has? asm "    .quad 0\n")
+          (asm-lacks? asm "    movabsq $0x8000000000000000, %rax\n")
+          (asm-lacks? asm "    movq %rax, %xmm1\n")
           true)
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    xorpd %xmm1, %xmm0\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    xorpd .L_tl_f64_sign_bit(%rip), %xmm0\n"))
-        (match (backend.compiler-backend-emit-source
-          (compiler-backend-f64-source))
-          [(backend.ResultCompilerBackend.Ok no-neg-asm)
-            (not
-              (backend.compiler-backend-string-contains?
-                no-neg-asm
-                ".L_tl_f64_sign_bit"))]
-          [(backend.ResultCompilerBackend.Err _) false]))]
+        (asm-lacks?
+          asm
+          "    xorpd %xmm1, %xmm0\n"
+          "    xorpd .L_tl_f64_sign_bit(%rip), %xmm0\n")
+        (asm-ok?
+          (backend.compiler-backend-emit-source (compiler-backend-f64-source))
+          (lacks ".L_tl_f64_sign_bit")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-f64-neg-sign-mask-object-render-ok?
@@ -32019,22 +29352,17 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    xorpd .L_tl_f32_sign_bit(%rip), %xmm2\n")
+          (asm-has? asm "    xorpd .L_tl_f32_sign_bit(%rip), %xmm2\n")
           (=
             (backend.compiler-backend-string-count asm ".L_tl_f32_sign_bit:\n")
             1)
-          (backend.compiler-backend-string-contains? asm "    .balign 16\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .quad 0x80000000\n")
-          (backend.compiler-backend-string-contains? asm "    .quad 0\n")
-          (not (backend.compiler-backend-string-contains? asm "    negq "))
+          (asm-has? asm "    .balign 16\n")
+          (asm-has? asm "    .quad 0x80000000\n")
+          (asm-has? asm "    .quad 0\n")
+          (asm-lacks? asm "    negq ")
           true
           true)
-        (not
-          (backend.compiler-backend-string-contains? asm ".L_tl_f64_sign_bit")))]
+        (asm-lacks? asm ".L_tl_f64_sign_bit"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-f32-neg-sign-mask-object-target-ok?
@@ -32092,64 +29420,54 @@ g:
     (compiler-backend-f32-neg-sign-mask-object-ok?)))
 
 (define (compiler-backend-direct-f64-neg-home-ok?) : bool
-  (match (backend.compiler-backend-emit-unop
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        0
-        (regalloc.CompilerRegLocation.Register
-          (cabi.compiler-abi-xmm-register-id 2)))
+  (asm-ok?
+    (backend.compiler-backend-emit-unop
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          1
+          0
           (regalloc.CompilerRegLocation.Register
-            (cabi.compiler-abi-xmm-register-id 3)))
-        (regalloc.compiler-reg-assignment-table-empty)))
-    1
-    (ir.CompilerIrUnOp.Neg)
-    (ir.CompilerIrValue.Var 0)
-    (ast.AstType.F64)
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd %xmm2, %xmm3\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    xorpd .L_tl_f64_sign_bit(%rip), %xmm3\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+            (cabi.compiler-abi-xmm-register-id 2)))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Register
+              (cabi.compiler-abi-xmm-register-id 3)))
+          (regalloc.compiler-reg-assignment-table-empty)))
+      1
+      (ir.CompilerIrUnOp.Neg)
+      (ir.CompilerIrValue.Var 0)
+      (ast.AstType.F64)
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    movsd %xmm2, %xmm3\n"
+      "    xorpd .L_tl_f64_sign_bit(%rip), %xmm3\n")
+    (lacks "%xmm0")))
 
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
-  (match (backend.compiler-backend-emit-unop
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        0
-        (regalloc.CompilerRegLocation.Register
-          (cabi.compiler-abi-xmm-register-id 3)))
+  (asm-ok?
+    (backend.compiler-backend-emit-unop
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          1
-          (regalloc.CompilerRegLocation.Spill -16))
-        (regalloc.compiler-reg-assignment-table-empty)))
-    1
-    (ir.CompilerIrUnOp.Neg)
-    (ir.CompilerIrValue.Var 0)
-    (ast.AstType.F64)
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd %xmm3, %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd %xmm2, -16(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%xmm0")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+          0
+          (regalloc.CompilerRegLocation.Register
+            (cabi.compiler-abi-xmm-register-id 3)))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Spill -16))
+          (regalloc.compiler-reg-assignment-table-empty)))
+      1
+      (ir.CompilerIrUnOp.Neg)
+      (ir.CompilerIrValue.Var 0)
+      (ast.AstType.F64)
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has
+      "    movsd %xmm3, %xmm2\n"
+      "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n"
+      "    movsd %xmm2, -16(%rbp)\n")
+    (lacks "%xmm0")))
 
 (define (compiler-backend-float-sqrt-home-ok?) : bool
   (let
@@ -32236,15 +29554,12 @@ g:
 
 (define (compiler-backend-float-sqrt-source-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-float-sqrt-source)
-    target)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    sqrtsd ")
-        (backend.compiler-backend-string-contains? asm "    sqrtss ")
-        (not (backend.compiler-backend-string-contains? asm "__tl_float_sqrt")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-float-sqrt-source)
+      target)
+    (has "    sqrtsd " "    sqrtss ")
+    (lacks "__tl_float_sqrt")))
 
 (define (compiler-backend-float-sqrt-source-ok?) : bool
   (and
@@ -32269,19 +29584,12 @@ g:
 
 (define (compiler-backend-float-bitcast-source-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-float-bitcast-source)
-    target)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq ")
-        (backend.compiler-backend-string-contains? asm "    movd ")
-        (not
-          (backend.compiler-backend-string-contains? asm "__tl_float_to_bits"))
-        (not
-          (backend.compiler-backend-string-contains? asm "__tl_float_from_bits"))
-        (not (backend.compiler-backend-string-contains? asm "tl_alloc")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-float-bitcast-source)
+      target)
+    (has "    movq " "    movd ")
+    (lacks "__tl_float_to_bits" "__tl_float_from_bits" "tl_alloc")))
 
 (define (compiler-backend-float-bitcast-source-ok?) : bool
   (and
@@ -32383,14 +29691,7 @@ g:
         [(backend.ResultCompilerBackend.Ok integer-asm)
           (and
             (string.eq literal-asm integer-asm)
-            (not
-              (backend.compiler-backend-string-contains?
-                literal-asm
-                ".L_tl_f64_"))
-            (not
-              (backend.compiler-backend-string-contains?
-                literal-asm
-                ".L_tl_f32_")))]
+            (asm-lacks? literal-asm ".L_tl_f64_" ".L_tl_f32_"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -32438,28 +29739,18 @@ g:
             (backend.compiler-backend-float-bits-directive
               (ast.AstType.F32)
               (compiler-backend-test-f32-bits "11.0"))]
-          (backend.compiler-backend-string-contains? asm needle))
-        (not (backend.compiler-backend-string-contains? asm "    .float "))
+          (asm-has? asm needle))
+        (asm-lacks? asm "    .float ")
         ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
         ;; old positive 176(%rsp) identity slot to -64; literal temporaries
         ;; independently reuse -8.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    ucomiss -64(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    addss -64(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains? asm "    setb %r8b\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    ucomiss %xmm1, %xmm0\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    addss %xmm1, %xmm0\n"))
-        (not (backend.compiler-backend-string-contains? asm "    cvtsd2ss "))
-        (not (backend.compiler-backend-string-contains? asm "    ucomisd")))]
+        (asm-has? asm "    ucomiss -64(%rsp), %xmm2\n")
+        (asm-has? asm "    addss -64(%rsp), %xmm2\n")
+        (asm-has? asm "    setb %r8b\n")
+        (asm-lacks? asm "    ucomiss %xmm1, %xmm0\n")
+        (asm-lacks? asm "    addss %xmm1, %xmm0\n")
+        (asm-lacks? asm "    cvtsd2ss ")
+        (asm-lacks? asm "    ucomisd"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-float-binop-asm
@@ -32512,22 +29803,12 @@ g:
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (backend.backend-and4
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    movsd %xmm2, %xmm4\n")
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    addsd %xmm3, %xmm4\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    movss %xmm2, %xmm4\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    addss %xmm3, %xmm4\n"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm1")))]
+              (asm-has? f64-asm "    movsd %xmm2, %xmm4\n")
+              (asm-has? f64-asm "    addsd %xmm3, %xmm4\n")
+              (asm-has? f32-asm "    movss %xmm2, %xmm4\n")
+              (asm-has? f32-asm "    addss %xmm3, %xmm4\n"))
+            (asm-lacks? f64-asm "%xmm0" "%xmm1")
+            (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -32575,28 +29856,14 @@ g:
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (backend.backend-and4
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    movsd %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    addsd %xmm4, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    movss %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    addss %xmm4, %xmm2\n"))
-            (backend.compiler-backend-string-contains?
-              f64-asm
-              "    movsd %xmm2, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              f32-asm
-              "    movss %xmm2, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm1")))]
+              (asm-has? f64-asm "    movsd %xmm3, %xmm2\n")
+              (asm-has? f64-asm "    addsd %xmm4, %xmm2\n")
+              (asm-has? f32-asm "    movss %xmm3, %xmm2\n")
+              (asm-has? f32-asm "    addss %xmm4, %xmm2\n"))
+            (asm-has? f64-asm "    movsd %xmm2, -16(%rbp)\n")
+            (asm-has? f32-asm "    movss %xmm2, -16(%rbp)\n")
+            (asm-lacks? f64-asm "%xmm0" "%xmm1")
+            (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -32687,30 +29954,20 @@ g:
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    ucomisd %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    setb %r12b\n")
-              (backend.compiler-backend-string-contains?
+              (asm-has? f64-asm "    ucomisd %xmm3, %xmm2\n")
+              (asm-has? f64-asm "    setb %r12b\n")
+              (asm-has?
                 f64-asm
                 "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    ucomiss %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    setb %r12b\n")
-              (backend.compiler-backend-string-contains?
+              (asm-has? f32-asm "    ucomiss %xmm3, %xmm2\n")
+              (asm-has? f32-asm "    setb %r12b\n")
+              (asm-has?
                 f32-asm
                 "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
-              (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-              (not (backend.compiler-backend-string-contains? f32-asm "%rax")))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm1")))]
+              (asm-lacks? f64-asm "%rax")
+              (asm-lacks? f32-asm "%rax"))
+            (asm-lacks? f64-asm "%xmm0" "%xmm1")
+            (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -32758,36 +30015,22 @@ g:
         [(backend.ResultCompilerBackend.Ok f32-asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    ucomisd %xmm4, %xmm3\n")
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    setb %r8b\n")
-              (backend.compiler-backend-string-contains?
+              (asm-has? f64-asm "    ucomisd %xmm4, %xmm3\n")
+              (asm-has? f64-asm "    setb %r8b\n")
+              (asm-has?
                 f64-asm
                 "    movl $0, %r8d\n    jp 1f\n    setb %r8b\n1:\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    ucomiss %xmm4, %xmm3\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    setb %r8b\n")
-              (backend.compiler-backend-string-contains?
+              (asm-has? f32-asm "    ucomiss %xmm4, %xmm3\n")
+              (asm-has? f32-asm "    setb %r8b\n")
+              (asm-has?
                 f32-asm
                 "    movl $0, %r8d\n    jp 1f\n    setb %r8b\n1:\n")
-              (backend.compiler-backend-string-contains?
-                f64-asm
-                "    movq %r8, -16(%rbp)\n")
-              (backend.compiler-backend-string-contains?
-                f32-asm
-                "    movq %r8, -16(%rbp)\n"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f64-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm0"))
-            (not (backend.compiler-backend-string-contains? f32-asm "%xmm1")))]
+              (asm-has? f64-asm "    movq %r8, -16(%rbp)\n")
+              (asm-has? f32-asm "    movq %r8, -16(%rbp)\n"))
+            (asm-lacks? f64-asm "%rax")
+            (asm-lacks? f32-asm "%rax")
+            (asm-lacks? f64-asm "%xmm0" "%xmm1")
+            (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -32864,30 +30107,18 @@ g:
         [(backend.ResultCompilerBackend.Ok cmp-asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                arith-asm
-                "    addsd %xmm4, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                arith-asm
-                "    movsd %xmm2, %xmm4\n")
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    movsd -24(%rbp), %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    ucomisd %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    setb %r12b\n")
-              (backend.compiler-backend-string-contains?
+              (asm-has? arith-asm "    addsd %xmm4, %xmm2\n")
+              (asm-has? arith-asm "    movsd %xmm2, %xmm4\n")
+              (asm-has? cmp-asm "    movsd -24(%rbp), %xmm2\n")
+              (asm-has? cmp-asm "    ucomisd %xmm3, %xmm2\n")
+              (asm-has? cmp-asm "    setb %r12b\n")
+              (asm-has?
                 cmp-asm
                 "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
-              (not
-                (backend.compiler-backend-string-contains? arith-asm "%xmm0"))
-              (not (backend.compiler-backend-string-contains? cmp-asm "%xmm0")))
-            (not (backend.compiler-backend-string-contains? arith-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? cmp-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? cmp-asm "%rax")))]
+              (asm-lacks? arith-asm "%xmm0")
+              (asm-lacks? cmp-asm "%xmm0"))
+            (asm-lacks? arith-asm "%xmm1")
+            (asm-lacks? cmp-asm "%xmm1" "%rax"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -32938,26 +30169,15 @@ g:
         [(backend.ResultCompilerBackend.Ok clobber-asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                home-asm
-                "    movsd %xmm2, %xmm0\n")
-              (backend.compiler-backend-string-contains?
-                home-asm
-                "    addsd %xmm3, %xmm0\n")
-              (backend.compiler-backend-string-contains?
-                clobber-asm
-                "    movsd %xmm0, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                clobber-asm
-                "    movsd %xmm3, %xmm0\n")
-              (backend.compiler-backend-string-contains?
-                clobber-asm
-                "    addsd %xmm2, %xmm0\n")
-              (not (backend.compiler-backend-string-contains? home-asm "%xmm1"))
-              (not
-                (backend.compiler-backend-string-contains? clobber-asm "%xmm1"))
+              (asm-has? home-asm "    movsd %xmm2, %xmm0\n")
+              (asm-has? home-asm "    addsd %xmm3, %xmm0\n")
+              (asm-has? clobber-asm "    movsd %xmm0, %xmm2\n")
+              (asm-has? clobber-asm "    movsd %xmm3, %xmm0\n")
+              (asm-has? clobber-asm "    addsd %xmm2, %xmm0\n")
+              (asm-lacks? home-asm "%xmm1")
+              (asm-lacks? clobber-asm "%xmm1")
               true)
-            (not (backend.compiler-backend-string-contains? clobber-asm "%rax")))]
+            (asm-lacks? clobber-asm "%rax"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -33039,29 +30259,18 @@ g:
         [(backend.ResultCompilerBackend.Ok spill-asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                home-asm
-                "    ucomisd %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                home-asm
-                "    setb %al\n")
-              (backend.compiler-backend-string-contains?
+              (asm-has? home-asm "    ucomisd %xmm3, %xmm2\n")
+              (asm-has? home-asm "    setb %al\n")
+              (asm-has?
                 home-asm
                 "    movl $0, %eax\n    jp 1f\n    setb %al\n1:\n")
-              (backend.compiler-backend-string-contains?
-                spill-asm
-                "    movsd -24(%rbp), %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                spill-asm
-                "    ucomisd %xmm3, %xmm2\n")
-              (backend.compiler-backend-string-contains?
-                spill-asm
-                "    setb %al\n")
-              (not (backend.compiler-backend-string-contains? home-asm "%xmm0"))
-              (not
-                (backend.compiler-backend-string-contains? spill-asm "%xmm0")))
-            (not (backend.compiler-backend-string-contains? home-asm "%xmm1"))
-            (not (backend.compiler-backend-string-contains? spill-asm "%xmm1")))]
+              (asm-has? spill-asm "    movsd -24(%rbp), %xmm2\n")
+              (asm-has? spill-asm "    ucomisd %xmm3, %xmm2\n")
+              (asm-has? spill-asm "    setb %al\n")
+              (asm-lacks? home-asm "%xmm0")
+              (asm-lacks? spill-asm "%xmm0"))
+            (asm-lacks? home-asm "%xmm1")
+            (asm-lacks? spill-asm "%xmm1"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -33161,15 +30370,10 @@ g:
     result))
 
 (define (compiler-backend-int-return-binop-r8-live-ok?) : bool
-  (match (compiler-backend-int-return-binop-r8-live-asm)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -16(%rbp), %r9\n")
-        (backend.compiler-backend-string-contains? asm "    addq %r9, %rax\n")
-        (not (backend.compiler-backend-string-contains? asm "%r8")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-int-return-binop-r8-live-asm)
+    (has "    movq -16(%rbp), %r9\n" "    addq %r9, %rax\n")
+    (lacks "%r8")))
 
 (define (compiler-backend-int-return-compare-direct-rhs-ok?) : bool
   (let
@@ -33186,27 +30390,22 @@ g:
             1
             (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rsi))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Eq)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq %rsi, %rax\n")
-          (backend.compiler-backend-string-contains? asm "    sete %al\n")
-          (not (backend.compiler-backend-string-contains? asm "%r8")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Eq)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.I64))
+      (has "    cmpq %rsi, %rax\n" "    sete %al\n")
+      (lacks "%r8"))))
 
 (define (compiler-backend-int-return-compare-direct-memory-ok?) : bool
   (let
@@ -33223,27 +30422,22 @@ g:
             1
             (regalloc.CompilerRegLocation.Spill -16))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_memory")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Ge)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq -16(%rbp), %rax\n")
-          (backend.compiler-backend-string-contains? asm "    setge %al\n")
-          (not (backend.compiler-backend-string-contains? asm "%r8")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_memory")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Ge)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.I64))
+      (has "    cmpq -16(%rbp), %rax\n" "    setge %al\n")
+      (lacks "%r8"))))
 
 (define (compiler-backend-int-return-compare-remat-immediate-ok?) : bool
   (let
@@ -33260,27 +30454,22 @@ g:
             1
             (regalloc.CompilerRegLocation.Remat (ir.CompilerIrValue.I64 0)))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_remat")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Ge)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    testq %rax, %rax\n")
-          (backend.compiler-backend-string-contains? asm "    setge %al\n")
-          (not (backend.compiler-backend-string-contains? asm "%r8")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_remat")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Ge)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.I64))
+      (has "    testq %rax, %rax\n" "    setge %al\n")
+      (lacks "%r8"))))
 
 (define (compiler-backend-int-return-compare-global-memory-ok?) : bool
   (let
@@ -33298,25 +30487,22 @@ g:
             (regalloc.CompilerRegLocation.Remat
               (ir.CompilerIrValue.Global (ci.intern "tls_current_arena"))))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_global")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Eq)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.I64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "(%rip), %rax\n")
-          (backend.compiler-backend-string-contains? asm "    sete %al\n")
-          (not (backend.compiler-backend-string-contains? asm "%r8")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_global")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Eq)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.I64))
+      (has "(%rip), %rax\n" "    sete %al\n")
+      (lacks "%r8"))))
 
 (define (compiler-backend-int-return-compare-reuses-lhs-home-ok?) : bool
   (let
@@ -33329,24 +30515,22 @@ g:
           0
           (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rsi))
         (regalloc.compiler-reg-assignment-table-empty))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_reuse_lhs")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 1)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      1
-      (ir.CompilerIrBinOp.Ne)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.I64 0x7ff0000000000000)
-      (ast.AstType.U64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rsi, %rax\n    movq $9218868437227405312, %rsi\n    cmpq %rsi, %rax\n")]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_reuse_lhs")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 1)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        1
+        (ir.CompilerIrBinOp.Ne)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.I64 0x7ff0000000000000)
+        (ast.AstType.U64))
+      (has
+        "    movq %rsi, %rax\n    movq $9218868437227405312, %rsi\n    cmpq %rsi, %rax\n"))))
 
 (define (compiler-backend-int-return-compare-rax-frame-ok?) : bool
   (let
@@ -33363,28 +30547,25 @@ g:
             1
             (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-rax))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_rax_frame")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Ne)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.U64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains? asm "    movq %rax, ")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -8(%rbp), %rax\n")
-          (backend.compiler-backend-string-contains? asm "    cmpq ")
-          (backend.compiler-backend-string-contains? asm "    movq %rax, %r8\n"))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_rax_frame")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Ne)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.U64))
+      (has
+        "    movq %rax, "
+        "    movq -8(%rbp), %rax\n"
+        "    cmpq "
+        "    movq %rax, %r8\n"))))
 
 (define (compiler-backend-int-return-compare-swapped-memory-ok?) : bool
   (let
@@ -33402,30 +30583,25 @@ g:
             (regalloc.CompilerRegLocation.Remat
               (ir.CompilerIrValue.I64 0x7ff0000000000000)))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_swapped_memory")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Lt)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.U64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $9218868437227405312, %rax\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq -8(%rbp), %rax\n")
-          (backend.compiler-backend-string-contains? asm "    seta %al\n")
-          (not (backend.compiler-backend-string-contains? asm "%r8")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_swapped_memory")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Lt)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.U64))
+      (has
+        "    movq $9218868437227405312, %rax\n"
+        "    cmpq -8(%rbp), %rax\n"
+        "    seta %al\n")
+      (lacks "%r8"))))
 
 (define (compiler-backend-int-return-compare-remat-frame-ok?) : bool
   (let
@@ -33444,24 +30620,22 @@ g:
             (regalloc.CompilerRegLocation.Remat
               (ir.CompilerIrValue.I64 0x7ff0000000000002)))
           (regalloc.compiler-reg-assignment-table-empty)))]
-    (match (backend.compiler-backend-emit-binop-return-with-plan
-      (ast.ast-node-pool-reader-type-segment-bases)
-      backend-state
-      (ci.intern "ret_int_compare_remat_frame")
-      ir.CompilerIrBlockList.Nil
-      (compiler-backend-scratch-test-types-from 0 2)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      assignments
-      2
-      (ir.CompilerIrBinOp.Lt)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.U64))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq $9218868437227405314, %r8\n    movq $9218868437227405313, %rax\n    cmpq %r8, %rax\n    setb %al\n")]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop-return-with-plan
+        (ast.ast-node-pool-reader-type-segment-bases)
+        backend-state
+        (ci.intern "ret_int_compare_remat_frame")
+        ir.CompilerIrBlockList.Nil
+        (compiler-backend-scratch-test-types-from 0 2)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        assignments
+        2
+        (ir.CompilerIrBinOp.Lt)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.U64))
+      (has
+        "    movq $9218868437227405314, %r8\n    movq $9218868437227405313, %rax\n    cmpq %r8, %rax\n    setb %al\n"))))
 
 ;; Backend-owned replacement for the Rust bool logic codegen checks:
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
@@ -33540,14 +30714,14 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_f")]
         (and
           (not (string.eq body ""))
-          (backend.compiler-backend-string-contains? body "    cmpq ")
-          (or
-            (backend.compiler-backend-string-contains? body "    je ")
-            (backend.compiler-backend-string-contains? body "    jne "))
-          (not (backend.compiler-backend-string-contains? body "    sete "))
-          (not (backend.compiler-backend-string-contains? body "    setne "))
-          (not (backend.compiler-backend-string-contains? body "    xorq $1, "))
-          (not (backend.compiler-backend-string-contains? body "    testq "))))]
+          (asm-has? body "    cmpq ")
+          (or (asm-has? body "    je ") (asm-has? body "    jne "))
+          (asm-lacks?
+            body
+            "    sete "
+            "    setne "
+            "    xorq $1, "
+            "    testq ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-not-branch-ok?) : bool
@@ -33558,13 +30732,9 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_f")]
         (and
           (not (string.eq body ""))
-          (or
-            (backend.compiler-backend-string-contains? body "    cmpq $0, ")
-            (backend.compiler-backend-string-contains? body "    testq "))
-          (or
-            (backend.compiler-backend-string-contains? body "    je ")
-            (backend.compiler-backend-string-contains? body "    jne "))
-          (not (backend.compiler-backend-string-contains? body "    xorq $1, "))))]
+          (or (asm-has? body "    cmpq $0, ") (asm-has? body "    testq "))
+          (or (asm-has? body "    je ") (asm-has? body "    jne "))
+          (asm-lacks? body "    xorq $1, ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-multi-not-branch-ok?) : bool
@@ -33576,10 +30746,8 @@ g:
         [body : String (compiler-backend-asm-function-body asm "_tl_contains")]
         (and
           (not (string.eq body ""))
-          (or
-            (backend.compiler-backend-string-contains? body "    cmpq $0, ")
-            (backend.compiler-backend-string-contains? body "    testq "))
-          (not (backend.compiler-backend-string-contains? body "    xorq $1, "))))]
+          (or (asm-has? body "    cmpq $0, ") (asm-has? body "    testq "))
+          (asm-lacks? body "    xorq $1, ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-condition-branch-ok?) : bool
@@ -33611,20 +30779,10 @@ g:
           (ci.intern-compat-state-capture-active)))
         [(backend.ResultCompilerBackend.Ok spill-asm)
           (and
-            (backend.compiler-backend-string-contains?
-              reg-asm
-              "    testq %r12, %r12\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                reg-asm
-                "    movq %r12, %rax\n"))
-            (backend.compiler-backend-string-contains?
-              spill-asm
-              "    cmpq $0, -24(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                spill-asm
-                "    movq -24(%rbp), %rax\n")))]
+            (asm-has? reg-asm "    testq %r12, %r12\n")
+            (asm-lacks? reg-asm "    movq %r12, %rax\n")
+            (asm-has? spill-asm "    cmpq $0, -24(%rbp)\n")
+            (asm-lacks? spill-asm "    movq -24(%rbp), %rax\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -33676,22 +30834,10 @@ g:
             (ci.intern-compat-state-capture-active)))
           [(backend.ResultCompilerBackend.Ok stack-asm)
             (and
-              (backend.compiler-backend-string-contains?
-                reg-asm
-                "    cmpq $10, %r12\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  reg-asm
-                  "    movq %r12, %rax\n"))
-              (not (backend.compiler-backend-string-contains? reg-asm "%rax"))
-              (backend.compiler-backend-string-contains?
-                stack-asm
-                "    cmpq %r13, -16(%rbp)\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  stack-asm
-                  "    movq -16(%rbp), %rax\n"))
-              (not (backend.compiler-backend-string-contains? stack-asm "%rax")))]
+              (asm-has? reg-asm "    cmpq $10, %r12\n")
+              (asm-lacks? reg-asm "    movq %r12, %rax\n" "%rax")
+              (asm-has? stack-asm "    cmpq %r13, -16(%rbp)\n")
+              (asm-lacks? stack-asm "    movq -16(%rbp), %rax\n" "%rax"))]
           [(backend.ResultCompilerBackend.Err _) false])]
       [(backend.ResultCompilerBackend.Err _) false])))
 
@@ -33758,19 +30904,16 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
         (or
-          (backend.compiler-backend-string-contains? asm "    xorq %r8, %rax\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    xorq %rcx, %rax\n"))
-        (backend.compiler-backend-string-contains? asm "    shlq %cl, %rax\n")
-        (backend.compiler-backend-string-contains? asm "    sarq %cl, %rax\n")
-        (not (backend.compiler-backend-string-contains? asm "    orq "))
-        (not
-          (backend.compiler-backend-string-contains? asm "    addq %r8, %rax\n"))
+          (asm-has? asm "    xorq %r8, %rax\n")
+          (asm-has? asm "    xorq %rcx, %rax\n"))
+        (asm-has? asm "    shlq %cl, %rax\n")
+        (asm-has? asm "    sarq %cl, %rax\n")
+        (asm-lacks? asm "    orq ")
+        (asm-lacks? asm "    addq %r8, %rax\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle)))
+            (asm-has? asm needle)))
         true
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -33905,23 +31048,11 @@ g:
             [(backend.ResultCompilerBackend.Ok negative-asm)
               (and
                 (backend.backend-and4
-                  (backend.compiler-backend-string-contains?
-                    byte-asm
-                    "    movzbq %r12b, %r12\n")
-                  (not
-                    (backend.compiler-backend-string-contains?
-                      byte-asm
-                      "    andq $255, %r12\n"))
-                  (backend.compiler-backend-string-contains?
-                    word-asm
-                    "    movzwq %r12w, %r12\n")
-                  (not
-                    (backend.compiler-backend-string-contains?
-                      word-asm
-                      "    andq $65535, %r12\n")))
-                (backend.compiler-backend-string-contains?
-                  negative-asm
-                  "    andq $254, %r12\n"))]
+                  (asm-has? byte-asm "    movzbq %r12b, %r12\n")
+                  (asm-lacks? byte-asm "    andq $255, %r12\n")
+                  (asm-has? word-asm "    movzwq %r12w, %r12\n")
+                  (asm-lacks? word-asm "    andq $65535, %r12\n"))
+                (asm-has? negative-asm "    andq $254, %r12\n"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -33963,11 +31094,11 @@ g:
 (define (compiler-backend-direct-compare-asm-ok? [asm : (& asm str)]) : bool
   (and
     (backend.backend-and4
-      (backend.compiler-backend-string-contains? asm "    movq %r15, %r12\n")
-      (backend.compiler-backend-string-contains? asm "    setl %r12b\n")
-      (backend.compiler-backend-string-contains? asm "    movzbq %r12b, %r12\n")
-      (not (backend.compiler-backend-string-contains? asm "%rax")))
-    (not (backend.compiler-backend-string-contains? asm "%r8"))))
+      (asm-has? asm "    movq %r15, %r12\n")
+      (asm-has? asm "    setl %r12b\n")
+      (asm-has? asm "    movzbq %r12b, %r12\n")
+      (asm-lacks? asm "%rax"))
+    (asm-lacks? asm "%r8")))
 
 (define (compiler-backend-direct-compare-home-ok?) : bool
   (match (compiler-backend-direct-compare-asm (ir.CompilerIrValue.I64 42))
@@ -33977,12 +31108,8 @@ g:
           (and
             (compiler-backend-direct-compare-asm-ok? imm-asm)
             (compiler-backend-direct-compare-asm-ok? reg-asm)
-            (backend.compiler-backend-string-contains?
-              imm-asm
-              "    cmpq $42, %r12\n")
-            (backend.compiler-backend-string-contains?
-              reg-asm
-              "    cmpq %r13, %r12\n"))]
+            (asm-has? imm-asm "    cmpq $42, %r12\n")
+            (asm-has? reg-asm "    cmpq %r13, %r12\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -34026,22 +31153,14 @@ g:
         [(backend.ResultCompilerBackend.Ok shr-asm)
           (and
             (backend.backend-and4
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    movq %r15, %r12\n")
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    shlq $3, %r12\n")
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    movq %r15, %r12\n")
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    sarq $3, %r12\n"))
-            (not (backend.compiler-backend-string-contains? shl-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? shr-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? shl-asm "%rcx"))
-            (not (backend.compiler-backend-string-contains? shr-asm "%rcx")))]
+              (asm-has? shl-asm "    movq %r15, %r12\n")
+              (asm-has? shl-asm "    shlq $3, %r12\n")
+              (asm-has? shr-asm "    movq %r15, %r12\n")
+              (asm-has? shr-asm "    sarq $3, %r12\n"))
+            (asm-lacks? shl-asm "%rax")
+            (asm-lacks? shr-asm "%rax")
+            (asm-lacks? shl-asm "%rcx")
+            (asm-lacks? shr-asm "%rcx"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -34088,42 +31207,20 @@ g:
         [(backend.ResultCompilerBackend.Ok shr-asm)
           (and
             (backend.backend-and8
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    movq %r15, %r12\n")
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    testq %rcx, %rcx\n")
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    cmpq $64, %rcx\n")
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    shlq %cl, %r12\n")
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    movq %r15, %r12\n")
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    testq %rcx, %rcx\n")
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    cmpq $64, %rcx\n")
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    sarq %cl, %r12\n"))
-            (not (backend.compiler-backend-string-contains? shl-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? shr-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? shl-asm "%r8"))
-            (not (backend.compiler-backend-string-contains? shr-asm "%r8"))
-            (not
-              (backend.compiler-backend-string-contains?
-                shl-asm
-                "    movq %rcx"))
-            (not
-              (backend.compiler-backend-string-contains?
-                shr-asm
-                "    movq %rcx")))]
+              (asm-has? shl-asm "    movq %r15, %r12\n")
+              (asm-has? shl-asm "    testq %rcx, %rcx\n")
+              (asm-has? shl-asm "    cmpq $64, %rcx\n")
+              (asm-has? shl-asm "    shlq %cl, %r12\n")
+              (asm-has? shr-asm "    movq %r15, %r12\n")
+              (asm-has? shr-asm "    testq %rcx, %rcx\n")
+              (asm-has? shr-asm "    cmpq $64, %rcx\n")
+              (asm-has? shr-asm "    sarq %cl, %r12\n"))
+            (asm-lacks? shl-asm "%rax")
+            (asm-lacks? shr-asm "%rax")
+            (asm-lacks? shl-asm "%r8")
+            (asm-lacks? shr-asm "%r8")
+            (asm-lacks? shl-asm "    movq %rcx")
+            (asm-lacks? shr-asm "    movq %rcx"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -34170,27 +31267,14 @@ g:
         [(backend.ResultCompilerBackend.Ok cmp-asm)
           (and
             (backend.backend-and4
-              (backend.compiler-backend-string-contains?
-                add-asm
-                "    leaq 7(%r12), %r8\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  add-asm
-                  "    addq $7, %r8\n"))
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    cmpq $7, %r8\n")
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    setl %r8b\n"))
-            (backend.compiler-backend-string-contains?
-              add-asm
-              "    movq %r8, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              cmp-asm
-              "    movq %r8, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? add-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? cmp-asm "%rax")))]
+              (asm-has? add-asm "    leaq 7(%r12), %r8\n")
+              (asm-lacks? add-asm "    addq $7, %r8\n")
+              (asm-has? cmp-asm "    cmpq $7, %r8\n")
+              (asm-has? cmp-asm "    setl %r8b\n"))
+            (asm-has? add-asm "    movq %r8, -16(%rbp)\n")
+            (asm-has? cmp-asm "    movq %r8, -16(%rbp)\n")
+            (asm-lacks? add-asm "%rax")
+            (asm-lacks? cmp-asm "%rax"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -34300,22 +31384,16 @@ g:
     (and
       direct-result.ok
       spilled-result.ok
-      (backend.compiler-backend-string-contains?
-        direct
-        "    leaq 31(,%rbp,1), %r12\n")
-      (backend.compiler-backend-string-contains?
-        spilled
-        "    leaq 31(,%rbp,1), %r8\n")
-      (not (backend.compiler-backend-string-contains? direct "31(%rsp)"))
-      (not (backend.compiler-backend-string-contains? spilled "31(%rsp)"))
-      (not (backend.compiler-backend-string-contains? direct "    addq $31"))
-      (not (backend.compiler-backend-string-contains? spilled "    addq $31"))
+      (asm-has? direct "    leaq 31(,%rbp,1), %r12\n")
+      (asm-has? spilled "    leaq 31(,%rbp,1), %r8\n")
+      (asm-lacks? direct "31(%rsp)")
+      (asm-lacks? spilled "31(%rsp)")
+      (asm-lacks? direct "    addq $31")
+      (asm-lacks? spilled "    addq $31")
       ;; The spilled destination remains a genuine rebased frame write.
-      (backend.compiler-backend-string-contains?
-        spilled
-        "    movq %r8, 48(%rsp)\n")
-      (backend.compiler-backend-string-contains? direct "    popq %rbp\n")
-      (backend.compiler-backend-string-contains? spilled "    popq %rbp\n"))))
+      (asm-has? spilled "    movq %r8, 48(%rsp)\n")
+      (asm-has? direct "    popq %rbp\n")
+      (asm-has? spilled "    popq %rbp\n"))))
 
 (define (compiler-backend-direct-immediate-zero-asm [op : ir.CompilerIrBinOp]) : backend.ResultCompilerBackend
   (backend.compiler-backend-emit-binop
@@ -34362,20 +31440,14 @@ g:
                 (ir.CompilerIrBinOp.Sub))
                 [(backend.ResultCompilerBackend.Ok direct-sub)
                   (and
-                    (backend.compiler-backend-string-contains?
+                    (asm-has?
                       spill-add
                       "    movq %r12, %r8\n    movq %r8, -16(%rbp)\n")
                     (string.eq spill-add spill-sub)
-                    (backend.compiler-backend-string-contains?
-                      direct-add
-                      "    movq %r12, %r13\n")
+                    (asm-has? direct-add "    movq %r12, %r13\n")
                     (string.eq direct-add direct-sub)
-                    (not
-                      (backend.compiler-backend-string-contains? spill-add "$0"))
-                    (not
-                      (backend.compiler-backend-string-contains?
-                        direct-add
-                        "$0")))]
+                    (asm-lacks? spill-add "$0")
+                    (asm-lacks? direct-add "$0"))]
                 [(backend.ResultCompilerBackend.Err _) false])]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
@@ -34428,54 +31500,37 @@ g:
         [(backend.ResultCompilerBackend.Ok cmp-asm)
           (and
             (backend.backend-and4
-              (backend.compiler-backend-string-contains?
-                add-asm
-                "    movq %r12, %r8\n")
-              (backend.compiler-backend-string-contains?
-                add-asm
-                "    addq %r13, %r8\n")
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    cmpq %r13, %r8\n")
-              (backend.compiler-backend-string-contains?
-                cmp-asm
-                "    setl %r8b\n"))
-            (backend.compiler-backend-string-contains?
-              add-asm
-              "    movq %r8, -16(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              cmp-asm
-              "    movq %r8, -16(%rbp)\n")
-            (not (backend.compiler-backend-string-contains? add-asm "%rax"))
-            (not (backend.compiler-backend-string-contains? cmp-asm "%rax")))]
+              (asm-has? add-asm "    movq %r12, %r8\n")
+              (asm-has? add-asm "    addq %r13, %r8\n")
+              (asm-has? cmp-asm "    cmpq %r13, %r8\n")
+              (asm-has? cmp-asm "    setl %r8b\n"))
+            (asm-has? add-asm "    movq %r8, -16(%rbp)\n")
+            (asm-has? cmp-asm "    movq %r8, -16(%rbp)\n")
+            (asm-lacks? add-asm "%rax")
+            (asm-lacks? cmp-asm "%rax"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-spill-unop-home-ok?) : bool
-  (match (backend.compiler-backend-emit-unop
-    (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        0
-        (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+  (asm-ok?
+    (backend.compiler-backend-emit-unop
       (regalloc.compiler-reg-assignments-prepend
         (regalloc.CompilerRegAssignment
-          1
-          (regalloc.CompilerRegLocation.Spill -16))
-        (regalloc.compiler-reg-assignment-table-empty)))
-    1
-    (ir.CompilerIrUnOp.Neg)
-    (ir.CompilerIrValue.Var 0)
-    (ast.AstType.I64)
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq %r12, %r8\n")
-        (backend.compiler-backend-string-contains? asm "    negq %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r8, -16(%rbp)\n")
-        (not (backend.compiler-backend-string-contains? asm "%rax")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+          0
+          (regalloc.CompilerRegLocation.Register cabi.compiler-reg-id-r12))
+        (regalloc.compiler-reg-assignments-prepend
+          (regalloc.CompilerRegAssignment
+            1
+            (regalloc.CompilerRegLocation.Spill -16))
+          (regalloc.compiler-reg-assignment-table-empty)))
+      1
+      (ir.CompilerIrUnOp.Neg)
+      (ir.CompilerIrValue.Var 0)
+      (ast.AstType.I64)
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    movq %r12, %r8\n" "    negq %r8\n" "    movq %r8, -16(%rbp)\n")
+    (lacks "%rax")))
 
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend.backend-and8
@@ -34512,36 +31567,23 @@ g:
         (backend.backend-and8
           ;; COLD-1: both abort stubs are out of line; the INT_MIN test
           ;; still skips the -1 test through the kept `1:`.
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
             "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_div_abort_at\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq $1, %rax\n    jno 1f\n")
-          (backend.compiler-backend-string-contains?
+          (asm-has? asm "    call tl_div_abort_at\n")
+          (asm-has? asm "    cmpq $1, %rax\n    jno 1f\n")
+          (asm-has?
             asm
             "    cmpq $-1, %r8\n    je .L_tl_abort_site_2_div_overflow.cold\n1:\n    cqto\n")
-          (backend.compiler-backend-string-contains? asm "    cqto\n")
-          (backend.compiler-backend-string-contains? asm "    idivq %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rdx, %rax\n")
-          (backend.compiler-backend-string-contains? asm "    .quad 46\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_div_abort\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_div_abort\n"))
+          (asm-has? asm "    cqto\n")
+          (asm-has? asm "    idivq %r8\n")
+          (asm-has? asm "    movq %rdx, %rax\n")
+          (asm-has? asm "    .quad 46\n"))
+        (asm-lacks? asm "    call tl_div_abort\n" ".globl tl_div_abort\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-constant-divisor-strength-source) : String
@@ -34562,37 +31604,21 @@ g:
     (compiler-backend-constant-divisor-strength-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
+        (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
+        (asm-has? asm "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
+        (asm-has? asm "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
         ;; M-F folds the power-of-2 modulo mask into an immediate `andq`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
-        (backend.compiler-backend-string-contains? asm "    andq $7, %rax\n")
-        (not (backend.compiler-backend-string-contains? asm "    idivq %r8\n"))
-        (not (backend.compiler-backend-string-contains? asm "    divq %r8\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_div_abort\n"))
+        (asm-has? asm "    andq $7, %rax\n")
+        (asm-lacks? asm "    idivq %r8\n")
+        (asm-lacks? asm "    divq %r8\n")
+        (asm-lacks? asm "    call tl_div_abort\n")
         (and
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".extern tl_div_abort\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_div_abort\n"))
+          (asm-lacks? asm ".extern tl_div_abort\n" ".globl tl_div_abort\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))))]
+              (asm-has? asm needle)))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Signed i64 magic div/mod must keep the pre-shift quotient sign in %rax and
@@ -34626,8 +31652,7 @@ g:
       (string.eq
         frame-asm
         "    movq %r10, %rax\n    imulq -40(%rbp)\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
-      (not (backend.compiler-backend-string-contains? reg-asm "sarq $63"))
-      (not (backend.compiler-backend-string-contains? reg-asm "subq %r9, %rdx")))))
+      (asm-lacks? reg-asm "sarq $63" "subq %r9, %rdx"))))
 
 ;; Exercise the adjacent producer/result forwarding at the IR emission layer,
 ;; where fixed allocator homes can make both otherwise-redundant copies
@@ -34880,40 +31905,31 @@ g:
               (and
                 ;; Positive: producer lands in SRC and the single-use result is
                 ;; stored from SRC after the exact nine-instruction expansion.
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   forwarded
                   "    leaq (%r12,%r13), %r9\n    movq %r9, %rax\n")
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   forwarded
                   "    subq %rax, %r9\n    movq %r9, (%rdi,%rsi,8)\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    forwarded
-                    "    movq %rdx, %r9\n"))
-                (not
-                  (backend.compiler-backend-string-contains?
-                    forwarded
-                    "    movq %r9, %rax\n    movq %rax, (%rdi,%rsi,8)\n"))
+                (asm-lacks? forwarded "    movq %rdx, %r9\n")
+                (asm-lacks?
+                  forwarded
+                  "    movq %r9, %rax\n    movq %rax, (%rdi,%rsi,8)\n")
                 ;; Negative: a multi-use divmod result returns to its canonical
                 ;; %rax home before both consumers read it.
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   multi-result
                   "    leaq (%r12,%r13), %r9\n    movq %r9, %rax\n")
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   multi-result
                   "    subq %rax, %r9\n    movq %r9, %rax\n")
-                (backend.compiler-backend-string-contains?
-                  multi-result
-                  "    movq %rax, (%rdi,%rsi,8)\n")
+                (asm-has? multi-result "    movq %rax, (%rdi,%rsi,8)\n")
                 ;; Negative: another use of the producer keeps its fixed %rdx
                 ;; home, so the divmod performs the ordinary SRC copy.
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   multi-producer
                   "    leaq (%r12,%r13), %rdx\n    movq %rdx, %r9\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    multi-producer
-                    "    leaq (%r12,%r13), %r9\n")))]
+                (asm-lacks? multi-producer "    leaq (%r12,%r13), %r9\n"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
@@ -34927,13 +31943,9 @@ g:
       (match (compiler-backend-divmod-polish-asm false false true false)
         [(backend.ResultCompilerBackend.Ok r12-asm)
           (and
-            (backend.compiler-backend-string-contains?
-              rbp-asm
-              "    leaq 62(,%rbp,1), %r9\n")
-            (not (backend.compiler-backend-string-contains? rbp-asm "(%rbp)"))
-            (backend.compiler-backend-string-contains?
-              r12-asm
-              "    leaq 62(%r12), %r9\n"))]
+            (asm-has? rbp-asm "    leaq 62(,%rbp,1), %r9\n")
+            (asm-lacks? rbp-asm "(%rbp)")
+            (asm-has? r12-asm "    leaq 62(%r12), %r9\n"))]
         [(backend.ResultCompilerBackend.Err _) false])]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -35185,23 +32197,14 @@ g:
     result))
 
 (define (compiler-backend-c22-divmod-store-clobber-rejected-ok?) : bool
-  (match (compiler-backend-c22-divmod-store-collision-asm)
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq (%rcx,%r8,8), %rdx\n    addq (%rcx,%r12,8), %rdx\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movabsq $-8543223828751151131, %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq -512(%rbp), %rcx\n    movq %rax, (%rcx,%r12,8)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    subq %rax, %rcx\n    movq %rcx, %r9\n    movq %r9, (%rcx,%r12,8)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (compiler-backend-c22-divmod-store-collision-asm)
+    (has
+      "    movq (%rcx,%r8,8), %rdx\n    addq (%rcx,%r12,8), %rdx\n"
+      "    movabsq $-8543223828751151131, %r9\n"
+      "    movq -512(%rbp), %rcx\n    movq %rax, (%rcx,%r12,8)\n")
+    (lacks
+      "    subq %rax, %rcx\n    movq %rcx, %r9\n    movq %r9, (%rcx,%r12,8)\n")))
 
 (define (compiler-backend-divrem-binop-types [ty : ast.AstType]) : regalloc.CompilerRegVarTypes
   (regalloc.compiler-reg-var-types-insert
@@ -35262,29 +32265,22 @@ g:
           [(backend.ResultCompilerBackend.Ok magic-spill)
             (and
               ;; Quotient-only power division does not preserve the dividend.
-              (not
-                (backend.compiler-backend-string-contains?
-                  power-quotient
-                  "    movq %rax, %r9\n"))
-              (backend.compiler-backend-string-contains?
-                power-remainder
-                "    movq %rax, %r9\n")
+              (asm-lacks? power-quotient "    movq %rax, %r9\n")
+              (asm-has? power-remainder "    movq %rax, %r9\n")
               ;; Power and magic quotient expansions both honor the requested
               ;; %rax result and spill it without a fixed-register hop.
-              (backend.compiler-backend-string-contains?
+              (asm-has?
                 power-spill
                 "    sarq $3, %rax\n    movq %rax, -24(%rbp)\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  power-spill
-                  "    sarq $3, %rax\n    movq %rax, %rdx\n"))
-              (backend.compiler-backend-string-contains?
+              (asm-lacks?
+                power-spill
+                "    sarq $3, %rax\n    movq %rax, %rdx\n")
+              (asm-has?
                 magic-spill
                 "    addq %rdx, %rax\n    movq %rax, -24(%rbp)\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  magic-spill
-                  "    movq %rdx, %rax\n    movq %rax, -24(%rbp)\n")))]
+              (asm-lacks?
+                magic-spill
+                "    movq %rdx, %rax\n    movq %rax, -24(%rbp)\n"))]
           [(backend.ResultCompilerBackend.Err _) false])]
       [(backend.ResultCompilerBackend.Err _) false])))
 
@@ -35298,23 +32294,16 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (if want-guard?
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_div_abort\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call tl_div_abort\n")))
-        (backend.compiler-backend-string-contains? asm "    idivq %r8\n")
+          (asm-has? asm "    call tl_div_abort\n")
+          (asm-lacks? asm "    call tl_div_abort\n"))
+        (asm-has? asm "    idivq %r8\n")
         (if want-remainder?
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rdx, %rax\n")
+          (asm-has? asm "    movq %rdx, %rax\n")
           true)
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-divrem-rax-rhs-preserved-ok?) : bool
@@ -35343,18 +32332,15 @@ g:
         (ci.intern-compat-state-capture-active)))
       [(backend.ResultCompilerBackend.Ok asm)
         (and
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
-            "    movq %rax, %r8\n    movq %r12, %rax\n")
-          (backend.compiler-backend-string-contains? asm "    idivq %r8\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %r12, %rax\n    movq %rax, %r8\n"))
+            "    movq %rax, %r8\n    movq %r12, %rax\n"
+            "    idivq %r8\n")
+          (asm-lacks? asm "    movq %r12, %rax\n    movq %rax, %r8\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle))))]
+              (asm-has? asm needle))))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-safe-divrem-guard-elision-ok?) : bool
@@ -35479,21 +32465,13 @@ g:
     [one-flag : String (str_cat.str-cat "    movq $1, " flag-reg "\n")]
     (and
       (> (string.string-length body) 0)
-      (backend.compiler-backend-string-contains? body cmp)
-      (backend.compiler-backend-string-contains? body normalized-push)
+      (asm-has? body cmp normalized-push)
       (if signed?
+        (and (asm-has? body test zero-flag) (asm-lacks? body one-flag))
         (and
-          (backend.compiler-backend-string-contains? body test)
-          (backend.compiler-backend-string-contains? body zero-flag)
-          (not (backend.compiler-backend-string-contains? body one-flag)))
-        (and
-          (not (backend.compiler-backend-string-contains? body test))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "_shift_negative.cold"))
-          (backend.compiler-backend-string-contains? body one-flag)
-          (not (backend.compiler-backend-string-contains? body zero-flag)))))))
+          (asm-lacks? body test "_shift_negative.cold")
+          (asm-has? body one-flag)
+          (asm-lacks? body zero-flag))))))
 
 (define (compiler-backend-scalar-shift-matrix-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
@@ -35526,42 +32504,17 @@ g:
           ;; All helpers stay on stable direct user symbols so body extraction
           ;; is independent of compact-name slot assignment.
           (backend.backend-and8
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_u64_lit\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_si8\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_ui8\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_si16\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_ui16\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_si32\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_shift_ui32\n")
-            (and
-              (backend.compiler-backend-string-contains?
-                asm
-                ".globl _tl_shift_si64\n")
-              (backend.compiler-backend-string-contains?
-                asm
-                ".globl _tl_shift_ui64\n")))
+            (asm-has? asm ".globl _tl_shift_u64_lit\n")
+            (asm-has? asm ".globl _tl_shift_si8\n")
+            (asm-has? asm ".globl _tl_shift_ui8\n")
+            (asm-has? asm ".globl _tl_shift_si16\n")
+            (asm-has? asm ".globl _tl_shift_ui16\n")
+            (asm-has? asm ".globl _tl_shift_si32\n")
+            (asm-has? asm ".globl _tl_shift_ui32\n")
+            (asm-has? asm ".globl _tl_shift_si64\n" ".globl _tl_shift_ui64\n"))
           ;; A U64 literal/copy must select the logical right-shift mnemonic.
-          (backend.compiler-backend-string-contains?
-            literal
-            "    shrq %cl, %rax\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              literal
-              "    sarq %cl, %rax\n"))
+          (asm-has? literal "    shrq %cl, %rax\n")
+          (asm-lacks? literal "    sarq %cl, %rax\n")
           (compiler-backend-shift-guard-body-ok?
             si8
             "b"
@@ -35628,32 +32581,23 @@ g:
     (compiler-backend-shift-guard-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains? asm "    movq $-1,")
-        (backend.compiler-backend-string-contains?
+        (asm-has? asm "    movq $-1,")
+        (asm-has?
           asm
           "    testq %r8, %r8\n    jl .L_tl_abort_site_1_shift_negative.cold\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
           "    cmpq $64, %r8\n    jae .L_tl_abort_site_2_shift_large.cold\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_shift_abort_at\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_shift_abort\n"))
-        (not (backend.compiler-backend-string-contains? asm ".L_tl_shift_msg:"))
-        (not
-          (backend.compiler-backend-string-contains? asm "    shlq $-1, %rax\n"))
+        (asm-has? asm "    call tl_shift_abort_at\n")
+        (asm-lacks? asm ".globl tl_shift_abort\n")
+        (asm-lacks? asm ".L_tl_shift_msg:")
+        (asm-lacks? asm "    shlq $-1, %rax\n")
         (and
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call tl_shift_abort\n"))
+          (asm-lacks? asm "    call tl_shift_abort\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))))]
+              (asm-has? asm needle)))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-narrow-binop-types
@@ -35687,14 +32631,14 @@ g:
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm needle)
+        (asm-has? asm needle)
         (if (string.eq bad "")
           true
-          (not (backend.compiler-backend-string-contains? asm bad)))
+          (asm-lacks? asm bad))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend-owned narrow integer instruction selection coverage. These
@@ -35825,9 +32769,8 @@ g:
       (and
         ;; The RHS global is a legal scalar memory source, so the materialized
         ;; compare needs only the result staging register.
-        (backend.compiler-backend-string-contains? asm "(%rip), %r8\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
+        (asm-has? asm "(%rip), %r8\n")
+        (asm-lacks? asm "    cmpb %r8b, %al\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-global-compare-program) : ir.CompilerIrProgram
@@ -35885,19 +32828,12 @@ g:
         ;; staging register the plan reserved for it and the right one becomes
         ;; the compare's memory SOURCE. Pre-M6-I both were staged and the line
         ;; read `cmpq %r8, %r9`.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_g_next(%rip), %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq _tl_g_cap(%rip), %r9\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_g_cap(%rip)"))
+        (asm-has? asm "    movq _tl_g_next(%rip), %r9\n")
+        (asm-has? asm "    cmpq _tl_g_cap(%rip), %r9\n")
+        (asm-lacks? asm "    movq _tl_g_cap(%rip)")
         ;; The load-bearing width check is unchanged: a full-word compare, not
         ;; the byte one the `bool` result type would suggest.
-        (not (backend.compiler-backend-string-contains? asm "    cmpb %r8b, ")))]
+        (asm-lacks? asm "    cmpb %r8b, "))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-missing-var-compare-width-ok?) : bool
@@ -35908,32 +32844,23 @@ g:
           1
           (regalloc.CompilerRegLocation.Spill -16))
         (regalloc.compiler-reg-assignment-table-empty))]
-    (match (backend.compiler-backend-emit-binop
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (regalloc.compiler-reg-var-types-empty)
-      (backend.CompilerBackendGlobalTypeTable.Empty)
-      rhs-spill
-      2
-      (ir.CompilerIrBinOp.Lt)
-      (ir.CompilerIrValue.Var 0)
-      (ir.CompilerIrValue.Var 1)
-      (ast.AstType.Bool)
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq -16(%rbp), %r8\n    setl %r8b\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    cmpb -16(%rbp), %al\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    cmpq -16(%rbp), %rax\n    setl %al\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-binop
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (regalloc.compiler-reg-var-types-empty)
+        (backend.CompilerBackendGlobalTypeTable.Empty)
+        rhs-spill
+        2
+        (ir.CompilerIrBinOp.Lt)
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.Bool)
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))
+      (has "    cmpq -16(%rbp), %r8\n    setl %r8b\n")
+      (lacks
+        "    cmpb -16(%rbp), %al\n"
+        "    cmpq -16(%rbp), %rax\n    setl %al\n"))))
 
 (define (compiler-backend-global-compare-width-ok?) : bool
   (and
@@ -35954,32 +32881,20 @@ g:
         ;; T1-6 (a) red-zone frame slots (second's n at -8(%rsp); half's x
         ;; f64 param spills from %xmm0 to -8(%rsp), divisor 2.0 at
         ;; -16(%rsp)); every one of these leaves is call-free.
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %rdi, -8(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd %xmm0, -8(%rsp)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm1, -8(%rsp)\n"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    divsd -16(%rsp), %xmm2\n")
+        (asm-has? asm "    movq %rdi, -8(%rsp)\n")
+        (asm-has? asm "    movsd %xmm0, -8(%rsp)\n")
+        (asm-lacks? asm "    movsd %xmm1, -8(%rsp)\n")
+        (asm-has? asm "    divsd -16(%rsp), %xmm2\n")
         (or
           (compiler-backend-call-or-jmp-ok? asm "_tl_half")
           (compiler-backend-call-or-jmp-ok? asm "_tl_callhalf")
           (compiler-backend-call-or-jmp-ok? asm "_tl_f"))
-        (backend.compiler-backend-string-contains? asm "    movsd %xmm0, ")
+        (asm-has? asm "    movsd %xmm0, ")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle)))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    divsd %xmm1, %xmm0\n")))]
+            (asm-has? asm needle)))
+        (asm-lacks? asm "    divsd %xmm1, %xmm0\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Windows f64 ABI emit-shape coverage: the first four positional
@@ -36009,51 +32924,28 @@ g:
         (backend.backend-and8
           ;; Win64 FPO rebases local slots and the positive incoming fifth
           ;; argument against the compacted post-prologue %rsp frame.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm0, 56(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm1, 48(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, 40(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd %xmm3, 32(%rsp)\n")
-          (backend.compiler-backend-string-contains? asm "    subq $72, %rsp\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 64(%rsp), %r10\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r10, 32(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd 112(%rsp), %xmm2\n"))
+          (asm-has? asm "    movsd %xmm0, 56(%rsp)\n")
+          (asm-has? asm "    movsd %xmm1, 48(%rsp)\n")
+          (asm-has? asm "    movsd %xmm2, 40(%rsp)\n")
+          (asm-has? asm "    movsd %xmm3, 32(%rsp)\n")
+          (asm-has? asm "    subq $72, %rsp\n")
+          (asm-has? asm "    movq 64(%rsp), %r10\n")
+          (asm-has? asm "    movq %r10, 32(%rsp)\n")
+          (asm-has? asm "    movsd 112(%rsp), %xmm2\n"))
         (or
-          (backend.compiler-backend-string-contains? asm "    call _tl_f")
-          (backend.compiler-backend-string-contains? asm "    call _tl_sum5")
-          (backend.compiler-backend-string-contains? asm "    call _tl_call5"))
+          (asm-has? asm "    call _tl_f")
+          (asm-has? asm "    call _tl_sum5")
+          (asm-has? asm "    call _tl_call5"))
         ;; The f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd %xmm0, 56(%rsp)\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "too many call args"))
-        (not (backend.compiler-backend-string-contains? asm "    syscall"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd 48(%rbp), %xmm0\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r11, 32(%rsp)\n"))
+        (asm-has? asm "    movsd %xmm0, 56(%rsp)\n")
+        (asm-lacks? asm "too many call args")
+        (asm-lacks? asm "    syscall")
+        (asm-lacks? asm "    movsd 48(%rbp), %xmm0\n")
+        (asm-lacks? asm "    movq %r11, 32(%rsp)\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-source) : String
@@ -36081,20 +32973,18 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains? asm "    movsd ")
-          (backend.compiler-backend-string-contains? asm "%xmm0")
-          (backend.compiler-backend-string-contains? asm "%xmm1")
-          (backend.compiler-backend-string-contains? asm "    call ")
-          (not (backend.compiler-backend-string-contains? asm "    movsd %rax"))
-          (not (backend.compiler-backend-string-contains? asm "    movsd %rdx"))
-          (not
-            (backend.compiler-backend-string-contains? asm ", %rax\n    movsd"))
-          (not
-            (backend.compiler-backend-string-contains? asm ", %rdx\n    movsd")))
+          (asm-has? asm "    movsd ")
+          (asm-has? asm "%xmm0")
+          (asm-has? asm "%xmm1")
+          (asm-has? asm "    call ")
+          (asm-lacks? asm "    movsd %rax")
+          (asm-lacks? asm "    movsd %rdx")
+          (asm-lacks? asm ", %rax\n    movsd")
+          (asm-lacks? asm ", %rdx\n    movsd"))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-ok?) : bool
@@ -36133,40 +33023,24 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movd %xmm2, %r8d\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movd %r8d, %xmm2\n")
-          (backend.compiler-backend-string-contains? asm "    movsd ")
-          (backend.compiler-backend-string-contains? asm "%xmm0")
-          (backend.compiler-backend-string-contains? asm "    call ")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movss 4(%r10), %xmm2\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "unsupported bitcast"))
+          (asm-has? asm "    movd %xmm2, %r8d\n")
+          (asm-has? asm "    movd %r8d, %xmm2\n")
+          (asm-has? asm "    movsd ")
+          (asm-has? asm "%xmm0")
+          (asm-has? asm "    call ")
+          (asm-has? asm "    movss 4(%r10), %xmm2\n")
+          (asm-lacks? asm "unsupported bitcast")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle))))
-        (not (backend.compiler-backend-string-contains? asm "    movsd %rax"))
-        (not (backend.compiler-backend-string-contains? asm "    movsd %rdx"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movd %xmm0, %eax\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movd %eax, %xmm0\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movss 4(%r10), %xmm0\n")))]
+              (asm-has? asm needle))))
+        (asm-lacks?
+          asm
+          "    movsd %rax"
+          "    movsd %rdx"
+          "    movd %xmm0, %eax\n"
+          "    movd %eax, %xmm0\n"
+          "    movss 4(%r10), %xmm0\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-register-f32-aggregate-ok?) : bool
@@ -36181,14 +33055,10 @@ g:
 ;; call-arg emission, so the 7th and 8th args still exercise the variable
 ;; stack-store path while `add8` reads them back from 16(%rbp)/24(%rbp).
 (define (compiler-backend-stack-add-call-ok? [asm : String]) : bool
-  (or
-    (backend.compiler-backend-string-contains? asm "    call _tl_add8")
-    (backend.compiler-backend-string-contains? asm "    call _tl_f")))
+  (or (asm-has? asm "    call _tl_add8") (asm-has? asm "    call _tl_f")))
 
 (define (compiler-backend-stack-mix-call-ok? [asm : String]) : bool
-  (or
-    (backend.compiler-backend-string-contains? asm "    call _tl_mix")
-    (backend.compiler-backend-string-contains? asm "    call _tl_f")))
+  (or (asm-has? asm "    call _tl_mix") (asm-has? asm "    call _tl_f")))
 
 (define (compiler-backend-stack-int-args-ok?) : bool
   (match (backend.compiler-backend-emit-source
@@ -36205,29 +33075,14 @@ g:
       (let
         [callee : String (compiler-backend-asm-function-body asm "_tl_add8")]
         (and
-          (not
-            (backend.compiler-backend-string-contains? asm "too many call args"))
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r10, 0(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r10, 8(%rsp)\n")
+          (asm-lacks? asm "too many call args")
+          (asm-has? asm "    movq %r10, 0(%rsp)\n" "    movq %r10, 8(%rsp)\n")
           (compiler-backend-stack-add-call-ok? asm)
-          (backend.compiler-backend-string-contains?
+          (asm-has? callee "    movq 8(%rsp), %r8\n" "    movq 16(%rsp), %r8\n")
+          (asm-lacks?
             callee
-            "    movq 8(%rsp), %r8\n")
-          (backend.compiler-backend-string-contains?
-            callee
-            "    movq 16(%rsp), %r8\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              callee
-              "    movq 8(%rsp), %rax\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              callee
-              "    movq 16(%rsp), %rax\n"))))]
+            "    movq 8(%rsp), %rax\n"
+            "    movq 16(%rsp), %rax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; A SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
@@ -36238,33 +33093,18 @@ g:
     (compiler-backend-stack-f64-args-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (not
-          (backend.compiler-backend-string-contains? asm "too many call args"))
+        (asm-lacks? asm "too many call args")
         ;; FPO reserves the outgoing stack-arg area in the prologue (no
         ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
         ;; bit-copies. `_tl_sum10` is a call-free leaf, so T1-6 (a) leaves its
         ;; %rsp at the entry value and it reads its incoming f64 stack args at
         ;; 8/16(%rsp) instead of positive 16/24(%rbp).
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 0(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 8(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd 8(%rsp), %xmm2\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movsd 16(%rsp), %xmm2\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd 8(%rsp), %xmm0\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movsd 16(%rsp), %xmm0\n")))]
+        (asm-has? asm "    movq %r10, 0(%rsp)\n")
+        (asm-has? asm "    movq %r10, 8(%rsp)\n")
+        (asm-has? asm "    movsd 8(%rsp), %xmm2\n")
+        (asm-has? asm "    movsd 16(%rsp), %xmm2\n")
+        (asm-lacks? asm "    movsd 8(%rsp), %xmm0\n")
+        (asm-lacks? asm "    movsd 16(%rsp), %xmm0\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; A mixed call spilling one int and one f64 keeps the integer and float
@@ -36275,42 +33115,25 @@ g:
     (compiler-backend-stack-mixed-args-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (not
-          (backend.compiler-backend-string-contains? asm "too many call args"))
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 0(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 8(%rsp)\n")
+        (asm-lacks? asm "too many call args")
+        (asm-has? asm "    movq %r10, 0(%rsp)\n" "    movq %r10, 8(%rsp)\n")
         (compiler-backend-stack-mix-call-ok? asm))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; The Windows positional ABI still reserves 32-byte shadow space, stacks
 ;; args after the first four, and stores them after the shadow space.
 (define (compiler-backend-stack-windows-args-ok?) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-stack-int-args-source)
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (not
-          (backend.compiler-backend-string-contains? asm "too many call args"))
-        (backend.compiler-backend-string-contains? asm "    call _tl_add8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 32(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r10, 56(%rsp)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 128(%rsp), %r8\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 128(%rsp), %rax\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-stack-int-args-source)
+      (backend.CompilerBackendTarget.Windows))
+    (lacks "too many call args")
+    (has
+      "    call _tl_add8\n"
+      "    movq %r10, 32(%rsp)\n"
+      "    movq %r10, 56(%rsp)\n"
+      "    movq 128(%rsp), %r8\n")
+    (lacks "    movq 128(%rsp), %rax\n")))
 
 (define (compiler-backend-i64-type-list8) : ast.AstTypeList
   (let
@@ -36346,35 +33169,30 @@ g:
                     (ir.compiler-ir-value-seq-empty)))))))))))
 
 (define (compiler-backend-immediate-stack-call-args-ok?) : bool
-  (match (backend.compiler-backend-emit-call-args
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (backend.CompilerBackendTarget.Linux)
-    (regalloc.compiler-reg-assignment-table-empty)
-    (compiler-backend-i64-immediate-call-args8)
-    (compiler-backend-i64-type-list8)
-    false
-    0
-    0
-    0
-    0
-    0
-    ""
-    (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-program-index-build
+  (asm-ok?
+    (backend.compiler-backend-emit-call-args
       (ast.ast-node-pool-reader-type-segment-bases)
-      (ir.compiler-ir-function-seq-empty)
-      (ir.compiler-ir-extern-seq-empty))
-    0
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm "    movq $7, 0(%rsp)\n")
-        (backend.compiler-backend-string-contains? asm "    movq $8, 8(%rsp)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r11, 0(%rsp)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+      (backend.CompilerBackendTarget.Linux)
+      (regalloc.compiler-reg-assignment-table-empty)
+      (compiler-backend-i64-immediate-call-args8)
+      (compiler-backend-i64-type-list8)
+      false
+      0
+      0
+      0
+      0
+      0
+      ""
+      (cdiag.compiler-diagnostic-at-start "" "")
+      (backend.compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))
+      0
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active)))
+    (has "    movq $7, 0(%rsp)\n" "    movq $8, 8(%rsp)\n")
+    (lacks "    movq %r11, 0(%rsp)\n")))
 
 (define (compiler-backend-stack-f32-arg-bits-ok?) : bool
   (let
@@ -36385,24 +33203,17 @@ g:
           (regalloc.CompilerRegLocation.Register
             (cabi.compiler-abi-xmm-register-id 3)))
         (regalloc.compiler-reg-assignment-table-empty))]
-    (match (compiler-backend-test-emit-scalar-stack-call-arg-text
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      assignments
-      (ir.CompilerIrValue.Var 0)
-      (ast.AstType.F32)
-      true
-      0)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movd %xmm3, %r10d\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movl %r10d, 0(%rsp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm15")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (compiler-backend-test-emit-scalar-stack-call-arg-text
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        (ir.CompilerIrValue.Var 0)
+        (ast.AstType.F32)
+        true
+        0)
+      (has "    movd %xmm3, %r10d\n" "    movl %r10d, 0(%rsp)\n")
+      (lacks "%xmm15"))))
 
 (define (compiler-backend-group-stack-f64-arg-bits-ok?) : bool
   (let
@@ -36417,32 +33228,23 @@ g:
     [ty : ast.AstType (compiler-backend-register-group-f64-test-type)]
     [index : backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-f64-test-index)]
-    (match (backend.compiler-backend-emit-group-stack-arg
-      (backend.CompilerBackendTarget.Linux)
-      assignments
-      (ir.CompilerIrValue.Var 0)
-      0
-      2
-      ""
-      ty
-      index
-      index.backend-state)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %xmm3, %r10\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r10, 0(%rsp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %xmm4, %r10\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r10, 8(%rsp)\n")
-          (not (backend.compiler-backend-string-contains? asm "%xmm15")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-group-stack-arg
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        (ir.CompilerIrValue.Var 0)
+        0
+        2
+        ""
+        ty
+        index
+        index.backend-state)
+      (has
+        "    movq %xmm3, %r10\n"
+        "    movq %r10, 0(%rsp)\n"
+        "    movq %xmm4, %r10\n"
+        "    movq %r10, 8(%rsp)\n")
+      (lacks "%xmm15"))))
 
 (define (compiler-backend-group-stack-param-no-return-stage-ok?) : bool
   (let
@@ -36462,64 +33264,38 @@ g:
             cabi.compiler-reg-id-r13))
         (regalloc.compiler-reg-assignment-table-empty))]
     (and
-      (match (backend.compiler-backend-emit-param-spills
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        reg-assignments
-        (owned_view.compiler-owned-shared-view params)
-        6
-        0
-        6
-        0
-        index
-        1
-        index.backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 16(%rbp), %r12\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 24(%rbp), %r13\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq 16(%rbp), %rax\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq 24(%rbp), %rdx\n")))]
-        [(backend.ResultCompilerBackend.Err _) false])
-      (match (backend.compiler-backend-emit-param-spills
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        (regalloc.compiler-reg-assignment-table-empty)
-        params
-        6
-        0
-        6
-        0
-        index
-        1
-        index.backend-state)
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n")
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq 16(%rbp), %rax\n"))
-            (not
-              (backend.compiler-backend-string-contains?
-                asm
-                "    movq 24(%rbp), %rdx\n")))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        (backend.compiler-backend-emit-param-spills
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (backend.CompilerBackendTarget.Linux)
+          reg-assignments
+          (owned_view.compiler-owned-shared-view params)
+          6
+          0
+          6
+          0
+          index
+          1
+          index.backend-state)
+        (has "    movq 16(%rbp), %r12\n" "    movq 24(%rbp), %r13\n")
+        (lacks "    movq 16(%rbp), %rax\n" "    movq 24(%rbp), %rdx\n"))
+      (asm-ok?
+        (backend.compiler-backend-emit-param-spills
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (backend.CompilerBackendTarget.Linux)
+          (regalloc.compiler-reg-assignment-table-empty)
+          params
+          6
+          0
+          6
+          0
+          index
+          1
+          index.backend-state)
+        (has
+          "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n"
+          "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n")
+        (lacks "    movq 16(%rbp), %rax\n" "    movq 24(%rbp), %rdx\n")))))
 
 ;; Parameter spill text is assembled after body emission, but it executes
 ;; before the body. A stack-resident group word must therefore select its
@@ -36570,16 +33346,11 @@ g:
         function-state)]
     (and
       (= pending-before pending-after)
-      (match result
-        [(backend.ResultCompilerBackend.Ok asm)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n"))]
-        [(backend.ResultCompilerBackend.Err _) false]))))
+      (asm-ok?
+        result
+        (has
+          "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n"
+          "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n")))))
 
 (define (compiler-backend-linux-atomic-int-group-type) : ast.AstType
   (ast.AstType.Struct
@@ -36998,58 +33769,24 @@ g:
           0
           index)
         2)
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         pressure-call
-        "    movl $11, %edi\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
-        "    movl $12, %esi\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
-        "    movl $13, %edx\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
-        "    movl $14, %ecx\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
-        "    movl $15, %r8d\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
-        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
-        "    movq %r13, %r14\n    movq %r14, 8(%rsp)\n")
-      (backend.compiler-backend-string-contains?
-        pressure-call
+        "    movl $11, %edi\n"
+        "    movl $12, %esi\n"
+        "    movl $13, %edx\n"
+        "    movl $14, %ecx\n"
+        "    movl $15, %r8d\n"
+        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n"
+        "    movq %r13, %r14\n    movq %r14, 8(%rsp)\n"
         "    movl $16, %r9d\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          pressure-call
-          "    movq %r12, %r9\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          pressure-call
-          "    movq %r13, %r9\n"))
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? pressure-call "    movq %r12, %r9\n" "    movq %r13, %r9\n")
+      (asm-has?
         pressure-param
-        "    movq 16(%rbp), %r12\n")
-      (backend.compiler-backend-string-contains?
-        pressure-param
-        "    movq 24(%rbp), %r13\n")
-      (backend.compiler-backend-string-contains?
-        pressure-param
+        "    movq 16(%rbp), %r12\n"
+        "    movq 24(%rbp), %r13\n"
         "    movq %r9, %r15\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          pressure-param
-          "    movq %r9, %r12\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          pressure-param
-          "    movq %r9, %r13\n"))
-      (backend.compiler-backend-string-contains?
-        memory-param
-        "    movq %r9, %r15\n")
+      (asm-lacks? pressure-param "    movq %r9, %r12\n" "    movq %r9, %r13\n")
+      (asm-has? memory-param "    movq %r9, %r15\n")
       (<
         (backend.compiler-backend-string-find-from
           memory-param
@@ -37059,60 +33796,24 @@ g:
           memory-param
           "    movq 16(%rbp), "
           0))
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         memory-param
-        "    movq 16(%rbp), %r9\n    movq %r9, -8(%rbp)\n")
-      (backend.compiler-backend-string-contains?
-        memory-param
+        "    movq 16(%rbp), %r9\n    movq %r9, -8(%rbp)\n"
         "    movq 24(%rbp), %r9\n    movq %r9, -16(%rbp)\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 16(%rbp), %rdi\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 16(%rbp), %rsi\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 16(%rbp), %rdx\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 16(%rbp), %rcx\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 16(%rbp), %r8\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 16(%rbp), %r15\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 24(%rbp), %rdi\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 24(%rbp), %rsi\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 24(%rbp), %rdx\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 24(%rbp), %rcx\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 24(%rbp), %r8\n"))
-      (not
-        (backend.compiler-backend-string-contains?
-          memory-param
-          "    movq 24(%rbp), %r15\n"))
+      (asm-lacks?
+        memory-param
+        "    movq 16(%rbp), %rdi\n"
+        "    movq 16(%rbp), %rsi\n"
+        "    movq 16(%rbp), %rdx\n"
+        "    movq 16(%rbp), %rcx\n"
+        "    movq 16(%rbp), %r8\n"
+        "    movq 16(%rbp), %r15\n"
+        "    movq 24(%rbp), %rdi\n"
+        "    movq 24(%rbp), %rsi\n"
+        "    movq 24(%rbp), %rdx\n"
+        "    movq 24(%rbp), %rcx\n"
+        "    movq 24(%rbp), %r8\n"
+        "    movq 24(%rbp), %r15\n")
       (=
         (backend.compiler-backend-call-stack-arg-count
           bases
@@ -37127,19 +33828,9 @@ g:
           0
           index)
         0)
-      (backend.compiler-backend-string-contains?
-        mixed-call
-        "    movq %r12, %rdi\n")
-      (backend.compiler-backend-string-contains?
-        mixed-call
-        "    movsd %xmm3, %xmm0\n")
-      (not (backend.compiler-backend-string-contains? mixed-call "(%rsp)"))
-      (backend.compiler-backend-string-contains?
-        mixed-param
-        "    movq %rdi, %r12\n")
-      (backend.compiler-backend-string-contains?
-        mixed-param
-        "    movsd %xmm0, %xmm3\n")
+      (asm-has? mixed-call "    movq %r12, %rdi\n" "    movsd %xmm3, %xmm0\n")
+      (asm-lacks? mixed-call "(%rsp)")
+      (asm-has? mixed-param "    movq %rdi, %r12\n" "    movsd %xmm0, %xmm3\n")
       (=
         (backend.compiler-backend-call-stack-arg-count
           bases
@@ -37165,32 +33856,18 @@ g:
           0
           index)
         2)
-      (backend.compiler-backend-string-contains?
+      (asm-has?
         exhausted-call
-        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n")
-      (backend.compiler-backend-string-contains?
-        exhausted-call
-        "    movq %xmm3, %r14\n    movq %r14, 8(%rsp)\n")
-      (backend.compiler-backend-string-contains?
-        exhausted-call
+        "    movq %r12, %r14\n    movq %r14, 0(%rsp)\n"
+        "    movq %xmm3, %r14\n    movq %r14, 8(%rsp)\n"
         "    movsd %xmm4, %xmm0\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          exhausted-call
-          "    movsd %xmm3, %xmm0\n"))
-      (backend.compiler-backend-string-contains?
+      (asm-lacks? exhausted-call "    movsd %xmm3, %xmm0\n")
+      (asm-has?
         exhausted-param
-        "    movq 16(%rbp), %r12\n")
-      (backend.compiler-backend-string-contains?
-        exhausted-param
-        "    movsd 24(%rbp), %xmm3\n")
-      (backend.compiler-backend-string-contains?
-        exhausted-param
+        "    movq 16(%rbp), %r12\n"
+        "    movsd 24(%rbp), %xmm3\n"
         "    movsd %xmm0, %xmm4\n")
-      (not
-        (backend.compiler-backend-string-contains?
-          exhausted-param
-          "    movsd %xmm0, %xmm3\n")))))
+      (asm-lacks? exhausted-param "    movsd %xmm0, %xmm3\n"))))
 
 ;; Refs #7820. Exhaust every address-exposure mask for eight live groups.
 ;; Compare the actual operand route used by copies/calls, so a legacy second
@@ -37330,29 +34007,28 @@ g:
     [reg0 : String (compiler-backend-direct-tail-call-reg0 target)]
     [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
     (and
-      (backend.compiler-backend-string-contains? body "    jmp _tl_finish\n")
-      (not
-        (backend.compiler-backend-string-contains? body "    call _tl_finish\n"))
+      (asm-has? body "    jmp _tl_finish\n")
+      (asm-lacks? body "    call _tl_finish\n")
       (not
         (let
           [needle
             (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)")]
-          (backend.compiler-backend-string-contains? body needle)))
+          (asm-has? body needle)))
       (not
         (let
           [needle
             (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)")]
-          (backend.compiler-backend-string-contains? body needle)))
+          (asm-has? body needle)))
       (not
         (let
           [needle
             (compiler-backend-direct-tail-call-param-load "-8(%rbp)" reg0)]
-          (backend.compiler-backend-string-contains? body needle)))
+          (asm-has? body needle)))
       (not
         (let
           [needle
             (compiler-backend-direct-tail-call-param-load "-16(%rbp)" reg1)]
-          (backend.compiler-backend-string-contains? body needle))))))
+          (asm-has? body needle))))))
 
 (define (compiler-backend-direct-tail-call-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
@@ -37361,11 +34037,8 @@ g:
     target)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm "    jmp _tl_finish\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_finish\n"))
+        (asm-has? asm "    jmp _tl_finish\n")
+        (asm-lacks? asm "    call _tl_finish\n")
         (compiler-backend-direct-tail-call-identity-elided? target asm))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -37389,18 +34062,16 @@ g:
         [reg0 : String (compiler-backend-direct-tail-call-reg0 target)]
         [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
         (and
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp _tl_finish\n")
+          (asm-has? body "    jmp _tl_finish\n")
           (let
             [needle (compiler-backend-direct-tail-call-param-store reg0 slot0)]
-            (backend.compiler-backend-string-contains? body needle))
+            (asm-has? body needle))
           (if (string.eq slot1 "")
             true
             (let
               [needle
                 (compiler-backend-direct-tail-call-param-store reg1 slot1)]
-              (backend.compiler-backend-string-contains? body needle)))))]
+              (asm-has? body needle)))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Under FPO the f64 params spill to rsp-relative slots (offsets differ by
@@ -37416,17 +34087,15 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_stepf")]
         (and
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp _tl_finishf\n")
+          (asm-has? body "    jmp _tl_finishf\n")
           (let
             [needle
               (str_cat.str-cat "    movsd %xmm0, " (str_cat.str-cat slot0 "\n"))]
-            (backend.compiler-backend-string-contains? body needle))
+            (asm-has? body needle))
           (let
             [needle
               (str_cat.str-cat "    movsd %xmm1, " (str_cat.str-cat slot1 "\n"))]
-            (backend.compiler-backend-string-contains? body needle))))]
+            (asm-has? body needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-stack-slot
@@ -37444,17 +34113,11 @@ g:
     target)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    jmp _tl_finishstack\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call _tl_finishstack\n"))
-        (not (backend.compiler-backend-string-contains? asm "    pushq %r11\n"))
+        (asm-has? asm "    jmp _tl_finishstack\n")
+        (asm-lacks? asm "    call _tl_finishstack\n" "    pushq %r11\n")
         (let
           [needle (compiler-backend-direct-tail-call-stack-slot target)]
-          (backend.compiler-backend-string-contains? asm needle)))]
+          (asm-has? asm needle)))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-immediate-stack-target-ok?
@@ -37470,23 +34133,11 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (if (backend.compiler-backend-target-windows? target)
         (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $5, 48(%rbp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $8, 72(%rbp)\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    pushq %r11\n")))
+          (asm-has? asm "    movq $5, 48(%rbp)\n" "    movq $8, 72(%rbp)\n")
+          (asm-lacks? asm "    pushq %r11\n"))
         (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $7, 16(%rbp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq $8, 24(%rbp)\n")
-          (not
-            (backend.compiler-backend-string-contains? asm "    pushq %r11\n"))))]
+          (asm-has? asm "    movq $7, 16(%rbp)\n" "    movq $8, 24(%rbp)\n")
+          (asm-lacks? asm "    pushq %r11\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-mixed-slot
@@ -37506,20 +34157,11 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_stepmixed")]
         (and
-          (backend.compiler-backend-string-contains?
-            body
-            "    jmp _tl_finishmixed\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    call _tl_finishmixed\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    subq $8, %rsp\n"))
+          (asm-has? body "    jmp _tl_finishmixed\n")
+          (asm-lacks? body "    call _tl_finishmixed\n" "    subq $8, %rsp\n")
           (let
             [needle (compiler-backend-direct-tail-call-mixed-slot target)]
-            (backend.compiler-backend-string-contains? body needle))))]
+            (asm-has? body needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-ok?) : bool
@@ -37590,15 +34232,12 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_step")]
         (and
-          (backend.compiler-backend-string-contains? body "    jmp *(%r10)\n")
-          (not
-            (backend.compiler-backend-string-contains? body "    jmp *%rax\n"))
-          (not
-            (backend.compiler-backend-string-contains? body "    jmp *(%r11)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    movq (%r10), %rax\n"))))]
+          (asm-has? body "    jmp *(%r10)\n")
+          (asm-lacks?
+            body
+            "    jmp *%rax\n"
+            "    jmp *(%r11)\n"
+            "    movq (%r10), %rax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-indirect-tail-call-stack-target-ok?
@@ -37610,19 +34249,13 @@ g:
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_step6")]
         (and
-          (backend.compiler-backend-string-contains? body "    call *(%r10)\n")
-          (not
-            (backend.compiler-backend-string-contains? body "    jmp *(%r10)\n"))
-          (not
-            (backend.compiler-backend-string-contains? body "    call *%rax\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    call *(%r11)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              body
-              "    movq (%r10), %rax\n"))))]
+          (asm-has? body "    call *(%r10)\n")
+          (asm-lacks?
+            body
+            "    jmp *(%r10)\n"
+            "    call *%rax\n"
+            "    call *(%r11)\n"
+            "    movq (%r10), %rax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-indirect-tail-call-r11-callee-asm
@@ -37743,7 +34376,7 @@ g:
   (match (compiler-backend-indirect-tail-call-r11-callee-asm target)
     [(backend.ResultCompilerBackend.Ok asm)
       (and
-        (backend.compiler-backend-string-contains? asm "    movq %r11, %r10\n")
+        (asm-has? asm "    movq %r11, %r10\n")
         (let
           [needle
             (str_cat.str-cat
@@ -37752,10 +34385,9 @@ g:
                 [(backend.ResultBackendReg.Ok reg) reg]
                 [(backend.ResultBackendReg.Err _) ""])
               "\n")]
-          (backend.compiler-backend-string-contains? asm needle))
-        (backend.compiler-backend-string-contains? asm "    jmp *(%r10)\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    jmp *(%r11)\n")))]
+          (asm-has? asm needle))
+        (asm-has? asm "    jmp *(%r10)\n")
+        (asm-lacks? asm "    jmp *(%r11)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-non-direct-tail-call-extern
@@ -37896,14 +34528,9 @@ g:
   (match (compiler-backend-non-direct-tail-call-i64-emit target)
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leave\n    jmp tl_tail_target\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_tail_target\n"))
-        (not (backend.compiler-backend-string-contains? asm "    ret\n"))
+        (asm-has? asm "    leave\n    jmp tl_tail_target\n")
+        (asm-lacks? asm "    call tl_tail_target\n")
+        (asm-lacks? asm "    ret\n")
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -37912,14 +34539,9 @@ g:
   (match (compiler-backend-non-direct-tail-call-unit-emit target)
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_tail_unit_target\n")
-        (backend.compiler-backend-string-contains? asm "    movq $0, %rax\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leave\n    jmp tl_tail_unit_target\n"))
+        (asm-has? asm "    call tl_tail_unit_target\n")
+        (asm-has? asm "    movq $0, %rax\n")
+        (asm-lacks? asm "    leave\n    jmp tl_tail_unit_target\n")
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -37928,14 +34550,9 @@ g:
   (match (compiler-backend-non-direct-tail-call-stack-emit target)
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
-        (backend.compiler-backend-string-contains?
-          asm
-          "    call tl_tail_stack_target\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leave\n    jmp tl_tail_stack_target\n"))
-        (backend.compiler-backend-string-contains? asm "    ret\n")
+        (asm-has? asm "    call tl_tail_stack_target\n")
+        (asm-lacks? asm "    leave\n    jmp tl_tail_stack_target\n")
+        (asm-has? asm "    ret\n")
         true)]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -37943,8 +34560,8 @@ g:
   [target : backend.CompilerBackendTarget]
   [asm : (& asm str)]) : bool
   (if (backend.compiler-backend-target-windows? target)
-    (backend.compiler-backend-string-contains? asm "    movq %xmm3, %r9\n")
-    (backend.compiler-backend-string-contains? asm "    movb $1, %al\n")))
+    (asm-has? asm "    movq %xmm3, %r9\n")
+    (asm-has? asm "    movb $1, %al\n")))
 
 (define (compiler-backend-non-direct-tail-call-varargs-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
@@ -37952,14 +34569,9 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
         (compiler-backend-non-direct-tail-call-varargs-pre-call? target asm)
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leave\n    jmp tl_tail_varargs_target\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call tl_tail_varargs_target\n"))
-        (not (backend.compiler-backend-string-contains? asm "    ret\n")))]
+        (asm-has? asm "    leave\n    jmp tl_tail_varargs_target\n")
+        (asm-lacks? asm "    call tl_tail_varargs_target\n")
+        (asm-lacks? asm "    ret\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-indirect-tail-call-ok?) : bool
@@ -38077,26 +34689,25 @@ g:
         (backend.backend-and4
           (let
             [needle (compiler-backend-known-function-call-env-zero target)]
-            (backend.compiler-backend-string-contains? asm needle))
+            (asm-has? asm needle))
           (let
             [needle
               (str_cat.str-cat
                 "    call "
                 (backend.compiler-backend-closure-entry-label "known_target")
                 "\n")]
-            (backend.compiler-backend-string-contains? asm needle))
-          (not
-            (backend.compiler-backend-string-contains? asm "    call *(%r11)\n"))
+            (asm-has? asm needle))
+          (asm-lacks? asm "    call *(%r11)\n")
           (not
             (let
               [needle
                 (backend.compiler-backend-closure-descriptor-label
                   "known_target")]
-              (backend.compiler-backend-string-contains? asm needle))))
+              (asm-has? asm needle))))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-dynamic-indirect-call-target-ok?
@@ -38112,10 +34723,9 @@ g:
                 [(backend.ResultBackendReg.Ok reg) reg]
                 [(backend.ResultBackendReg.Err _) ""])
               "\n")]
-          (backend.compiler-backend-string-contains? asm needle))
-        (backend.compiler-backend-string-contains? asm "    call *(%r10)\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    call *(%r11)\n")))]
+          (asm-has? asm needle))
+        (asm-has? asm "    call *(%r10)\n")
+        (asm-lacks? asm "    call *(%r11)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-overlapping-indirect-call-target-ok?
@@ -38278,25 +34888,17 @@ g:
     (compiler-backend-export-symbol-source))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          ".globl tl_exported_value\n")
-        (backend.compiler-backend-string-contains? asm "tl_exported_value:\n")
+        (asm-has? asm ".globl tl_exported_value\n")
+        (asm-has? asm "tl_exported_value:\n")
         (compiler-backend-call-or-jmp-ok? asm "tl_exported_value")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_exported_value\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl _tl_exported\n"))
-        (not (backend.compiler-backend-string-contains? asm "_tl_exported:\n"))
-        (backend.compiler-backend-string-contains? asm "main:\n")
+        (asm-lacks? asm ".extern tl_exported_value\n")
+        (asm-lacks? asm ".globl _tl_exported\n")
+        (asm-lacks? asm "_tl_exported:\n")
+        (asm-has? asm "main:\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-export-symbol-fixed-fault-source) : String
@@ -38306,17 +34908,11 @@ g:
 (define (main) : i64 0)")
 
 (define (compiler-backend-export-symbol-fixed-fault-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    (compiler-backend-export-symbol-fixed-fault-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
-        (backend.compiler-backend-string-contains? asm "tl_oob_abort:\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_oob_abort\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      (compiler-backend-export-symbol-fixed-fault-source))
+    (has ".globl tl_oob_abort\n" "tl_oob_abort:\n")
+    (lacks ".extern tl_oob_abort\n")))
 
 (define (compiler-backend-export-symbol-abort-string-source) : String
   "(extern (runtime-abort [message : String]) : never (:symbol \"tl_abort_string\"))
@@ -38325,19 +34921,11 @@ g:
 (define (main) : i64 0)")
 
 (define (compiler-backend-export-symbol-abort-string-ok?) : bool
-  (match (backend.compiler-backend-emit-source
-    (compiler-backend-export-symbol-abort-string-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          ".globl tl_abort_string\n")
-        (backend.compiler-backend-string-contains? asm "tl_abort_string:\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".extern tl_abort_string\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source
+      (compiler-backend-export-symbol-abort-string-source))
+    (has ".globl tl_abort_string\n" "tl_abort_string:\n")
+    (lacks ".extern tl_abort_string\n")))
 
 (define (compiler-backend-duplicate-export-symbol-source) : String
   "(define (a) (:export-symbol \"dup_export\") : i64 1)
@@ -38462,40 +35050,21 @@ g:
       (backend.backend-and8
         (or
           (>= (backend.compiler-backend-string-count asm ".globl _tl_f") 2)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_write_i64")
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl _tl_read_i64")))
-        (or
-          (backend.compiler-backend-string-contains? asm "_tl_write_i64")
-          (backend.compiler-backend-string-contains? asm "_tl_f"))
+          (asm-has? asm ".globl _tl_write_i64" ".globl _tl_read_i64"))
+        (or (asm-has? asm "_tl_write_i64") (asm-has? asm "_tl_f"))
         (or
           (>= (backend.compiler-backend-string-count asm "    call _tl_f") 2)
-          (and
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_write_i64")
-            (backend.compiler-backend-string-contains?
-              asm
-              "    call _tl_read_i64")))
-        (backend.compiler-backend-string-contains? asm "main:\n")
-        (backend.compiler-backend-string-contains? asm "    call tl_alloc\n")
-        (backend.compiler-backend-string-contains? asm "tl_alloc:")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq (%r10,%r8,8), %r9\n")
+          (asm-has? asm "    call _tl_write_i64" "    call _tl_read_i64"))
+        (asm-has? asm "main:\n")
+        (asm-has? asm "    call tl_alloc\n")
+        (asm-has? asm "tl_alloc:")
+        (asm-has? asm "    movq (%r10,%r8,8), %r9\n")
         (and
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq (%r10), %rax\n"))))]
+              (asm-has? asm needle)))
+          (asm-lacks? asm "    movq (%r10), %rax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend emit-shape coverage for arena-owned boxes. `(box 42)`
@@ -38518,46 +35087,25 @@ g:
           ;; (box 42): allocate size-of(i64)=8 bytes for the box storage,
           (compiler-backend-string-contains-alloc-size? asm 8)
           ;; Store the boxed value through allocator-owned pointer/value homes.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, (%r10)\n")
+          (asm-has? asm "    movq %r8, (%r10)\n")
           ;; BoxGet b: load the boxed value back through the box pointer.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10), %r8\n")
+          (asm-has? asm "    movq (%r10), %r8\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle))))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, (%r10)\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq (%r10), %rax\n")))]
+              (asm-has? asm needle))))
+        (asm-lacks? asm "    movq %rax, (%r10)\n" "    movq (%r10), %rax\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-fast-alloc-next-load-ok?) : bool
-  (match (backend.compiler-backend-emit-source (compiler-backend-box-source))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq 8(%rax), %rcx\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, %rcx\n    addq $8, %rcx\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source (compiler-backend-box-source))
+    (has
+      "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n"
+      "    leaq 8(%rax), %rcx\n")
+    (lacks
+      ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n"
+      "    movq %rax, %rcx\n    addq $8, %rcx\n")))
 
 ;; Tuple literals are inline frame values (#7070), so the fixed-size allocation
 ;; these fast-path fixtures pin comes from an explicit `box`.
@@ -38568,33 +35116,18 @@ g:
     (tuple-ref (deref b) 1)))")
 
 (define (compiler-backend-inline-fast-alloc-result-ok?) : bool
-  (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-inline-fast-alloc-source)
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackend.Ok asm)
-      (and
-        (backend.compiler-backend-string-contains?
-          asm
-          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 16(%r8), %r10\n    addq $16, %r10\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, %r10\n    addq $16, %r10\n"))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, 16(%r8)\n")))]
-    [(backend.ResultCompilerBackend.Err _) false]))
+  (asm-ok?
+    (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-inline-fast-alloc-source)
+      (backend.CompilerBackendTarget.Windows))
+    (has
+      "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n"
+      "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n"
+      "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
+    (lacks
+      "    movq 16(%r8), %r10\n    addq $16, %r10\n"
+      "    movq %rax, %r10\n    addq $16, %r10\n"
+      "    movq %r8, 16(%r8)\n")))
 
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
@@ -38741,18 +35274,10 @@ g:
     (match result
       [(backend.ResultCompilerBackend.Ok asm)
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_test_allocentry_i0_v0_slow:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_test_allocentry_i1_v0_slow:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_test_allocentry_i0_v0_done:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            ".L_tl_test_allocentry_i1_v0_done:\n"))]
+          (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
+          (asm-has? asm ".L_tl_test_allocentry_i1_v0_slow:\n")
+          (asm-has? asm ".L_tl_test_allocentry_i0_v0_done:\n")
+          (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
       [(backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-source) : String
@@ -38777,16 +35302,12 @@ g:
       (and
         (compiler-backend-string-contains-inline-alloc-size? asm 24)
         (compiler-backend-string-contains-inline-alloc-size? asm 40)
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           asm
-          "_slow:\n    call .L_tl_alloc24\n")
-        (backend.compiler-backend-string-contains?
-          asm
+          "_slow:\n    call .L_tl_alloc24\n"
           "_slow:\n    call .L_tl_alloc40\n")
-        (not
-          (backend.compiler-backend-string-contains? asm "    call tl_alloc\n"))
-        (backend.compiler-backend-string-contains? asm "    jb ")
-        (backend.compiler-backend-string-contains? asm "    ja "))]
+        (asm-lacks? asm "    call tl_alloc\n")
+        (asm-has? asm "    jb " "    ja "))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-ok?) : bool
@@ -38817,10 +35338,7 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (if (> expected 0)
         (compiler-backend-string-contains-inline-alloc-size? asm expected)
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "_slow:\n    call .L_tl_alloc")))]
+        (asm-lacks? asm "_slow:\n    call .L_tl_alloc"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-alloc-alias-target-ok?
@@ -39107,61 +35625,27 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r9, -512(%rbp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -512(%rbp), %r9\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rcx, -576(%rbp)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq -576(%rbp), %rcx\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rdx, -640(%rbp)\n"))
-          (backend.compiler-backend-string-contains?
+          (asm-has? asm "    movq %r9, -512(%rbp)\n")
+          (asm-has? asm "    movq -512(%rbp), %r9\n")
+          (asm-has? asm "    movq %rcx, -576(%rbp)\n")
+          (asm-has? asm "    movq -576(%rbp), %rcx\n")
+          (asm-lacks? asm "    movq %rdx, -640(%rbp)\n")
+          (asm-has?
             asm
             "    movq %fs:tl_current_arena@tpoff, %r9\n    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n    testq $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 16(%rcx), %rax\n    leaq 8(%rax), %r9\n")
-          (backend.compiler-backend-string-contains?
+          (asm-has? asm "    movq 16(%rcx), %rax\n    leaq 8(%rax), %r9\n")
+          (asm-has?
             asm
             "    cmpq 24(%rcx), %r9\n    ja .L_tl_test_allocentry_i0_v20_slow\n    movq %r9, 16(%rcx)\n"))
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "    call .L_tl_alloc8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq tl_profile_alloc_live_bytes(%rip), %r9\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    cmpq tl_profile_alloc_peak_bytes(%rip), %r9\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_profile_alloc_live_bytes(%rip), %rcx"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "%rcx, tl_profile_alloc_peak_bytes(%rip)"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %fs:tl_current_arena@tpoff, %r8\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    leaq 8(%rax), %r8\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    leaq 8(%rax), %rax\n"))))]
+          (asm-has? asm "    call .L_tl_alloc8\n")
+          (asm-has? asm "    movq tl_profile_alloc_live_bytes(%rip), %r9\n")
+          (asm-has? asm "    cmpq tl_profile_alloc_peak_bytes(%rip), %r9\n")
+          (asm-lacks? asm "tl_profile_alloc_live_bytes(%rip), %rcx")
+          (asm-lacks? asm "%rcx, tl_profile_alloc_peak_bytes(%rip)")
+          (asm-lacks? asm "    movq %fs:tl_current_arena@tpoff, %r8\n")
+          (asm-lacks? asm "    leaq 8(%rax), %r8\n")
+          (asm-lacks? asm "    leaq 8(%rax), %rax\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend emit-shape coverage for local tuple construction/ref.
@@ -39179,34 +35663,20 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (= (compiler-backend-alloc-call-count asm) 0)
-        (not (backend.compiler-backend-string-contains? asm "_allocentry_"))
+        (asm-lacks? asm "_allocentry_")
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "(%rsp), %r8\n    movq %r8, ")
-          (backend.compiler-backend-string-contains? asm "    movq $1,")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movb %r8b, (%r10)\n")
-          (backend.compiler-backend-string-contains? asm "    movq $42,")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %r8, 8(%r10)\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq 8(%r10), %r8\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movb %al, (%r10)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rax, 8(%r10)\n")))
+          (asm-has? asm "(%rsp), %r8\n    movq %r8, ")
+          (asm-has? asm "    movq $1,")
+          (asm-has? asm "    movb %r8b, (%r10)\n")
+          (asm-has? asm "    movq $42,")
+          (asm-has? asm "    movq %r8, 8(%r10)\n")
+          (asm-has? asm "    movq 8(%r10), %r8\n")
+          (asm-lacks? asm "    movb %al, (%r10)\n")
+          (asm-lacks? asm "    movq %rax, 8(%r10)\n"))
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-struct-ok?) : bool
@@ -39215,12 +35685,12 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
         (= (backend.compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (backend.compiler-backend-string-contains? asm "    leaq -")
-        (backend.compiler-backend-string-contains? asm "main:\n")
+        (asm-has? asm "    leaq -")
+        (asm-has? asm "main:\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-enum-ok?) : bool
@@ -39229,12 +35699,12 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
         (= (backend.compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (backend.compiler-backend-string-contains? asm "    leaq -")
-        (backend.compiler-backend-string-contains? asm ".Lf0_match_arm.")
+        (asm-has? asm "    leaq -")
+        (asm-has? asm ".Lf0_match_arm.")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-boxed-recursive-ok?) : bool
@@ -39248,11 +35718,11 @@ g:
         ;; 16, so 24 bytes. With default-inline aggregates each box holds the
         ;; inline value, not an 8-byte handle.
         (compiler-backend-string-contains-alloc-size? asm 24)
-        (backend.compiler-backend-string-contains? asm "    leaq -")
+        (asm-has? asm "    leaq -")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-hot-loop-struct-ok?) : bool
@@ -39264,12 +35734,12 @@ g:
       ;; a stack-slot address for it.
       (backend.backend-and4
         (= (backend.compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (backend.compiler-backend-string-contains? asm "main:\n")
+        (asm-has? asm "main:\n")
         true
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-call-source) : String
@@ -39304,7 +35774,7 @@ g:
     target)
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and4
-        (backend.compiler-backend-string-contains? asm "main:\n")
+        (asm-has? asm "main:\n")
         (>= (backend.compiler-backend-string-count asm "    call ") 6)
         ;; sret ABI: aggregate args/returns pass by caller slot pointer
         ;; and inline construction is stack storage -- no arena allocation.
@@ -39312,7 +35782,7 @@ g:
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-call-ok?) : bool
@@ -39334,13 +35804,13 @@ g:
       ;; the old pointer-load / pointer-store byte-copy ("(%r11), %rax" then
       ;; "%rax, (%r10)") that a memory aggregate required.
       (backend.backend-and4
-        (backend.compiler-backend-string-contains? asm "id_pair")
-        (not (backend.compiler-backend-string-contains? asm "(%r11), %rax"))
-        (not (backend.compiler-backend-string-contains? asm "%rax, (%r10)"))
+        (asm-has? asm "id_pair")
+        (asm-lacks? asm "(%r11), %rax")
+        (asm-lacks? asm "%rax, (%r10)")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-copy-ok?) : bool
@@ -39389,28 +35859,22 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            "__tl_dispatch_cache_dot")
-          (backend.compiler-backend-string-contains?
-            asm
-            "__tl_dispatch_variant_avx2")
-          (backend.compiler-backend-string-contains?
-            asm
-            "__tl_dispatch_variant_avx512")
-          (backend.compiler-backend-string-contains? asm "    cpuid\n")
-          (backend.compiler-backend-string-contains? asm "    xgetbv\n")
-          (backend.compiler-backend-string-contains? asm "    call *(%r10)\n")
-          (backend.compiler-backend-string-contains? asm "    vzeroupper\n")
-          (backend.compiler-backend-string-contains? asm "main:\n"))
-        (backend.compiler-backend-string-contains? asm "    lock cmpxchgq ")
-        (backend.compiler-backend-string-contains?
+          (asm-has? asm "__tl_dispatch_cache_dot")
+          (asm-has? asm "__tl_dispatch_variant_avx2")
+          (asm-has? asm "__tl_dispatch_variant_avx512")
+          (asm-has? asm "    cpuid\n")
+          (asm-has? asm "    xgetbv\n")
+          (asm-has? asm "    call *(%r10)\n")
+          (asm-has? asm "    vzeroupper\n")
+          (asm-has? asm "main:\n"))
+        (asm-has?
           asm
+          "    lock cmpxchgq "
           "    .comm _tl___tl_dispatch_cache_dot, 8, 8\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
-            (backend.compiler-backend-string-contains? asm needle))))]
+            (asm-has? asm needle))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-dispatch-variant-mode-ok?) : bool
@@ -40221,37 +36685,15 @@ g:
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
-          (backend.compiler-backend-string-contains?
-            asm
-            ".globl tl_profile_alloc_total\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "tl_profile_alloc_total:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "tl_profile_alloc_live:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "tl_profile_alloc_peak:\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "tl_profile_alloc_reset_peak:\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              ".globl tl_profile_now_ms\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "tl_profile_now_ms:\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "QueryPerformanceCounter")))
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "QueryPerformanceFrequency")))]
+          (asm-has? asm ".globl tl_profile_alloc_total\n")
+          (asm-has? asm "tl_profile_alloc_total:\n")
+          (asm-has? asm "tl_profile_alloc_live:\n")
+          (asm-has? asm "tl_profile_alloc_peak:\n")
+          (asm-has? asm "tl_profile_alloc_reset_peak:\n")
+          (asm-lacks? asm ".globl tl_profile_now_ms\n")
+          (asm-lacks? asm "tl_profile_now_ms:\n")
+          (asm-lacks? asm "QueryPerformanceCounter"))
+        (asm-lacks? asm "QueryPerformanceFrequency"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-profile-runtime-split-ok?) : bool
@@ -40745,17 +37187,13 @@ g:
             (backend.compiler-backend-state-function-state backend-state)
             1)
           -576)
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           avx2
-          "    vmovdqu %ymm2, -512(%rbp)\n")
-        (backend.compiler-backend-string-contains?
-          avx2
+          "    vmovdqu %ymm2, -512(%rbp)\n"
           "    vmovdqu -512(%rbp), %ymm2\n")
-        (backend.compiler-backend-string-contains?
+        (asm-has?
           avx512
-          "    vmovdqu64 %zmm3, -512(%rbp)\n")
-        (backend.compiler-backend-string-contains?
-          avx512
+          "    vmovdqu64 %zmm3, -512(%rbp)\n"
           "    vmovdqu64 -512(%rbp), %zmm3\n"))]
     ok))
 
@@ -41412,8 +37850,8 @@ g:
           (compiler-backend-asm-function-body asm "_tl_guard_large")]
         (and
           (not (string.eq body ""))
-          (backend.compiler-backend-string-contains? body "4294967296")
-          (not (backend.compiler-backend-string-contains? body "__shrinkwrap"))))]
+          (asm-has? body "4294967296")
+          (asm-lacks? body "__shrinkwrap")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; ---------------------------------------------------------------------------
@@ -41507,7 +37945,7 @@ g:
     (and
       (compiler-backend-swb-sunk? body)
       ;; Form (a) is not what fired: its rewrite renames the bypass blocks.
-      (not (backend.compiler-backend-string-contains? body "__shrinkwrap")))))
+      (asm-lacks? body "__shrinkwrap"))))
 
 ;; (2) The `kinds_remove` shape: a parameter compare (form (a)'s only shape)
 ;; followed by a second early exit that compares against a loaded global.  Form
@@ -41632,7 +38070,7 @@ g:
     (and
       (compiler-backend-swb-entry-placed? body)
       ;; The premise of the test: the entry really does name the frame.
-      (backend.compiler-backend-string-contains? body "(%rsp)"))))
+      (asm-has? body "(%rsp)"))))
 
 ;; (5) The only call is inside a loop. Save must land on the loop's depth-0
 ;; dominator -- the preheader the guard branches to -- and never on the loop
@@ -41695,9 +38133,8 @@ g:
         [clone : String
           (string.substring body at (- (string.string-length body) at))]
         (and
-          (backend.compiler-backend-string-contains? clone "    ret\n")
-          (not (backend.compiler-backend-string-contains? clone ", %rsp\n"))
-          (not (backend.compiler-backend-string-contains? clone "    popq ")))))))
+          (asm-has? clone "    ret\n")
+          (asm-lacks? clone ", %rsp\n" "    popq "))))))
 
 ;; (6) TD-1. A bypass path and a framed path MERGE before the return, so the
 ;; return tail has a predecessor the Save does not dominate.  Before TD-1 that
@@ -41740,11 +38177,9 @@ g:
       ;; the clone before the prologue, not by a `ret` before it.
       (compiler-backend-swb-clone-before-prologue? body)
       ;; The tail's own computation is reproduced in the clone ...
-      (backend.compiler-backend-string-contains?
-        body
-        "__swb_tail:\n    addq $5, %rax\n    ret\n")
+      (asm-has? body "__swb_tail:\n    addq $5, %rax\n    ret\n")
       ;; ... and a framed return still tears the frame down.
-      (backend.compiler-backend-string-contains? body ", %rsp\n    ret\n")
+      (asm-has? body ", %rsp\n    ret\n")
       (compiler-backend-swb-clone-bare? body))))
 
 ;; (6c) The duplication's bound, tested on the copier directly.  A tail whose
@@ -43063,28 +39498,21 @@ g:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : backend.CompilerBackendState index.backend-state]
-    (match (backend.compiler-backend-emit-param-spills
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Windows)
-      assignments
-      params
-      0
-      0
-      0
-      0
-      index
-      5
-      backend-state)
-      [(backend.ResultCompilerBackend.Ok asm)
-        (and
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movzbq 48(%rbp), ")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movzbq 48(%rbp), %r9\n")))]
-      [(backend.ResultCompilerBackend.Err _) false])))
+    (asm-ok?
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Windows)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        5
+        backend-state)
+      (has "    movzbq 48(%rbp), ")
+      (lacks "    movzbq 48(%rbp), %r9\n"))))
 
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
@@ -43557,26 +39985,12 @@ b_keep:
               (and
                 (string.eq out-a serial-a)
                 (string.eq out-b serial-b)
-                (not
-                  (backend.compiler-backend-string-contains?
-                    out-a
-                    "    movq $1, 40(%rsp)\n"))
-                (backend.compiler-backend-string-contains?
-                  out-b
-                  "    movq $1, 40(%rsp)\n")
-                (not
-                  (backend.compiler-backend-string-contains?
-                    out-a
-                    "    movq %r11, 72(%rsp)\n"))
-                (backend.compiler-backend-string-contains?
-                  out-b
-                  "    movq %r11, 72(%rsp)\n")
-                (backend.compiler-backend-string-contains?
-                  out-a
-                  "    movq %r9, %r10\n")
-                (backend.compiler-backend-string-contains?
-                  out-b
-                  "    movq %r9, %r10\n")
+                (asm-lacks? out-a "    movq $1, 40(%rsp)\n")
+                (asm-has? out-b "    movq $1, 40(%rsp)\n")
+                (asm-lacks? out-a "    movq %r11, 72(%rsp)\n")
+                (asm-has? out-b "    movq %r11, 72(%rsp)\n")
+                (asm-has? out-a "    movq %r9, %r10\n")
+                (asm-has? out-b "    movq %r9, %r10\n")
                 (backend.compiler-backend-state-scalar-registers-enabled?
                   session-a.backend-state)
                 (not
@@ -43634,9 +40048,7 @@ b_keep:
               (backend.compiler-backend-stream-state-owner-bytes-capacity
                 session.stream)
               4096)
-            (backend.compiler-backend-string-contains?
-              out
-              "very_long_stream_owner_global_symbol_127(%rip)"))]
+            (asm-has? out "very_long_stream_owner_global_symbol_127(%rip)"))]
         (begin
           (compiler-backend-assembly-stream-test-session-destroy! session)
           ok)))))
@@ -44021,10 +40433,7 @@ b_keep:
       (match a-mode-before
         [(backend.CompilerBackendMode.Scalar) true]
         [_ false])
-      (not
-        (backend.compiler-backend-string-contains? a-entry-before ".seh_proc"))
-      (not
-        (backend.compiler-backend-string-contains? a-entry-before "__chkstk"))
+      (asm-lacks? a-entry-before ".seh_proc" "__chkstk")
       b-before.windows
       (not b-before.linux)
       b-before.seh-unwind
@@ -44040,21 +40449,13 @@ b_keep:
       (match b-mode-before
         [(backend.CompilerBackendMode.Avx2) true]
         [_ false])
-      (backend.compiler-backend-string-contains?
-        b-entry-before
-        ".seh_proc _tl_policy_b")
-      (backend.compiler-backend-string-contains?
-        b-entry-before
-        "callq __chkstk")
+      (asm-has? b-entry-before ".seh_proc _tl_policy_b" "callq __chkstk")
       a-after.windows
       (backend.compiler-backend-test-get-compiler-backend-current-fn-win64
         state-a)
       b-after.windows
       (string.eq b-entry-before b-entry-after)
-      (backend.compiler-backend-string-contains?
-        a-entry-after
-        ".seh_proc _tl_policy_a")
-      (backend.compiler-backend-string-contains? a-entry-after "callq __chkstk")
+      (asm-has? a-entry-after ".seh_proc _tl_policy_a" "callq __chkstk")
       (backend.compiler-backend-test-get-compiler-backend-current-fn-win64
         state-b)
       (backend.compiler-backend-mode-avx2?
@@ -44566,8 +40967,7 @@ b_keep:
         (not (string.eq scratch-gp-a "%rax"))
         (not (string.eq scratch-gp-a "%rdx"))
         (not (string.eq scratch-xmm-a ""))
-        (backend.compiler-backend-string-contains? scratch-wrap-a "movq")
-        (backend.compiler-backend-string-contains? scratch-wrap-a "vmovdqu")
+        (asm-has? scratch-wrap-a "movq" "vmovdqu")
         (not (string.eq scratch-cycle-a0 scratch-cycle-a1))
         (=
           (backend.compiler-backend-function-scratch-i64
@@ -44648,11 +41048,9 @@ b_keep:
             [(backend.ResultCompilerBackend.Ok after-asm)
               (and
                 (string.eq before-asm after-asm)
-                (backend.compiler-backend-string-contains?
+                (asm-has?
                   after-asm
-                  "_allocentry_i0_v0_slow")
-                (backend.compiler-backend-string-contains?
-                  after-asm
+                  "_allocentry_i0_v0_slow"
                   "_allocentry_i1_v0_slow"))]
             [(backend.ResultCompilerBackend.Err _) false])]
         [(backend.ResultCompilerBackend.Err _) false])]
@@ -45300,51 +41698,32 @@ b_keep:
       (and
         (backend.backend-and8
           ;; (i) the cell reserves the aggregate itself, not a box pointer.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .comm _tl_cell, 16, 8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .comm _tl_triple, 24, 8\n")
+          (asm-has? asm "    .comm _tl_cell, 16, 8\n")
+          (asm-has? asm "    .comm _tl_triple, 24, 8\n")
           ;; (i) `CompilerIrValue.Global` materialises as the symbol's address.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    leaq _tl_cell(%rip), %rdi\n")
+          (asm-has? asm "    leaq _tl_cell(%rip), %rdi\n")
           ;; (ii) a constant-offset field read folds to ONE rip-relative load.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_cell+8(%rip), %r8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_triple+16(%rip), %r8\n")
+          (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
+          (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
           ;; ... and the cell is never read as a pointer any more.
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq _tl_cell(%rip), %"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq _tl_triple(%rip), %"))
+          (asm-lacks? asm "    movq _tl_cell(%rip), %")
+          (asm-lacks? asm "    movq _tl_triple(%rip), %")
           ;; (iii) the startup initializer copies the aggregate into the cell.
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
             "    call _tl___global_init_cell\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_cell(%rip)\n"))
         (backend.backend-and4
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
             "    call _tl___global_init_triple\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_triple(%rip)\n    movq 16(%rax), %r10\n    movq %r10, _tl_triple+16(%rip)\n")
           ;; (iii) and `(set! g v)` copies the same bytes at the rebind.
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
             "    movq (%r10), %r11\n    movq %r11, _tl_cell(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_cell+8(%rip)\n")
-          (backend.compiler-backend-string-contains?
+          (asm-has?
             asm
             "    movq (%r10), %r11\n    movq %r11, _tl_triple(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_triple+8(%rip)\n    movq 16(%r10), %r11\n    movq %r11, _tl_triple+16(%rip)\n")
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movq %rax, _tl_cell(%rip)\n"))))]
+          (asm-lacks? asm "    movq %rax, _tl_cell(%rip)\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; (iv) Windows keeps its own `.comm` alignment convention; every other inline
@@ -45355,31 +41734,14 @@ b_keep:
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackend.Ok asm)
       (backend.backend-and8
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .comm _tl_cell, 16, 3\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    .comm _tl_triple, 24, 3\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    leaq _tl_cell(%rip), %rcx\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_cell+8(%rip), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq _tl_triple+16(%rip), %r8\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movups %xmm0, _tl_cell(%rip)\n")
-        (backend.compiler-backend-string-contains?
-          asm
-          "    movq %r11, _tl_triple+16(%rip)\n")
-        (not
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_cell(%rip), %")))]
+        (asm-has? asm "    .comm _tl_cell, 16, 3\n")
+        (asm-has? asm "    .comm _tl_triple, 24, 3\n")
+        (asm-has? asm "    leaq _tl_cell(%rip), %rcx\n")
+        (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
+        (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
+        (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
+        (asm-has? asm "    movq %r11, _tl_triple+16(%rip)\n")
+        (asm-lacks? asm "    movq _tl_cell(%rip), %"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 ;; (v) the safety rule: a global the reader's call graph can rebind keeps the
@@ -45396,39 +41758,23 @@ b_keep:
       (and
         (backend.backend-and4
           ;; The cell is one word and holds a POINTER to the arena box.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    .comm _tl_cell, 8, 8\n")
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq %rax, _tl_cell(%rip)\n")
+          (asm-has? asm "    .comm _tl_cell, 8, 8\n")
+          (asm-has? asm "    movq %rax, _tl_cell(%rip)\n")
           ;; ... which the rebind replaces with a pointer store, never a byte
           ;; copy, so the box identity the program can observe is preserved.
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    movups %xmm0, _tl_cell(%rip)\n"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    .comm _tl_cell, 16, 8\n")))
+          (asm-lacks? asm "    movups %xmm0, _tl_cell(%rip)\n")
+          (asm-lacks? asm "    .comm _tl_cell, 16, 8\n"))
         (backend.backend-and4
           ;; No inline-cell spelling anywhere: no field displacement operand,
           ;; and no address materialisation standing in for a cell read.
-          (not
-            (backend.compiler-backend-string-contains? asm "_tl_cell+8(%rip)"))
-          (not
-            (backend.compiler-backend-string-contains?
-              asm
-              "    leaq _tl_cell(%rip), "))
+          (asm-lacks? asm "_tl_cell+8(%rip)")
+          (asm-lacks? asm "    leaq _tl_cell(%rip), ")
           ;; ... and every read of the global is still the cell LOAD.
-          (backend.compiler-backend-string-contains?
-            asm
-            "    movq _tl_cell(%rip), ")
+          (asm-has? asm "    movq _tl_cell(%rip), ")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
-              (backend.compiler-backend-string-contains? asm needle)))))]
+              (asm-has? asm needle)))))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-inline-aggregate-global-safety-ok?) : bool
@@ -45466,20 +41812,11 @@ b_keep:
           [(object_asm.ResultCompilerObjectAsm.Ok text)
             (backend.backend-and4
               ;; The .bss reservation is the aggregate, not a box pointer.
-              (backend.compiler-backend-string-contains?
-                text
-                "_tl_cell:\n    .zero 16\n")
-              (backend.compiler-backend-string-contains?
-                text
-                "_tl_triple:\n    .zero 24\n")
+              (asm-has? text "_tl_cell:\n    .zero 16\n")
+              (asm-has? text "_tl_triple:\n    .zero 24\n")
               ;; A `Global` read materialises the symbol's ADDRESS.
-              (backend.compiler-backend-string-contains?
-                text
-                "    leaq _tl_cell(%rip), %rax\n")
-              (not
-                (backend.compiler-backend-string-contains?
-                  text
-                  "    movq _tl_cell(%rip), %rax\n")))]
+              (asm-has? text "    leaq _tl_cell(%rip), %rax\n")
+              (asm-lacks? text "    movq _tl_cell(%rip), %rax\n"))]
           [(object_asm.ResultCompilerObjectAsm.Err _) false]))]
     [(backend.ResultCompilerBackendObject.Err _) false]))
 

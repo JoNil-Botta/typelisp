@@ -2631,9 +2631,9 @@ runtime bounds discipline as arrays and strings: negative or out-of-range
 indices and invalid `[start, start + len)` slices trap through the ordinary
 out-of-bounds path unless an API is explicitly named as checked/try-style.
 
-The stdlib module `stdlib/byte_buf.tl` provides `byte-buf-*` helper names for
-owned-buffer operations and `bytes-*` helper names for borrowed-slice
-operations. The semantic operations are:
+The stdlib module `stdlib/byte_buf.tl` provides owned-buffer operations
+(`byte_buf.push`, `byte_buf.to-string`, ...) and `bytes-*` helper names for
+borrowed-slice operations. The semantic operations are:
 
 - create an empty buffer or a buffer with capacity;
 - inspect length/capacity and read initialized bytes;
@@ -2664,7 +2664,7 @@ Conversions are explicit:
   (bytes-set! view 0 value))
 
 (define (render-owned [buf : ByteBuf]) : String
-  (byte-buf-to-string buf))
+  (to-string buf))
 ```
 
 FFI and IO boundaries are explicit. Borrowed byte views are pointer/length

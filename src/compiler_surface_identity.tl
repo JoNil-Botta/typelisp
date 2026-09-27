@@ -82,11 +82,6 @@
 (define surface-identity-max-count : i64
   1048576)
 
-(cfg
-  compiler-surface-producer
-  (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
-    (__tl_make-array u8 0)))
-
 (define (surface-identity-string-eq?
   [left : (& left str)]
   [right : (& right str)]) : bool
@@ -218,16 +213,6 @@
   ;; that portable contract explicitly; it is a wire limit, not an intern-table
   ;; capacity calculation.
   8796093022208)
-
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-identity-portable-module-ref
-    [stored-module-id : i64]
-    [source-count : i64]
-    [identity-count : i64]) : i64
-    (if (= stored-module-id 0)
-      identity-count
-      (surface-identity-local-ref (- stored-module-id 1) source-count))))
 
 ;; Nominal ids can be one intern id, a session-owned structural pair/triple, or
 ;; one of the compiler's syntax-identity families. Repack every component with

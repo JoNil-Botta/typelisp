@@ -525,7 +525,7 @@
         type-segment-bases
         func
         (opt.optimize-function-max-iterations)
-        (opt.opt-loop-bce-empty-summaries))
+        (opt.opt-program-summaries-empty))
         [(opt.OptFunctionPassResult.Result next _) next])]
     [converted : ir.CompilerIrFunction
       (match (opt.opt-if-convert-final-pass type-segment-bases fixed)
@@ -2550,10 +2550,10 @@
     (opt.opt-const-divisors-build globals facts.disq)))
 
 (define (opt-test-summaries-with-global-cell
-  [summaries : opt.OptLoopBceSummaries]
-  [cell : opt.OptGlobalCellSummary]) : opt.OptLoopBceSummaries
+  [summaries : opt.OptProgramSummaries]
+  [cell : opt.OptGlobalCellSummary]) : opt.OptProgramSummaries
   (let
-    [out : opt.OptLoopBceSummaries summaries]
+    [out : opt.OptProgramSummaries summaries]
     (begin
       (set! out.global-cell cell)
       out)))
@@ -8303,7 +8303,7 @@
       16
       (opt-dce-pack-blocks)
       ir.CompilerIrFunctionAbi.Ordinary)
-    (opt.opt-loop-bce-empty-summaries))
+    (opt.opt-program-summaries-empty))
     [(ir.CompilerIrFunction.Function _ _ _ _ optimized-blocks _)
       (begin
         (unless
@@ -12714,7 +12714,7 @@
 (define (compiler-optimize-level1-escape-equivalent-one-ok?
   [func : ir.CompilerIrFunction]) : bool
   (let
-    [summaries : opt.OptLoopBceSummaries (opt.opt-loop-bce-empty-summaries)]
+    [summaries : opt.OptProgramSummaries (opt.opt-program-summaries-empty)]
     [expected : ir.CompilerIrFunction
       (ir.compiler-ir-function-compact-blocks
         (opt.optimize-function-with-level-and-summaries
@@ -33575,7 +33575,7 @@
       (let
         [functions (opt-licm-direct-call-clean-test-functions symbols)]
         [index : opt.OptProgramIndex (opt.opt-program-index-build functions)]
-        (opt.opt-loop-bce-direct-call-clean-map index 8))]
+        (opt.opt-direct-call-clean-map index 8))]
     ;; The call-memory union that feeds the clean-callee LICM refinement. Over
     ;; the same three fixtures: `leaf` writes no memory at all, so its packed
     ;; summary is exactly 0 and the union admits it; `writer` carries a StorePtr
@@ -33590,7 +33590,7 @@
             (ast.ast-node-pool-reader-type-segment-bases)
             (opt-licm-direct-call-clean-test-functions symbols)
             8)]
-        (opt.opt-loop-bce-direct-call-clean-add-memory-clean
+        (opt.opt-direct-call-clean-add-memory-clean
           functions
           call-memory
           (opt_i64_i64_map.with-capacity 8)))]
@@ -46732,9 +46732,9 @@
     [(= variant 6) (opt-test-symbol "mbcall_memory_callee")]
     [else (opt-test-symbol "mbcall_clean_callee")]))
 
-;; The per-callee bits the loop-BCE summaries would have built for this
+;; The per-callee bits the program summaries would have built for this
 ;; fixture's callees, spelled through the same producer production uses
-;; (opt-loop-bce-direct-call-clean-bits) so the test cannot drift from it:
+;; (opt-direct-call-clean-bits) so the test cannot drift from it:
 ;;
 ;;   clean   summary = element bit only            -> global + element (2|4)
 ;;   memory  summary = 0                           -> memory + global  (1|2)
@@ -46747,16 +46747,16 @@
       (opt_i64_i64_map.insert-ref!
         (&mut out)
         (opt-test-symbol "mbcall_clean_callee")
-        (opt.opt-loop-bce-direct-call-clean-bits
+        (opt.opt-direct-call-clean-bits
           (opt.opt-call-memory-summary-add-element 0)))
       (opt_i64_i64_map.insert-ref!
         (&mut out)
         (opt-test-symbol "mbcall_memory_callee")
-        (opt.opt-loop-bce-direct-call-clean-bits 0))
+        (opt.opt-direct-call-clean-bits 0))
       (opt_i64_i64_map.insert-ref!
         (&mut out)
         (opt-test-symbol "mbcall_param_callee")
-        (opt.opt-loop-bce-direct-call-clean-bits 1))
+        (opt.opt-direct-call-clean-bits 1))
       out)))
 
 (define (opt-bce-mbcall-test-params) : ir.CompilerIrParamSeq
@@ -47099,7 +47099,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits
+              (opt.opt-direct-call-clean-bits
                 (opt.opt-call-memory-summary-add-element 0))
               (opt.opt-direct-call-clean-unconditional-global-bit))
             (opt.opt-direct-call-clean-unconditional-global-bit)))
@@ -47107,7 +47107,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits
+              (opt.opt-direct-call-clean-bits
                 (opt.opt-call-memory-summary-add-element 1))
               (opt.opt-direct-call-clean-unconditional-global-bit))
             0))
@@ -47117,7 +47117,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits
+              (opt.opt-direct-call-clean-bits
                 (opt.opt-call-memory-summary-add-element 1))
               (opt.opt-direct-call-clean-global-bit))
             (opt.opt-direct-call-clean-global-bit)))
@@ -47127,7 +47127,7 @@
       ;; cannot move a descriptor word.
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits
+            (opt.opt-direct-call-clean-bits
               (opt.opt-call-memory-summary-add-global
                 (opt.opt-call-memory-summary-add-element 0)))
             (opt.opt-direct-call-clean-header-bit)))
@@ -47138,7 +47138,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits
+              (opt.opt-direct-call-clean-bits
                 (opt.opt-call-memory-summary-add-global
                   (opt.opt-call-memory-summary-add-element 0)))
               (bit-or
@@ -47151,7 +47151,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits
+              (opt.opt-direct-call-clean-bits
                 (opt.opt-call-memory-summary-add-element 0))
               (opt.opt-direct-call-clean-header-bit))
             (opt.opt-direct-call-clean-header-bit)))
@@ -47159,7 +47159,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits
+              (opt.opt-direct-call-clean-bits
                 (opt.opt-call-memory-summary-add-unknown 0))
               (opt.opt-direct-call-clean-header-bit))
             0))
@@ -47167,7 +47167,7 @@
       [(not
           (=
             (bit-and
-              (opt.opt-loop-bce-direct-call-clean-bits 1)
+              (opt.opt-direct-call-clean-bits 1)
               (opt.opt-direct-call-clean-header-bit))
             0))
         29]
@@ -51773,7 +51773,7 @@
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-ssa-construct-loop-function)
-        (opt.opt-loop-bce-empty-summaries))]
+        (opt.opt-program-summaries-empty))]
     [pipeline-loop-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks
         (opt.compiler-opt-global-shared-view pipeline-loop))]
@@ -51798,7 +51798,7 @@
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-ssa-nested-loop-function)
-        (opt.opt-loop-bce-empty-summaries))]
+        (opt.opt-program-summaries-empty))]
     [pipeline-nested-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks
         (opt.compiler-opt-global-shared-view pipeline-nested))]
@@ -53464,7 +53464,7 @@
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt.compiler-opt-global-shared-view func)
-        (opt.opt-loop-bce-empty-summaries))]
+        (opt.opt-program-summaries-empty))]
     [fixed : ir.CompilerIrFunction
       (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
@@ -55873,7 +55873,7 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-call-memory-cycle-functions first second cell false)
         8)]
-    (opt.opt-loop-bce-direct-call-clean-add-memory-clean
+    (opt.opt-direct-call-clean-add-memory-clean
       functions
       call-memory
       (opt_i64_i64_map.with-capacity 8))))
@@ -58848,9 +58848,9 @@
 
 (define (opt-gc-test-summaries
   [symbols : OptGcTestSymbols]
-  [functions : ir.CompilerIrFunctionSeq]) : opt.OptLoopBceSummaries
+  [functions : ir.CompilerIrFunctionSeq]) : opt.OptProgramSummaries
   (opt-test-summaries-with-global-cell
-    (opt.opt-loop-bce-empty-summaries)
+    (opt.opt-program-summaries-empty)
     (opt.opt-global-cell-summary-build
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-gc-test-globals symbols)
@@ -59515,7 +59515,7 @@
     ;; fixture A: plain hoist of gc_k + gc_arr
     [reader-a : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 0)]
-    [summaries-a : opt.OptLoopBceSummaries
+    [summaries-a : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions1 (opt.compiler-opt-global-shared-view reader-a)))]
@@ -59526,7 +59526,7 @@
     ;; fixture B: the function stores gc_k itself -> gc_k stays direct (a)
     [reader-b : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols true 0)]
-    [summaries-b : opt.OptLoopBceSummaries
+    [summaries-b : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions1 (opt.compiler-opt-global-shared-view reader-b)))]
@@ -59540,7 +59540,7 @@
     ;; compiler-optimize-global-cell-call-mod-ref-self-test.
     [reader-c : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 3)]
-    [summaries-c : opt.OptLoopBceSummaries
+    [summaries-c : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions1 (opt.compiler-opt-global-shared-view reader-c)))]
@@ -59552,7 +59552,7 @@
     ;; stays direct (b), gc_k still hoists
     [reader-d : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 0)]
-    [summaries-d : opt.OptLoopBceSummaries
+    [summaries-d : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions2
@@ -59568,7 +59568,7 @@
     ;; call-free reader still hoists gc_k
     [reader-e : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 0)]
-    [summaries-e : opt.OptLoopBceSummaries
+    [summaries-e : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions2
@@ -59580,7 +59580,7 @@
     ;; admits the function and both word cells hoist, exactly as in A
     [reader-g : ir.CompilerIrFunction
       (opt-gc-test-reader-function symbols false 2)]
-    [summaries-g : opt.OptLoopBceSummaries
+    [summaries-g : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions1 (opt.compiler-opt-global-shared-view reader-g)))]
@@ -59588,7 +59588,7 @@
       (opt.opt-global-cell-function summaries-g reader-g)]
     ;; fixture H: a single-reference cell is refused on profitability
     [reader-h : ir.CompilerIrFunction (opt-gc-test-single-ref-function symbols)]
-    [summaries-h : opt.OptLoopBceSummaries
+    [summaries-h : opt.OptProgramSummaries
       (opt-gc-test-summaries
         symbols
         (opt-gc-test-functions1 (opt.compiler-opt-global-shared-view reader-h)))]
@@ -61223,7 +61223,7 @@
     [fixture : ir.CompilerIrFunction (opt-gc-test-while-function symbols)]
     [functions : ir.CompilerIrFunctionSeq
       (opt-gc-test-functions1 (opt.compiler-opt-global-shared-view fixture))]
-    [summaries : opt.OptLoopBceSummaries
+    [summaries : opt.OptProgramSummaries
       (opt.opt-build-program-summaries
         type-segment-bases
         (opt-gc-test-globals symbols)
@@ -62037,23 +62037,23 @@
       ;; a descriptor word
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits
+            (opt.opt-direct-call-clean-bits
               (opt.opt-call-memory-summary-add-global 0))
             (opt.opt-direct-call-clean-header-bit)))
         12]
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits
+            (opt.opt-direct-call-clean-bits
               (opt.opt-call-memory-summary-add-unknown 0))
             0))
         13]
       ;; a param-write-only summary earns the global bit and not the memory one
-      [(not (= (opt.opt-loop-bce-direct-call-clean-bits 1) global-bit)) 14]
+      [(not (= (opt.opt-direct-call-clean-bits 1) global-bit)) 14]
       ;; ...and a memory-clean one earns every bit, the header bit (SUM-6)
       ;; included
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits 0)
+            (opt.opt-direct-call-clean-bits 0)
             (bit-or
               memory-bit
               (bit-or
@@ -65561,10 +65561,10 @@
         (ir.compiler-ir-global-shared-view functions)
         16)]
     [index : opt.OptProgramIndex (opt.opt-program-index-build functions)]
-    (opt.opt-loop-bce-direct-call-clean-add-memory-clean
+    (opt.opt-direct-call-clean-add-memory-clean
       functions
       call-memory
-      (opt.opt-loop-bce-direct-call-clean-map index 16))))
+      (opt.opt-direct-call-clean-map index 16))))
 
 (define (compiler-optimize-call-memory-element-write-self-test) : i64
   (let
@@ -65660,7 +65660,7 @@
       ;; says the same of the header directly (opt-direct-call-clean-header-bit).
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits element-bit)
+            (opt.opt-direct-call-clean-bits element-bit)
             (bit-or
               global-bit
               (bit-or unconditional-bit (opt.opt-direct-call-clean-header-bit)))))
@@ -65669,21 +65669,18 @@
       ;; loses the descriptor bit: that write may be the caller's own
       ;; descriptor, which is exactly the pair of reasons bit 1 conflates.
       [(not
-          (=
-            (opt.opt-loop-bce-direct-call-clean-bits (bit-or element-bit 1))
-            global-bit))
+          (= (opt.opt-direct-call-clean-bits (bit-or element-bit 1)) global-bit))
         26]
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits
-              (bit-or element-bit unknown-bit))
+            (opt.opt-direct-call-clean-bits (bit-or element-bit unknown-bit))
             0))
         10]
       ;; ...with a named-cell write beside it, neither global bit and the header
       ;; bit alone (SUM-6)
       [(not
           (=
-            (opt.opt-loop-bce-direct-call-clean-bits
+            (opt.opt-direct-call-clean-bits
               (bit-or element-bit (opt.opt-call-memory-global-bit)))
             (opt.opt-direct-call-clean-header-bit)))
         11]
@@ -65784,9 +65781,9 @@
       (ir.compiler-ir-function-seq-prepend
         (opt.compiler-opt-global-shared-view call-fixture)
         (opt-lp-test-program-functions symbols))]
-    [call-summaries : opt.OptLoopBceSummaries
+    [call-summaries : opt.OptProgramSummaries
       (opt-test-summaries-with-global-cell
-        (opt.opt-loop-bce-empty-summaries)
+        (opt.opt-program-summaries-empty)
         (opt.opt-global-cell-summary-build
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-lp-test-globals symbols)
@@ -65814,7 +65811,7 @@
       (opt-gc-test-functions2
         (opt.compiler-opt-global-shared-view version-fixture)
         (opt-lp-test-writer-function symbols))]
-    [version-summaries : opt.OptLoopBceSummaries
+    [version-summaries : opt.OptProgramSummaries
       (opt.opt-build-program-summaries
         type-segment-bases
         (opt-lp-test-globals symbols)
@@ -74523,7 +74520,7 @@
 
 ;; Summaries carrying one call-memory row, so the region test can be shown
 ;; admitting a callee proven to write nothing and refusing one that writes.
-(define (opt-guard-dedup-summaries [name : i64] [known? : bool] [summary : i64]) : opt.OptLoopBceSummaries
+(define (opt-guard-dedup-summaries [name : i64] [known? : bool] [summary : i64]) : opt.OptProgramSummaries
   (let
     [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
     (begin
@@ -74533,7 +74530,7 @@
           (ir.compiler-ir-symbol-id name)
           summary)
         unit)
-      (opt.OptLoopBceSummaries
+      (opt.OptProgramSummaries
         false
         (profile_state.compiler-profile-state-new)
         (opt_i64_i64_map.with-capacity 8)
@@ -74546,7 +74543,7 @@
         (opt_i64_i64_map.with-capacity 8)))))
 
 (define (opt-guard-dedup-run
-  [summaries : opt.OptLoopBceSummaries]
+  [summaries : opt.OptProgramSummaries]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (opt.opt-guard-dedup-final-sweep
     (ast.ast-node-pool-reader-type-segment-bases)
@@ -77980,7 +77977,7 @@
     type-segment-bases
     func
     level
-    (opt.opt-loop-bce-empty-summaries)))
+    (opt.opt-program-summaries-empty)))
 
 (define (opt-callgraph-callee-count
   [graph : opt.OptCallGraph]

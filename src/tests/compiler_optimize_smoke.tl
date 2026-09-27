@@ -2277,7 +2277,7 @@
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
         (smoke-heavy-pass-large-function)
-        (opt.opt-loop-bce-empty-summaries))]
+        (opt.opt-program-summaries-empty))]
     (begin
       (unless
         (>

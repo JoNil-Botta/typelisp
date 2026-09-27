@@ -60812,7 +60812,7 @@
     (opt-global-obj-mod-ref-none)
     (opt_i64_i64_map.with-capacity 1)))
 
-(defstruct OptLoopBceSummaries
+(defstruct OptProgramSummaries
   ;; Set only for the inliner's checked tier, which runs the frozen priced
   ;; pipeline instead of the live one (see opt-live-only).
   (priced? bool)
@@ -60835,7 +60835,7 @@
   ;; consumed in the same per-function level-2 pass.
   (return-alias opt_i64_i64_map.Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
-  ;; global name -> constant value. Carried alongside the BCE summaries (rather
+  ;; global name -> constant value. Carried alongside the call summaries (rather
   ;; than threaded as a separate parameter) because both are built once per
   ;; program and consumed in the same per-function level-2 pass. Empty unless
   ;; the program qualifies for summary construction.
@@ -60852,11 +60852,11 @@
   (const-lengths opt_i64_i64_map.Map)
   (init-functions opt_i64_i64_map.Map))
 
-(define (opt-loop-bce-empty-summaries) : OptLoopBceSummaries
-  (opt-loop-bce-empty-summaries-for false))
+(define (opt-program-summaries-empty) : OptProgramSummaries
+  (opt-program-summaries-empty-for false))
 
-(define (opt-loop-bce-empty-summaries-for [priced? : bool]) : OptLoopBceSummaries
-  (OptLoopBceSummaries
+(define (opt-program-summaries-empty-for [priced? : bool]) : OptProgramSummaries
+  (OptProgramSummaries
     priced?
     (profile_state.compiler-profile-state-new)
     (opt_i64_i64_map.with-capacity 8)
@@ -84059,7 +84059,7 @@
 
 ;; Descriptor-length recognition context: the type-pool segment bases, the
 ;; per-function descriptor-handle set they classify (the load-GVN/LICM header
-;; classification), and the per-callee `direct-call-clean` bit map the loop-BCE
+;; classification), and the per-callee `direct-call-clean` bit map the program
 ;; summaries built. (No) disables the descriptor-length path entirely -- test
 ;; entries without type-pool access take it, and recognition then stays off
 ;; exactly as before.
@@ -84113,7 +84113,7 @@
 ;; stores, calls, syscalls, vector/predicated stores -- which is sound but
 ;; answers a strictly bigger question, so a single cold call anywhere in the
 ;; body refused every descriptor length in it. A DIRECT call has a per-callee
-;; answer to the REAL question, in the `direct-call-clean` bits the loop-BCE
+;; answer to the REAL question, in the `direct-call-clean` bits the program
 ;; summaries already build:
 ;;
 ;;   memory-clean (bit 0)   writes nothing at all, so nothing of any class
@@ -84122,7 +84122,7 @@
 ;;                          allocation from the descriptor that names it, and
 ;;                          never a symbol's own global cell (see
 ;;                          opt-call-memory-element-bit for the layering
-;;                          argument, and opt-loop-bce-direct-call-clean-bits
+;;                          argument, and opt-direct-call-clean-bits
 ;;                          for why the bit needs `has-param-writes?` clear)
 ;;
 ;; Either bit makes the call unable to move a descriptor word, whatever the
@@ -104783,7 +104783,7 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunction
   (let
     [load-cse-profile : profile_state.CompilerProfileMetrics
       (profile_state.compiler-profile-state-metrics
@@ -105599,7 +105599,7 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
-  [summaries : OptLoopBceSummaries]) : OptLevel1PreDceResult
+  [summaries : OptProgramSummaries]) : OptLevel1PreDceResult
   (let
     [load-cse-profile : profile_state.CompilerProfileMetrics
       (profile_state.compiler-profile-state-metrics
@@ -105653,7 +105653,7 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunction
   (match (optimize-function-level1-pre-dce-with-summaries
     pools
     type-segment-bases
@@ -105680,7 +105680,7 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
-  [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
+  [summaries : OptProgramSummaries]) : OptFunctionPassResult
   (let
     [next : ir.CompilerIrFunction
       (optimize-function-once-with-summaries
@@ -105730,7 +105730,7 @@
 ;; actually decide something.
 (define (opt-arg-global-final-sweep
   [type-segment-bases : i64]
-  [summaries : OptLoopBceSummaries]
+  [summaries : OptProgramSummaries]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (if (= (opt_i64_i64_map.len (& summaries.global-cell.arg-global)) 0)
     func
@@ -105756,7 +105756,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [remaining : i64]
-  [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
+  [summaries : OptProgramSummaries]) : OptFunctionPassResult
   (if (<= remaining 0)
     (OptFunctionPassResult.Result func false)
     (match (optimize-function-pass-with-summaries
@@ -106542,7 +106542,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [level : i64]
-  [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
+  [summaries : OptProgramSummaries]) : OptFunctionPassResult
   (if (= level 0)
     (OptFunctionPassResult.Result func false)
     (if (= level 1)
@@ -106688,7 +106688,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [level : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunction
   (match (optimize-function-with-level-and-summaries-pass
     pools
     type-segment-bases
@@ -106763,7 +106763,7 @@
   [type-segment-bases : i64]
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
     (let
@@ -106790,7 +106790,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [scratch : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunction
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [_profile-name : String
@@ -106867,7 +106867,7 @@
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
   [scratch : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunctionSeq
   (let
     [index : i64 0]
     [builder : ir.CompilerIrFunctionBuilder
@@ -106927,7 +106927,7 @@
   [func : ir.CompilerIrFunction]
   [level : i64]
   [scratch : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunction
+  [summaries : OptProgramSummaries]) : ir.CompilerIrFunction
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [_profile-name : String
@@ -111891,7 +111891,7 @@
       (begin
         (set!
           opt-inline-caller-recursion?
-          (opt-loop-bce-direct-call-self-recursive-blocks?
+          (opt-direct-call-self-recursive-blocks?
             opt-inline-caller-name
             (opt-inline-caller-facts-blocks-shared-view)))
         (set! opt-inline-caller-recursion-known? true)))
@@ -117311,7 +117311,7 @@
         type-segment-bases
         func
         2
-        (opt-loop-bce-empty-summaries-for true))]
+        (opt-program-summaries-empty-for true))]
     [_restore : unit
       (begin
         (compiler-opt-debug-set-suppressed! false)
@@ -121481,44 +121481,41 @@
             (opt-filter-reachable-functions index functions reachable-out))]))
     (OptPrunedProgram.Program globals functions)))
 
-(define (opt-loop-bce-direct-call-clean-effect? [effect : ir.CompilerIrEffect]) : bool
+(define (opt-direct-call-clean-effect? [effect : ir.CompilerIrEffect]) : bool
   (match effect
     [(ir.CompilerIrEffect.Pure) true]
     [(ir.CompilerIrEffect.MemoryRead) true]
     [(ir.CompilerIrEffect.ControlFlow) true]
     [_ false]))
 
-(define (opt-loop-bce-direct-call-clean-target-effect? [name : i64]) : bool
-  (opt-loop-bce-direct-call-clean-effect?
-    (ir.compiler-ir-direct-call-effect-id name)))
+(define (opt-direct-call-clean-target-effect? [name : i64]) : bool
+  (opt-direct-call-clean-effect? (ir.compiler-ir-direct-call-effect-id name)))
 
 ;; The syntactic walk's verdict on one instruction: reads, pure computation,
 ;; control flow and direct calls only. A call to one of the program's functions
 ;; is decided by that callee's verdict (the closure below); any other callee
 ;; must be a runtime helper whose effect writes nothing.
-(define (opt-loop-bce-direct-call-clean-instr?
+(define (opt-direct-call-clean-instr?
   [index : (& index OptProgramIndex)]
   [instr : ir.CompilerIrInstr]) : bool
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Call _ name _ _)
       (or
         (opt-program-function? index name)
-        (opt-loop-bce-direct-call-clean-target-effect? name))]
+        (opt-direct-call-clean-target-effect? name))]
     [(ir.CompilerIrInstr.TailCall name _ _)
       (or
         (opt-program-function? index name)
-        (opt-loop-bce-direct-call-clean-target-effect? name))]
+        (opt-direct-call-clean-target-effect? name))]
     [(ir.CompilerIrInstr.CallIndirect _ _ _ _) false]
     [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) false]
     [(ir.CompilerIrInstr.CallCAbiStoreResult _) false]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) false]
     [(ir.CompilerIrInstr.SpmdCall _) false]
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _) false]
-    [_
-      (opt-loop-bce-direct-call-clean-effect?
-        (ir.compiler-ir-instr-effect instr))]))
+    [_ (opt-direct-call-clean-effect? (ir.compiler-ir-instr-effect instr))]))
 
-(define (opt-loop-bce-direct-call-self-recursive-instr?
+(define (opt-direct-call-self-recursive-instr?
   [name : i64]
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -121528,10 +121525,10 @@
       (ir.compiler-ir-symbol-eq? name callee)]
     [_ false]))
 
-(define (opt-loop-bce-direct-call-self-recursive-blocks?
+(define (opt-direct-call-self-recursive-blocks?
   [name : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
-  (opt-blocks-any? blocks opt-loop-bce-direct-call-self-recursive-instr? name))
+  (opt-blocks-any? blocks opt-direct-call-self-recursive-instr? name))
 
 ;; The self-recursive functions no execution of which writes memory: the
 ;; greatest set the walk above accepts once every call to a program function
@@ -121540,7 +121537,7 @@
 ;; admits by effect would stand for two verdicts at once; program functions
 ;; carry their module's names, so none does, and a program that had one would
 ;; get no facts at all rather than wrong ones.
-(define (opt-loop-bce-direct-call-clean-map
+(define (opt-direct-call-clean-map
   [index : (& index OptProgramIndex)]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
@@ -121555,16 +121552,16 @@
             [(ir.CompilerIrFunction.Function name _ _ _ blocks _)
               (begin
                 (when
-                  (opt-loop-bce-direct-call-clean-target-effect? name)
+                  (opt-direct-call-clean-target-effect? name)
                   (set! ambiguous? true))
                 (unless
                   (and
-                    (opt-loop-bce-direct-call-self-recursive-blocks?
+                    (opt-direct-call-self-recursive-blocks?
                       name
                       (compiler-opt-global-shared-view blocks))
                     (opt-blocks-every?
                       blocks
-                      opt-loop-bce-direct-call-clean-instr?
+                      opt-direct-call-clean-instr?
                       index))
                   (set! (array-ref refused slot) 1)))])
           (set! slot (+ slot 1))))
@@ -121618,7 +121615,7 @@
   (let
     [count : i64 (opt-function-seq-count functions)]
     (OptProgramFacts
-      (if (<= count (opt-loop-bce-summary-function-limit))
+      (if (<= count (opt-summary-function-limit))
         (opt-program-index-build functions)
         (opt-program-index-empty))
       (if (>= level 2)
@@ -123967,7 +123964,7 @@
 (define (opt-const-length-rewrite-summary-blocks
   [type-segment-bases : i64]
   [name : i64]
-  [summaries : (& summaries OptLoopBceSummaries)]
+  [summaries : (& summaries OptProgramSummaries)]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [lengths (& summaries.const-lengths)]
@@ -124008,7 +124005,7 @@
 ;; const-divisor table is independent and far cheaper (one linear store scan),
 ;; so it is built separately by the program driver and injected here rather
 ;; than tied to this gate -- see opt-build-program-summaries.
-(define (opt-loop-bce-summary-function-limit) : i64
+(define (opt-summary-function-limit) : i64
   ;; Dotted stdlib imports can leave small programs with more pre-prune reachable
   ;; functions than the old 64-function gate, even when the final program is still
   ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
@@ -124109,7 +124106,7 @@
 ;; every cell regardless of the arguments. A parameter-writing callee earns the
 ;; ordinary global bit only; LICM may use that weaker fact only when the
 ;; whole-program summary proves that no cell address exists anywhere.
-(define (opt-loop-bce-direct-call-clean-bits [summary : i64]) : i64
+(define (opt-direct-call-clean-bits [summary : i64]) : i64
   (if (= summary 0)
     (bit-or
       (opt-direct-call-clean-memory-bit)
@@ -124139,7 +124136,7 @@
               0
               (opt-direct-call-clean-unconditional-global-bit))))))))
 
-(define (opt-loop-bce-direct-call-clean-add-memory-clean
+(define (opt-direct-call-clean-add-memory-clean
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
@@ -124159,8 +124156,7 @@
                   (match (opt_i64_i64_map.get (& call-memory) name-id)
                     [(opt_i64_i64_map.LookupFound summary)
                       (let
-                        [bits : i64
-                          (opt-loop-bce-direct-call-clean-bits summary)]
+                        [bits : i64 (opt-direct-call-clean-bits summary)]
                         [existing : i64
                           (match (opt_i64_i64_map.get (& next) name-id)
                             [(opt_i64_i64_map.LookupFound old) old]
@@ -124176,13 +124172,13 @@
           (set! index (+ index 1))))
       next)))
 
-(define (opt-loop-bce-build-summaries-with-direct-call-clean
+(define (opt-program-call-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [index : (& index OptProgramIndex)]
   [build-direct-call-clean : bool]
-  [build-call-memory : bool]) : OptLoopBceSummaries
+  [build-call-memory : bool]) : OptProgramSummaries
   (let
     [capacity : i64
       (opt-function-index-capacity (opt-function-seq-count functions))]
@@ -124209,10 +124205,10 @@
     ;; gate, so opt0/opt1 keep an empty map and stay byte-identical.
     [direct-call-clean : opt_i64_i64_map.Map
       (if build-direct-call-clean
-        (opt-loop-bce-direct-call-clean-add-memory-clean
+        (opt-direct-call-clean-add-memory-clean
           functions
           call-memory
-          (opt-loop-bce-direct-call-clean-map index capacity))
+          (opt-direct-call-clean-map index capacity))
         (opt_i64_i64_map.with-capacity 1))]
     ;; The return-alias table rides the same level>=2 gate as
     ;; `direct-call-clean`: it feeds LICM provenance only, and leaving it empty
@@ -124221,7 +124217,7 @@
       (if build-direct-call-clean
         (opt-licm-return-alias-map functions capacity)
         (opt_i64_i64_map.with-capacity 1))]
-    (OptLoopBceSummaries
+    (OptProgramSummaries
       false
       (profile_state.compiler-profile-state-new)
       direct-call-clean
@@ -124233,7 +124229,7 @@
       (opt_i64_i64_map.with-capacity 1)
       (opt_i64_i64_map.with-capacity 1))))
 
-;; Build the per-program summaries: the function-count-gated BCE/LICM call maps
+;; Build the per-program summaries: the function-count-gated call maps
 ;; plus the const-divisor table. The const-divisor table is built only at opt
 ;; level 2 (the only level whose pipeline runs the divisor rewrite), so opt0/opt1
 ;; -- and in particular the opt1 self-compile throughput metric -- pay nothing
@@ -124247,22 +124243,22 @@
   [globals : ir.CompilerIrGlobalSeq]
   [externs : ir.CompilerIrExternSeq]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
-  [level : i64]) : OptLoopBceSummaries
+  [level : i64]) : OptProgramSummaries
   (let
     [count : i64 (opt-function-seq-count reachable-functions)]
     [capacity : i64 (opt-function-index-capacity count)]
     [facts : OptProgramFacts
       (opt-program-facts-build reachable-functions level)]
-    [summaries : OptLoopBceSummaries
-      (if (<= count (opt-loop-bce-summary-function-limit))
-        (opt-loop-bce-build-summaries-with-direct-call-clean
+    [summaries : OptProgramSummaries
+      (if (<= count (opt-summary-function-limit))
+        (opt-program-call-summaries
           type-segment-bases
           (compiler-opt-global-shared-view globals)
           reachable-functions
           facts.index
           (>= level 2)
           (>= level 1))
-        (opt-loop-bce-empty-summaries))]
+        (opt-program-summaries-empty))]
     (begin
       (when
         (>= level 2)
@@ -124292,7 +124288,7 @@
           ;; them runs only when one of the two tables is built.
           [roots : OptArgGlobalScan
             (if (and
-              (<= count (opt-loop-bce-summary-function-limit))
+              (<= count (opt-summary-function-limit))
               (or
                 (and
                   (= (opt_i64_i64_map.len (& cell.addr-taken)) 0)
@@ -124756,7 +124752,7 @@
 ;; divisor exists -- the common case, so the level-2 fixpoint pays only a length
 ;; check per function rather than a block walk.
 (define (opt-const-divisor-rewrite-summary-blocks
-  [summaries : (& summaries OptLoopBceSummaries)]
+  [summaries : (& summaries OptProgramSummaries)]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [const-divisors (& summaries.const-divisors)]
@@ -125611,7 +125607,7 @@
   [capacity : i64]) : OptGlobalModRef
   (if (or
     (> (opt_i64_i64_map.len (& addr-taken)) 0)
-    (> (opt-function-seq-count functions) (opt-loop-bce-summary-function-limit)))
+    (> (opt-function-seq-count functions) (opt-summary-function-limit)))
     (opt-global-mod-ref-none)
     (match (opt-global-mod-ref-index-build globals stores capacity)
       [(OptGlobalModRefIndex.No) (opt-global-mod-ref-none)]
@@ -126666,7 +126662,7 @@
   [capacity : i64]) : OptGlobalObjModRef
   (if (or
     (> (opt_i64_i64_map.len (& addr-taken)) 0)
-    (> (opt-function-seq-count functions) (opt-loop-bce-summary-function-limit))
+    (> (opt-function-seq-count functions) (opt-summary-function-limit))
     (=
       (ir.compiler-ir-global-seq-count
         (compiler-opt-global-shared-view globals))
@@ -128376,9 +128372,7 @@
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [call-memory : opt_i64_i64_map.Map]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (if (>
-    (opt-function-seq-count functions)
-    (opt-loop-bce-summary-function-limit))
+  (if (> (opt-function-seq-count functions) (opt-summary-function-limit))
     (opt_i64_i64_map.with-capacity 1)
     (let
       [cand : OptGlobalFrozenCandidates
@@ -128892,7 +128886,7 @@
   [capacity : i64]) : opt_i64_i64_map.Map
   (if (or
     (= (opt_i64_i64_map.len len-eq) 0)
-    (> (opt-function-seq-count functions) (opt-loop-bce-summary-function-limit)))
+    (> (opt-function-seq-count functions) (opt-summary-function-limit)))
     (opt_i64_i64_map.with-capacity 1)
     (opt-arg-global-emit
       type-segment-bases
@@ -128948,7 +128942,7 @@
 ;; global-rooted chains get their cleanup.
 ;;
 ;; THE GATE. Both tables this pass rests on -- P18's cell mod-ref and IAG-2's
-;; storage-write table -- decline above `opt-loop-bce-summary-function-limit`
+;; storage-write table -- decline above `opt-summary-function-limit`
 ;; and outside the empty-address-taken precondition, so above that limit every
 ;; candidate would be refused anyway. Declining there up front keeps the census
 ;; free for a big program instead of walking it to reach the same answer.
@@ -129848,7 +129842,7 @@
     (if (or
       (< level 2)
       (<= count 0)
-      (> count (opt-loop-bce-summary-function-limit))
+      (> count (opt-summary-function-limit))
       (=
         (ir.compiler-ir-global-seq-count
           (compiler-opt-global-shared-view globals))
@@ -131403,7 +131397,7 @@
 ;; or when every referenced global is excluded by (a)/(b)/(c)/cell-width or
 ;; price.
 (define (opt-global-cell-function
-  [summaries : OptLoopBceSummaries]
+  [summaries : OptProgramSummaries]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function
@@ -131793,7 +131787,7 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena))]
-                    [summaries : OptLoopBceSummaries
+                    [summaries : OptProgramSummaries
                       (opt-build-program-summaries
                         type-segment-bases
                         pruned-globals
@@ -145732,7 +145726,7 @@
 ;; mechanism.
 (define (opt-guard-dedup-final-sweep
   [type-segment-bases : i64]
-  [summaries : (& summaries OptLoopBceSummaries)]
+  [summaries : (& summaries OptProgramSummaries)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function

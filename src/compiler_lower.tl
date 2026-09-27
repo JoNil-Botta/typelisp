@@ -2468,12 +2468,6 @@
       "lower.alias_overlay.resets"
       live)))
 
-;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
-;; build's retention decomposes across the walk / clone augmentation / context
-;; extension stages. Detail rows carry absolute alloc-live and the running peak
-;; so analysis can diff stages without perturbing the phase-level peak math.
-;; Kept out of the shipped compiler: the compile-profile verifier gate rejects
-;; unexpected detail rows, so these fire only in local measurement builds.
 (define (compiler-lower-profile-reset! [_state : CompilerLowerState]) : unit
   (cfg
     (any compile-profile test)
@@ -3562,10 +3556,10 @@
 
 ;; A derived symbol is minted into the IR's own growable symbol table, not into
 ;; the fixed intern pool. These logical spellings are by far the largest
-;; generated-name population -- about 50,000 of the ~51,500 generated names a
-;; whole-program self-compile allocates -- and the pool's 131,072 slots cannot
-;; hold them alongside the source lane (refs #6293). The table keys on the full
-;; display string exactly as `intern-generated-canonical-name` did, so a
+;; generated-name population of a whole-program compile, and the pool's fixed
+;; slots cannot hold them alongside the source lane (refs #6293). The table
+;; keys on the full display string exactly as `intern-generated-canonical-name`
+;; does, so a
 ;; definition and every call to it still resolve to one id and one spelling.
 (define (lower-derived-symbol-id [logical-name : String]) : i64
   (ir.compiler-ir-symbol logical-name))
@@ -4479,7 +4473,8 @@
 
 ;; Build a small overlay type cache from `env` (the module-local type
 ;; bindings only). On a miss it falls through to the shared global cache
-;; `lower-decls-global-type-cache` (see lower-type-cache-lookup-id).
+;; in the lower state's `decls-global-type-cache` cell (see
+;; lower-type-cache-lookup-id).
 (define (lower-type-cache-overlay
   [lower-state : CompilerLowerState]
   [env : tc_core.TcTypeEnv]) : LowerTypeCache
@@ -4852,8 +4847,7 @@
 ;; lower-name-env-from-import-aliases-in-module-cache. That overlay starts empty
 ;; and is accumulated strictly linearly (single accumulator, no branching or
 ;; re-entrant overlay builds), so an O(1) hashmap presence check can stand in for
-;; the O(n) LowerNameEnv scan previously run for every added alias -- formerly
-;; O(aliases^2) per module. Only
+;; an O(n) LowerNameEnv scan per added alias (O(aliases^2) per module). Only
 ;; presence matters here, so a bare generated i64 -> i64 map (which grows) is
 ;; used rather than a fixed-capacity LowerNameCache.
 ;;
@@ -5010,15 +5004,15 @@
 ;; function of the TARGET declaration alone -- entry path, the declaration's own
 ;; path, its owning module, and its name. The importing alias never appears in
 ;; it. The alias fanout, however, visits every declaration of a module once per
-;; importing alias, so an opt1 self-compile rendered the same "<module>::<name>"
-;; string 232337 times across at most 26609 distinct declarations. Those strings
+;; importing alias, so it would render the same "<module>::<name>" string many
+;; times per declaration. Those strings
 ;; are pure scratch -- only the interned ID they resolve to is retained -- yet
-;; the lowering arena has no free, so all 51.5 MB of them stayed live through
+;; the lowering arena has no free, so all of them would stay live through
 ;; the compile-wide peak, in each of the two name-env builds.
 ;;
 ;; Keying on the declaration's program-order position collapses that to one
-;; render per declaration. The first visit still renders and interns in exactly
-;; the original order, so the intern pool receives the same insertions with the
+;; render per declaration. The first visit renders and interns in exactly the
+;; unmemoized order, so the intern pool receives the same insertions with the
 ;; same IDs; later visits reuse the ID that intern-generated-canonical-name
 ;; would have returned from its existing slot anyway.
 (define (lower-alias-symbol-memo-reset!
@@ -5309,13 +5303,11 @@
         names))))
 
 ;; The module-local alias fanout resolves every (import, declaration) pair
-;; through the base module's name cache. That cache holds the pair's symbol on
-;; every visit of a whole-compiler input (measured 467,682 of 467,682 lookups),
-;; so the display name rendered to derive the miss fallback -- and the fallback
-;; itself -- were pure waste: the callee below ignores the rendered name (its
-;; parameter is `_`), and the lookup never returned the derived id. Rendering
-;; only on an actual miss keeps the same result while dropping ~32 MB of
-;; throwaway module-key strings per compile. Presence is decided with the same
+;; through the base module's name cache, which holds the pair's symbol on
+;; practically every visit. So the display name that derives the miss fallback
+;; is rendered only on an actual miss: the callee below ignores the rendered
+;; name (its parameter is `_`), so the result is the same either way, without
+;; the throwaway module-key strings. Presence is decided with the same
 ;; `>= 0` test the render helper itself uses on this API.
 (define (lower-name-cache-alias-symbol-id-or-derived
   [base-cache : (& base-cache LowerNameCache)]
@@ -5866,10 +5858,9 @@
         ""
         (string.substring path 0 (+ last 1))))))
 
-;; Join segments with '/' in one linear text-buf build. The fold-with-append
-;; version copied the whole accumulated prefix on every segment (quadratic in
-;; rendered length) and ran once per normalized path, making it the largest
-;; string.append caller in the lowering phase of a self-compile.
+;; Join segments with '/' in one linear text-buf build. A fold-with-append
+;; copies the whole accumulated prefix on every segment (quadratic in rendered
+;; length), and this runs once per normalized path.
 (define (lower-path-segment-vec-render [segments : svec.Vec]) : String
   (let
     [count : i64 (svec.len (& segments))]
@@ -5965,11 +5956,10 @@
 
 ;; --- proven-canonical path memo ---------------------------------------
 ;; lower-normalize-path returns its argument unchanged when the path is
-;; already canonical, and that is what every module path of a normal compile
-;; is: an opt1 self-compile asked 676,802 times and took the rewriting branch
-;; 35 times. The asks come one per declaration per lowering walk over the
-;; program's ~150 distinct module paths, so lower-path-canonical? kept
-;; re-reading the same strings byte by byte -- 693M Ir, 1.3% of the compile.
+;; already canonical, and that is what nearly every module path of a normal
+;; compile is. The asks come one per declaration per lowering walk over the
+;; program's few distinct module paths, so lower-path-canonical? would keep
+;; re-reading the same strings byte by byte.
 ;; Remembering which path strings are already proven canonical answers the
 ;; repeats with a length compare instead of a scan.
 ;;
@@ -7528,7 +7518,7 @@
 ;; Import-alias fanout, its cache-backed module-local variant, and
 ;; lower-module-local-envs-list all need to filter the whole-program decl list
 ;; down to one module. Scanning every declaration and tracking `(module NAME)`
-;; markers for each target made a self-compile pay O(imports x program) work in
+;; markers for each target would cost O(imports x program) work in
 ;; the initial name-env build, plus repeated module-local scans later. This
 ;; CSR-shaped index maps each module id to the program-order positions of its
 ;; declarations (module markers excluded) so all of those consumers touch only
@@ -11134,7 +11124,7 @@
     [out : ast.AstExprList (ast.ast-expr-list-new)]
     (begin
       ;; Dense roots expose logical newest-first order; cons from the oldest
-      ;; logical entry back to index 0 to preserve the old recursive output.
+      ;; logical entry back to index 0 so the list keeps that order.
       (while (>= index 0)
         (let
           [root-key-id : i64
@@ -11277,8 +11267,8 @@
 ;; root in one shot. Its working set (CTFE values, env spines, memo entries) is
 ;; dead once the generated helper declarations exist, but unlike the main macro
 ;; walk it runs after macro_detach -- no later pool compaction retires that
-;; garbage, and on a self-compile it retained ~745MB in the persistent base
-;; arena for the rest of the compile. Run the expansion in a scratch arena and
+;; garbage, so it would stay in the persistent base arena for the rest of the
+;; compile. Run the expansion in a scratch arena and
 ;; copy only the returned declarations out (the mark/rewind/clone-out shape of
 ;; tc-check-fn-decl-scoped): node-pool growth and interned spellings already
 ;; live in their persistent owners, type-node payloads are persisted at push
@@ -11388,7 +11378,7 @@
   [module-id : i64]) : i64
   ;; Index cursor rather than `ast-decl-list-step`; the first non-negative root
   ;; key still stops the walk. The wrapper peel stays by value -- it needs owned
-  ;; `Box` storage to walk an `AstDecl.Unsafe` chain -- but it now reads the
+  ;; `Box` storage to walk an `AstDecl.Unsafe` chain -- but it reads the
   ;; backing slot instead of a stepped-out 104 B copy.
   (let
     [count : i64 (ast.ast-decl-list-len (& source-decls))]
@@ -11516,8 +11506,8 @@
     "]"))
 
 ;; Expand roots in bounded chunks: the one-shot expansion's macro/CTFE working
-;; set scales with the whole root list (hundreds of MB of interpreter churn on
-;; a self-compile), but only one chunk's worth needs to be live at a time.
+;; set scales with the whole root list, but only one chunk's worth needs to be
+;; live at a time.
 ;; Helpers are generated per type key, so chunking preserves the output union.
 (define (lower-clone-handoff-expand-roots
   [lower-state : CompilerLowerState]
@@ -14460,7 +14450,7 @@
   ;; Index cursor rather than `ast-decl-list-step`. The predicates and the
   ;; dependency walk all take `AstDecl` by value, but an aggregate argument is
   ;; passed by reference, so handing them the backing slot costs nothing where
-  ;; the step copied 104 B and wrote a 144 B result per declaration.
+  ;; the step would copy 104 B and write a 144 B result per declaration.
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
@@ -15095,11 +15085,11 @@
             unit)]
         ;; The reachability scratch (function/dispatch sets, body index and
         ;; its per-module name overlays, the reachable map) is the bulk of the
-        ;; ~163MB / ~12% opt1 lower-phase prune cost and adds zero AST/type pool
+        ;; prune cost and adds zero AST/type pool
         ;; nodes -- pure transient scratch. Build it inside the dedicated lower
         ;; scratch arena and rewind it once the pruned program is materialized.
         ;; The pruned decl/path lists only reference shared decl nodes (by
-        ;; AstNodeId) and interned strings, never the scratch maps, so they are
+        ;; node id) and interned strings, never the scratch maps, so they are
         ;; safe to keep in the persistent arena after the rewind (mirrors the
         ;; scratch+escape pattern in lower-function-escaping).
         [prev-arena : i64 (arena.tl_arena_current)]
@@ -16632,11 +16622,10 @@
     (LowerExpr.Expr state base (ast.AstType.U64))
     (lower-gep-byte state base offset)))
 
-;; Inline the hottest by-value aggregate copies. The flip to
-;; inline-by-value aggregates made the 17-128 B band, especially
-;; AstTypeList/AstType, ResultTcType/ResultTcType.Ok, and CompilerIrInstr copies,
-;; dynamically dominant, but the 16 B ceiling pushed every one of them onto a
-;; `tl_memcpy` CALL (~88 dynamic instructions each). Inline they lower to
+;; Inline the hottest by-value aggregate copies. Copies in the 17-128 B band,
+;; especially AstTypeList/AstType, ResultTcType/ResultTcType.Ok, and
+;; CompilerIrInstr copies, are dynamically dominant, and a `tl_memcpy` CALL
+;; costs far more than such a copy. Inline they lower to
 ;; at most eleven 16-byte XMM or scalar-tail load+store pairs.
 ;; Capping the expansion by that
 ;; operation count, as production compiler memcpy lowering does, admits the hot
@@ -16647,11 +16636,10 @@
   176)
 
 ;; Copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
-;; of `size/8` separate gep+load+gep+store chunks. The flip from heap-handle
-;; structs to inline-by-value aggregates turned every large by-value
-;; aggregate copy (set!, pass/return, clone of a >16 B struct) into a long run of
-;; word copies -- the dominant `movq` source at -O1 (the `movq ...,%r10 ; movq
-;; off(%r10),%rax ; movq %rax,SLOT` runs). One call collapses each run to a few
+;; of `size/8` separate gep+load+gep+store chunks. Chunked, a large by-value
+;; aggregate copy (set!, pass/return, clone of a >16 B struct) is a long run of
+;; word copies (`movq ...,%r10 ; movq off(%r10),%rax ; movq %rax,SLOT`); one
+;; call collapses each run to a few
 ;; instructions. tl_memcpy takes (dst, src, len) and is emitted unconditionally in
 ;; the runtime. Only used for copies large enough that the call beats the inline
 ;; chunks (see lower-copy-bytes threshold).
@@ -16802,7 +16790,8 @@
 ;; Number of machine words a register-resident aggregate occupies
 ;; (ceil(size/8)). 1 word => carried as a single scalar value; 2
 ;; words => carried as a register-group value built with CompilerIrInstr.Pack and read
-;; with IrInstrWord. Only meaningful when `lower-type-register-resident?` holds.
+;; with CompilerIrInstr.Word. Only meaningful when
+;; `lower-type-register-resident?` holds.
 ;; True for a register-resident aggregate that needs the multi-word
 ;; register-group representation (2+ words) rather than the single-word scalar
 ;; representation. Drives the CompilerIrInstr.Pack/CompilerIrInstr.Word lowering paths.
@@ -16815,9 +16804,8 @@
 ;; layout rebuilds of calling register-resident? + register-group? (which itself
 ;; rebuilds for resident? and for the size) separately. Returns the machine-word
 ;; count (1 or 2) of a register-resident aggregate, else 0. Used on the hot match
-;; path so the per-function scratch arena keeps the same transient-allocation
-;; profile as before this slice (excess rebuilds there overflowed it into a second
-;; chunk whose rewind leaked into later lowering).
+;; path, where excess rebuilds would overflow the per-function scratch arena
+;; into a second chunk whose rewind leaks into later lowering.
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
     [(ast.AstType.Ref _ inner)
@@ -17584,7 +17572,7 @@
                   word-index))))]))))
 
 ;; Construct a register-group struct value: pack each machine word and
-;; combine them with IrInstrPack. Two-word integer-class structs only.
+;; combine them with CompilerIrInstr.Pack. Two-word integer-class structs only.
 (define (lower-construct-struct-register-group
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -17791,8 +17779,9 @@
   [ty : ast.AstType]) : LowerExpr
   ;; A register-resident aggregate field is loaded as a word (a scalar
   ;; load), not returned as a pointer into the containing slot. A 2-word
-  ;; register-group loads BOTH words and reassembles them with IrInstrPack. Only a
-  ;; genuine memory aggregate keeps the pointer-return shape.
+  ;; register-group loads BOTH words and reassembles them with
+  ;; CompilerIrInstr.Pack. Only a genuine memory aggregate keeps the
+  ;; pointer-return shape.
   (cond
     [(and
         (lower-type-inline-storage? ctx (lower-global-shared-view ty))
@@ -17836,9 +17825,9 @@
       (lower-state-emit state (ir.CompilerIrInstr.CopyBytes dst src size))
       (lower-copy-bytes state dst dst-offset src src-offset size))))
 
-;; Return-slot copies are paid on every aggregate-returning wrapper edge. The
-;; measured opt1 self-compile has 1.67M 216-byte and 0.91M 208-byte copies in
-;; the move checker alone. Let final sret copies use fourteen 16-byte memory
+;; Return-slot copies are paid on every aggregate-returning wrapper edge, and
+;; results just over 200 bytes are common (the move checker returns many).
+;; Let final sret copies use fourteen 16-byte memory
 ;; operations, matching the target-style operation budget, without globally
 ;; expanding cold field/list copies in the same size band.
 (define lower-inline-return-copy-threshold : i64
@@ -23731,10 +23720,9 @@
     (ResultLowerState.Ok state)))
 
 ;; Emit the cleanup/region-reset calls a binding env keeps active. This
-;; walks the whole TcTypeEnv chain once per scope exit; it used to be a
-;; tail-recursive walk, but the inline-aggregate TCO guard declines
-;; frame reuse here, so deep envs stacked one ~12KB frame per binding (8,164
-;; frames = 100MB of the measured 502MB stack peak). Iterate instead.
+;; walks the whole TcTypeEnv chain once per scope exit. It iterates rather than
+;; tail-recursing: the inline-aggregate TCO guard declines frame reuse here, so
+;; a recursive walk stacks one large frame per binding of a deep env.
 (define (lower-emit-active-exits-with
   [ctx : tc_core.TcContext]
   [cleanup-marker-id : i64]
@@ -23764,8 +23752,8 @@
               ;; the function-local scope: cleanup/region-reset markers are
               ;; only ever bound above it by body forms (with-resource/
               ;; with-arena), never in the module or top env below. Stopping
-              ;; there avoids walking the whole program spine (~24.6k binds per
-              ;; return on a self-compile). A break or continue stops at the
+              ;; there avoids walking the whole program spine on every
+              ;; return. A break or continue stops at the
               ;; innermost loop target.
               ;; lint-allow: nested-if-ladder
               (if (= key stop-id)
@@ -25900,7 +25888,8 @@
         [(tc_core.TcInlineAggregateLayout.Struct size _ _)
           ;; A register-resident struct is built directly in registers by
           ;; packing its fields with shift/or; no stack slot, no stores. A 2-word
-          ;; struct packs each word and combines them with IrInstrPack.
+          ;; struct packs each word and combines them with
+          ;; CompilerIrInstr.Pack.
           (if (tc_core.tc-inline-aggregate-layout-register-resident?
             (lower-global-shared-view layout))
             (if (lower-type-register-group?
@@ -25993,9 +25982,8 @@
 ;; `(set! acc (f acc x))` and tail-sret forwarding are the canonical cross-call
 ;; cases; direct `set!` constructors expose the same ordering within one frame.
 ;; Interleaving destination writes with argument evaluation MISCOMPILES whenever
-;; `dst` aliases an operand place. A prior full destination-forwarding version
-;; here (-282 `tl_memcpy` call sites) broke stage1 in `tc-name-id-list-add`; keep
-;; the source order explicit.
+;; `dst` aliases an operand place. Forwarding the destination here was tried
+;; and broke stage1; keep the source order explicit.
 ;;
 ;; Destination forwarding belongs in `compiler_optimize.tl`, where the whole
 ;; window is visible and the alias side condition can actually be discharged --
@@ -26291,7 +26279,7 @@
                 variant-name))))])))
 
 ;; Two-phase order (arguments first, destination bytes second) is load-bearing
-;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
+;; here too -- see the two-phase note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-enum-with-name-into
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -26340,7 +26328,7 @@
         (ResultLowerState.Err (box (lower-diagnostic message)))])))
 
 ;; Two-phase order (arguments first, destination bytes second) is load-bearing
-;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
+;; here too -- see the two-phase note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-enum-with-handle-into
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -26506,7 +26494,7 @@
         (ResultLowerExpr.Err (box (lower-diagnostic message)))])))
 
 ;; Two-phase order (arguments first, destination bytes second) is load-bearing
-;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
+;; here too -- see the two-phase note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-struct-into
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -27997,8 +27985,8 @@
 ;; lower-expr-origin computes each expr's result type (walking the result-
 ;; determining spine) BEFORE lowering, and lowering the children re-walks their
 ;; spines -- so for deeply-nested functions a node's spine is recomputed once per
-;; ancestor: O(N^2), the dominant lower-phase cost (single big functions
-;; allocated hundreds of MB of transient). The owner lazily retains fixed
+;; ancestor: O(N^2), the dominant lower-phase cost without this memo. The
+;; owner lazily retains fixed
 ;; direct-mapped backing while each explicitly passed function state carries a
 ;; distinct generation. Nested lambdas/helpers may interleave safely: a nested
 ;; function can evict slots, but the enclosing generation then misses instead
@@ -28622,7 +28610,7 @@
 
 ;; Lowering runs after full-program typecheck. For result types that are
 ;; syntactically available, avoid re-running recursive expression typecheck;
-;; the fallback below preserves the old path for anything ambiguous.
+;; the fallback below keeps the typecheck path for anything ambiguous.
 (define (lower-expr-origin
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -34500,7 +34488,7 @@
     (ResultLowerArgs.Ok state values)))
 
 ;; Keep the ownership role on the IR argument carrier. The ABI still sees the
-;; same physical values, but colouring no longer has to guess from position.
+;; same physical values, but colouring need not guess from position.
 (define (lower-call-args-with-nominal-sret
   [ctx : tc_core.TcContext]
   [values : ir.CompilerIrValueSeq]
@@ -38489,7 +38477,7 @@
 ;; i64 and u64 share the single 64-bit register/stack home the compare reads,
 ;; and the emitted instruction is identical either way. A negative i64 index
 ;; still traps, because the unsigned compare sees its sign-extended pattern as a
-;; huge value -- which is exactly what the cast used to produce.
+;; huge value -- which is exactly what the cast would produce.
 ;;
 ;; The IR already carries raw i64 bounds-check operands: the gather lane checks
 ;; and the vector-map lane-array checks pass array lengths and computed indices
@@ -45200,7 +45188,7 @@
     [(ast.AstExpr.SpmdProgramIndex) true]
     [_ false]))
 
-;; SPMD plans historically carried a dynamic-array descriptor variable id.
+;; SPMD plans carry a sequence variable id naming a dynamic-array descriptor.
 ;; Native Slice references are register groups instead: word 0 is the data
 ;; pointer and word 1 is the length. Keep the compact plan representation by
 ;; tagging Slice ids as `-(id + 1)`; function-local IR ids are non-negative.
@@ -63870,9 +63858,8 @@
 ;; remain, their false-edge suffix carries TotalEnumBranch proof. Keeping the
 ;; proof on only this terminal suffix matters because switch formation may
 ;; split a long comparison chain: an earlier chunk's default still has more
-;; enum tags to test and must remain checked. Labels keep the old display
-;; spelling only for byte-stable IR/assembly. Small matches therefore remain
-;; byte-for-byte identical at the lowered-IR stage.
+;; enum tags to test and must remain checked. Label spellings are display-only
+;; and stay fixed for byte-stable IR/assembly.
 (define (lower-total-enum-switch-rest-explicit-from?
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : bool
@@ -63899,7 +63886,7 @@
 (define (lower-enum-match-next-label-base
   [total-enum-switch? : bool]
   [rest : (& rest ast.AstMatchArmList)]) : String
-  ;; Preserve the old diagnostic spellings without consulting them for
+  ;; Keep the diagnostic spellings without consulting them for
   ;; semantics. The explicit proof is threaded only through this match's
   ;; outer compare chain and cannot leak into a nested arm body.
   (let
@@ -64390,7 +64377,8 @@
   [force-memory : bool]) : ResultLowerExpr
   ;; A 1-word register-resident enum value IS the tag word (nullary, no
   ;; payload); match on `scrut-var` directly. A 2-word register-group enum holds
-  ;; the tag in word0; extract it with IrInstrWord. Neither touches memory. One
+  ;; the tag in word0; extract it with CompilerIrInstr.Word. Neither touches
+  ;; memory. One
   ;; layout build (lower-type-register-words) decides all three cases.
   ;; `force-memory` (borrowed match of a spilled register-resident scrutinee)
   ;; overrides the value paths: scrut-var then holds the ADDRESS of the enum
@@ -66956,18 +66944,19 @@
 
 ;; Reusable per-function lowering scratch arena. Lowering one function
 ;; allocates a fresh `LowerState` plus the transient IR/AST-walk scratch the bump
-;; allocator never frees; summed across cli.tl's ~5000 functions this transient
-;; dominates the lower phase's peak live (the headline self-build memory number).
+;; allocator never frees; summed across a large program's functions this
+;; transient would dominate the lower phase's peak live.
 ;; We lower each function inside one shared scratch arena and `tl_region_reset` it
 ;; after deep-`clone`ing ONLY the produced IR function list back into the
 ;; enclosing (program) arena -- reclaiming the per-function transient before the
 ;; next function. The arena is created lazily once and reused (rewound, never
 ;; remapped) per function, mirroring the optimizer's per-function escape
-;; (`optimize-function-escaping`). The spans side-table insertion is recomputed
-;; in the enclosing arena (it never affects emitted assembly, only backend-error
-;; source locations). `lower-function-escaping` is only ever called at decl
-;; granularity (never re-entrant within `lower-function`'s body walk), so a
-;; single shared mark/rewind region is sound. Output stays byte-identical: the
+;; (`optimize-function-escaping-with-summaries`). The spans side-table
+;; insertion is recomputed in the enclosing arena (it never affects emitted
+;; assembly, only backend-error source locations). `lower-function-escaping`
+;; is only ever called at decl granularity (never re-entrant within
+;; `lower-function`'s body walk), so a single shared mark/rewind region is
+;; sound. Output stays byte-identical: the
 ;; clone is a structural deep copy, so the escaped IR lowers to the same assembly
 ;; as the in-place IR did.
 ;; Dotted imports create transient lookup-key strings during function lowering
@@ -66997,8 +66986,8 @@
 ;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
 ;; deep-clones every surviving function into the enclosing arena
-;; (optimize-function-escaping), after which the entire input IR is dead --
-;; ~172MB on a cli.tl self-compile that the program-lifetime arena would
+;; (optimize-function-escaping-with-summaries), after which the entire input IR
+;; is dead -- memory the program-lifetime arena would
 ;; never reclaim. Cloning the lowered functions into this arena instead lets
 ;; the driver destroy it right after optimization. At opt level 0 the
 ;; program flows to the backend unchanged, so the arena must stay alive for
@@ -69100,8 +69089,8 @@
     [name-cache : LowerNameCache (lower-name-cache-from-env lower-state names)]
     [cur-out : lower_i64_i64_map.Map out]
     ;; Feed the wrapper peel the backing slot directly. Binding the row to a
-    ;; local first materialised a 104 B copy that `ast-decl-unwrapped` then
-    ;; copied again; an aggregate argument is passed by reference, so the
+    ;; local first would materialise a copy that `ast-decl-unwrapped` then
+    ;; copies again; an aggregate argument is passed by reference, so the
     ;; projection costs nothing.
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
@@ -69114,9 +69103,9 @@
               (+ decl-offset index)))
             [(ast.AstDecl.Module next-module) (set! cur-module-id next-module)]
             [(ast.AstDecl.DefFn decl-meta name _ _ body-box _)
-              ;; #6056 threads the per-body typecheck state through the
-              ;; early-exit fact lookup; keep that argument while the walk
-              ;; itself reads the backing slot instead of a stepped-out row.
+              ;; The early-exit fact lookup takes the per-body typecheck state
+              ;; (#6056); the walk itself reads the backing slot instead of a
+              ;; stepped-out row.
               (let
                 [has-early-return : bool
                   (match (tc_core.tc-body-early-exit-fact
@@ -70653,7 +70642,7 @@
                 ;; specialized instances stay private symbols. Its store grows
                 ;; in its owner arena, so give it one of its own and retire it
                 ;; as soon as the walk returns instead of carrying it to the
-                ;; end of lowering (22 MB on a self-compile, #7882).
+                ;; end of lowering (#7882).
                 [prune-names-arena : i64
                   (if needs-specialization
                     (arena.tl_arena_make)

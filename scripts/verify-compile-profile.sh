@@ -29,18 +29,6 @@ SURFACE_HYDRATED_STDERR="$WORKDIR/surface-hydrated.stderr"
 SURFACE_SOURCE_ASM="$WORKDIR/surface-source.s"
 SURFACE_SOURCE_STDOUT="$WORKDIR/surface-source.stdout"
 SURFACE_SOURCE_STDERR="$WORKDIR/surface-source.stderr"
-SURFACE_MISMATCH_PROFILE_ASM="$WORKDIR/surface-mismatch-profile.s"
-SURFACE_MISMATCH_PROFILE_OBJ="$WORKDIR/surface-mismatch-profile.$NL_OBJ_EXT"
-SURFACE_MISMATCH_PROFILE_BIN="$WORKDIR/surface-mismatch-profile$NL_BIN_EXT"
-SURFACE_MISMATCH_ASM="$WORKDIR/surface-mismatch.s"
-SURFACE_MISMATCH_STDOUT="$WORKDIR/surface-mismatch.stdout"
-SURFACE_MISMATCH_STDERR="$WORKDIR/surface-mismatch.stderr"
-SURFACE_COMPILER_MISMATCH_PROFILE_ASM="$WORKDIR/surface-compiler-mismatch-profile.s"
-SURFACE_COMPILER_MISMATCH_PROFILE_OBJ="$WORKDIR/surface-compiler-mismatch-profile.$NL_OBJ_EXT"
-SURFACE_COMPILER_MISMATCH_PROFILE_BIN="$WORKDIR/surface-compiler-mismatch-profile$NL_BIN_EXT"
-SURFACE_COMPILER_MISMATCH_ASM="$WORKDIR/surface-compiler-mismatch.s"
-SURFACE_COMPILER_MISMATCH_STDOUT="$WORKDIR/surface-compiler-mismatch.stdout"
-SURFACE_COMPILER_MISMATCH_STDERR="$WORKDIR/surface-compiler-mismatch.stderr"
 SUMMARY_ASM="$WORKDIR/typelisp-summary.s"
 SUMMARY_OBJ="$WORKDIR/typelisp-summary.$NL_OBJ_EXT"
 SUMMARY_BIN="$WORKDIR/typelisp-summary$NL_BIN_EXT"
@@ -152,109 +140,107 @@ show_failure_logs() {
     sed 's/^/  /' "$_stderr" >&2 || true
 }
 
-assert_contains_in() {
-    _file=$1
-    _text=$2
-    _stdout=$3
-    _stderr=$4
-    if ! grep -F -- "$_text" "$_file" >/dev/null; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "missing expected profile text: $_text"
+# run_logged STDOUT STDERR MESSAGE COMMAND...: run COMMAND with its streams in
+# STDOUT and STDERR; a failure shows both and fails with MESSAGE.
+run_logged() {
+    _rl_out=$1
+    _rl_err=$2
+    _rl_msg=$3
+    shift 3
+    if ! "$@" > "$_rl_out" 2> "$_rl_err"; then
+        show_failure_logs "$_rl_out" "$_rl_err"
+        fail "$_rl_msg"
     fi
 }
 
-assert_contains() {
-    assert_contains_in "$1" "$2" "$CHECK_STDOUT" "$CHECK_STDERR"
-}
-
-assert_not_contains_in() {
-    _file=$1
-    _text=$2
-    _stdout=$3
-    _stderr=$4
-    if grep -F -- "$_text" "$_file" >/dev/null; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "unexpected profile text: $_text"
-    fi
-}
-
-assert_not_contains() {
-    assert_not_contains_in "$1" "$2" "$CHECK_STDOUT" "$CHECK_STDERR"
-}
-
-assert_line_count_in() {
-    _file=$1
-    _text=$2
-    _want=$3
-    _stdout=$4
-    _stderr=$5
-    _got=$(grep -F -- "$_text" "$_file" | wc -l | tr -d '[:space:]')
-    if [ "$_got" != "$_want" ]; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected $_want profile rows for: $_text; got $_got"
-    fi
-}
-
-assert_line_count_at_most_in() {
-    _file=$1
-    _text=$2
-    _max=$3
-    _stdout=$4
-    _stderr=$5
-    _got=$(grep -F -- "$_text" "$_file" | wc -l | tr -d '[:space:]')
-    if [ "$_got" -gt "$_max" ]; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected at most $_max profile rows for: $_text; got $_got"
-    fi
-}
-
-assert_profile_counter_at_least_in() {
-    _file=$1
-    _phase=$2
-    _min=$3
-    _stdout=$4
-    _stderr=$5
-    if ! awk -F'|' -v phase="$_phase" -v min="$_min" '
-        $1 == "compile-profile" && $2 == phase && ($3 + 0) >= min { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "$_file"; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected profile counter $_phase to be at least $_min"
-    fi
-}
-
-assert_profile_counter_eq_in() {
-    _file=$1
-    _phase=$2
-    _want=$3
-    _stdout=$4
-    _stderr=$5
-    if ! awk -F'|' -v phase="$_phase" -v want="$_want" '
-        $1 == "compile-profile" && $2 == phase && ($3 + 0) == want { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "$_file"; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected profile counter $_phase to equal $_want"
-    fi
-}
-
-# Unlike assert_profile_counter_eq_in, which accepts any one matching row, this
-# requires at least one row and rejects every row whose value differs.
-assert_profile_counter_all_eq_in() {
-    _file=$1
-    _phase=$2
-    _want=$3
-    _stdout=$4
-    _stderr=$5
-    if ! awk -F'|' -v phase="$_phase" -v want="$_want" '
-        $1 == "compile-profile" && $2 == phase {
-            rows += 1
-            if (($3 + 0) != want) bad += 1
+# profile_rows STDOUT STDERR [FILE] < ROWS: check FILE (default STDERR), a
+# profile-enabled compiler's stderr, against one expectation per row; rows
+# starting with `#` are comments. On failure show STDOUT and STDERR.
+#   has TEXT | lacks TEXT          some line contains TEXT | no line does
+#   lines N TEXT | lines<= N TEXT  exactly | at most N lines contain TEXT
+#   c NAME OP N | l NAME OP N      the value (c) or live-delta (l) field of the
+#                                  `compile-profile|NAME|...` rows: `=` and
+#                                  `>=` hold for some row, `<=` for the first
+#                                  row, `all=` for every row (at least one)
+#   sum NAME = TERM + TERM...      the first NAME row's value equals the sum
+#                                  of TERMs: counter names (their first row's
+#                                  value) or integers; a missing counter fails
+profile_rows() {
+    cat > "$WORKDIR/profile-rows.txt"
+    if ! awk -F'|' -v rows="$WORKDIR/profile-rows.txt" '
+        BEGIN {
+            while ((getline line < rows) > 0) {
+                if (line ~ /^[[:space:]]*(#|$)/) continue
+                nw = split(line, w, " ")
+                spec[++n] = line
+                kind[n] = w[1]
+                if (w[1] == "has" || w[1] == "lacks") {
+                    text[n] = substr(line, length(w[1]) + 2)
+                } else if (w[1] == "lines" || w[1] == "lines<=") {
+                    want[n] = w[2] + 0
+                    text[n] = substr(line, length(w[1]) + length(w[2]) + 3)
+                } else if (w[1] == "c" || w[1] == "l") {
+                    name[n] = w[2]
+                    op[n] = w[3]
+                    want[n] = w[4] + 0
+                } else if (w[1] == "sum" && w[3] == "=") {
+                    terms[n] = w[2]
+                    for (j = 4; j <= nw; j += 2) terms[n] = terms[n] " " w[j]
+                    for (j = 2; j <= nw; j += 2) if (w[j] !~ /^-?[0-9]+$/) named[w[j]] = 1
+                } else {
+                    print "malformed profile row: " line > "/dev/stderr"
+                    failed = 1
+                }
+            }
         }
-        END { exit (rows > 0 && bad == 0) ? 0 : 1 }
-    ' "$_file"; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected every profile counter $_phase row to equal $_want"
+        $1 == "compile-profile" && ($2 in named) && !($2 in value) { value[$2] = $3 + 0 }
+        {
+            for (i = 1; i <= n; i++) {
+                if (kind[i] == "sum") continue
+                if (kind[i] == "c" || kind[i] == "l") {
+                    if ($1 != "compile-profile" || $2 != name[i]) continue
+                    v = (kind[i] == "c" ? $3 : $5) + 0
+                    if (!seen[i]++) first[i] = v
+                    if (v == want[i]) eq[i] = 1
+                    if (v >= want[i]) ge[i] = 1
+                    if (v != want[i]) ne[i] = 1
+                } else if (index($0, text[i])) {
+                    hits[i]++
+                }
+            }
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                if (kind[i] == "has") ok = hits[i] > 0
+                else if (kind[i] == "lacks") ok = hits[i] == 0
+                else if (kind[i] == "lines") ok = hits[i] + 0 == want[i]
+                else if (kind[i] == "lines<=") ok = hits[i] + 0 <= want[i]
+                else if (kind[i] == "sum") {
+                    nt = split(terms[i], t, " ")
+                    ok = 1
+                    total = 0
+                    for (j = 1; j <= nt; j++) {
+                        if (t[j] ~ /^-?[0-9]+$/) v = t[j] + 0
+                        else if (t[j] in value) v = value[t[j]]
+                        else { ok = 0; v = 0 }
+                        if (j == 1) lhs = v; else total += v
+                    }
+                    ok = ok && lhs == total
+                } else if (op[i] == "=") ok = eq[i]
+                else if (op[i] == ">=") ok = ge[i]
+                else if (op[i] == "<=") ok = seen[i] && first[i] <= want[i]
+                else if (op[i] == "all=") ok = seen[i] && !ne[i]
+                else ok = 0
+                if (!ok) {
+                    print "profile row failed: " spec[i] > "/dev/stderr"
+                    failed = 1
+                }
+            }
+            exit failed ? 1 : 0
+        }
+    ' "${3:-$2}"; then
+        show_failure_logs "$1" "$2"
+        fail "compile-profile expectations failed for ${3:-$2}"
     fi
 }
 
@@ -264,6 +250,19 @@ profile_counter_value_in() {
     awk -F'|' -v phase="$_phase" '
         $1 == "compile-profile" && $2 == phase {
             print $3 + 0
+            found = 1
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$_file"
+}
+
+profile_live_counter_value_in() {
+    _file=$1
+    _phase=$2
+    awk -F'|' -v phase="$_phase" '
+        $1 == "compile-profile" && $2 == phase {
+            print $5 + 0
             found = 1
             exit
         }
@@ -365,37 +364,10 @@ assert_lifetime_ledger_in() {
 # documented conservative reasons. Successful expansion then publishes the
 # ordinary flat program exactly once at the walk boundary.
 assert_segmented_program_view_in() {
-    _spv_file=$1
-    _spv_stdout=$2
-    _spv_stderr=$3
-    _spv_total=$(profile_counter_value_in \
-        "$_spv_file" "typecheck.macro.walk_segment_fallback_flattens") || {
-        show_failure_logs "$_spv_stdout" "$_spv_stderr"
-        fail "missing segmented-program fallback counter"
-    }
-    _spv_alias=$(profile_counter_value_in \
-        "$_spv_file" "typecheck.macro.walk_segment_fallback_alias_flattens") || {
-        show_failure_logs "$_spv_stdout" "$_spv_stderr"
-        fail "missing segmented-program alias fallback counter"
-    }
-    _spv_file_count=$(profile_counter_value_in \
-        "$_spv_file" "typecheck.macro.walk_segment_fallback_file_flattens") || {
-        show_failure_logs "$_spv_stdout" "$_spv_stderr"
-        fail "missing segmented-program file fallback counter"
-    }
-    _spv_final=$(profile_counter_value_in \
-        "$_spv_file" "typecheck.macro.walk_segment_final_flattens") || {
-        show_failure_logs "$_spv_stdout" "$_spv_stderr"
-        fail "missing segmented-program final flatten counter"
-    }
-    if [ "$_spv_total" -ne $((_spv_alias + _spv_file_count)) ]; then
-        show_failure_logs "$_spv_stdout" "$_spv_stderr"
-        fail "unclassified segmented-program flatten: total=$_spv_total alias=$_spv_alias file=$_spv_file_count"
-    fi
-    if [ "$_spv_final" -ne 1 ]; then
-        show_failure_logs "$_spv_stdout" "$_spv_stderr"
-        fail "segmented-program walk must flatten once at its boundary; got $_spv_final"
-    fi
+    profile_rows "$2" "$3" "$1" <<'ROWS'
+sum typecheck.macro.walk_segment_fallback_flattens = typecheck.macro.walk_segment_fallback_alias_flattens + typecheck.macro.walk_segment_fallback_file_flattens
+sum typecheck.macro.walk_segment_final_flattens = 1
+ROWS
 }
 
 # Fired self time excludes the union of nested hygiene and produced-node rewalk
@@ -508,24 +480,15 @@ assert_fired_decl_attribution_in() {
         _fda_unattributed=$((-_fda_unattributed))
     fi
     # The unattributed remainder tracks the size of the compiler's own source
-    # (the selfhost compile is the probe): the authoritative Windows probe
-    # measured 4,148,928 bytes on the #6701 tree and 4,194,720 bytes with the
-    # instruction-count campaign series (#6702). #6215's source-wide ownership
-    # cutover grows the checked compiler graph by 3,687,018 source bytes and
-    # measures 10,103,968 residual bytes. 12 MiB retains about 2.5 MiB of
-    # ordinary source-growth room; the pool-family pins remain the exact
-    # boundaries.
+    # (the selfhost compile is the probe).
     [ "$_fda_unattributed" -le 12582912 ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
         fail "fired-declaration unattributed residual exceeds 12 MiB: $_fda_unattributed"
     }
 
-    # #5893's batch-8 cadence measured non-output retention at 18.9% of
-    # superseded allocation on the Windows selfhost; batch 32 retained 36.1%.
-    # Keep a proportional ceiling so source growth cannot silently restore the
-    # old fixed-batch retention. The generation counter includes copy-out
-    # boundaries outside the declaration arena, hence the narrow 2..3 cadence
-    # band instead of an equality against two.
+    # A proportional ceiling on non-output retention. The generation counter
+    # includes copy-out boundaries outside the declaration arena, hence a 2..3
+    # cadence band instead of an equality against two.
     _fda_nonoutput_limit=$((_fda_walk_decl_fire_superseded_alloc_bytes / 4))
     [ "$_fda_walk_decl_fire_nonoutput_live_bytes" -le "$_fda_nonoutput_limit" ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
@@ -545,210 +508,14 @@ assert_fired_decl_attribution_in() {
 
 }
 
-profile_live_counter_value_in() {
-    _file=$1
-    _phase=$2
-    awk -F'|' -v phase="$_phase" '
-        $1 == "compile-profile" && $2 == phase {
-            print $5 + 0
-            found = 1
-            exit
-        }
-        END { if (!found) exit 1 }
-    ' "$_file"
-}
-
-# Lowerer counters use the same six-field phase schema, with their value in
-# the live-delta column. Keep this separate from the ordinary profile counters
-# above, whose value lives in the elapsed-ms column.
-#
-# Every exact pin expressed through this helper is verified twice: in PR CI and
-# after merge by Bootstrap Stage0's narrow Windows main-push step. Keep new
-# exact profile pins in this verifier so they inherit that attribution guarantee
-# instead of first failing on an unrelated later PR (#5773).
-assert_profile_live_counter_eq_in() {
-    _file=$1
-    _phase=$2
-    _want=$3
-    _stdout=$4
-    _stderr=$5
-    if ! awk -F'|' -v phase="$_phase" -v want="$_want" '
-        $1 == "compile-profile" && $2 == phase && ($5 + 0) == want { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "$_file"; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected profile live counter $_phase to equal $_want"
-    fi
-}
-
-# Read one live counter out of profile output, or the literal string "absent" so
-# a renamed or dropped counter fails closed instead of comparing against 0.
-profile_live_counter_in() {
-    awk -F'|' -v phase="$2" '
-        $1 == "compile-profile" && $2 == phase { value = ($5 + 0); found = 1 }
-        END { if (found) print value; else print "absent" }
-    ' "$1"
-}
-
-# #6822's bounds-check range merge, tail-call inlining, word copy_call, and
-# rip-relative compare packets crossed ast_expr_pool.typecheck from 37 to 38
-# segments; the authoritative Windows CI probe measured 2,426,832 used nodes,
-# 2,490,368 capacity, and 79,691,776 physical payload bytes.
-#
-# #3992's removal of the stdlib.array compatibility module crossed
-# lower.ast_type_pool.typecheck from 10 back to 9 segments; the authoritative
-# Windows target probe measured 9,173 used nodes, 9,216 capacity, and 221,184
-# physical payload bytes.
-#
-# Assert one selfhost pool boundary from its segment count alone.
-#
-# Since #5541 the AST pools are reclaimable segmented storage with fixed-size
-# segments, so `capacity` and `segment_bytes` are exact multiples of `segments`:
-# pinning the segment count pins all three, one constant moves when the
-# compiler's own sources grow a step, and no mismatch can leave the three views
-# inconsistent with each other.
-#
-# On failure report the whole family with expected against actual. All three
-# move together, and a message naming only the counter that happened to be
-# compared first sends the author round a discover-by-failing loop (#5764).
-assert_selfhost_pool_family() {
-    _spf_file=$1
-    _spf_pool=$2
-    _spf_point=$3
-    _spf_segments=$4
-    _spf_segment_nodes=$5
-    _spf_node_bytes=$6
-    _spf_stdout=$7
-    _spf_stderr=$8
-
-    _spf_capacity=$((_spf_segments * _spf_segment_nodes))
-    _spf_segment_bytes=$((_spf_capacity * _spf_node_bytes))
-    _spf_prefix="lower.$_spf_pool.$_spf_point"
-    _spf_expected="segments:$_spf_segments capacity:$_spf_capacity segment_bytes:$_spf_segment_bytes"
-    _spf_bad=
-
-    for _spf_pair in $_spf_expected; do
-        _spf_metric=${_spf_pair%%:*}
-        _spf_want=${_spf_pair#*:}
-        _spf_got=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.$_spf_metric")
-        if [ "$_spf_got" != "$_spf_want" ]; then
-            _spf_bad="$_spf_bad $_spf_metric"
-        fi
-    done
-
-    [ -n "$_spf_bad" ] || return 0
-
-    show_failure_logs "$_spf_stdout" "$_spf_stderr"
-    echo "selfhost pool boundary $_spf_prefix does not match its pin" >&2
-    echo "  mismatched:$_spf_bad" >&2
-    printf '  %-14s %14s %14s\n' metric expected actual >&2
-    for _spf_pair in $_spf_expected; do
-        _spf_metric=${_spf_pair%%:*}
-        printf '  %-14s %14s %14s\n' \
-            "$_spf_metric" \
-            "${_spf_pair#*:}" \
-            "$(profile_live_counter_in "$_spf_file" "$_spf_prefix.$_spf_metric")" >&2
-    done
-    _spf_len=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.len")
-    _spf_actual_segments=$(profile_live_counter_in "$_spf_file" "$_spf_prefix.segments")
-    echo "  used nodes $_spf_len; capacity is that rounded up to whole segments of $_spf_segment_nodes" >&2
-    echo "  to refresh: set this boundary's segment count to $_spf_actual_segments" >&2
-    echo "  capacity = segments * $_spf_segment_nodes, segment_bytes = capacity * $_spf_node_bytes" >&2
-    echo "  this probe is Windows-gated, so a Linux run cannot regenerate these values" >&2
-    fail "selfhost pool boundary $_spf_prefix does not match its pin"
-}
-
-# The pool-family checker is the only thing between an allocation regression and
-# a green run, and on Linux the probe it guards never executes, so exercise it
-# against synthetic profile output on every host. A grep-shaped gate that
-# silently matched nothing would otherwise read as "clean".
-selfhost_pool_family_self_test() {
-    _spst_dir="$WORKDIR/pool-family-self-test"
-    rm -rf "$_spst_dir"
-    mkdir -p "$_spst_dir"
-    _spst_ok="$_spst_dir/consistent.txt"
-    _spst_grown="$_spst_dir/one-segment-more.txt"
-    _spst_empty="$_spst_dir/no-counters.txt"
-
-    # 7 segments of 1024 nodes at 24 bytes, internally consistent.
-    {
-        echo "compile-profile|lower.ast_type_pool.self_test.len|0|0|6900|0"
-        echo "compile-profile|lower.ast_type_pool.self_test.segments|0|0|7|0"
-        echo "compile-profile|lower.ast_type_pool.self_test.capacity|0|0|7168|0"
-        echo "compile-profile|lower.ast_type_pool.self_test.segment_bytes|0|0|172032|0"
-    } > "$_spst_ok"
-    # The same pin with one more segment actually allocated: the regression the
-    # exact pins exist to catch.
-    sed -e 's/|7|0$/|8|0/' -e 's/|7168|0$/|8192|0/' -e 's/|172032|0$/|196608|0/' \
-        "$_spst_ok" > "$_spst_grown"
-    : > "$_spst_empty"
-
-    if ! (assert_selfhost_pool_family "$_spst_ok" ast_type_pool self_test 7 1024 24 \
-        "$_spst_ok" "$_spst_ok") >/dev/null 2>&1; then
-        fail "pool family self-test rejected consistent counters"
-    fi
-    if (assert_selfhost_pool_family "$_spst_grown" ast_type_pool self_test 7 1024 24 \
-        "$_spst_grown" "$_spst_grown") >/dev/null 2>&1; then
-        fail "pool family self-test accepted a pool that grew a segment"
-    fi
-    if (assert_selfhost_pool_family "$_spst_empty" ast_type_pool self_test 7 1024 24 \
-        "$_spst_empty" "$_spst_empty") >/dev/null 2>&1; then
-        fail "pool family self-test accepted missing counters"
-    fi
-    # The report must name every member, not only the one that mismatched.
-    _spst_report=$( (assert_selfhost_pool_family "$_spst_grown" ast_type_pool self_test 7 1024 24 \
-        "$_spst_empty" "$_spst_empty") 2>&1 || true)
-    for _spst_metric in segments capacity segment_bytes; do
-        case "$_spst_report" in
-            *"$_spst_metric"*) ;;
-            *) fail "pool family failure report omitted $_spst_metric" ;;
-        esac
-    done
-    echo "[compile-profile] pool family self-tests passed"
-}
-
-assert_profile_live_counter_at_least_in() {
-    _file=$1
-    _phase=$2
-    _min=$3
-    _stdout=$4
-    _stderr=$5
-    if ! awk -F'|' -v phase="$_phase" -v min="$_min" '
-        $1 == "compile-profile" && $2 == phase && ($5 + 0) >= min { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "$_file"; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "expected profile live counter $_phase to be at least $_min"
-    fi
-}
-
-assert_profile_live_counter_at_most_in() {
-    _file=$1
-    _phase=$2
-    _max=$3
-    _stdout=$4
-    _stderr=$5
-    _value=$(profile_live_counter_value_in "$_file" "$_phase") || {
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "missing profile live counter $_phase"
-    }
-    if [ "$_value" -gt "$_max" ]; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "profile live counter $_phase crossed $_max: $_value"
-    fi
-}
-
 assert_lower_name_cache_storage_in() {
     _storage_file=$1
     _storage_stdout=$2
     _storage_stderr=$3
-    for _storage_metric in \
-        lower.name_cache.id_growth_views \
-        lower.name_cache.logical_growth_views; do
-        assert_profile_live_counter_eq_in \
-            "$_storage_file" "$_storage_metric" 0 \
-            "$_storage_stdout" "$_storage_stderr"
-    done
+    profile_rows "$_storage_stdout" "$_storage_stderr" "$_storage_file" <<'ROWS'
+l lower.name_cache.id_growth_views = 0
+l lower.name_cache.logical_growth_views = 0
+ROWS
     _storage_builds=$(profile_live_counter_value_in \
         "$_storage_file" lower.name_cache.builds) ||
         fail "missing name-cache build count"
@@ -769,22 +536,6 @@ assert_lower_name_cache_storage_in() {
     }
 }
 
-assert_profile_counter_at_most_in() {
-    _file=$1
-    _phase=$2
-    _max=$3
-    _stdout=$4
-    _stderr=$5
-    _value=$(profile_counter_value_in "$_file" "$_phase") || {
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "missing profile counter $_phase"
-    }
-    if [ "$_value" -gt "$_max" ]; then
-        show_failure_logs "$_stdout" "$_stderr"
-        fail "profile counter $_phase crossed $_max: $_value"
-    fi
-}
-
 assert_profile_total_peak_covers_live_in() {
     _file=$1
     _stdout=$2
@@ -801,34 +552,6 @@ assert_profile_total_peak_covers_live_in() {
     fi
 }
 
-assert_layout_row() {
-    assert_contains_in \
-        "$LAYOUT_STDERR" \
-        "compile-profile|typecheck.layout.$1|" \
-        "$LAYOUT_STDOUT" \
-        "$LAYOUT_STDERR"
-}
-
-assert_opt_escape_row() {
-    assert_contains_in \
-        "$OPT_STDERR" \
-        "compile-profile-detail|optimize.escape.$1|" \
-        "$OPT_STDOUT" \
-        "$OPT_STDERR"
-}
-
-assert_lower_row() {
-    assert_contains_in \
-        "$OPT_STDERR" \
-        "compile-profile|lower.$1|" \
-        "$OPT_STDOUT" \
-        "$OPT_STDERR"
-}
-
-# Runs on every host, ahead of the expensive builds: the selfhost pool probe it
-# guards is Windows-gated, so this is the only coverage the checker gets on
-# Linux, and a broken checker there would land silently.
-selfhost_pool_family_self_test
 
 case "${TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE:-0}" in
     0)
@@ -867,21 +590,11 @@ mkdir -p target/build-stage0
 printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
 
 echo "[compile-profile] compile profile-enabled CLI"
-if ! "$COMPILER" compile src/main.tl \
-    -o "$PROFILE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    --cfg compiler-build-identity \
-    --cfg compile-profile \
-    --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route-stress \
-    --cfg dependency-tlci-verification \
-    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "profile-enabled CLI compile failed"
-fi
+run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "profile-enabled CLI compile failed" \
+    "$COMPILER" compile src/main.tl -o "$PROFILE_ASM" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
+    --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci \
+    --cfg tlci-native-route-stress --cfg dependency-tlci-verification
 
 echo "[compile-profile] link profile-enabled CLI"
 if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFILE_BIN" \
@@ -898,35 +611,22 @@ if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
     printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
 fi
 
-echo "[compile-profile] verify exhaustive stdlib tlci identity differential (#6609)"
+echo "[compile-profile] verify exhaustive stdlib tlci identity differential"
 sh scripts/verify-stdlib-tlci-identity-differential.sh "$PROFILE_BIN"
 
-# This profile selfhost also compiles the extracted poison-name helpers that
-# exposed dotted-constructor cache poisoning in #6324 before #6451 fixed it.
+# This also compiles the extracted poison-name helpers of the dotted-constructor
+# cache.
 echo "[compile-profile] verify dense macro profile storage and helper layout"
-if ! "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    --cfg compile-profile \
-    --cfg test \
-    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "dense macro profile storage smoke failed"
-fi
+run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "dense macro profile storage smoke failed" \
+    "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib \
+    --stdlib-root src --cfg compile-profile --cfg test
 
 echo "[compile-profile] verify native comptime host metadata parity"
-if ! "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
-    -o "$COMPTIME_HOST_SMOKE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    > "$COMPTIME_HOST_SMOKE_STDOUT" 2> "$COMPTIME_HOST_SMOKE_STDERR"; then
-    show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
-    fail "native comptime host metadata smoke compile failed"
-fi
+run_logged "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR" "native comptime host metadata smoke compile failed" \
+    "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
+    -o "$COMPTIME_HOST_SMOKE_ASM" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src
 if ! assemble_and_link \
     comptime-host-smoke \
     "$COMPTIME_HOST_SMOKE_ASM" \
@@ -947,47 +647,27 @@ if [ "$COMPTIME_HOST_SMOKE_STATUS" -ne 42 ]; then
 fi
 
 echo "[compile-profile] verify package-test native structural equality"
-if ! "$PROFILE_BIN" test --check src/build_cli_core.tl \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    --stdlib-root stdlib \
-    > "$BUILD_CLI_TEST_STDOUT" 2> "$BUILD_CLI_TEST_STDERR"; then
-    show_failure_logs "$BUILD_CLI_TEST_STDOUT" "$BUILD_CLI_TEST_STDERR"
-    fail "profile package-test native structural equality failed"
-fi
+run_logged "$BUILD_CLI_TEST_STDOUT" "$BUILD_CLI_TEST_STDERR" "profile package-test native structural equality failed" \
+    "$PROFILE_BIN" test --check src/build_cli_core.tl --target "$NL_BOOTSTRAP_TARGET" \
+    --stdlib-root stdlib
 
 echo "[compile-profile] verify hydrated prelude bypass and source parity"
-if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
-    -o "$SURFACE_HYDRATED_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    > "$SURFACE_HYDRATED_STDOUT" 2> "$SURFACE_HYDRATED_STDERR"; then
-    show_failure_logs "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR"
-    fail "hydrated prelude profile fixture failed"
-fi
-for row in \
-    'prelude.source_pipeline_entries|0' \
-    'prelude.hydrations|1' \
-    'prelude.macro_walk_decl_visits|0' \
-    'prelude.typecheck_decl_checks|0'; do
-    assert_contains_in "$SURFACE_HYDRATED_STDERR" \
-        "compile-profile-detail|$row" \
-        "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR"
-done
-if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
-    -o "$SURFACE_SOURCE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$SURFACE_SOURCE_STDOUT" 2> "$SURFACE_SOURCE_STDERR"; then
-    show_failure_logs "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
-    fail "source prelude parity fixture failed"
-fi
-assert_contains_in "$SURFACE_SOURCE_STDERR" \
-    "compile-profile-detail|prelude.source_pipeline_entries|1" \
-    "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
-assert_contains_in "$SURFACE_SOURCE_STDERR" \
-    "compile-profile-detail|prelude.hydrations|0" \
-    "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
+run_logged "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR" "hydrated prelude profile fixture failed" \
+    "$PROFILE_BIN" compile tests/integration/arithmetic.tl -o "$SURFACE_HYDRATED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args)
+profile_rows "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR" <<'ROWS'
+has compile-profile-detail|prelude.source_pipeline_entries|0
+has compile-profile-detail|prelude.hydrations|1
+has compile-profile-detail|prelude.macro_walk_decl_visits|0
+has compile-profile-detail|prelude.typecheck_decl_checks|0
+ROWS
+run_logged "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR" "source prelude parity fixture failed" \
+    "$PROFILE_BIN" compile tests/integration/arithmetic.tl -o "$SURFACE_SOURCE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
+profile_rows "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR" <<'ROWS'
+has compile-profile-detail|prelude.source_pipeline_entries|1
+has compile-profile-detail|prelude.hydrations|0
+ROWS
 assert_intern_storage_schema_in \
     "$SURFACE_SOURCE_STDERR" \
     "$SURFACE_SOURCE_STDOUT" \
@@ -995,122 +675,58 @@ assert_intern_storage_schema_in \
 cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
     fail "hydrated prelude assembly differs from source prelude output"
 
+# surface_fallback LABEL FILE VALUE: build the profile CLI while FILE, an input
+# of the embedded surface binding, holds VALUE (restored afterwards); its
+# compile of the arithmetic fixture must fall back to the source prelude and
+# match the explicit source route's assembly.
+surface_fallback() {
+    _sf=$WORKDIR/surface-$1
+    _sf_saved=$(cat "$2")
+    printf '%s' "$3" > "$2"
+    set +e
+    "$COMPILER" compile src/main.tl -o "$_sf-profile.s" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
+        --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci \
+        > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
+    _sf_status=$?
+    set -e
+    printf '%s' "$_sf_saved" > "$2"
+    [ "$_sf_status" -eq 0 ] || {
+        show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+        fail "$1 profile CLI compile failed"
+    }
+    if ! assemble_and_link "surface-$1-profile-cli" "$_sf-profile.s" "$_sf-profile.$NL_OBJ_EXT" \
+        "$_sf-profile$NL_BIN_EXT" >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
+        show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+        fail "$1 profile CLI link failed"
+    fi
+    run_logged "$_sf.stdout" "$_sf.stderr" "$1 surface fallback fixture failed" \
+        "$_sf-profile$NL_BIN_EXT" compile tests/integration/arithmetic.tl -o "$_sf.s" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args)
+    profile_rows "$_sf.stdout" "$_sf.stderr" <<'ROWS'
+has compile-profile-detail|prelude.source_pipeline_entries|1
+has compile-profile-detail|prelude.hydrations|0
+ROWS
+    cmp "$SURFACE_SOURCE_ASM" "$_sf.s" >/dev/null ||
+        fail "$1 fallback differs from explicit source output"
+}
+
 echo "[compile-profile] verify source-mismatched surface fallback"
-SOURCE_HASH_FILE=target/embedded-stdlib-tlci/source-hash.txt
-EXPECTED_SOURCE_HASH=$(cat "$SOURCE_HASH_FILE")
-printf '%s-mismatch' "$EXPECTED_SOURCE_HASH" > "$SOURCE_HASH_FILE"
-set +e
-"$COMPILER" compile src/main.tl \
-    -o "$SURFACE_MISMATCH_PROFILE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    --cfg compiler-build-identity \
-    --cfg compile-profile \
-    --cfg embedded-stdlib-tlci \
-    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
-status=$?
-set -e
-printf '%s' "$EXPECTED_SOURCE_HASH" > "$SOURCE_HASH_FILE"
-if [ "$status" -ne 0 ]; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "source-mismatch profile CLI compile failed"
-fi
-if ! assemble_and_link surface-mismatch-profile-cli \
-    "$SURFACE_MISMATCH_PROFILE_ASM" \
-    "$SURFACE_MISMATCH_PROFILE_OBJ" \
-    "$SURFACE_MISMATCH_PROFILE_BIN" \
-    >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "source-mismatch profile CLI link failed"
-fi
-if ! "$SURFACE_MISMATCH_PROFILE_BIN" compile \
-    tests/integration/arithmetic.tl \
-    -o "$SURFACE_MISMATCH_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    > "$SURFACE_MISMATCH_STDOUT" 2> "$SURFACE_MISMATCH_STDERR"; then
-    show_failure_logs "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
-    fail "source-mismatched surface fallback fixture failed"
-fi
-assert_contains_in "$SURFACE_MISMATCH_STDERR" \
-    "compile-profile-detail|prelude.source_pipeline_entries|1" \
-    "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
-assert_contains_in "$SURFACE_MISMATCH_STDERR" \
-    "compile-profile-detail|prelude.hydrations|0" \
-    "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
-cmp "$SURFACE_SOURCE_ASM" "$SURFACE_MISMATCH_ASM" >/dev/null ||
-    fail "source-mismatched fallback differs from explicit source output"
+surface_fallback source-mismatch target/embedded-stdlib-tlci/source-hash.txt \
+    "$(cat target/embedded-stdlib-tlci/source-hash.txt)-mismatch"
 
 echo "[compile-profile] verify producer-compiler-mismatched surface fallback"
 MISMATCH_PRODUCER_IDENTITY=0000000000000000000000000000000000000000
 if [ "$MISMATCH_PRODUCER_IDENTITY" = "$PRODUCER_IDENTITY" ]; then
     MISMATCH_PRODUCER_IDENTITY=1111111111111111111111111111111111111111
 fi
-printf '%s' "$MISMATCH_PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
-set +e
-"$COMPILER" compile src/main.tl \
-    -o "$SURFACE_COMPILER_MISMATCH_PROFILE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    --cfg compiler-build-identity \
-    --cfg compile-profile \
-    --cfg embedded-stdlib-tlci \
-    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
-status=$?
-set -e
-printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
-if [ "$status" -ne 0 ]; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "producer-mismatch profile CLI compile failed"
-fi
-if ! assemble_and_link surface-compiler-mismatch-profile-cli \
-    "$SURFACE_COMPILER_MISMATCH_PROFILE_ASM" \
-    "$SURFACE_COMPILER_MISMATCH_PROFILE_OBJ" \
-    "$SURFACE_COMPILER_MISMATCH_PROFILE_BIN" \
-    >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "producer-mismatch profile CLI link failed"
-fi
-if ! "$SURFACE_COMPILER_MISMATCH_PROFILE_BIN" compile \
-    tests/integration/arithmetic.tl \
-    -o "$SURFACE_COMPILER_MISMATCH_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    > "$SURFACE_COMPILER_MISMATCH_STDOUT" \
-    2> "$SURFACE_COMPILER_MISMATCH_STDERR"; then
-    show_failure_logs \
-        "$SURFACE_COMPILER_MISMATCH_STDOUT" \
-        "$SURFACE_COMPILER_MISMATCH_STDERR"
-    fail "producer-compiler-mismatched surface fallback fixture failed"
-fi
-assert_contains_in "$SURFACE_COMPILER_MISMATCH_STDERR" \
-    "compile-profile-detail|prelude.source_pipeline_entries|1" \
-    "$SURFACE_COMPILER_MISMATCH_STDOUT" \
-    "$SURFACE_COMPILER_MISMATCH_STDERR"
-assert_contains_in "$SURFACE_COMPILER_MISMATCH_STDERR" \
-    "compile-profile-detail|prelude.hydrations|0" \
-    "$SURFACE_COMPILER_MISMATCH_STDOUT" \
-    "$SURFACE_COMPILER_MISMATCH_STDERR"
-cmp "$SURFACE_SOURCE_ASM" "$SURFACE_COMPILER_MISMATCH_ASM" >/dev/null ||
-    fail "producer-compiler-mismatched fallback differs from explicit source output"
+surface_fallback producer-mismatch target/build-stage0/git-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
 
 echo "[compile-profile] compile compact-summary CLI"
-if ! "$COMPILER" compile src/main.tl \
-    -o "$SUMMARY_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    --cfg compile-profile \
-    --cfg compile-profile-summary \
-    > "$SUMMARY_BUILD_STDOUT" 2> "$SUMMARY_BUILD_STDERR"; then
-    show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
-    fail "compact-summary CLI compile failed"
-fi
+run_logged "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR" "compact-summary CLI compile failed" \
+    "$COMPILER" compile src/main.tl -o "$SUMMARY_ASM" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
+    --cfg compile-profile --cfg compile-profile-summary
 if ! assemble_and_link compile-profile-summary-cli \
     "$SUMMARY_ASM" "$SUMMARY_OBJ" "$SUMMARY_BIN" \
     >> "$SUMMARY_BUILD_STDOUT" 2>> "$SUMMARY_BUILD_STDERR"; then
@@ -1119,32 +735,24 @@ if ! assemble_and_link compile-profile-summary-cli \
 fi
 
 echo "[compile-profile] verify compact summary schema and bound"
-if ! "$SUMMARY_BIN" compile tests/integration/arithmetic.tl \
-    -o "$SUMMARY_OUTPUT_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$SUMMARY_CHECK_STDOUT" 2> "$SUMMARY_CHECK_STDERR"; then
-    show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
-    fail "compact-summary fixture compile failed"
-fi
-assert_contains_in "$SUMMARY_CHECK_STDERR" \
-    "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls" \
-    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
-for row in \
-    'optimizer|pass' 'optimizer|function' 'optimizer|module' \
-    'backend|function' 'backend|module'; do
-    assert_contains_in "$SUMMARY_CHECK_STDERR" \
-        "compile-profile-summary|$row|" \
-        "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
-    assert_contains_in "$SUMMARY_CHECK_STDERR" \
-        "compile-profile-summary|$row|0|<remainder>|" \
-        "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
-done
-assert_contains_in "$SUMMARY_CHECK_STDERR" "compile-profile|total|" \
-    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
-assert_not_contains_in "$SUMMARY_CHECK_STDERR" "compile-profile-detail|" \
-    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+run_logged "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR" "compact-summary fixture compile failed" \
+    "$SUMMARY_BIN" compile tests/integration/arithmetic.tl -o "$SUMMARY_OUTPUT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
+profile_rows "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR" <<'ROWS'
+has compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls
+has compile-profile-summary|optimizer|pass|
+has compile-profile-summary|optimizer|pass|0|<remainder>|
+has compile-profile-summary|optimizer|function|
+has compile-profile-summary|optimizer|function|0|<remainder>|
+has compile-profile-summary|optimizer|module|
+has compile-profile-summary|optimizer|module|0|<remainder>|
+has compile-profile-summary|backend|function|
+has compile-profile-summary|backend|function|0|<remainder>|
+has compile-profile-summary|backend|module|
+has compile-profile-summary|backend|module|0|<remainder>|
+has compile-profile|total|
+lacks compile-profile-detail|
+ROWS
 summary_lines=$(grep -c '^compile-profile-summary|' "$SUMMARY_CHECK_STDERR")
 if [ "$summary_lines" -gt 46 ]; then
     show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
@@ -1162,156 +770,96 @@ if ! awk -F'|' '
 fi
 
 echo "[compile-profile] verify normal compiler has no profile output"
-if ! "$COMPILER" compile tests/integration/arithmetic.tl \
-    -o "$NORMAL_OUTPUT_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$NORMAL_CHECK_STDOUT" 2> "$NORMAL_CHECK_STDERR"; then
-    show_failure_logs "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
-    fail "normal fixture compile failed"
-fi
-assert_not_contains_in "$NORMAL_CHECK_STDERR" "compile-profile" \
-    "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+run_logged "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR" "normal fixture compile failed" \
+    "$COMPILER" compile tests/integration/arithmetic.tl -o "$NORMAL_OUTPUT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
+profile_rows "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR" <<'ROWS'
+lacks compile-profile
+ROWS
 
 echo "[compile-profile] verify macro detach structural-change decision"
-if ! "$PROFILE_BIN" compile tests/integration/compile_profile_macro_detach_unchanged.tl \
-    -o "$DETACH_NOCHANGE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$DETACH_NOCHANGE_STDOUT" 2> "$DETACH_NOCHANGE_STDERR"; then
-    show_failure_logs "$DETACH_NOCHANGE_STDOUT" "$DETACH_NOCHANGE_STDERR"
-    fail "macro detach no-change fixture compile failed"
-fi
-assert_profile_live_counter_eq_in \
-    "$DETACH_NOCHANGE_STDERR" \
-    "lower.macro_detach.fast_path_hits" \
-    1 \
-    "$DETACH_NOCHANGE_STDOUT" \
-    "$DETACH_NOCHANGE_STDERR"
-assert_profile_live_counter_eq_in \
-    "$DETACH_NOCHANGE_STDERR" \
-    "lower.macro_detach.fast_path_misses" \
-    0 \
-    "$DETACH_NOCHANGE_STDOUT" \
-    "$DETACH_NOCHANGE_STDERR"
-assert_profile_live_counter_eq_in \
-    "$DETACH_NOCHANGE_STDERR" \
-    "lower.macro_detach.change_reasons" \
-    0 \
-    "$DETACH_NOCHANGE_STDOUT" \
-    "$DETACH_NOCHANGE_STDERR"
+run_logged "$DETACH_NOCHANGE_STDOUT" "$DETACH_NOCHANGE_STDERR" "macro detach no-change fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_macro_detach_unchanged.tl \
+    -o "$DETACH_NOCHANGE_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root stdlib
+profile_rows "$DETACH_NOCHANGE_STDOUT" "$DETACH_NOCHANGE_STDERR" <<'ROWS'
+l lower.macro_detach.fast_path_hits = 1
+l lower.macro_detach.fast_path_misses = 0
+l lower.macro_detach.change_reasons = 0
+ROWS
 
-if ! "$PROFILE_BIN" compile tests/integration/compile_profile_macro_detail.tl \
-    -o "$DETACH_CHANGED_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$DETACH_CHANGED_STDOUT" 2> "$DETACH_CHANGED_STDERR"; then
-    show_failure_logs "$DETACH_CHANGED_STDOUT" "$DETACH_CHANGED_STDERR"
-    fail "macro detach changed fixture compile failed"
-fi
-assert_profile_live_counter_eq_in \
-    "$DETACH_CHANGED_STDERR" \
-    "lower.macro_detach.fast_path_hits" \
-    0 \
-    "$DETACH_CHANGED_STDOUT" \
-    "$DETACH_CHANGED_STDERR"
-assert_profile_live_counter_eq_in \
-    "$DETACH_CHANGED_STDERR" \
-    "lower.macro_detach.fast_path_misses" \
-    1 \
-    "$DETACH_CHANGED_STDOUT" \
-    "$DETACH_CHANGED_STDERR"
-assert_contains_in \
-    "$DETACH_CHANGED_STDERR" \
-    "compile-profile|lower.macro_handoff|" \
-    "$DETACH_CHANGED_STDOUT" \
-    "$DETACH_CHANGED_STDERR"
-assert_contains_in \
-    "$DETACH_CHANGED_STDERR" \
-    "compile-profile|lower.macro_expand|" \
-    "$DETACH_CHANGED_STDOUT" \
-    "$DETACH_CHANGED_STDERR"
-assert_contains_in \
-    "$DETACH_CHANGED_STDERR" \
-    "compile-profile|lower.macro_finalize|" \
-    "$DETACH_CHANGED_STDOUT" \
-    "$DETACH_CHANGED_STDERR"
-assert_profile_live_counter_at_least_in \
-    "$DETACH_CHANGED_STDERR" \
-    "lower.macro_detach.change_reasons" \
-    1 \
-    "$DETACH_CHANGED_STDOUT" \
-    "$DETACH_CHANGED_STDERR"
+run_logged "$DETACH_CHANGED_STDOUT" "$DETACH_CHANGED_STDERR" "macro detach changed fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_macro_detail.tl \
+    -o "$DETACH_CHANGED_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root stdlib
+profile_rows "$DETACH_CHANGED_STDOUT" "$DETACH_CHANGED_STDERR" <<'ROWS'
+l lower.macro_detach.fast_path_hits = 0
+l lower.macro_detach.fast_path_misses = 1
+has compile-profile|lower.macro_handoff|
+has compile-profile|lower.macro_expand|
+has compile-profile|lower.macro_finalize|
+l lower.macro_detach.change_reasons >= 1
+has compile-profile|typecheck.macro.retention_retired_symbol_rotations|
+has compile-profile|typecheck.macro.retention_expansion_scratch_creations|
+has compile-profile|typecheck.macro.retention_active_generation_rotations|
+has compile-profile|typecheck.macro.retention_retired_generation_rotations|
+has compile-profile|typecheck.macro.retention_live_symbols_max_bytes|
+has compile-profile|typecheck.macro.retention_retired_symbols_max_bytes|
+has compile-profile|typecheck.macro.retention_expansion_scratch_max_bytes|
+has compile-profile|typecheck.macro.retention_active_generations_max_bytes|
+has compile-profile|typecheck.macro.retention_retired_generations_max_bytes|
+ROWS
 assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
-for retention_counter in \
-    retention_retired_symbol_rotations \
-    retention_expansion_scratch_creations \
-    retention_active_generation_rotations \
-    retention_retired_generation_rotations \
-    retention_live_symbols_max_bytes \
-    retention_retired_symbols_max_bytes \
-    retention_expansion_scratch_max_bytes \
-    retention_active_generations_max_bytes \
-    retention_retired_generations_max_bytes
-do
-    assert_contains_in \
-        "$DETACH_CHANGED_STDERR" \
-        "compile-profile|typecheck.macro.$retention_counter|" \
-        "$DETACH_CHANGED_STDOUT" \
-        "$DETACH_CHANGED_STDERR"
-done
 
 echo "[compile-profile] verify compile-wide peak survives nested reset"
-if ! "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
-    --cfg compile-profile \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$PEAK_RESET_STDOUT" 2> "$PEAK_RESET_STDERR"; then
-    show_failure_logs "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR"
-    fail "compile-wide nested peak reset fixture failed"
-fi
+run_logged "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR" "compile-wide nested peak reset fixture failed" \
+    "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
+    --cfg compile-profile --stdlib-root . --stdlib-root stdlib
 
 echo "[compile-profile] verify per-entry batch memory boundaries"
 printf '%s|%s\n%s|%s\n' \
     "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$BATCH_ARITH")" \
     "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$BATCH_FUNCTIONS")" > "$BATCH_LIST"
-if ! "$PROFILE_BIN" compile --batch "$BATCH_LIST" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$BATCH_STDOUT" 2> "$BATCH_STDERR"; then
-    show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
-    fail "profile batch fixture failed"
-fi
-assert_line_count_in "$BATCH_STDERR" \
-    "compile-batch-profile|entry_ordinal|marker|" 1 \
-    "$BATCH_STDOUT" "$BATCH_STDERR"
-for ordinal in 0 1; do
-    for marker in entry-start emit-complete owned-pool-release \
-        intern-session-cleanup lower-cleanup scratch-destroy-steady; do
-        assert_line_count_in "$BATCH_STDERR" \
-            "compile-batch-profile|$ordinal|$marker|" 1 \
-            "$BATCH_STDOUT" "$BATCH_STDERR"
-    done
-done
-for row in \
-    records.source_live records.source_capacity \
-    records.generated_live records.generated_capacity \
-    records.source_resizes records.generated_resizes records.reserved_bytes \
-    source_map.live source_map.capacity source_map.probes_total \
-    source_map.probe_max source_map.resizes source_map.reserved_bytes \
-    canonical_map.live canonical_map.capacity canonical_map.probes_total \
-    canonical_map.probe_max canonical_map.resizes canonical_map.reserved_bytes; do
-    assert_line_count_in "$BATCH_STDERR" \
-        "compile-profile|intern.$row|" 2 \
-        "$BATCH_STDOUT" "$BATCH_STDERR"
-done
+run_logged "$BATCH_STDOUT" "$BATCH_STDERR" "profile batch fixture failed" \
+    "$PROFILE_BIN" compile --batch "$BATCH_LIST" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib
+profile_rows "$BATCH_STDOUT" "$BATCH_STDERR" <<'ROWS'
+lines 1 compile-batch-profile|entry_ordinal|marker|
+lines 1 compile-batch-profile|0|entry-start|
+lines 1 compile-batch-profile|0|emit-complete|
+lines 1 compile-batch-profile|0|owned-pool-release|
+lines 1 compile-batch-profile|0|intern-session-cleanup|
+lines 1 compile-batch-profile|0|lower-cleanup|
+lines 1 compile-batch-profile|0|scratch-destroy-steady|
+lines 1 compile-batch-profile|1|entry-start|
+lines 1 compile-batch-profile|1|emit-complete|
+lines 1 compile-batch-profile|1|owned-pool-release|
+lines 1 compile-batch-profile|1|intern-session-cleanup|
+lines 1 compile-batch-profile|1|lower-cleanup|
+lines 1 compile-batch-profile|1|scratch-destroy-steady|
+lines 2 compile-profile|intern.records.source_live|
+lines 2 compile-profile|intern.records.source_capacity|
+lines 2 compile-profile|intern.records.generated_live|
+lines 2 compile-profile|intern.records.generated_capacity|
+lines 2 compile-profile|intern.records.source_resizes|
+lines 2 compile-profile|intern.records.generated_resizes|
+lines 2 compile-profile|intern.records.reserved_bytes|
+lines 2 compile-profile|intern.source_map.live|
+lines 2 compile-profile|intern.source_map.capacity|
+lines 2 compile-profile|intern.source_map.probes_total|
+lines 2 compile-profile|intern.source_map.probe_max|
+lines 2 compile-profile|intern.source_map.resizes|
+lines 2 compile-profile|intern.source_map.reserved_bytes|
+lines 2 compile-profile|intern.canonical_map.live|
+lines 2 compile-profile|intern.canonical_map.capacity|
+lines 2 compile-profile|intern.canonical_map.probes_total|
+lines 2 compile-profile|intern.canonical_map.probe_max|
+lines 2 compile-profile|intern.canonical_map.resizes|
+lines 2 compile-profile|intern.canonical_map.reserved_bytes|
+ROWS
 if ! awk -F'|' '
     $1 == "compile-batch-profile" && $2 != "entry_ordinal" {
         if (NF != 9 || $2 !~ /^[0-9]+$/ || $4 !~ /^-?[0-9]+$/ ||
@@ -1379,13 +927,11 @@ if "$PROFILE_BIN" compile --batch "$FAILED_BATCH_LIST" \
     show_failure_logs "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
     fail "profile batch with invalid second entry unexpectedly passed"
 fi
-assert_contains_in "$FAILED_BATCH_STDERR" "compile: batch source failed:" \
-    "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
-assert_contains_in "$FAILED_BATCH_STDERR" "functions.tl" \
-    "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
-assert_line_count_in "$FAILED_BATCH_STDERR" \
-    "compile-batch-profile|1|emit-complete|" 1 \
-    "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
+profile_rows "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR" <<'ROWS'
+has compile: batch source failed:
+has functions.tl
+lines 1 compile-batch-profile|1|emit-complete|
+ROWS
 if ! grep '^compile-batch-profile|1|emit-complete|' "$FAILED_BATCH_STDERR" >/dev/null; then
     show_failure_logs "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
     fail "failed-entry emit marker was not independently parseable"
@@ -1396,16 +942,12 @@ cmp "$FAILED_BATCH_FIRST" "$BATCH_ARITH" >/dev/null ||
 printf '%s|%s\n%s|%s\n' \
     "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$NORMAL_BATCH_ARITH")" \
     "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$NORMAL_BATCH_FUNCTIONS")" > "$NORMAL_BATCH_LIST"
-if ! "$COMPILER" compile --batch "$NORMAL_BATCH_LIST" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root stdlib \
-    > "$NORMAL_BATCH_STDOUT" 2> "$NORMAL_BATCH_STDERR"; then
-    show_failure_logs "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR"
-    fail "normal batch fixture failed"
-fi
-assert_not_contains_in "$NORMAL_BATCH_STDERR" "compile-batch-profile" \
-    "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR"
+run_logged "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" "normal batch fixture failed" \
+    "$COMPILER" compile --batch "$NORMAL_BATCH_LIST" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib
+profile_rows "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" <<'ROWS'
+lacks compile-batch-profile
+ROWS
 cmp "$BATCH_ARITH" "$NORMAL_BATCH_ARITH" >/dev/null ||
     fail "profile-enabled batch changed normal arithmetic assembly"
 cmp "$BATCH_FUNCTIONS" "$NORMAL_BATCH_FUNCTIONS" >/dev/null ||
@@ -1441,194 +983,14 @@ if [ "$actual_heavy_sources" != "$expected_heavy_sources" ]; then
 fi
 
 # A source selfhost compile exercises the compiler's embedded canonical stdlib
-# payloads. On Windows it is the allocation boundary that small new modules
-# (such as the clone declaration-macro handoff) previously crossed. The macro
-# walk now starts in the compact destination and grows fixed-size node segments;
-# typecheck starts in a fresh segmented destination.
-#
-# The macro-expand expr boundary crossed the 41 -> 42 segment step and had been
-# failing on main since #5712, which is what #5766 tracked. Attribution, holding
-# the profile binary fixed and varying only the compiled tree: 1e7ef1d90 used
-# 2679678 nodes (41 segments), #5712 used 2689228 (42 segments, 2252 over the
-# old pin), and #5717 added 4093 more. Nothing regressed -- both grew the
-# compiler's own source graph, and a segmented pool sized from that graph is
-# expected to step.
-#
-# PR CI verifies a head merged into the base as of that event, not the eventual
-# merge result. Bootstrap Stage0 therefore runs this complete verifier on its
-# converged Windows compiler after every push to main. A boundary crossed by a
-# merge now fails on that merge's own workflow instead of whichever unrelated
-# PR opens next (#5773). Keep that post-merge step paired with these Windows
-# selfhost pins. Each boundary moves as one constant with a report that names
-# the whole family, so the next step costs a one-number edit instead of the
-# archaeology that took (#5764).
-#
-# Current headroom, used against capacity, measured directly on Windows after
-# the AstExpr row narrowing landed:
-# expr macro_expand 3047737/3080192, expr typecheck 1790988/1835008,
-# type macro_expand 21059/21504, and type typecheck 6374/7168. #5980 added the
-# LSP code-action source and transcript coverage. Transformer-owned hygiene
-# nodes still reuse their CTFE slots instead of retaining a second complete
-# expression tree. The combined #6012/#6035 main tree crossed the expr
-# typecheck boundary from 26 to 27 segments after #6012's last PR run; the
-# other three values are retained from their latest direct measurements.
-# #6090's dense macro type-kind storage crossed the expr macro_expand boundary
-# from 44 to 45 segments. #5606's remaining native producer support crossed it
-# from 45 to 46. #5670's finer-grained diagnostic spans crossed it from 46 to
-# 47; the Windows probe measured the complete family directly, including
-# 98566144 physical payload bytes. #6108's retained semantic-index snapshots
-# crossed it from 47 to 48; the authoritative Windows probe measured 3086935
-# used nodes and 100663296 physical payload bytes.
-# #5932's dense clone-root storage and tests crossed ast_expr_pool.macro_expand
-# from 48 to 49 segments; the authoritative Windows probe measured 3,147,102
-# used nodes and 102,760,448 physical payload bytes.
-# #6291's optimizer/backend instruction series, rebased over #6297/#6298,
-# crossed ast_expr_pool.macro_expand from 49 to 50 segments; the authoritative
-# Windows probe measured 3,229,625 used nodes and 104,857,600 physical payload
-# bytes (0.57% past the 49-segment line -- the combined sources grew a step).
-# #6303's seventeen-packet optimizer/backend series, reconciled with main,
-# crossed ast_expr_pool.macro_expand from 50 to 51 segments; the authoritative
-# Windows probe measured 3,284,058 used nodes and 106,954,752 physical payload
-# bytes.
-# #5675's shuffle selector lowering and focused coverage crossed
-# ast_expr_pool.macro_expand from 51 to 52 segments; the authoritative Windows
-# probe measured 3,345,585 used nodes and 109,051,904 physical payload bytes.
-# #6173's package artifact freshness and transactional staging support
-# independently crossed that same boundary; its pre-reconciliation Windows
-# probe measured 3,342,684 used nodes and 109,051,904 physical payload bytes.
-# The reconciled #5675/#6173 tree retains 52 segments: the authoritative
-# Windows probe measured 3,357,074 used nodes, 3,407,872 capacity, and
-# 109,051,904 physical payload bytes.
-# #6371's pre-reconciliation relocation of compiler self-test fixtures out of
-# production modules brought ast_expr_pool.macro_expand back to 51 segments:
-# the authoritative Windows probe measured 3,331,983 used nodes. Reconciliation
-# with current main's added compiler features returns the combined tree to 52
-# segments: 3,361,826 used nodes, 3,407,872 capacity, and 109,051,904 physical
-# payload bytes.
-# #6384's loop-carried memory aggregate provenance and regression coverage
-# crossed ast_expr_pool.macro_expand from 52 to 53 segments; the authoritative
-# Windows CI probe measured 3,408,354 used nodes, 3,473,408 capacity, and
-# 111,149,056 physical payload bytes.
-# Reconciled with #6371's fixture relocation, the combined tree remains at 52
-# segments: the authoritative Windows probe measured 3,362,558 used nodes,
-# 3,407,872 capacity, and 109,051,904 physical payload bytes.
-# #6159's explicit 30-cell lower-state owner and state-isolation coverage
-# crossed ast_expr_pool.macro_expand from 52 to 53 segments; after replacing
-# the first reflective state aggregate with the final typed-cell directory, the
-# authoritative Windows CI probe measured 3,410,813 used nodes, 3,473,408
-# capacity, and 111,149,056 physical payload bytes. The same final source tree
-# crossed ast_expr_pool.typecheck from 31 to 32 segments: 2,039,958 used nodes,
-# 2,097,152 capacity, and 67,108,864 physical payload bytes.
-# #5937's persistent typechecker list storage and focused wide/deep tests
-# crossed ast_expr_pool.typecheck from 30 to 31 segments; the authoritative
-# Windows probe measured 1,966,965 used nodes and 65,011,712 physical payload
-# bytes.
-# All four sit within a few percent of their next step, so expect these to move.
-# #5701 landed while
-# this was in review and consumed 4177 of the expr macro_expand headroom without
-# crossing, which is the normal case this shape is meant to make cheap. #6069's
-# load-CSE source crossed the expr typecheck boundary from 26 to 27 segments.
-# #5670's finer-grained diagnostic spans crossed it from 27 to 28; the same
-# Windows probe measured 58720256 physical payload bytes.
-# #5841's dense text-buffer generated implementation crossed the expr
-# macro_expand boundary from 48 to 49; the authoritative Windows probe
-# measured 3145809 used nodes, 3211264 capacity, and 102760448 physical
-# payload bytes.
-#
-# type typecheck DID cross on the AstExpr row narrowing, 6 -> 7 segments. That
-# commit moves nine variants' inline AstType payloads into the type pool, so the
-# types those rows used to carry inline are now interned nodes: measured
-# directly on this host, the same selfhost probe reports 6040 type nodes at the
-# typecheck boundary before the change and 6180 after (+140), and 6144 was the
-# 6-segment capacity. The expr pools grew too (+1838..+2254 nodes) but held
-# their segment counts, which is the sizing this trade was designed to buy.
-# #6193's dotted-module migration crossed the next type-pool typecheck boundary,
-# 7 -> 8 segments: the authoritative Windows selfhost probe measured 7346 used
-# nodes, 8192 capacity, and 196608 physical payload bytes.
-# Reconciled with current main through #6425, #6159's lower-state owner crosses
-# the next type-pool typecheck boundary from 8 to 9 segments: the authoritative
-# Windows CI probe measured 8193 used nodes, 9216 capacity, and 221184 physical
-# payload bytes.
-# #5682's source-wide deprecated-concat migration crossed
-# ast_expr_pool.macro_expand from 53 to 54 segments; the authoritative Windows
-# CI probe measured 3,508,812 used nodes, 3,538,944 capacity, and 113,246,208
-# physical payload bytes. The same migration's simpler concat expansions brought
-# ast_type_pool.typecheck back from 9 to 8 segments: 8,030 used nodes, 8,192
-# capacity, and 196,608 physical payload bytes.
-# #6328's delayed binding-clause expansion markers avoid retaining a wrapper for
-# every captured initializer and bring ast_expr_pool.macro_expand from 54 to 42
-# segments. The authoritative Windows probe measured 2,705,143 used nodes,
-# 2,752,512 capacity, and 88,080,384 physical payload bytes; the other three
-# exact pool boundaries remain unchanged.
-# #6293's derived-symbol table (moving ~50k generated spellings out of the
-# pinned intern pool, plus its tests) crossed the expr typecheck boundary
-# from 29 to 30 segments: the authoritative Windows probe measured 1,902,698
-# used nodes, 1,966,080 capacity, and 62,914,560 physical payload bytes.
-# #6223's deep result-leaf global-move walk initially crossed the next expr
-# typecheck boundary, but its shallow-view cleanup plus #6362's dead-definition
-# removal brought the authoritative Windows probe back to 31 segments: 2,018,603
-# used nodes, 2,031,616 capacity, and 65,011,712 physical payload bytes.
-# #6236's scalar fixed-array/native-slice `for` support, reconciled with #6369,
-# crossed that boundary from 31 to 32 segments: the authoritative Windows probe
-# measured 2,034,470 used nodes, 2,097,152 capacity, and 67,108,864 physical
-# payload bytes.
-# #6371's relocation of compiler self-test fixtures out of production modules
-# brings the combined tree back to 31 segments: the authoritative Windows probe
-# measured 2,008,157 used nodes, 2,031,616 capacity, and 65,011,712 physical
-# payload bytes.
-# #6277's function-owned backend scratch context crossed that boundary from 31
-# to 32 segments: the authoritative Windows CI probe measured 2,031,667 used
-# nodes, 2,097,152 capacity, and 67,108,864 physical payload bytes.
-# #6240's public dotted CTFE projection and native BoxTake template callback
-# crossed the macro-expand Expr boundary from 52 to 53 segments: the
-# authoritative Windows probe measured 3,469,666 used nodes, 3,473,408
-# capacity, and 111,149,056 physical payload bytes. The typecheck Expr pool
-# remains at 32 segments.
-# Reconciled with main through #5493's splice-cache compaction, #6277's backend
-# state ownership, and the dense IR sequence changes, the combined source graph
-# crosses the next macro-expand Expr boundary from 53 to 54 segments: the
-# authoritative Windows CI probe measured 3,487,386 used nodes, 3,538,944
-# capacity, and 113,246,208 physical payload bytes.
-# #6424's dead-phi retirement pass, rotation rounds, and flag-exit separation
-# clause crossed ast_expr_pool.typecheck from 31 to 32 segments: the
-# authoritative Windows probe measured 2,032,112 used nodes, 2,097,152
-# capacity, and 67,108,864 physical payload bytes.
-# #5460's default trusted TLCI route changes where the byte-identical selfhost
-# graph is retained: native commits put macro_expand at 46 segments (2,989,325
-# used nodes, 3,014,656 capacity, 96,468,992 payload bytes) and reduce typecheck
-# to 32 segments (2,045,446 used nodes, 2,097,152 capacity, 67,108,864 payload
-# bytes). The controlled route-off/default-route outputs had identical
-# 66,255,493-byte assembly; default routing reduced total time by 2.57%, while
-# peak live allocation increased by 1.29% without changing its budget.
-# #5493's removal of the splice-tail rebuild plans and filtered-environment
-# walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
-# authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
-# 565,248 physical payload bytes.
-# #4959's job-owned intern-metric slots and owner plumbing cross the next
-# typecheck Expr boundary: the authoritative Windows probe measured 2,425,352
-# used nodes, 2,490,368 capacity, and 79,691,776 physical payload bytes.
-#
-# Keep both the logical
-# capacity and physical payload bytes exact so an accidental return to eager or
-# #6846's optimizer/backend packets (non-negativity lattice, compare-chain
-# threading and block merge, sentinel exit flags, red-zone leaves,
-# phi-inductive checks) crossed ast_type_pool.macro_expand from 26 to 27
-# segments; the authoritative Windows probe measured 26,710 used nodes
-# (capacity 27,648; segment bytes 663,552).
-# copy-on-grow storage is visible.
+# payloads and the retention/attribution invariants on the largest input. The
+# probe is Windows-only.
 if [ "$NL_HOST_OS" = windows ]; then
     echo "[compile-profile] selfhost embedded-stdlib allocation probe"
-    if ! "$PROFILE_BIN" compile src/main.tl \
-        -o "$SELFHOST_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib \
-        --stdlib-root src \
-        --cfg compile-profile \
-        > "$SELFHOST_STDOUT" 2> "$SELFHOST_STDERR"; then
-        show_failure_logs "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-        fail "profile-enabled selfhost compile failed"
-    fi
+    run_logged "$SELFHOST_STDOUT" "$SELFHOST_STDERR" "profile-enabled selfhost compile failed" \
+        "$PROFILE_BIN" compile src/main.tl -o "$SELFHOST_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib \
+        --stdlib-root src --cfg compile-profile
     assert_profile_total_peak_covers_live_in \
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
@@ -1645,24 +1007,17 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
-    for retention_counter in \
-        retention_retired_symbol_rotations \
-        retention_expansion_scratch_creations \
-        retention_active_generation_rotations \
-        retention_retired_generation_rotations \
-        retention_live_symbols_max_bytes \
-        retention_retired_symbols_max_bytes \
-        retention_expansion_scratch_max_bytes \
-        retention_active_generations_max_bytes \
-        retention_retired_generations_max_bytes
-    do
-        assert_profile_counter_at_least_in \
-            "$SELFHOST_STDERR" \
-            "typecheck.macro.$retention_counter" \
-            1 \
-            "$SELFHOST_STDOUT" \
-            "$SELFHOST_STDERR"
-    done
+    profile_rows "$SELFHOST_STDOUT" "$SELFHOST_STDERR" <<'ROWS'
+c typecheck.macro.retention_retired_symbol_rotations >= 1
+c typecheck.macro.retention_expansion_scratch_creations >= 1
+c typecheck.macro.retention_active_generation_rotations >= 1
+c typecheck.macro.retention_retired_generation_rotations >= 1
+c typecheck.macro.retention_live_symbols_max_bytes >= 1
+c typecheck.macro.retention_retired_symbols_max_bytes >= 1
+c typecheck.macro.retention_expansion_scratch_max_bytes >= 1
+c typecheck.macro.retention_active_generations_max_bytes >= 1
+c typecheck.macro.retention_retired_generations_max_bytes >= 1
+ROWS
     SELFHOST_SEGMENT_FILE_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_segment_fallback_file_flattens")
@@ -1684,480 +1039,74 @@ if [ "$NL_HOST_OS" = windows ]; then
     # Modules, and generated-file nominal deltas. All are additive: the CTFE
     # metadata cache builds once, grows when needed, and never rescans the
     # whole source graph for a splice.
-    assert_profile_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_ctfe_builds" \
-        1 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_ctfe_cleared" \
-        0 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_ctfe_cache_unavailable" \
-        0 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_at_least_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_ctfe_extensions" \
-        1 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # The marker path used to rebuild 51 filtered source tails and allocate
-    # about 39 MiB on this probe. Every marker batch now flushes a delta cache
-    # plus its unresolved-signature index; no tail build or conservative
-    # fallback may hide equivalent work.
-    assert_profile_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_sp_envbuild_calls" \
-        0 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_sp_envbuild_alloc_kb" \
-        0 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_eq_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_env_fallbacks" \
-        0 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_at_least_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_sp_reresolve_calls" \
-        1 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_counter_at_least_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_env_reresolve_updates" \
-        1 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # The cache-local candidate scan revisits only unresolved signatures, and
-    # direct signature reconstruction stays below the removed ~39 MiB
-    # tail-build bucket.
-    assert_profile_counter_at_least_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_splice_env_reresolve_candidates" \
-        1 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # #6827's range-merge, branch-threading and carrier-dataflow packets
-    # (~2,900 compiler-source lines) carried this to 25,131 KiB on the Windows
-    # CI probe; ceiling raised one step with the usual headroom.
-    # #6855's guard-algebra, if-convert, load-CSE, lea/cmov and sibling-phi
-    # threading packets (~4,900 compiler-source lines) carried it to 26,324 KiB
-    # on the Windows CI probe; raised one more step.
-    # #6996's inline aggregate globals (~2,400 backend-source lines) carried
-    # it to 27,064 KiB on the Windows CI probe; raised one more step.
-    # #7164's fifteen optimizer/regalloc/backend packets (~12,000
-    # compiler-source lines) carried it to 28,641 KiB on the Windows CI probe;
-    # raised one more step.
-    # #6692's explicit owning-handle provenance and fail-closed optimizer,
-    # verifier, backend, and regalloc coverage adds ~5,500 compiler-source
-    # lines on top of that; allow the combined source-size step with the usual
-    # headroom. Its combined macro-expand Expr graph crosses one pool boundary
-    # below; the other three pool families stay within their existing segment
-    # counts.
-    # #7696's eleven optimizer packets (GDP-1 .. P18-2, ~2,300 compiler-source
-    # lines) carried it to 30,550 KiB on the Windows CI probe; raised one more
-    # step.
-    assert_profile_counter_at_most_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        31400 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # One constant per boundary: the segment count. capacity and segment_bytes
-    # are derived, so a source-size step is a one-number edit and the three
-    # views cannot drift apart. Expr nodes are 32 bytes in segments of 65536
-    # (they were 40 until the AstExpr row moved its inline AstType payloads
-    # behind AstTypeIds); type nodes are 24 bytes in segments of 1024.
-    #
-    # The type-pool macro_expand boundary is load-bearing beyond sizing: the
-    # ordinary scalar `for` macro retains each source binding's produced type
-    # for expr-type inspection, and the native Vec slice-copy loop contributes
-    # its expanded loop types, so their macro-walk type footprint is part of
-    # the intentional exact selfhost allocation boundary.
-    # The public-place migration removes the expanded legacy accessor calls;
-    # the merged path-sensitive checker remains one segment above main alone.
-    # The explicit job-owned macro carrier threads state through the former
-    # global helper surface. Keep all four ownership boundaries measured
-    # independently. Two changes meet at this boundary. #6375's owned
-    # cursor-visible semantic binding regions grew the unspanned graph from 48
-    # to 49 segments (3,148,431 used nodes on the pre-span tree). Carrying
-    # template source spans through the native macro route then shrinks it:
-    # the native route used to strip the parser's `AstExpr.Spanned` wrapper
-    # from every template node; it now rebuilds each one, so a natively
-    # produced expansion is node-for-node the tree the interpreted quasiquote
-    # builds. That changes which side of the macro-hygiene copy-on-write
-    # commit the expansion lands on -- a node `macro-hygiene-produced-owned?`
-    # accepts is rewritten in its own slot and the replacement is truncated
-    # back off the pool; a node it rejects leaves its replacement appended --
-    # and on the pre-#6526 tree walk_hygiene_nodes_copied fell from 786,701 to
-    # 232,422 (463,234 fewer pool nodes; reverting only the span carriage
-    # restored every boundary exactly, and the route never flipped: 100 native
-    # entries, 7 shells, 0 interpreted arms either way). #6526's semantic index
-    # then adds its own nodes on top, so the combined tree lands one segment
-    # above the arithmetic on the two changes alone: the authoritative Windows
-    # probe measured 2,690,790 used nodes, 2,752,512 capacity, and 88,080,384
-    # physical payload bytes, which is 3,814 nodes past the 41-segment line
-    # (walk_hygiene_nodes_copied 233,130 here). Do not reconstruct this
-    # boundary by adding published deltas; it is close enough to a step that
-    # only a direct Windows measurement decides it.
-    # #6241's move-safe replace expression adds the missing macro expansion,
-    # hygiene, dependency, and reflection-prescan traversal arms. The
-    # authoritative Windows probe measured 2,755,843 used nodes, crossing the
-    # boundary to 43 segments: 2,818,048 capacity and 90,177,536 physical
-    # payload bytes. Merged with this bank's optimizer, backend, regalloc, and
-    # planned bounds-preservation regression helper, the authoritative Windows
-    # probe measured 2,764,373 used nodes and retained the same capacity and
-    # physical payload boundary. #5262's complete public-place surface and
-    # native source-name handoff coverage also retain this 43-segment boundary.
-    # #5754's explicit context projection for typecheck expression reads crosses
-    # the boundary to 44 segments: the authoritative Windows CI probe measured
-    # 2,827,771 used nodes, 2,883,584 capacity, and 92,274,688 physical payload
-    # bytes. Rebasing #6702's optimizer/regalloc campaign onto the #6717 tree
-    # crosses the next boundary: the authoritative Windows probe measured
-    # 2,888,486 used nodes, 2,949,120 capacity, and 94,371,840 physical payload
-    # bytes. The separately pinned checked-expression and type pools remain in
-    # their existing segment families. #6267's semantic occurrence sidecar and
-    # exact-span parser coverage cross the next macro-expand expression boundary:
-    # the authoritative Windows CI probe measured 2,950,768 used nodes,
-    # 3,014,656 capacity, and 96,468,992 physical payload bytes.
-    # #6827's range-merge, branch-threading, carrier-dataflow, loop-placement,
-    # and rematerialisation helpers cross the next boundary: the authoritative
-    # Windows CI probe measured 3,021,008 used nodes, 3,080,192 capacity, and
-    # 98,566,144 physical payload bytes.
-    # #6840's semantic workspace rename provider raises the pre-ownership graph
-    # to 3,029,193 used nodes while retaining that same segment boundary.
-    # #6215's source-wide by-value ownership cutover replaces compatibility
-    # moves throughout the compiler. Its pre-#6840 authoritative Windows probe
-    # measured 4,624,578 used nodes, 4,653,056 capacity, and 148,897,792
-    # physical payload bytes; #6840's separately measured 8,185-node increase
-    # remains within the same exact 71-segment boundary. Rebasing the ownership
-    # cutover over #6857/#6861/#6862 crosses the next boundary: the authoritative
-    # Windows CI probe measured 4,653,508 used nodes, 4,718,592 capacity, and
-    # 150,994,944 physical payload bytes. Reconciliation through #6870/#6871
-    # brings the combined graph back below that boundary: the authoritative
-    # Windows CI probe measured 4,643,724 used nodes, 4,653,056 capacity, and
-    # 148,897,792 physical payload bytes. Merging #6873's raw-pointer format
-    # selector and the final ownership reconciliation crosses two boundaries:
-    # the authoritative Windows CI probe measured 4,728,044 used nodes,
-    # 4,784,128 capacity, and 153,092,096 physical payload bytes.
-    # #6877's loop-postcondition bounds-check memo crossed the pre-ownership
-    # graph from 47 to 48 segments (3,083,453 used nodes), but the combined
-    # ownership graph remains within this exact 73-segment boundary.
-    # On the pre-ownership graph, composing #6840's semantic workspace rename
-    # provider with #6827 measured 3,029,193 used nodes and retained the same
-    # boundary.
-    # #6855's optimizer/backend/regalloc packets (guard algebra, if-convert casts,
-    # load-CSE precision and join phis, lea/cmov emission, sibling-phi threading,
-    # length-equality families, local splits, invariant-load rematerialisation)
-    # rebased onto #6867's core fixed-array operations stay at 47 segments: the
-    # authoritative Windows probe measured 3,074,738 used nodes, 3,080,192
-    # capacity, and 98,566,144 physical payload bytes.
-    # #6650's direct format sink plan and stdio macro family independently stay
-    # at that boundary on the same base. Composing #6650 with #6873's unsafe
-    # raw-pointer formatter crossed to 48 segments: the authoritative Windows
-    # CI probe measured 3,091,775 used nodes, 3,145,728 capacity, and 100,663,296
-    # physical payload bytes.
-    # #6877's loop-postcondition bounds-check memo (~1,800 compiler-source lines)
-    # independently crossed ast_expr_pool.macro_expand from 47 to 48 segments:
-    # the authoritative Windows probe measured 3,083,453 used nodes, 3,145,728
-    # 100,663,296 physical payload bytes.
-    # On the pre-#6877 tree, #6783's integer and float exponent formatting
-    # independently crossed the same boundary: the authoritative Windows CI
-    # probe measured 3,080,997 used nodes with the same capacity and payload.
-    # #6650's retained Arguments renderer and unified writer/stdio macro family
-    # cross the ownership-composed macro-expand boundary from 73 to 74 segments:
-    # the authoritative Windows CI probe measured 4,802,959 used nodes,
-    # 4,849,664 capacity, and 155,189,248 physical payload bytes.
-    # #6996 (inline aggregate globals, ~2,400 backend lines): Windows CI probe
-    # 74 macro_expand / 58 typecheck expr-pool segments.
-    # #7104's optimizer/backend additions independently carried macro_expand
-    # from 74 to 75 segments on its prior base.
-    # #7133's checked diagnostic registry, complete typecheck taxonomy, explain
-    # corpus, and regression coverage cross macro_expand from 74 to 75 segments:
-    # the authoritative Windows CI probe measured 4,851,619 used nodes,
-    # 4,915,200 capacity, and 157,286,400 physical payload bytes.
-    # #6984's package-lock transaction independently crossed the same boundary
-    # on its pre-#7133 base (4,850,511 used nodes); their rebased composition
-    # remained pinned to the exact 75-segment capacity before #7083.
-    # #7083's spmd-compact surface node and complete compiler walkers cross the
-    # composed graph from 75 to 76 segments: the authoritative Windows CI probe
-    # measured 4,915,346 used nodes, 4,980,736 capacity, and 159,383,552 physical
-    # payload bytes.
-    # #7164's fifteen optimizer/regalloc/backend packets (~12,000 compiler-source
-    # lines), rebased over #7376, cross the composed graph from 76 to 77
-    # segments: the authoritative Windows CI probe measured 5,028,561 used
-    # nodes, 5,046,272 capacity, and 161,480,704 physical payload bytes.
-    # Composing #6692's explicit owning-handle provenance crosses the graph from
-    # 77 to 78 segments: the Windows-target selfhost probe measured 5,058,440
-    # used nodes, 5,111,808 capacity, and 163,577,856 physical payload bytes.
-    # #7433's declaration-level test metadata and replayable selection support
-    # independently crosses the same boundary on the pre-#6692 tree: its
-    # authoritative Windows CI probe measured 5,047,053 used nodes, 5,111,808
-    # capacity, and 163,577,856 physical payload bytes.
-    # #7426's optimizer/backend packets, rebased over #6692 and #7433, cross the
-    # composed graph from 78 to 79 segments: the authoritative Windows CI probe
-    # measured 5,112,197 used nodes, 5,177,344 capacity, and 165,675,008 physical
-    # payload bytes.
-    # #7574's twenty optimizer/backend packets plus the switch-dispatch fix cross
-    # the composed graph from 79 to 80 segments: the authoritative Windows CI
-    # probe measured 5,196,047 used nodes, 5,242,880 capacity, and 167,772,160
-    # physical payload bytes.
-    # #7678's optimizer/regalloc/backend packet bank crosses the composed graph
-    # from 80 to 81 segments: the authoritative Windows CI probe measured
-    # 5,246,300 used nodes, 5,308,416 capacity, and 169,869,312 physical payload
-    # bytes.
-    # #7714's three packets (PH-1, IV-AFF, FLAGS-1) cross the composed graph
-    # from 81 to 82 segments: the authoritative Windows CI probe measured
-    # 5,311,816 used nodes, 5,373,952 capacity, and 171,966,464 physical payload
-    # bytes.
-    # #7405's private SPMD ABI descriptors (the IR schema and its integrity
-    # checks, plus the sixth CompilerIrFunction field at every rebuild site)
-    # cross the composed graph from 82 to 83 segments: the authoritative Windows
-    # CI probe (run 35806895783) measured 5,377,895 used nodes, 5,439,488
-    # capacity, and 174,063,616 physical payload bytes. The other three selfhost
-    # pool boundaries keep their pins on that tree (31, 64 and 12 segments).
-    # The 2026-09-24 codegen rollup (#8078: #8069, #8014, #8076, #8062, #8045,
-    # #8053, #8050, #8011, #8029, #8058 and #8032 over #8077) crosses the
-    # composed graph from 83 to 84 segments: the authoritative Windows CI probe
-    # (run 35977848989) measured 5,457,616 used nodes, 5,505,024 capacity, and
-    # 176,160,768 physical payload bytes; #8077 alone stays at 5,438,802.
-    assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 84 65536 32 \
-        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # The three dense optimizer plan containers crossed the checked expression
-    # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
-    # series keeps the combined graph in that exact segment count. The apparent
-    # jitter observed while landing the series was merge-base movement, not
-    # identical-source nondeterminism, so this remains an exact pin.
-    # The template span wrappers that survive their expansion carry this
-    # boundary from 33 to 34 segments -- the same change that lowered the
-    # macro-expand boundary above raises this one, which is why the two are
-    # pinned independently. walk_decl_fire_survivor_expr_nodes rises from
-    # 403,079 to 453,835 (+50,756) and the checked graph gains 50,828 nodes:
-    # the pre-#6526 Windows probe measured 2,183,339 used nodes. #6526's
-    # semantic index adds a further 10,890 checked nodes (survivor expr nodes
-    # 455,537) and holds the same segment count: the authoritative Windows
-    # probe on the combined tree measured 2,194,229 used nodes. #5961's masked
-    # load cache adds the cache and mask-ancestry types plus their lowering
-    # helpers; the authoritative Windows probe measured 2,228,875 used nodes,
-    # crossing the boundary to 2,293,760 capacity and 73,400,320 physical
-    # payload bytes, with 64,885 nodes of headroom below the 36-segment line.
-    # #5754's explicitly threaded macro-hygiene pool context retains this
-    # 35-segment boundary on the combined tree: the Windows probe measured
-    # 2,229,797 used nodes, leaving 63,963 nodes of headroom. #6543's optimizer
-    # additions also retained 35 segments in its prior current-main CI; the
-    # post-#5754 composition remains pinned here and is measured by the same
-    # required Windows profile gate. This bank's spilled-stage compare fold /
-    # memory-destination RMW / commutation-and-promotion / jump-forwarding /
-    # loop-model series adds ~4,500 lines of optimizer, backend and regalloc
-    # source and retains 35 segments: the authoritative Windows probe on the
-    # rebased tree measured 2,238,298 used nodes, 2,293,760 capacity and
-    # 73,400,320 physical payload bytes, leaving 55,462 nodes of headroom.
-    # #5754's context-projected expression reads cross the boundary to 36
-    # segments: the authoritative Windows probe measured 2,298,673 used nodes,
-    # 2,359,296 capacity, and 75,497,472 physical payload bytes. The
-    # instruction-gap bank's second series (bounds_dom run widening, LICM
-    # frame-object and global-box provenance, per-cell call mod-ref, block
-    # layout, cold-arm carriers, loop ladders; ~16,000 optimizer/regalloc/
-    # backend lines with their self-tests) adds ~22,800 checked nodes on top of
-    # the #6731 tree and crosses to 37 segments: the Linux-host selfhost probe
-    # measured 2,365,142 used nodes against the 2,359,296 line (main measured
-    # 2,342,380 on the same host, which over-reads the Windows probe by
-    # ~3,000 nodes), so the authoritative Windows probe lands a few thousand
-    # nodes past the boundary: 2,424,832 capacity and 77,594,624 physical
-    # payload bytes.
-    # Reconciled with #6824 and #6819, #6776's reflected-type expression bridge
-    # crosses the next boundary: the direct Windows selfhost probe measured
-    # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
-    # bytes.
-    # #6215's ownership cutover moves this boundary to 3,574,471 used nodes,
-    # 3,604,480 capacity, and 115,343,360 physical payload bytes on the
-    # authoritative Windows probe. Rebasing over #6857/#6861/#6862 crosses the
-    # next boundary: the authoritative Windows CI probe measured 3,606,568 used
-    # nodes, 3,670,016 capacity, and 117,440,512 physical payload bytes.
-    # Merging #6877's loop-postcondition memo into the ownership tree crosses
-    # the next boundary: the authoritative Windows CI probe measured 3,687,354
-    # used nodes, 3,735,552 capacity, and 119,537,664 physical payload bytes.
-    # On the pre-ownership graph,
-    # #6855's allocator packets (local splits, invariant-load rematerialisation)
-    # on top of its optimizer packets crossed ast_expr_pool.typecheck from 38 to
-    # 39 segments. #6650's direct format sink plan and stdio macro family
-    # independently cross the same boundary on the #6867 base. The last
-    # authoritative Windows probes measured 2,507,253 and 2,491,282 used nodes
-    # respectively, with 2,555,904 capacity and 81,788,928 physical bytes.
-    # #6986's direct dense phi-input traversal expands the checked compiler
-    # graph across the next boundary: the authoritative Windows CI probe
-    # measured 3,736,675 used nodes, 3,801,088 capacity, and 121,634,816
-    # physical payload bytes.
-    # #7083's spmd-compact typechecking and borrow-check walkers cross the
-    # composed graph from 58 to 59 segments: the authoritative Windows CI probe
-    # measured 3,806,383 used nodes, 3,866,624 capacity, and 123,731,968 physical
-    # payload bytes.
-    # #7164's packets, rebased over #7376, cross the composed graph from 59 to
-    # 60 segments: the authoritative Windows CI probe measured 3,892,000 used
-    # nodes, 3,932,160 capacity, and 125,829,120 physical payload bytes.
-    # #7419's stack-only lifetime and frame-coloring packets cross the composed
-    # graph from 60 to 61 segments: the authoritative Windows CI probe measured
-    # 3,932,251 used nodes, 3,997,696 capacity, and 127,926,272 physical payload
-    # bytes.
-    # #7426's optimizer/backend packets independently cross the same boundary:
-    # its authoritative Windows CI probe measured 3,935,779 used nodes with the
-    # same capacity and physical payload size.
-    # #7574's twenty packets cross the composed graph from 61 to 62 segments: the
-    # authoritative Windows CI probe measured 4,005,073 used nodes, 4,063,232
-    # capacity, and 130,023,424 physical payload bytes.
-    # #7696's eleven optimizer packets, rebased over #7698, cross the composed
-    # graph from 62 to 63 segments: the authoritative Windows CI probe measured
-    # 4,063,428 used nodes, 4,128,768 capacity, and 132,120,576 physical payload
-    # bytes.
-    # #7888's diagnostic-span pool threading and its A/B isolation test cross the
-    # composed graph from 63 to 64 segments: the authoritative Windows CI probe
-    # measured 4,129,838 used nodes (1,070 past the 63-segment capacity),
-    # 4,194,304 capacity, and 134,217,728 physical payload bytes.
-    # The 2026-09-24 codegen rollup (#8078) crosses the composed graph from 64 to
-    # 65 segments: the Windows-target probe, reproduced with the profile CLI
-    # (it matches run 35977848989's macro_expand values exactly), measured
-    # 4,201,209 used nodes, 4,259,840 capacity, and 136,314,880 physical payload
-    # bytes; #8077 alone stays at 4,188,041.
-    assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 65 65536 32 \
-        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # This is the tightest of the four and the one to check first when a series
-    # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
-    # unswitching series added ~2,700 lines to the optimizer and backend and
-    # spent only 60 of its nodes, holding 24 segments. The authoritative Windows
-    # probe on that tree measured 24,301 used nodes, 24,576 capacity, and
-    # 589,824 physical payload bytes, leaving 275 nodes -- 1.1% of one segment --
-    # below the 25-segment line. Production source is what moves this number;
-    # optimizer passes and their self-tests barely touch the macro-walk type
-    # footprint, so a step here means new macro-expanded type structure, not
-    # source volume.
-    # That reading holds through this bank: the spilled-stage compare fold /
-    # memory-destination RMW / commutation-and-promotion / jump-forwarding /
-    # loop-model series added ~4,500 lines and spent 123 of these nodes, still
-    # 24 segments. It is now genuinely tight -- the authoritative Windows probe
-    # on the rebased tree measured 24,485 used nodes against 24,576 capacity,
-    # leaving 91 nodes, 0.37% of one segment, below the 25-segment line. Expect
-    # the next series that introduces macro-expanded type structure to cross it.
-    # #2778's dependency-catalog observation row was the first to cross it: the
-    # authoritative Windows probe on that tree measured 24,577 used nodes, 25
-    # segments, 25,600 capacity, and 614,400 physical payload bytes. The
-    # #6556 vector-generator tree measured 24,579 used nodes. The later
-    # multi-exit rotation series' classified exit placement adds macro-expanded
-    # type structure on top of main: its authoritative tree measured 24,589
-    # used nodes, still 25 segments with 1,011 nodes below the 26-segment line.
-    # The instruction-gap bank's optimizer, regalloc, and backend test surface
-    # crosses that line: its authoritative Windows probe measured 25,643 used
-    # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
-    # #6215's ownership annotations and view types cross one further boundary:
-    # 27,582 used nodes, 27,648 capacity, and 663,552 physical payload bytes.
-    # Rebasing that cutover over #6843's dense-only instruction sequence surface
-    # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
-    # and 688,128 physical payload bytes on the authoritative Windows probe.
-    # #7106's admitted NtCreateFile boundary adds the audited Windows ABI types
-    # and stable result taxonomy: the authoritative Windows probe measured
-    # 28,710 used nodes and crossed to 29 segments, 29,696 capacity, and 712,704
-    # physical payload bytes.
-    # #7277's typed lint policy registry, groups, provenance, and resolver
-    # results cross the next boundary: the authoritative Windows probe measured
-    # 29,931 used nodes, 30 segments, 30,720 capacity, and 737,280 physical
-    # payload bytes.
-    # #7574's twenty packets independently cross to 30 segments: its
-    # authoritative Windows CI probe measured 29,860 used nodes, 30,720
-    # capacity, and 737,280 physical payload bytes.
-    # #5407's semantic completion provider measured 26,662 used nodes and 27
-    # segments on the pre-ownership mainline tree.
-    # #7452's closed direct-object fallback types cross to 31 segments: the
-    # authoritative Windows CI probe measured 30,725 used nodes, 31,744
-    # capacity, and 761,856 physical payload bytes. The other three AST pool
-    # boundaries remain unchanged.
-    # #7348's aggregate marker metadata and generated replay add type structure
-    # to the compiler source graph. Windows CI run 34727532440 on a6096578
-    # measured 30,724 used nodes: 31 segments, 31,744 capacity, and 761,856
-    # physical payload bytes. The node width remains 24 bytes; the other three
-    # selfhost pool boundaries retain their exact pins.
-    # PR #7808 on main 0e672d6a used 30,712 nodes (run 34741138729).
-    # After main's affine-table change #7800, run 34744653544 tested merge
-    # adc852ce (4484b66e + 9c05981c) and used 30,747 nodes: 31 segments,
-    # 31,744 capacity and 761,856 payload bytes. Pin the combined source graph;
-    # the earlier 30-segment result cannot describe this different input.
-    assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 31 1024 24 \
-        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
-    # typecheck boundary: the authoritative Windows probe measured 9,221 used
-    # nodes, 10 segments, 10,240 capacity, and 245,760 physical payload bytes.
-    # #6215's checked ownership surface measures 10,378 used nodes and crosses
-    # to 11 segments, 11,264 capacity, and 270,336 physical payload bytes.
-    # The REPL scratch cleanup result/reporting paths on #7746 measured 11,266
-    # used nodes on Windows, crossing to 12 segments, 12,288 capacity, and
-    # 294,912 physical payload bytes. Keep the exact capacity boundary pinned.
-    assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 12 1024 24 \
-        "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Each ownership boundary must expose used nodes, logical capacity, and
-    # physical segmentation for both pools. Values vary with the source graph;
-    # the exact selfhost segment invariants above catch sizing regressions.
-    for pool_point in source_load checked_pool macro_detach retained_reader; do
-        for pool_kind in ast_expr_pool ast_type_pool; do
-            for pool_metric in len capacity segments segment_bytes; do
-                assert_contains_in \
-                    "$SELFHOST_STDERR" \
-                    "compile-profile|lower.$pool_kind.$pool_point.$pool_metric|" \
-                    "$SELFHOST_STDOUT" \
-                    "$SELFHOST_STDERR"
-            done
-        done
-    done
-    # The phase reports arena destruction as a negative live delta. Exact-size
-    # declaration/path reversals keep accumulated macro scratch below 500 MB;
-    # the former grow-and-copy reversals retained roughly 600 MB here.
-    assert_profile_live_counter_at_least_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.macro_scratch_release" \
-        -500000000 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    # Last-use pruning only needs lexical bindings. The compiler's combined
-    # GOT lookup/insert body borrows a String in a loop and consumes it after;
-    # crossing the authoritative global cache here once made that one body
-    # take about five seconds while resolving the whole compiler environment.
+    profile_rows "$SELFHOST_STDOUT" "$SELFHOST_STDERR" <<'ROWS'
+c typecheck.macro.walk_splice_ctfe_builds = 1
+c typecheck.macro.walk_splice_ctfe_cleared = 0
+c typecheck.macro.walk_splice_ctfe_cache_unavailable = 0
+c typecheck.macro.walk_splice_ctfe_extensions >= 1
+# Every marker batch flushes a delta cache plus its unresolved-signature
+# index; no tail build or conservative fallback may hide equivalent work.
+c typecheck.macro.walk_sp_envbuild_calls = 0
+c typecheck.macro.walk_sp_envbuild_alloc_kb = 0
+c typecheck.macro.walk_splice_env_fallbacks = 0
+c typecheck.macro.walk_sp_reresolve_calls >= 1
+c typecheck.macro.walk_splice_env_reresolve_updates >= 1
+# The cache-local candidate scan revisits only unresolved signatures.
+c typecheck.macro.walk_splice_env_reresolve_candidates >= 1
+# A ceiling on re-resolution allocation; it grows with the compiler source.
+c typecheck.macro.walk_sp_reresolve_alloc_kb <= 31400
+ROWS
+    # Each ownership boundary exposes used nodes, logical capacity and physical
+    # segmentation for both AST pools.
+    profile_rows "$SELFHOST_STDOUT" "$SELFHOST_STDERR" <<'ROWS'
+has compile-profile|lower.ast_expr_pool.source_load.len|
+has compile-profile|lower.ast_expr_pool.source_load.capacity|
+has compile-profile|lower.ast_expr_pool.source_load.segments|
+has compile-profile|lower.ast_expr_pool.source_load.segment_bytes|
+has compile-profile|lower.ast_type_pool.source_load.len|
+has compile-profile|lower.ast_type_pool.source_load.capacity|
+has compile-profile|lower.ast_type_pool.source_load.segments|
+has compile-profile|lower.ast_type_pool.source_load.segment_bytes|
+has compile-profile|lower.ast_expr_pool.checked_pool.len|
+has compile-profile|lower.ast_expr_pool.checked_pool.capacity|
+has compile-profile|lower.ast_expr_pool.checked_pool.segments|
+has compile-profile|lower.ast_expr_pool.checked_pool.segment_bytes|
+has compile-profile|lower.ast_type_pool.checked_pool.len|
+has compile-profile|lower.ast_type_pool.checked_pool.capacity|
+has compile-profile|lower.ast_type_pool.checked_pool.segments|
+has compile-profile|lower.ast_type_pool.checked_pool.segment_bytes|
+has compile-profile|lower.ast_expr_pool.macro_detach.len|
+has compile-profile|lower.ast_expr_pool.macro_detach.capacity|
+has compile-profile|lower.ast_expr_pool.macro_detach.segments|
+has compile-profile|lower.ast_expr_pool.macro_detach.segment_bytes|
+has compile-profile|lower.ast_type_pool.macro_detach.len|
+has compile-profile|lower.ast_type_pool.macro_detach.capacity|
+has compile-profile|lower.ast_type_pool.macro_detach.segments|
+has compile-profile|lower.ast_type_pool.macro_detach.segment_bytes|
+has compile-profile|lower.ast_expr_pool.retained_reader.len|
+has compile-profile|lower.ast_expr_pool.retained_reader.capacity|
+has compile-profile|lower.ast_expr_pool.retained_reader.segments|
+has compile-profile|lower.ast_expr_pool.retained_reader.segment_bytes|
+has compile-profile|lower.ast_type_pool.retained_reader.len|
+has compile-profile|lower.ast_type_pool.retained_reader.capacity|
+has compile-profile|lower.ast_type_pool.retained_reader.segments|
+has compile-profile|lower.ast_type_pool.retained_reader.segment_bytes|
+# Arena destruction is a negative live delta; accumulated macro scratch stays
+# below 500 MB.
+l typecheck.macro_scratch_release >= -500000000
+ROWS
+    # Last-use pruning only needs lexical bindings.
     BORROW_LIFETIME_SCAN_MAX=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.env.borrow_lifetime_scan_max")
     [ "$BORROW_LIFETIME_SCAN_MAX" -le 256 ] ||
         fail "borrow lifetime scan crossed lexical boundary: $BORROW_LIFETIME_SCAN_MAX bindings"
-    # Dotted imports revisit module markers thousands of times. Module-local
-    # macro and lowering views must therefore be reused by module, rather than
-    # rebuilt into fresh immutable overlays at every marker. The fixed #6193
-    # selfhost measures about 1.02M macro entries and 780K lowering entries;
-    # the broken traversal emitted 74.4M and 13.5M respectively.
-    assert_profile_counter_at_most_in \
-        "$SELFHOST_STDERR" \
-        "typecheck.env.macro_cache_entries" \
-        2000000 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
-    assert_profile_live_counter_at_most_in \
-        "$SELFHOST_STDERR" \
-        "lower.name_cache.entries" \
-        1500000 \
-        "$SELFHOST_STDOUT" \
-        "$SELFHOST_STDERR"
+    # Dotted imports revisit module markers thousands of times, so module-local
+    # macro and lowering views are reused by module, not rebuilt per marker.
+    profile_rows "$SELFHOST_STDOUT" "$SELFHOST_STDERR" <<'ROWS'
+c typecheck.env.macro_cache_entries <= 2000000
+l lower.name_cache.entries <= 1500000
+ROWS
     assert_lower_name_cache_storage_in \
         "$SELFHOST_STDERR" "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     for cache in module_name_cache module_local_view; do
@@ -2180,143 +1129,69 @@ if [ "$NL_HOST_OS" = windows ]; then
             fail "lower.$cache retained too many phase entries: $cache_entries"
     done
 else
-    echo "[compile-profile] selfhost allocation probe and pool pins SKIPPED (windows-gated)"
+    echo "[compile-profile] selfhost allocation probe SKIPPED (windows-gated)"
 fi
 
 echo "[compile-profile] alias module name-cache storage"
 ALIAS_VIEW_ASM="$WORKDIR/profile-alias-view.s"
 ALIAS_VIEW_STDOUT="$WORKDIR/profile-alias-view.stdout"
 ALIAS_VIEW_STDERR="$WORKDIR/profile-alias-view.stderr"
-if ! "$PROFILE_BIN" compile tests/integration/generated_import_alias_scopes.tl \
-    -o "$ALIAS_VIEW_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root tests/integration \
-    --stdlib-root stdlib \
-    --opt-level 1 \
-    > "$ALIAS_VIEW_STDOUT" 2> "$ALIAS_VIEW_STDERR"; then
-    show_failure_logs "$ALIAS_VIEW_STDOUT" "$ALIAS_VIEW_STDERR"
-    fail "profiled alias-module fixture compile failed"
-fi
+run_logged "$ALIAS_VIEW_STDOUT" "$ALIAS_VIEW_STDERR" "profiled alias-module fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/generated_import_alias_scopes.tl \
+    -o "$ALIAS_VIEW_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root tests/integration --stdlib-root stdlib --opt-level 1
 assert_lower_name_cache_storage_in \
     "$ALIAS_VIEW_STDERR" "$ALIAS_VIEW_STDOUT" "$ALIAS_VIEW_STDERR"
 
 echo "[compile-profile] compile deep string concat fixture"
-if ! "$PROFILE_BIN" compile tests/integration/string_concat_deep.tl \
-    -o "$CONCAT_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    --opt-level 0 \
-    > "$CONCAT_STDOUT" 2> "$CONCAT_STDERR"; then
-    show_failure_logs "$CONCAT_STDOUT" "$CONCAT_STDERR"
-    fail "profiled deep string concat fixture compile failed"
-fi
+run_logged "$CONCAT_STDOUT" "$CONCAT_STDERR" "profiled deep string concat fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/string_concat_deep.tl -o "$CONCAT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root . \
+    --stdlib-root stdlib --opt-level 0
 
 # Two 16-leaf trees flatten once each. The first group holds five leaves and
 # each carry group adds four, yielding three concat5 calls plus one concat4
 # call per tree. These counters make both the traversal and fan-in invariant
 # observable without depending on assembly formatting.
-assert_profile_live_counter_eq_in \
-    "$CONCAT_STDERR" \
-    "lower.string_concat.trees" \
-    2 \
-    "$CONCAT_STDOUT" \
-    "$CONCAT_STDERR"
-assert_profile_live_counter_eq_in \
-    "$CONCAT_STDERR" \
-    "lower.string_concat.leaves" \
-    32 \
-    "$CONCAT_STDOUT" \
-    "$CONCAT_STDERR"
-assert_profile_live_counter_eq_in \
-    "$CONCAT_STDERR" \
-    "lower.string_concat.runtime_calls" \
-    8 \
-    "$CONCAT_STDOUT" \
-    "$CONCAT_STDERR"
-assert_contains "$CONCAT_STDERR" "compile-profile|intern.render_calls|"
-assert_contains "$CONCAT_STDERR" "compile-profile-detail|intern.phase.render|"
-assert_contains "$CONCAT_STDERR" "compile-profile-detail|intern.lower_phase.render|"
-assert_contains "$CONCAT_STDERR" \
-    "compile-profile|lower.specialization.structural_keys.created|"
-assert_contains "$CONCAT_STDERR" \
-    "compile-profile|lower.specialization.structural_keys.reused|"
-assert_contains "$CONCAT_STDERR" \
-    "compile-profile|lower.specialization.generated_text.materialized|"
-assert_contains "$CONCAT_STDERR" \
-    "compile-profile|lower.specialization.render.calls|"
-assert_contains "$CONCAT_STDERR" \
-    "compile-profile|lower.specialization.render.cache_hits|"
-assert_contains "$CONCAT_STDERR" \
-    "compile-profile|lower.specialization.render.cache_misses|"
+profile_rows "$CONCAT_STDOUT" "$CONCAT_STDERR" <<'ROWS'
+l lower.string_concat.trees = 2
+l lower.string_concat.leaves = 32
+l lower.string_concat.runtime_calls = 8
+# A program without specialization never creates a pruning name environment.
+l lower.name_env.prune_arena_releases = 0
+has compile-profile|intern.render_calls|
+has compile-profile-detail|intern.phase.render|
+has compile-profile-detail|intern.lower_phase.render|
+has compile-profile|lower.specialization.structural_keys.created|
+has compile-profile|lower.specialization.structural_keys.reused|
+has compile-profile|lower.specialization.generated_text.materialized|
+has compile-profile|lower.specialization.render.calls|
+has compile-profile|lower.specialization.render.cache_hits|
+has compile-profile|lower.specialization.render.cache_misses|
+ROWS
 
 echo "[compile-profile] compile specialization counter fixture"
-if ! "$PROFILE_BIN" compile tests/integration/comptime_type_specialization.tl \
-    -o "$SPECIALIZATION_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$SPECIALIZATION_STDOUT" 2> "$SPECIALIZATION_STDERR"; then
-    show_failure_logs "$SPECIALIZATION_STDOUT" "$SPECIALIZATION_STDERR"
-    fail "profiled specialization fixture compile failed"
-fi
-assert_profile_live_counter_at_least_in \
-    "$SPECIALIZATION_STDERR" \
-    "lower.specialization.structural_keys.created" \
-    1 \
-    "$SPECIALIZATION_STDOUT" \
-    "$SPECIALIZATION_STDERR"
-# The name environment over the specialized declarations serves pruning only.
-# It lives in its own arena, which is retired as soon as the reachability walk
-# returns; a program without specialization never creates one. Refs #7882.
-assert_profile_live_counter_eq_in \
-    "$SPECIALIZATION_STDERR" \
-    "lower.name_env.prune_arena_releases" \
-    1 \
-    "$SPECIALIZATION_STDOUT" \
-    "$SPECIALIZATION_STDERR"
-assert_profile_live_counter_eq_in \
-    "$CONCAT_STDERR" \
-    "lower.name_env.prune_arena_releases" \
-    0 \
-    "$CONCAT_STDOUT" \
-    "$CONCAT_STDERR"
-assert_profile_live_counter_eq_in \
-    "$SPECIALIZATION_STDERR" \
-    "lower.specialization.generated_text.materialized" \
-    0 \
-    "$SPECIALIZATION_STDOUT" \
-    "$SPECIALIZATION_STDERR"
-assert_profile_live_counter_eq_in \
-    "$SPECIALIZATION_STDERR" \
-    "lower.specialization.render.calls" \
-    1 \
-    "$SPECIALIZATION_STDOUT" \
-    "$SPECIALIZATION_STDERR"
-assert_profile_live_counter_eq_in \
-    "$SPECIALIZATION_STDERR" \
-    "lower.specialization.render.cache_hits" \
-    0 \
-    "$SPECIALIZATION_STDOUT" \
-    "$SPECIALIZATION_STDERR"
-assert_profile_live_counter_eq_in \
-    "$SPECIALIZATION_STDERR" \
-    "lower.specialization.render.cache_misses" \
-    1 \
-    "$SPECIALIZATION_STDOUT" \
-    "$SPECIALIZATION_STDERR"
+run_logged "$SPECIALIZATION_STDOUT" "$SPECIALIZATION_STDERR" "profiled specialization fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/comptime_type_specialization.tl \
+    -o "$SPECIALIZATION_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib
+profile_rows "$SPECIALIZATION_STDOUT" "$SPECIALIZATION_STDERR" <<'ROWS'
+l lower.specialization.structural_keys.created >= 1
+# The name environment over the specialized declarations serves pruning only:
+# its arena is retired as soon as the reachability walk returns.
+l lower.name_env.prune_arena_releases = 1
+l lower.specialization.generated_text.materialized = 0
+l lower.specialization.render.calls = 1
+l lower.specialization.render.cache_hits = 0
+l lower.specialization.render.cache_misses = 1
+ROWS
 
-# A successful compile must not pay for "did you mean" suggestions (#7868).
-# Macro operand capture type-probes each operand and drops a failed probe. The
-# stdlib format macros below probe operands that only typecheck inside their
-# own templates, so this nine-line program discards dozens of unbound-name
-# errors while compiling cleanly. The finalizer still runs for each of them,
-# which proves the fixture reaches the path; none of them may scan the visible
-# names. Before #7868 this program performed 12 scans. A new speculative caller
-# that forgets `tc-expr-discarding-errors` makes unbound_scans positive here.
+# A successful compile must not pay for "did you mean" suggestions. Macro
+# operand capture type-probes each operand and drops a failed probe; the stdlib
+# format macros below probe operands that only typecheck inside their own
+# templates, so this program discards unbound-name errors while compiling
+# cleanly. The finalizer runs for each (the fixture reaches the path); none may
+# scan the visible names.
 DISCARDED_PROBE_SRC="$WORKDIR/discarded-probe.tl"
 DISCARDED_PROBE_STDOUT="$WORKDIR/discarded-probe.stdout"
 DISCARDED_PROBE_STDERR="$WORKDIR/discarded-probe.stderr"
@@ -2332,333 +1207,167 @@ cat > "$DISCARDED_PROBE_SRC" <<'FIXTURE'
       0)))
 FIXTURE
 echo "[compile-profile] check discarded operand probes build no unbound-name suggestion"
-if ! "$PROFILE_BIN" check "$DISCARDED_PROBE_SRC" \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$DISCARDED_PROBE_STDOUT" 2> "$DISCARDED_PROBE_STDERR"; then
-    show_failure_logs "$DISCARDED_PROBE_STDOUT" "$DISCARDED_PROBE_STDERR"
-    fail "discarded operand probe fixture check failed"
-fi
-assert_profile_counter_at_least_in \
-    "$DISCARDED_PROBE_STDERR" \
-    "typecheck.env.unbound_finalizers" \
-    1 \
-    "$DISCARDED_PROBE_STDOUT" \
-    "$DISCARDED_PROBE_STDERR"
-assert_profile_counter_all_eq_in \
-    "$DISCARDED_PROBE_STDERR" \
-    "typecheck.env.unbound_scans" \
-    0 \
-    "$DISCARDED_PROBE_STDOUT" \
-    "$DISCARDED_PROBE_STDERR"
+run_logged "$DISCARDED_PROBE_STDOUT" "$DISCARDED_PROBE_STDERR" "discarded operand probe fixture check failed" \
+    "$PROFILE_BIN" check "$DISCARDED_PROBE_SRC" --stdlib-root . --stdlib-root stdlib
+profile_rows "$DISCARDED_PROBE_STDOUT" "$DISCARDED_PROBE_STDERR" <<'ROWS'
+c typecheck.env.unbound_finalizers >= 1
+c typecheck.env.unbound_scans all= 0
+ROWS
 
 echo "[compile-profile] check macro detail fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$CHECK_STDOUT" 2> "$CHECK_STDERR"; then
-    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "profiled fixture check failed"
-fi
+run_logged "$CHECK_STDOUT" "$CHECK_STDERR" "profiled fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \
+    --stdlib-root . --stdlib-root stdlib
 
 assert_fired_decl_timing_in "$CHECK_STDERR" "$CHECK_STDOUT" "$CHECK_STDERR"
 
-assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro_materialize|"
-assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=2"
-assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
 str_cat_arity_2_line=$(grep -nF \
     "stdlib.str_cat/str-cat arity=2 calls=2" \
     "$CHECK_STDERR" | sed -n '1s/:.*//p')
 str_cat_arity_6_line=$(grep -nF \
     "stdlib.str_cat/str-cat arity=6 calls=1" \
     "$CHECK_STDERR" | sed -n '1s/:.*//p')
+profile_rows "$CHECK_STDOUT" "$CHECK_STDERR" <<'ROWS'
+has compile-profile-detail|typecheck.macro_expand|
+has compile-profile|typecheck.macro_materialize|
+has stdlib.str_cat/str-cat arity=2 calls=2
+has stdlib.str_cat/str-cat arity=6 calls=1
+# str-cat's six-plus-operand path delegates packing to the runtime module.
+has stdlib.str_cat_runtime/str-cat-pack arity=3
+has stdlib.core_macros/and arity=3
+has stdlib.core_macros/or arity=2
+has stdlib.core_macros/cond arity=4
+has compile-profile|typecheck.macro.walk_rewalk_zero_fire_calls|
+has compile-profile|typecheck.macro.walk_rewalk_provenance_skips|
+has compile-profile|typecheck.macro.walk_hygiene_nodes_reused|
+has compile-profile|typecheck.macro.walk_hygiene_nodes_copied|
+has compile-profile|typecheck.macro.walk_decl_fire_self_us|
+has compile-profile|typecheck.macro.walk_decl_fire_survivor_bytes|
+has compile-profile|typecheck.macro.walk_decl_fire_nonoutput_live_bytes|
+has compile-profile|typecheck.macro.walk_decl_fire_residual_live_bytes|
+has compile-profile|typecheck.macro.walk_decl_fire_source_shared_expr_refs|
+has compile-profile|typecheck.macro.walk_decl_generation_rotations|
+c typecheck.macro.walk_hygiene_nodes_reused >= 1
+c typecheck.macro.walk_rewalk_provenance_skips >= 1
+has compile-profile|typecheck.env.binds|
+has compile-profile|typecheck.env.lookups|
+has compile-profile|typecheck.env.cache_builds|
+has compile-profile|typecheck.env.cache_entries|
+has compile-profile|typecheck.env.macro_cache_entries|
+has compile-profile|typecheck.env.marker_scans|
+has compile-profile|typecheck.env.module_local_hits|
+has compile-profile|typecheck.env.module_local_misses|
+has compile-profile|typecheck.env.scoped_binds|
+has compile-profile|typecheck.env.scoped_cache_hits|
+has compile-profile|typecheck.env.scoped_cache_misses|
+has compile-profile|typecheck.env.scoped_tail_fallbacks|
+has compile-profile|typecheck.env.scoped_materializations|
+has compile-profile|typecheck.env.scoped_materialized_slots|
+has compile-profile|typecheck.env.borrow_lifetime_scans|
+has compile-profile|typecheck.env.borrow_lifetime_scan_bindings|
+has compile-profile|typecheck.env.borrow_lifetime_scan_max|
+has compile-profile|typecheck.env.unbound_finalizers|
+has compile-profile|typecheck.env.unbound_scans|
+has compile-profile|typecheck.env.unbound_candidate_slots|
+has compile-profile|typecheck.env.unbound_visible_candidates|
+has compile-profile|typecheck.env.unbound_length_survivors|
+has compile-profile|typecheck.env.unbound_edit_evaluations|
+has compile-profile|typecheck.resolve.typecheck.ordinary_calls|
+has compile-profile|typecheck.resolve.typecheck.concrete_leaf_calls|
+has compile-profile|typecheck.resolve.typecheck.concrete_composite_calls|
+has compile-profile|typecheck.resolve.typecheck.unresolved_var_calls|
+has compile-profile|typecheck.resolve.typecheck.unresolved_varargs_calls|
+has compile-profile|typecheck.resolve.typecheck.unresolved_composite_calls|
+has compile-profile|typecheck.resolve.typecheck.name_lookup_calls|
+has compile-profile|typecheck.resolve.typecheck.name_cache_hits|
+has compile-profile|typecheck.resolve.typecheck.name_cache_misses|
+has compile-profile|typecheck.resolve.typecheck.type_symbol_probes|
+has compile-profile|typecheck.resolve.typecheck.type_handle_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_cache_hits|
+has compile-profile|typecheck.resolve.typecheck.type_handle_cache_misses|
+has compile-profile|typecheck.resolve.typecheck.type_handle_symbol_probes|
+has compile-profile|typecheck.resolve.typecheck.type_handle_resolver_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_nominal_lifetime_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_constructor_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_aggregate_layout_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_move_kind_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_qualified_owner_lookups|
+has compile-profile|typecheck.resolve.typecheck.type_handle_lazy_unique_lookups|
+# Ordinary calls are classified; name lookups and type handles are hits or
+# misses, each miss one symbol probe; every type-handle lookup has a caller.
+sum typecheck.resolve.typecheck.ordinary_calls = typecheck.resolve.typecheck.concrete_leaf_calls + typecheck.resolve.typecheck.concrete_composite_calls + typecheck.resolve.typecheck.unresolved_var_calls + typecheck.resolve.typecheck.unresolved_varargs_calls + typecheck.resolve.typecheck.unresolved_composite_calls
+sum typecheck.resolve.typecheck.name_lookup_calls = typecheck.resolve.typecheck.name_cache_hits + typecheck.resolve.typecheck.name_cache_misses
+sum typecheck.resolve.typecheck.name_cache_misses = typecheck.resolve.typecheck.type_symbol_probes
+sum typecheck.resolve.typecheck.type_handle_lookups = typecheck.resolve.typecheck.type_handle_cache_hits + typecheck.resolve.typecheck.type_handle_cache_misses
+sum typecheck.resolve.typecheck.type_handle_cache_misses = typecheck.resolve.typecheck.type_handle_symbol_probes
+sum typecheck.resolve.typecheck.type_handle_lookups = typecheck.resolve.typecheck.type_handle_resolver_lookups + typecheck.resolve.typecheck.type_handle_nominal_lifetime_lookups + typecheck.resolve.typecheck.type_handle_constructor_lookups + typecheck.resolve.typecheck.type_handle_aggregate_layout_lookups + typecheck.resolve.typecheck.type_handle_move_kind_lookups + typecheck.resolve.typecheck.type_handle_qualified_owner_lookups + typecheck.resolve.typecheck.type_handle_lazy_unique_lookups
+c typecheck.resolve.typecheck.type_handle_resolver_lookups >= 1
+c typecheck.resolve.typecheck.type_handle_nominal_lifetime_lookups >= 1
+c typecheck.resolve.typecheck.type_handle_constructor_lookups >= 1
+c typecheck.resolve.typecheck.type_handle_cache_hits >= 1
+c typecheck.resolve.typecheck.concrete_composite_calls >= 1
+c typecheck.resolve.typecheck.unresolved_var_calls >= 1
+has compile-profile|typecheck.macro.generated_module_materializations|
+has compile-profile|typecheck.macro.generated_decl_checks|
+has compile-profile|typecheck.macro.generated_module_memo_hits|
+has compile-profile|typecheck.macro.generated_module_catalog_builds|
+has compile-profile|typecheck.macro.generated_module_catalog_hits|
+has compile-profile|typecheck.macro.generated_module_catalog_validations|
+has compile-profile|typecheck.macro.live_rebuilds|
+has compile-profile|typecheck.macro.live_reuses|
+has compile-profile|typecheck.macro.live_registry_rebuilds|
+has compile-profile|typecheck.macro.live_registry_reuses|
+has compile-profile|typecheck.macro.stdlib_tlci_catalog_hits|
+has compile-profile|typecheck.macro.stdlib_tlci_catalog_misses|
+has compile-profile|typecheck.macro.stdlib_tlci_load_failures|
+has compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|
+has compile-profile|typecheck.macro.stdlib_source_interpreted|
+has compile-profile|typecheck.macro.stdlib_tlci_native_expr_results|
+has compile-profile|typecheck.macro.stdlib_tlci_direct_expr_results|
+has compile-profile|typecheck.macro.stdlib_tlci_direct_shell_env_folds|
+has compile-profile|typecheck.macro.stdlib_tlci_native_module_results|
+has compile-profile|typecheck.macro.stdlib_tlci_native_decls_results|
+has compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_us|
+has compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_calls|
+has compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_us|
+has compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_calls|
+has compile-profile|typecheck.macro.stdlib_tlci_shell_learns|
+has compile-profile|typecheck.macro.stdlib_tlci_shell_cache_hits|
+has compile-profile|typecheck.macro.walk_direct_marshal_us|
+has compile-profile|typecheck.macro.walk_direct_marshal_calls|
+has compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|
+has compile-profile|typecheck.macro.walk_direct_marshal_live_kb|
+# The repo's stdlib is content-identical to the embedded payload, so the
+# catalog dispatches natively on both hosts.
+c typecheck.macro.stdlib_tlci_catalog_hits >= 1
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+c typecheck.macro.stdlib_tlci_direct_expr_results >= 1
+c typecheck.macro.walk_direct_marshal_calls >= 1
+c typecheck.macro.stdlib_tlci_catalog_misses = 0
+c typecheck.macro.stdlib_source_interpreted = 0
+# Macro expansion is a single demand-driven pass (no fixed-point loop).
+lacks typecheck.macro.fixed_point_
+has compile-profile|typecheck.reinfer.move.call_func|
+has compile-profile|typecheck.reinfer.borrow.call_arg.calls|
+has compile-profile|typecheck.body_fact.move.call_func.hits|
+has compile-profile|typecheck.body_fact.move.call_func.misses|
+has compile-profile|typecheck.body_fact.borrow.call_func.hits|
+has compile-profile|typecheck.body_fact.borrow.call_func.misses|
+ROWS
 [ "$str_cat_arity_2_line" -lt "$str_cat_arity_6_line" ] ||
     fail "macro profile detail rows lost deterministic first-seen order"
-# str-cat's six-plus-operand path now delegates packing to the bootstrap-safe
-# runtime implementation, so that module's str-cat-pack step appears in the
-# macro-expansion profile.
-assert_contains "$CHECK_STDERR" "stdlib.str_cat_runtime/str-cat-pack arity=3"
-assert_contains "$CHECK_STDERR" "stdlib.core_macros/and arity=3"
-assert_contains "$CHECK_STDERR" "stdlib.core_macros/or arity=2"
-assert_contains "$CHECK_STDERR" "stdlib.core_macros/cond arity=4"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_zero_fire_calls|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_provenance_skips|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_hygiene_nodes_reused|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_hygiene_nodes_copied|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_self_us|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_survivor_bytes|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_nonoutput_live_bytes|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_residual_live_bytes|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_fire_source_shared_expr_refs|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_decl_generation_rotations|"
-assert_profile_counter_at_least_in \
+# Direct capture owns one declared-parameter-sized operand array per call: at
+# most 1.25 KiB per call.
+DIRECT_MARSHAL_CALLS=$(profile_counter_value_in \
     "$CHECK_STDERR" \
-    "typecheck.macro.walk_hygiene_nodes_reused" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_profile_counter_at_least_in \
+    "typecheck.macro.walk_direct_marshal_calls")
+DIRECT_MARSHAL_ALLOC_KB=$(profile_counter_value_in \
     "$CHECK_STDERR" \
-    "typecheck.macro.walk_rewalk_provenance_skips" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.binds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.lookups|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.cache_builds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.cache_entries|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.macro_cache_entries|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.marker_scans|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_binds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_cache_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_cache_misses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_tail_fallbacks|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materializations|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materialized_slots|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.borrow_lifetime_scans|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.borrow_lifetime_scan_bindings|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.borrow_lifetime_scan_max|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_finalizers|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_scans|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_candidate_slots|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_visible_candidates|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_length_survivors|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_edit_evaluations|"
-for resolution_metric in \
-    ordinary_calls \
-    concrete_leaf_calls \
-    concrete_composite_calls \
-    unresolved_var_calls \
-    unresolved_varargs_calls \
-    unresolved_composite_calls \
-    name_lookup_calls \
-    name_cache_hits \
-    name_cache_misses \
-    type_symbol_probes \
-    type_handle_lookups \
-    type_handle_cache_hits \
-    type_handle_cache_misses \
-    type_handle_symbol_probes \
-    type_handle_resolver_lookups \
-    type_handle_nominal_lifetime_lookups \
-    type_handle_constructor_lookups \
-    type_handle_aggregate_layout_lookups \
-    type_handle_move_kind_lookups \
-    type_handle_qualified_owner_lookups \
-    type_handle_lazy_unique_lookups; do
-    assert_contains \
-        "$CHECK_STDERR" \
-        "compile-profile|typecheck.resolve.typecheck.$resolution_metric|"
-done
-RESOLUTION_ORDINARY_CALLS=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.ordinary_calls")
-RESOLUTION_CLASSIFIED_CALLS=0
-for resolution_class in \
-    concrete_leaf_calls \
-    concrete_composite_calls \
-    unresolved_var_calls \
-    unresolved_varargs_calls \
-    unresolved_composite_calls; do
-    resolution_class_value=$(profile_counter_value_in \
-        "$CHECK_STDERR" \
-        "typecheck.resolve.typecheck.$resolution_class")
-    RESOLUTION_CLASSIFIED_CALLS=$((RESOLUTION_CLASSIFIED_CALLS + resolution_class_value))
-done
-[ "$RESOLUTION_ORDINARY_CALLS" -eq "$RESOLUTION_CLASSIFIED_CALLS" ] || {
+    "typecheck.macro.walk_direct_marshal_alloc_kb")
+if [ $((DIRECT_MARSHAL_ALLOC_KB * 4)) -gt $((DIRECT_MARSHAL_CALLS * 5)) ]; then
     show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "ordinary type-resolution classification mismatch: calls=$RESOLUTION_ORDINARY_CALLS classified=$RESOLUTION_CLASSIFIED_CALLS"
-}
-RESOLUTION_NAME_LOOKUPS=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.name_lookup_calls")
-RESOLUTION_NAME_CACHE_HITS=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.name_cache_hits")
-RESOLUTION_NAME_CACHE_MISSES=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.name_cache_misses")
-RESOLUTION_TYPE_SYMBOL_PROBES=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.type_symbol_probes")
-[ "$RESOLUTION_NAME_LOOKUPS" -eq \
-    "$((RESOLUTION_NAME_CACHE_HITS + RESOLUTION_NAME_CACHE_MISSES))" ] || {
-    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "type-name resolution cache accounting mismatch: lookups=$RESOLUTION_NAME_LOOKUPS hits=$RESOLUTION_NAME_CACHE_HITS misses=$RESOLUTION_NAME_CACHE_MISSES"
-}
-[ "$RESOLUTION_NAME_CACHE_MISSES" -eq "$RESOLUTION_TYPE_SYMBOL_PROBES" ] || {
-    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "type-name resolution probe accounting mismatch: misses=$RESOLUTION_NAME_CACHE_MISSES probes=$RESOLUTION_TYPE_SYMBOL_PROBES"
-}
-TYPE_HANDLE_LOOKUPS=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.type_handle_lookups")
-TYPE_HANDLE_CACHE_HITS=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.type_handle_cache_hits")
-TYPE_HANDLE_CACHE_MISSES=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.type_handle_cache_misses")
-TYPE_HANDLE_SYMBOL_PROBES=$(profile_counter_value_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.type_handle_symbol_probes")
-TYPE_HANDLE_CALLER_LOOKUPS=0
-for type_handle_caller in \
-    resolver \
-    nominal_lifetime \
-    constructor \
-    aggregate_layout \
-    move_kind \
-    qualified_owner \
-    lazy_unique; do
-    type_handle_caller_value=$(profile_counter_value_in \
-        "$CHECK_STDERR" \
-        "typecheck.resolve.typecheck.type_handle_${type_handle_caller}_lookups")
-    TYPE_HANDLE_CALLER_LOOKUPS=$((TYPE_HANDLE_CALLER_LOOKUPS + type_handle_caller_value))
-done
-[ "$TYPE_HANDLE_LOOKUPS" -eq \
-    "$((TYPE_HANDLE_CACHE_HITS + TYPE_HANDLE_CACHE_MISSES))" ] || {
-    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "type-handle cache accounting mismatch: lookups=$TYPE_HANDLE_LOOKUPS hits=$TYPE_HANDLE_CACHE_HITS misses=$TYPE_HANDLE_CACHE_MISSES"
-}
-[ "$TYPE_HANDLE_CACHE_MISSES" -eq "$TYPE_HANDLE_SYMBOL_PROBES" ] || {
-    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "type-handle probe accounting mismatch: misses=$TYPE_HANDLE_CACHE_MISSES probes=$TYPE_HANDLE_SYMBOL_PROBES"
-}
-[ "$TYPE_HANDLE_LOOKUPS" -eq "$TYPE_HANDLE_CALLER_LOOKUPS" ] || {
-    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-    fail "type-handle caller accounting mismatch: lookups=$TYPE_HANDLE_LOOKUPS callers=$TYPE_HANDLE_CALLER_LOOKUPS"
-}
-for type_handle_exercised_caller in \
-    resolver \
-    nominal_lifetime \
-    constructor; do
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.resolve.typecheck.type_handle_${type_handle_exercised_caller}_lookups" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-done
-assert_profile_counter_at_least_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.type_handle_cache_hits" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_profile_counter_at_least_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.concrete_composite_calls" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_profile_counter_at_least_in \
-    "$CHECK_STDERR" \
-    "typecheck.resolve.typecheck.unresolved_var_calls" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_decl_checks|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_builds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_validations|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_rebuilds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_reuses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_rebuilds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_reuses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_catalog_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_catalog_misses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_load_failures|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_expr_results|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_direct_expr_results|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_direct_shell_env_folds|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_module_results|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_native_decls_results|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_us|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_resolution_calls|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_us|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_entry_invoke_calls|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_learns|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_shell_cache_hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_us|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_calls|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_alloc_kb|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_direct_marshal_live_kb|"
-# The repo's own stdlib is content-identical to the embedded payload, so the
-# catalog dispatches on both hosts. #5634 is moving the macro-detail fixture's
-# last interpreted shells native (#5596's zero-shell end state), so a non-zero
-# fallback count can no longer be required here. Assert the catalog route is
-# live and exact instead; the row-exists assertion above keeps fallback
-# counter plumbing covered.
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_catalog_hits" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_native_dispatches" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_direct_expr_results" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_at_least_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.walk_direct_marshal_calls" \
-        1 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    # Direct capture owns one native operand array per call. This stable mix of
-    # fixed and final-variadic macros used 52 KiB when every call reserved all
-    # eight ABI slots and 35 KiB with declared-parameter-sized storage. Keep a
-    # per-call ceiling with enough headroom for allocation-accounting changes,
-    # while still rejecting the fixed-eight regression.
-    DIRECT_MARSHAL_CALLS=$(profile_counter_value_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.walk_direct_marshal_calls")
-    DIRECT_MARSHAL_ALLOC_KB=$(profile_counter_value_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.walk_direct_marshal_alloc_kb")
-    if [ $((DIRECT_MARSHAL_ALLOC_KB * 4)) -gt \
-        $((DIRECT_MARSHAL_CALLS * 5)) ]; then
-        show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
-        fail "direct marshal storage exceeded 1.25 KiB per call: ${DIRECT_MARSHAL_ALLOC_KB} KiB / ${DIRECT_MARSHAL_CALLS} calls"
-    fi
-    assert_profile_counter_eq_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_catalog_misses" \
-        0 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-    assert_profile_counter_eq_in \
-        "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_source_interpreted" \
-        0 \
-        "$CHECK_STDOUT" \
-        "$CHECK_STDERR"
-# The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
-# expansion is a single demand-driven pass, so the fixed_point_* counters no
-# longer exist.
-assert_not_contains "$CHECK_STDERR" "typecheck.macro.fixed_point_"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.misses|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
+    fail "direct marshal storage exceeded 1.25 KiB per call: ${DIRECT_MARSHAL_ALLOC_KB} KiB / ${DIRECT_MARSHAL_CALLS} calls"
+fi
 
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
@@ -2683,32 +1392,14 @@ if ! (
     show_failure_logs "$STDLIB_TLCI_SOURCE_STDOUT" "$STDLIB_TLCI_SOURCE_STDERR"
     fail "source stdlib routing fixture compile failed"
 fi
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    1 \
-    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_misses" \
-    0 \
-    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_load_failures" \
-    0 \
-    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_EMBEDDED_STDERR"
+profile_rows "$STDLIB_TLCI_EMBEDDED_STDOUT" "$STDLIB_TLCI_EMBEDDED_STDERR" <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits >= 1
+c typecheck.macro.stdlib_tlci_catalog_misses = 0
+c typecheck.macro.stdlib_tlci_load_failures = 0
 # With the fold bodies native, every cataloged macro in this fixture now
 # commits natively; assert the dispatches instead of a fallback count.
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    1 \
-    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_EMBEDDED_STDERR"
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+ROWS
 embedded_native_expr=$(profile_counter_value_in \
     "$STDLIB_TLCI_EMBEDDED_STDERR" \
     "typecheck.macro.stdlib_tlci_native_expr_results")
@@ -2721,12 +1412,9 @@ fi
 # A pristine stdlib root is content-identical to the embedded payload, so
 # the catalog dispatches for it too; the byte-parity requirement below is
 # the contract that matters.
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_SOURCE_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    1 \
-    "$STDLIB_TLCI_SOURCE_STDOUT" \
-    "$STDLIB_TLCI_SOURCE_STDERR"
+profile_rows "$STDLIB_TLCI_SOURCE_STDOUT" "$STDLIB_TLCI_SOURCE_STDERR" <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits >= 1
+ROWS
 if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_SOURCE_ASM"; then
     diff -u "$STDLIB_TLCI_SOURCE_ASM" "$STDLIB_TLCI_EMBEDDED_ASM" >&2 || true
     fail "embedded and source stdlib routing changed generated assembly"
@@ -2757,809 +1445,327 @@ if ! (
     show_failure_logs "$STDLIB_TLCI_MODIFIED_STDOUT" "$STDLIB_TLCI_MODIFIED_STDERR"
     fail "modified stdlib routing fixture compile failed"
 fi
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_MODIFIED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$STDLIB_TLCI_MODIFIED_STDOUT" \
-    "$STDLIB_TLCI_MODIFIED_STDERR"
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_MODIFIED_STDERR" \
-    "typecheck.macro.stdlib_source_interpreted" \
-    1 \
-    "$STDLIB_TLCI_MODIFIED_STDOUT" \
-    "$STDLIB_TLCI_MODIFIED_STDERR"
+profile_rows "$STDLIB_TLCI_MODIFIED_STDOUT" "$STDLIB_TLCI_MODIFIED_STDERR" <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+c typecheck.macro.stdlib_source_interpreted >= 1
+ROWS
 if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM" >&2 || true
     fail "comment-modified stdlib root changed generated assembly"
 fi
 
-# Compile one public fixture through the embedded native catalog and through
-# forced source interpretation, require every named macro to execute on the
-# native route, and compare the resulting assembly byte-for-byte. This is the
-# route-level contract for the last string/computed-body residuals
-# (#5606/#5627/#5999);
-# the image census alone cannot catch a callback returning the wrong syntax.
-verify_residual_route() {
-    _residual_label=$1
-    _residual_source=$2
-    shift 2
-    _residual_embedded_asm="$STDLIB_TLCI_DIR/$_residual_label-embedded.s"
-    _residual_embedded_stdout="$STDLIB_TLCI_DIR/$_residual_label-embedded.stdout"
-    _residual_embedded_stderr="$STDLIB_TLCI_DIR/$_residual_label-embedded.stderr"
-    _residual_interpreted_asm="$STDLIB_TLCI_DIR/$_residual_label-interpreted.s"
-    _residual_interpreted_stdout="$STDLIB_TLCI_DIR/$_residual_label-interpreted.stdout"
-    _residual_interpreted_stderr="$STDLIB_TLCI_DIR/$_residual_label-interpreted.stderr"
+# Route differentials: a fixture compiled through the embedded native catalog
+# (from $STDLIB_TLCI_DIR) and through source interpretation of the
+# comment-modified root must produce the same assembly, with the named macros
+# on the native route; the image census alone cannot catch a callback that
+# returns the wrong syntax. A route's outputs are
+# $STDLIB_TLCI_DIR/LABEL-{embedded,interpreted}.{s,stdout,stderr}.
 
-    if ! (
-        cd "$STDLIB_TLCI_DIR"
-        "$PROFILE_BIN" compile "$_residual_source" \
-            -o "$_residual_embedded_asm" \
-            --target "$NL_BOOTSTRAP_TARGET" \
-            $(native_target_cfg_args)
-    ) > "$_residual_embedded_stdout" 2> "$_residual_embedded_stderr"; then
-        show_failure_logs \
-            "$_residual_embedded_stdout" "$_residual_embedded_stderr"
-        fail "embedded $_residual_label residual fixture compile failed"
+# route_run NAME DIR COMMAND SOURCE ARGS...: run the profile compiler's
+# COMMAND on SOURCE from DIR (compile writes $STDLIB_TLCI_DIR/NAME.s); the
+# status is left in route_status.
+route_run() {
+    _rr_out=$STDLIB_TLCI_DIR/$1
+    _rr_dir=$2
+    _rr_command=$3
+    _rr_source=$4
+    shift 4
+    if [ "$_rr_command" = compile ]; then
+        set -- -o "$_rr_out.s" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) "$@"
     fi
-    if ! (
-        cd "$STDLIB_TLCI_MODIFIED_DIR"
-        "$PROFILE_BIN" compile "$_residual_source" \
-            -o "$_residual_interpreted_asm" \
-            --target "$NL_BOOTSTRAP_TARGET" \
-            $(native_target_cfg_args) \
-            --stdlib-root stdlib
-    ) > "$_residual_interpreted_stdout" \
-        2> "$_residual_interpreted_stderr"; then
-        show_failure_logs \
-            "$_residual_interpreted_stdout" "$_residual_interpreted_stderr"
-        fail "interpreted $_residual_label residual fixture compile failed"
-    fi
-    assert_profile_counter_at_least_in \
-        "$_residual_embedded_stderr" \
-        "typecheck.macro.stdlib_tlci_native_dispatches" \
-        1 \
-        "$_residual_embedded_stdout" \
-        "$_residual_embedded_stderr"
-    assert_profile_counter_eq_in \
-        "$_residual_embedded_stderr" \
-        "typecheck.macro.stdlib_tlci_catalog_misses" \
-        0 \
-        "$_residual_embedded_stdout" \
-        "$_residual_embedded_stderr"
-    assert_profile_counter_eq_in \
-        "$_residual_interpreted_stderr" \
-        "typecheck.macro.stdlib_tlci_catalog_hits" \
-        0 \
-        "$_residual_interpreted_stdout" \
-        "$_residual_interpreted_stderr"
-    for _residual_identity in "$@"; do
-        assert_contains_in \
-            "$_residual_embedded_stderr" \
-            "$_residual_identity arity=" \
-            "$_residual_embedded_stdout" \
-            "$_residual_embedded_stderr"
+    set +e
+    (cd "$_rr_dir" && "$PROFILE_BIN" "$_rr_command" "$_rr_source" "$@") \
+        > "$_rr_out.stdout" 2> "$_rr_out.stderr"
+    route_status=$?
+    set -e
+}
+
+# route_pair LABEL SOURCE: both routes compile SOURCE to the same assembly.
+route_pair() {
+    for _rp_route in embedded interpreted; do
+        if [ "$_rp_route" = embedded ]; then
+            route_run "$1-embedded" "$STDLIB_TLCI_DIR" compile "$2"
+        else
+            route_run "$1-interpreted" "$STDLIB_TLCI_MODIFIED_DIR" compile "$2" --stdlib-root stdlib
+        fi
+        [ "$route_status" -eq 0 ] || {
+            show_failure_logs "$STDLIB_TLCI_DIR/$1-$_rp_route.stdout" "$STDLIB_TLCI_DIR/$1-$_rp_route.stderr"
+            fail "$_rp_route $1 fixture compile failed"
+        }
     done
-    if ! cmp -s "$_residual_embedded_asm" "$_residual_interpreted_asm"; then
-        diff -u "$_residual_interpreted_asm" "$_residual_embedded_asm" >&2 \
-            || true
-        fail "native and interpreted $_residual_label expansions differ"
+    if ! cmp -s "$STDLIB_TLCI_DIR/$1-embedded.s" "$STDLIB_TLCI_DIR/$1-interpreted.s"; then
+        diff -u "$STDLIB_TLCI_DIR/$1-interpreted.s" "$STDLIB_TLCI_DIR/$1-embedded.s" >&2 || true
+        fail "native and interpreted $1 expansions differ"
     fi
 }
 
-echo "[compile-profile] verify for residual routing differential (#5606)"
-verify_residual_route \
-    for-residual \
-    "$ROOT/tests/integration/for_macro.tl" \
-    "stdlib.core_macros/for"
+# route_rows LABEL ROUTE < ROWS: profile_rows over one route's stderr.
+route_rows() {
+    profile_rows "$STDLIB_TLCI_DIR/$1-$2.stdout" "$STDLIB_TLCI_DIR/$1-$2.stderr"
+}
 
-# `for` validates the iterator protocol before it builds syntax. Preserve the
-# source diagnostic as well as the successful binding/cleanup expansion above.
-FOR_RESIDUAL_DIAG_SOURCE="$ROOT/stdlib/tests/core_macros_for_missing_protocol.tl"
-FOR_RESIDUAL_DIAG_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/for-diagnostic-embedded.stdout"
-FOR_RESIDUAL_DIAG_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/for-diagnostic-embedded.stderr"
-FOR_RESIDUAL_DIAG_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/for-diagnostic-interpreted.stdout"
-FOR_RESIDUAL_DIAG_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/for-diagnostic-interpreted.stderr"
-if (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" check "$FOR_RESIDUAL_DIAG_SOURCE"
-) > "$FOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
-    2> "$FOR_RESIDUAL_DIAG_EMBEDDED_STDERR"; then
-    fail "embedded for diagnostic fixture unexpectedly passed"
-fi
-if (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" check "$FOR_RESIDUAL_DIAG_SOURCE" \
-        --stdlib-root stdlib
-) > "$FOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
-    2> "$FOR_RESIDUAL_DIAG_INTERPRETED_STDERR"; then
-    fail "interpreted for diagnostic fixture unexpectedly passed"
-fi
-grep -v 'compile-profile' "$FOR_RESIDUAL_DIAG_EMBEDDED_STDERR" \
-    > "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text"
-grep -v 'compile-profile' "$FOR_RESIDUAL_DIAG_INTERPRETED_STDERR" \
-    > "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text"
-assert_contains_in \
-    "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
-    "is missing protocol function" \
-    "$FOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
-    "$FOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
-if ! cmp -s "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" \
-    "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text"; then
-    diff -u "$STDLIB_TLCI_DIR/for-diagnostic-interpreted.text" \
-        "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" >&2 || true
-    fail "native and interpreted for diagnostics differ"
-fi
+# route_reject LABEL SOURCE: both routes reject SOURCE under `check`; the
+# diagnostics without profile rows are LABEL-{embedded,interpreted}.text.
+route_reject() {
+    route_run "$1-embedded" "$STDLIB_TLCI_DIR" check "$2"
+    [ "$route_status" -ne 0 ] || fail "embedded route accepted rejected $1 fixture"
+    route_run "$1-interpreted" "$STDLIB_TLCI_MODIFIED_DIR" check "$2" --stdlib-root stdlib
+    [ "$route_status" -ne 0 ] || fail "interpreted route accepted rejected $1 fixture"
+    for _rj_route in embedded interpreted; do
+        grep -v 'compile-profile' "$STDLIB_TLCI_DIR/$1-$_rj_route.stderr" \
+            > "$STDLIB_TLCI_DIR/$1-$_rj_route.text" || true
+    done
+}
 
-echo "[compile-profile] verify vector residual routing differential (#6556)"
-verify_residual_route \
-    vector-full-residual \
-    "$ROOT/tests/integration/compile_profile_vector_full.tl" \
-    "stdlib.vector/vector"
-verify_residual_route \
-    vector-core-residual \
-    "$ROOT/tests/integration/compile_profile_vector_core.tl" \
-    "stdlib.vector/vector"
+# route_same LABEL SUFFIX: LABEL-embedded.SUFFIX and LABEL-interpreted.SUFFIX
+# are identical.
+route_same() {
+    if ! cmp -s "$STDLIB_TLCI_DIR/$1-embedded.$2" "$STDLIB_TLCI_DIR/$1-interpreted.$2"; then
+        diff -u "$STDLIB_TLCI_DIR/$1-interpreted.$2" "$STDLIB_TLCI_DIR/$1-embedded.$2" >&2 || true
+        fail "native and interpreted $1 $2 differ"
+    fi
+}
 
-# The borrowed TextBuf family is the production consumer for unresolved
-# lifetime-parameterized nominal type templates. Pin its exact identity to the
-# mapped native route and require byte-identical assembly from source CTFE.
-verify_residual_route \
-    text-buf-borrowed-lifetime-residual \
-    "$ROOT/tests/integration/stdlib_text_buf.tl" \
-    "stdlib.text_buf_family/borrowed"
+# route_native_exit LABEL: the embedded route's program links and exits 42.
+route_native_exit() {
+    _rn=$STDLIB_TLCI_DIR/$1-embedded
+    if ! assemble_and_link "$1-native" "$_rn.s" "$_rn.$NL_OBJ_EXT" "$_rn$NL_BIN_EXT" \
+        >> "$_rn.stdout" 2>> "$_rn.stderr"; then
+        show_failure_logs "$_rn.stdout" "$_rn.stderr"
+        fail "native $1 fixture link failed"
+    fi
+    set +e
+    "$_rn$NL_BIN_EXT" >> "$_rn.stdout" 2>> "$_rn.stderr"
+    _rn_status=$?
+    set -e
+    [ "$_rn_status" -eq 42 ] || {
+        show_failure_logs "$_rn.stdout" "$_rn.stderr"
+        fail "native $1 fixture expected exit 42, got $_rn_status"
+    }
+}
 
-# Pin the module generator's public malformed-capability diagnostic on both
-# routes. Successful full/core expansion above covers both body branches; this
-# rejection catches computed-match/control-flow drift before syntax building.
-VECTOR_RESIDUAL_DIAG_SOURCE="$ROOT/tests/safety/vector_invalid_capability_reject.tl"
-VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stdout"
-VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-embedded.stderr"
-VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stdout"
-VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.stderr"
-if (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" check "$VECTOR_RESIDUAL_DIAG_SOURCE"
-) > "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
-    2> "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"; then
-    fail "embedded vector diagnostic fixture unexpectedly passed"
-fi
-if (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" check "$VECTOR_RESIDUAL_DIAG_SOURCE" \
-        --stdlib-root stdlib
-) > "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
-    2> "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"; then
-    fail "interpreted vector diagnostic fixture unexpectedly passed"
-fi
-grep -v 'compile-profile' "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR" \
-    > "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text"
-grep -v 'compile-profile' "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR" \
-    > "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text"
-assert_contains_in \
-    "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
-    'vector: optional capability must be bare `core`' \
-    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
-    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
-assert_contains_in \
-    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
-    'vector: optional capability must be bare `core`' \
-    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
-    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"
-assert_contains_in \
-    "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
-    'in expansion of macro `stdlib.vector/vector` invoked here' \
-    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDOUT" \
-    "$VECTOR_RESIDUAL_DIAG_EMBEDDED_STDERR"
-assert_contains_in \
-    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
-    'in expansion of macro `stdlib.vector/vector` invoked here' \
-    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDOUT" \
-    "$VECTOR_RESIDUAL_DIAG_INTERPRETED_STDERR"
-# Native callback diagnostics are anchored at the invocation by design; the
-# interpreted route can retain a transformer-expression primary span. Compare
-# the route-stable diagnostic headline exactly and require invocation
-# provenance above instead of conflating this location policy with semantics.
-head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.text" \
-    > "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline"
-head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.text" \
-    > "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline"
-if ! cmp -s "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline" \
-    "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline"; then
-    diff -u "$STDLIB_TLCI_DIR/vector-diagnostic-interpreted.headline" \
-        "$STDLIB_TLCI_DIR/vector-diagnostic-embedded.headline" >&2 || true
-    fail "native and interpreted vector diagnostic messages differ"
-fi
+# verify_residual_route LABEL SOURCE IDENTITY...: the route pair, with every
+# IDENTITY expanded on the native route and no catalog miss.
+verify_residual_route() {
+    _vr_label=$1
+    route_pair "$1" "$2"
+    shift 2
+    route_rows "$_vr_label" embedded <<'ROWS'
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+c typecheck.macro.stdlib_tlci_catalog_misses = 0
+ROWS
+    route_rows "$_vr_label" interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
+    for _vr_identity do
+        printf 'has %s arity=\n' "$_vr_identity"
+    done | route_rows "$_vr_label" embedded
+}
 
-echo "[compile-profile] verify json/serialize residual routing differential (#5606/#5627/#5999)"
-verify_residual_route \
-    serialize-json-residual \
-    "$ROOT/tests/integration/stdlib_serialize_json.tl" \
-    "stdlib.json/decode-int" \
-    "stdlib.serialize/encode-value" \
-    "stdlib.serialize/decode-value" \
-    "stdlib.serialize/decode-field" \
-    "stdlib.serialize/enum-source-import" \
-    "stdlib.serialize/nested-import-for-type" \
-    "stdlib.serialize/encode-tuple-elements" \
-    "stdlib.serialize/decode-tuple-items" \
-    "stdlib.serialize/encode-enum-payload-elements" \
-    "stdlib.serialize/decode-enum-payload-items" \
-    "stdlib.serialize/nested-imports-for-tuple" \
-    "stdlib.serialize/nested-imports-for-enum-payloads"
+echo "[compile-profile] verify for residual routing differential"
+verify_residual_route for-residual "$ROOT/tests/integration/for_macro.tl" \
+    stdlib.core_macros/for
+# `for` validates the iterator protocol before it builds syntax.
+route_reject for-diagnostic "$ROOT/stdlib/tests/core_macros_for_missing_protocol.tl"
+profile_rows "$STDLIB_TLCI_DIR/for-diagnostic-embedded.stdout" "$STDLIB_TLCI_DIR/for-diagnostic-embedded.stderr" \
+    "$STDLIB_TLCI_DIR/for-diagnostic-embedded.text" <<'ROWS'
+has is missing protocol function
+ROWS
+route_same for-diagnostic text
 
-# The public concatenator must preserve every operand-count arm across the
-# embedded native route and forced source interpretation. Besides assembly
-# parity, assert the public and runtime profile rows plus zero native-route
-# fallbacks so silently dropping the native entry cannot pass this gate.
-echo "[compile-profile] verify public str-cat arity routing differential (#5628)"
-STR_CAT_ARITIES_SOURCE="$ROOT/tests/integration/str_cat_native_arities.tl"
-STR_CAT_ARITIES_EMBEDDED_ASM="$STDLIB_TLCI_DIR/str-cat-arities-embedded.s"
-STR_CAT_ARITIES_EMBEDDED_OBJ="$STDLIB_TLCI_DIR/str-cat-arities-embedded.$NL_OBJ_EXT"
-STR_CAT_ARITIES_EMBEDDED_BIN="$STDLIB_TLCI_DIR/str-cat-arities-embedded$NL_BIN_EXT"
-STR_CAT_ARITIES_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/str-cat-arities-embedded.stdout"
-STR_CAT_ARITIES_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/str-cat-arities-embedded.stderr"
-STR_CAT_ARITIES_INTERPRETED_ASM="$STDLIB_TLCI_DIR/str-cat-arities-interpreted.s"
-STR_CAT_ARITIES_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/str-cat-arities-interpreted.stdout"
-STR_CAT_ARITIES_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/str-cat-arities-interpreted.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$STR_CAT_ARITIES_SOURCE" \
-        -o "$STR_CAT_ARITIES_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$STR_CAT_ARITIES_EMBEDDED_STDOUT" 2> "$STR_CAT_ARITIES_EMBEDDED_STDERR"; then
-    show_failure_logs \
-        "$STR_CAT_ARITIES_EMBEDDED_STDOUT" "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-    fail "embedded public str-cat arity fixture compile failed"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$STR_CAT_ARITIES_SOURCE" \
-        -o "$STR_CAT_ARITIES_INTERPRETED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$STR_CAT_ARITIES_INTERPRETED_STDOUT" 2> "$STR_CAT_ARITIES_INTERPRETED_STDERR"; then
-    show_failure_logs \
-        "$STR_CAT_ARITIES_INTERPRETED_STDOUT" "$STR_CAT_ARITIES_INTERPRETED_STDERR"
-    fail "interpreted public str-cat arity fixture compile failed"
-fi
-for arity in 0 1 2 5 6 8; do
-    assert_contains \
-        "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-        "stdlib.str_cat/str-cat arity=$arity"
-    assert_contains \
-        "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-        "stdlib.str_cat_runtime/str-cat-scoped arity=$arity"
+echo "[compile-profile] verify vector residual routing differential"
+verify_residual_route vector-full-residual "$ROOT/tests/integration/compile_profile_vector_full.tl" \
+    stdlib.vector/vector
+verify_residual_route vector-core-residual "$ROOT/tests/integration/compile_profile_vector_core.tl" \
+    stdlib.vector/vector
+# The borrowed TextBuf family is the production consumer of unresolved
+# lifetime-parameterized nominal type templates.
+verify_residual_route text-buf-borrowed-lifetime-residual "$ROOT/tests/integration/stdlib_text_buf.tl" \
+    stdlib.text_buf_family/borrowed
+# The module generator's malformed-capability diagnostic on both routes. Native
+# callback diagnostics are anchored at the invocation; the interpreted route can
+# keep a transformer-expression primary span, so the headlines must match and
+# both must name the invocation.
+route_reject vector-diagnostic "$ROOT/tests/safety/vector_invalid_capability_reject.tl"
+for vector_route in embedded interpreted; do
+    profile_rows "$STDLIB_TLCI_DIR/vector-diagnostic-$vector_route.stdout" \
+        "$STDLIB_TLCI_DIR/vector-diagnostic-$vector_route.stderr" \
+        "$STDLIB_TLCI_DIR/vector-diagnostic-$vector_route.text" <<'ROWS'
+has vector: optional capability must be bare `core`
+has in expansion of macro `stdlib.vector/vector` invoked here
+ROWS
+    head -n 1 "$STDLIB_TLCI_DIR/vector-diagnostic-$vector_route.text" \
+        > "$STDLIB_TLCI_DIR/vector-diagnostic-$vector_route.headline"
 done
-assert_contains \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-    "stdlib.str_cat_runtime/str-cat-pack arity=3"
-assert_profile_counter_at_least_in \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    6 \
-    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_misses" \
-    0 \
-    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_load_failures" \
-    0 \
-    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
-    0 \
-    "$STR_CAT_ARITIES_EMBEDDED_STDOUT" \
-    "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STR_CAT_ARITIES_INTERPRETED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$STR_CAT_ARITIES_INTERPRETED_STDOUT" \
-    "$STR_CAT_ARITIES_INTERPRETED_STDERR"
-if ! cmp -s "$STR_CAT_ARITIES_EMBEDDED_ASM" "$STR_CAT_ARITIES_INTERPRETED_ASM"; then
-    diff -u \
-        "$STR_CAT_ARITIES_INTERPRETED_ASM" "$STR_CAT_ARITIES_EMBEDDED_ASM" \
-        >&2 || true
-    fail "native and interpreted public str-cat arities changed generated assembly"
-fi
-if ! assemble_and_link \
-    str-cat-arities-native \
-    "$STR_CAT_ARITIES_EMBEDDED_ASM" \
-    "$STR_CAT_ARITIES_EMBEDDED_OBJ" \
-    "$STR_CAT_ARITIES_EMBEDDED_BIN" \
-    >> "$STR_CAT_ARITIES_EMBEDDED_STDOUT" 2>> "$STR_CAT_ARITIES_EMBEDDED_STDERR"; then
-    show_failure_logs \
-        "$STR_CAT_ARITIES_EMBEDDED_STDOUT" "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-    fail "native public str-cat arity fixture link failed"
-fi
-set +e
-"$STR_CAT_ARITIES_EMBEDDED_BIN" \
-    >> "$STR_CAT_ARITIES_EMBEDDED_STDOUT" 2>> "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-STR_CAT_ARITIES_STATUS=$?
-set -e
-if [ "$STR_CAT_ARITIES_STATUS" -ne 42 ]; then
-    show_failure_logs \
-        "$STR_CAT_ARITIES_EMBEDDED_STDOUT" "$STR_CAT_ARITIES_EMBEDDED_STDERR"
-    fail \
-        "native public str-cat arity fixture expected exit 42, got $STR_CAT_ARITIES_STATUS"
+route_same vector-diagnostic headline
+
+echo "[compile-profile] verify json/serialize residual routing differential"
+verify_residual_route serialize-json-residual "$ROOT/tests/integration/stdlib_serialize_json.tl" \
+    stdlib.json/decode-int \
+    stdlib.serialize/encode-value \
+    stdlib.serialize/decode-value \
+    stdlib.serialize/decode-field \
+    stdlib.serialize/enum-source-import \
+    stdlib.serialize/nested-import-for-type \
+    stdlib.serialize/encode-tuple-elements \
+    stdlib.serialize/decode-tuple-items \
+    stdlib.serialize/encode-enum-payload-elements \
+    stdlib.serialize/decode-enum-payload-items \
+    stdlib.serialize/nested-imports-for-tuple \
+    stdlib.serialize/nested-imports-for-enum-payloads
+
+# Every operand-count arm of the public concatenator, with its runtime rows
+# and no native-route fallback; the native result must also run.
+echo "[compile-profile] verify public str-cat arity routing differential"
+route_pair str-cat-arities "$ROOT/tests/integration/str_cat_native_arities.tl"
+route_rows str-cat-arities embedded <<'ROWS'
+has stdlib.str_cat/str-cat arity=0
+has stdlib.str_cat_runtime/str-cat-scoped arity=0
+has stdlib.str_cat/str-cat arity=1
+has stdlib.str_cat_runtime/str-cat-scoped arity=1
+has stdlib.str_cat/str-cat arity=2
+has stdlib.str_cat_runtime/str-cat-scoped arity=2
+has stdlib.str_cat/str-cat arity=5
+has stdlib.str_cat_runtime/str-cat-scoped arity=5
+has stdlib.str_cat/str-cat arity=6
+has stdlib.str_cat_runtime/str-cat-scoped arity=6
+has stdlib.str_cat/str-cat arity=8
+has stdlib.str_cat_runtime/str-cat-scoped arity=8
+has stdlib.str_cat_runtime/str-cat-pack arity=3
+c typecheck.macro.stdlib_tlci_native_dispatches >= 6
+c typecheck.macro.stdlib_tlci_catalog_misses = 0
+c typecheck.macro.stdlib_tlci_load_failures = 0
+c typecheck.macro.stdlib_tlci_interpreted_fallbacks = 0
+ROWS
+route_rows str-cat-arities interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
+route_native_exit str-cat-arities
+
+# The scoped concatenator's fixed arities, by bytes and by behavior.
+echo "[compile-profile] verify scoped str-cat routing differential"
+route_pair scoped-cat "$ROOT/tests/integration/str_cat_scoped_region.tl"
+route_rows scoped-cat embedded <<'ROWS'
+has stdlib.str_cat_runtime/str-cat-scoped arity=2
+has stdlib.str_cat_runtime/str-cat-scoped arity=3
+has stdlib.str_cat_runtime/str-cat-scoped arity=4
+has stdlib.str_cat_runtime/str-cat-scoped arity=5
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+c typecheck.macro.stdlib_tlci_interpreted_fallbacks = 0
+ROWS
+route_rows scoped-cat interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
+route_native_exit scoped-cat
+
+# The template node kinds the json/serialize/text_buf/math hooks use: `return`,
+# `box`/`deref`, dotted `set!` places and float literals inside quasiquotes.
+# text_buf_family.owned commits a Decls result through the mapped image.
+echo "[compile-profile] verify template node kind routing differential"
+route_pair template-nodes "$ROOT/tests/integration/tlci_native_template_nodes.tl"
+route_rows template-nodes embedded <<'ROWS'
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+has stdlib.text_buf/append! arity=2
+c typecheck.macro.stdlib_tlci_interpreted_fallbacks = 0
+c typecheck.macro.stdlib_tlci_native_decls_results >= 1
+ROWS
+route_rows template-nodes interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
+
+# The modified root reached by a non-`stdlib` path spelling, from a working
+# directory without a `stdlib/` fallback, still typechecks the root's own
+# modules against that root's core-macros prelude.
+route_run pathroot "$STDLIB_TLCI_DIR" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
+    --stdlib-root modified-root/stdlib
+[ "$route_status" -eq 0 ] || {
+    show_failure_logs "$STDLIB_TLCI_DIR/pathroot.stdout" "$STDLIB_TLCI_DIR/pathroot.stderr"
+    fail "path-spelled modified stdlib root failed to typecheck"
+}
+profile_rows "$STDLIB_TLCI_DIR/pathroot.stdout" "$STDLIB_TLCI_DIR/pathroot.stderr" <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+c typecheck.macro.stdlib_source_interpreted >= 1
+ROWS
+if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_DIR/pathroot.s"; then
+    diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_DIR/pathroot.s" >&2 || true
+    fail "path-spelled modified stdlib root changed generated assembly"
 fi
 
-# The scoped concatenator's fixed arities now execute through the native
-# catalog. Compare that route with forced source interpretation, then run the
-# native result so parity covers both generated bytes and behavior. Refs #5656.
-echo "[compile-profile] verify scoped str-cat routing differential (#5656)"
-SCOPED_CAT_SOURCE="$ROOT/tests/integration/str_cat_scoped_region.tl"
-SCOPED_CAT_EMBEDDED_ASM="$STDLIB_TLCI_DIR/scoped-cat-embedded.s"
-SCOPED_CAT_EMBEDDED_OBJ="$STDLIB_TLCI_DIR/scoped-cat-embedded.$NL_OBJ_EXT"
-SCOPED_CAT_EMBEDDED_BIN="$STDLIB_TLCI_DIR/scoped-cat-embedded$NL_BIN_EXT"
-SCOPED_CAT_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/scoped-cat-embedded.stdout"
-SCOPED_CAT_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/scoped-cat-embedded.stderr"
-SCOPED_CAT_INTERPRETED_ASM="$STDLIB_TLCI_DIR/scoped-cat-interpreted.s"
-SCOPED_CAT_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/scoped-cat-interpreted.stdout"
-SCOPED_CAT_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/scoped-cat-interpreted.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$SCOPED_CAT_SOURCE" \
-        -o "$SCOPED_CAT_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$SCOPED_CAT_EMBEDDED_STDOUT" 2> "$SCOPED_CAT_EMBEDDED_STDERR"; then
-    show_failure_logs "$SCOPED_CAT_EMBEDDED_STDOUT" "$SCOPED_CAT_EMBEDDED_STDERR"
-    fail "embedded scoped str-cat routing fixture compile failed"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$SCOPED_CAT_SOURCE" \
-        -o "$SCOPED_CAT_INTERPRETED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$SCOPED_CAT_INTERPRETED_STDOUT" 2> "$SCOPED_CAT_INTERPRETED_STDERR"; then
-    show_failure_logs "$SCOPED_CAT_INTERPRETED_STDOUT" "$SCOPED_CAT_INTERPRETED_STDERR"
-    fail "interpreted scoped str-cat routing fixture compile failed"
-fi
-for arity in 2 3 4 5; do
-    assert_contains \
-        "$SCOPED_CAT_EMBEDDED_STDERR" \
-        "stdlib.str_cat_runtime/str-cat-scoped arity=$arity"
-done
-assert_profile_counter_at_least_in \
-    "$SCOPED_CAT_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    1 \
-    "$SCOPED_CAT_EMBEDDED_STDOUT" \
-    "$SCOPED_CAT_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$SCOPED_CAT_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
-    0 \
-    "$SCOPED_CAT_EMBEDDED_STDOUT" \
-    "$SCOPED_CAT_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$SCOPED_CAT_INTERPRETED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$SCOPED_CAT_INTERPRETED_STDOUT" \
-    "$SCOPED_CAT_INTERPRETED_STDERR"
-if ! cmp -s "$SCOPED_CAT_EMBEDDED_ASM" "$SCOPED_CAT_INTERPRETED_ASM"; then
-    diff -u "$SCOPED_CAT_INTERPRETED_ASM" "$SCOPED_CAT_EMBEDDED_ASM" >&2 || true
-    fail "native and interpreted scoped str-cat changed generated assembly"
-fi
-if ! assemble_and_link \
-    scoped-cat-native \
-    "$SCOPED_CAT_EMBEDDED_ASM" \
-    "$SCOPED_CAT_EMBEDDED_OBJ" \
-    "$SCOPED_CAT_EMBEDDED_BIN" \
-    >> "$SCOPED_CAT_EMBEDDED_STDOUT" 2>> "$SCOPED_CAT_EMBEDDED_STDERR"; then
-    show_failure_logs "$SCOPED_CAT_EMBEDDED_STDOUT" "$SCOPED_CAT_EMBEDDED_STDERR"
-    fail "native scoped str-cat routing fixture link failed"
-fi
-set +e
-"$SCOPED_CAT_EMBEDDED_BIN" \
-    >> "$SCOPED_CAT_EMBEDDED_STDOUT" 2>> "$SCOPED_CAT_EMBEDDED_STDERR"
-SCOPED_CAT_STATUS=$?
-set -e
-if [ "$SCOPED_CAT_STATUS" -ne 42 ]; then
-    show_failure_logs "$SCOPED_CAT_EMBEDDED_STDOUT" "$SCOPED_CAT_EMBEDDED_STDERR"
-    fail "native scoped str-cat routing fixture expected exit 42, got $SCOPED_CAT_STATUS"
-fi
-
-# The same native-vs-interpreted comparison over the template node kinds the
-# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`deref`,
-# dotted `set!` places, and float literals inside quasiquotes. The
-# array fixture above exercises none of them, so a reconstruction divergence
-# in those node kinds would otherwise reach the bootstrap unchecked.
-echo "[compile-profile] verify template node kind routing differential (#5605)"
-TEMPLATE_NODES_SOURCE="$ROOT/tests/integration/tlci_native_template_nodes.tl"
-TEMPLATE_NODES_EMBEDDED_ASM="$STDLIB_TLCI_DIR/template-nodes-embedded.s"
-TEMPLATE_NODES_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/template-nodes-embedded.stdout"
-TEMPLATE_NODES_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/template-nodes-embedded.stderr"
-TEMPLATE_NODES_INTERPRETED_ASM="$STDLIB_TLCI_DIR/template-nodes-interpreted.s"
-TEMPLATE_NODES_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/template-nodes-interpreted.stdout"
-TEMPLATE_NODES_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/template-nodes-interpreted.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$TEMPLATE_NODES_SOURCE" \
-        -o "$TEMPLATE_NODES_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$TEMPLATE_NODES_EMBEDDED_STDOUT" 2> "$TEMPLATE_NODES_EMBEDDED_STDERR"; then
-    show_failure_logs \
-        "$TEMPLATE_NODES_EMBEDDED_STDOUT" "$TEMPLATE_NODES_EMBEDDED_STDERR"
-    fail "template node kind fixture failed on the embedded route"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$TEMPLATE_NODES_SOURCE" \
-        -o "$TEMPLATE_NODES_INTERPRETED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$TEMPLATE_NODES_INTERPRETED_STDOUT" \
-    2> "$TEMPLATE_NODES_INTERPRETED_STDERR"; then
-    show_failure_logs \
-        "$TEMPLATE_NODES_INTERPRETED_STDOUT" \
-        "$TEMPLATE_NODES_INTERPRETED_STDERR"
-    fail "template node kind fixture failed on the interpreted route"
-fi
-assert_profile_counter_at_least_in \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    1 \
-    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR"
-# #6550's final-shell removal must be proven by identity on the bounded
-# native/source differential, not inferred from another macro's dispatch.
-assert_contains \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
-    "stdlib.text_buf/append! arity=2"
-assert_profile_counter_eq_in \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
-    0 \
-    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR"
-# text_buf_family.owned commits a Decls result through the real mapped image;
-# the byte comparison below proves its handle rejoins the source CTFE
-# validation/splice path instead of merely returning a native value. Refs
-# #4870.
-assert_profile_counter_at_least_in \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_decls_results" \
-    1 \
-    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
-    "$TEMPLATE_NODES_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$TEMPLATE_NODES_INTERPRETED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$TEMPLATE_NODES_INTERPRETED_STDOUT" \
-    "$TEMPLATE_NODES_INTERPRETED_STDERR"
-if ! cmp -s "$TEMPLATE_NODES_EMBEDDED_ASM" "$TEMPLATE_NODES_INTERPRETED_ASM"; then
-    diff -u "$TEMPLATE_NODES_INTERPRETED_ASM" "$TEMPLATE_NODES_EMBEDDED_ASM" >&2 \
-        || true
-    fail "native and interpreted template node kinds changed generated assembly"
-fi
-
-# #5454 regression: the same modified root reached by a non-`stdlib` path
-# spelling from a working directory without a `stdlib/` fallback must still
-# typecheck the root's own modules against that root's core-macros prelude
-# (previously: 'unbound name cond' unless the root was literally `stdlib`).
-STDLIB_TLCI_PATHROOT_ASM="$STDLIB_TLCI_DIR/pathroot.s"
-STDLIB_TLCI_PATHROOT_STDOUT="$STDLIB_TLCI_DIR/pathroot.stdout"
-STDLIB_TLCI_PATHROOT_STDERR="$STDLIB_TLCI_DIR/pathroot.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_PATHROOT_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root modified-root/stdlib
-) > "$STDLIB_TLCI_PATHROOT_STDOUT" 2> "$STDLIB_TLCI_PATHROOT_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_PATHROOT_STDOUT" "$STDLIB_TLCI_PATHROOT_STDERR"
-    fail "path-spelled modified stdlib root failed to typecheck (#5454)"
-fi
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_PATHROOT_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$STDLIB_TLCI_PATHROOT_STDOUT" \
-    "$STDLIB_TLCI_PATHROOT_STDERR"
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_PATHROOT_STDERR" \
-    "typecheck.macro.stdlib_source_interpreted" \
-    1 \
-    "$STDLIB_TLCI_PATHROOT_STDOUT" \
-    "$STDLIB_TLCI_PATHROOT_STDERR"
-if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_PATHROOT_ASM"; then
-    diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_PATHROOT_ASM" >&2 || true
-    fail "path-spelled modified stdlib root changed generated assembly (#5454)"
-fi
-
-# #5647: the index-fold bodies walk an operand list by index, and a fold that
-# stops one element early, repeats one, or reverses the order still compiles
-# and still runs. Only a route differential catches that, and
-# array_qualified_macros.tl exercises neither fold, so drive them explicitly.
+# Index folds that stop early, repeat or reverse still compile and run; only a
+# route differential catches them. Both folds must fire.
 echo "[compile-profile] verify tlci index-fold route differential"
-STDLIB_TLCI_FOLDS_SOURCE="$ROOT/tests/integration/tlci_native_index_folds.tl"
-STDLIB_TLCI_FOLDS_EMBEDDED_ASM="$STDLIB_TLCI_DIR/folds-embedded.s"
-STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/folds-embedded.stdout"
-STDLIB_TLCI_FOLDS_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/folds-embedded.stderr"
-STDLIB_TLCI_FOLDS_MODIFIED_ASM="$STDLIB_TLCI_DIR/folds-modified.s"
-STDLIB_TLCI_FOLDS_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/folds-modified.stdout"
-STDLIB_TLCI_FOLDS_MODIFIED_STDERR="$STDLIB_TLCI_DIR/folds-modified.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$STDLIB_TLCI_FOLDS_SOURCE" \
-        -o "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
-    2> "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
-        "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"
-    fail "embedded tlci index-fold fixture compile failed"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$STDLIB_TLCI_FOLDS_SOURCE" \
-        -o "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$STDLIB_TLCI_FOLDS_MODIFIED_STDOUT" \
-    2> "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_FOLDS_MODIFIED_STDOUT" \
-        "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR"
-    fail "comment-modified-root tlci index-fold fixture compile failed"
-fi
-# The embedded route must actually take the native entries, and the modified
-# root must actually interpret, or the byte comparison below proves nothing.
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    1 \
-    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_misses" \
-    0 \
-    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$STDLIB_TLCI_FOLDS_MODIFIED_STDOUT" \
-    "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR"
-# Both folds must fire, so a fixture edit cannot silently stop covering them.
-assert_contains "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
-    "stdlib.str_cat_runtime/str-cat-pack arity=3"
-assert_contains "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
-    "stdlib.fs/path-join-fold arity=3"
-if ! cmp -s "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
-    "$STDLIB_TLCI_FOLDS_MODIFIED_ASM"; then
-    diff -u "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
-        "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" >&2 || true
-    fail "native and interpreted index folds produced different assembly"
-fi
+route_pair folds "$ROOT/tests/integration/tlci_native_index_folds.tl"
+route_rows folds embedded <<'ROWS'
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+c typecheck.macro.stdlib_tlci_catalog_misses = 0
+has stdlib.str_cat_runtime/str-cat-pack arity=3
+has stdlib.fs/path-join-fold arity=3
+ROWS
+route_rows folds interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
 
-# Native-vs-interpreted parity over the computed string-dispatch scrutinees
-# (#5604): `(type-kind (comptime.expr-type e))` and `(type-key T)` probes pick
-# an arm inside the native entry, so a wrong probe result silently selects a
-# different expansion instead of failing. The array fixture above has no such
-# dispatch, and neither does the #5605 template-node fixture.
-echo "[compile-profile] verify computed scrutinee routing differential (#5604)"
-SCRUTINEE_SOURCE="$ROOT/tests/integration/tlci_native_computed_scrutinee.tl"
-SCRUTINEE_EMBEDDED_ASM="$STDLIB_TLCI_DIR/scrutinee-embedded.s"
-SCRUTINEE_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/scrutinee-embedded.stdout"
-SCRUTINEE_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/scrutinee-embedded.stderr"
-SCRUTINEE_INTERPRETED_ASM="$STDLIB_TLCI_DIR/scrutinee-interpreted.s"
-SCRUTINEE_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/scrutinee-interpreted.stdout"
-SCRUTINEE_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/scrutinee-interpreted.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$SCRUTINEE_SOURCE" \
-        -o "$SCRUTINEE_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$SCRUTINEE_EMBEDDED_STDOUT" 2> "$SCRUTINEE_EMBEDDED_STDERR"; then
-    show_failure_logs "$SCRUTINEE_EMBEDDED_STDOUT" "$SCRUTINEE_EMBEDDED_STDERR"
-    fail "computed scrutinee fixture failed on the embedded route"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$SCRUTINEE_SOURCE" \
-        -o "$SCRUTINEE_INTERPRETED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$SCRUTINEE_INTERPRETED_STDOUT" 2> "$SCRUTINEE_INTERPRETED_STDERR"; then
-    show_failure_logs \
-        "$SCRUTINEE_INTERPRETED_STDOUT" "$SCRUTINEE_INTERPRETED_STDERR"
-    fail "computed scrutinee fixture failed on the interpreted route"
-fi
-assert_profile_counter_at_least_in \
-    "$SCRUTINEE_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    1 \
-    "$SCRUTINEE_EMBEDDED_STDOUT" \
-    "$SCRUTINEE_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$SCRUTINEE_INTERPRETED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$SCRUTINEE_INTERPRETED_STDOUT" \
-    "$SCRUTINEE_INTERPRETED_STDERR"
-if ! cmp -s "$SCRUTINEE_EMBEDDED_ASM" "$SCRUTINEE_INTERPRETED_ASM"; then
-    diff -u "$SCRUTINEE_INTERPRETED_ASM" "$SCRUTINEE_EMBEDDED_ASM" >&2 || true
-    fail "native and interpreted computed scrutinees changed generated assembly"
-fi
+# Computed string-dispatch scrutinees pick an arm inside the native entry, so a
+# wrong probe result silently selects another expansion.
+echo "[compile-profile] verify computed scrutinee routing differential"
+route_pair scrutinee "$ROOT/tests/integration/tlci_native_computed_scrutinee.tl"
+route_rows scrutinee embedded <<'ROWS'
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+ROWS
+route_rows scrutinee interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
 
-# #5648: definition-site aliases retained only in a lazy surface summary used
-# to disappear when another import loaded the shared dependency first. Compile
-# both orderings through the same embedded route and require identical output;
-# the json-first source is the historical failure ordering.
-echo "[compile-profile] verify lazy macro definition import order (#5648)"
-IMPORT_ORDER_JSON_SOURCE="$ROOT/tests/integration/macro_import_order_repro.tl"
-IMPORT_ORDER_FORMAT_SOURCE="$ROOT/tests/integration/macro_import_order_format_first.tl"
-IMPORT_ORDER_JSON_ASM="$STDLIB_TLCI_DIR/import-order-json-first.s"
-IMPORT_ORDER_JSON_STDOUT="$STDLIB_TLCI_DIR/import-order-json-first.stdout"
-IMPORT_ORDER_JSON_STDERR="$STDLIB_TLCI_DIR/import-order-json-first.stderr"
-IMPORT_ORDER_FORMAT_ASM="$STDLIB_TLCI_DIR/import-order-format-first.s"
-IMPORT_ORDER_FORMAT_STDOUT="$STDLIB_TLCI_DIR/import-order-format-first.stdout"
-IMPORT_ORDER_FORMAT_STDERR="$STDLIB_TLCI_DIR/import-order-format-first.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$IMPORT_ORDER_JSON_SOURCE" \
-        -o "$IMPORT_ORDER_JSON_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$IMPORT_ORDER_JSON_STDOUT" 2> "$IMPORT_ORDER_JSON_STDERR"; then
-    show_failure_logs "$IMPORT_ORDER_JSON_STDOUT" "$IMPORT_ORDER_JSON_STDERR"
-    fail "json-first lazy macro definition import-order fixture failed"
-fi
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$IMPORT_ORDER_FORMAT_SOURCE" \
-        -o "$IMPORT_ORDER_FORMAT_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$IMPORT_ORDER_FORMAT_STDOUT" 2> "$IMPORT_ORDER_FORMAT_STDERR"; then
-    show_failure_logs "$IMPORT_ORDER_FORMAT_STDOUT" "$IMPORT_ORDER_FORMAT_STDERR"
-    fail "format-first lazy macro definition import-order fixture failed"
-fi
-if ! cmp -s "$IMPORT_ORDER_JSON_ASM" "$IMPORT_ORDER_FORMAT_ASM"; then
-    diff -u "$IMPORT_ORDER_FORMAT_ASM" "$IMPORT_ORDER_JSON_ASM" >&2 || true
+# Definition-site aliases retained only in a lazy surface summary must survive
+# another import loading the shared dependency first (json-first is the
+# failure ordering).
+echo "[compile-profile] verify lazy macro definition import order"
+for import_order in repro format_first; do
+    route_run "import-order-$import_order" "$STDLIB_TLCI_DIR" compile \
+        "$ROOT/tests/integration/macro_import_order_$import_order.tl"
+    [ "$route_status" -eq 0 ] || {
+        show_failure_logs "$STDLIB_TLCI_DIR/import-order-$import_order.stdout" \
+            "$STDLIB_TLCI_DIR/import-order-$import_order.stderr"
+        fail "lazy macro definition import-order fixture $import_order failed"
+    }
+done
+if ! cmp -s "$STDLIB_TLCI_DIR/import-order-repro.s" "$STDLIB_TLCI_DIR/import-order-format_first.s"; then
+    diff -u "$STDLIB_TLCI_DIR/import-order-format_first.s" "$STDLIB_TLCI_DIR/import-order-repro.s" >&2 || true
     fail "import order changed lazy macro definition-context assembly"
 fi
-# #5658: `stdlib.hash/hash` generates its module in the wildcard arm of a
-# type-kind match, so every type except `unit` goes through an arm that was
-# interpreted per invocation until that arm compiled. A wrong module name or a
-# dropped declaration there still compiles and still runs, so the route
-# differential is the contract.
+
+# `stdlib.hash/hash` generates its module in the wildcard arm of a type-kind
+# match; a wrong module name or dropped declaration still compiles and runs.
+# It is a real source-lowered Module result.
 echo "[compile-profile] verify tlci wildcard-arm route differential"
-STDLIB_TLCI_WILD_SOURCE="$ROOT/tests/integration/tlci_native_wildcard_arms.tl"
-STDLIB_TLCI_WILD_EMBEDDED_ASM="$STDLIB_TLCI_DIR/wild-embedded.s"
-STDLIB_TLCI_WILD_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/wild-embedded.stdout"
-STDLIB_TLCI_WILD_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/wild-embedded.stderr"
-STDLIB_TLCI_WILD_MODIFIED_ASM="$STDLIB_TLCI_DIR/wild-modified.s"
-STDLIB_TLCI_WILD_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/wild-modified.stdout"
-STDLIB_TLCI_WILD_MODIFIED_STDERR="$STDLIB_TLCI_DIR/wild-modified.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$STDLIB_TLCI_WILD_SOURCE"         -o "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         --target "$NL_BOOTSTRAP_TARGET"         $(native_target_cfg_args)
-) > "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"     2> "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"         "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
-    fail "embedded tlci wildcard-arm fixture compile failed"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$STDLIB_TLCI_WILD_SOURCE"         -o "$STDLIB_TLCI_WILD_MODIFIED_ASM"         --target "$NL_BOOTSTRAP_TARGET"         $(native_target_cfg_args)         --stdlib-root stdlib
-) > "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"     2> "$STDLIB_TLCI_WILD_MODIFIED_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"         "$STDLIB_TLCI_WILD_MODIFIED_STDERR"
-    fail "comment-modified-root tlci wildcard-arm fixture compile failed"
-fi
-assert_profile_counter_at_least_in     "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"     "typecheck.macro.stdlib_tlci_native_dispatches"     1     "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT"     "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
-# stdlib.hash/hash is a real source-lowered Module result. Compiling this
-# fixture and matching its source-route assembly proves the committed handle
-# reaches module identity, validation, and splice materialization. Refs #4870.
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_module_results" \
-    1 \
-    "$STDLIB_TLCI_WILD_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_WILD_EMBEDDED_STDERR"
-assert_profile_counter_eq_in     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"     "typecheck.macro.stdlib_tlci_catalog_hits"     0     "$STDLIB_TLCI_WILD_MODIFIED_STDOUT"     "$STDLIB_TLCI_WILD_MODIFIED_STDERR"
-# Both wildcard-arm identities must fire, so a fixture edit cannot silently
-# stop covering them.
-assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" "stdlib.hash/hash arity=1"
-assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" \
-    "stdlib.hash/inline-hash arity=2"
-assert_contains "$STDLIB_TLCI_WILD_EMBEDDED_STDERR" "stdlib.eq/inline-eq arity=3"
-if ! cmp -s "$STDLIB_TLCI_WILD_EMBEDDED_ASM"     "$STDLIB_TLCI_WILD_MODIFIED_ASM"; then
-    diff -u "$STDLIB_TLCI_WILD_EMBEDDED_ASM"         "$STDLIB_TLCI_WILD_MODIFIED_ASM" >&2 || true
-    fail "native and interpreted wildcard arms produced different assembly"
-fi
+route_pair wildcard "$ROOT/tests/integration/tlci_native_wildcard_arms.tl"
+route_rows wildcard embedded <<'ROWS'
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+c typecheck.macro.stdlib_tlci_native_module_results >= 1
+has stdlib.hash/hash arity=1
+has stdlib.hash/inline-hash arity=2
+has stdlib.eq/inline-eq arity=3
+ROWS
+route_rows wildcard interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
 
-# #5701/#6644: `stdlib.format/format` scans the template at comptime, then
-# `format-expand` and `format-expand-call` validate and bind the completed plan.
-# An off-by-one in any index, a dropped escape byte, or a wrong positional/named
-# selection still compiles and still runs, producing a subtly wrong string, so
-# the differential is the contract. None of the fixtures above formats
-# anything.
+# `stdlib.format/format` scans the template at comptime, then `format-expand`
+# and `format-expand-call` bind the plan; an off-by-one still compiles and runs.
 echo "[compile-profile] verify tlci format-scanner route differential"
-STDLIB_TLCI_FMT_SOURCE="$ROOT/tests/integration/tlci_native_format_scanner.tl"
-STDLIB_TLCI_FMT_EMBEDDED_ASM="$STDLIB_TLCI_DIR/format-embedded.s"
-STDLIB_TLCI_FMT_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/format-embedded.stdout"
-STDLIB_TLCI_FMT_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/format-embedded.stderr"
-STDLIB_TLCI_FMT_MODIFIED_ASM="$STDLIB_TLCI_DIR/format-modified.s"
-STDLIB_TLCI_FMT_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/format-modified.stdout"
-STDLIB_TLCI_FMT_MODIFIED_STDERR="$STDLIB_TLCI_DIR/format-modified.stderr"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$STDLIB_TLCI_FMT_SOURCE" \
-        -o "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
-    2> "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
-        "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"
-    fail "embedded tlci format-scanner fixture compile failed"
-fi
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
-    "$PROFILE_BIN" compile "$STDLIB_TLCI_FMT_SOURCE" \
-        -o "$STDLIB_TLCI_FMT_MODIFIED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
-    2> "$STDLIB_TLCI_FMT_MODIFIED_STDERR"; then
-    show_failure_logs "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
-        "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
-    fail "comment-modified-root tlci format-scanner fixture compile failed"
-fi
-assert_profile_counter_at_least_in \
-    "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_native_dispatches" \
-    1 \
-    "$STDLIB_TLCI_FMT_EMBEDDED_STDOUT" \
-    "$STDLIB_TLCI_FMT_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_FMT_MODIFIED_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$STDLIB_TLCI_FMT_MODIFIED_STDOUT" \
-    "$STDLIB_TLCI_FMT_MODIFIED_STDERR"
-# The plan expander and argument classifier have to run, not just the scanner
-# wrapper, so a fixture edit cannot silently stop covering selection/binding.
-assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format arity="
-assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format-expand arity="
-assert_contains "$STDLIB_TLCI_FMT_EMBEDDED_STDERR" "stdlib.format/format-expand-call arity="
-if ! cmp -s "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
-    "$STDLIB_TLCI_FMT_MODIFIED_ASM"; then
-    diff -u "$STDLIB_TLCI_FMT_EMBEDDED_ASM" \
-        "$STDLIB_TLCI_FMT_MODIFIED_ASM" >&2 || true
-    fail "native and interpreted format scanners produced different assembly"
-fi
+route_pair format "$ROOT/tests/integration/tlci_native_format_scanner.tl"
+route_rows format embedded <<'ROWS'
+c typecheck.macro.stdlib_tlci_native_dispatches >= 1
+has stdlib.format/format arity=
+has stdlib.format/format-expand arity=
+has stdlib.format/format-expand-call arity=
+ROWS
+route_rows format interpreted <<'ROWS'
+c typecheck.macro.stdlib_tlci_catalog_hits = 0
+ROWS
 
-# The scanner's three rejection paths are reported by the macro itself, so a
-# native arm that mis-detects them fails differently -- or not at all -- from
-# the interpreted one. Compare the rendered diagnostics, not just the exit
-# status.
+# The scanner's rejection paths are reported by the macro itself; compare the
+# rendered diagnostics, not just the exit status.
 echo "[compile-profile] verify tlci format-scanner diagnostic differential"
 FMT_DIAG_DIR="$STDLIB_TLCI_DIR/format-diagnostics"
 rm -rf "$FMT_DIAG_DIR"
@@ -3598,75 +1804,31 @@ cat > "$FMT_DIAG_DIR/non-literal-template.tl" <<'FIXTURE'
 (define (main) : i64
   (begin (io.print-format "{}" (format.format template 1)) 0))
 FIXTURE
-# The profiled compiler writes its counters to stderr too, and those legitimately
-# differ by route (catalog hits, native dispatches). Compare only the rendered
-# diagnostic.
-format_diagnostic_text() {
-    grep -v 'compile-profile' "$1" > "$2"
-}
-for FMT_DIAG_CASE in unmatched-open too-few-arguments too-many-arguments \
+for fmt_case in unmatched-open too-few-arguments too-many-arguments \
     unmatched-close non-literal-template; do
-    FMT_DIAG_SOURCE="$FMT_DIAG_DIR/$FMT_DIAG_CASE.tl"
-    FMT_DIAG_EMBEDDED="$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stderr"
-    FMT_DIAG_MODIFIED="$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.stderr"
-    if (
-        cd "$STDLIB_TLCI_DIR"
-        "$PROFILE_BIN" check "$FMT_DIAG_SOURCE"
-    ) > "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stdout" \
-        2> "$FMT_DIAG_EMBEDDED"; then
-        fail "embedded route accepted rejected format case $FMT_DIAG_CASE"
-    fi
-    if (
-        cd "$STDLIB_TLCI_MODIFIED_DIR"
-        "$PROFILE_BIN" check "$FMT_DIAG_SOURCE" \
-            --stdlib-root stdlib
-    ) > "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.stdout" \
-        2> "$FMT_DIAG_MODIFIED"; then
-        fail "interpreted route accepted rejected format case $FMT_DIAG_CASE"
-    fi
-    format_diagnostic_text "$FMT_DIAG_EMBEDDED" \
-        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"
-    format_diagnostic_text "$FMT_DIAG_MODIFIED" \
-        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text"
-    if ! grep -q 'format: ' "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"; then
-        show_failure_logs "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.stdout" \
-            "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text"
-        fail "embedded route reported no format diagnostic for $FMT_DIAG_CASE"
-    fi
-    if ! cmp -s "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text" \
-        "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text"; then
-        diff -u "$FMT_DIAG_DIR/$FMT_DIAG_CASE.embedded.text" \
-            "$FMT_DIAG_DIR/$FMT_DIAG_CASE.modified.text" >&2 || true
-        fail "format scanner diagnostics differ by route for $FMT_DIAG_CASE"
-    fi
+    route_reject "format-$fmt_case" "$FMT_DIAG_DIR/$fmt_case.tl"
+    grep -q 'format: ' "$STDLIB_TLCI_DIR/format-$fmt_case-embedded.text" || {
+        show_failure_logs "$STDLIB_TLCI_DIR/format-$fmt_case-embedded.stdout" \
+            "$STDLIB_TLCI_DIR/format-$fmt_case-embedded.text"
+        fail "embedded route reported no format diagnostic for $fmt_case"
+    }
+    route_same "format-$fmt_case" text
 done
 
 echo "[compile-profile] compare compact and full canonical vector modules"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$VECTOR_CORE_STDOUT" 2> "$VECTOR_CORE_STDERR"; then
-    show_failure_logs "$VECTOR_CORE_STDOUT" "$VECTOR_CORE_STDERR"
-    fail "profiled compact vector fixture check failed"
-fi
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_full.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$VECTOR_FULL_STDOUT" 2> "$VECTOR_FULL_STDERR"; then
-    show_failure_logs "$VECTOR_FULL_STDOUT" "$VECTOR_FULL_STDERR"
-    fail "profiled full vector fixture check failed"
-fi
+run_logged "$VECTOR_CORE_STDOUT" "$VECTOR_CORE_STDERR" "profiled compact vector fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \
+    --stdlib-root . --stdlib-root stdlib
+run_logged "$VECTOR_FULL_STDOUT" "$VECTOR_FULL_STDERR" "profiled full vector fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_vector_full.tl \
+    --stdlib-root . --stdlib-root stdlib
 
-assert_contains_in \
-    "$VECTOR_CORE_STDERR" \
-    "stdlib.vector/vector arity=2 calls=1" \
-    "$VECTOR_CORE_STDOUT" \
-    "$VECTOR_CORE_STDERR"
-assert_contains_in \
-    "$VECTOR_FULL_STDERR" \
-    "stdlib.vector/vector arity=1 calls=1" \
-    "$VECTOR_FULL_STDOUT" \
-    "$VECTOR_FULL_STDERR"
+profile_rows "$VECTOR_CORE_STDOUT" "$VECTOR_CORE_STDERR" <<'ROWS'
+has stdlib.vector/vector arity=2 calls=1
+ROWS
+profile_rows "$VECTOR_FULL_STDOUT" "$VECTOR_FULL_STDERR" <<'ROWS'
+has stdlib.vector/vector arity=1 calls=1
+ROWS
 
 VECTOR_CORE_MACRO_ALLOC=$(awk -F'|' \
     '$1 == "compile-profile" && $2 == "typecheck.macro_walk" { print $4 }' \
@@ -3690,96 +1852,38 @@ fi
 echo "[compile-profile] vector macro-walk allocation core=$VECTOR_CORE_MACRO_ALLOC full=$VECTOR_FULL_MACRO_ALLOC savings=$VECTOR_MACRO_ALLOC_SAVINGS"
 
 echo "[compile-profile] compare one and five compact vector identities"
-if ! "$PROFILE_BIN" compile tests/integration/compile_profile_vector_one_core.tl \
-    -o "$VECTOR_ONE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    --opt-level 1 \
-    > "$VECTOR_ONE_STDOUT" 2> "$VECTOR_ONE_STDERR"; then
-    show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
-    fail "profiled one-vector fixture compile failed"
-fi
-if ! "$PROFILE_BIN" compile tests/integration/compile_profile_vector_five_core.tl \
-    -o "$VECTOR_FIVE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    --opt-level 1 \
-    > "$VECTOR_FIVE_STDOUT" 2> "$VECTOR_FIVE_STDERR"; then
-    show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
-    fail "profiled five-vector fixture compile failed"
-fi
+run_logged "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR" "profiled one-vector fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_vector_one_core.tl \
+    -o "$VECTOR_ONE_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --opt-level 1
+run_logged "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR" "profiled five-vector fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_vector_five_core.tl \
+    -o "$VECTOR_FIVE_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --opt-level 1
 
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_module_materializations" \
-    1 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_module_materializations" \
-    5 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_module_memo_hits" \
-    0 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_module_memo_hits" \
-    0 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-
+profile_rows "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR" <<'ROWS'
+c typecheck.macro.generated_module_materializations = 1
+c typecheck.macro.generated_module_memo_hits = 0
 # Every generated vector identity checks all fifteen generated declarations,
-# including the two public place macros reconstructed by #5262.
-assert_profile_counter_eq_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_decl_checks" \
-    15 \
-    "$VECTOR_ONE_STDOUT" \
-    "$VECTOR_ONE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_decl_checks" \
-    75 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-
+# including the two public place macros.
+c typecheck.macro.generated_decl_checks = 15
+ROWS
+profile_rows "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR" <<'ROWS'
+c typecheck.macro.generated_module_materializations = 5
+c typecheck.macro.generated_module_memo_hits = 0
+c typecheck.macro.generated_decl_checks = 75
+# The initial table build is the only whole-program symbol/registry build;
+# every generated vector module extends the live tables at their logical end.
+c typecheck.macro.live_rebuilds = 1
+c typecheck.macro.live_reuses = 5
+c typecheck.macro.live_registry_reuses = 5
+ROWS
 VECTOR_ONE_DECL_CHECKS=$(profile_counter_value_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks")
 VECTOR_FIVE_DECL_CHECKS=$(profile_counter_value_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks")
-
-# The initial table build is the only whole-program symbol/registry build.
-# Every generated vector module extends the live tables at their logical end.
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.live_rebuilds" \
-    1 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.live_reuses" \
-    5 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.live_registry_reuses" \
-    5 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
 
 # Generated vector Modules and their marker imports are append-only. They split
 # the active segment and publish declaration deltas, but must never request an
@@ -3792,24 +1896,11 @@ assert_segmented_program_view_in \
     "$VECTOR_FIVE_STDERR" \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
-assert_profile_counter_eq_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.walk_segment_fallback_flattens" \
-    0 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_at_least_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.walk_segment_splits" \
-    5 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
-assert_profile_counter_at_least_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.walk_segment_delta_decls" \
-    5 \
-    "$VECTOR_FIVE_STDOUT" \
-    "$VECTOR_FIVE_STDERR"
+profile_rows "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR" <<'ROWS'
+c typecheck.macro.walk_segment_fallback_flattens = 0
+c typecheck.macro.walk_segment_splits >= 5
+c typecheck.macro.walk_segment_delta_decls >= 5
+ROWS
 
 for counter in \
     checked_program.pre_decls.functions \
@@ -3834,159 +1925,74 @@ done
 echo "[compile-profile] compact vector identity counters generated_decl_checks=$VECTOR_ONE_DECL_CHECKS/$VECTOR_FIVE_DECL_CHECKS"
 
 echo "[compile-profile] check generated import fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$GEN_IMPORT_STDOUT" 2> "$GEN_IMPORT_STDERR"; then
-    show_failure_logs "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR"
-    fail "profiled generated import fixture check failed"
-fi
+run_logged "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR" "profiled generated import fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \
+    --stdlib-root . --stdlib-root stdlib
 assert_segmented_program_view_in \
     "$GEN_IMPORT_STDERR" \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
 
 # The generated module imports stdlib.string; the single demand-driven pass
-# loads and forces that file import inline (there is no fixed-point loop or
-# follow-up worklist to fall back to).
-assert_not_contains_in \
-    "$GEN_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_" \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
-assert_contains_in \
-    "$GEN_IMPORT_STDERR" \
-    "compile-profile|typecheck.macro_scratch_release|" \
-    "$GEN_IMPORT_STDOUT" \
-    "$GEN_IMPORT_STDERR"
+# loads and forces that file import inline.
+profile_rows "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR" <<'ROWS'
+lacks typecheck.macro.fixed_point_
+has compile-profile|typecheck.macro_scratch_release|
+ROWS
 
 echo "[compile-profile] check additive CTFE splice fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_ctfe_splice_delta.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$CTFE_SPLICE_STDOUT" 2> "$CTFE_SPLICE_STDERR"; then
-    show_failure_logs "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR"
-    fail "profiled additive CTFE splice fixture check failed"
-fi
+run_logged "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR" "profiled additive CTFE splice fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_ctfe_splice_delta.tl \
+    --stdlib-root . --stdlib-root stdlib
 assert_segmented_program_view_in \
     "$CTFE_SPLICE_STDERR" \
     "$CTFE_SPLICE_STDOUT" \
     "$CTFE_SPLICE_STDERR"
 
 # Fresh ordinary/module/file nominals remain visible to later reflection. The
-# fixture also forces vector growth and one first-wins collision. Every clear
-# must therefore have a measured rebuild, and capacity must never make the
-# cache unavailable.
-CTFE_SPLICE_BUILDS=$(profile_counter_value_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_builds")
-CTFE_SPLICE_REBUILDS=$(profile_counter_value_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_rebuilds")
-CTFE_SPLICE_CLEARS=$(profile_counter_value_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_cleared")
-if [ "$CTFE_SPLICE_BUILDS" -ne $((CTFE_SPLICE_REBUILDS + 1)) ] ||
-    [ "$CTFE_SPLICE_REBUILDS" -ne "$CTFE_SPLICE_CLEARS" ]; then
-    show_failure_logs "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR"
-    fail "CTFE splice build/clear pairing mismatch: builds=$CTFE_SPLICE_BUILDS rebuilds=$CTFE_SPLICE_REBUILDS clears=$CTFE_SPLICE_CLEARS"
-fi
-assert_profile_counter_at_least_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_extensions" \
-    1 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
-assert_profile_counter_at_least_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_semantic_rejections" \
-    1 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
-assert_profile_counter_at_least_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_capacity_grows" \
-    1 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
-assert_profile_counter_eq_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_ctfe_cache_unavailable" \
-    0 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
-# Top-env maintenance follows the same additive splice contract. The fixture
-# covers ordinary Decls, a generated Module, and a materialized source file;
-# each must use the cache-local unresolved-signature index and never take a
-# whole-tail fallback.
-assert_profile_counter_at_least_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_env_reresolve_calls" \
-    1 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
-assert_profile_counter_at_least_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_env_reresolve_candidates" \
-    1 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
-assert_profile_counter_eq_in \
-    "$CTFE_SPLICE_STDERR" \
-    "typecheck.macro.walk_splice_env_fallbacks" \
-    0 \
-    "$CTFE_SPLICE_STDOUT" \
-    "$CTFE_SPLICE_STDERR"
+# fixture also forces vector growth and one first-wins collision: every clear
+# has a measured rebuild, and capacity never makes the cache unavailable.
+# Top-env maintenance follows the same additive splice contract.
+profile_rows "$CTFE_SPLICE_STDOUT" "$CTFE_SPLICE_STDERR" <<'ROWS'
+sum typecheck.macro.walk_splice_ctfe_builds = typecheck.macro.walk_splice_ctfe_rebuilds + 1
+sum typecheck.macro.walk_splice_ctfe_rebuilds = typecheck.macro.walk_splice_ctfe_cleared
+c typecheck.macro.walk_splice_ctfe_extensions >= 1
+c typecheck.macro.walk_splice_ctfe_semantic_rejections >= 1
+c typecheck.macro.walk_splice_ctfe_capacity_grows >= 1
+c typecheck.macro.walk_splice_ctfe_cache_unavailable = 0
+c typecheck.macro.walk_splice_env_reresolve_calls >= 1
+c typecheck.macro.walk_splice_env_reresolve_candidates >= 1
+c typecheck.macro.walk_splice_env_fallbacks = 0
+ROWS
 
 echo "[compile-profile] check generated result import fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_result_import.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$RESULT_IMPORT_STDOUT" 2> "$RESULT_IMPORT_STDERR"; then
-    show_failure_logs "$RESULT_IMPORT_STDOUT" "$RESULT_IMPORT_STDERR"
-    fail "profiled generated result import fixture check failed"
-fi
+run_logged "$RESULT_IMPORT_STDOUT" "$RESULT_IMPORT_STDERR" "profiled generated result import fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_result_import.tl \
+    --stdlib-root . --stdlib-root stdlib
 
-assert_contains_in \
-    "$RESULT_IMPORT_STDERR" \
-    "stdlib.result/result arity=2 calls=1" \
-    "$RESULT_IMPORT_STDOUT" \
-    "$RESULT_IMPORT_STDERR"
-assert_not_contains_in \
-    "$RESULT_IMPORT_STDERR" \
-    "typecheck.macro.fixed_point_" \
-    "$RESULT_IMPORT_STDOUT" \
-    "$RESULT_IMPORT_STDERR"
+profile_rows "$RESULT_IMPORT_STDOUT" "$RESULT_IMPORT_STDERR" <<'ROWS'
+has stdlib.result/result arity=2 calls=1
+lacks typecheck.macro.fixed_point_
+ROWS
 
 echo "[compile-profile] check cross-file single-compilation fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_cross_file_single_compilation.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$CROSS_SINGLE_STDOUT" 2> "$CROSS_SINGLE_STDERR"; then
-    show_failure_logs "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR"
-    fail "profiled cross-file single-compilation fixture check failed"
-fi
+run_logged "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR" "profiled cross-file single-compilation fixture check failed" \
+    "$PROFILE_BIN" check \
+    tests/integration/compile_profile_cross_file_single_compilation.tl --stdlib-root . \
+    --stdlib-root stdlib
 
-# Plan P1 single-compilation invariant: three separate modules import the same
-# (vector i64) instantiation. The program-global memo materializes/typechecks
-# that identity exactly once, so the two later importers are memo hits. Vector
-# contains uses the shared generated equality module, so the compilation
-# materializes exactly two identities: `(vector i64)` and `(eq.eq i64)`. The
-# vector catalog currently exceeds the large-catalog cutoff and is materialized
-# in full, so ordinary typechecking validates generated declarations while the
-# separate partial-catalog shadow-validation counter remains zero.
-assert_profile_counter_eq_in \
-    "$CROSS_SINGLE_STDERR" \
-    "typecheck.macro.generated_module_memo_hits" \
-    2 \
-    "$CROSS_SINGLE_STDOUT" \
-    "$CROSS_SINGLE_STDERR"
-assert_profile_counter_eq_in \
-    "$CROSS_SINGLE_STDERR" \
-    "typecheck.macro.generated_module_materializations" \
-    2 \
-    "$CROSS_SINGLE_STDOUT" \
-    "$CROSS_SINGLE_STDERR"
+# Three modules import the same (vector i64) instantiation: the program-global
+# memo materializes it once, so the two later importers are memo hits. Vector
+# contains uses the shared generated equality module, so exactly two identities
+# are materialized. The vector catalog is materialized in full, so the
+# partial-catalog shadow-validation counter stays zero.
+profile_rows "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR" <<'ROWS'
+c typecheck.macro.generated_module_memo_hits = 2
+c typecheck.macro.generated_module_materializations = 2
+c typecheck.macro.generated_module_catalog_builds = 2
+c typecheck.macro.generated_module_catalog_hits = 2
+c typecheck.macro.generated_module_catalog_validations = 0
+ROWS
 CROSS_SINGLE_DECL_CHECKS=$(profile_counter_value_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_decl_checks")
@@ -3994,222 +2000,121 @@ if [ "$CROSS_SINGLE_DECL_CHECKS" -le 0 ]; then
     show_failure_logs "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR"
     fail "repeated generated identity emitted no generated declaration checks"
 fi
-assert_profile_counter_eq_in \
-    "$CROSS_SINGLE_STDERR" \
-    "typecheck.macro.generated_module_catalog_builds" \
-    2 \
-    "$CROSS_SINGLE_STDOUT" \
-    "$CROSS_SINGLE_STDERR"
-assert_profile_counter_eq_in \
-    "$CROSS_SINGLE_STDERR" \
-    "typecheck.macro.generated_module_catalog_hits" \
-    2 \
-    "$CROSS_SINGLE_STDOUT" \
-    "$CROSS_SINGLE_STDERR"
-assert_profile_counter_eq_in \
-    "$CROSS_SINGLE_STDERR" \
-    "typecheck.macro.generated_module_catalog_validations" \
-    0 \
-    "$CROSS_SINGLE_STDOUT" \
-    "$CROSS_SINGLE_STDERR"
 
 echo "[compile-profile] check inert generated import fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import_inert.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$GEN_IMPORT_INERT_STDOUT" 2> "$GEN_IMPORT_INERT_STDERR"; then
-    show_failure_logs "$GEN_IMPORT_INERT_STDOUT" "$GEN_IMPORT_INERT_STDERR"
-    fail "profiled inert generated import fixture check failed"
-fi
+run_logged "$GEN_IMPORT_INERT_STDOUT" "$GEN_IMPORT_INERT_STDERR" "profiled inert generated import fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_generated_import_inert.tl \
+    --stdlib-root . --stdlib-root stdlib
 
 # The generated module imports a source file by path; the single
-# demand-driven pass loads it inline (the multi-pass materialization
-# fallback this fixture used to exercise is gone).
-assert_not_contains_in \
-    "$GEN_IMPORT_INERT_STDERR" \
-    "typecheck.macro.fixed_point_" \
-    "$GEN_IMPORT_INERT_STDOUT" \
-    "$GEN_IMPORT_INERT_STDERR"
+# demand-driven pass loads it inline.
+profile_rows "$GEN_IMPORT_INERT_STDOUT" "$GEN_IMPORT_INERT_STDERR" <<'ROWS'
+lacks typecheck.macro.fixed_point_
+ROWS
 
 echo "[compile-profile] check generated module replay lazy fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$REPLAY_STDOUT" 2> "$REPLAY_STDERR"; then
-    show_failure_logs "$REPLAY_STDOUT" "$REPLAY_STDERR"
-    fail "profiled generated replay fixture check failed"
-fi
+run_logged "$REPLAY_STDOUT" "$REPLAY_STDERR" "profiled generated replay fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \
+    --stdlib-root . --stdlib-root stdlib
 
-assert_contains_in \
-    "$REPLAY_STDERR" \
-    "compile-profile-detail|typecheck.macro_expand|" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-# The replay-compare + fingerprint machinery is deleted (plan P1): a memoized
-# module is never re-expanded, so those counters no longer exist. The repeated
-# import now resolves through the program-global module memo and is counted as a
-# memo hit instead of a compare pass.
-assert_contains_in \
-    "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro.generated_module_memo_hits|" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-# The demand-driven walk forces the generated module import inline in a single
-# traversal, and the repeated structurally-identical import resolves through
-# the program-global memo as a memo hit rather than a re-expand. The fixed-point
-# loop and its follow-up counters are deleted.
-assert_not_contains_in \
-    "$REPLAY_STDERR" \
-    "typecheck.macro.fixed_point_" \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_profile_counter_at_least_in \
-    "$REPLAY_STDERR" \
-    "typecheck.macro.generated_module_memo_hits" \
-    1 \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
+profile_rows "$REPLAY_STDOUT" "$REPLAY_STDERR" <<'ROWS'
+has compile-profile-detail|typecheck.macro_expand|
+# A memoized module is never re-expanded: the repeated import is a memo hit of
+# the single demand-driven walk.
+has compile-profile|typecheck.macro.generated_module_memo_hits|
+lacks typecheck.macro.fixed_point_
+c typecheck.macro.generated_module_memo_hits >= 1
 # Local generated-import worklist processing and generated-identity shortcuts can
 # reduce these detail rows; keep upper bounds to guard against re-expanding the
 # repeated replay import.
-assert_line_count_at_most_in \
-    "$REPLAY_STDERR" \
-    "profile-replay-user arity=1 calls=1" \
-    2 \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_line_count_at_most_in \
-    "$REPLAY_STDERR" \
-    "profile-replay-nested arity=2 calls=1" \
-    2 \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
+lines<= 2 profile-replay-user arity=1 calls=1
+lines<= 2 profile-replay-nested arity=2 calls=1
 # The repeated profile-replay-user import is structurally identical. It must not
 # add another whole-program macro setup/walk pass just to discover no new work.
 # Keep this as an upper bound so future local-worklist fixes can reduce it.
-assert_line_count_at_most_in \
-    "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro_setup|" \
-    7 \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
-assert_line_count_at_most_in \
-    "$REPLAY_STDERR" \
-    "compile-profile|typecheck.macro_walk|" \
-    7 \
-    "$REPLAY_STDOUT" \
-    "$REPLAY_STDERR"
+lines<= 7 compile-profile|typecheck.macro_setup|
+lines<= 7 compile-profile|typecheck.macro_walk|
+ROWS
 
 echo "[compile-profile] check layout/spec counter fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_layout_spec.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$LAYOUT_STDOUT" 2> "$LAYOUT_STDERR"; then
-    show_failure_logs "$LAYOUT_STDOUT" "$LAYOUT_STDERR"
-    fail "profiled layout/spec fixture check failed"
-fi
+run_logged "$LAYOUT_STDOUT" "$LAYOUT_STDERR" "profiled layout/spec fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_layout_spec.tl \
+    --stdlib-root . --stdlib-root stdlib
 
-assert_layout_row "repr_c_field_builds"
-assert_layout_row "repr_c_field_visits"
-assert_layout_row "inline_field_builds"
-assert_layout_row "inline_field_visits"
-assert_layout_row "inline_payload_builds"
-assert_layout_row "inline_payload_visits"
-assert_layout_row "inline_variant_builds"
-assert_layout_row "inline_variant_visits"
-assert_layout_row "stdlib_field_spec_builds"
-assert_layout_row "stdlib_field_spec_visits"
-assert_layout_row "stdlib_variant_spec_builds"
-assert_layout_row "stdlib_variant_spec_visits"
-assert_layout_row "cache_hits"
-assert_layout_row "cache_misses"
-assert_layout_row "cache_bypasses"
+profile_rows "$LAYOUT_STDOUT" "$LAYOUT_STDERR" <<'ROWS'
+has compile-profile|typecheck.layout.repr_c_field_builds|
+has compile-profile|typecheck.layout.repr_c_field_visits|
+has compile-profile|typecheck.layout.inline_field_builds|
+has compile-profile|typecheck.layout.inline_field_visits|
+has compile-profile|typecheck.layout.inline_payload_builds|
+has compile-profile|typecheck.layout.inline_payload_visits|
+has compile-profile|typecheck.layout.inline_variant_builds|
+has compile-profile|typecheck.layout.inline_variant_visits|
+has compile-profile|typecheck.layout.stdlib_field_spec_builds|
+has compile-profile|typecheck.layout.stdlib_field_spec_visits|
+has compile-profile|typecheck.layout.stdlib_variant_spec_builds|
+has compile-profile|typecheck.layout.stdlib_variant_spec_visits|
+has compile-profile|typecheck.layout.cache_hits|
+has compile-profile|typecheck.layout.cache_misses|
+has compile-profile|typecheck.layout.cache_bypasses|
+ROWS
 
 echo "[compile-profile] compile optimizer escape fixture"
-if ! "$PROFILE_BIN" compile tests/integration/compile_profile_optimizer_escape.tl \
-    -o "$OPT_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    --opt-level 1 \
-    > "$OPT_STDOUT" 2> "$OPT_STDERR"; then
-    show_failure_logs "$OPT_STDOUT" "$OPT_STDERR"
-    fail "profiled optimized fixture compile failed"
-fi
+run_logged "$OPT_STDOUT" "$OPT_STDERR" "profiled optimized fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_optimizer_escape.tl \
+    -o "$OPT_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --opt-level 1
 
-assert_contains_in \
-    "$OPT_STDERR" \
-    "compile-profile|optimize.functions|" \
-    "$OPT_STDOUT" \
-    "$OPT_STDERR"
-assert_contains_in \
-    "$OPT_STDERR" \
-    "compile-profile|optimize.load_cse.max_table_size|" \
-    "$OPT_STDOUT" \
-    "$OPT_STDERR"
-assert_contains_in \
-    "$OPT_STDERR" \
-    "compile-profile|optimize.load_cse.max_kinds_size|" \
-    "$OPT_STDOUT" \
-    "$OPT_STDERR"
-assert_contains_in \
-    "$OPT_STDERR" \
-    "compile-profile|optimize.load_cse.table_cap_hits|" \
-    "$OPT_STDOUT" \
-    "$OPT_STDERR"
-assert_contains_in \
-    "$OPT_STDERR" \
-    "compile-profile|optimize.load_cse.kinds_cap_hits|" \
-    "$OPT_STDOUT" \
-    "$OPT_STDERR"
-assert_contains_in \
-    "$OPT_STDERR" \
-    "compile-profile|optimize.load_cse.field_key_drops|" \
-    "$OPT_STDOUT" \
-    "$OPT_STDERR"
-assert_opt_escape_row "body"
-assert_opt_escape_row "dce_escape"
-assert_opt_escape_row "restore"
-assert_contains_in "$OPT_STDERR" "|1|main" "$OPT_STDOUT" "$OPT_STDERR"
-assert_lower_row "ast_expr_pool.macro_expand.len"
-assert_lower_row "ast_expr_pool.macro_expand.capacity"
-assert_lower_row "ast_type_pool.macro_expand.len"
-assert_lower_row "ast_type_pool.macro_expand.capacity"
-assert_lower_row "ast_expr_pool.typecheck.len"
-assert_lower_row "ast_expr_pool.typecheck.capacity"
-assert_lower_row "ast_type_pool.typecheck.len"
-assert_lower_row "ast_type_pool.typecheck.capacity"
-assert_lower_row "ast_expr_pool.pre_decls.len"
-assert_lower_row "ast_expr_pool.pre_decls.capacity"
-assert_lower_row "ast_type_pool.pre_decls.len"
-assert_lower_row "ast_type_pool.pre_decls.capacity"
-assert_lower_row "checked_program.pre_decls.decls"
-assert_lower_row "checked_program.pre_decls.functions"
-assert_lower_row "checked_program.reachable.decls"
-assert_lower_row "checked_program.reachable.functions"
-assert_lower_row "ir.after_decls.functions"
-assert_lower_row "ir.after_decls.blocks"
-assert_lower_row "ir.after_decls.instructions"
-assert_lower_row "ir_arena.after_decls.active"
-assert_lower_row "name_env.binds"
-assert_lower_row "name_env.lookups"
-assert_lower_row "name_env.lookup_steps"
-assert_lower_row "name_env.stores"
-assert_lower_row "name_env.store_grows"
-assert_lower_row "name_env.materializations"
-assert_lower_row "name_env.materialized_entries"
-assert_lower_row "name_cache.builds"
-assert_lower_row "name_cache.entries"
-assert_lower_row "name_cache.lookups"
-assert_lower_row "name_cache.local_hits"
-assert_lower_row "name_cache.local_misses"
-assert_lower_row "module_name_cache.lookups"
-assert_lower_row "module_name_cache.hits"
-assert_lower_row "module_name_cache.entries"
-assert_lower_row "module_local_view.lookups"
-assert_lower_row "module_local_view.hits"
-assert_lower_row "module_local_view.entries"
+profile_rows "$OPT_STDOUT" "$OPT_STDERR" <<'ROWS'
+has compile-profile|optimize.functions|
+has compile-profile|optimize.load_cse.max_table_size|
+has compile-profile|optimize.load_cse.max_kinds_size|
+has compile-profile|optimize.load_cse.table_cap_hits|
+has compile-profile|optimize.load_cse.kinds_cap_hits|
+has compile-profile|optimize.load_cse.field_key_drops|
+has compile-profile-detail|optimize.escape.body|
+has compile-profile-detail|optimize.escape.dce_escape|
+has compile-profile-detail|optimize.escape.restore|
+has |1|main
+has compile-profile|lower.ast_expr_pool.macro_expand.len|
+has compile-profile|lower.ast_expr_pool.macro_expand.capacity|
+has compile-profile|lower.ast_type_pool.macro_expand.len|
+has compile-profile|lower.ast_type_pool.macro_expand.capacity|
+has compile-profile|lower.ast_expr_pool.typecheck.len|
+has compile-profile|lower.ast_expr_pool.typecheck.capacity|
+has compile-profile|lower.ast_type_pool.typecheck.len|
+has compile-profile|lower.ast_type_pool.typecheck.capacity|
+has compile-profile|lower.ast_expr_pool.pre_decls.len|
+has compile-profile|lower.ast_expr_pool.pre_decls.capacity|
+has compile-profile|lower.ast_type_pool.pre_decls.len|
+has compile-profile|lower.ast_type_pool.pre_decls.capacity|
+has compile-profile|lower.checked_program.pre_decls.decls|
+has compile-profile|lower.checked_program.pre_decls.functions|
+has compile-profile|lower.checked_program.reachable.decls|
+has compile-profile|lower.checked_program.reachable.functions|
+has compile-profile|lower.ir.after_decls.functions|
+has compile-profile|lower.ir.after_decls.blocks|
+has compile-profile|lower.ir.after_decls.instructions|
+has compile-profile|lower.ir_arena.after_decls.active|
+has compile-profile|lower.name_env.binds|
+has compile-profile|lower.name_env.lookups|
+has compile-profile|lower.name_env.lookup_steps|
+has compile-profile|lower.name_env.stores|
+has compile-profile|lower.name_env.store_grows|
+has compile-profile|lower.name_env.materializations|
+has compile-profile|lower.name_env.materialized_entries|
+has compile-profile|lower.name_cache.builds|
+has compile-profile|lower.name_cache.entries|
+has compile-profile|lower.name_cache.lookups|
+has compile-profile|lower.name_cache.local_hits|
+has compile-profile|lower.name_cache.local_misses|
+has compile-profile|lower.module_name_cache.lookups|
+has compile-profile|lower.module_name_cache.hits|
+has compile-profile|lower.module_name_cache.entries|
+has compile-profile|lower.module_local_view.lookups|
+has compile-profile|lower.module_local_view.hits|
+has compile-profile|lower.module_local_view.entries|
+ROWS
 
 echo "[compile-profile] scan scratch allocation regression"
 "$COMPILER" test src/tests/scan_storage_growth.tl \

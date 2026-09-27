@@ -72217,8 +72217,20 @@
           (OptBceCounterAffine.No)
           (OptBceCounterAffine.Some (* scale factor) (* offset factor))))]))
 
+;; The loop's one block as a block list, for the multi-block walks this pass
+;; shares. Over one block they agree with the block-local lookups: the phis and
+;; the terminator they also see are never the arithmetic they follow, and the
+;; body this pass admits holds no call.
+(define (opt-bce-version-body-blocks
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-block-cons
+    (ir.CompilerIrBlock.Block
+      0
+      (owned_view.compiler-owned-reference-shared-view instrs))
+    (ir.CompilerIrBlockList.Nil)))
+
 ;; Same-block affine recovery for the canonical self-loop: the multi-block
-;; recovery run over the loop's one block. Copy/reinterpret chains are resolved
+;; recovery over the loop's one block. Copy/reinterpret chains are resolved
 ;; first; Add/Sub/Mul may then contribute one literal coefficient at a time.
 (define (opt-bce-version-counter-affine
   [instrs : ir.CompilerIrInstrSeq]
@@ -72226,10 +72238,7 @@
   [value : ir.CompilerIrValue]
   [fuel : i64]) : OptBceCounterAffine
   (let
-    [body-blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block 0 instrs)
-        (ir.CompilerIrBlockList.Nil))]
+    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
     (opt-bce-mb-counter-affine body-blocks iphi value fuel)))
 
 ;; The invariant value an operand resolves to (a literal, or a var defined
@@ -72264,12 +72273,7 @@
   [phi-var : i64]
   [inputs : ir.CompilerIrPhiInputSeq]) : OptBceDerivedInduction
   (let
-    [body-blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block
-          0
-          (owned_view.compiler-owned-reference-shared-view instrs))
-        (ir.CompilerIrBlockList.Nil))]
+    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
     (opt-bce-mb-derived-induction
       body-blocks
       defs
@@ -72693,73 +72697,16 @@
   (No)
   (Some i64 i64))
 
-;; Peel literal Add/Sub addends off an index expression, returning the
-;; remaining core variable and the accumulated literal. Peeling stops at the
-;; first definition that is not a literal addend link (a var+var Add, a phi,
-;; a load, ...); a non-variable expression rejects.
+;; Peel literal Add/Sub addends off an index expression: opt-bce-mb-strided-peel
+;; over the loop's one block.
 (define (opt-bce-version-strided-peel
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [phi-count : i64]
-  [last : i64]
   [value : ir.CompilerIrValue]
   [k : i64]
   [fuel : i64]) : OptBceVersionStridedCore
-  (match value
-    [(ir.CompilerIrValue.Var raw)
-      (let
-        [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
-        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-        [def-index : i64
-          (opt-unroll-def-index
-            (compiler-opt-global-shared-view slots)
-            0
-            last
-            id)]
-        (if (or (<= fuel 0) (< def-index 0))
-          (OptBceVersionStridedCore.Some id k)
-          (match (array-ref slots def-index)
-            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
-              (if (not (opt-affine-64bit-type? ty))
-                (OptBceVersionStridedCore.Some id k)
-                (match op
-                  [(ir.CompilerIrBinOp.Add)
-                    (match (opt-affine-var-const lhs rhs)
-                      [(OptAffineOperands.Some src c)
-                        (match (opt-bce-version-k-add k c)
-                          [(OptBceVersionKSum.No) (OptBceVersionStridedCore.No)]
-                          [(OptBceVersionKSum.Some next)
-                            (opt-bce-version-strided-peel
-                              instrs
-                              phi-count
-                              last
-                              (ir.CompilerIrValue.Var src)
-                              next
-                              (- fuel 1))])]
-                      [(OptAffineOperands.No)
-                        (OptBceVersionStridedCore.Some id k)])]
-                  [(ir.CompilerIrBinOp.Sub)
-                    (match lhs
-                      [(ir.CompilerIrValue.Var src)
-                        (match rhs
-                          [(ir.CompilerIrValue.I64 c)
-                            (if (= c (- (- 0 9223372036854775807) 1))
-                              (OptBceVersionStridedCore.Some id k)
-                              (match (opt-bce-version-k-add k (- 0 c))
-                                [(OptBceVersionKSum.No)
-                                  (OptBceVersionStridedCore.No)]
-                                [(OptBceVersionKSum.Some next)
-                                  (opt-bce-version-strided-peel
-                                    instrs
-                                    phi-count
-                                    last
-                                    (ir.CompilerIrValue.Var src)
-                                    next
-                                    (- fuel 1))]))]
-                          [_ (OptBceVersionStridedCore.Some id k)])]
-                      [_ (OptBceVersionStridedCore.Some id k)])]
-                  [_ (OptBceVersionStridedCore.Some id k)]))]
-            [_ (OptBceVersionStridedCore.Some id k)])))]
-    [_ (OptBceVersionStridedCore.No)]))
+  (let
+    [body-blocks : ir.CompilerIrBlockList (opt-bce-version-body-blocks instrs)]
+    (opt-bce-mb-strided-peel body-blocks value k fuel)))
 
 ;; The strided side as a derived induction phi (possibly under peeled literal
 ;; addends): opt-bce-version-derived-induction pins the invariant init and
@@ -72773,7 +72720,7 @@
   [pred-label : i64]
   [value : ir.CompilerIrValue]
   [fuel : i64]) : OptBceVarBaseStrided
-  (match (opt-bce-version-strided-peel instrs phi-count last value 0 fuel)
+  (match (opt-bce-version-strided-peel instrs value 0 fuel)
     [(OptBceVersionStridedCore.No) (OptBceVarBaseStrided.No)]
     [(OptBceVersionStridedCore.Some core total)
       (let
@@ -74522,7 +74469,7 @@
   [allow-scale1 : bool]
   [fan : OptBceVersionFan]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match (opt-bce-version-strided-peel instrs phi-count last index-value 0 8)
+  (match (opt-bce-version-strided-peel instrs index-value 0 8)
     [(OptBceVersionStridedCore.No) (OptBceVersionGuardAcc.No)]
     [(OptBceVersionStridedCore.Some core k0)
       (let
@@ -76102,90 +76049,6 @@
             [_ (OptUnrollMaybeShape.No)])))]))
 
 ;; --- rewrite -------------------------------------------------------------------
-;; Uses of loop defs anywhere outside the loop block, except as the loop-edge
-;; inputs of the exit block's phis (those get the parallel fast input).
-(define (opt-bce-version-outside-phi-uses
-  [set : opt_i64_i64_map.Map]
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [loop-label : i64]) : opt_i64_i64_map.Map
-  (let
-    [phi-inputs-at-79727-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-79727-3.len 0)
-      set
-      (let
-        [phi-input-at-79727-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-79727-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-79727-3.value]
-        [label : i64 phi-input-at-79727-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-79727-3.slots
-            (+ phi-inputs-at-79727-3.start 1)
-            (- phi-inputs-at-79727-3.len 1))]
-        (opt-bce-version-outside-phi-uses
-          (if (= label loop-label)
-            set
-            (opt-collect-value-uses set value))
-          rest
-          loop-label)))))
-
-(define (opt-bce-version-outside-uses-seq
-  [set : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [loop-label : i64]) : opt_i64_i64_map.Map
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    set
-    (let
-      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt-bce-version-outside-uses-seq
-        (match (compiler-opt-global-shared-view instr)
-          [(ir.CompilerIrInstr.Phi _ inputs _)
-            (opt-bce-version-outside-phi-uses set inputs loop-label)]
-          [_ (opt-collect-instr-uses set instr)])
-        instrs
-        (+ index 1)
-        loop-label))))
-
-(define (opt-bce-version-outside-uses
-  [set : opt_i64_i64_map.Map]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [loop-label : i64]) : opt_i64_i64_map.Map
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) set]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (opt-bce-version-outside-uses
-        (match block
-          [(ir.CompilerIrBlock.Block label instrs)
-            (if (= label loop-label)
-              set
-              (opt-bce-version-outside-uses-seq set instrs 0 loop-label))])
-        (deref rest)
-        loop-label)]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-bce-version-outside-uses set blocks loop-label))]))
-
-(define (opt-bce-version-defs-escape?
-  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
-  [index : i64]
-  [count : i64]
-  [outside : (& outside opt_i64_i64_map.Map)]) : bool
-  (if (>= index count)
-    false
-    (let
-      [dst : i64
-        (ir.compiler-ir-instr-array-loop-dst-or
-          (compiler-opt-global-shared-view slots)
-          index
-          (- 0 1))]
-      (if (and (>= dst 0) (opt-used-contains outside dst))
-        true
-        (opt-bce-version-defs-escape? slots (+ index 1) count outside)))))
-
 ;; The fast clone's leading phis: the counter and every loop-carried value,
 ;; seeded from the guard and chained through the clone's remapped back edges.
 (define (opt-bce-version-push-fast-phis!
@@ -76423,10 +76286,10 @@
             (ir.compiler-ir-instr-seq-count instrs)
             (opt_i64_i64_map.with-capacity 32))]
         [outside : opt_i64_i64_map.Map
-          (opt-bce-version-outside-uses
+          (opt-bce-mb-outside-uses
             (opt_i64_i64_map.with-capacity 64)
             blocks
-            label)]
+            (opt-label-add (OptLabelSet.Nil) label))]
         ;; The guard's no-wrap condition needs the exact literal step. ALIAS-1:
         ;; its sign is the counter's DIRECTION -- see
         ;; opt-bce-version-down-range.
@@ -76473,11 +76336,9 @@
             [(= exit-label label) (opt-bce-reason-latch-form)]
             [(= exit-label pred-label) (opt-bce-reason-latch-form)]
             [(not range-ok?) (opt-bce-reason-bound-range)]
-            [(opt-bce-version-defs-escape?
-                (compiler-opt-global-shared-view
-                  (__tl-project-field instrs slots))
+            [(opt-bce-mb-defs-escape-instrs?
+                (compiler-opt-global-shared-view instrs)
                 0
-                (ir.compiler-ir-instr-seq-count instrs)
                 outside)
               (opt-bce-reason-defs-escape)]
             [else (opt-bce-reason-ok)])]

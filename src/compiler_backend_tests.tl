@@ -19353,7 +19353,7 @@ g:
 (define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
   (match (reg_tests.compiler-reg-plan-function
     (compiler-backend-avx512-mask-spill-function))
-    [(regalloc.CompilerRegPlan.Plan assignments _ _ _ _ _)
+    [(regalloc.CompilerRegPlan.Plan assignments _ _ _ _)
       (compiler-backend-avx512-mask-spill-assignment? assignments 0)]))
 
 (define (compiler-backend-avx512-mask-spill-compile-ok?) : bool

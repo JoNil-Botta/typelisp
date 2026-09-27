@@ -545,45 +545,13 @@
     (compiler-reg-call-region-seq-empty)
     (compiler-reg-call-evict-seq-empty)))
 
-;; SplitKit occupant-liberation record (design 3.2): to free a callee-saved
-;; register R for a call-spanning value V across its crossing region, a cold
-;; through-occupant O of R is split -- stored to its slot before the region and
-;; reloaded after -- so R is free over [region-start,region-end). Fields:
-;;   occupant var O, region start, region end (point coords), the freed CSR
-;;   register, and O's stack slot offset (store-before / reload-after home).
-;; Carried by the split plan; the array stays empty until M5 turns the
-;; live-occupant lever on.
-(defenum CompilerRegOccupantSplit
-  (CompilerRegOccupantSplit i64 i64 i64 i64 i64))
-
-;; SplitKit per-sub-range value model (design 1.2). Produced by the greedy and
-;; threaded through CompilerRegPlan: a spilled call-spanning value V keeps its
-;; canonical stack slot while its live range partitions at call boundaries into
-;; register sub-ranges (future minted pieces V_i + boundary copies) and slot
-;; sub-ranges. Indexed by piece var id:
-;;   piece-of[V_i]        -- original root V of a minted piece; -1 for non-pieces
-;;   piece-start/-end     -- V_i's sub-range [start,end) in point coords
-;;   piece-reg[V_i]       -- physreg ID the worklist gave V_i (-1 = spilled)
-;;   piece-writeback[V_i] -- 1 iff V is redefined inside V_i (needs the OUT copy)
-;;   occupant-split       -- the freed-CSR store/reload plans (design 3.2)
-;; M1 threads an EMPTY (budget-0) plan: no pieces are minted and nothing consumes
-;; it, so allocation and emission are unchanged until M2+ populate it.
-(defstruct CompilerRegSplitPlan
-  (piece-of (__tl_dyn-array i64))
-  (piece-start (__tl_dyn-array i64))
-  (piece-end (__tl_dyn-array i64))
-  (piece-reg (__tl_dyn-array i64))
-  (piece-writeback (__tl_dyn-array i64))
-  (occupant-split (__tl_dyn-array CompilerRegOccupantSplit)))
-
 (defenum CompilerRegPlan
   (Plan
     CompilerRegAssignmentTable
     live.CompilerLiveI64Set
     CompilerRegIntervalSeq
     CompilerRegVarTypes
-    CompilerRegCallSplit
-    CompilerRegSplitPlan))
+    CompilerRegCallSplit))
 
 (defenum CompilerRegAssignState
   (State CompilerRegActiveSeq CompilerRegAssignmentTable))
@@ -25596,21 +25564,6 @@
           (set! v (+ v 1))))
       out)))
 
-;; ---------------------------------------------------------------------------
-;; SplitKit Phase A step 0: coalesce/segment-preserving spill bookkeeping.
-;; ---------------------------------------------------------------------------
-;; The empty (budget-0) split plan: no minted pieces, no occupant splits. M1
-;; threads this through CompilerRegPlan on every path so the per-sub-range model
-;; is carried but inert; M2+ replace it with a populated plan from the greedy.
-(define (compiler-reg-split-plan-empty) : CompilerRegSplitPlan
-  (CompilerRegSplitPlan
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array CompilerRegOccupantSplit 0)))
-
 ;; The spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
 ;; least-used member of the class (e.g. a phi result used once), so the eviction
@@ -31318,8 +31271,6 @@
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState.State _ found) found])]
-    ;; SplitKit remains removed; the plan carries its empty metadata carrier.
-    [split-plan : CompilerRegSplitPlan (compiler-reg-split-plan-empty)]
     ;; The passes above assigned class ROOTS; expand so every member
     ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
     ;; coalesce map, so this is the identity there.
@@ -31387,8 +31338,7 @@
       ineligible
       intervals
       type-info
-      call-save-split
-      split-plan)))
+      call-save-split)))
 
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
@@ -31732,16 +31682,6 @@
         (compiler-reg-owned-copy-i64 b)
         (compiler-reg-owned-copy-i64 c))]))
 
-(define (compiler-reg-owned-copy-occupant [item : CompilerRegOccupantSplit]) : CompilerRegOccupantSplit
-  (match item
-    [(CompilerRegOccupantSplit a b c d e)
-      (CompilerRegOccupantSplit
-        (compiler-reg-owned-copy-i64 a)
-        (compiler-reg-owned-copy-i64 b)
-        (compiler-reg-owned-copy-i64 c)
-        (compiler-reg-owned-copy-i64 d)
-        (compiler-reg-owned-copy-i64 e))]))
-
 (define (compiler-reg-owned-copy-set [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (live.CompilerLiveI64Set
     (live.compiler-live-set-copy-with-capacity
@@ -31769,24 +31709,11 @@
             compiler-reg-owned-copy-eviction)
           evictions.len))]))
 
-(define (compiler-reg-owned-copy-split [split : CompilerRegSplitPlan]) : CompilerRegSplitPlan
-  (CompilerRegSplitPlan
-    (compiler-reg-owned-copy-words split.piece-of)
-    (compiler-reg-owned-copy-words split.piece-start)
-    (compiler-reg-owned-copy-words split.piece-end)
-    (compiler-reg-owned-copy-words split.piece-reg)
-    (compiler-reg-owned-copy-words split.piece-writeback)
-    (compiler-reg-owned-copy-array
-      CompilerRegOccupantSplit
-      (compiler-reg-global-shared-view split.occupant-split)
-      (array-length split.occupant-split)
-      compiler-reg-owned-copy-occupant)))
-
 (define (compiler-reg-owned-copy-plan
   [plan : CompilerRegPlan]
   [types : CompilerRegVarTypes]) : CompilerRegPlan
   (match plan
-    [(CompilerRegPlan.Plan assignments ineligible intervals _ calls split)
+    [(CompilerRegPlan.Plan assignments ineligible intervals _ calls)
       (let
         [copied : CompilerRegAssignmentTable
           (compiler-reg-assignment-table-copy-with-capacity
@@ -31821,8 +31748,7 @@
                 compiler-reg-owned-copy-interval)
               intervals.len)
             types
-            (compiler-reg-owned-copy-call-split calls)
-            (compiler-reg-owned-copy-split split))))]))
+            (compiler-reg-owned-copy-call-split calls))))]))
 
 (define (compiler-reg-plan-function-scalar-forced-spill-with-types
   [type-segment-bases : i64]
@@ -32073,8 +31999,7 @@
       (live.compiler-live-set-empty)
       intervals
       type-info
-      (compiler-reg-call-split-empty)
-      (compiler-reg-split-plan-empty))))
+      (compiler-reg-call-split-empty))))
 
 (define (compiler-reg-plan-function-stack-only-with-representations-and-metrics-and-advisory-sink
   [func : ir.CompilerIrFunction]
@@ -36177,34 +36102,33 @@
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentTable
   (match plan
-    [(CompilerRegPlan.Plan assignments _ _ _ _ _) assignments]))
+    [(CompilerRegPlan.Plan assignments _ _ _ _) assignments]))
 
 (define (compiler-reg-plan-ineligible [plan : CompilerRegPlan]) : live.CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan.Plan _ ineligible _ _ _ _) ineligible]))
+    [(CompilerRegPlan.Plan _ ineligible _ _ _) ineligible]))
 
 (define (compiler-reg-plan-intervals [plan : CompilerRegPlan]) : CompilerRegIntervalSeq
   (match plan
-    [(CompilerRegPlan.Plan _ _ intervals _ _ _) intervals]))
+    [(CompilerRegPlan.Plan _ _ intervals _ _) intervals]))
 
 (define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypes
   (match plan
-    [(CompilerRegPlan.Plan _ _ _ types _ _) types]))
+    [(CompilerRegPlan.Plan _ _ _ types _) types]))
 
 (define (compiler-reg-plan-caller-save-regs [plan : CompilerRegPlan]) : (__tl_dyn-array
     i64)
   (match plan
-    [(CompilerRegPlan.Plan _ _ _ _ split _)
-      (compiler-reg-call-split-regs split)]))
+    [(CompilerRegPlan.Plan _ _ _ _ split) (compiler-reg-call-split-regs split)]))
 
 (define (compiler-reg-plan-caller-save-regions [plan : CompilerRegPlan]) : CompilerRegCallRegionSeq
   (match plan
-    [(CompilerRegPlan.Plan _ _ _ _ split _)
+    [(CompilerRegPlan.Plan _ _ _ _ split)
       (compiler-reg-call-split-regions split)]))
 
 (define (compiler-reg-plan-caller-save-evictions [plan : CompilerRegPlan]) : CompilerRegCallEvictSeq
   (match plan
-    [(CompilerRegPlan.Plan _ _ _ _ split _)
+    [(CompilerRegPlan.Plan _ _ _ _ split)
       (compiler-reg-call-split-evictions split)]))
 
 (define (compiler-reg-assignment-table-merge
@@ -36266,13 +36190,7 @@
   [plan : CompilerRegPlan]
   [rewrite : CompilerRegCallSaveRewrite]) : CompilerRegPlan
   (match plan
-    [(CompilerRegPlan.Plan
-        assignments
-        ineligible
-        intervals
-        types
-        shadows
-        split-plan)
+    [(CompilerRegPlan.Plan assignments ineligible intervals types shadows)
       (match rewrite
         [(CompilerRegCallSaveRewrite.Rewrite
             _
@@ -36285,8 +36203,7 @@
             ineligible
             intervals
             (compiler-reg-var-types-merge extra-types types)
-            shadows
-            split-plan)])]))
+            shadows)])]))
 
 (define (compiler-reg-plan-var-count-intervals
   [intervals : CompilerRegIntervalSeq]
@@ -36341,7 +36258,7 @@
 
 (define (compiler-reg-plan-var-count [plan : CompilerRegPlan] [min-vars : i64]) : i64
   (match plan
-    [(CompilerRegPlan.Plan assignments _ intervals types _ _)
+    [(CompilerRegPlan.Plan assignments _ intervals types _)
       (compiler-reg-plan-var-count-types
         types
         (compiler-reg-plan-var-count-assignments

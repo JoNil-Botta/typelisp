@@ -672,9 +672,7 @@
       false
       (let
         [phi-input-at-103173-5 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-103173-5)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-103173-5 0)]
         [first : i64 phi-input-at-103173-5.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -689,9 +687,7 @@
               false
               (let
                 [phi-input-at-103177-11 : ir.CompilerIrPhiInput
-                  (ir.compiler-ir-phi-input-seq-ref
-                    (ir.compiler-ir-global-shared-view phi-inputs-at-103177-11)
-                    0)]
+                  (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-103177-11 0)]
                 [second : i64 phi-input-at-103177-11.label]
                 [tail : ir.CompilerIrPhiInputSeq
                   (ir.CompilerIrPhiInputSeq
@@ -2216,9 +2212,7 @@
     (begin
       (while (< index functions.len)
         (begin
-          (match (ir.compiler-ir-function-seq-ref
-            (ir.compiler-ir-global-shared-view functions)
-            index)
+          (match (ir.compiler-ir-function-seq-ref functions index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set!
                 count
@@ -3017,7 +3011,9 @@
           [(opt.OptMaybeFunction.Some main)
             (and
               (=
-                (ir.compiler-ir-block-list-count (opt.opt-function-blocks main))
+                (let
+                  [blocks (opt.opt-function-blocks main)]
+                  (ir.compiler-ir-block-list-count blocks))
                 5)
               (opt-span-lookup-ok?
                 (opt.compiler-opt-global-shared-view optimized-spans)
@@ -4559,9 +4555,7 @@
 (define (opt-agsplit-string-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [out : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
-    [count : i64
-      (ir.compiler-ir-block-list-count
-        (opt.compiler-opt-global-shared-view blocks))]
+    [count : i64 (ir.compiler-ir-block-list-count blocks)]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -8970,12 +8964,7 @@
         (return 8))
       ;; The literal-fed branch becomes a jump to the arm the literal selects,
       ;; the other arm is dropped, and the Mov that fed it goes with it.
-      (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view folded-blocks))
-          2)
-        (return 9))
+      (unless (= (ir.compiler-ir-block-list-count folded-blocks) 2) (return 9))
       (unless
         (opt-block-list-has-label? folded-blocks (ir.compiler-ir-label "other"))
         (return 10))
@@ -8999,12 +8988,7 @@
       (unless folded-changed? (return 14))
       ;; A branch on a real comparison decides nothing: both arms stay and the
       ;; block is left exactly as written.
-      (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view kept-blocks))
-          3)
-        (return 15))
+      (unless (= (ir.compiler-ir-block-list-count kept-blocks) 3) (return 15))
       (unless
         (=
           (let
@@ -10100,12 +10084,7 @@
       ;; case), so a full verify does not apply; the pass only deletes
       ;; mid-block instructions, checked structurally below.
       [(not (= after 4)) 2]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view after-blocks))
-            5))
-        3]
+      [(not (= (ir.compiler-ir-block-list-count after-blocks) 5)) 3]
       [(not (opt.opt-cfg-successor-targets-known? after-blocks)) 4]
       [else 42])))
 
@@ -11633,12 +11612,7 @@
       ;; (b) folded: `idx < 5` on the true arm. kept: the branch's own compare
       ;; and the false arm's copy, which `idx >= 3` does not decide.
       [(not (= (opt-rule-a-count-compares after-blocks) 2)) 4]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view after-blocks))
-            4))
-        5]
+      [(not (= (ir.compiler-ir-block-list-count after-blocks) 4)) 5]
       [(not (opt.opt-cfg-successor-targets-known? after-blocks)) 6]
       ;; (c) nothing folds when the compared operand is redefined between.
       [(not (= (opt-rule-a-count-compares redef) 2)) 7]
@@ -11737,12 +11711,7 @@
       [(not (= (opt-rule-a-count-compares admitted) 4)) 1]
       ;; ADMITTED: the header test became a Mov; nothing else moved.
       [(not (= (opt-rule-a-count-compares after) 3)) 2]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view after))
-            5))
-        3]
+      [(not (= (ir.compiler-ir-block-list-count after) 5)) 3]
       [(not (opt.opt-cfg-successor-targets-known? after)) 4]
       [(not (= (opt-rule-a-count-compares again) 3)) 5]
       [(not (= (ir.compiler-ir-block-list-count again) 5)) 6]
@@ -11964,10 +11933,7 @@
 (define (opt-branch-fold-block-count-is?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [expected : i64]) : bool
-  (=
-    (ir.compiler-ir-block-list-count
-      (owned_view.compiler-owned-reference-shared-view blocks))
-    expected))
+  (= (ir.compiler-ir-block-list-count blocks) expected))
 
 (define (opt-branch-fold-phi-input-count-is?
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -12196,14 +12162,9 @@
   [globals : ir.CompilerIrGlobalSeq]
   [name : String]
   [index : i64]) : bool
-  (if (>=
-    index
-    (ir.compiler-ir-global-seq-count
-      (opt.compiler-opt-global-shared-view globals)))
+  (if (>= index (ir.compiler-ir-global-seq-count globals))
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (opt.compiler-opt-global-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global global-name _ _)
         (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
           true
@@ -12255,13 +12216,9 @@
               (begin
                 (while (and same? (< index aglobals.len))
                   (begin
-                    (match (ir.compiler-ir-global-seq-ref
-                      (opt.compiler-opt-global-shared-view aglobals)
-                      index)
+                    (match (ir.compiler-ir-global-seq-ref aglobals index)
                       [(ir.CompilerIrGlobal.Global aname aty avalue)
-                        (match (ir.compiler-ir-global-seq-ref
-                          (opt.compiler-opt-global-shared-view bglobals)
-                          index)
+                        (match (ir.compiler-ir-global-seq-ref bglobals index)
                           [(ir.CompilerIrGlobal.Global bname bty bvalue)
                             (set!
                               same?
@@ -12289,9 +12246,7 @@
                 (set! index 0)
                 (while (and same? (< index aexterns.len))
                   (begin
-                    (match (ir.compiler-ir-extern-seq-ref
-                      (opt.compiler-opt-global-shared-view aexterns)
-                      index)
+                    (match (ir.compiler-ir-extern-seq-ref aexterns index)
                       [(ir.CompilerIrExtern.Extern
                           aid
                           asource
@@ -12301,9 +12256,7 @@
                           asymbol
                           alinks
                           aprovided)
-                        (match (ir.compiler-ir-extern-seq-ref
-                          (opt.compiler-opt-global-shared-view bexterns)
-                          index)
+                        (match (ir.compiler-ir-extern-seq-ref bexterns index)
                           [(ir.CompilerIrExtern.Extern
                               bid
                               bsource
@@ -12596,15 +12549,9 @@
     [level1-globals : ir.CompilerIrGlobalSeq (opt-program-globals level1)]
     (and
       (= (ir.compiler-ir-function-seq-count level0-functions) 6)
-      (=
-        (ir.compiler-ir-function-seq-count
-          (ir.compiler-ir-global-shared-view level1-functions))
-        4)
+      (= (ir.compiler-ir-function-seq-count level1-functions) 4)
       (= (ir.compiler-ir-global-seq-count level0-globals) 5)
-      (=
-        (ir.compiler-ir-global-seq-count
-          (ir.compiler-ir-global-shared-view level1-globals))
-        3)
+      (= (ir.compiler-ir-global-seq-count level1-globals) 3)
       (opt.opt-function-seq-defines? level1-functions "main")
       (opt.opt-function-seq-defines? level1-functions "helper")
       (opt.opt-function-seq-defines? level1-functions "callback-target")
@@ -14720,9 +14667,7 @@
 
 (define (opt-inline-pack-words-are-vars-1-2? [words : ir.CompilerIrValueSeq]) : bool
   (if (= words.len 2)
-    (match (ir.compiler-ir-value-seq-ref
-      (ir.compiler-ir-global-shared-view words)
-      0)
+    (match (ir.compiler-ir-value-seq-ref words 0)
       [(ir.CompilerIrValue.Var av)
         (match (ir.compiler-ir-value-seq-ref words 1)
           [(ir.CompilerIrValue.Var bv) (and (= av 1) (= bv 2))]
@@ -14992,10 +14937,7 @@
           [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
           (and
             (= (opt-count-direct-call-name-blocks blocks "inline_branch") 0)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
-              5)
+            (= (ir.compiler-ir-block-list-count blocks) 5)
             (= (opt-count-phi-blocks blocks) 1)
             (= (opt.opt-function-frame main) 2)
             (opt.opt-inline-structure-ok? blocks)))]
@@ -15056,10 +14998,7 @@
           [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
           (and
             (= (opt-count-direct-call-name-blocks blocks "inline_loop") 0)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
-              5)
+            (= (ir.compiler-ir-block-list-count blocks) 5)
             (= (opt-count-phi-blocks blocks) 0)
             (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))
@@ -15289,10 +15228,7 @@
             (match (ir.compiler-ir-instr-seq-ref instrs 0)
               [(ir.CompilerIrInstr.Phi _ inputs _)
                 (and
-                  (=
-                    (ir.compiler-ir-phi-input-seq-count
-                      (opt.compiler-opt-global-shared-view inputs))
-                    3)
+                  (= (ir.compiler-ir-phi-input-seq-count inputs) 3)
                   (opt.opt-inline-phi-input-label?
                     (opt.compiler-opt-global-shared-view inputs)
                     (ir.compiler-ir-label "inl.entry.0.zero"))
@@ -19981,9 +19917,7 @@
     (begin
       (while (< index functions.len)
         (begin
-          (match (ir.compiler-ir-function-seq-ref
-            (ir.compiler-ir-global-shared-view functions)
-            index)
+          (match (ir.compiler-ir-function-seq-ref functions index)
             [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
               (set!
                 count
@@ -23189,10 +23123,7 @@
           [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
           (and
             (= (opt-count-direct-call-name-blocks blocks "inline_loop") 0)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
-              8)
+            (= (ir.compiler-ir-block-list-count blocks) 8)
             (= (opt-count-phi-blocks blocks) 1)
             (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))
@@ -23667,10 +23598,8 @@
                 (opt.opt-function-blocks twice-main)]
               (and
                 (=
-                  (ir.compiler-ir-block-list-count
-                    (opt.compiler-opt-global-shared-view once-blocks))
-                  (ir.compiler-ir-block-list-count
-                    (opt.compiler-opt-global-shared-view twice-blocks)))
+                  (ir.compiler-ir-block-list-count once-blocks)
+                  (ir.compiler-ir-block-list-count twice-blocks))
                 (=
                   (opt-count-direct-call-name-blocks
                     twice-blocks
@@ -23834,10 +23763,7 @@
             (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
             (= (opt-count-tail-call-blocks blocks) 0)
             (= (opt-count-phi-blocks blocks) 0)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
-              1)
+            (= (ir.compiler-ir-block-list-count blocks) 1)
             (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))
 
@@ -24109,10 +24035,7 @@
             (= (opt-count-return-blocks blocks) 1)
             (= (opt-count-instrs-blocks blocks) 2)
             (= (opt-count-phi-blocks blocks) 0)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
-              1)
+            (= (ir.compiler-ir-block-list-count blocks) 1)
             (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))
 
@@ -24140,10 +24063,7 @@
             (= (opt-count-return-blocks blocks) 0)
             (= (opt-count-instrs-blocks blocks) 2)
             (= (opt-count-phi-blocks blocks) 0)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
-              1)
+            (= (ir.compiler-ir-block-list-count blocks) 1)
             (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))
 
@@ -24192,10 +24112,7 @@
               0)
             ;; preheader jump, the `Mov`, the back-edge jump
             (= (opt-count-instrs-blocks callee-blocks) 3)
-            (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view callee-blocks))
-              2)
+            (= (ir.compiler-ir-block-list-count callee-blocks) 2)
             (opt-block-list-has-label?
               callee-blocks
               (ir.compiler-ir-label "entry__ssa_entry"))
@@ -25313,10 +25230,7 @@
                       (opt-inline-mov-dst-src? indirect-instrs 2 3)
                       (return 15))
                     (unless
-                      (=
-                        (ir.compiler-ir-function-seq-count
-                          (ir.compiler-ir-global-shared-view devirt-reach))
-                        1)
+                      (= (ir.compiler-ir-function-seq-count devirt-reach) 1)
                       (return 16))
                     (unless
                       (opt.opt-function-seq-defines? devirt-reach "main")
@@ -28386,43 +28300,23 @@
       [(not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42)) 2]
       [(not (= (opt-count-phi-blocks diamond) 0)) 3]
       [(not (= (opt-blocks-mov-dst-i64-value diamond 3 (- 0 999)) 7)) 4]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view branch))
-            2))
-        5]
+      [(not (= (ir.compiler-ir-block-list-count branch) 2)) 5]
       [(opt-block-list-has-label? branch (ir.compiler-ir-label "else")) 6]
       [(not (= (opt-count-branches-blocks branch) 0)) 7]
       [(not
           (= (opt-count-jump-to-blocks branch (ir.compiler-ir-label "then")) 1))
         8]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view loop))
-            4))
-        9]
+      [(not (= (ir.compiler-ir-block-list-count loop) 4)) 9]
       [(not (= (opt-count-phi-blocks loop) 1)) 10]
       [(not (= (opt-count-mov-dst-blocks loop 1) 0)) 11]
       [(not (= (opt-count-arith-blocks loop) 1)) 12]
       [(not (= (opt-count-arith-blocks trap) 1)) 13]
       [(not (= (opt-count-mov-dst-blocks trap 1) 0)) 14]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view group))
-            4))
-        15]
+      [(not (= (ir.compiler-ir-block-list-count group) 4)) 15]
       [(not (= (opt-count-branches-blocks group) 1)) 16]
       [(not (opt-block-list-has-label? group (ir.compiler-ir-label "then"))) 17]
       [(not (opt-block-list-has-label? group (ir.compiler-ir-label "else"))) 18]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view branch-context))
-            2))
-        19]
+      [(not (= (ir.compiler-ir-block-list-count branch-context) 2)) 19]
       [(not branch-context-valid) 20]
       [(opt-block-list-has-label? branch-context (ir.compiler-ir-label "else"))
         21]
@@ -28816,10 +28710,7 @@
 
 (define (opt-cfg-fallthrough-prune-ok? [blocks : ir.CompilerIrBlockList]) : bool
   (and
-    (=
-      (ir.compiler-ir-block-list-count
-        (ir.compiler-ir-global-shared-view blocks))
-      3)
+    (= (ir.compiler-ir-block-list-count blocks) 3)
     (opt-block-list-has-label? blocks (ir.compiler-ir-label "entry"))
     (opt-block-list-has-label? blocks (ir.compiler-ir-label "reachable-empty"))
     (opt-block-list-has-label? blocks (ir.compiler-ir-label "exit"))
@@ -30475,7 +30366,9 @@
   (match maybe
     [(opt.OptMaybeNaturalLoop.No) 0]
     [(opt.OptMaybeNaturalLoop.Some loop)
-      (ir.compiler-ir-block-list-count (opt.opt-natural-loop-body-blocks loop))]))
+      (let
+        [blocks (opt.opt-natural-loop-body-blocks loop)]
+        (ir.compiler-ir-block-list-count blocks))]))
 
 (define (opt-natural-loop-maybe-body-contains?
   [maybe : (& maybe opt.OptMaybeNaturalLoop)]
@@ -33859,8 +33752,7 @@
       [(not
           (=
             (ir.compiler-ir-block-list-count positive-blocks)
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view repeat-blocks))))
+            (ir.compiler-ir-block-list-count repeat-blocks)))
         10]
       [(opt-block-list-has-label?
           repeat-blocks
@@ -34244,8 +34136,7 @@
       [(not
           (=
             (ir.compiler-ir-block-list-count chained-blocks)
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view repeat-blocks))))
+            (ir.compiler-ir-block-list-count repeat-blocks)))
         9]
       [(opt-block-list-has-label?
           repeat-blocks
@@ -35816,12 +35707,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function merge-func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view merge))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count merge) 5)) 2]
       ;; TWO copies, not sixteen: the load-and-store factor.
       [(not
           (=
@@ -35847,12 +35733,7 @@
             1))
         5]
       ;; Idempotent: a second pass finds nothing left to rewrite.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view idempotent))
-            5))
-        6]
+      [(not (= (ir.compiler-ir-block-list-count idempotent) 5)) 6]
       [(not
           (=
             (opt-unroll-test-count-store-ptr-in-block
@@ -35877,12 +35758,7 @@
         16]
       ;; The other side of the factor table: a store-only body keeps sixteen.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function fill-func))) 10]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view fill))
-            5))
-        11]
+      [(not (= (ir.compiler-ir-block-list-count fill) 5)) 11]
       [(not
           (=
             (opt-unroll-test-count-store-ptr-in-block
@@ -36023,12 +35899,7 @@
       [(not (opt.opt-verify-ok? (opt.opt-verify-function down-func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit -- the remainder
       ;; loop is kept exactly as it is for the ascending form.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view down))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count down) 5)) 2]
       ;; The load-and-store class factor, unchanged for the descending
       ;; direction: two copies, each with its own load and its own store.
       [(not
@@ -36141,12 +36012,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function func))) 1]
       ;; entry, guard, unrolled body, sum exit, remainder loop, exit.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            6))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 6)) 2]
       ;; thirty-two acc adds + thirty-two counter adds.
       [(<
           (opt-unroll-test-count-add-in-block
@@ -36163,12 +36029,7 @@
           (opt.opt-unroll-copy-suffix 15))
         6]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function vector-func))) 7]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view vector-out))
-            5))
-        8]
+      [(not (= (ir.compiler-ir-block-list-count vector-out) 5)) 8]
       ;; Eight admitted SIMD instructions across all sixteen body copies.
       [(not
           (=
@@ -36190,12 +36051,7 @@
           (opt.opt-verify-ok?
             (opt.opt-verify-final-function mutable-vector-func)))
         11]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view mutable-vector-out))
-            6))
-        12]
+      [(not (= (ir.compiler-ir-block-list-count mutable-vector-out) 6)) 12]
       ;; Three vector instructions across all sixteen mutable body copies.
       [(not
           (=
@@ -36211,12 +36067,7 @@
       [(not (= (ir.compiler-ir-block-list-count local-base-out) 3)) 15]
       ;; A store-bearing three-base map gets sixteen sequential gang copies.
       [(not (opt.opt-verify-ok? (opt.opt-verify-final-function map-func))) 16]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view map-out))
-            6))
-        17]
+      [(not (= (ir.compiler-ir-block-list-count map-out) 6)) 17]
       [(not
           (=
             (opt-unroll-test-count-vector-in-block
@@ -36244,12 +36095,7 @@
       ;; between distinct parameters are still safe because copies stay ordered.
       [(not (opt.opt-verify-ok? (opt.opt-verify-final-function alias-map-func)))
         21]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view alias-map-out))
-            6))
-        22]
+      [(not (= (ir.compiler-ir-block-list-count alias-map-out) 6)) 22]
       [(not
           (=
             (opt-unroll-test-count-in-block
@@ -37179,12 +37025,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; entry, guard, fast, slow loop, exit.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 5)) 2]
       ;; the fast clone dropped its check; the slow loop keeps it.
       [(not
           (=
@@ -37213,12 +37054,7 @@
       ;; Positive scaled induction versions through the overflow-safe
       ;; quotient guard and drops the fast-path check.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function scaled))) 7]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view scaled-out))
-            5))
-        8]
+      [(not (= (ir.compiler-ir-block-list-count scaled-out) 5)) 8]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37233,12 +37069,7 @@
       ;; `bound <= length - kmax` plus the raised minimum seed `seed >= 2`, with
       ;; no division anywhere in the guard (the fixture starts at 2 for i-2).
       [(not (opt.opt-verify-ok? (opt.opt-verify-function offset))) 11]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view offset-out))
-            5))
-        12]
+      [(not (= (ir.compiler-ir-block-list-count offset-out) 5)) 12]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37255,12 +37086,7 @@
       ;; (opt-bce-version-mirror-guard). Here the whole family is literal --
       ;; base 0, seed 0 -- so the origin is 0, its quotient folds, and the two
       ;; surviving conjuncts need no division at all.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view negative-scale-out))
-            5))
-        15]
+      [(not (= (ir.compiler-ir-block-list-count negative-scale-out) 5)) 15]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37278,12 +37104,7 @@
       ;; Induction lowering's canonical derived phi is covered by the
       ;; trip-count quotient guard as well.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function derived))) 16]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view derived-out))
-            5))
-        17]
+      [(not (= (ir.compiler-ir-block-list-count derived-out) 5)) 17]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37306,12 +37127,7 @@
       ;; out a wrapping final increment, so the guard must carry the no-wrap
       ;; add of `step - 1` onto the bound.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function step8-counter))) 21]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view step8-counter-out))
-            5))
-        22]
+      [(not (= (ir.compiler-ir-block-list-count step8-counter-out) 5)) 22]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37335,12 +37151,7 @@
         25]
       ;; A non-loop-invariant bound still refuses (variant 20): three blocks,
       ;; check intact.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view noninv-bound-out))
-            3))
-        26]
+      [(not (= (ir.compiler-ir-block-list-count noninv-bound-out) 3)) 26]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37357,12 +37168,7 @@
       ;; far under `i64-MAX - step + 1`, so variant 24 versions with NO
       ;; no-wrap instruction in its guard...
       [(not (opt.opt-verify-ok? (opt.opt-verify-function lit-bound))) 30]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view lit-bound-out))
-            5))
-        31]
+      [(not (= (ir.compiler-ir-block-list-count lit-bound-out) 5)) 31]
       [(opt-bce-version-test-block-binop-op-lit?
           lit-bound-out
           (ir.compiler-ir-label "loop__bce_guard")
@@ -37372,12 +37178,7 @@
       ;; ... while an i64-MAX bound can never satisfy the cap, so variant 25
       ;; rejects the versioning outright rather than emitting a guard that
       ;; always fails.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view max-bound-out))
-            3))
-        33]
+      [(not (= (ir.compiler-ir-block-list-count max-bound-out) 3)) 33]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37683,12 +37484,7 @@
       ;; synthesized derived-seed quotient guard (one division by the step).
       [(not (opt.opt-verify-ok? (opt.opt-verify-function mul-load))) 1]
       ;; entry, guard, fast, slow loop, exit.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view mul-load-out))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count mul-load-out) 5)) 2]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37710,12 +37506,7 @@
         5]
       ;; the store form versions identically and keeps its (remapped) store.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function mul-store))) 6]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view mul-store-out))
-            5))
-        7]
+      [(not (= (ir.compiler-ir-block-list-count mul-store-out) 5)) 7]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37739,12 +37530,7 @@
         10]
       ;; the derived-phi form (induction lowering's shape) versions too.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function dphi))) 11]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view dphi-out))
-            5))
-        12]
+      [(not (= (ir.compiler-ir-block-list-count dphi-out) 5)) 12]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37756,12 +37542,7 @@
         14]
       ;; ... including a literal offset peeled above the base add.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function dphi-off))) 15]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view dphi-off-out))
-            5))
-        16]
+      [(not (= (ir.compiler-ir-block-list-count dphi-off-out) 5)) 16]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37777,12 +37558,7 @@
       ;; partial versioning: the strided check leaves the fast clone, the
       ;; underivable data check STAYS (remapped); the slow loop keeps both.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function partial))) 19]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view partial-out))
-            5))
-        20]
+      [(not (= (ir.compiler-ir-block-list-count partial-out) 5)) 20]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37805,12 +37581,7 @@
       ;; A NEGATIVE scale is mirrored: `base - 2*i` versions through the
       ;; decreasing guard, whose three conditions run from the origin down
       ;; instead of from the derived seed up, with ONE unsigned quotient.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view neg-out))
-            5))
-        25]
+      [(not (= (ir.compiler-ir-block-list-count neg-out) 5)) 25]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37841,12 +37612,7 @@
       ;; opt-bce-version-guard-conds, where the guard this buys came down to
       ;; ~7 instructions): entry, guard, fast, slow loop, exit, with a
       ;; check-free clone, the check kept in the slow loop, and no division.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view base-counter-out))
-            5))
-        27]
+      [(not (= (ir.compiler-ir-block-list-count base-counter-out) 5)) 27]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37876,12 +37642,7 @@
       ;; no Div is emitted (the scale-1 specialization needs none, unlike
       ;; the scale > 1 quotient guard asserted above).
       [(not (opt.opt-verify-ok? (opt.opt-verify-function two-scale1))) 30]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view two-scale1-out))
-            5))
-        31]
+      [(not (= (ir.compiler-ir-block-list-count two-scale1-out) 5)) 31]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37907,12 +37668,7 @@
       ;; clone, both checks kept in the slow loop, no division, and the
       ;; guard carries the no-wrap add of `step - 1` onto the bound.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function step8-scale1))) 35]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view step8-scale1-out))
-            5))
-        36]
+      [(not (= (ir.compiler-ir-block-list-count step8-scale1-out) 5)) 36]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37944,12 +37700,7 @@
       ;; ... and so does its lone-check twin, under the re-costed gate: the
       ;; step-8 stride's clone is check-free too, with the slow loop keeping
       ;; the one check.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view step8-lone-out))
-            5))
-        41]
+      [(not (= (ir.compiler-ir-block-list-count step8-lone-out) 5)) 41]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -37970,12 +37721,7 @@
       ;; cond B) and one `<` (the seed < bound entry condition). Before fan
       ;; subsumption each member paid two conditions of its own.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function fan3))) 43]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view fan3-out))
-            5))
-        44]
+      [(not (= (ir.compiler-ir-block-list-count fan3-out) 5)) 44]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -38138,12 +37884,7 @@
       ;; The mirrored range needs NO division at a unit magnitude, and states
       ;; the three conditions the increasing guard states, read downward.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function descending))) 1]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view descending-out))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count descending-out) 5)) 2]
       [(not (= (opt-bce-version-test-block-checks descending-out fast-label) 0))
         3]
       [(not (= (opt-bce-version-test-block-checks descending-out slow-label) 1))
@@ -38187,12 +37928,7 @@
       [(not (= (ir.compiler-ir-block-list-count descending-wrap-out) 3)) 9]
       ;; --- bare derived phi read at two offsets --------------------------------
       [(not (opt.opt-verify-ok? (opt.opt-verify-function dphi-fan))) 10]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view dphi-fan-out))
-            5))
-        11]
+      [(not (= (ir.compiler-ir-block-list-count dphi-fan-out) 5)) 11]
       [(not (= (opt-bce-version-test-block-checks dphi-fan-out fast-label) 0))
         12]
       [(not (= (opt-bce-version-test-block-checks dphi-fan-out slow-label) 2))
@@ -38208,12 +37944,7 @@
         14]
       ;; --- scale-2 family with a negative minimum offset -----------------------
       [(not (opt.opt-verify-ok? (opt.opt-verify-function scaled-fan))) 15]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view scaled-fan-out))
-            5))
-        16]
+      [(not (= (ir.compiler-ir-block-list-count scaled-fan-out) 5)) 16]
       [(not (= (opt-bce-version-test-block-checks scaled-fan-out fast-label) 0))
         17]
       [(not (= (opt-bce-version-test-block-checks scaled-fan-out slow-label) 2))
@@ -38267,12 +37998,7 @@
       ;; --- conjuncts a compile-time decision must not emit ---------------------
       ;; `bound <= len` where the length IS the bound: reflexive, so no compare
       ;; at all, and no identity add anywhere in the guard.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view reflexive-out))
-            5))
-        24]
+      [(not (= (ir.compiler-ir-block-list-count reflexive-out) 5)) 24]
       [(not (= (opt-bce-version-test-block-checks reflexive-out fast-label) 0))
         25]
       [(not
@@ -38292,12 +38018,7 @@
       ;; Every conjunct decided at compile time: the guard states a literal
       ;; `true` rather than refusing the versioning.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function all-folded))) 28]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view all-folded-out))
-            5))
-        29]
+      [(not (= (ir.compiler-ir-block-list-count all-folded-out) 5)) 29]
       [(not (= (opt-bce-version-test-block-checks all-folded-out fast-label) 0))
         30]
       [(not
@@ -38329,12 +38050,7 @@
       ;; non-negative, which is exactly the fact that makes
       ;; `seed >= 0 && seed < bound` one unsigned compare.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function merged))) 34]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view merged-out))
-            5))
-        35]
+      [(not (= (ir.compiler-ir-block-list-count merged-out) 5)) 35]
       [(not
           (=
             (opt-bce-version-test-block-binop-count
@@ -38354,12 +38070,7 @@
         37]
       ;; The same loop with the bound taken from a plain parameter keeps both
       ;; signed compares: nothing there decides the bound's sign.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view unmerged-out))
-            5))
-        38]
+      [(not (= (ir.compiler-ir-block-list-count unmerged-out) 5)) 38]
       [(not
           (=
             (opt-bce-version-test-block-binop-count
@@ -38862,12 +38573,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; entry + guard + four fast clones + four slow blocks + exit
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            11))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 11)) 2]
       ;; the fast region dropped every check ...
       [(not
           (=
@@ -38921,12 +38627,7 @@
       ;; The same affine recovery works when the index definition and latch
       ;; live in different blocks.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function scaled))) 10]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view scaled-out))
-            11))
-        11]
+      [(not (= (ir.compiler-ir-block-list-count scaled-out) 11)) 11]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -38951,12 +38652,7 @@
       ;; single-block body".
       [(not (opt.opt-verify-ok? (opt.opt-verify-function chain))) 15]
       ;; entry + guard + nine fast clones + nine slow blocks + exit
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view chain-out))
-            21))
-        16]
+      [(not (= (ir.compiler-ir-block-list-count chain-out) 21)) 16]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -38990,12 +38686,7 @@
       ;; condition covering the larger increment. Both checks drop from the
       ;; fast region.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function step-two))) 21]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view step-two-out))
-            11))
-        22]
+      [(not (= (ir.compiler-ir-block-list-count step-two-out) 11)) 22]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -39030,12 +38721,7 @@
       ;; exactly as its ascending twin does: same block count, both checks out
       ;; of the fast region, both kept in the slow one.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function down))) 27]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view down-out))
-            11))
-        28]
+      [(not (= (ir.compiler-ir-block-list-count down-out) 11)) 28]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -39087,12 +38773,7 @@
           1)
         35]
       ;; Idempotent: a second pass over the versioned function changes nothing.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view down-again-out))
-            11))
-        36]
+      [(not (= (ir.compiler-ir-block-list-count down-again-out) 11)) 36]
       [(match (opt.opt-cfg-find-block
           down-again-out
           (ir.compiler-ir-label "body__bce_fast__bce_fast"))
@@ -39102,12 +38783,7 @@
       ;; Variant 15 keeps the increment under the `>=` latch: the counter walks
       ;; away from the limit it is tested against, so no range is recovered and
       ;; the function is left alone.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view wrong-way-out))
-            6))
-        38]
+      [(not (= (ir.compiler-ir-block-list-count wrong-way-out) 6)) 38]
       [(match (opt.opt-cfg-find-block
           wrong-way-out
           (ir.compiler-ir-label "body__bce_guard"))
@@ -39164,12 +38840,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; Original seven blocks + guard + four fast loop blocks.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            12))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 12)) 2]
       [(not (opt-bce-mb-test-cloned-switch-ok? out)) 3]
       [(not
           (=
@@ -39181,12 +38852,7 @@
       ;; A lowering-proven exhaustive enum dispatch is totalized after BCE;
       ;; cloning its high-fanout loop here would collapse vm_run allocation.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function marked))) 5]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view marked-out))
-            7))
-        6]
+      [(not (= (ir.compiler-ir-block-list-count marked-out) 7)) 6]
       [(opt-block-list-has-label?
           marked-out
           (ir.compiler-ir-label "body__bce_fast"))
@@ -39505,9 +39171,7 @@
     (- 0 1)
     (let
       [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (ir.compiler-ir-global-shared-view inputs)
-          index)]
+        (ir.compiler-ir-phi-input-seq-ref inputs index)]
       (if (= input.label pred)
         (match input.value
           [(ir.CompilerIrValue.Var id) id]
@@ -39995,7 +39659,7 @@
             [changed : ir.CompilerIrInstrSeq (opt-test-instr-seq-copy instrs)]
             (begin
               (ir.compiler-ir-instr-seq-set!
-                (ir.compiler-ir-global-shared-view changed)
+                (&mut changed)
                 2
                 (irt.instr "%8 = mov 0 : i64"))
               (ir.CompilerIrBlock.Block label changed)))
@@ -40407,8 +40071,9 @@
       ;; idempotent: a second run is a no-op
       [(not
           (=
-            (ir.compiler-ir-block-list-count
-              (opt-bce-mb3-test-refixed-blocks 0))
+            (let
+              [blocks (opt-bce-mb3-test-refixed-blocks 0)]
+              (ir.compiler-ir-block-list-count blocks))
             (ir.compiler-ir-block-list-count merged)))
         12]
       [else 42])))
@@ -41154,12 +40819,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function nested))) 1]
       ;; entry + guard + five fast clones + five slow blocks + exit
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            13))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 13)) 2]
       [(match (opt.opt-cfg-find-block
           out
           (ir.compiler-ir-label "body__bce_guard"))
@@ -41228,12 +40888,7 @@
       ;; size, not shape: 40 pad movs still fit ...
       [(not (= (ir.compiler-ir-block-list-count big) 13)) 12]
       ;; ... 55 do not, and the rejection leaves the function untouched.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view too-big))
-            7))
-        13]
+      [(not (= (ir.compiler-ir-block-list-count too-big) 7)) 13]
       [(opt-block-list-has-label?
           too-big
           (ir.compiler-ir-label "body__bce_guard"))
@@ -41356,21 +41011,11 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function both))) 1]
       ;; entry + two guards + two fast clones + two slow loops + mid + done
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view both-out))
-            9))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count both-out) 9)) 2]
       [(not (opt-block-list-has-label? both-out fast-a)) 3]
       [(not (opt-block-list-has-label? both-out fast-b)) 4]
       ;; an unprobed run is the production entry, block for block
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view plain-out))
-            9))
-        5]
+      [(not (= (ir.compiler-ir-block-list-count plain-out) 9)) 5]
       [(not (opt-block-list-has-label? plain-out fast-a)) 6]
       [(not (opt-block-list-has-label? plain-out fast-b)) 7]
       [(not (opt.opt-verify-ok? (opt.opt-verify-function skip-a))) 8]
@@ -41424,12 +41069,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; entry + guard + four fast clones + four slow blocks + exit
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            11))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 11)) 2]
       ;; the derivable counter check is gone from the fast header...
       [(not
           (=
@@ -42149,12 +41789,7 @@
       ;; a guard with two successors is not a preheader, so one is synthesized
       ;; ahead of the header and the derived base lands there
       [(not (opt.opt-verify-ok? (opt.opt-verify-function synthesized))) 12]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view synthesized-blocks))
-            5))
-        13]
+      [(not (= (ir.compiler-ir-block-list-count synthesized-blocks) 5)) 13]
       [(not
           (=
             (opt-gep-offset-test-geps-in
@@ -42411,12 +42046,7 @@
             (opt.opt-verify-function
               (opt.compiler-opt-global-shared-view outer-addend))))
         1]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view outer-blocks))
-            8))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count outer-blocks) 8)) 2]
       [(not (= (opt-gep-offset-test-geps-in outer-blocks pre-label) 1)) 3]
       [(not
           (opt.opt-value-eq
@@ -42563,12 +42193,7 @@
               (opt.compiler-opt-global-shared-view split))))
         1]
       ;; the second loop got its preheader even though the first refused one
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view blocks))
-            8))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count blocks) 8)) 2]
       [(not (= (opt-gep-offset-test-geps-in blocks pre-label) 1)) 3]
       [(not
           (opt.opt-value-eq
@@ -42890,8 +42515,9 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [dst : i64]) : i64
-  (ir.compiler-ir-phi-input-seq-count
-    (opt-flag-exit-test-phi-inputs blocks label dst)))
+  (let
+    [inputs (opt-flag-exit-test-phi-inputs blocks label dst)]
+    (ir.compiler-ir-phi-input-seq-count inputs)))
 
 ;; 1 when the block's first instruction is `dst = mov <literal>`, 0 otherwise.
 (define (opt-flag-exit-test-mov-bool
@@ -43190,9 +42816,7 @@
           (match (ir.compiler-ir-instr-seq-ref instrs 0)
             [(ir.CompilerIrInstr.Phi _ inputs _)
               (let
-                [n : i64
-                  (ir.compiler-ir-phi-input-seq-count
-                    (ir.compiler-ir-global-shared-view inputs))]
+                [n : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
                 [pred-label : i64 (ir.compiler-ir-label pred)]
                 [k : i64 0]
                 [found : ir.CompilerIrValue ir.CompilerIrValue.Unit]
@@ -43200,9 +42824,7 @@
                   (while (< k n)
                     (let
                       [input : ir.CompilerIrPhiInput
-                        (ir.compiler-ir-phi-input-seq-ref
-                          (ir.compiler-ir-global-shared-view inputs)
-                          k)]
+                        (ir.compiler-ir-phi-input-seq-ref inputs k)]
                       (begin
                         (if (= input.label pred-label)
                           (set! found input.value)
@@ -44508,12 +44130,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; ten originals + guard + six fast loop blocks + two stub twins.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            19))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 19)) 2]
       [(match (opt.opt-cfg-find-block
           out
           (ir.compiler-ir-label "header__bce_guard"))
@@ -44561,12 +44178,7 @@
       [(not (= (opt-count-binop-op-blocks out (ir.CompilerIrBinOp.Div)) 0)) 10]
       ;; an in-loop base cannot prove invariance: that check stays, but the
       ;; second check still derives, so the loop PARTIALLY versions.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view in-loop-base-out))
-            19))
-        11]
+      [(not (= (ir.compiler-ir-block-list-count in-loop-base-out) 19)) 11]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -44577,12 +44189,7 @@
       ;; scale-2 with a variable base now DERIVES through the scale-N
       ;; variable-base guard (a synthesized derived seed with step 2), so the
       ;; loop versions check-free instead of keeping the strided check.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view scaled-out))
-            19))
-        13]
+      [(not (= (ir.compiler-ir-block-list-count scaled-out) 19)) 13]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -44592,12 +44199,7 @@
         14]
       ;; a store in the body blocks the descriptor-length hoist: no
       ;; derivable check, so the loop is left untouched.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view stored-out))
-            10))
-        15]
+      [(not (= (ir.compiler-ir-block-list-count stored-out) 10)) 15]
       [(not (opt-bce-mb-eq-test-no-fast? stored-out)) 16]
       ;; the scale-2 variable-base check pays one quotient division.
       [(not
@@ -44926,10 +44528,7 @@
   (let
     [out : ir.CompilerIrBlockList (opt-bce-mbcall-test-out variant)]
     (and
-      (=
-        (ir.compiler-ir-block-list-count
-          (ir.compiler-ir-global-shared-view out))
-        6)
+      (= (ir.compiler-ir-block-list-count out) 6)
       (match (opt.opt-cfg-find-block
         out
         (ir.compiler-ir-label "body__bce_fast"))
@@ -44959,12 +44558,7 @@
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; six originals + guard + five fast clones (body/then/else/merge and the
       ;; entry stub is not cloned) -- entry and exit stay shared.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            11))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 11)) 2]
       [(match (opt.opt-cfg-find-block
           out
           (ir.compiler-ir-label "body__bce_guard"))
@@ -45041,12 +44635,7 @@
             (ir.compiler-ir-label "body__bce_guard")))
         12]
       ;; (7) idempotent.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view again-out))
-            11))
-        13]
+      [(not (= (ir.compiler-ir-block-list-count again-out) 11)) 13]
       [(match (opt.opt-cfg-find-block
           again-out
           (ir.compiler-ir-label "body__bce_fast__bce_fast"))
@@ -45055,12 +44644,7 @@
         14]
       ;; The call-free twin versions identically -- the call is priced, not
       ;; structurally special.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view twin-out))
-            11))
-        15]
+      [(not (= (ir.compiler-ir-block-list-count twin-out) 11)) 15]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -45671,9 +45255,7 @@
             (ir.compiler-ir-value-seq-empty)
             (let
               [phi-input-at-54784-9 : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (ir.compiler-ir-global-shared-view phi-inputs-at-54784-9)
-                  0)]
+                (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-54784-9 0)]
               [a : ir.CompilerIrValue phi-input-at-54784-9.value]
               [rest : ir.CompilerIrPhiInputSeq
                 (ir.CompilerIrPhiInputSeq
@@ -45727,9 +45309,7 @@
             (opt-ssa-preexisting-test-phi-inputs
               (opt.opt-function-blocks constructed))]
           (if (= values.len 2)
-            (match (ir.compiler-ir-value-seq-ref
-              (ir.compiler-ir-global-shared-view values)
-              0)
+            (match (ir.compiler-ir-value-seq-ref values 0)
               [(ir.CompilerIrValue.Var av)
                 (match (ir.compiler-ir-value-seq-ref values 1)
                   [(ir.CompilerIrValue.Var bv) (= av bv)]
@@ -47806,9 +47386,7 @@
       (opt.opt-loop-preheaders-blocks agree-input)]
     ;; A loop that already owns a safe preheader must come back untouched.
     [safe-input : ir.CompilerIrBlockList (opt-preheader-safe-blocks)]
-    [safe-block-count : i64
-      (ir.compiler-ir-block-list-count
-        (opt.compiler-opt-global-shared-view safe-input))]
+    [safe-block-count : i64 (ir.compiler-ir-block-list-count safe-input)]
     [safe-instr-count : i64 (opt-preheader-instr-total safe-input)]
     [safe-blocks : ir.CompilerIrBlockList
       (opt.opt-loop-preheaders-blocks safe-input)]
@@ -47838,11 +47416,7 @@
       [(not (opt-preheader-loop-has-preheader? agree-blocks "loop" "body")) 8]
       ;; The loop that already owns one is left alone: no block added, no
       ;; instruction added, and no synthesized label anywhere.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view safe-blocks))
-            safe-block-count))
+      [(not (= (ir.compiler-ir-block-list-count safe-blocks) safe-block-count))
         9]
       [(not (= (opt-preheader-instr-total safe-blocks) safe-instr-count)) 10]
       [(opt.opt-cfg-block-exists?
@@ -48340,12 +47914,7 @@
               preheadered-multi-blocks
               b)))
         51]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view synth-blocks))
-            7))
-        52]
+      [(not (= (ir.compiler-ir-block-list-count synth-blocks) 7)) 52]
       [(not
           (opt-block-list-has-label?
             synth-blocks
@@ -48431,12 +48000,7 @@
       (opt-natural-loop-multi-backedge-blocks)]
     [with-phi : ir.CompilerIrBlockList (opt-ssa-loop-blocks)]
     (cond
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view rotated))
-            3))
-        1]
+      [(not (= (ir.compiler-ir-block-list-count rotated) 3)) 1]
       [(opt-block-list-has-label? rotated (ir.compiler-ir-label "loop")) 2]
       [(not
           (opt-loop-rotation-successors?
@@ -48501,12 +48065,7 @@
                 (opt.compiler-opt-global-shared-view with-phi))]
             (opt.opt-block-list-eq type-segment-bases a with-phi)))
         15]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view constant-edge-rotated))
-            3))
-        16]
+      [(not (= (ir.compiler-ir-block-list-count constant-edge-rotated) 3)) 16]
       [(opt-block-list-has-label?
           constant-edge-rotated
           (ir.compiler-ir-label "loop"))
@@ -48998,9 +48557,7 @@
       (- 0 1)
       (let
         [phi-input-at-57835-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-57835-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-57835-3 0)]
         [value : ir.CompilerIrValue phi-input-at-57835-3.value]
         [input-label : i64 phi-input-at-57835-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -49194,12 +48751,7 @@
           rotated-blocks
           (ir.compiler-ir-label "header"))
         2]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view rotated-blocks))
-            5))
-        3]
+      [(not (= (ir.compiler-ir-block-list-count rotated-blocks) 5)) 3]
       [(not
           (opt-rotate-ssa-test-starts-with-phi?
             rotated-blocks
@@ -49223,12 +48775,7 @@
             [b (opt-rotate-ssa-test-blocks true)]
             (opt.opt-block-list-eq type-segment-bases side-exit-blocks b)))
         8]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view side-exit-blocks))
-            5))
-        9]
+      [(not (= (ir.compiler-ir-block-list-count side-exit-blocks) 5)) 9]
       [(not
           (opt-block-list-has-label?
             side-exit-blocks
@@ -49719,12 +49266,7 @@
       [(not
           (opt.opt-label-contains loop-frontier (ir.compiler-ir-label "loop")))
         16]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view unreachable-order))
-            1))
-        17]
+      [(not (= (ir.compiler-ir-block-list-count unreachable-order) 1)) 17]
       [(not
           (opt-block-list-has-label?
             unreachable-order
@@ -50387,12 +49929,7 @@
       (match straighten-switch-result
         [(opt.OptFunctionPassResult.Result _ changed) changed])]
     (begin
-      (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view constant-if))
-          2)
-        (return 1))
+      (unless (= (ir.compiler-ir-block-list-count constant-if) 2) (return 1))
       (unless
         (not
           (opt-block-list-has-label? constant-if (ir.compiler-ir-label "else")))
@@ -50403,12 +49940,7 @@
           1)
         (return 3))
       (unless (= (opt-count-branches-blocks constant-if) 0) (return 4))
-      (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view loop-guard))
-          3)
-        (return 5))
+      (unless (= (ir.compiler-ir-block-list-count loop-guard) 3) (return 5))
       (unless
         (not
           (opt-block-list-has-label? loop-guard (ir.compiler-ir-label "body")))
@@ -50418,12 +49950,7 @@
           (opt-count-jump-to-blocks loop-guard (ir.compiler-ir-label "exit"))
           1)
         (return 7))
-      (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view phi-blocks))
-          3)
-        (return 8))
+      (unless (= (ir.compiler-ir-block-list-count phi-blocks) 3) (return 8))
       (unless
         (not
           (opt-block-list-has-label? phi-blocks (ir.compiler-ir-label "else")))
@@ -50434,19 +49961,11 @@
       ;; sequence metadata; both the rewritten block and compacted length must
       ;; be written back to the returned block list.
       (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view phi-cfg-in-place))
-          3)
+        (= (ir.compiler-ir-block-list-count phi-cfg-in-place) 3)
         (return 60))
       (unless (= (opt-count-phi-blocks phi-cfg-in-place) 0) (return 61))
       (unless (= (opt-count-mov-dst-blocks phi-cfg-in-place 3) 1) (return 62))
-      (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view trap-blocks))
-          3)
-        (return 12))
+      (unless (= (ir.compiler-ir-block-list-count trap-blocks) 3) (return 12))
       (unless
         (opt-block-list-has-label? trap-blocks (ir.compiler-ir-label "trap"))
         (return 13))
@@ -50722,10 +50241,7 @@
         (return 86))
       (unless and-chain-changed (return 46))
       (unless
-        (=
-          (ir.compiler-ir-block-list-count
-            (ir.compiler-ir-global-shared-view and-chain-blocks))
-          5)
+        (= (ir.compiler-ir-block-list-count and-chain-blocks) 5)
         (return 47))
       (unless (= (opt-count-branches-blocks and-chain-blocks) 3) (return 48))
       (unless
@@ -50864,10 +50380,7 @@
       (unless
         (and
           straighten-plain-changed
-          (=
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view straighten-plain-blocks))
-            3)
+          (= (ir.compiler-ir-block-list-count straighten-plain-blocks) 3)
           (not
             (opt-block-list-has-label?
               straighten-plain-blocks
@@ -50918,10 +50431,7 @@
       (unless
         (and
           straighten-duplicate-changed
-          (=
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view straighten-duplicate-blocks))
-            3)
+          (= (ir.compiler-ir-block-list-count straighten-duplicate-blocks) 3)
           (not
             (opt-block-list-has-label?
               straighten-duplicate-blocks
@@ -50963,10 +50473,7 @@
       (unless
         (and
           straighten-switch-changed
-          (=
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view straighten-switch-blocks))
-            4)
+          (= (ir.compiler-ir-block-list-count straighten-switch-blocks) 4)
           (not
             (opt-block-list-has-label?
               straighten-switch-blocks
@@ -55181,12 +54688,7 @@
       ;; The affine check family consolidates: entry, a one-block guard with
       ;; two conditions, the check-free fast body, the original slow loop,
       ;; and the exit with the last-trip merge phi.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view word-out))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count word-out) 5)) 2]
       [(not (= (opt-lc-test-block-instr-count word-out word-guard) 6)) 3]
       [(not (= (opt-lc-test-count-in-block word-out word-guard 5) 2)) 4]
       [(not (= (opt-lc-test-count-in-block word-out word-guard 6) 1)) 5]
@@ -55222,24 +54724,14 @@
       ;; A check-free body still takes the exact unguarded arm: 3 blocks, no
       ;; guard, 5 copies x 4 cloned instructions + the closing jump, and the
       ;; last copy keeps the original destinations for the exit's dataflow.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view asc-out))
-            3))
-        27]
+      [(not (= (ir.compiler-ir-block-list-count asc-out) 3)) 27]
       [(not (= (opt-lc-test-block-instr-count asc-out word-body) 21)) 28]
       [(not (= (opt-lc-test-count-in-block asc-out word-body 3) 0)) 29]
       [(not (opt-lc-test-has-add-lit-blocks asc-out 4)) 30]
       [(not (= (opt-lc-test-def-dst-count-blocks asc-out 9) 1)) 31]
       [(not (= (opt-lc-test-def-dst-count-blocks asc-out 36) 1)) 32]
       ;; 21 trips exceeds the 16-trip cap: the loop stays rolled.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view long-out))
-            3))
-        33]
+      [(not (= (ir.compiler-ir-block-list-count long-out) 3)) 33]
       [(not (= (opt-lc-test-block-instr-count long-out word-body) 14)) 34]
       [(not (= (opt-lc-test-count-in-block long-out word-body 4) 1)) 35]
       [(not (= (opt-lc-test-count-in-block long-out word-body 3) 2)) 36]
@@ -55247,12 +54739,7 @@
       [(not (= (opt-lc-test-block-instr-count varbound-out word-body) 14)) 37]
       [(not (= (opt-lc-test-count-in-block varbound-out word-body 4) 1)) 38]
       ;; StorePtr bodies are excluded like the x16 arm.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view store-out))
-            3))
-        39]
+      [(not (= (ir.compiler-ir-block-list-count store-out) 3)) 39]
       [(not (= (opt-lc-test-block-instr-count store-out word-body) 12)) 40]
       [(not (= (opt-lc-test-count-in-block store-out word-body 4) 1)) 41]
       [else 42])))
@@ -55464,12 +54951,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function dual-func))) 1]
       ;; Two groups: 2 x (gmin, c1, t, c2, and) + the combining and + branch.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view dual-out))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count dual-out) 5)) 2]
       [(not (= (opt-lc-test-block-instr-count dual-out guard) 12)) 3]
       [(not (= (opt-lc-test-count-in-block dual-out guard 5) 4)) 4]
       [(not (= (opt-lc-test-count-in-block dual-out guard 6) 3)) 5]
@@ -55512,12 +54994,7 @@
           [(opt.OptMaybeBlock.No) false]
           [(opt.OptMaybeBlock.Some _) true])
         2]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            3))
-        3]
+      [(not (= (ir.compiler-ir-block-list-count out) 3)) 3]
       ;; 8 copies x 11 cloned body instructions + the closing jump.
       [(not (= (opt-lc-test-block-instr-count out body) 89)) 4]
       [(not (= (opt-lc-test-count-in-block out body 2) 16)) 5]
@@ -63850,12 +63327,7 @@
       [(not (opt.opt-verify-ok? (opt.opt-verify-function func))) 1]
       ;; All THREE loops unrolled in one invocation (previously only the
       ;; first): 7 original blocks + guard, group and sum exit per rewrite.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            16))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 16)) 2]
       [(match (opt.opt-cfg-find-block
           out
           (ir.compiler-ir-label "loop0__unroll_body"))
@@ -63902,12 +63374,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned3))) 1]
       ;; Three loops versioned in ONE invocation: 7 originals + 2 per loop.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out3))
-            13))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out3) 13)) 2]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -63942,12 +63409,7 @@
       ;; Budget cap: five eligible loops, exactly (opt-loop-apply-budget)
       ;; transform, in scan order -- loop4 is the one left behind.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function capped))) 8]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out5))
-            19))
-        9]
+      [(not (= (ir.compiler-ir-block-list-count out5) 19)) 9]
       [(match (opt.opt-cfg-find-block
           out5
           (ir.compiler-ir-label "loop3__bce_fast"))
@@ -63970,12 +63432,7 @@
         12]
       ;; The next pipeline iteration's invocation picks up exactly loop4.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function round5))) 13]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view round5-out))
-            21))
-        14]
+      [(not (= (ir.compiler-ir-block-list-count round5-out) 21)) 14]
       [(match (opt.opt-cfg-find-block
           round5-out
           (ir.compiler-ir-label "loop4__bce_fast"))
@@ -63993,12 +63450,7 @@
       [(not (opt.opt-verify-ok? (opt.opt-verify-function versioned))) 1]
       ;; Both multi-block loops version in ONE invocation: 9 originals + one
       ;; guard and three fast clones per loop.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            17))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 17)) 2]
       [(match (opt.opt-cfg-find-block
           out
           (ir.compiler-ir-label "head0__bce_guard"))
@@ -64068,12 +63520,7 @@
       ;; conservatively: the failed application rolls back whole and the
       ;; second loop is never attempted -- the original blocks return
       ;; untouched, with no partial rewrite left behind.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view stopped-out))
-            5))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count stopped-out) 5)) 2]
       [(match (opt.opt-cfg-find-block
           stopped-out
           (ir.compiler-ir-label "loop0__unroll_body"))
@@ -70919,12 +70366,7 @@
     (cond
       [(not (opt.opt-verify-ok? (opt.opt-verify-function func))) 1]
       ;; entry, guard, group, sum exit, cascade guard, cascade, remainder, exit.
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view out))
-            8))
-        2]
+      [(not (= (ir.compiler-ir-block-list-count out) 8)) 2]
       [(match (opt.opt-cfg-find-block
           out
           (ir.compiler-ir-label "body__unroll_guard2"))
@@ -70967,12 +70409,7 @@
       [(not (= (opt.opt-unroll-cascade-count 16) 4)) 12]
       ;; The store-only neighbour keeps its single group.
       [(not (opt.opt-verify-ok? (opt.opt-verify-function fill-func))) 13]
-      [(not
-          (=
-            (ir.compiler-ir-block-list-count
-              (ir.compiler-ir-global-shared-view fill))
-            5))
-        14]
+      [(not (= (ir.compiler-ir-block-list-count fill) 5)) 14]
       [(match (opt.opt-cfg-find-block
           fill
           (ir.compiler-ir-label "body__unroll_body2"))
@@ -72196,7 +71633,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (ir.compiler-ir-instr-seq-set!
-            instrs
+            (&mut instrs)
             0
             (if reject?
               (ir.CompilerIrInstr.Jump (opt-fc-test-label "missing"))
@@ -73467,8 +72904,7 @@
         (begin
           (test.assert-true
             (=
-              (ir.compiler-ir-block-list-count
-                (ir.compiler-ir-global-shared-view blocks))
+              (ir.compiler-ir-block-list-count blocks)
               (if (or
                 (= mode 0)
                 (= mode 5)
@@ -73808,7 +73244,7 @@
                             (ast.AstType.I64)))
                         (ir.compiler-ir-instr-builder-append-seq-range!
                           (&mut b)
-                          (opt.compiler-opt-global-shared-view instrs)
+                          instrs
                           0
                           instrs.len)
                         (ir.compiler-ir-block-builder-push!
@@ -73919,8 +73355,7 @@
             (if (< mode 6)
               7
               6)
-            (ir.compiler-ir-block-list-count
-              (opt.compiler-opt-global-shared-view blocks))
+            (ir.compiler-ir-block-list-count blocks)
             "replay only bounded nontrapping scalar prefixes")
           (test.assert-i64-eq
             (if (< mode 6)
@@ -74231,9 +73666,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (opt.compiler-opt-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ var)
             (opt.opt-var-defs-index-add! items var 0 0)])
         (set! position (+ position 1))))))

@@ -2131,12 +2131,7 @@
           func
           (opt.opt-program-summaries-empty)))]
     (begin
-      (unless
-        (>
-          (ir.compiler-ir-block-list-count
-            (opt.compiler-opt-global-shared-view blocks))
-          1024)
-        (return 1))
+      (unless (> (ir.compiler-ir-block-list-count blocks) 1024) (return 1))
       (unless
         (<=
           (ir.compiler-ir-block-list-count blocks)
@@ -2340,11 +2335,7 @@
                   (ot.opt-count-direct-call-name-blocks blocks "inline_branch")
                   0))
               11]
-            [(not
-                (=
-                  (ir.compiler-ir-block-list-count
-                    (opt.compiler-opt-global-shared-view blocks))
-                  7))
+            [(not (= (ir.compiler-ir-block-list-count blocks) 7))
               (+ 20 (ir.compiler-ir-block-list-count blocks))]
             [(not (= (ot.opt-count-phi-blocks blocks) 2))
               (+ 40 (ot.opt-count-phi-blocks blocks))]

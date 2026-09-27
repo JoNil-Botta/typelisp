@@ -3278,8 +3278,7 @@
               "ir."
               (lower-global-shared-view point)
               ".functions")
-            (ir.compiler-ir-function-seq-count
-              (lower-global-shared-view functions)))
+            (ir.compiler-ir-function-seq-count functions))
           (compiler-lower-profile-counter
             (str_cat.str-cat "ir." (lower-global-shared-view point) ".blocks")
             (ir.compiler-ir-function-seq-block-count functions))
@@ -17629,9 +17628,7 @@
                 ctx
                 state
                 acc
-                (ir.compiler-ir-value-seq-ref
-                  (lower-global-shared-view values)
-                  field-index)
+                (ir.compiler-ir-value-seq-ref values field-index)
                 offset
                 resolved)
                 [(LowerExpr.Expr packed-state packed-acc packed-ty)
@@ -17969,9 +17966,7 @@
                   ctx
                   state
                   acc
-                  (ir.compiler-ir-value-seq-ref
-                    (lower-global-shared-view values)
-                    field-index)
+                  (ir.compiler-ir-value-seq-ref values field-index)
                   (- offset (* word-index 8))
                   resolved)
                   [(LowerExpr.Expr packed-state packed-acc packed-ty)
@@ -18097,7 +18092,7 @@
           ctx
           state
           acc
-          (ir.compiler-ir-value-seq-ref (lower-global-shared-view values) index)
+          (ir.compiler-ir-value-seq-ref values index)
           offset
           (lower-global-shared-view resolved))
           [(LowerExpr.Expr packed-state packed-acc packed-ty)
@@ -20376,9 +20371,7 @@
                           state
                           (lower-global-shared-view base)
                           offset
-                          (ir.compiler-ir-value-seq-ref
-                            (lower-global-shared-view values)
-                            field-index)
+                          (ir.compiler-ir-value-seq-ref values field-index)
                           resolved
                           (tc_core.tc-layout-info-size info)))]
                     (lower-store-inline-struct-values-at
@@ -20462,9 +20455,7 @@
                     state
                     (lower-global-shared-view base)
                     offset
-                    (ir.compiler-ir-value-seq-ref
-                      (lower-global-shared-view values)
-                      index)
+                    (ir.compiler-ir-value-seq-ref values index)
                     resolved
                     (tc_core.tc-layout-info-size info)))
                 base
@@ -34961,9 +34952,7 @@
         (match (lower-emit-pack
           slot-state
           (ir.compiler-ir-value-seq2
-            (ir.compiler-ir-value-seq-ref
-              (lower-global-shared-view slot-values)
-              0)
+            (ir.compiler-ir-value-seq-ref slot-values 0)
             (ir.compiler-ir-value-seq-ref slot-values 1))
           (lower-internal-transport-type ctx source-ty classification))
           [(LowerExpr.Expr packed-state packed-value _)
@@ -35073,7 +35062,7 @@
         (match (lower-internal-call-arg-one
           ctx
           state
-          (ir.compiler-ir-value-seq-ref (lower-global-shared-view values) index)
+          (ir.compiler-ir-value-seq-ref values index)
           (lower-global-shared-view source-ty)
           (lower-internal-param-class ctx mode source-ty)
           (lower-global-shared-view origin))
@@ -35348,7 +35337,7 @@
         (lower-bytes-view-from-parts-result
           ctx
           args-state
-          (ir.compiler-ir-value-seq-ref (lower-global-shared-view values) 0)
+          (ir.compiler-ir-value-seq-ref values 0)
           (ir.compiler-ir-value-seq-ref values 1)
           result-ty
           origin)
@@ -37378,9 +37367,7 @@
                 (lower-spmd-ir-value-class
                   (lower-global-shared-view resolved-ty)
                   varying)
-                (ir.compiler-ir-value-seq-ref
-                  (lower-global-shared-view values)
-                  arg-index)
+                (ir.compiler-ir-value-seq-ref values arg-index)
                 resolved-ty))
             (lower-spmd-call-args-from-values-at
               ctx
@@ -60282,9 +60269,7 @@
     (begin
       (while (< ordinal physical-params.len)
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (lower-global-shared-view physical-params)
-            ordinal)
+          (match (ir.compiler-ir-param-seq-ref physical-params ordinal)
             [(ir.CompilerIrParam.Param _ ty _)
               (ir.compiler-ir-spmd-private-param-seq-push!
                 (&mut params)
@@ -60332,9 +60317,7 @@
     [found : ir.CompilerIrFunctionAbi ir.CompilerIrFunctionAbi.Ordinary]
     (begin
       (while (>= index 0)
-        (match (ir.compiler-ir-function-seq-ref
-          (lower-global-shared-view functions)
-          index)
+        (match (ir.compiler-ir-function-seq-ref functions index)
           [(ir.CompilerIrFunction.Function name _ _ _ _ function-abi)
             (if (ir.compiler-ir-symbol-eq? name helper)
               (begin
@@ -68896,7 +68879,7 @@
     [feature-ok-var : i64 (+ base 10)]
     [blocks : ir.CompilerIrBlockBuilder
       (ir.compiler-ir-block-builder-with-capacity
-        (+ 4 (ir.compiler-ir-block-list-count (lower-global-shared-view tail))))]
+        (+ 4 (ir.compiler-ir-block-list-count tail)))]
     (begin
       (ir.compiler-ir-block-builder-push!
         (&mut blocks)
@@ -69164,10 +69147,7 @@
                     param-count))]
               [blocks : ir.CompilerIrBlockBuilder
                 (ir.compiler-ir-block-builder-with-capacity
-                  (+
-                    2
-                    (ir.compiler-ir-block-list-count
-                      (lower-global-shared-view tail-blocks))))]
+                  (+ 2 (ir.compiler-ir-block-list-count tail-blocks)))]
               (begin
                 (ir.compiler-ir-block-builder-push!
                   (&mut blocks)
@@ -69467,10 +69447,9 @@
                     [functions : ir.CompilerIrFunctionBuilder
                       (ir.compiler-ir-function-builder-with-capacity
                         (+
+                          (ir.compiler-ir-function-seq-count variant-functions)
                           (ir.compiler-ir-function-seq-count
-                            (lower-global-shared-view variant-functions))
-                          (ir.compiler-ir-function-seq-count
-                            (lower-global-shared-view escaped-thunk-functions))))]
+                            escaped-thunk-functions)))]
                     (begin
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut functions)

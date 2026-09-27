@@ -311,7 +311,7 @@
       (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (ir.compiler-ir-global-shared-view rest)
+        rest
         0
         rest.len)
       (ir.compiler-ir-instr-builder-to-seq builder))))

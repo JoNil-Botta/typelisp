@@ -3097,10 +3097,7 @@
     [_ false]))
 
 (define (lower-test-pack-values-shape? [values : ir.CompilerIrValueSeq]) : bool
-  (if (=
-    (ir.compiler-ir-value-seq-count
-      (owned_view.compiler-owned-shared-view values))
-    2)
+  (if (= (ir.compiler-ir-value-seq-count values) 2)
     (match (ir.compiler-ir-value-seq-ref values 1)
       [(ir.CompilerIrValue.I64 length) (= length 3)]
       [_ false])
@@ -4793,9 +4790,7 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global global-name _ _)
         (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
           true
@@ -4813,9 +4808,7 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name _ initial)
         (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (match initial
@@ -4844,9 +4837,7 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global global-name ty initial)
         (if (string.eq (ir.compiler-ir-symbol-text global-name) name)
           (match ty
@@ -6848,9 +6839,7 @@
   [index : i64]) : String
   (if (>= index globals.len)
     "missing"
-    (match (ir.compiler-ir-global-seq-ref
-      (owned_view.compiler-owned-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name _ initial)
         (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (match initial
@@ -6925,10 +6914,7 @@
       (let
         [lambda-name : String "__tl_lambda_get-fn_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-function-return-function-count
               functions
@@ -6945,10 +6931,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -6971,10 +6954,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count functions "main" (LowerTestInstr.IndirectUnit))
             1)
@@ -7000,10 +6980,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -7023,10 +7000,7 @@
       (let
         [capturing-name : String "__tl_lambda_main_1"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            3)
+          (= (ir.compiler-ir-function-seq-count functions) 3)
           (=
             (lower-test-count
               functions
@@ -7052,10 +7026,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -7074,10 +7045,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count
               functions
@@ -7095,10 +7063,7 @@
       (compiler-lower-capturing-lambda-structural-return-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
         (= (lower-test-count functions "main" (LowerTestInstr.IndirectCall)) 1)
         (>=
           (lower-test-count
@@ -7114,10 +7079,7 @@
       (compiler-lower-capturing-lambda-structural-sret-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
         (string.eq
           (lower-test-function-param-name functions "__tl_lambda_main_0" 0)
           "__tl_env")
@@ -7132,14 +7094,8 @@
       (compiler-lower-capturing-lambda-shadow-source)))
     [(LowerTestFunctions.Some functions)
       (and
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
-        (=
-          (ir.compiler-ir-function-seq-count
-            (ir.compiler-ir-global-shared-view functions))
-          2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
+        (= (ir.compiler-ir-function-seq-count functions) 2)
         (=
           (lower-test-count functions "main" (LowerTestInstr.IndirectTailCall))
           1))]
@@ -7153,10 +7109,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count functions "main" (LowerTestInstr.IndirectCall))
             1)
@@ -7171,10 +7124,7 @@
       (let
         [lambda-name : String "__tl_lambda_main_0"]
         (and
-          (=
-            (ir.compiler-ir-function-seq-count
-              (ir.compiler-ir-global-shared-view functions))
-            2)
+          (= (ir.compiler-ir-function-seq-count functions) 2)
           (=
             (lower-test-count functions "main" (LowerTestInstr.IndirectCall))
             1)
@@ -11892,10 +11842,7 @@
       (match lowered
         [(ir.CompilerIrProgram.Program _ functions externs)
           (and
-            (=
-              (ir.compiler-ir-function-seq-count
-                (ir.compiler-ir-global-shared-view functions))
-              1)
+            (= (ir.compiler-ir-function-seq-count functions) 1)
             (= (ir.compiler-ir-extern-seq-count externs) 0)
             (lower-test-function-defined? functions "main"))])]
     [(lower.ResultCompilerLower.Err _) false]))

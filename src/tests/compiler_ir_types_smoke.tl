@@ -14,7 +14,7 @@
       (compiler_ir_types.compiler-ir-instr-builder-push! (&mut builder) instr)
       (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (compiler_ir_types.compiler-ir-global-shared-view rest)
+        rest
         0
         rest.len)
       (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
@@ -183,10 +183,7 @@
   [want-var : i64]) : bool
   (if (or
     (< index 0)
-    (>=
-      index
-      (compiler_ir_types.compiler-ir-param-seq-count
-        (compiler_ir_types.compiler-ir-global-shared-view seq))))
+    (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
     (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
       [(compiler_ir_types.CompilerIrParam.Param name ty var)
@@ -204,10 +201,7 @@
   [want-var : i64]) : bool
   (if (or
     (< index 0)
-    (>=
-      index
-      (compiler_ir_types.compiler-ir-param-seq-count
-        (compiler_ir_types.compiler-ir-global-shared-view seq))))
+    (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
     (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
       [(compiler_ir_types.CompilerIrParam.Param name ty var)
@@ -242,10 +236,7 @@
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _ _)
           (and
-            (=
-              (compiler_ir_types.compiler-ir-param-seq-count
-                (compiler_ir_types.compiler-ir-global-shared-view stored))
-              2)
+            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
             (compiler-ir-smoke-param-seq-entry-i64?
               (compiler_ir_types.compiler-ir-global-shared-view stored)
               0
@@ -255,10 +246,7 @@
       (match cloned
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _ _)
           (and
-            (=
-              (compiler_ir_types.compiler-ir-param-seq-count
-                (compiler_ir_types.compiler-ir-global-shared-view stored))
-              2)
+            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
             (compiler-ir-smoke-param-seq-entry-i64?
               (compiler_ir_types.compiler-ir-global-shared-view stored)
               0
@@ -445,10 +433,7 @@
     (and
       (compiler-ir-smoke-function-seq-count-two? compact)
       (compiler-ir-smoke-function-seq-count-two? cloned)
-      (=
-        (compiler_ir_types.compiler-ir-function-seq-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact))
-        2)
+      (= (compiler_ir_types.compiler-ir-function-seq-count compact) 2)
       (compiler-ir-smoke-function-seq-first-name?
         (compiler_ir_types.compiler-ir-global-shared-view compact)
         "first")
@@ -530,10 +515,7 @@
     [array-reversed-functions : compiler_ir_types.CompilerIrFunctionSeq
       reversed-functions]
     (and
-      (=
-        (compiler_ir_types.compiler-ir-block-list-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))
-        3)
+      (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 3)
       (compiler-ir-smoke-block-list-label-at?
         (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
         0
@@ -554,10 +536,7 @@
         array-reversed-blocks
         2
         (compiler_ir_types.compiler-ir-label "first"))
-      (=
-        (compiler_ir_types.compiler-ir-function-seq-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact-functions))
-        3)
+      (= (compiler_ir_types.compiler-ir-function-seq-count compact-functions) 3)
       (compiler-ir-smoke-function-seq-name-at?
         (compiler_ir_types.compiler-ir-global-shared-view compact-functions)
         0
@@ -973,10 +952,7 @@
           " private spmd-private-v1 @helper avx2 lanes 8 [0 active-mask : bool,"
           " 1 source 0 uniform i64 : i64, 2 source 1 varying i64 : i64]"
           " index none result varying i64"))
-      (=
-        (compiler_ir_types.compiler-ir-instr-dst
-          (compiler_ir_types.compiler-ir-global-shared-view instr))
-        6)
+      (= (compiler_ir_types.compiler-ir-instr-dst instr) 6)
       (match (compiler_ir_types.compiler-ir-global-shared-view instr)
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let
@@ -1322,21 +1298,13 @@
           1
           (- 0 1))
         (- 0 1))
-      (not
-        (compiler_ir_types.compiler-ir-instr-seq-phi?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          0))
+      (not (compiler_ir_types.compiler-ir-instr-seq-phi? seq 0))
       (not
         (compiler-ir-instr-seq-return?
           (compiler_ir_types.compiler-ir-global-shared-view seq)
           0))
-      (not
-        (compiler_ir_types.compiler-ir-instr-seq-bounds-check?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          0))
-      (compiler_ir_types.compiler-ir-instr-seq-bounds-check?
-        (compiler_ir_types.compiler-ir-global-shared-view seq)
-        1)
+      (not (compiler_ir_types.compiler-ir-instr-seq-bounds-check? seq 0))
+      (compiler_ir_types.compiler-ir-instr-seq-bounds-check? seq 1)
       (compiler-ir-instr-seq-return?
         (compiler_ir_types.compiler-ir-global-shared-view seq)
         3)
@@ -3115,9 +3083,7 @@
       (compiler_ir_types.compiler-ir-global-shared-view instr)
       0)
     " | dst "
-    (string.int->string
-      (compiler_ir_types.compiler-ir-instr-dst
-        (compiler_ir_types.compiler-ir-global-shared-view instr)))
+    (string.int->string (compiler_ir_types.compiler-ir-instr-dst instr))
     " | succ"
     (compiler-ir-smoke-successor-text
       (compiler_ir_types.compiler-ir-global-shared-view instr)
@@ -3158,9 +3124,7 @@
   [instr : compiler_ir_types.CompilerIrInstr]
   [expected : String]) : i64
   (let
-    [dst : i64
-      (compiler_ir_types.compiler-ir-instr-dst
-        (compiler_ir_types.compiler-ir-global-shared-view instr))]
+    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
     [spmd? : bool
       (match (compiler_ir_types.compiler-ir-global-shared-view instr)
         [(compiler_ir_types.CompilerIrInstr.SpmdCall _) true]
@@ -3199,8 +3163,7 @@
         3]
       [(not
           (=
-            (compiler_ir_types.compiler-ir-instr-dst
-              (compiler_ir_types.compiler-ir-global-shared-view renamed))
+            (compiler_ir_types.compiler-ir-instr-dst renamed)
             (if (< dst 0)
               dst
               (+ dst 1000))))
@@ -3243,8 +3206,9 @@
         8]
       [(not
           (=
-            (compiler_ir_types.compiler-ir-instr-dst
-              (compiler_ir_types.compiler-ir-instr-with-dst instr 5))
+            (let
+              [instr (compiler_ir_types.compiler-ir-instr-with-dst instr 5)]
+              (compiler_ir_types.compiler-ir-instr-dst instr))
             (if (< dst 0)
               dst
               5)))
@@ -3709,7 +3673,7 @@
     (while (< index count)
       (begin
         (compiler_ir_types.compiler-ir-instr-seq-set!
-          (compiler_ir_types.compiler-ir-global-shared-view instrs)
+          (&mut instrs)
           index
           (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
         (set! index (+ index 1))))))
@@ -4791,10 +4755,7 @@
           1
           2)
         (compiler-ir-instr-seq-return-var? instrs 2 2)
-        (=
-          (compiler_ir_types.compiler-ir-block-list-count
-            (compiler_ir_types.compiler-ir-global-shared-view blocks))
-          3)
+        (= (compiler_ir_types.compiler-ir-block-list-count blocks) 3)
         (compiler-ir-block-list-label-at?
           (compiler_ir_types.compiler-ir-global-shared-view blocks)
           0
@@ -4804,10 +4765,7 @@
           1
           "middle")
         (compiler-ir-block-list-label-at? blocks 2 "done")
-        (=
-          (compiler_ir_types.compiler-ir-function-seq-count
-            (compiler_ir_types.compiler-ir-global-shared-view functions))
-          3)
+        (= (compiler_ir_types.compiler-ir-function-seq-count functions) 3)
         (compiler-ir-function-seq-name-at? functions 0 "first")
         (compiler-ir-function-seq-name-at? functions 1 "second")
         (compiler-ir-function-seq-name-at? functions 2 "third")))))
@@ -4893,25 +4851,16 @@
         cloned-func
         (compiler_ir_types.compiler-ir-clone-function pools func))
       (and
-        (=
-          (compiler_ir_types.compiler-ir-param-seq-count
-            (compiler_ir_types.compiler-ir-global-shared-view snapshot))
-          1)
+        (= (compiler_ir_types.compiler-ir-param-seq-count snapshot) 1)
         (compiler-ir-param-seq-entry-i64? snapshot 0 "value" 3)
-        (=
-          (compiler_ir_types.compiler-ir-param-seq-count
-            (compiler_ir_types.compiler-ir-global-shared-view params))
-          2)
+        (= (compiler_ir_types.compiler-ir-param-seq-count params) 2)
         (compiler-ir-param-seq-entry-i64?
           (compiler_ir_types.compiler-ir-global-shared-view params)
           0
           "value"
           3)
         (compiler-ir-param-seq-entry-bool? params 1 "flag" 7)
-        (=
-          (compiler_ir_types.compiler-ir-param-seq-count
-            (compiler_ir_types.compiler-ir-global-shared-view cloned))
-          2)
+        (= (compiler_ir_types.compiler-ir-param-seq-count cloned) 2)
         (compiler-ir-param-seq-entry-i64?
           (compiler_ir_types.compiler-ir-global-shared-view cloned)
           0
@@ -4928,9 +4877,7 @@
               _)
             (and
               (=
-                (compiler_ir_types.compiler-ir-param-seq-count
-                  (compiler_ir_types.compiler-ir-global-shared-view
-                    cloned-params))
+                (compiler_ir_types.compiler-ir-param-seq-count cloned-params)
                 2)
               (compiler-ir-param-seq-entry-i64?
                 (compiler_ir_types.compiler-ir-global-shared-view cloned-params)
@@ -5217,10 +5164,7 @@
         (compiler_ir_types.compiler-ir-global-shared-view inputs)
         (compiler_ir_types.compiler-ir-phi-input-seq-empty))]
     (and
-      (=
-        (compiler_ir_types.compiler-ir-phi-input-seq-count
-          (compiler_ir_types.compiler-ir-global-shared-view inputs))
-        2)
+      (= (compiler_ir_types.compiler-ir-phi-input-seq-count inputs) 2)
       (compiler-ir-phi-input-seq-entry-var-label?
         (compiler_ir_types.compiler-ir-global-shared-view inputs)
         0
@@ -5228,10 +5172,7 @@
         "entry")
       (compiler-ir-phi-input-seq-entry-var-label? inputs 1 20 "loop")
       (compiler-ir-phi-input-seq-entry-var-label? cloned 0 10 "entry")
-      (=
-        (compiler_ir_types.compiler-ir-phi-input-seq-count
-          (compiler_ir_types.compiler-ir-global-shared-view tail))
-        1)
+      (= (compiler_ir_types.compiler-ir-phi-input-seq-count tail) 1)
       (compiler-ir-phi-input-seq-entry-var-label? tail 0 20 "loop")
       (compiler-ir-phi-input-seq-entry-var-label?
         (compiler_ir_types.compiler-ir-global-shared-view reversed)
@@ -5327,10 +5268,7 @@
       (=
         (compiler_ir_types.compiler-ir-block-list-instruction-count block-list)
         3)
-      (=
-        (compiler_ir_types.compiler-ir-block-list-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))
-        1)
+      (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 1)
       (compiler-ir-block-list-first-label? compact-blocks "entry")
       (compiler-ir-instr-seq-mov-dst? seq 0 1))))
 

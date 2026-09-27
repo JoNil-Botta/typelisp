@@ -33,7 +33,7 @@
       (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (ir.compiler-ir-global-shared-view rest)
+        rest
         0
         rest.len)
       (ir.compiler-ir-instr-builder-to-seq builder))))
@@ -12625,14 +12625,10 @@
                   (reg.compiler-reg-remap-params remap params)]
                 (and
                   (= remapped.len 3)
-                  (match (ir.compiler-ir-param-seq-ref
-                    (reg.compiler-reg-global-shared-view remapped)
-                    0)
+                  (match (ir.compiler-ir-param-seq-ref remapped 0)
                     [(ir.CompilerIrParam.Param _ _ active-param)
                       (= active-param active)])
-                  (match (ir.compiler-ir-param-seq-ref
-                    (reg.compiler-reg-global-shared-view remapped)
-                    1)
+                  (match (ir.compiler-ir-param-seq-ref remapped 1)
                     [(ir.CompilerIrParam.Param _ _ varying-param)
                       (= varying-param varying)])
                   (match (ir.compiler-ir-param-seq-ref remapped 2)

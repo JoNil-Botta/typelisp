@@ -34,9 +34,7 @@
     (begin
       (while (< index functions.len)
         (begin
-          (match (ir.compiler-ir-function-seq-ref
-            (ir.compiler-ir-global-shared-view functions)
-            index)
+          (match (ir.compiler-ir-function-seq-ref functions index)
             [(ir.CompilerIrFunction.Function name _ _ _ _ _)
               (let
                 [name-text : String (ir.compiler-ir-symbol-text name)]
@@ -108,9 +106,7 @@
     ""
     (let
       [function : ir.CompilerIrFunction
-        (ir.compiler-ir-function-seq-ref
-          (ir.compiler-ir-global-shared-view functions)
-          index)]
+        (ir.compiler-ir-function-seq-ref functions index)]
       (match (ir.compiler-ir-global-shared-view function)
         [(ir.CompilerIrFunction.Function name _ _ _ _ _)
           (if (lower.lower-string-prefix-at?

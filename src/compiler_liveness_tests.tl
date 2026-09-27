@@ -212,7 +212,7 @@
       (live.compiler-live-instr-uses (clone instr))]
     [defs : live.CompilerLiveI64Set
       (live.compiler-live-instr-defs (clone instr))]
-    [def-var : i64 (ir.compiler-ir-instr-dst (clone instr))]
+    [def-var : i64 (ir.compiler-ir-instr-dst instr)]
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
     [index : i64 0]
@@ -478,7 +478,7 @@
   (let
     [store : ir.CompilerIrInstr (irt.instr "store_owned %71 -> %70 : String")]
     (and
-      (= (ir.compiler-ir-instr-dst (clone store)) -1)
+      (= (ir.compiler-ir-instr-dst store) -1)
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-defs (clone store))
         (live.compiler-live-set-empty))

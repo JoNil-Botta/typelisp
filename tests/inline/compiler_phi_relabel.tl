@@ -53,13 +53,9 @@
           (while (< index count)
             (let
               [original : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (ir.compiler-ir-global-shared-view inputs)
-                  index)]
+                (ir.compiler-ir-phi-input-seq-ref inputs index)]
               [actual : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (ir.compiler-ir-global-shared-view result)
-                  index)]
+                (ir.compiler-ir-phi-input-seq-ref result index)]
               [label : i64
                 (if (= (% (+ start index) 2) 0)
                   -7

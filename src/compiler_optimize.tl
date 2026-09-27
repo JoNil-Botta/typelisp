@@ -661,9 +661,7 @@
               "|"
               (compiler-opt-global-shared-view pass)
               "|blocks="
-              (string.int->string
-                (ir.compiler-ir-block-list-count
-                  (compiler-opt-global-shared-view blocks)))
+              (string.int->string (ir.compiler-ir-block-list-count blocks))
               "|instructions="
               (string.int->string
                 (ir.compiler-ir-block-list-instruction-count blocks))
@@ -2376,17 +2374,11 @@
                 [(ir.CompilerIrInstr.Phi dst inputs phi-ty)
                   (if (or
                     (not (= i phis))
-                    (not
-                      (=
-                        (ir.compiler-ir-phi-input-seq-count
-                          (compiler-opt-global-shared-view inputs))
-                        2)))
+                    (not (= (ir.compiler-ir-phi-input-seq-count inputs) 2)))
                     (set! bad true)
                     (let
                       [in0 : ir.CompilerIrPhiInput
-                        (ir.compiler-ir-phi-input-seq-ref
-                          (compiler-opt-global-shared-view inputs)
-                          0)]
+                        (ir.compiler-ir-phi-input-seq-ref inputs 0)]
                       [in1 : ir.CompilerIrPhiInput
                         (ir.compiler-ir-phi-input-seq-ref inputs 1)]
                       [self-first? : bool (= in0.label label)]
@@ -3444,9 +3436,7 @@
       unit
       (let
         [phi-input-at-2900-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-2900-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-2900-3 0)]
         [value : ir.CompilerIrValue phi-input-at-2900-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -3775,9 +3765,7 @@
       (begin
         (opt-uncount-value-uses-array
           items
-          (ir.compiler-ir-value-seq-ref
-            (compiler-opt-global-shared-view values)
-            index))
+          (ir.compiler-ir-value-seq-ref values index))
         (set! index (+ index 1))))))
 
 (define (opt-uncount-phi-uses-array
@@ -3789,9 +3777,7 @@
       unit
       (let
         [phi-input-at-3279-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-3279-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-3279-3 0)]
         [value : ir.CompilerIrValue phi-input-at-3279-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -4991,7 +4977,7 @@
           [(ir.CompilerIrBlock.Block _ instrs)
             (ir.compiler-ir-instr-builder-append-seq-range!
               builder
-              (compiler-opt-global-shared-view instrs)
+              instrs
               0
               (ir.compiler-ir-instr-seq-count instrs))])
         (opt-aggregate-append-blocks! (deref rest) builder))]
@@ -5005,7 +4991,7 @@
               [(ir.CompilerIrBlock.Block _ instrs)
                 (ir.compiler-ir-instr-builder-append-seq-range!
                   builder
-                  (compiler-opt-global-shared-view instrs)
+                  instrs
                   0
                   (ir.compiler-ir-instr-seq-count instrs))])
             (set! index (+ index 1)))))]))
@@ -6129,9 +6115,7 @@
   (if (>= index params.len)
     unit
     (begin
-      (match (ir.compiler-ir-param-seq-ref
-        (compiler-opt-global-shared-view params)
-        index)
+      (match (ir.compiler-ir-param-seq-ref params index)
         [(ir.CompilerIrParam.Param _ _ var)
           (opt-aggregate-split-count-use! (&mut plan.def-count) var)])
       (opt-aggregate-split-count-param-defs! plan params (+ index 1)))))
@@ -7652,8 +7636,8 @@
     true
     (and
       (opt-value-eq
-        (ir.compiler-ir-value-seq-ref (compiler-opt-global-shared-view a) index)
-        (ir.compiler-ir-value-seq-ref (compiler-opt-global-shared-view b) index))
+        (ir.compiler-ir-value-seq-ref a index)
+        (ir.compiler-ir-value-seq-ref b index))
       (opt-value-seq-eq-from a b (+ index 1)))))
 
 (define (opt-value-seq-eq
@@ -7726,9 +7710,7 @@
           false))
       (let
         [phi-input-at-6661-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-6661-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-6661-3 0)]
         [av : ir.CompilerIrValue phi-input-at-6661-3.value]
         [alabel : i64 phi-input-at-6661-3.label]
         [at : ir.CompilerIrPhiInputSeq
@@ -7741,9 +7723,7 @@
           false
           (let
             [phi-input-at-6667-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-6667-7)
-                0)]
+              (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-6667-7 0)]
             [bv : ir.CompilerIrValue phi-input-at-6667-7.value]
             [blabel : i64 phi-input-at-6667-7.label]
             [bt : ir.CompilerIrPhiInputSeq
@@ -8539,12 +8519,8 @@
       (< position b.len)
       (opt-param-eq
         type-segment-bases
-        (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view a)
-          position)
-        (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view b)
-          position))
+        (ir.compiler-ir-param-seq-ref a position)
+        (ir.compiler-ir-param-seq-ref b position))
       (opt-param-seq-eq-from type-segment-bases a b (+ position 1)))))
 
 (define (opt-param-seq-eq
@@ -8915,9 +8891,7 @@
         env
         group
         index
-        (ir.compiler-ir-value-seq-ref
-          (compiler-opt-global-shared-view words)
-          index))
+        (ir.compiler-ir-value-seq-ref words index))
       group
       (+ index 1)
       words)))
@@ -11085,8 +11059,7 @@
 
 (define (opt-cfg-index-build [blocks : ir.CompilerIrBlockList]) : OptCfgIndex
   (let
-    [count : i64
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))]
+    [count : i64 (ir.compiler-ir-block-list-count blocks)]
     [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [dense-blocks : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock count)]
@@ -11219,9 +11192,7 @@
   [blocks : ir.CompilerIrBlockList]) : unit
   (let
     [count : i64 (opt-cfg-index-block-count index)]
-    (if (=
-      count
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks)))
+    (if (= count (ir.compiler-ir-block-list-count blocks))
       (begin
         (opt-cfg-index-refresh-blocks-from! (&mut index.blocks) blocks 0)
         unit)
@@ -12234,9 +12205,7 @@
   [position : i64]) : bool
   (if (>= position params.len)
     true
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ var)
         (and
           (opt-var-set-add-unique! set var)
@@ -12252,15 +12221,12 @@
   [defs : (&mut defs (__tl_dyn-array i64))]
   [params : ir.CompilerIrParamSeq]) : unit
   (let
-    [count : i64
-      (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params))]
+    [count : i64 (ir.compiler-ir-param-seq-count params)]
     [at : i64 0]
     (begin
       (while (< at count)
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            at)
+          (match (ir.compiler-ir-param-seq-ref params at)
             [(ir.CompilerIrParam.Param _ _ index)
               (if (and (>= index 0) (< index (array-length defs)))
                 (set! (array-ref defs index) (+ (array-ref defs index) 1))
@@ -12403,9 +12369,7 @@
   [position : i64]) : bool
   (if (>= position params.len)
     true
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ var)
         (and
           (opt-var-defs-checked-add! items var 0 0)
@@ -12635,9 +12599,7 @@
       (ResultCompilerOptimizeVerify.Ok)
       (let
         [phi-input-at-12652-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-12652-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-12652-3 0)]
         [value : ir.CompilerIrValue phi-input-at-12652-3.value]
         [pred-label : i64 phi-input-at-12652-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -12809,9 +12771,7 @@
       (OptLabelSet.Nil)
       (let
         [phi-input-at-13106-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-13106-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-13106-3 0)]
         [label : i64 phi-input-at-13106-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -12829,9 +12789,7 @@
       true
       (let
         [phi-input-at-13116-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-13116-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-13116-3 0)]
         [label : i64 phi-input-at-13116-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -12916,9 +12874,7 @@
           (while (< k inputs.len)
             (let
               [input : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (ir.compiler-ir-global-shared-view inputs)
-                  k)]
+                (ir.compiler-ir-phi-input-seq-ref inputs k)]
               (match (opt-cfg-index-id index input.label)
                 [(option_i64.None) (return false)]
                 [(option_i64.Some pred)
@@ -13901,9 +13857,7 @@
         facts
         label
         defs
-        (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view params)
-          position))
+        (ir.compiler-ir-param-seq-ref params position))
       params
       (+ position 1))))
 
@@ -14394,9 +14348,7 @@
   [position : i64]) : OptSsaRenameEnv
   (if (>= position params.len)
     env
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ var)
         (opt-ssa-env-from-params-at
           facts
@@ -15051,9 +15003,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-16078-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-16078-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-16078-3 0)]
         [value : ir.CompilerIrValue phi-input-at-16078-3.value]
         [pred : i64 phi-input-at-16078-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -15542,9 +15492,7 @@
             (while (< index words.len)
               (let
                 [value : ir.CompilerIrValue
-                  (ir.compiler-ir-value-seq-ref
-                    (compiler-opt-global-shared-view words)
-                    index)]
+                  (ir.compiler-ir-value-seq-ref words index)]
                 (begin
                   (if (and
                     (opt-copy-safe-source? value)
@@ -15947,9 +15895,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-17525-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-17525-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-17525-3 0)]
         [value : ir.CompilerIrValue phi-input-at-17525-3.value]
         [label : i64 phi-input-at-17525-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -16457,7 +16403,7 @@
     (while (< index count)
       (begin
         (ir.compiler-ir-instr-seq-set!
-          (compiler-opt-global-shared-view instrs)
+          (&mut instrs)
           index
           (opt-cfg-fold-branch (ir.compiler-ir-instr-seq-ref instrs index)))
         (set! index (+ index 1))))))
@@ -17769,9 +17715,7 @@
       true
       (let
         [phi-input-at-19481-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-19481-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-19481-3 0)]
         [value : ir.CompilerIrValue phi-input-at-19481-3.value]
         [label : i64 phi-input-at-19481-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -17889,9 +17833,7 @@
         emitted)
       (let
         [phi-input-at-19579-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-19579-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-19579-3 0)]
         [value : ir.CompilerIrValue phi-input-at-19579-3.value]
         [label : i64 phi-input-at-19579-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -18998,9 +18940,7 @@
                 (OptRotateSsaMaybePhiRecs.No)
                 (let
                   [phi-input-at-20698-13 : ir.CompilerIrPhiInput
-                    (ir.compiler-ir-phi-input-seq-ref
-                      (ir.compiler-ir-global-shared-view phi-inputs-at-20698-13)
-                      0)]
+                    (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-20698-13 0)]
                   [first-value : ir.CompilerIrValue phi-input-at-20698-13.value]
                   [first-label : i64 phi-input-at-20698-13.label]
                   [rest1 : ir.CompilerIrPhiInputSeq
@@ -19014,8 +18954,7 @@
                     (let
                       [phi-input-at-20700-17 : ir.CompilerIrPhiInput
                         (ir.compiler-ir-phi-input-seq-ref
-                          (ir.compiler-ir-global-shared-view
-                            phi-inputs-at-20700-17)
+                          phi-inputs-at-20700-17
                           0)]
                       [second-value : ir.CompilerIrValue
                         phi-input-at-20700-17.value]
@@ -19369,9 +19308,7 @@
       set
       (let
         [phi-input-at-21071-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-21071-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-21071-3 0)]
         [value : ir.CompilerIrValue phi-input-at-21071-3.value]
         [label : i64 phi-input-at-21071-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -19774,9 +19711,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-21455-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-21455-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-21455-3 0)]
         [value : ir.CompilerIrValue phi-input-at-21455-3.value]
         [label : i64 phi-input-at-21455-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -19815,9 +19750,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-21485-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-21485-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-21485-3 0)]
         [value : ir.CompilerIrValue phi-input-at-21485-3.value]
         [label : i64 phi-input-at-21485-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -21799,9 +21732,7 @@
         (opt-licm-root-env-seed-param!
           type-segment-bases
           env
-          (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position))
+          (ir.compiler-ir-param-seq-ref params position))
         (set! position (+ position 1))))))
 
 (define (opt-licm-phi-root
@@ -21814,9 +21745,7 @@
       found
       (let
         [phi-input-at-23292-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-23292-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-23292-3 0)]
         [value : ir.CompilerIrValue phi-input-at-23292-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -22094,16 +22023,12 @@
   [globals : ir.CompilerIrGlobalSeq]
   [acc : opt_i64_i64_map.Map]
   [index : i64]) : opt_i64_i64_map.Map
-  (if (>=
-    index
-    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+  (if (>= index (ir.compiler-ir-global-seq-count globals))
     acc
     (let
       [out : opt_i64_i64_map.Map acc]
       (begin
-        (match (ir.compiler-ir-global-seq-ref
-          (compiler-opt-global-shared-view globals)
-          index)
+        (match (ir.compiler-ir-global-seq-ref globals index)
           [(ir.CompilerIrGlobal.Global name ty _)
             (if (opt-licm-array-header-type? type-segment-bases ty)
               (opt_i64_i64_map.insert-ref!
@@ -25198,7 +25123,7 @@
       (begin
         (ir.compiler-ir-instr-builder-append-seq-range!
           (&mut builder)
-          (compiler-opt-global-shared-view instrs)
+          instrs
           0
           terminator-index)
         (ir.compiler-ir-instr-builder-append-seq-range!
@@ -28809,9 +28734,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ ty var)
             (let
               [fresh : i64 (array-ref cell 0)]
@@ -28926,12 +28849,12 @@
         prefix-end)
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (compiler-opt-global-shared-view fuse-instrs)
+        fuse-instrs
         0
         (ir.compiler-ir-instr-seq-count fuse-instrs))
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (compiler-opt-global-shared-view clone-param-moves)
+        clone-param-moves
         0
         (ir.compiler-ir-instr-seq-count clone-param-moves))
       (ir.compiler-ir-instr-builder-push!
@@ -29240,9 +29163,7 @@
       (while (< i n)
         (let
           [input : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view inputs)
-              i)]
+            (ir.compiler-ir-phi-input-seq-ref inputs i)]
           (begin
             (when
               (= input.label label)
@@ -29266,9 +29187,7 @@
           (while (< i n)
             (let
               [input : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (ir.compiler-ir-global-shared-view inputs)
-                  i)]
+                (ir.compiler-ir-phi-input-seq-ref inputs i)]
               (begin
                 (when
                   (and
@@ -29297,9 +29216,7 @@
         (let
           [_dec : unit (set! i (- i 1))]
           [input : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view inputs)
-              i)]
+            (ir.compiler-ir-phi-input-seq-ref inputs i)]
           [keep? : bool
             (if (opt-label-contains fold input.label)
               (match (opt-licm-predicate-dispatch blocks input.label)
@@ -29342,7 +29259,7 @@
               (and preheader? last?)
               (ir.compiler-ir-instr-builder-append-seq-range!
                 (&mut builder)
-                (compiler-opt-global-shared-view fuse-instrs)
+                fuse-instrs
                 0
                 (ir.compiler-ir-instr-seq-count fuse-instrs)))
             (ir.compiler-ir-instr-builder-push!
@@ -29716,9 +29633,7 @@
       (OptInductionPhiInputs.No)
       (let
         [phi-input-at-28317-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-28317-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-28317-3 0)]
         [a-value : ir.CompilerIrValue phi-input-at-28317-3.value]
         [a-label : i64 phi-input-at-28317-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -29731,9 +29646,7 @@
           (OptInductionPhiInputs.No)
           (let
             [phi-input-at-28319-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-28319-7)
-                0)]
+              (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-28319-7 0)]
             [b-value : ir.CompilerIrValue phi-input-at-28319-7.value]
             [b-label : i64 phi-input-at-28319-7.label]
             [rest2 : ir.CompilerIrPhiInputSeq
@@ -31672,26 +31585,26 @@
                   (if is-header
                     (ir.compiler-ir-instr-builder-append-seq-range!
                       (&mut builder)
-                      (compiler-opt-global-shared-view phi-instrs)
+                      phi-instrs
                       0
                       phi-count)
                     unit)
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
-                    (compiler-opt-global-shared-view instrs)
+                    instrs
                     0
                     terminator-index)
                   (if is-preheader
                     (ir.compiler-ir-instr-builder-append-seq-range!
                       (&mut builder)
-                      (compiler-opt-global-shared-view seed-instrs)
+                      seed-instrs
                       0
                       seed-count)
                     unit)
                   (if is-latch
                     (ir.compiler-ir-instr-builder-append-seq-range!
                       (&mut builder)
-                      (compiler-opt-global-shared-view next-instrs)
+                      next-instrs
                       0
                       next-count)
                     unit)
@@ -32690,9 +32603,7 @@
       (and var? (>= count 2))
       (let
         [phi-input-at-31400-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-31400-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-31400-3 0)]
         [value : ir.CompilerIrValue phi-input-at-31400-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -32847,9 +32758,7 @@
       false
       (let
         [phi-input-at-31567-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-31567-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-31567-3 0)]
         [value : ir.CompilerIrValue phi-input-at-31567-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -32989,9 +32898,7 @@
       acc
       (let
         [phi-input-at-31716-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-31716-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-31716-3 0)]
         [value : ir.CompilerIrValue phi-input-at-31716-3.value]
         [input-label : i64 phi-input-at-31716-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -34099,9 +34006,7 @@
       (ir.CompilerIrMaybeValue.No)
       (let
         [phi-input-at-32906-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-32906-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-32906-3 0)]
         [value : ir.CompilerIrValue phi-input-at-32906-3.value]
         [label : i64 phi-input-at-32906-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -34123,9 +34028,7 @@
       false
       (let
         [phi-input-at-32919-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-32919-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-32919-3 0)]
         [value : ir.CompilerIrValue phi-input-at-32919-3.value]
         [label : i64 phi-input-at-32919-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -34149,9 +34052,7 @@
       true
       (let
         [phi-input-at-32937-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-32937-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-32937-3 0)]
         [value : ir.CompilerIrValue phi-input-at-32937-3.value]
         [label : i64 phi-input-at-32937-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -34175,9 +34076,7 @@
       true
       (let
         [phi-input-at-32956-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-32956-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-32956-3 0)]
         [value : ir.CompilerIrValue phi-input-at-32956-3.value]
         [label : i64 phi-input-at-32956-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -34380,9 +34279,7 @@
       unit
       (let
         [phi-input-at-33168-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-33168-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-33168-3 0)]
         [value : ir.CompilerIrValue phi-input-at-33168-3.value]
         [label : i64 phi-input-at-33168-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -35451,9 +35348,7 @@
       true
       (let
         [phi-input-at-34317-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34317-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34317-3 0)]
         [value : ir.CompilerIrValue phi-input-at-34317-3.value]
         [label : i64 phi-input-at-34317-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -35629,9 +35524,7 @@
       unit
       (let
         [phi-input-at-34504-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34504-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34504-3 0)]
         [value : ir.CompilerIrValue phi-input-at-34504-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -35659,9 +35552,7 @@
       unit
       (let
         [phi-input-at-34525-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34525-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34525-3 0)]
         [value : ir.CompilerIrValue phi-input-at-34525-3.value]
         [label : i64 phi-input-at-34525-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -35835,9 +35726,7 @@
       acc
       (let
         [phi-input-at-34704-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34704-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34704-3 0)]
         [value : ir.CompilerIrValue phi-input-at-34704-3.value]
         [label : i64 phi-input-at-34704-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -35949,9 +35838,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-34811-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34811-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34811-3 0)]
         [value : ir.CompilerIrValue phi-input-at-34811-3.value]
         [label : i64 phi-input-at-34811-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -35977,9 +35864,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-34830-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34830-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34830-3 0)]
         [value : ir.CompilerIrValue phi-input-at-34830-3.value]
         [label : i64 phi-input-at-34830-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -36017,9 +35902,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-34861-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-34861-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34861-3 0)]
         [label : i64 phi-input-at-34861-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -36115,9 +35998,7 @@
         (= expected count)
         (let
           [phi-input-at-34950-5 : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view phi-inputs-at-34950-5)
-              0)]
+            (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-34950-5 0)]
           [value : ir.CompilerIrValue phi-input-at-34950-5.value]
           [label : i64 phi-input-at-34950-5.label]
           [rest : ir.CompilerIrPhiInputSeq
@@ -36263,9 +36144,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-35102-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-35102-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-35102-3 0)]
         [value : ir.CompilerIrValue phi-input-at-35102-3.value]
         [label : i64 phi-input-at-35102-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -37046,9 +36925,7 @@
         (OptFlagExitSeed.No))
       (let
         [phi-input-at-35997-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-35997-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-35997-3 0)]
         [value : ir.CompilerIrValue phi-input-at-35997-3.value]
         [label : i64 phi-input-at-35997-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -38719,9 +38596,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-37489-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-37489-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-37489-3 0)]
         [value : ir.CompilerIrValue phi-input-at-37489-3.value]
         [label : i64 phi-input-at-37489-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -38785,9 +38660,7 @@
       found
       (let
         [phi-input-at-37541-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-37541-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-37541-3 0)]
         [value : ir.CompilerIrValue phi-input-at-37541-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -38981,7 +38854,7 @@
               (ir.compiler-ir-instr-seq-ref instrs pos))]
           (begin
             (ir.compiler-ir-instr-seq-set!
-              (compiler-opt-global-shared-view instrs)
+              (&mut instrs)
               pos
               (compiler-opt-global-shared-view cleaned))
             (opt-collect-instr-uses-array
@@ -39469,9 +39342,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-38268-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-38268-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-38268-3 0)]
         [value : ir.CompilerIrValue phi-input-at-38268-3.value]
         [label : i64 phi-input-at-38268-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -39495,7 +39366,7 @@
       [(ir.CompilerIrInstr.Phi dst inputs ty)
         (begin
           (ir.compiler-ir-instr-seq-set!
-            (compiler-opt-global-shared-view instrs)
+            (&mut instrs)
             slot
             (ir.CompilerIrInstr.Phi
               dst
@@ -40578,9 +40449,7 @@
       (OptBoolBranchPhiInputs.No)
       (let
         [phi-input-at-39461-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-39461-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39461-3 0)]
         [first : ir.CompilerIrValue phi-input-at-39461-3.value]
         [first-label : i64 phi-input-at-39461-3.label]
         [first-rest : ir.CompilerIrPhiInputSeq
@@ -40593,9 +40462,7 @@
           (OptBoolBranchPhiInputs.No)
           (let
             [phi-input-at-39463-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-39463-7)
-                0)]
+              (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39463-7 0)]
             [second : ir.CompilerIrValue phi-input-at-39463-7.value]
             [second-label : i64 phi-input-at-39463-7.label]
             [second-rest : ir.CompilerIrPhiInputSeq
@@ -40619,9 +40486,7 @@
       (OptBoolBranchConstantInputs.Some true-preds false-preds count)
       (let
         [phi-input-at-39479-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-39479-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39479-3 0)]
         [value : ir.CompilerIrValue phi-input-at-39479-3.value]
         [label : i64 phi-input-at-39479-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -40706,9 +40571,7 @@
       false
       (let
         [phi-input-at-39557-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-39557-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39557-3 0)]
         [label : i64 phi-input-at-39557-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -40793,9 +40656,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-39638-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-39638-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-39638-3 0)]
         [value : ir.CompilerIrValue phi-input-at-39638-3.value]
         [label : i64 phi-input-at-39638-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -40819,7 +40680,7 @@
       [(ir.CompilerIrInstr.Phi dst inputs ty)
         (begin
           (ir.compiler-ir-instr-seq-set!
-            (compiler-opt-global-shared-view instrs)
+            (&mut instrs)
             index
             (ir.CompilerIrInstr.Phi
               dst
@@ -40867,7 +40728,7 @@
                   (let
                     [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
                     (ir.compiler-ir-instr-seq-set!
-                      instrs
+                      (&mut instrs)
                       last
                       (ir.CompilerIrInstr.Jump target-label)))])])
           (opt-bool-branch-apply-constant-pred-rewrites!
@@ -41061,9 +40922,12 @@
           (if (not (or first-compare second-compare))
             false
             (begin
-              (ir.compiler-ir-instr-seq-set! first-instrs first-pos first-term)
               (ir.compiler-ir-instr-seq-set!
-                second-instrs
+                (&mut first-instrs)
+                first-pos
+                first-term)
+              (ir.compiler-ir-instr-seq-set!
+                (&mut second-instrs)
                 second-pos
                 second-term)
               true))])]))
@@ -41148,9 +41012,7 @@
       (OptBoolBranchOnlyInput.No)
       (let
         [phi-input-at-40009-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-40009-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-40009-3 0)]
         [value : ir.CompilerIrValue phi-input-at-40009-3.value]
         [label : i64 phi-input-at-40009-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -41222,7 +41084,7 @@
                 (if (not compare?)
                   false
                   (begin
-                    (ir.compiler-ir-instr-seq-set! pred-instrs pos term)
+                    (ir.compiler-ir-instr-seq-set! (&mut pred-instrs) pos term)
                     (opt-bool-branch-repair-target-phis!
                       blocks
                       true-label
@@ -41837,9 +41699,7 @@
         (OptPhiCmpFoldInputs.No))
       (let
         [phi-input-at-40777-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-40777-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-40777-3 0)]
         [value : ir.CompilerIrValue phi-input-at-40777-3.value]
         [label : i64 phi-input-at-40777-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -41910,9 +41770,7 @@
       acc
       (let
         [phi-input-at-40841-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-40841-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-40841-3 0)]
         [value : ir.CompilerIrValue phi-input-at-40841-3.value]
         [label : i64 phi-input-at-40841-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -42543,9 +42401,7 @@
         (OptPhiCmpFoldInputs.No))
       (let
         [phi-input-at-41493-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-41493-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-41493-3 0)]
         [value : ir.CompilerIrValue phi-input-at-41493-3.value]
         [label : i64 phi-input-at-41493-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -42624,9 +42480,7 @@
       changed
       (let
         [phi-input-at-41564-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-41564-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-41564-3 0)]
         [value : ir.CompilerIrValue phi-input-at-41564-3.value]
         [label : i64 phi-input-at-41564-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -43036,9 +42890,7 @@
         false
         (let
           [phi-input-at-42000-5 : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view phi-inputs-at-42000-5)
-              0)]
+            (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-42000-5 0)]
           [value : ir.CompilerIrValue phi-input-at-42000-5.value]
           [rest : ir.CompilerIrPhiInputSeq
             (ir.CompilerIrPhiInputSeq
@@ -43404,9 +43256,7 @@
       (ir.CompilerIrMaybeValue.No)
       (let
         [phi-input-at-42465-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-42465-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-42465-3 0)]
         [value : ir.CompilerIrValue phi-input-at-42465-3.value]
         [input-label : i64 phi-input-at-42465-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -43427,9 +43277,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-42477-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-42477-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-42477-3 0)]
         [value : ir.CompilerIrValue phi-input-at-42477-3.value]
         [input-label : i64 phi-input-at-42477-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -43485,9 +43333,7 @@
       found
       (let
         [phi-input-at-42532-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-42532-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-42532-3 0)]
         [value : ir.CompilerIrValue phi-input-at-42532-3.value]
         [input-label : i64 phi-input-at-42532-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -44308,7 +44154,7 @@
                   (begin
                     (opt-thread-note-value-use! uses value)
                     (ir.compiler-ir-instr-seq-set!
-                      (compiler-opt-global-shared-view instrs)
+                      (&mut instrs)
                       slot
                       (ir.CompilerIrInstr.Phi
                         dst
@@ -44341,7 +44187,7 @@
       [(ir.CompilerIrInstr.Phi dst inputs ty)
         (begin
           (ir.compiler-ir-instr-seq-set!
-            (compiler-opt-global-shared-view instrs)
+            (&mut instrs)
             slot
             (ir.CompilerIrInstr.Phi
               dst
@@ -44367,7 +44213,7 @@
       (match (ir.compiler-ir-instr-seq-ref instrs slot)
         [(ir.CompilerIrInstr.Phi dst inputs ty)
           (ir.compiler-ir-instr-seq-set!
-            instrs
+            (&mut instrs)
             slot
             (ir.CompilerIrInstr.Phi
               dst
@@ -44511,7 +44357,7 @@
                                 merge-label
                                 origin-label)
                               (ir.compiler-ir-instr-seq-set!
-                                (compiler-opt-global-shared-view origin-instrs)
+                                (&mut origin-instrs)
                                 (-
                                   (ir.compiler-ir-instr-seq-count origin-instrs)
                                   1)
@@ -44582,9 +44428,7 @@
       changed
       (let
         [phi-input-at-43723-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-43723-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-43723-3 0)]
         [value : ir.CompilerIrValue phi-input-at-43723-3.value]
         [label : i64 phi-input-at-43723-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -46118,7 +45962,7 @@
                   (begin
                     (opt-thread-note-value-use! uses carried)
                     (ir.compiler-ir-instr-seq-set!
-                      (compiler-opt-global-shared-view instrs)
+                      (&mut instrs)
                       slot
                       (ir.CompilerIrInstr.Phi
                         dst
@@ -46157,9 +46001,7 @@
           (while (< i n)
             (let
               [input : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (ir.compiler-ir-global-shared-view inputs)
-                  i)]
+                (ir.compiler-ir-phi-input-seq-ref inputs i)]
               [origin : i64 input.label]
               (begin
                 (opt-thread-facts-collect! facts index doms origin merge-label)
@@ -46213,7 +46055,7 @@
                               from
                               merge-label))
                           (ir.compiler-ir-instr-seq-set!
-                            (compiler-opt-global-shared-view instrs)
+                            (&mut instrs)
                             (- (ir.compiler-ir-instr-seq-count instrs) 1)
                             (ir.CompilerIrInstr.Jump exit))
                           (opt-thread-phi-chain-trace!
@@ -46749,7 +46591,7 @@
           (let
             [slot : i64 (- count 1)]
             (ir.compiler-ir-instr-seq-set!
-              (compiler-opt-global-shared-view instrs)
+              (&mut instrs)
               slot
               (opt-cfg-straighten-terminator
                 index
@@ -46871,11 +46713,7 @@
             (opt-collect-blocks-uses-array frame work)]
           [flag : (__tl_dyn-array i64) (__tl_make-array i64 1)]
           [entry-label : i64 (opt-cfg-straighten-head-label work)]
-          [fuel : i64
-            (+
-              (ir.compiler-ir-block-list-count
-                (compiler-opt-global-shared-view work))
-              1)]
+          [fuel : i64 (+ (ir.compiler-ir-block-list-count work) 1)]
           (begin
             (set! (array-ref flag 0) 0)
             (opt-cfg-straighten-round!
@@ -47083,9 +46921,7 @@
     (begin
       (while (< position params.len)
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position)
+          (match (ir.compiler-ir-param-seq-ref params position)
             [(ir.CompilerIrParam.Param _ _ id)
               (if (> id out)
                 (set! out id)
@@ -47318,9 +47154,7 @@
       (OptSccpValue.Unknown)
       (let
         [phi-input-at-45408-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-45408-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-45408-3 0)]
         [value : ir.CompilerIrValue phi-input-at-45408-3.value]
         [pred : i64 phi-input-at-45408-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -47511,9 +47345,7 @@
   [position : i64]) : OptSccpEnv
   (if (>= position params.len)
     env
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ id)
         (opt-sccp-env-from-params-at
           params
@@ -47615,10 +47447,7 @@
     (compiler-opt-global-shared-view blocks)
     (opt-sccp-initial-state type-segment-bases context params blocks)
     (+
-      (+
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view blocks))
-        8)
+      (+ (ir.compiler-ir-block-list-count blocks) 8)
       (* 2 (ir.compiler-ir-block-list-instruction-count blocks)))))
 
 (define (opt-sccp-analyze-with-frame
@@ -47632,10 +47461,7 @@
     (compiler-opt-global-shared-view blocks)
     (opt-sccp-initial-state-with-frame type-segment-bases context params frame)
     (+
-      (+
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view blocks))
-        8)
+      (+ (ir.compiler-ir-block-list-count blocks) 8)
       (* 2 (ir.compiler-ir-block-list-instruction-count blocks)))))
 
 (define (opt-sccp-rewrite-value
@@ -48645,8 +48471,7 @@
           (opt-late-total-switch-mark-params!
             (&mut occupied)
             0
-            (ir.compiler-ir-param-seq-count
-              (compiler-opt-global-shared-view params)))]
+            (ir.compiler-ir-param-seq-count params))]
         [blocks-result : OptLateTotalSwitchBlocks
           (opt-late-total-switch-blocks
             blocks
@@ -50517,9 +50342,7 @@
   [position : i64]) : OptValueSources
   (if (>= position params.len)
     acc
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ id)
         (opt-gvn-sources-params-from
           params
@@ -50541,8 +50364,7 @@
   [instr : ir.CompilerIrInstr]) : OptValueSources
   (let
     [out : OptValueSources acc]
-    [dst : i64
-      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
+    [dst : i64 (ir.compiler-ir-instr-dst instr)]
     (begin
       (when
         (opt-gvn-record-candidate? instr)
@@ -51327,9 +51149,7 @@
     (begin
       (while (and (not found) (< index params.len))
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            index)
+          (match (ir.compiler-ir-param-seq-ref params index)
             [(ir.CompilerIrParam.Param _ ty _)
               (if (opt-load-slice-param-type? type-segment-bases ty)
                 (set! found true)
@@ -52374,9 +52194,7 @@
       false
       (let
         [phi-input-at-51555-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-51555-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-51555-3 0)]
         [value : ir.CompilerIrValue phi-input-at-51555-3.value]
         [from-label : i64 phi-input-at-51555-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -52964,9 +52782,7 @@
       false
       (let
         [phi-input-at-52210-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-52210-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-52210-3 0)]
         [value : ir.CompilerIrValue phi-input-at-52210-3.value]
         [from-label : i64 phi-input-at-52210-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -53861,9 +53677,7 @@
       false
       (let
         [phi-input-at-53371-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-53371-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-53371-3 0)]
         [value : ir.CompilerIrValue phi-input-at-53371-3.value]
         [from-label : i64 phi-input-at-53371-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -54314,9 +54128,7 @@
       false
       (let
         [phi-input-at-53896-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-53896-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-53896-3 0)]
         [value : ir.CompilerIrValue phi-input-at-53896-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -54720,7 +54532,9 @@
   (cond
     [(>= pos (ir.compiler-ir-instr-seq-count instrs)) -1]
     [(=
-        (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-ref instrs pos))
+        (let
+          [instr (ir.compiler-ir-instr-seq-ref instrs pos)]
+          (ir.compiler-ir-instr-dst instr))
         var)
       pos]
     [else (opt-bounds-dom-def-pos instrs var (+ pos 1))]))
@@ -55088,9 +54902,7 @@
       (begin
         (while (< position params.len)
           (begin
-            (match (ir.compiler-ir-param-seq-ref
-              (compiler-opt-global-shared-view params)
-              position)
+            (match (ir.compiler-ir-param-seq-ref params position)
               [(ir.CompilerIrParam.Param _ _ var)
                 (if (and (>= var 0) (< var frame))
                   (set!
@@ -55993,9 +55805,7 @@
       found
       (let
         [phi-input-at-55588-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-55588-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-55588-3 0)]
         [value : ir.CompilerIrValue phi-input-at-55588-3.value]
         [input-label : i64 phi-input-at-55588-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -57354,9 +57164,7 @@
       (OptRangeMergeInput.No)
       (let
         [phi-input-at-57165-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-57165-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-57165-3 0)]
         [value : ir.CompilerIrValue phi-input-at-57165-3.value]
         [label : i64 phi-input-at-57165-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -58166,9 +57974,7 @@
                           false-label)))))]
               [(ir.CompilerIrInstr.Phi dst inputs ty)
                 (let
-                  [n : i64
-                    (ir.compiler-ir-phi-input-seq-count
-                      (compiler-opt-global-shared-view inputs))]
+                  [n : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
                   [out : ir.CompilerIrPhiInputBuilder
                     (ir.compiler-ir-phi-input-builder-with-capacity (+ n 1))]
                   [k : i64 0]
@@ -58186,9 +57992,7 @@
                             (begin
                               (match (opt-cfg-index-id
                                 index
-                                (ir.compiler-ir-phi-input-seq-ref
-                                  (compiler-opt-global-shared-view inputs)
-                                  j).label)
+                                (ir.compiler-ir-phi-input-seq-ref inputs j).label)
                                 [(option_i64.Some pred)
                                   (if (opt-dom-info-dominates-id? doms id pred)
                                     (set! found true)
@@ -58200,9 +58004,7 @@
                     (while (< k n)
                       (let
                         [input : ir.CompilerIrPhiInput
-                          (ir.compiler-ir-phi-input-seq-ref
-                            (compiler-opt-global-shared-view inputs)
-                            k)]
+                          (ir.compiler-ir-phi-input-seq-ref inputs k)]
                         [from : i64
                           (match (opt-cfg-index-id index input.label)
                             [(option_i64.Some pred) pred]
@@ -59927,7 +59729,7 @@
       ;; add-of-add: dst == base + (k1 + k), bit-identical.
       (begin
         (ir.compiler-ir-instr-seq-set!
-          instrs
+          (&mut instrs)
           index
           (ir.CompilerIrInstr.BinOp
             dst
@@ -59960,7 +59762,7 @@
                   [_ c])]
               (begin
                 (ir.compiler-ir-instr-seq-set!
-                  (compiler-opt-global-shared-view instrs)
+                  (&mut instrs)
                   vidx
                   (ir.CompilerIrInstr.BinOp
                     src
@@ -59970,7 +59772,7 @@
                     vty))
                 (opt-affine-use-retarget! uses mbase ubase)
                 (ir.compiler-ir-instr-seq-set!
-                  instrs
+                  (&mut instrs)
                   index
                   (ir.CompilerIrInstr.BinOp
                     dst
@@ -60010,7 +59812,7 @@
       ;; mul-of-mul: dst == base * (c1 * c), bit-identical.
       (begin
         (ir.compiler-ir-instr-seq-set!
-          instrs
+          (&mut instrs)
           index
           (ir.CompilerIrInstr.BinOp
             dst
@@ -60266,7 +60068,7 @@
                             unit)]
                         [_ unit])
                       (ir.compiler-ir-instr-seq-set!
-                        (compiler-opt-global-shared-view instrs)
+                        (&mut instrs)
                         index
                         rewritten)
                       (set! fold-state next-fold)
@@ -60423,7 +60225,7 @@
                   [(OptCopyResult.Result next-copy rewritten)
                     (begin
                       (ir.compiler-ir-instr-seq-set!
-                        (compiler-opt-global-shared-view instrs)
+                        (&mut instrs)
                         index
                         rewritten)
                       (set! load-state next-load)
@@ -61578,15 +61380,11 @@
   [index : i64]) : bool
   (if (or (>= index params.len) (>= index args.len))
     false
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      index)
+    (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param _ ty var-id)
         (if (and
           (not (opt-ssa-register-value-type? ty))
-          (match (ir.compiler-ir-value-seq-ref
-            (compiler-opt-global-shared-view args)
-            index)
+          (match (ir.compiler-ir-value-seq-ref args index)
             [(ir.CompilerIrValue.Var source) (= source var-id)]
             [_ false]))
           true
@@ -61669,9 +61467,7 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index params.len)
     unit
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      index)
+    (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param _ ty var-id)
         (begin
           (ir.compiler-ir-instr-builder-push!
@@ -61691,13 +61487,8 @@
   (if (or (>= index params.len) (>= index args.len))
     unit
     (let
-      [arg : ir.CompilerIrValue
-        (ir.compiler-ir-value-seq-ref
-          (compiler-opt-global-shared-view args)
-          index)]
-      (match (ir.compiler-ir-param-seq-ref
-        (compiler-opt-global-shared-view params)
-        index)
+      [arg : ir.CompilerIrValue (ir.compiler-ir-value-seq-ref args index)]
+      (match (ir.compiler-ir-param-seq-ref params index)
         [(ir.CompilerIrParam.Param _ ty var-id)
           (begin
             (if (match arg
@@ -61728,18 +61519,14 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (or (>= index params.len) (>= index args.len))
     unit
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      index)
+    (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param _ ty _)
         (begin
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Mov
               (+ base index)
-              (ir.compiler-ir-value-seq-ref
-                (compiler-opt-global-shared-view args)
-                index)
+              (ir.compiler-ir-value-seq-ref args index)
               ty))
           (opt-tailrec-push-stage-movs!
             params
@@ -62415,18 +62202,14 @@
   [index : i64]) : i64
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     index
-    (if (ir.compiler-ir-instr-seq-phi?
-      (compiler-opt-global-shared-view instrs)
-      index)
+    (if (ir.compiler-ir-instr-seq-phi? instrs index)
       (opt-unroll-phi-prefix-count instrs (+ index 1))
       index)))
 
 (define (opt-unroll-no-phi-from? [instrs : ir.CompilerIrInstrSeq] [index : i64]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     true
-    (if (ir.compiler-ir-instr-seq-phi?
-      (compiler-opt-global-shared-view instrs)
-      index)
+    (if (ir.compiler-ir-instr-seq-phi? instrs index)
       false
       (opt-unroll-no-phi-from? instrs (+ index 1)))))
 
@@ -62575,9 +62358,7 @@
       (OptUnrollPhiSplit.No)
       (let
         [phi-input-at-67178-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-67178-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-67178-3 0)]
         [first-value : ir.CompilerIrValue phi-input-at-67178-3.value]
         [first-label : i64 phi-input-at-67178-3.label]
         [rest-box : ir.CompilerIrPhiInputSeq
@@ -62590,9 +62371,7 @@
           (OptUnrollPhiSplit.No)
           (let
             [phi-input-at-67181-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-67181-7)
-                0)]
+              (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-67181-7 0)]
             [second-value : ir.CompilerIrValue phi-input-at-67181-7.value]
             [second-label : i64 phi-input-at-67181-7.label]
             [tail-box : ir.CompilerIrPhiInputSeq
@@ -62849,9 +62628,7 @@
       any?
       (let
         [phi-input-at-67451-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-67451-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-67451-3 0)]
         [value : ir.CompilerIrValue phi-input-at-67451-3.value]
         [label : i64 phi-input-at-67451-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -64493,8 +64270,7 @@
         (compiler-opt-global-shared-view remap)
         labels
         instr)]
-    [dst : i64
-      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view cloned))]
+    [dst : i64 (ir.compiler-ir-instr-dst cloned)]
     (if (< dst 0)
       cloned
       (ir.compiler-ir-instr-with-dst cloned (opt-bce-mb-remap-dst remap dst)))))
@@ -64511,9 +64287,7 @@
     (ir.compiler-ir-phi-input-seq-empty)
     (let
       [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (compiler-opt-global-shared-view inputs)
-          0)]
+        (ir.compiler-ir-phi-input-seq-ref inputs 0)]
       [tail : ir.CompilerIrPhiInputSeq
         (opt-clone-extend-exit-phi-inputs
           (ir.CompilerIrPhiInputSeq
@@ -64588,8 +64362,7 @@
           (ir.compiler-ir-label-none)
           (ir.compiler-ir-label-none))
         instr)]
-    [dst : i64
-      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view cloned))]
+    [dst : i64 (ir.compiler-ir-instr-dst cloned)]
     (if (< dst 0)
       cloned
       (ir.compiler-ir-instr-with-dst
@@ -64678,9 +64451,7 @@
               (opt-unroll-remap-set
                 remap
                 dst
-                (ir.compiler-ir-value-seq-ref
-                  (compiler-opt-global-shared-view values)
-                  index))
+                (ir.compiler-ir-value-seq-ref values index))
               (let
                 [others-2 (opt-unroll-phi-list-tail others)]
                 (opt-unroll-write-phi-seeds-from
@@ -65120,14 +64891,10 @@
                 (ir.CompilerIrInstr.Phi
                   (array-ref ku-ids index)
                   (ir.compiler-ir-phi-input-seq-prepend
-                    (ir.compiler-ir-value-seq-ref
-                      (compiler-opt-global-shared-view inits)
-                      index)
+                    (ir.compiler-ir-value-seq-ref inits index)
                     guard-label
                     (ir.compiler-ir-phi-input-seq-prepend
-                      (ir.compiler-ir-value-seq-ref
-                        (compiler-opt-global-shared-view chains)
-                        index)
+                      (ir.compiler-ir-value-seq-ref chains index)
                       unrolled-label
                       (ir.compiler-ir-phi-input-seq-empty)))
                   ty))
@@ -65214,7 +64981,7 @@
                           dst
                           (ir.compiler-ir-phi-input-seq-prepend
                             (ir.compiler-ir-value-seq-ref
-                              (compiler-opt-global-shared-view guard-values)
+                              guard-values
                               chain-index)
                             guard-label
                             (ir.compiler-ir-phi-input-seq-prepend
@@ -65222,7 +64989,7 @@
                               loop-label
                               (ir.compiler-ir-phi-input-seq-prepend
                                 (ir.compiler-ir-value-seq-ref
-                                  (compiler-opt-global-shared-view chains)
+                                  chains
                                   chain-index)
                                 unrolled-label
                                 (ir.compiler-ir-phi-input-seq-empty))))
@@ -65560,7 +65327,7 @@
           (&mut cunrolled-builder))
         (ir.compiler-ir-instr-builder-append-seq-range!
           (&mut cunrolled-builder)
-          (compiler-opt-global-shared-view copies2)
+          copies2
           0
           (ir.compiler-ir-instr-seq-count copies2))
         (ir.compiler-ir-instr-builder-push!
@@ -66022,7 +65789,7 @@
               (&mut unrolled-builder))
             (ir.compiler-ir-instr-builder-append-seq-range!
               (&mut unrolled-builder)
-              (compiler-opt-global-shared-view copies)
+              copies
               0
               (ir.compiler-ir-instr-seq-count copies))
             (ir.compiler-ir-instr-builder-push!
@@ -66653,9 +66420,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-69645-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-69645-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-69645-3 0)]
         [value : ir.CompilerIrValue phi-input-at-69645-3.value]
         [label : i64 phi-input-at-69645-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -69554,12 +69319,12 @@
                 (begin
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
-                    (compiler-opt-global-shared-view phis)
+                    phis
                     0
                     (ir.compiler-ir-instr-seq-count phis))
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
-                    (compiler-opt-global-shared-view body)
+                    body
                     0
                     (ir.compiler-ir-instr-seq-count body))
                   (ir.CompilerIrBlock.Block
@@ -69647,7 +69412,7 @@
                 (begin
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut guard-builder)
-                    (compiler-opt-global-shared-view emitted.instrs)
+                    emitted.instrs
                     0
                     (ir.compiler-ir-instr-seq-count emitted.instrs))
                   (ir.compiler-ir-instr-builder-push!
@@ -69667,7 +69432,7 @@
                 (begin
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut fast-builder)
-                    (compiler-opt-global-shared-view copies)
+                    copies
                     0
                     (ir.compiler-ir-instr-seq-count copies))
                   (ir.compiler-ir-instr-builder-push!
@@ -69734,7 +69499,7 @@
                 (begin
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut builder)
-                    (compiler-opt-global-shared-view copies)
+                    copies
                     0
                     (ir.compiler-ir-instr-seq-count copies))
                   (ir.compiler-ir-instr-builder-push!
@@ -70553,12 +70318,12 @@
                 (compiler-opt-global-shared-view ity)))
             (ir.compiler-ir-instr-builder-append-seq-range!
               (&mut unrolled-builder)
-              (compiler-opt-global-shared-view group-geps)
+              group-geps
               0
               (ir.compiler-ir-instr-seq-count group-geps))
             (ir.compiler-ir-instr-builder-append-seq-range!
               (&mut unrolled-builder)
-              (compiler-opt-global-shared-view copies)
+              copies
               0
               (ir.compiler-ir-instr-seq-count copies))
             (ir.compiler-ir-instr-builder-push!
@@ -70802,9 +70567,7 @@
               (and
                 (= true-label label)
                 (or
-                  (ir.compiler-ir-instr-seq-phi?
-                    (compiler-opt-global-shared-view instrs)
-                    0)
+                  (ir.compiler-ir-instr-seq-phi? instrs 0)
                   (opt-unroll-simd-body-has-vector? instrs 0 (- count 1))))]
             [_ false])))]))
 
@@ -75674,9 +75437,7 @@
       (OptBceMaskSet.No)
       (let
         [phi-input-at-78668-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-78668-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-78668-3 0)]
         [value : ir.CompilerIrValue phi-input-at-78668-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -76067,8 +75828,7 @@
   [values : ir.CompilerIrValueSeq]) : OptBceVersionGuardResult
   (let
     [instrs : ir.CompilerIrInstrBuilder instrs-input]
-    [value-count : i64
-      (ir.compiler-ir-value-seq-count (compiler-opt-global-shared-view values))]
+    [value-count : i64 (ir.compiler-ir-value-seq-count values)]
     (if (= value-count 0)
       (let
         [dst : i64 (opt-bce-version-alloc-var cell)]
@@ -76086,9 +75846,7 @@
           (opt-bce-version-and-chain-array
             cell
             (&mut instrs)
-            (ir.compiler-ir-value-seq-ref
-              (compiler-opt-global-shared-view values)
-              0)
+            (ir.compiler-ir-value-seq-ref values 0)
             values
             1)]
         (OptBceVersionGuardResult.Some
@@ -76968,9 +76726,7 @@
       set
       (let
         [phi-input-at-79727-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-79727-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-79727-3 0)]
         [value : ir.CompilerIrValue phi-input-at-79727-3.value]
         [label : i64 phi-input-at-79727-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -77432,7 +77188,7 @@
                 [_fast-body : unit
                   (ir.compiler-ir-instr-builder-append-seq-range!
                     (&mut fast-builder)
-                    (compiler-opt-global-shared-view body)
+                    body
                     0
                     (ir.compiler-ir-instr-seq-count body))]
                 [_fast-branch : unit
@@ -79882,9 +79638,7 @@
       set
       (let
         [phi-input-at-82412-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-82412-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-82412-3 0)]
         [value : ir.CompilerIrValue phi-input-at-82412-3.value]
         [label : i64 phi-input-at-82412-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -80310,9 +80064,7 @@
       (= seen (opt-label-count preds))
       (let
         [phi-input-at-82890-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-82890-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-82890-3 0)]
         [value : ir.CompilerIrValue phi-input-at-82890-3.value]
         [label : i64 phi-input-at-82890-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -80430,7 +80182,7 @@
           (if (= index phi-count)
             (ir.compiler-ir-instr-builder-append-seq-range!
               (&mut builder)
-              (compiler-opt-global-shared-view new-phis)
+              new-phis
               0
               new-count)
             unit)
@@ -80762,9 +80514,7 @@
       (OptBceMbMaybeLabels.Some stubs)
       (let
         [phi-input-at-83364-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-83364-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-83364-3 0)]
         [value : ir.CompilerIrValue phi-input-at-83364-3.value]
         [label : i64 phi-input-at-83364-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -81148,9 +80898,7 @@
     plan
     (let
       [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (ir.compiler-ir-global-shared-view inputs)
-          index)]
+        (ir.compiler-ir-phi-input-seq-ref inputs index)]
       [label : i64 input.label]
       [next : OptBceMbFarPlan
         (if (opt-label-contains body-labels label)
@@ -81230,9 +80978,7 @@
       (while (< index inputs.len)
         (let
           [input : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view inputs)
-              index)]
+            (ir.compiler-ir-phi-input-seq-ref inputs index)]
           [label : i64 input.label]
           (begin
             (ir.compiler-ir-phi-input-builder-push!
@@ -81738,9 +81484,7 @@
       true
       (let
         [phi-input-at-83983-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-83983-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-83983-3 0)]
         [value : ir.CompilerIrValue phi-input-at-83983-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -82790,9 +82534,7 @@
       found
       (let
         [phi-input-at-86012-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-86012-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-86012-3 0)]
         [value : ir.CompilerIrValue phi-input-at-86012-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -83136,9 +82878,7 @@
       (OptBceMaskSet.No)
       (let
         [phi-input-at-86396-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-86396-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-86396-3 0)]
         [value : ir.CompilerIrValue phi-input-at-86396-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -85922,9 +85662,7 @@
       false
       (let
         [phi-input-at-89254-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-89254-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-89254-3 0)]
         [input-label : i64 phi-input-at-89254-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -87907,10 +87645,7 @@
     (if (<= seq.len 0)
       (ir.compiler-ir-phi-input-seq-empty)
       (let
-        [head : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view seq)
-            0)]
+        [head : ir.CompilerIrPhiInput (ir.compiler-ir-phi-input-seq-ref seq 0)]
         [value : ir.CompilerIrValue head.value]
         [label : i64 head.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -91286,7 +91021,7 @@
         (begin
           (ir.compiler-ir-instr-builder-append-seq-range!
             (&mut builder)
-            (compiler-opt-global-shared-view instrs)
+            instrs
             0
             terminator-index)
           (ir.compiler-ir-instr-builder-append-seq-range!
@@ -91490,9 +91225,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ var)
             (set! (array-ref counts var) (+ (array-ref counts var) 1))])
         (set! position (+ position 1))))))
@@ -92042,9 +91775,7 @@
               (opt-cmp-sink-find-compare instrs cond-var (- index 1))))]
         [_
           (if (or
-            (=
-              (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))
-              cond-var)
+            (= (ir.compiler-ir-instr-dst instr) cond-var)
             (opt-cmp-sink-instr-uses-var? instr cond-var))
             (- 0 1)
             (opt-cmp-sink-find-compare instrs cond-var (- index 1)))]))))
@@ -93417,9 +93148,7 @@
     true
     (and
       (opt-successor-sink-stable-value?
-        (ir.compiler-ir-value-seq-ref
-          (compiler-opt-global-shared-view values)
-          index))
+        (ir.compiler-ir-value-seq-ref values index))
       (opt-successor-sink-stable-values-from? values (+ index 1)))))
 
 (define (opt-successor-sink-stable-values? [values : ir.CompilerIrValueSeq]) : bool
@@ -93536,9 +93265,7 @@
             (opt-successor-sink-subst-value
               frame
               remap
-              (ir.compiler-ir-value-seq-ref
-                (compiler-opt-global-shared-view values)
-                index)))
+              (ir.compiler-ir-value-seq-ref values index)))
           (set! index (+ index 1))))
       (ir.CompilerIrValueSeq slots values.len))))
 
@@ -93688,9 +93415,7 @@
       (OptSuccessorSinkMaybeLabel.No)
       (let
         [phi-input-at-97131-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-97131-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-97131-3 0)]
         [value : ir.CompilerIrValue phi-input-at-97131-3.value]
         [label : i64 phi-input-at-97131-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -93737,9 +93462,7 @@
       (OptSuccessorSinkMaybeLabel.No)
       (let
         [phi-input-at-97177-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-97177-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-97177-3 0)]
         [value : ir.CompilerIrValue phi-input-at-97177-3.value]
         [label : i64 phi-input-at-97177-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -93755,11 +93478,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [phi-var : i64]
   [inputs : ir.CompilerIrPhiInputSeq]) : OptSuccessorSinkMaybeInductionShape
-  (if (not
-    (=
-      (ir.compiler-ir-phi-input-seq-count
-        (compiler-opt-global-shared-view inputs))
-      2))
+  (if (not (= (ir.compiler-ir-phi-input-seq-count inputs) 2))
     (OptSuccessorSinkMaybeInductionShape.No)
     (match (opt-successor-sink-phi-zero-label
       blocks
@@ -93827,9 +93546,7 @@
       (OptSuccessorSinkMaybeLabel.No)
       (let
         [phi-input-at-97261-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-97261-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-97261-3 0)]
         [value : ir.CompilerIrValue phi-input-at-97261-3.value]
         [label : i64 phi-input-at-97261-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -93855,11 +93572,7 @@
   [base : (& base ir.CompilerIrValue)]
   [scale : i64]
   [inputs : ir.CompilerIrPhiInputSeq]) : OptSuccessorSinkMaybeInductionShape
-  (if (not
-    (=
-      (ir.compiler-ir-phi-input-seq-count
-        (compiler-opt-global-shared-view inputs))
-      2))
+  (if (not (= (ir.compiler-ir-phi-input-seq-count inputs) 2))
     (OptSuccessorSinkMaybeInductionShape.No)
     (match (opt-successor-sink-pointer-edge-label
       blocks
@@ -93894,9 +93607,7 @@
       (option_i64.None)
       (let
         [phi-input-at-97322-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-97322-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-97322-3 0)]
         [value : ir.CompilerIrValue phi-input-at-97322-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -94052,9 +93763,7 @@
       (OptSuccessorSinkMaybeRecipe.No)
       (let
         [phi-input-at-97479-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-97479-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-97479-3 0)]
         [value : ir.CompilerIrValue phi-input-at-97479-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -95633,9 +95342,7 @@
   [env : OptCopyEnv]
   [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
   (let
-    [count : i64
-      (ir.compiler-ir-phi-input-seq-count
-        (ir.compiler-ir-global-shared-view inputs))]
+    [count : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
     [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
       (__tl_make-array ir.CompilerIrPhiInput count)]
     [at : i64 0]
@@ -95643,9 +95350,7 @@
       (while (< at count)
         (let
           [head : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view inputs)
-              at)]
+            (ir.compiler-ir-phi-input-seq-ref inputs at)]
           (begin
             (set!
               (array-ref slots at)
@@ -95765,10 +95470,8 @@
     [right-blocks : ir.CompilerIrBlockList (opt-function-blocks right)]
     (and
       (=
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view left-blocks))
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view right-blocks)))
+        (ir.compiler-ir-block-list-count left-blocks)
+        (ir.compiler-ir-block-list-count right-blocks))
       (=
         (ir.compiler-ir-block-list-instruction-count left-blocks)
         (ir.compiler-ir-block-list-instruction-count right-blocks)))))
@@ -95891,10 +95594,7 @@
   (if (>= index values.len)
     true
     (and
-      (opt-guard-sink-plain-value?
-        (ir.compiler-ir-value-seq-ref
-          (compiler-opt-global-shared-view values)
-          index))
+      (opt-guard-sink-plain-value? (ir.compiler-ir-value-seq-ref values index))
       (opt-guard-sink-plain-values-from? values (+ index 1)))))
 
 (define (opt-guard-sink-plain-values? [values : ir.CompilerIrValueSeq]) : bool
@@ -96247,10 +95947,7 @@
   (if (<= inputs.len 0)
     unit
     (let
-      [head : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (ir.compiler-ir-global-shared-view inputs)
-          0)]
+      [head : ir.CompilerIrPhiInput (ir.compiler-ir-phi-input-seq-ref inputs 0)]
       [rest : ir.CompilerIrPhiInputSeq
         (ir.CompilerIrPhiInputSeq
           inputs.slots
@@ -97376,9 +97073,7 @@
   [source-label : i64]
   [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
   (let
-    [count : i64
-      (ir.compiler-ir-phi-input-seq-count
-        (ir.compiler-ir-global-shared-view inputs))]
+    [count : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
     [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
       (__tl_make-array ir.CompilerIrPhiInput count)]
     [at : i64 0]
@@ -97386,9 +97081,7 @@
       (while (< at count)
         (let
           [head : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref
-              (ir.compiler-ir-global-shared-view inputs)
-              at)]
+            (ir.compiler-ir-phi-input-seq-ref inputs at)]
           (begin
             (set!
               (array-ref slots at)
@@ -99352,9 +99045,7 @@
       (OptUboundMaybeEdges.No)
       (let
         [phi-input-at-100754-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-100754-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-100754-3 0)]
         [value : ir.CompilerIrValue phi-input-at-100754-3.value]
         [label : i64 phi-input-at-100754-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -99367,9 +99058,7 @@
           (OptUboundMaybeEdges.No)
           (let
             [phi-input-at-100757-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-100757-7)
-                0)]
+              (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-100757-7 0)]
             [value2 : ir.CompilerIrValue phi-input-at-100757-7.value]
             [label2 : i64 phi-input-at-100757-7.label]
             [rest2 : ir.CompilerIrPhiInputSeq
@@ -99758,9 +99447,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-101179-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-101179-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-101179-3 0)]
         [value : ir.CompilerIrValue phi-input-at-101179-3.value]
         [label : i64 phi-input-at-101179-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -101442,9 +101129,7 @@
       false
       (let
         [phi-input-at-102936-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-102936-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-102936-3 0)]
         [label : i64 phi-input-at-102936-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -101467,9 +101152,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-102954-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-102954-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-102954-3 0)]
         [value : ir.CompilerIrValue phi-input-at-102954-3.value]
         [label : i64 phi-input-at-102954-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -101589,7 +101272,7 @@
           (if (= plan.pre label)
             (ir.compiler-ir-instr-builder-append-seq-range!
               (&mut builder)
-              (compiler-opt-global-shared-view plan.pre-instrs)
+              plan.pre-instrs
               0
               (ir.compiler-ir-instr-seq-count plan.pre-instrs))
             unit)
@@ -101904,10 +101587,7 @@
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view context))]
         [marks : (__tl_dyn-array bool)
-          (__tl_make-array
-            bool
-            (ir.compiler-ir-block-list-count
-              (compiler-opt-global-shared-view blocks)))]
+          (__tl_make-array bool (ir.compiler-ir-block-list-count blocks))]
         [_marks : unit (opt-bg-loop-marks! loops (&mut marks))]
         (match (opt-bg-plan-loops
           (opt-bg-loops-widest-first (compiler-opt-global-shared-view loops))
@@ -102456,7 +102136,9 @@
             s)))]
     [run-heavy? : bool
       (<=
-        (ir.compiler-ir-block-list-count (opt-pass-blocks s))
+        (let
+          [blocks (opt-pass-blocks s)]
+          (ir.compiler-ir-block-list-count blocks))
         (opt-heavy-pass-block-limit))]
     ;; Dominator and natural-loop analyses use the integer CFG index. Their
     ;; admission decisions are loop-local, so an unrelated block elsewhere in
@@ -103513,8 +103195,7 @@
   [lits : (&mut lits (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
   (let
-    [dst : i64
-      (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
+    [dst : i64 (ir.compiler-ir-instr-dst instr)]
     (if (or (< dst 0) (>= dst (array-length lits)))
       unit
       (let
@@ -103870,9 +103551,7 @@
             (array-ref left dst)
             (let
               [input : ir.CompilerIrPhiInput
-                (ir.compiler-ir-phi-input-seq-ref
-                  (compiler-opt-global-shared-view inputs)
-                  0)]
+                (ir.compiler-ir-phi-input-seq-ref inputs 0)]
               (opt-ml-var input.value)))
           (set!
             (array-ref right dst)
@@ -104919,8 +104598,7 @@
 ;; walk never reads the array.
 (define (opt-inline-census-depths-build! [blocks : ir.CompilerIrBlockList]) : unit
   (let
-    [count : i64
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))]
+    [count : i64 (ir.compiler-ir-block-list-count blocks)]
     (begin
       (set! opt-inline-census-depth-active? false)
       (set! opt-inline-census-depth-count 0)
@@ -106017,7 +105695,7 @@
                 (set! alias? true)]
               [_ unit])
             (ir.compiler-ir-instr-seq-set!
-              (compiler-opt-global-shared-view instrs)
+              (&mut instrs)
               index
               (opt-devirt-known-function-literal-instr instr))
             (set! index (+ index 1)))))
@@ -106150,7 +105828,7 @@
     (while (< index count)
       (begin
         (ir.compiler-ir-instr-seq-set!
-          (compiler-opt-global-shared-view instrs)
+          (&mut instrs)
           index
           (opt-devirt-known-function-instr
             states
@@ -106455,13 +106133,9 @@
   [params : ir.CompilerIrParamSeq]
   [index : i64]
   [expected : i64]) : bool
-  (if (>=
-    index
-    (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params)))
+  (if (>= index (ir.compiler-ir-param-seq-count params))
     true
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      index)
+    (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param _ _ vid)
         (and
           (= vid expected)
@@ -106833,9 +106507,7 @@
       false
       (let
         [phi-input-at-108929-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-108929-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-108929-3 0)]
         [input-label : i64 phi-input-at-108929-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -106869,9 +106541,7 @@
       labels
       (let
         [phi-input-at-108957-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-108957-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-108957-3 0)]
         [label : i64 phi-input-at-108957-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -107441,9 +107111,7 @@
     (begin
       (while (and (not found) (< position params.len))
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position)
+          (match (ir.compiler-ir-param-seq-ref params position)
             [(ir.CompilerIrParam.Param _ ty _)
               (if (opt-inline-private-memory-transport-type? ty)
                 (set! found true)
@@ -107458,9 +107126,7 @@
     (begin
       (while (and (not found) (< position params.len))
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position)
+          (match (ir.compiler-ir-param-seq-ref params position)
             [(ir.CompilerIrParam.Param name _ _)
               (if (string.eq name (ir.compiler-ir-hidden-sret-param-name))
                 (set! found true)
@@ -107510,10 +107176,7 @@
       ;; execution) and `cg-scc-discover!` (37) sat, refused for size by one
       ;; tier and for structure by the other.
       [(and
-          (<=
-            (ir.compiler-ir-block-list-count
-              (compiler-opt-global-shared-view cblocks))
-            1)
+          (<= (ir.compiler-ir-block-list-count cblocks) 1)
           (<=
             (-
               (ir.compiler-ir-block-list-instruction-count
@@ -108035,9 +107698,7 @@
     [(ir.CompilerIrFunction.Function callee-name cparams ret cvars cblocks _)
       (let
         [np : i64 (opt-inline-param-count cparams)]
-        [block-count : i64
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view cblocks))]
+        [block-count : i64 (ir.compiler-ir-block-list-count cblocks)]
         [instr-count : i64 (opt-inline-multiblock-cost-instrs cblocks)]
         (and
           (opt-inline-bool-type? ret)
@@ -108170,9 +107831,7 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index params.len)
     unit
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      index)
+    (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param name ty _)
         (begin
           (if (or
@@ -108953,9 +108612,7 @@
       (ir.compiler-ir-phi-input-seq-empty)
       (let
         [phi-input-at-110930-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-110930-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-110930-3 0)]
         [value : ir.CompilerIrValue phi-input-at-110930-3.value]
         [label : i64 phi-input-at-110930-3.label]
         [rest : ir.CompilerIrPhiInputSeq
@@ -109069,9 +108726,7 @@
       (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Unit) (clone ret))
       (let
         [phi-input-at-111255-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-111255-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-111255-3 0)]
         [value : ir.CompilerIrValue phi-input-at-111255-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -109556,7 +109211,7 @@
     (= absorb-class 1)
     (<= callee-instrs (opt-inline-recursive-site-max-body))
     (<=
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))
+      (ir.compiler-ir-block-list-count blocks)
       (opt-inline-recursive-site-max-blocks))
     (opt-inline-blocks-call-free? blocks)
     (opt-inline-bounds-loop-cascade-safe?)
@@ -110384,8 +110039,7 @@
           (compiler-opt-global-shared-view blocks))
         (<= callee-instrs (opt-inline-single-site-max-body))
         (<=
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
+          (ir.compiler-ir-block-list-count blocks)
           (opt-inline-single-site-max-blocks))
         (opt-inline-single-site-frame-tax-ok? has-bounds? blocks)))))
 
@@ -110659,7 +110313,7 @@
       (opt-inline-shared-accessor-dominant? refs hot-refs))
     (<= callee-instrs (opt-inline-shared-accessor-max-body))
     (<=
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))
+      (ir.compiler-ir-block-list-count blocks)
       (opt-inline-shared-accessor-max-blocks))
     (if (opt-inline-shared-accessor-dominant? refs hot-refs)
       (and
@@ -110799,7 +110453,7 @@
     (not has-bounds?)
     (<= callee-instrs (opt-inline-branch-chain-max-body))
     (<=
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))
+      (ir.compiler-ir-block-list-count blocks)
       (opt-inline-branch-chain-max-blocks))
     ;; The heavy gate is asked about TOTAL caller growth, shared and
     ;; gate-specific alike; the block fuel is this gate's own accumulator.
@@ -111072,8 +110726,7 @@
       (and
         (<= callee-instrs (opt-inline-hot-loop-leaf-max-body))
         (<=
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
+          (ir.compiler-ir-block-list-count blocks)
           (opt-inline-hot-loop-leaf-max-blocks))
         (or
           (opt-inline-caller-loop-free?)
@@ -112428,8 +112081,7 @@
   [blocks : ir.CompilerIrBlockList]
   [label : i64]) : i64
   (let
-    [caller-blocks : i64
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))]
+    [caller-blocks : i64 (ir.compiler-ir-block-list-count blocks)]
     [entry-label : i64 (opt-inline-checked-entry-label blocks)]
     (cond
       [(> caller-blocks (opt-inline-checked-pos-max-blocks))
@@ -114378,8 +114030,7 @@
       [(> callee-instrs (opt-inline-checked-max-body))
         (opt-inline-checked-clause-callee-size)]
       [(>
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
+          (ir.compiler-ir-block-list-count blocks)
           (opt-inline-checked-max-blocks))
         (opt-inline-checked-clause-callee-blocks)]
       [(opt-inline-census-address-taken? index census callee-name)
@@ -114856,9 +114507,7 @@
     (begin
       (while (and (< found 0) (< position params.len))
         (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            position)
+          (match (ir.compiler-ir-param-seq-ref params position)
             [(ir.CompilerIrParam.Param name _ var)
               (if (string.eq name (ir.compiler-ir-hidden-sret-param-name))
                 (set! found var)
@@ -115464,7 +115113,7 @@
               (begin
                 (ir.compiler-ir-instr-builder-append-seq-range!
                   (&mut builder)
-                  (compiler-opt-global-shared-view expanded)
+                  expanded
                   0
                   (ir.compiler-ir-instr-seq-count expanded))
                 (set! next-vars vars2)
@@ -115719,8 +115368,7 @@
             ;; ceilings and the heavy gate are handed that count.
             [added-blocks : i64
               (+
-                (ir.compiler-ir-block-list-count
-                  (compiler-opt-global-shared-view cblocks))
+                (ir.compiler-ir-block-list-count cblocks)
                 (if tail-site?
                   0
                   1))]
@@ -115911,15 +115559,11 @@
                 (opt-inline-blocks-call-free? cblocks)
                 (<= callee-instrs (opt-inline-converted-leaf-max-body))
                 (<=
-                  (ir.compiler-ir-block-list-count
-                    (compiler-opt-global-shared-view cblocks))
+                  (ir.compiler-ir-block-list-count cblocks)
                   (opt-inline-converted-leaf-max-blocks))
                 (opt-inline-bounds-loop-site-in-loop?))]
             [one-block-callee? : bool
-              (<=
-                (ir.compiler-ir-block-list-count
-                  (compiler-opt-global-shared-view cblocks))
-                1)]
+              (<= (ir.compiler-ir-block-list-count cblocks) 1)]
             [band-admits? : bool
               (and
                 (not tail-site?)
@@ -117438,9 +117082,7 @@
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret vars blocks function-abi)
       (let
-        [caller-blocks : i64
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))]
+        [caller-blocks : i64 (ir.compiler-ir-block-list-count blocks)]
         [phi-predecessors : OptLabelSet
           (opt-inline-blocks-phi-predecessors-add blocks (OptLabelSet.Nil))]
         [_reset-sites : unit
@@ -118069,7 +117711,7 @@
               (begin
                 (ir.compiler-ir-instr-builder-append-seq-range!
                   (&mut builder)
-                  (compiler-opt-global-shared-view expanded)
+                  expanded
                   0
                   (ir.compiler-ir-instr-seq-count expanded))
                 (set! next-vars vars2)
@@ -118616,18 +118258,14 @@
   [state : OptReachState]
   [globals : ir.CompilerIrGlobalSeq]
   [seq-index : i64]) : OptReachState
-  (if (>=
-    seq-index
-    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+  (if (>= seq-index (ir.compiler-ir-global-seq-count globals))
     state
     (opt-reach-global-seq
       index
       (opt-reach-global
         index
         state
-        (ir.compiler-ir-global-seq-ref
-          (compiler-opt-global-shared-view globals)
-          seq-index))
+        (ir.compiler-ir-global-seq-ref globals seq-index))
       globals
       (+ seq-index 1))))
 
@@ -118685,9 +118323,7 @@
         (begin
           (let
             [global : ir.CompilerIrGlobal
-              (ir.compiler-ir-global-seq-ref
-                (compiler-opt-global-shared-view globals)
-                index)]
+              (ir.compiler-ir-global-seq-ref globals index)]
             (match (compiler-opt-global-shared-view global)
               [(ir.CompilerIrGlobal.Global name ty value)
                 (when
@@ -118715,13 +118351,9 @@
   [externs : ir.CompilerIrExternSeq]
   [state : OptReachState]
   [seq-index : i64]) : OptReachState
-  (if (>=
-    seq-index
-    (ir.compiler-ir-extern-seq-count (compiler-opt-global-shared-view externs)))
+  (if (>= seq-index (ir.compiler-ir-extern-seq-count externs))
     state
-    (match (ir.compiler-ir-extern-seq-ref
-      (compiler-opt-global-shared-view externs)
-      seq-index)
+    (match (ir.compiler-ir-extern-seq-ref externs seq-index)
       [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided)
         (opt-reach-add-provided-extern-seq
           index
@@ -118816,8 +118448,7 @@
       [reachable-globals : opt_i64_i64_map.Map
         (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity
-            (ir.compiler-ir-global-seq-count
-              (compiler-opt-global-shared-view globals))))]
+            (ir.compiler-ir-global-seq-count globals)))]
       (match (opt-reach-process
         (compiler-opt-global-shared-view index)
         (opt-reach-globals
@@ -119245,9 +118876,7 @@
   [index : i64]) : i64
   (if (>= index params.len)
     -1
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      index)
+    (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param _ _ var)
         (if (= var root-var)
           index
@@ -119432,9 +119061,7 @@
     (begin
       (while (< index globals.len)
         (begin
-          (match (ir.compiler-ir-global-seq-ref
-            (compiler-opt-global-shared-view globals)
-            index)
+          (match (ir.compiler-ir-global-seq-ref globals index)
             [(ir.CompilerIrGlobal.Global name ty _)
               (if (opt-licm-array-header-type? type-segment-bases ty)
                 (opt_i64_i64_map.insert-ref!
@@ -120630,9 +120257,7 @@
   [index : i64]
   [disq : (& disq opt_i64_i64_map.Map)]
   [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (if (>=
-    index
-    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+  (if (>= index (ir.compiler-ir-global-seq-count globals))
     map
     (opt-const-globals-from-global-seq
       (compiler-opt-global-shared-view globals)
@@ -121193,9 +120818,7 @@
       (set! index 0)
       (while (< index globals.len)
         (begin
-          (match (ir.compiler-ir-global-seq-ref
-            (compiler-opt-global-shared-view globals)
-            index)
+          (match (ir.compiler-ir-global-seq-ref globals index)
             [(ir.CompilerIrGlobal.Global name ty value)
               (match value
                 [(ir.CompilerIrValue.RuntimeGlobal init)
@@ -121331,9 +120954,7 @@
   [disq : (& disq opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
   (let
     [capacity : i64
-      (opt-function-index-capacity
-        (ir.compiler-ir-global-seq-count
-          (compiler-opt-global-shared-view globals)))]
+      (opt-function-index-capacity (ir.compiler-ir-global-seq-count globals))]
     (opt-const-globals-from-global-seq
       globals
       0
@@ -121632,10 +121253,7 @@
               (or
                 (and
                   (= (opt_i64_i64_map.len (& cell.addr-taken)) 0)
-                  (>
-                    (ir.compiler-ir-global-seq-count
-                      (compiler-opt-global-shared-view globals))
-                    0))
+                  (> (ir.compiler-ir-global-seq-count globals) 0))
                 (> (opt_i64_i64_map.len (& cell.len-eq)) 0)))
               (opt-arg-global-roots
                 (compiler-opt-global-shared-view globals)
@@ -121875,9 +121493,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ var)
             (opt_i64_i64_map.insert-ref!
               (&mut counts)
@@ -122464,9 +122080,7 @@
   [index : i64]) : opt_i64_i64_map.Map
   (if (>= index globals.len)
     type-index
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name ty _)
         (let
           [next-index : opt_i64_i64_map.Map type-index]
@@ -122503,9 +122117,7 @@
   [index : i64]) : opt_i64_i64_map.Map
   (if (>= index globals.len)
     out
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name _ _)
         (opt-global-cell-addr-taken-fill
           globals
@@ -122535,9 +122147,7 @@
   [count : i64]) : i64
   (if (>= index globals.len)
     count
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name ty _)
         (opt-global-cell-word-count
           globals
@@ -122771,9 +122381,7 @@
   [count : i64]) : i64
   (if (>= at globals.len)
     count
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      at)
+    (match (ir.compiler-ir-global-seq-ref globals at)
       [(ir.CompilerIrGlobal.Global name ty _)
         (opt-global-mod-ref-store-count-pool
           globals
@@ -122801,9 +122409,7 @@
   [next : i64]) : OptGlobalModRefIndex
   (if (>= at globals.len)
     (OptGlobalModRefIndex.Some out next)
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      at)
+    (match (ir.compiler-ir-global-seq-ref globals at)
       [(ir.CompilerIrGlobal.Global name ty _)
         (if (not
           (and
@@ -122966,9 +122572,7 @@
   [index : i64]) : OptGlobalFrozenCandidates
   (if (>= index globals.len)
     cand
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      index)
+    (match (ir.compiler-ir-global-seq-ref globals index)
       [(ir.CompilerIrGlobal.Global name _ value)
         (match value
           [(ir.CompilerIrValue.RuntimeGlobal init)
@@ -123240,10 +122844,7 @@
   (if (<= inputs.len 0)
     acc
     (let
-      [head : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (ir.compiler-ir-global-shared-view inputs)
-          0)]
+      [head : ir.CompilerIrPhiInput (ir.compiler-ir-phi-input-seq-ref inputs 0)]
       [rest : ir.CompilerIrPhiInputSeq
         (ir.CompilerIrPhiInputSeq
           inputs.slots
@@ -123411,9 +123012,7 @@
     owners
     (opt-global-obj-seed-params
       type-segment-bases
-      (match (ir.compiler-ir-param-seq-ref
-        (compiler-opt-global-shared-view params)
-        position)
+      (match (ir.compiler-ir-param-seq-ref params position)
         [(ir.CompilerIrParam.Param _ ty var)
           (if (opt-global-obj-shared-param?
             type-segment-bases
@@ -123883,9 +123482,7 @@
   [count : i64]) : i64
   (if (>= at globals.len)
     count
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      at)
+    (match (ir.compiler-ir-global-seq-ref globals at)
       [(ir.CompilerIrGlobal.Global _ ty _)
         (opt-global-obj-nonscalar-count
           globals
@@ -123940,9 +123537,7 @@
   [next : i64]) : OptGlobalModRefIndex
   (if (>= at globals.len)
     (OptGlobalModRefIndex.Some out next)
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      at)
+    (match (ir.compiler-ir-global-seq-ref globals at)
       [(ir.CompilerIrGlobal.Global name ty _)
         (if (opt-global-obj-scalar-type? ty)
           (opt-global-obj-index-fill globals overflow-bit out (+ at 1) next)
@@ -123989,10 +123584,7 @@
   (if (or
     (> (opt_i64_i64_map.len (& addr-taken)) 0)
     (> (opt-function-seq-count functions) (opt-summary-function-limit))
-    (=
-      (ir.compiler-ir-global-seq-count
-        (compiler-opt-global-shared-view globals))
-      0))
+    (= (ir.compiler-ir-global-seq-count globals) 0))
     (opt-global-obj-mod-ref-none)
     (match (opt-global-obj-index-fill
       (compiler-opt-global-shared-view globals)
@@ -125131,9 +124723,7 @@
       unit
       (let
         [phi-input-at-125823-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-125823-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-125823-3 0)]
         [value : ir.CompilerIrValue phi-input-at-125823-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -125991,14 +125581,10 @@
   [scan : OptArgGlobalScan]
   [externs : ir.CompilerIrExternSeq]
   [index : i64]) : OptArgGlobalScan
-  (if (>=
-    index
-    (ir.compiler-ir-extern-seq-count (compiler-opt-global-shared-view externs)))
+  (if (>= index (ir.compiler-ir-extern-seq-count externs))
     scan
     (opt-arg-global-seed-externs
-      (match (ir.compiler-ir-extern-seq-ref
-        (compiler-opt-global-shared-view externs)
-        index)
+      (match (ir.compiler-ir-extern-seq-ref externs index)
         [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided)
           (if provided
             (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name-id))
@@ -126013,14 +125599,10 @@
   [scan : OptArgGlobalScan]
   [globals : ir.CompilerIrGlobalSeq]
   [index : i64]) : OptArgGlobalScan
-  (if (>=
-    index
-    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+  (if (>= index (ir.compiler-ir-global-seq-count globals))
     scan
     (opt-arg-global-seed-globals
-      (match (ir.compiler-ir-global-seq-ref
-        (compiler-opt-global-shared-view globals)
-        index)
+      (match (ir.compiler-ir-global-seq-ref globals index)
         [(ir.CompilerIrGlobal.Global _ _ value)
           (match value
             [(ir.CompilerIrValue.RuntimeGlobal init)
@@ -126057,9 +125639,7 @@
     out
     (let
       [emitted : opt_i64_i64_map.Map
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ ty _)
             (let
               [seen : i64 (opt-arg-global-fact scan.sites name position)]
@@ -126405,9 +125985,7 @@
     mask
     (let
       [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref
-          (compiler-opt-global-shared-view inputs)
-          index)]
+        (ir.compiler-ir-phi-input-seq-ref inputs index)]
       (opt-lga-root-of-phi
         roots
         inputs
@@ -126522,9 +126100,7 @@
   [position : i64]) : bool
   (if (>= position params.len)
     true
-    (match (ir.compiler-ir-param-seq-ref
-      (compiler-opt-global-shared-view params)
-      position)
+    (match (ir.compiler-ir-param-seq-ref params position)
       [(ir.CompilerIrParam.Param _ _ var)
         (and
           (= var position)
@@ -126812,9 +126388,7 @@
         (begin
           (let
             [input : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (compiler-opt-global-shared-view inputs)
-                index)]
+              (ir.compiler-ir-phi-input-seq-ref inputs index)]
             (set!
               (array-ref slots index)
               (ir.CompilerIrPhiInput
@@ -127011,9 +126585,7 @@
             unit
             (ir.compiler-ir-param-builder-push!
               (&mut builder)
-              (ir.compiler-ir-param-seq-ref
-                (compiler-opt-global-shared-view params)
-                position)))
+              (ir.compiler-ir-param-seq-ref params position)))
           (set! position (+ position 1))))
       (ir.compiler-ir-param-builder-to-seq builder))))
 
@@ -127103,10 +126675,7 @@
       (< level 2)
       (<= count 0)
       (> count (opt-summary-function-limit))
-      (=
-        (ir.compiler-ir-global-seq-count
-          (compiler-opt-global-shared-view globals))
-        0))
+      (= (ir.compiler-ir-global-seq-count globals) 0))
       (begin
         (if (>= level 2)
           (opt-lga-trace-gate! "declined-program-gate" count)
@@ -127423,9 +126992,7 @@
     [position : i64 0]
     (while (< position params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref
-          (compiler-opt-global-shared-view params)
-          position)
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ ty var)
             (if (and
               (>= var 0)
@@ -127543,9 +127110,7 @@
     [out : opt_i64_i64_map.Map out-input]
     (if (>= index globals.len)
       out
-      (match (ir.compiler-ir-global-seq-ref
-        (compiler-opt-global-shared-view globals)
-        index)
+      (match (ir.compiler-ir-global-seq-ref globals index)
         [(ir.CompilerIrGlobal.Global name ty value)
           (let
             [id : i64 (ir.compiler-ir-symbol-id name)]
@@ -127618,9 +127183,7 @@
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [cell : OptGlobalCellSummary]) : opt_i64_i64_map.Map
   (let
-    [count : i64
-      (ir.compiler-ir-global-seq-count
-        (compiler-opt-global-shared-view globals))]
+    [count : i64 (ir.compiler-ir-global-seq-count globals)]
     (if (= count 0)
       (opt_i64_i64_map.with-capacity 1)
       (let
@@ -127681,9 +127244,7 @@
   [facts : (& facts OptProgramFacts)]
   [call-memory : opt_i64_i64_map.Map]) : OptGlobalCellSummary
   (let
-    [count : i64
-      (ir.compiler-ir-global-seq-count
-        (compiler-opt-global-shared-view globals))]
+    [count : i64 (ir.compiler-ir-global-seq-count globals)]
     (if (= count 0)
       (opt-global-cell-summary-empty)
       (let
@@ -129476,9 +129037,7 @@
   [params : ir.CompilerIrParamSeq]
   [index : i64]
   [facts : OptAliasFacts]) : OptAliasFacts
-  (if (>=
-    index
-    (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params)))
+  (if (>= index (ir.compiler-ir-param-seq-count params))
     facts
     (opt-alias-seed-param-seq
       type-segment-bases
@@ -129876,10 +129435,7 @@
     false
     (or
       (let
-        [value
-          (ir.compiler-ir-value-seq-ref
-            (compiler-opt-global-shared-view values)
-            index)]
+        [value (ir.compiler-ir-value-seq-ref values index)]
         (opt-scratch-value-derived? roots facts value))
       (opt-scratch-value-seq-derived-from? roots facts values (+ index 1)))))
 
@@ -130519,9 +130075,7 @@
       false
       (let
         [phi-input-at-131116-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-131116-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-131116-3 0)]
         [value : ir.CompilerIrValue phi-input-at-131116-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -130856,8 +130410,7 @@
         blocks
         function-abi)
       (if (<=
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view blocks))
+        (ir.compiler-ir-block-list-count blocks)
         (opt-heavy-pass-block-limit))
         (let
           [context : OptCfgContext
@@ -131268,8 +130821,7 @@
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (let
     [index : i64 0]
-    [count : i64
-      (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params))]
+    [count : i64 (ir.compiler-ir-param-seq-count params)]
     [work : OptLoadHeaderSet set]
     (begin
       (while (< index count)
@@ -131278,9 +130830,7 @@
             work
             (opt-load-header-set-add-param
               type-segment-bases
-              (ir.compiler-ir-param-seq-ref
-                (compiler-opt-global-shared-view params)
-                index)
+              (ir.compiler-ir-param-seq-ref params index)
               work))
           (set! index (+ index 1))))
       work)))
@@ -136414,7 +135964,7 @@
                       (begin
                         (ir.compiler-ir-instr-builder-append-seq-range!
                           (&mut b)
-                          (compiler-opt-global-shared-view instrs)
+                          instrs
                           0
                           (+ at 1))
                         (when
@@ -136542,7 +136092,7 @@
                           (begin
                             (ir.compiler-ir-instr-builder-append-seq-range!
                               (&mut first)
-                              (compiler-opt-global-shared-view instrs)
+                              instrs
                               0
                               (+ at 1))
                             (ir.compiler-ir-instr-builder-push!
@@ -136565,7 +136115,7 @@
                                 (begin
                                   (ir.compiler-ir-instr-builder-append-seq-range!
                                     (&mut replayed)
-                                    (compiler-opt-global-shared-view instrs)
+                                    instrs
                                     0
                                     at)
                                   (ir.compiler-ir-instr-builder-push!
@@ -136579,7 +136129,7 @@
                                         replayed))))))
                             (ir.compiler-ir-instr-builder-append-seq-range!
                               (&mut rest)
-                              (compiler-opt-global-shared-view instrs)
+                              instrs
                               (+ at 1)
                               (- instrs.len 1))
                             (ir.compiler-ir-instr-builder-push!
@@ -136592,7 +136142,7 @@
                                 (ir.compiler-ir-instr-builder-to-seq rest)))
                             (ir.compiler-ir-instr-builder-append-seq-range!
                               (&mut again)
-                              (compiler-opt-global-shared-view guard)
+                              guard
                               0
                               (- guard.len 1))
                             (match (ir.compiler-ir-instr-seq-ref
@@ -136782,7 +136332,7 @@
                                 (begin
                                   (ir.compiler-ir-instr-builder-append-seq-range!
                                     (&mut b)
-                                    (compiler-opt-global-shared-view instrs)
+                                    instrs
                                     0
                                     (- instrs.len 1))
                                   (ir.compiler-ir-instr-builder-push!
@@ -136802,7 +136352,7 @@
                                       (compiler-opt-global-shared-view ty)))
                                   (ir.compiler-ir-instr-builder-append-seq-range!
                                     (&mut b)
-                                    (compiler-opt-global-shared-view instrs)
+                                    instrs
                                     (- instrs.len 1)
                                     instrs.len)
                                   (ir.compiler-ir-block-builder-push!
@@ -136823,7 +136373,7 @@
                                 (begin
                                   (ir.compiler-ir-instr-builder-append-seq-range!
                                     (&mut before)
-                                    (compiler-opt-global-shared-view instrs)
+                                    instrs
                                     0
                                     at)
                                   (ir.compiler-ir-instr-builder-push!
@@ -136874,7 +136424,7 @@
                                       (compiler-opt-global-shared-view ty)))
                                   (ir.compiler-ir-instr-builder-append-seq-range!
                                     (&mut after)
-                                    (compiler-opt-global-shared-view instrs)
+                                    instrs
                                     (+ at 1)
                                     instrs.len)
                                   (ir.compiler-ir-block-builder-push!
@@ -136908,14 +136458,8 @@
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ params _ frame blocks _)
       (if (or
-        (<
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
-          2)
-        (>
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
-          64)
+        (< (ir.compiler-ir-block-list-count blocks) 2)
+        (> (ir.compiler-ir-block-list-count blocks) 64)
         (= (opt-pure-call-count-blocks memory blocks 0) 0))
         func
         (let
@@ -137311,9 +136855,7 @@
       (while (< i count)
         (let
           [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
-          (if (=
-            (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))
-            var)
+          (if (= (ir.compiler-ir-instr-dst instr) var)
             (return (OptMaybeInstr.Some instr))
             (set! i (+ i 1)))))
       (OptMaybeInstr.No))))
@@ -137399,9 +136941,7 @@
       true
       (let
         [phi-input-at-137024-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-137024-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-137024-3 0)]
         [value : ir.CompilerIrValue phi-input-at-137024-3.value]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
@@ -138660,15 +138200,13 @@
           (begin
             (opt-load-cell-note-def!
               promote
-              (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))
+              (ir.compiler-ir-instr-dst instr)
               block-id)
             (opt-load-cse-state-bind-entry
               type-segment-bases
               state
               (OptLoadKey.GlobalField global 0 ty false)
-              (ir.CompilerIrValue.Var
-                (ir.compiler-ir-instr-dst
-                  (compiler-opt-global-shared-view instr)))))
+              (ir.CompilerIrValue.Var (ir.compiler-ir-instr-dst instr))))
           instr)
         (opt-load-cell-promote-read-key
           type-segment-bases
@@ -139562,9 +139100,7 @@
                       (let
                         [instr : ir.CompilerIrInstr
                           (ir.compiler-ir-instr-seq-ref instrs cursor)]
-                        [dst : i64
-                          (ir.compiler-ir-instr-dst
-                            (compiler-opt-global-shared-view instr))]
+                        [dst : i64 (ir.compiler-ir-instr-dst instr)]
                         (begin
                           (if (and (>= dst 0) (< dst (array-length def-blocks)))
                             (begin
@@ -140892,8 +140428,9 @@
                   (while (< cursor count)
                     (let
                       [dst : i64
-                        (ir.compiler-ir-instr-dst
-                          (ir.compiler-ir-instr-seq-ref instrs cursor))]
+                        (let
+                          [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
+                          (ir.compiler-ir-instr-dst instr))]
                       (begin
                         (if (and (>= dst 0) (< dst (array-length out)))
                           (set! (array-ref out dst) (+ id 1))
@@ -141168,8 +140705,7 @@
     (while (< index count)
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-        [dst : i64
-          (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
+        [dst : i64 (ir.compiler-ir-instr-dst instr)]
         (begin
           (if (and
             (opt-guard-imply-recorded? instr)
@@ -142456,8 +141992,9 @@
       (while (< index count)
         (let
           [dst : i64
-            (ir.compiler-ir-instr-dst
-              (ir.compiler-ir-instr-seq-ref instrs index))]
+            (let
+              [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+              (ir.compiler-ir-instr-dst instr))]
           (begin
             (if (and
               (>= dst 0)
@@ -142492,8 +142029,7 @@
             (opt-copy-subst-instr
               (compiler-opt-global-shared-view env)
               (ir.compiler-ir-instr-seq-ref instrs index))]
-          [dst : i64
-            (ir.compiler-ir-instr-dst (compiler-opt-global-shared-view instr))]
+          [dst : i64 (ir.compiler-ir-instr-dst instr)]
           (begin
             (if (and
               (>= dst 0)

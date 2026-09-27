@@ -14184,9 +14184,7 @@
     (begin
       (while (< position params.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-param-seq-ref
-            (compiler-backend-global-shared-view params)
-            position)
+          (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
             [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
               (set!
                 out
@@ -14913,9 +14911,7 @@
   [table : compiler_regalloc.CompilerRegAssignmentTable]) : bool
   (if (>= position params.len)
     true
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      position)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
       [(compiler_ir_types.CompilerIrParam.Param _ ty var)
         ;; Register groups and memory-class aggregates do not take one integer
         ;; register each: a SysV memory-class parameter is passed on the stack
@@ -20686,9 +20682,7 @@
   (if (= words.len 2)
     (let
       [w0 : compiler_ir_types.CompilerIrValue
-        (compiler_ir_types.compiler-ir-value-seq-ref
-          (compiler-backend-global-shared-view words)
-          0)]
+        (compiler_ir_types.compiler-ir-value-seq-ref words 0)]
       [w1 : compiler_ir_types.CompilerIrValue
         (compiler_ir_types.compiler-ir-value-seq-ref words 1)]
       [w0-sse : bool
@@ -21803,9 +21797,7 @@
   [index : i64]) : backend_i64_i64_map.Map
   (if (>= index globals.len)
     ids
-    (match (compiler_ir_types.compiler-ir-global-seq-ref
-      (compiler-backend-global-shared-view globals)
-      index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       [(compiler_ir_types.CompilerIrGlobal.Global name ty _)
         (let
           [next-ids : backend_i64_i64_map.Map ids]
@@ -23537,9 +23529,7 @@
       (compiler-backend-const-hoist-disable! function-state)]
     [dense-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-list-compact blocks)]
-    [count : i64
-      (compiler_ir_types.compiler-ir-block-list-count
-        (compiler-backend-global-shared-view dense-blocks))]
+    [count : i64 (compiler_ir_types.compiler-ir-block-list-count dense-blocks)]
     (if (<= count 1)
       empty
       (let
@@ -25493,8 +25483,7 @@
           [_
             (compiler-backend-shift-count-bounds-note!
               bounds
-              (compiler_ir_types.compiler-ir-instr-dst
-                (compiler-backend-global-array-element-shared-view slots index))
+              (compiler_ir_types.compiler-ir-instr-dst (array-ref slots index))
               -1)])
         (set! index (+ index 1))))))
 
@@ -25517,9 +25506,7 @@
     (begin
       (while (< position params.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-param-seq-ref
-            (compiler-backend-global-shared-view params)
-            position)
+          (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
             [(compiler_ir_types.CompilerIrParam.Param _ _ id)
               (compiler-backend-shift-count-bounds-note! (&mut bounds) id -1)])
           (set! position (+ position 1))))
@@ -32948,9 +32935,7 @@
   [position : i64]) : i64
   (if (>= position params.len)
     0
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      position)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
       [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
         (+
           (match (compiler-backend-emit-assignment-lookup
@@ -33007,9 +32992,7 @@
   [position : i64]) : i64
   (if (>= position params.len)
     index
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      position)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
       [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
         (compiler-backend-param-register-exclude-fill-from
           backend-state
@@ -36638,9 +36621,7 @@
   [position : i64]) : compiler_ast_types.AstTypeList
   (if (>= position params.len)
     (compiler_ast_types.ast-type-list-new)
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      position)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
       [(compiler_ir_types.CompilerIrParam.Param _ ty _)
         (compiler_ast_types.ast-type-cons
           ty
@@ -36786,8 +36767,7 @@
   [seq-index : i64]) : backend_i64_i64_map.Map
   (if (>=
     seq-index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+    (compiler_ir_types.compiler-ir-function-seq-count functions))
     ids
     (match (array-ref functions.slots seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _ _)
@@ -36896,14 +36876,9 @@
   [call-infos : (__tl_dyn-array i64)]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     signature-ids
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           extern-name-id
           source-name-id
@@ -36970,14 +36945,9 @@
   [provideds : (__tl_dyn-array bool)]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     link-references
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           _
           _
@@ -37020,14 +36990,9 @@
   [reference-ids : backend_i64_i64_map.Map]
   [out-index : i64]
   [seq-index : i64]) : backend_i64_i64_map.Map
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     reference-ids
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           extern-name-id
           source-name-id
@@ -37210,10 +37175,7 @@
   [state : CompilerBackendCollectState]
   [seq : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]) : CompilerBackendCollectState
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view seq)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count seq))
     state
     (compiler-backend-collect-function-seq-shared
       (compiler-backend-collect-function-shared
@@ -37245,9 +37207,7 @@
   [position : i64]) : bool
   (if (>= position params.len)
     false
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      position)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
       [(compiler_ir_types.CompilerIrParam.Param _ ty _)
         (or
           (> (compiler-backend-abi-memory-size type-segment-bases ty) 0)
@@ -37276,10 +37236,7 @@
   [type-segment-bases : i64]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]) : unit
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     unit
     (begin
       (match (array-ref functions.slots index)
@@ -37963,9 +37920,7 @@
   [index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>= index globals.len)
     (ResultCompilerBackendSymbolValidation.Ok seen)
-    (match (compiler_ir_types.compiler-ir-global-seq-ref
-      (compiler-backend-global-shared-view globals)
-      index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       [(compiler_ir_types.CompilerIrGlobal.Global name _ _)
         (let
           [symbol : String
@@ -38032,8 +37987,7 @@
   [seq-index : i64]) : ResultCompilerBackendSymbolValidation
   (if (>=
     seq-index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+    (compiler_ir_types.compiler-ir-function-seq-count functions))
     (ResultCompilerBackendSymbolValidation.Ok seen)
     (match (array-ref functions.slots seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
@@ -38104,14 +38058,9 @@
   [plan : CompilerBackendRuntimePlan]
   [seen : backend_string_i64_map.Map]
   [seq-index : i64]) : ResultCompilerBackendSymbolValidation
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     (ResultCompilerBackendSymbolValidation.Ok seen)
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           _
@@ -39341,9 +39290,7 @@
       (>= arg-index (compiler_ast_types.ast-type-list-len (& target-types))))
     (if (>= arg-index params.len)
       false
-      (match (compiler_ir_types.compiler-ir-param-seq-ref
-        (compiler-backend-global-shared-view params)
-        arg-index)
+      (match (compiler_ir_types.compiler-ir-param-seq-ref params arg-index)
         [(compiler_ir_types.CompilerIrParam.Param _ source-ty var-id)
           (if (>=
             arg-index
@@ -42035,8 +41982,7 @@
       (let
         [phi-input-at-45535-3 : compiler_ir_types.CompilerIrPhiInput
           (compiler_ir_types.compiler-ir-phi-input-seq-ref
-            (compiler_ir_types.compiler-ir-global-shared-view
-              phi-inputs-at-45535-3)
+            phi-inputs-at-45535-3
             0)]
         [value : compiler_ir_types.CompilerIrValue phi-input-at-45535-3.value]
         [label : i64 phi-input-at-45535-3.label]
@@ -48893,10 +48839,7 @@
   [program-index : CompilerBackendProgramIndex]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     buf
     (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks _)
@@ -49622,10 +49565,7 @@
 (define (compiler-backend-switch-validate-function-seq
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]) : CompilerBackendSwitchValidation
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     (CompilerBackendSwitchValidation.Ok)
     (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks _)
@@ -62353,7 +62293,7 @@
       (while (< param-index params.len)
         (begin
           (match (compiler_ir_types.compiler-ir-param-seq-ref
-            (compiler-backend-global-shared-view params)
+            params
             param-index)
             [(compiler_ir_types.CompilerIrParam.Param name _ var-id)
               (let
@@ -62536,9 +62476,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (>= param-index params.len)
     (ResultCompilerBackend.Ok "")
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      param-index)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
       [(compiler_ir_types.CompilerIrParam.Param name ty var-id)
         (let
           [active? : bool (compiler-backend-spmd-active-mask-param? name)]
@@ -62754,9 +62692,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (>= param-index params.len)
     (ResultCompilerBackend.Ok "")
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      param-index)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
       [(compiler_ir_types.CompilerIrParam.Param _ ty var-id)
         (let
           [is-float : bool (compiler-backend-float-type? ty)]
@@ -64305,8 +64241,7 @@
         true)
       (compiler-backend-use-count-inc
         (&mut mask-counts)
-        (compiler_ir_types.compiler-ir-instr-dst
-          (compiler-backend-global-shared-view instr)))
+        (compiler_ir_types.compiler-ir-instr-dst instr))
       (compiler-backend-count-instr-uses mask-counts instr)
       (compiler-backend-function-state-set-bool!
         function-state
@@ -68908,8 +68843,7 @@
             (begin
               (let
                 [dst : i64
-                  (compiler_ir_types.compiler-ir-instr-dst
-                    (compiler-backend-global-array-element-shared-view slots j))]
+                  (compiler_ir_types.compiler-ir-instr-dst (array-ref slots j))]
                 (if (and (>= dst 0) (< dst (array-length defs)))
                   (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
                   unit))
@@ -69051,8 +68985,7 @@
     (begin
       (while (<= j to)
         (if (=
-          (compiler_ir_types.compiler-ir-instr-dst
-            (compiler-backend-global-array-element-shared-view slots j))
+          (compiler_ir_types.compiler-ir-instr-dst (array-ref slots j))
           var)
           (begin
             (set! found true)
@@ -74946,10 +74879,7 @@
   [crt-entry : bool]
   [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     (ResultCompilerBackendBuffer.Ok buf)
     (let
       [func : compiler_ir_types.CompilerIrFunction
@@ -75075,10 +75005,7 @@
   [crt-entry : bool]
   [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     (ResultCompilerBackendBuffer.Ok buf)
     (let
       [func : compiler_ir_types.CompilerIrFunction
@@ -75808,9 +75735,7 @@
     (compiler-backend-collect-value-seq-collections-from
       (compiler-backend-collect-value-collections
         collections
-        (compiler_ir_types.compiler-ir-value-seq-ref
-          (compiler-backend-global-shared-view values)
-          index))
+        (compiler_ir_types.compiler-ir-value-seq-ref values index))
       values
       (+ index 1))))
 
@@ -75879,8 +75804,7 @@
       (let
         [phi-input-at-80548-3 : compiler_ir_types.CompilerIrPhiInput
           (compiler_ir_types.compiler-ir-phi-input-seq-ref
-            (compiler_ir_types.compiler-ir-global-shared-view
-              phi-inputs-at-80548-3)
+            phi-inputs-at-80548-3
             0)]
         [value : compiler_ir_types.CompilerIrValue phi-input-at-80548-3.value]
         [rest : compiler_ir_types.CompilerIrPhiInputSeq
@@ -76224,9 +76148,7 @@
   [index : i64]) : CompilerBackendProgramCollections
   (if (>= index globals.len)
     collections
-    (match (compiler_ir_types.compiler-ir-global-seq-ref
-      (compiler-backend-global-shared-view globals)
-      index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
         (compiler-backend-collect-global-collections-from
           (compiler-backend-collect-value-collections collections value)
@@ -77306,9 +77228,7 @@
     (begin
       (while (< gi global-count)
         (begin
-          (match (compiler_ir_types.compiler-ir-global-seq-ref
-            (compiler-backend-global-shared-view globals)
-            gi)
+          (match (compiler_ir_types.compiler-ir-global-seq-ref globals gi)
             [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
               (when
                 (compiler-backend-iag-boxed-cell?
@@ -77715,9 +77635,7 @@
     (match (compiler-backend-emit-global
       type-segment-bases
       target
-      (compiler_ir_types.compiler-ir-global-seq-ref
-        (compiler-backend-global-shared-view globals)
-        index)
+      (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       program-index)
       [(ResultCompilerBackend.Ok head)
         (compiler-backend-emit-globals-buffer-from
@@ -77806,9 +77724,7 @@
   [index : i64]) : String
   (if (>= index globals.len)
     ""
-    (match (compiler_ir_types.compiler-ir-global-seq-ref
-      (compiler-backend-global-shared-view globals)
-      index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
         (str_cat.str-cat
           (match value
@@ -77845,10 +77761,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [name : i64]
   [index : i64]) : bool
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     false
     (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function func-name _ _ _ _ _)
@@ -77881,10 +77794,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [helper : String]
   [index : i64]) : bool
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     false
     (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
@@ -78062,8 +77972,7 @@
   [seq-index : i64]) : CompilerBackendRuntimeIndex
   (if (>=
     seq-index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+    (compiler_ir_types.compiler-ir-function-seq-count functions))
     index
     (match (array-ref functions.slots seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks _)
@@ -78085,14 +77994,9 @@
   [index : CompilerBackendRuntimeIndex]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [seq-index : i64]) : CompilerBackendRuntimeIndex
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -78134,14 +78038,9 @@
   [index : CompilerBackendRuntimeIndex]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [seq-index : i64]) : CompilerBackendRuntimeIndex
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -78609,14 +78508,9 @@
   [referenced-functions : (& referenced-functions BackendSymbolSeq)]
   [buf : text_buf.TextBuf]
   [seq-index : i64]) : text_buf.TextBuf
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     buf
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -78743,14 +78637,9 @@
                 (array-ref referenced.slots i))))
           (set! i (+ i 1))))
       (set! i 0)
-      (while (<
-        i
-        (compiler_ir_types.compiler-ir-extern-seq-count
-          (compiler-backend-global-shared-view externs)))
+      (while (< i (compiler_ir_types.compiler-ir-extern-seq-count externs))
         (begin
-          (match (compiler_ir_types.compiler-ir-extern-seq-ref
-            (compiler-backend-global-shared-view externs)
-            i)
+          (match (compiler_ir_types.compiler-ir-extern-seq-ref externs i)
             [(compiler_ir_types.CompilerIrExtern.Extern
                 name
                 source
@@ -79966,9 +79855,7 @@
       (compiler-backend-object-value-ref
         parts
         (compiler-backend-global-shared-view site)
-        (compiler_ir_types.compiler-ir-value-seq-ref
-          (compiler-backend-global-shared-view values)
-          index)
+        (compiler_ir_types.compiler-ir-value-seq-ref values index)
         program-index)
       site
       values
@@ -80601,9 +80488,7 @@
           (compiler-backend-object-load-value-to-reg
             parts
             (compiler-backend-global-shared-view site)
-            (compiler_ir_types.compiler-ir-value-seq-ref
-              (compiler-backend-global-shared-view words)
-              0)
+            (compiler_ir_types.compiler-ir-value-seq-ref words 0)
             "%rax"
             program-index)
           site
@@ -81214,9 +81099,7 @@
   [param-index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= param-index params.len)
     parts
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler-backend-global-shared-view params)
-      param-index)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
       [(compiler_ir_types.CompilerIrParam.Param _ ty var-id)
         (if (compiler-backend-float-type? ty)
           (compiler-backend-object-param-spills-from
@@ -82329,10 +82212,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>=
-    index
-    (compiler_ir_types.compiler-ir-function-seq-count
-      (compiler-backend-global-shared-view functions)))
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     parts
     (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function
@@ -82516,9 +82396,7 @@
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index globals.len)
     parts
-    (match (compiler_ir_types.compiler-ir-global-seq-ref
-      (compiler-backend-global-shared-view globals)
-      index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
       [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
         (let
           [symbol : String
@@ -82810,14 +82688,9 @@
   [referenced-functions : BackendSymbolSeq]
   [program-index : CompilerBackendProgramIndex]
   [seq-index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>=
-    seq-index
-    (compiler_ir_types.compiler-ir-extern-seq-count
-      (compiler-backend-global-shared-view externs)))
+  (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
-    (match (compiler_ir_types.compiler-ir-extern-seq-ref
-      (compiler-backend-global-shared-view externs)
-      seq-index)
+    (match (compiler_ir_types.compiler-ir-extern-seq-ref externs seq-index)
       [(compiler_ir_types.CompilerIrExtern.Extern
           name-id
           source-name-id
@@ -83322,9 +83195,7 @@
     (begin
       (while (< index globals.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-global-seq-ref
-            (compiler-backend-global-shared-view globals)
-            index)
+          (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
             [(compiler_ir_types.CompilerIrGlobal.Global _ _ value)
               (when
                 (not (compiler-backend-object-semantic-value-supported? value))
@@ -83493,16 +83364,12 @@
   [types : compiler_ast_types.AstTypeList]) : bool
   (let
     [index : i64 0]
-    [count : i64
-      (compiler_ir_types.compiler-ir-param-seq-count
-        (compiler-backend-global-shared-view params))]
+    [count : i64 (compiler_ir_types.compiler-ir-param-seq-count params)]
     (if (not (= count (compiler_ast_types.ast-type-list-len (& types))))
       false
       (begin
         (while (< index count)
-          (match (compiler_ir_types.compiler-ir-param-seq-ref
-            (compiler-backend-global-shared-view params)
-            index)
+          (match (compiler_ir_types.compiler-ir-param-seq-ref params index)
             [(compiler_ir_types.CompilerIrParam.Param _ ty _)
               (let
                 [indexed-ty : compiler_ast_types.AstType

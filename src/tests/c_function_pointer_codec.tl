@@ -2,7 +2,6 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_ast_codec_core as codec)
-(import compiler_owned_view as owned_view)
 (import stdlib.test)
 
 (define (c-function-codec-session) : cis.InternStructuralSessionHandle

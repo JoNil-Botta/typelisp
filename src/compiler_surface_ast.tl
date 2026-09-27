@@ -23,7 +23,13 @@
 (import compiler_surface_identity as surface_identity)
 (import compiler_surface_ast_codec_core as codec)
 (import compiler_surface_ast_expr as expr_codec)
-(import compiler_owned_view as owned_view)
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
+  (import compiler_owned_view as owned_view))
 (import sym_i64_env)
 
 (defstruct SurfaceAstHydration

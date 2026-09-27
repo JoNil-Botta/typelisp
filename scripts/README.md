@@ -185,7 +185,9 @@ Keep these at the top level while their owning gate references them.
   unless a workflow or gate entry point invokes them.
 - `lib-*` files are sourced support code and are not standalone commands.
   `lib-gate.sh` holds the `fail` helper (prefixed by `GATE_FAIL_PREFIX`) and
-  the `TYPELISP_BIN`/stage0 compiler resolution most gate scripts share.
+  the `TYPELISP_BIN`/stage0 compiler resolution most gate scripts share;
+  `lib-benchmark.sh` holds the benchmark harnesses' metadata, build and
+  Cachegrind helpers and the CI benchmark case manifest reader.
 - `generate-*` scripts refresh reviewed test vectors or other checked inputs.
 - Data files next to scripts are owned by the gate that reads them.
 

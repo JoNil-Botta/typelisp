@@ -4424,11 +4424,12 @@
             (compiler_lower.compiler-lower-profile-pools "source_load" pools)
             unit)
           ;; Load has returned its declaration list, so the lexer token buffer
-          ;; and the unspanned reader pool are dead scan scratch that would
-          ;; otherwise sit on the retain.program/retain.release peak for the
-          ;; rest of the process. Retire them here, on the same uncached
-          ;; single-entry gate the source-arena retirement uses, so a session
-          ;; that reuses loader state across jobs keeps its warm capacity.
+          ;; and the reader node pool's spare capacity are dead scan scratch
+          ;; that would otherwise sit on the retain.program/retain.release
+          ;; peak for the rest of the process. Retire them here, on the same
+          ;; uncached single-entry gate the source-arena retirement uses, so a
+          ;; session that reuses loader state across jobs keeps its warm
+          ;; capacity.
           (if route-source-allocations?
             (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)

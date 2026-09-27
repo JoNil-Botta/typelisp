@@ -3,9 +3,10 @@
 ;;
 ;; `spanned-result` scans source text into `token.SpannedToken` records, each
 ;; with the line and column of its first character; the reader (`read.tl`)
-;; consumes them. `result` and `lex` give the same token stream without
-;; positions. The token model (`token.Token`, its accessors and tag constants)
-;; stays behind the `token.` qualifier.
+;; consumes them. `result` and `lex` copy the same token stream without
+;; positions for the token-level tests; no compiler path reads it. The token
+;; model (`token.Token`, its accessors and tag constants) stays behind the
+;; `token.` qualifier.
 (import stdlib.str_cat_runtime as str_cat)
 
 (module lex)

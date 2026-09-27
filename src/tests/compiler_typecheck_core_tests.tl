@@ -2624,9 +2624,7 @@
   [name-id : i64]) : bool
   (let
     [index : i64
-      (tc_core.tc-type-env-scoped-carrier-lookup-index
-        (tc_core.tc-global-shared-view carrier)
-        name-id)]
+      (tc_core.tc-type-env-scoped-carrier-lookup-index carrier name-id)]
     (if (>= index 0)
       (match (tc_core.tc-type-env-scoped-stack-lookup-id-at
         carrier.sidecar.stack
@@ -2682,9 +2680,7 @@
     [prefix-id : i64]
     [expected : bool]) : bool
     (let
-      [env : tc_core.TcTypeEnv
-        (tc_core.tc-type-env-scoped-carrier-env
-          (tc_core.tc-global-shared-view carrier))]
+      [env : tc_core.TcTypeEnv (tc_core.tc-type-env-scoped-carrier-env carrier)]
       [runtime-save : tc_core.TcTypeEnvScopedRuntimeSave
         (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
       [actual : bool
@@ -3479,8 +3475,7 @@
                 (+ (* (tc_core.tc-local-cache-threshold) 2) 8))]
             [snapshot : tc_core.TcTypeEnvScopedCarrier
               (tc_core.tc-type-env-scoped-carrier-from-marker-visible-env
-                (tc_core.tc-type-env-scoped-carrier-env
-                  (tc_core.tc-global-shared-view deep)))]
+                (tc_core.tc-type-env-scoped-carrier-env deep))]
             [deep-sidecar : tc_core.TcTypeEnvScopedSidecar
               (tc-type-env-scoped-carrier-sidecar
                 (tc_core.tc-global-shared-view deep))]
@@ -3493,23 +3488,19 @@
                 (tc_core.tc-type-env-scoped-carrier-in-unsafe?
                   (tc_core.tc-global-shared-view deep))
                 (tc_core.tc-in-unsafe?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep)))
+                  (tc_core.tc-type-env-scoped-carrier-env deep))
                 (match (tc_core.tc-type-env-scoped-carrier-active-region
                   (tc_core.tc-global-shared-view deep))
                   [(tc_core.TcMaybeNameId.Some region) (= region _inner-id)]
                   [_ false])
                 (tc_core.tc-cleanup-owner-active-id?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep))
+                  (tc_core.tc-type-env-scoped-carrier-env deep)
                   _resource-id)
                 (tc_core.tc-ordinary-arena-owner-active-id?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep))
+                  (tc_core.tc-type-env-scoped-carrier-env deep)
                   _arena-id)
                 (tc_core.tc-atomic-arena-owner-active-id?
-                  (tc_core.tc-type-env-scoped-carrier-env
-                    (tc_core.tc-global-shared-view deep))
+                  (tc_core.tc-type-env-scoped-carrier-env deep)
                   _atomic-id)
                 (tc_core.tc-type-env-scoped-carrier-in-unsafe?
                   (tc_core.tc-global-shared-view snapshot))
@@ -3891,8 +3882,7 @@
           (tc_core.tc-fn0 (ast.AstType.I64))))
       (let
         [snapshot : tc_core.TcTypeEnv
-          (tc_core.tc-type-env-scoped-carrier-env
-            (tc_core.tc-global-shared-view carrier))]
+          (tc_core.tc-type-env-scoped-carrier-env carrier)]
         [default-carrier : tc_core.TcTypeEnvScopedCarrier
           (tc_core.tc-type-env-scoped-carrier-bind-id
             (tc_core.tc-type-env-scoped-carrier-from-env

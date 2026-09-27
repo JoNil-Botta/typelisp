@@ -8330,13 +8330,9 @@
     [dupe : tc_core.TcMovedSet
       (tc_core.tc-moved-add (tc_core.tc-moved-clone one) alpha-id)]
     [two : tc_core.TcMovedSet
-      (tc_core.tc-moved-add
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view dupe))
-        beta-id)]
+      (tc_core.tc-moved-add (tc_core.tc-moved-clone dupe) beta-id)]
     [removed : tc_core.TcMovedSet
-      (tc_core.tc-moved-remove
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view two))
-        alpha-id)]
+      (tc_core.tc-moved-remove (tc_core.tc-moved-clone two) alpha-id)]
     [origin-whole : tc_core.TcMovedSet
       (tc_core.tc-moved-add-origin
         (tc_core.tc-moved-empty)
@@ -8400,7 +8396,7 @@
         items0)]
     [partial-clear : tc_core.TcMovedSet
       (tc_core.tc-moved-remove-exact-path
-        (tc_core.tc-moved-clone (tc_core.tc-global-shared-view partial-one))
+        (tc_core.tc-moved-clone partial-one)
         items-id
         items1)]
     [partial-keeps-sibling : bool
@@ -8457,19 +8453,19 @@
     [retained-parent-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view retained-parent)
+          retained-parent
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view retained-parent)
+          retained-parent
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view retained-parent)
+          retained-parent
           growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
@@ -8477,32 +8473,32 @@
     [successors-isolated : bool
       (and
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view growth-successor)
+          growth-successor
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ origin-id)
             (not (= origin-id (tc_core.tc-moved-no-origin-id)))]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view growth-successor)
+          growth-successor
           growth63
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view growth-successor)
+          growth-successor
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) false]
           [tc_core.TcMoveConflict.No true])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view sibling-successor)
+          sibling-successor
           items0
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
           [tc_core.TcMoveConflict.No false])
         (match (tc_core.tc-moved-path-exact-conflict-kind
-          (tc_core.tc-global-shared-view sibling-successor)
+          sibling-successor
           shadowed-root
           (tc_core.TcMovedPathKind.BorrowShared))
           [(tc_core.TcMoveConflict.Some _ _) true]
@@ -8533,9 +8529,7 @@
         2
         origin-b)]
     [cross-store-union : tc_core.TcMovedSet
-      (tc_core.tc-moved-union
-        (tc_core.tc-global-shared-view retained-parent)
-        separate-store)]
+      (tc_core.tc-moved-union retained-parent separate-store)]
     [cross-store-facts : tc_core.TcMovedPathFacts
       (tc_core.tc-moved-paths (tc_core.tc-global-shared-view cross-store-union))]
     [cross-store-destination-ok : bool
@@ -8605,9 +8599,13 @@
         [(tc_core.TcMoveConflict.Some _ origin-id) (= origin-id 101)]
         [tc_core.TcMoveConflict.No false])]
     (and
-      (= (tc_core.tc-moved-len (tc_core.tc-moved-empty)) 0)
+      (=
+        (let
+          [set (tc_core.tc-moved-empty)]
+          (tc_core.tc-moved-len set))
+        0)
       (= (tc_core.tc-moved-len dupe) 1)
-      (= (tc_core.tc-moved-len (tc_core.tc-global-shared-view two)) 2)
+      (= (tc_core.tc-moved-len two) 2)
       (>= (core_tests.tc-moved-capacity two) 8)
       (not (tc_core.tc-moved-contains? removed alpha-id))
       origin-whole-ok

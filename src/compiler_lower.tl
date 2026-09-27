@@ -23473,10 +23473,7 @@
                       sret-var)
                     captured-env)]
                 [type-env : tc_core.TcTypeEnv
-                  (tc_core.tc-bind-params
-                    ctx
-                    captured-type-env
-                    (lower-global-shared-view params))]
+                  (tc_core.tc-bind-params ctx captured-type-env params)]
                 (match (if structural-params?
                   (lower-bind-internal-params
                     ctx
@@ -59967,7 +59964,7 @@
         (tc_core.tc-bind-params
           ctx
           (tc_core.tc-hygiene-global-env top-env)
-          (lower-global-shared-view params))
+          params)
         (lower-global-shared-view ret-ty))]
     [_recursion-reset : unit
       (compiler-lower-function-state-recursion-detected-set!
@@ -60390,7 +60387,7 @@
         (tc_core.tc-bind-params
           ctx
           (tc_core.tc-hygiene-global-env top-env)
-          (lower-global-shared-view params))
+          params)
         (lower-global-shared-view ret-ty))]
     (match (lower-avx512-masked-expr-expected
       ctx
@@ -60556,7 +60553,7 @@
         (tc_core.tc-bind-params
           ctx
           (tc_core.tc-hygiene-global-env top-env)
-          (lower-global-shared-view params))
+          params)
         (lower-global-shared-view ret-ty))]
     (match (lower-tail-expr
       ctx
@@ -67104,7 +67101,7 @@
           (tc_core.tc-bind-params
             ctx
             (tc_core.tc-hygiene-global-env top-env)
-            (lower-global-shared-view params))
+            params)
           (lower-global-shared-view ret-ty))]
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span

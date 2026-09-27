@@ -255,15 +255,17 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 
 ### Module-local self-tests
 
-Put small structural checks next to the module that owns the behavior. These are
-usually functions named `*-self-test`, with focused boolean helpers when that
-makes the assertion readable.
+Put small structural checks in the owning module's `*_tests.tl` companion (for
+example `compiler_parse_core_tests.tl` beside `compiler_parse_core.tl`), so the
+shipped compiler does not carry them. These are usually functions named
+`*-self-test`, with focused boolean helpers when that makes the assertion
+readable.
 
 Current examples include:
 
 - `compiler-parse-error-tests-ok?` and `compiler-parse-smoke` in
-  `compiler_parse_core.tl`
-- `compiler-symbols-self-test` in `compiler_symbols.tl`
+  `compiler_parse_core_tests.tl`
+- `compiler-symbols-self-test` in `compiler_symbols_tests.tl`
 - `compiler-typecheck-self-test` in `tests/compiler_typecheck_tests.tl`
 - `compiler-regalloc-self-test` and `compiler-backend-self-test`
 - `compiler-optimize-self-test` plus the pass-specific optimizer self-tests
@@ -334,7 +336,7 @@ still carry `CompilerIrFunction.name` as a raw compatibility value must wrap it
 at the source-span API boundary; a raw integer must not enter that key as the
 function identity.
 
-`compiler_intern.tl` self-tests own source-name reset cases, the registered
+`compiler_intern_tests.tl` self-tests own source-name reset cases, the registered
 `compiler-typecheck-structural-intern-session-isolation` test owns explicit
 structural-session isolation/reset/growth, and `compiler_backend_smoke.tl`
 covers equal numeric IDs with different spellings.
@@ -348,12 +350,13 @@ The package follows the standard layout: `typelisp build` resolves the default
 `src/main.tl` entry (no explicit `entry` in `typelisp.pkg`), and every top-level
 `src/*.tl` is reachable from `main.tl` except deliberate test/staging modules:
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
-modules with dedicated smokes, #2651/#2671/#2657), plus
-`compiler_backend_tests.tl`, `compiler_driver_smoke_tests.tl`,
-`compiler_lower_package_tests.tl`, `tlci_core_tests.tl`,
-`tlci_loader_tests.tl`, `compiler_tlci_native_image_tests.tl`, and
-`compiler_surface_tests.tl` (main-less test helpers; the last runs only through
-`tools/compiler-surface-ast-smoke.tl` with `--cfg compiler-surface-selftest`).
+modules with dedicated smokes, #2651/#2671/#2657), plus the main-less
+`src/*_tests.tl` test helpers such as `compiler_backend_tests.tl`,
+`compiler_load_tests.tl`, `compiler_parse_core_tests.tl`,
+`lsp_frame_core_tests.tl`, `tlci_core_tests.tl` and `compiler_surface_tests.tl`
+(the last runs only through `tools/compiler-surface-ast-smoke.tl` with
+`--cfg compiler-surface-selftest`), and the shared `format_tests.tl`,
+`cli_core_tests.tl` and `reader_tests.tl`.
 
 ### Inline tests
 

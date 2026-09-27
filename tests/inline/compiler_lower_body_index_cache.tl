@@ -16,11 +16,13 @@
         (compiler_lower.lower-name-cache-from-env
           lower-state
           compiler_lower.LowerNameEnv.Nil))
-      (match (compiler_lower.lower-compiler-source-with-state
+      (match (compiler_lower.lower-compiler-source-with-path-mode-and-state
         lower-state
+        "<source>"
         "(define (helper) : i64 42)
 (module main)
-(define (main) : i64 (helper))")
+(define (main) : i64 (helper))"
+        (compiler_lower.CompilerLowerMode.Scalar))
         [(compiler_lower.ResultCompilerLower.Ok _ _)
           (begin
             (compiler_lower.lower-active-global-name-cache-set!

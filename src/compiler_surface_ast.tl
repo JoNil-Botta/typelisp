@@ -23,7 +23,13 @@
 (import compiler_surface_identity as surface_identity)
 (import compiler_surface_ast_codec_core as codec)
 (import compiler_surface_ast_expr as expr_codec)
-(import compiler_owned_view as owned_view)
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
+  (import compiler_owned_view as owned_view))
 (import sym_i64_env)
 
 (defstruct SurfaceAstHydration
@@ -1638,10 +1644,10 @@
   (define (surface-ast-write-modules!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [modules : ast.AstDeclModuleList]) : unit
+    [modules : (& modules ast.AstDeclModuleList)]) : unit
     (let
       [index : i64 0]
-      [count : i64 (ast.ast-decl-module-list-len (& modules))]
+      [count : i64 (ast.ast-decl-module-list-len modules)]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
@@ -1721,7 +1727,7 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [program : ast.AstProgram]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [pools : ast.AstNodePoolContext]) : unit
     (let
@@ -1766,7 +1772,7 @@
     [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [source-pools : ast.AstNodePoolContext]
     [source-identity-count : i64]
@@ -1820,15 +1826,12 @@
   (let
     [index : i64 0]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (while (< index type-count)
         (let
           [new-id : i64
             (ast.ast-node-pool-context-type-push
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (codec.surface-ast-read-type! reader))]
           (begin
             (if (= new-id index)
@@ -1842,7 +1845,7 @@
         (let
           [new-id : i64
             (ast.ast-node-pool-context-expr-push
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (expr_codec.surface-ast-read-expr! reader))]
           (begin
             (if (= new-id index)
@@ -1874,11 +1877,7 @@
       (ResultSurfaceAstHydration.Err
         "surface ast: bad magic, schema, or identity binding")
       (begin
-        (surface-ast-decode-pools!
-          (&mut reader)
-          (owned_view.compiler-owned-shared-view pools)
-          type-count
-          expr-count)
+        (surface-ast-decode-pools! (&mut reader) pools type-count expr-count)
         (let
           [decls : ast.AstDeclList (surface-ast-read-decl-list! (&mut reader))]
           [paths : ast.AstDeclPathList (surface-ast-read-paths! (&mut reader))]
@@ -1888,7 +1887,7 @@
           [_c-signatures : unit
             (codec.surface-ast-validate-c-function-signatures!
               (&mut reader)
-              (owned_view.compiler-owned-shared-view pools))]
+              pools)]
           (cond
             [(not (codec.surface-ast-reader-valid? (& reader)))
               (ResultSurfaceAstHydration.Err

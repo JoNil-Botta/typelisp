@@ -2729,7 +2729,7 @@
         baseline-state
         (tc_core.tc-global-shared-view generated-import)
         (tc_core.tc-global-shared-view missing-import)
-        (tc_core.tc-global-shared-view pools))]
+        pools)]
     [_select-b : unit
       (load.compiler-load-session-state-use!
         (tc_core.tc-global-shared-view state-b))]
@@ -2847,16 +2847,18 @@
         cfgs
         pools)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
-          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            (tc_core.tc-global-shared-view state-a)
-            (tc_core.tc-global-shared-view prefix-cache-a)
-            job-state-a
-            (ast.ast-program decls)
-            (ast.ast-decl-path-list-with-modules paths modules)
-            (tc_core.tc-global-shared-view roots)
-            cfgs
-            "typecheck-generated-import-state-threading"
-            pools)]
+          (tc_api.typecheck-compiler-request
+            (tc_api.TypecheckRequest
+              (tc_core.tc-global-shared-view state-a)
+              (tc_core.tc-global-shared-view prefix-cache-a)
+              job-state-a
+              (ast.ast-program decls)
+              (ast.ast-decl-path-list-with-modules paths modules)
+              (tc_core.tc-global-shared-view roots)
+              cfgs
+              "typecheck-generated-import-state-threading"
+              pools
+              (ci.intern-compat-state-capture-active)))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -2867,18 +2869,20 @@
         "target/tc_state_controlled_failure.tl"
         "(define broken : i64 true)")
         [(parser.ResultAstProgramDiagnostic.Ok bad-program)
-          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            (tc_core.tc-global-shared-view state-a)
-            (tc_core.tc-global-shared-view prefix-cache-a)
-            job-state-a
-            bad-program
-            (ast.ast-decl-root-path-cons
-              "target/tc_state_controlled_failure.tl"
-              (ast.ast-decl-path-list-new))
-            roots
-            cfgs
-            "typecheck-controlled-failure-state-threading"
-            pools)]
+          (tc_api.typecheck-compiler-request
+            (tc_api.TypecheckRequest
+              (tc_core.tc-global-shared-view state-a)
+              (tc_core.tc-global-shared-view prefix-cache-a)
+              job-state-a
+              bad-program
+              (ast.ast-decl-root-path-cons
+                "target/tc_state_controlled_failure.tl"
+                (ast.ast-decl-path-list-new))
+              roots
+              cfgs
+              "typecheck-controlled-failure-state-threading"
+              pools
+              (ci.intern-compat-state-capture-active)))]
         [(parser.ResultAstProgramDiagnostic.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3038,16 +3042,18 @@
         cfgs
         (ast.ast-node-pool-context-shared-view (& pools)))
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
-          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
-            load-state
-            (tc_core.tc-global-shared-view prefix-cache)
-            job-state
-            (ast.ast-program decls)
-            (ast.ast-decl-path-list-with-modules paths modules)
-            roots
-            cfgs
-            "typecheck-macro-transitive-dependency-state"
-            pools)]
+          (tc_api.typecheck-compiler-request
+            (tc_api.TypecheckRequest
+              load-state
+              (tc_core.tc-global-shared-view prefix-cache)
+              job-state
+              (ast.ast-program decls)
+              (ast.ast-decl-path-list-with-modules paths modules)
+              roots
+              cfgs
+              "typecheck-macro-transitive-dependency-state"
+              pools
+              (ci.intern-compat-state-capture-active)))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (tc_core.ResultCompilerTypecheck.Err
             (diagnostic.compiler-diagnostic-list-box-single diag))])]
@@ -3545,7 +3551,7 @@
 
 (define (compiler-typecheck-smoke-program-parsed-id
   [program : ast.AstProgram]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
@@ -3572,19 +3578,19 @@
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id value (& name)))]
+                        (compiler-typecheck-smoke-expr-parsed-id value name))]
                     [(ast.AstDecl.DefFn decl-meta name-id _ _ body _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body (& name)))]
+                        (compiler-typecheck-smoke-expr-parsed-id body name))]
                     [(ast.AstDecl.DefMacro decl-meta name-id _ _ body)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
                         name)
                         name-id
-                        (compiler-typecheck-smoke-expr-parsed-id body (& name)))]
+                        (compiler-typecheck-smoke-expr-parsed-id body name))]
                     [(ast.AstDecl.DefStruct decl-meta name-id _ _ _)
                       (if (string.eq
                         (tc_core.tc-env-key-name-text name-id)
@@ -3609,7 +3615,7 @@
     [name-id : i64
       (compiler-typecheck-smoke-program-parsed-id
         (tc_core.tc-context-program ctx)
-        (tc_core.tc-global-shared-view name))]
+        name)]
     (if (>= name-id 0)
       name-id
       (io.panic (str_cat.str-cat context name)))))

@@ -21,7 +21,7 @@
 (import compiler_owned_view as owned_view)
 (import sym_i64_env)
 
-(define (selfhost-lint-write-text [path : String] [contents : String]) : unit
+(define (selfhost-lint-write-text [path : (& path str)] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
@@ -765,7 +765,7 @@ end
 
 (define (selfhost-lint-findings-rule-count-from
   [findings : lint_core.LintFindings]
-  [rule-id : String]
+  [rule-id : (& rule-id str)]
   [index : i64]
   [count : i64]) : i64
   (if (>=
@@ -779,7 +779,7 @@ end
       [(lint_core.LintMaybeFinding.Some finding)
         (selfhost-lint-findings-rule-count-from
           findings
-          (owned_view.compiler-owned-shared-view rule-id)
+          rule-id
           (+ index 1)
           (if (string.eq finding.rule-id rule-id)
             (+ count 1)
@@ -1234,7 +1234,7 @@ end
         (owned_view.compiler-owned-shared-view src-dir))
       (compiler_load.compiler-load-test-mkdir test-dir)
       (selfhost-lint-write-text
-        (owned_view.compiler-owned-shared-view manifest-path)
+        manifest-path
         "(package
   (name \"lint-dead-root-import-closure\")
   (version \"1\")
@@ -1245,7 +1245,7 @@ end
 (define (main) : i64
   (core.core-entry))")
       (selfhost-lint-write-text
-        (owned_view.compiler-owned-shared-view core-path)
+        core-path
         "(define (core-entry) : i64 7)
 (define (core-test-helper) : i64 42)
 (define (core-second-test-helper) : i64 43)

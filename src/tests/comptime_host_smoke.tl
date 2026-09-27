@@ -51,7 +51,7 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operand-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "x")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
@@ -63,7 +63,7 @@
           operand-node
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         operands
         1
         8
@@ -237,7 +237,7 @@
       (compiler_ast_types.ast-type-list-push
         (&mut payloads)
         (compiler_ast_types.ast-node-pool-context-type-push
-          (compiler_ast_types.ast-place-shared-view pools)
+          pools
           (compiler_ast_types.AstType.I64)))
       (compiler_ast_types.ast-type-list-push
         (&mut payloads)
@@ -339,7 +339,7 @@
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 0)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         0
         8
@@ -451,7 +451,7 @@
     [type-name : String "T"]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         0
         16
@@ -557,7 +557,7 @@
     [truncated : String "Broken\nonly"]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         0
         8
@@ -578,7 +578,7 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
+            pools
             (compiler_ast_types.ast-place-shared-view operands)
             0
             8
@@ -661,15 +661,15 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [target : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "slots")))]
     [live : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "live")))]
     [index : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "index")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
@@ -690,7 +690,7 @@
           index
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         3
         16
@@ -780,15 +780,15 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [init-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "with-capacity")))]
     [type-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "Vec")))]
     [bad-type-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Unit)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -811,7 +811,7 @@
           bad-type-node
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         3
         16
@@ -907,16 +907,16 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [var-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "core")))]
     [item-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Unit)))]
     [int-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 73)))]
     [items : compiler_ast_types.AstExprList
       (compiler_ast_types.ast-expr-list-with-capacity 1)]
@@ -928,7 +928,7 @@
       (set!
         begin-node
         (compiler_ast_types.ast-node-pool-context-expr-push
-          (compiler_ast_types.ast-place-shared-view pools)
+          pools
           (compiler_ast_types.AstExpr.Begin items)))
       (set!
         (array-ref operands 0)
@@ -940,7 +940,7 @@
         (compiler_ctfe.CompilerCtfeValue.CapturedExpr
           begin-node
           (compiler_ast_types.AstType.Expr)
-          (compiler_ast_types.ast-place-shared-view pools)))
+          pools))
       (set! (array-ref operands 2) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (set!
         (array-ref operands 3)
@@ -948,7 +948,7 @@
           int-node
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         4
         32
@@ -1083,7 +1083,7 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
+            pools
             (compiler_ast_types.ast-place-shared-view operands)
             4
             8
@@ -1103,7 +1103,7 @@
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-                (compiler_ast_types.ast-place-shared-view pools)
+                pools
                 (compiler_ast_types.ast-place-shared-view operands)
                 4
                 8
@@ -1179,7 +1179,7 @@
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         1
         8
@@ -1339,11 +1339,11 @@
     [binding-name : i64 (ci.intern "shared")]
     [init-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "owner")))]
     [body-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var binding-name))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
@@ -1362,7 +1362,7 @@
           body-node
           (compiler_ast_types.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         operands
         3
         16
@@ -1470,27 +1470,24 @@
     [parameter-type : compiler_ast_types.AstType
       (compiler_ast_types.ast-ty-tuple
         (compiler_ast_types.ast-type-cons-with-pools
-          (compiler_ast_types.ast-place-shared-view pools)
+          pools
           (compiler_ast_types.ast-ty-ref-with-pools
-            (compiler_ast_types.ast-place-shared-view pools)
+            pools
             owner-region
             (compiler_ast_types.AstType.Var owner-name))
           (compiler_ast_types.ast-type-cons-with-pools
-            (compiler_ast_types.ast-place-shared-view pools)
+            pools
             (compiler_ast_types.ast-ty-ref-with-pools
-              (compiler_ast_types.ast-place-shared-view pools)
+              pools
               text-region
               (compiler_ast_types.AstType.Str))
             (compiler_ast_types.ast-type-list-new))))]
     [target-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var parameter-name))]
     [body-node : i64
-      (compiler_ast_types.ast-expr-tuple-ref-with-pools
-        (compiler_ast_types.ast-place-shared-view pools)
-        target-node
-        1)]
+      (compiler_ast_types.ast-expr-tuple-ref-with-pools pools target-node 1)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
@@ -1506,7 +1503,7 @@
           body-node
           (compiler_ctfe.ctfe-untyped-expr-type)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         operands
         3
         16
@@ -1604,11 +1601,11 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [target-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "target")))]
     [value-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "value")))]
     [name-id : i64 (ci.intern "name-field")]
     [string-id : i64 (ci.intern "string-field")]
@@ -1633,7 +1630,7 @@
           (compiler_ast_types.AstType.Expr)))
       (set! (array-ref operands 4) (compiler_ctfe.CompilerCtfeValue.Bool false))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         5
         16
@@ -1675,7 +1672,7 @@
         (begin
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (compiler_ast_types.ast-place-shared-view pools)
+            pools
             (compiler_ast_types.ast-place-shared-view operands)
             5
             16
@@ -1683,8 +1680,7 @@
             (compiler_ctfe.ctfe-reflect-info-list-empty))
           (let
             [string-env : compiler_ctfe.CtfeEnv
-              (compiler_ctfe.ctfe-env-empty-with-pools
-                (compiler_ast_types.ast-place-shared-view pools))]
+              (compiler_ctfe.ctfe-env-empty-with-pools pools)]
             [string-ok : bool
               (and
                 (=
@@ -1829,11 +1825,11 @@
       (compiler_ast_types.ast-type-list-with-capacity 2)]
     [value-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "value")))]
     [body-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Bool true)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -1843,12 +1839,12 @@
       (compiler_ast_types.ast-type-list-push
         (&mut tuple-items)
         (compiler_ast_types.ast-node-pool-context-type-push
-          (compiler_ast_types.ast-place-shared-view pools)
+          pools
           (compiler_ast_types.AstType.I64)))
       (compiler_ast_types.ast-type-list-push
         (&mut tuple-items)
         (compiler_ast_types.ast-node-pool-context-type-push
-          (compiler_ast_types.ast-place-shared-view pools)
+          pools
           (compiler_ast_types.AstType.Bool)))
       (set!
         (array-ref operands 0)
@@ -1873,13 +1869,12 @@
           body-node
           (compiler_ast_types.AstType.Bool)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         operands
         5
         64
         comptime-host-smoke-cookie
-        (comptime-host-smoke-reflections
-          (compiler_ast_types.ast-place-shared-view pools)))
+        (comptime-host-smoke-reflections pools))
       (let
         [ok : bool
           (and
@@ -2228,7 +2223,7 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [condition-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "flag")))]
     [items : compiler_ast_types.AstExprList
       (compiler_ast_types.ast-expr-cons
@@ -2286,16 +2281,16 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [condition-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "flag")))]
     [result-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Bool true)))]
     [else-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.AstExpr.Var (ci.intern "else")))]
     [clauses : compiler_ast_types.AstExprClauseList
       (compiler_ast_types.ast-expr-clause-list-new)]
@@ -2467,7 +2462,7 @@
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (compiler_ast_types.ast-place-shared-view pools)
+        pools
         (compiler_ast_types.ast-place-shared-view operands)
         0
         1

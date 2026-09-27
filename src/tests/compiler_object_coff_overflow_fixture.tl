@@ -1,6 +1,5 @@
 ;; compiler_object_coff_overflow_fixture.tl - emit the bounded extended-count
 ;; COFF fixture consumed by scripts/verify-coff-relocation-overflow.sh.
-(import compiler_owned_view as owned_view)
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
 (import stdlib.byte_buf)
@@ -15,8 +14,7 @@
     (let
       [image : cobj.CompilerObjectImage
         (coff.compiler-object-coff-boundary-image 0xffff 0x10000)]
-      (match (coff.compiler-object-coff-render
-        (owned_view.compiler-owned-shared-view image))
+      (match (coff.compiler-object-coff-render image)
         [(coff.ResultCompilerObjectCoff.Ok bytes)
           (begin
             (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& bytes)))

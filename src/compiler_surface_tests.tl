@@ -223,9 +223,7 @@
                 (ci.intern-reset!)
                 (let
                   [unrelated : i64 (ci.intern "unrelated")]
-                  (match (surface_identity.surface-identity-hydrate
-                    bytes
-                    (surface_identity.surface-identity-shared-view key))
+                  (match (surface_identity.surface-identity-hydrate bytes key)
                     [(surface_identity.ResultSurfaceIdentityHydration.Err _)
                       false]
                     [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
@@ -525,7 +523,7 @@
     [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [source-pools : ast.AstNodePoolContext]
     [source-count : i64]
@@ -534,9 +532,9 @@
       structural-session
       (owned_view.compiler-owned-shared-view decls)
       (owned_view.compiler-owned-shared-view paths)
-      (owned_view.compiler-owned-shared-view modules)
+      modules
       seen
-      (owned_view.compiler-owned-shared-view source-pools)
+      source-pools
       source-count
       identity-count)
       [(surface_ast.ResultSurfaceAstBytes.Err message)
@@ -713,15 +711,15 @@
         (ast.ast-node-pool-context-new-with-capacities 8 8)]
       [left : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Literal (ast.AstLiteral.Int 20 "20")))]
       [right : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Literal (ast.AstLiteral.Int 22 "22")))]
       [sum-inner : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Binary ast.AstBinOp.Add left right))]
       [sum : i64
         (ast.ast-expr-spanned-with-pools
@@ -741,26 +739,21 @@
       [unsafe-nonnull-param-id : i64 (ci.intern "unsafe-nonnull-entry")]
       [c-signature : i64
         (ast.ast-node-pool-context-type-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.ast-ty-func-with-pools
-            (owned_view.compiler-owned-shared-view source-pools)
+            source-pools
             (ast.ast-type-cons-with-pools
-              (owned_view.compiler-owned-shared-view source-pools)
+              source-pools
               ast.AstType.I64
               (ast.ast-type-list-new))
             ast.AstType.Bool))]
       [slice-i64 : ast.AstType
-        (ast.ast-ty-slice-with-pools
-          (owned_view.compiler-owned-shared-view source-pools)
-          ast.AstType.I64)]
+        (ast.ast-ty-slice-with-pools source-pools ast.AstType.I64)]
       [borrowed-slice : ast.AstType
-        (ast.ast-ty-ref-with-pools
-          (owned_view.compiler-owned-shared-view source-pools)
-          borrow-lifetime-id
-          slice-i64)]
+        (ast.ast-ty-ref-with-pools source-pools borrow-lifetime-id slice-i64)]
       [body : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Borrow
             false
             (ast.ast-borrow-lifetime-to-id
@@ -768,22 +761,22 @@
             sum))]
       [tuple-set : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.StructSet
             left
             (ast.ast-tuple-set-field-id-from-index 3)
             right))]
       [compact-keep : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
       [compact-body : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Literal ast.AstLiteral.Unit))]
       [compact : i64
         (ast.ast-expr-spmd-compact-id-with-pools
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           compact-index-id
           (ast.AstType.I64)
           left
@@ -796,7 +789,7 @@
       [body-items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
+          source-pools
           (ast.AstExpr.Begin
             (ast.AstExprList
               (owned_view.compiler-owned-shared-view body-items)
@@ -1237,8 +1230,7 @@
                                             hydrated-test-span)
                                           50)
                                         (ast.ast-test-metadata-slow?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydrated-metadata))
+                                          hydrated-metadata)
                                         (match (ast.ast-test-metadata-ignore-reason
                                           hydrated-metadata)
                                           [(ast.AstTestIgnoreReason.Some reason)
@@ -1610,9 +1602,9 @@
               (owned_view.compiler-owned-shared-view payloads.identity-bytes)
               (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               payloads.fact-one-bytes
-              (owned_view.compiler-owned-shared-view payloads.key)
+              payloads.key
               structural-session
-              (owned_view.compiler-owned-shared-view pools))
+              pools)
               [(surface_hydrate.ResultCompilerSurfaceHydration.Ok hydration)
                 (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
@@ -1635,9 +1627,9 @@
               (owned_view.compiler-owned-shared-view payloads.identity-bytes)
               (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               (__tl_make-array u8 0)
-              (owned_view.compiler-owned-shared-view payloads.key)
+              payloads.key
               structural-session
-              (owned_view.compiler-owned-shared-view pools))
+              pools)
               [(surface_hydrate.ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
             (if (and
@@ -1651,9 +1643,9 @@
               payloads.identity-bytes
               payloads.ast-bytes
               payloads.fact-two-bytes
-              (owned_view.compiler-owned-shared-view payloads.key)
+              payloads.key
               structural-session
-              (owned_view.compiler-owned-shared-view pools))
+              pools)
               [(surface_hydrate.ResultCompilerSurfaceHydration.Ok hydration)
                 (begin
                   (set! second-hydrated hydration.facts)

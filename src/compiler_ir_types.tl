@@ -3996,9 +3996,7 @@
             (CompilerIrSpmdPrivateParamRole.Source
               source
               (compiler-ir-clone-spmd-value-class class)
-              (compiler-ir-clone-type
-                (compiler-ir-global-shared-view pools)
-                source-ty))]
+              (compiler-ir-clone-type pools source-ty))]
           [(CompilerIrSpmdPrivateParamRole.IndexBase)
             (CompilerIrSpmdPrivateParamRole.IndexBase)])
         (compiler-ir-clone-type pools ty))]))
@@ -4016,7 +4014,7 @@
           (compiler-ir-spmd-private-param-seq-push!
             (&mut params)
             (compiler-ir-clone-spmd-private-param
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-spmd-private-param-seq-ref abi.params index)))
           (set! index (+ index 1))))
       (CompilerIrSpmdPrivateAbi
@@ -4933,7 +4931,7 @@
 ;; integrity pass. The imported catalog is immutable; successful verification
 ;; should not change the optimizer's allocation schedule or generated assembly.
 (define (compiler-ir-spmd-call-segment-eq-at?
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [segment : String]) : bool
   (let
@@ -4952,7 +4950,7 @@
         (= index length)))))
 
 (define (compiler-ir-spmd-call-signature-args-end
-  [signature : String]
+  [signature : (& signature str)]
   [args : (& args CompilerIrSpmdCallArgSeq)]
   [bases : i64]
   [index : i64]
@@ -4965,12 +4963,9 @@
           [type-name : String (compiler-ir-type-name bases (clone ty))]
           [next : i64 (+ position 1 (string.string-length type-name))]
           (if (and
+            (compiler-ir-spmd-call-segment-eq-at? signature position " ")
             (compiler-ir-spmd-call-segment-eq-at?
-              (compiler-ir-global-shared-view signature)
-              position
-              " ")
-            (compiler-ir-spmd-call-segment-eq-at?
-              (compiler-ir-global-shared-view signature)
+              signature
               (+ position 1)
               type-name))
             (compiler-ir-spmd-call-signature-args-end
@@ -4982,13 +4977,13 @@
             -1))])))
 
 (define (compiler-ir-spmd-call-signature-valid?
-  [signature : String]
+  [signature : (& signature str)]
   [payload : (& payload CompilerIrInstrSpmdCallPayload)]) : bool
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [end : i64
       (compiler-ir-spmd-call-signature-args-end
-        (compiler-ir-global-shared-view signature)
+        signature
         (& payload.args)
         bases
         0
@@ -4999,20 +4994,14 @@
         [(CompilerIrSpmdCallResult.Value _ _ ty)
           (compiler-ir-type-name bases (clone ty))])]
     (and
+      (compiler-ir-spmd-call-segment-eq-at? signature 0 "(->")
+      (compiler-ir-spmd-call-segment-eq-at? signature end " ")
       (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
-        0
-        "(->")
-      (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
-        end
-        " ")
-      (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
+        signature
         (+ end 1)
         (compiler-ir-global-shared-view result-type))
       (compiler-ir-spmd-call-segment-eq-at?
-        (compiler-ir-global-shared-view signature)
+        signature
         (+ end 1 (string.string-length result-type))
         ")")
       (=
@@ -5105,10 +5094,7 @@
             (+
               4
               (string.string-length (compiler-ir-symbol-text payload.callee))))
-          (compiler-ir-spmd-call-segment-eq-at?
-            (compiler-ir-global-shared-view selected.link-symbol)
-            0
-            "_tl_")
+          (compiler-ir-spmd-call-segment-eq-at? selected.link-symbol 0 "_tl_")
           (compiler-ir-spmd-call-segment-eq-at?
             selected.link-symbol
             4
@@ -5212,7 +5198,7 @@
     (ir_i64_i64_map.with-capacity 1)))
 
 (define (compiler-ir-representation-index-kind-for-key
-  [index : CompilerIrRepresentationIndex]
+  [index : (& index CompilerIrRepresentationIndex)]
   [key : i64]) : CompilerIrRepresentationKind
   (match (ir_i64_i64_map.get (& index.word-counts) key)
     [(ir_i64_i64_map.LookupMissing) CompilerIrRepresentationKind.Unknown]
@@ -5229,7 +5215,7 @@
 
 (define (compiler-ir-representation-index-kind
   [type-segment-bases : i64]
-  [index : CompilerIrRepresentationIndex]
+  [index : (& index CompilerIrRepresentationIndex)]
   [ty : ast.AstType]) : CompilerIrRepresentationKind
   (match (ast.ast-aggregate-type-key type-segment-bases ty)
     [(ast.AstMaybeNominalKey.Some key)
@@ -6209,7 +6195,7 @@
       (set!
         (array-ref dst index)
         (compiler-ir-clone-spmd-call-arg
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-array-shared-view src index)))
       (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst (+ index 1) count))))
 
@@ -6273,14 +6259,11 @@
   (match (ast.ast-global-shared-view ty)
     [(ast.AstType.Func args ret)
       (ast.AstType.Func
-        (box
-          (compiler-ir-clone-type-list
-            (compiler-ir-global-shared-view pools)
-            (deref args)))
+        (box (compiler-ir-clone-type-list pools (deref args)))
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) ret))))]
     [(ast.AstType.Tuple elems)
       (ast.AstType.Tuple
@@ -6288,69 +6271,69 @@
     [(ast.AstType.Array elem len)
       (ast.AstType.Array
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem)))
         len)]
     [(ast.AstType.DynArray elem)
       (ast.AstType.DynArray
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Slice elem)
       (ast.AstType.Slice
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Box elem)
       (ast.AstType.Box
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Region region inner)
       (ast.AstType.Region
         region
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.Ref region inner)
       (ast.AstType.Ref
         region
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.MutRef region inner)
       (ast.AstType.MutRef
         region
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.Ptr elem)
       (ast.AstType.Ptr
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.MutPtr elem)
       (ast.AstType.MutPtr
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [_ (clone ty)]))
 
@@ -6365,9 +6348,9 @@
       (ast.ast-type-list-push
         out
         (ast.ast-node-pool-context-type-push
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-clone-type
-            (compiler-ir-global-shared-view pools)
+            pools
             (ast.ast-node-pool-context-type-get
               (& pools)
               (ast.ast-type-list-get tys index (ast.ast-type-id-fallback))))))
@@ -6418,12 +6401,8 @@
           (compiler-ir-clone-spmd-backend backend)
           lanes
           (compiler-ir-clone-value active-mask)
-          (compiler-ir-clone-spmd-call-arg-seq
-            (compiler-ir-global-shared-view pools)
-            args)
-          (compiler-ir-clone-spmd-call-result
-            (compiler-ir-global-shared-view pools)
-            result)
+          (compiler-ir-clone-spmd-call-arg-seq pools args)
+          (compiler-ir-clone-spmd-call-result pools result)
           (compiler-ir-clone-spmd-call-origin pools origin)))]
     [_
       (compiler-ir-instr-map
@@ -6448,7 +6427,7 @@
           (set!
             (array-ref dst cursor)
             (compiler-ir-clone-instr
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-array-shared-view src cursor)))
           (set! cursor (+ cursor 1))))
       unit)))
@@ -6480,7 +6459,7 @@
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-clone-block-list-acc
-        (compiler-ir-global-shared-view pools)
+        pools
         (deref rest)
         (compiler-ir-block-cons (compiler-ir-clone-block pools block) acc))]
     ;; Same forward order the cons walk used, so the accumulated (reversed)
@@ -6497,7 +6476,7 @@
                 out
                 (compiler-ir-block-cons
                   (compiler-ir-clone-block
-                    (compiler-ir-global-shared-view pools)
+                    pools
                     (compiler-ir-block-seq-ref seq index))
                   out))
               (set! index (+ index 1))))
@@ -6547,7 +6526,7 @@
           (compiler-ir-param-builder-push!
             (&mut builder)
             (compiler-ir-clone-param
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-param-seq-ref
                 (compiler-ir-global-shared-view params)
                 index)))
@@ -6561,15 +6540,11 @@
     [(CompilerIrFunction.Function name params ret vars blocks function-abi)
       (CompilerIrFunction.Function
         (compiler-ir-symbol-clone name)
-        (compiler-ir-clone-param-seq
-          (compiler-ir-global-shared-view pools)
-          params)
-        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ret)
+        (compiler-ir-clone-param-seq pools params)
+        (compiler-ir-clone-type pools ret)
         vars
         (compiler-ir-block-list-compact
-          (compiler-ir-clone-block-list
-            (compiler-ir-global-shared-view pools)
-            blocks))
+          (compiler-ir-clone-block-list pools blocks))
         (compiler-ir-clone-function-abi pools function-abi))]))
 
 (define (compiler-ir-clone-function-seq
@@ -6585,7 +6560,7 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-function
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-array-shared-view functions.slots index)))
           (set! index (+ index 1))))
       (CompilerIrFunctionSeq slots functions.len))))
@@ -6613,7 +6588,7 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-global
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-global-seq-ref
                 (compiler-ir-global-shared-view globals)
                 index)))
@@ -6656,7 +6631,7 @@
           (set!
             (array-ref slots index)
             (compiler-ir-clone-extern
-              (compiler-ir-global-shared-view pools)
+              pools
               (compiler-ir-extern-seq-ref
                 (compiler-ir-global-shared-view externs)
                 index)))
@@ -6686,9 +6661,7 @@
   (match program
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrProgram.Program
-        (compiler-ir-clone-global-seq
-          (compiler-ir-global-shared-view pools)
-          globals)
+        (compiler-ir-clone-global-seq pools globals)
         (compiler-ir-clone-function-seq-shell functions)
         (compiler-ir-clone-extern-seq pools externs))]))
 
@@ -8962,55 +8935,50 @@
 ;; right span. The passes stack (a versioned clone can be unrolled), hence the
 ;; loop; a bounded fuel keeps a pathological user label from spinning.
 (define (compiler-source-spans-label-suffix-len
-  [text : String]
+  [text : (& text str)]
   [suffix : String]) : i64
   (let
-    [n : i64 (string.string-length (& text))]
+    [n : i64 (string.string-length text)]
     [m : i64 (string.string-length (& suffix))]
-    (if (and (> n m) (string.is-string-prefix-at (& text) (& suffix) (- n m)))
+    (if (and (> n m) (string.is-string-prefix-at text (& suffix) (- n m)))
       m
       0)))
 
-(define (compiler-source-spans-label-digit-at? [text : String] [index : i64]) : bool
+(define (compiler-source-spans-label-digit-at?
+  [text : (& text str)]
+  [index : i64]) : bool
   (let
-    [c : char (string.string-ref (& text) index)]
+    [c : char (string.string-ref text index)]
     (and (>= c '0') (<= c '9'))))
 
 ;; Length of a trailing `__u<digits>` unroll-copy suffix, or 0.
-(define (compiler-source-spans-label-unroll-suffix-len [text : String]) : i64
+(define (compiler-source-spans-label-unroll-suffix-len [text : (& text str)]) : i64
   (let
     [marker : String "__u"]
-    [n : i64 (string.string-length (& text))]
+    [n : i64 (string.string-length text)]
     [digits : i64 n]
     (begin
       (while (and
         (> digits 0)
-        (compiler-source-spans-label-digit-at?
-          (compiler-ir-global-shared-view text)
-          (- digits 1)))
+        (compiler-source-spans-label-digit-at? text (- digits 1)))
         (set! digits (- digits 1)))
       (if (or (= digits n) (< digits 4))
         0
-        (if (string.is-string-prefix-at (& text) (& marker) (- digits 3))
+        (if (string.is-string-prefix-at text (& marker) (- digits 3))
           (- n (- digits 3))
           0)))))
 
 ;; Length of the one trailing clone suffix `text` carries, or 0.
-(define (compiler-source-spans-bounds-clone-suffix-len [text : String]) : i64
+(define (compiler-source-spans-bounds-clone-suffix-len [text : (& text str)]) : i64
   (let
     [fast : String "__bce_fast"]
-    [fast-len : i64
-      (compiler-source-spans-label-suffix-len
-        (compiler-ir-global-shared-view text)
-        fast)]
+    [fast-len : i64 (compiler-source-spans-label-suffix-len text fast)]
     (if (> fast-len 0)
       fast-len
       (let
         [unswitch : String "__licm_false"]
         [unswitch-len : i64
-          (compiler-source-spans-label-suffix-len
-            (compiler-ir-global-shared-view text)
-            unswitch)]
+          (compiler-source-spans-label-suffix-len text unswitch)]
         (if (> unswitch-len 0)
           unswitch-len
           (compiler-source-spans-label-unroll-suffix-len text))))))
@@ -9030,9 +8998,7 @@
         (CompilerMaybeSourceLocation.No)
         (let
           [text : String (compiler-ir-label-text ok-label)]
-          [drop : i64
-            (compiler-source-spans-bounds-clone-suffix-len
-              (compiler-ir-global-shared-view text))]
+          [drop : i64 (compiler-source-spans-bounds-clone-suffix-len text)]
           (if (= drop 0)
             (CompilerMaybeSourceLocation.No)
             (let
@@ -10427,7 +10393,7 @@
         (CompilerIrRepresentationIndex counts index.class-masks)))))
 
 (define (compiler-ir-representation-var-type-set!
-  [types : CompilerIrRepresentationVarTypes]
+  [types : (& types CompilerIrRepresentationVarTypes)]
   [var : i64]
   [ty : ast.AstType]) : unit
   (if (or (< var 0) (>= var (array-length types.present)))
@@ -10438,7 +10404,7 @@
 
 (define (compiler-ir-representation-param-types!
   [params : CompilerIrParamSeq]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (let
     [position : i64 0]
     (while (< position params.len)
@@ -10447,15 +10413,12 @@
           (compiler-ir-global-shared-view params)
           position)
           [(CompilerIrParam.Param _ ty var)
-            (compiler-ir-representation-var-type-set!
-              (compiler-ir-global-shared-view types)
-              var
-              ty)])
+            (compiler-ir-representation-var-type-set! types var ty)])
         (set! position (+ position 1))))))
 
 (define (compiler-ir-representation-instr-def-type!
   [instr : CompilerIrInstr]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match (compiler-ir-global-shared-view instr)
     ;; The index does not type indirect-call results or a scalar Select.
     [(CompilerIrInstr.CallIndirect _ _ _ _) unit]
@@ -10472,28 +10435,26 @@
 
 (define (compiler-ir-representation-instr-types!
   [instrs : CompilerIrInstrSeq]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (let
     [i : i64 0]
     (while (< i (compiler-ir-instr-seq-count instrs))
       (begin
         (compiler-ir-representation-instr-def-type!
           (compiler-ir-instr-seq-ref instrs i)
-          (compiler-ir-global-shared-view types))
+          types)
         (set! i (+ i 1))))))
 
 (define (compiler-ir-representation-block-types!
   [blocks : CompilerIrBlockList]
-  [types : CompilerIrRepresentationVarTypes]) : unit
+  [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (compiler-ir-representation-instr-types!
-              instrs
-              (compiler-ir-global-shared-view types))
+            (compiler-ir-representation-instr-types! instrs types)
             (compiler-ir-representation-block-types! (deref rest) types))])]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -10502,9 +10463,7 @@
           (begin
             (match (compiler-ir-block-seq-ref seq i)
               [(CompilerIrBlock.Block _ instrs)
-                (compiler-ir-representation-instr-types!
-                  instrs
-                  (compiler-ir-global-shared-view types))])
+                (compiler-ir-representation-instr-types! instrs types)])
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-representation-function-var-types
@@ -10517,12 +10476,8 @@
             (__tl_make-array i64 vars)
             (__tl_make-array ast.AstType vars))]
         (begin
-          (compiler-ir-representation-param-types!
-            params
-            (compiler-ir-global-shared-view types))
-          (compiler-ir-representation-block-types!
-            blocks
-            (compiler-ir-global-shared-view types))
+          (compiler-ir-representation-param-types! params types)
+          (compiler-ir-representation-block-types! blocks types)
           types))]))
 
 (define (compiler-ir-representation-float-type? [ty : ast.AstType]) : bool
@@ -11776,7 +11731,7 @@
       (set!
         cloned
         (compiler-ir-clone-param-seq
-          (compiler-ir-global-shared-view pools)
+          pools
           (compiler-ir-global-shared-view params)))
       (set!
         func

@@ -1,25 +1,16 @@
-;; FORCING TEST for SCR-1: a loop whose hoisted residents fill the whole
-;; register file leaves the backend no free scratch for the memory operations
-;; it must stage, and the allocator answers by RESERVING one.
+;; A loop whose hoisted residents fill the whole register file, so the
+;; backend has no free scratch for the memory operations it must stage.
 ;;
 ;; `reset-arrays!` writes sixteen global vectors at the same index in one loop.
 ;; LICM hoists every vector's data pointer into the preheader, the greedy homes
 ;; as many as the pool holds and spills the rest, and each store through a
-;; spilled pointer must reload it into a scratch register. Before SCR-1 every
-;; pool register was live across the loop, so the scavenger borrowed one for
-;; each such store and bracketed it with a save and a restore (the XMM park of
-;; compiler-backend-emergency-wrap), and the staged store copied the resident
-;; index into a second borrowed register besides: seven instructions per store
-;; against the two a free scratch needs. The scratch-reserve round
-;; (compiler-reg-scratch-reserve-rewrite-function) prices those parks off the
-;; plan, replans with %r11 out of the greedy pool and keeps the plan when it is
-;; cheaper, and the staged store reads the register-homed index in place. The
-;; gate asserts the shape: no park in the loop, and the spilled pointers
-;; reloaded through %r11 straight into a store.
+;; spilled pointer must reload it into a scratch register the scavenger borrows
+;; (bracketed with a save and a restore). The fixture pins that the result is
+;; still correct.
 ;;
 ;; NON-TAIL self-recursion (never taken at rounds = 1) keeps `reset-arrays!`
-;; out of the inliner and out of opt-tailrec, so the gate can assert on the
-;; named body (divmagic_hoist pattern).
+;; out of the inliner and out of opt-tailrec, so the spill-heavy loop stays in
+;; its own named body (divmagic_hoist pattern).
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)

@@ -115,7 +115,6 @@
     false
     false
     false
-    false
     mask))
 
 (test
@@ -171,8 +170,8 @@
                 (backend.CompilerBackendTarget.Linux)
                 plan
                 state
-                (owned.compiler-owned-shared-view index)
-                (owned.compiler-owned-shared-view refs)
+                index
+                refs
                 (owned.compiler-owned-shared-view externs)
                 true)]
             [library
@@ -180,8 +179,8 @@
                 (backend.CompilerBackendTarget.Linux)
                 plan
                 state
-                (owned.compiler-owned-shared-view index)
-                (owned.compiler-owned-shared-view refs)
+                index
+                refs
                 (owned.compiler-owned-shared-view externs)
                 false)]
             [win

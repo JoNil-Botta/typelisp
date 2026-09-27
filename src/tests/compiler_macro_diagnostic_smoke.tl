@@ -13,7 +13,7 @@
 (import compiler_typecheck_core as tc_core)
 (import sym_i64_env)
 
-(define (macro-diagnostic-write-text [path : String] [contents : String]) : unit
+(define (macro-diagnostic-write-text [path : (& path str)] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (macro-diagnostic-frame-at?
@@ -277,7 +277,7 @@
     (begin
       (load.compiler-load-test-mkdir dir)
       (macro-diagnostic-write-text
-        (load.compiler-load-global-shared-view provider)
+        provider
         "(module tc_macro_diagnostic_provider)
 (defmacro (bad [value : Expr]) : Expr
   `(+ ,value true))
@@ -286,19 +286,19 @@
 (defmacro (bindingbad [binding : ExprBindingClause]) : Expr
   (comptime.expr-binding-clause-init binding))")
       (macro-diagnostic-write-text
-        (load.compiler-load-global-shared-view generated-entry)
+        generated-entry
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.bad 1))")
       (macro-diagnostic-write-text
-        (load.compiler-load-global-shared-view caller-entry)
+        caller-entry
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.callerbad missing))")
       (macro-diagnostic-write-text
-        (load.compiler-load-global-shared-view binding-entry)
+        binding-entry
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.bindingbad [item missing]))")
       (macro-diagnostic-write-text
-        (load.compiler-load-global-shared-view native-entry)
+        native-entry
         "(import stdlib.core_macros)
 (import stdlib.fs as fs)
 (define (main) : String (fs.path-join-many missing))")

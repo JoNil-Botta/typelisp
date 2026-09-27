@@ -1045,15 +1045,13 @@
     (ptr-read (int->ptr (cast handle.generation-address : u64) : (Ptr i64)))))
 
 (define (compiler-load-dependency-catalog-owner-arena
-  [state : CompilerLoadSessionState]) : i64
+  [state : (& state CompilerLoadSessionState)]) : i64
   (array-ref state.dependency-catalog.owner-arena 0))
 
 (define (compiler-load-dependency-catalog-owner-arena-ensure!
   [state : CompilerLoadSessionState]) : i64
   (let
-    [owner : i64
-      (compiler-load-dependency-catalog-owner-arena
-        (owned_view.compiler-owned-shared-view state))]
+    [owner : i64 (compiler-load-dependency-catalog-owner-arena state)]
     (if (> owner 0)
       owner
       (let
@@ -1063,7 +1061,7 @@
           next)))))
 
 (define (compiler-load-dependency-catalog-key-eq?
-  [left : CompilerLoadDependencyCatalogKey]
+  [left : (& left CompilerLoadDependencyCatalogKey)]
   [right : CompilerLoadDependencyCatalogKey]) : bool
   (and
     (string.eq left.canonical-root right.canonical-root)
@@ -1089,7 +1087,7 @@
 
 (define (compiler-load-dependency-catalog-find-root-slot
   [items : CompilerLoadDependencyCatalogList]
-  [canonical-root : String]) : i64
+  [canonical-root : (& canonical-root str)]) : i64
   (let
     [index : i64 0]
     (begin
@@ -1115,7 +1113,7 @@
     [slot : i64
       (compiler-load-dependency-catalog-find-root-slot
         (owned_view.compiler-owned-shared-view items)
-        (owned_view.compiler-owned-shared-view key.canonical-root))]
+        key.canonical-root)]
     (if (and
       (>= slot 0)
       (let
@@ -1165,14 +1163,12 @@
     [slot : i64
       (compiler-load-dependency-catalog-find-root-slot
         (owned_view.compiler-owned-shared-view items)
-        (owned_view.compiler-owned-shared-view entry.key.canonical-root))]
+        entry.key.canonical-root)]
     (if (>= slot 0)
       (let
         [old : CompilerLoadDependencyCatalogEntry
           (owned_view.compiler-owned-array-element-shared-view items.slots slot)]
-        (if (compiler-load-dependency-catalog-key-eq?
-          (owned_view.compiler-owned-shared-view old.key)
-          entry.key)
+        (if (compiler-load-dependency-catalog-key-eq? old.key entry.key)
           slot
           (begin
             (match (compiler-load-dependency-catalog-entry-release-mapping! old)
@@ -1638,7 +1634,7 @@
 (define (compiler-load-dependency-surface-key-current?
   [catalog-key : CompilerLoadDependencyCatalogKey]
   [surface-key : (& surface-key surface_identity.SurfaceIdentityKey)]
-  [configuration : String]) : bool
+  [configuration : (& configuration str)]) : bool
   (and
     (string.eq surface-key.package-name catalog-key.package-name)
     (string.eq
@@ -1679,7 +1675,7 @@
       out)))
 
 (define (compiler-load-dependency-surface-copy-spmd-callables
-  [source : tlci.TlciSpmdCallables]) : tlci.TlciSpmdCallables
+  [source : (& source tlci.TlciSpmdCallables)]) : tlci.TlciSpmdCallables
   (let
     [count : i64 (tlci.tlci-spmd-callables-len source)]
     [out : tlci.TlciSpmdCallables
@@ -1704,7 +1700,7 @@
 (define (compiler-load-dependency-surface-hydrate-entry
   [_owner : i64]
   [entry : CompilerLoadDependencyCatalogEntry]
-  [configuration : String]
+  [configuration : (& configuration str)]
   [structural-session : cis.InternStructuralSessionHandle]) : CompilerLoadDependencySurfaceFragment
   (match entry.status
     [(CompilerLoadDependencyCatalogStatus.Unavailable _)
@@ -1779,7 +1775,7 @@
 
 (define (compiler-load-dependency-surfaces-build-cache!
   [state : CompilerLoadSessionState]
-  [configuration : String]) : bool
+  [configuration : (& configuration str)]) : bool
   (let
     [surface-state : CompilerLoadDependencySurfaceState
       (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
@@ -1827,7 +1823,7 @@
                       (owned_view.compiler-owned-array-element-shared-view
                         catalog.slots
                         index)
-                      (owned_view.compiler-owned-shared-view configuration)
+                      configuration
                       structural-session))]
                 (begin
                   (set! (array-ref slots index) fragment)
@@ -1853,7 +1849,7 @@
               (ci.intern-generation))
             (set!
               (array-ref surface-state.configuration 0)
-              (string.copy (& configuration)))
+              (string.copy configuration))
             (set! (array-ref surface-state.prepared 0) true)
             (set! (array-ref surface-state.enabled 0) ok)
             (if ok
@@ -2032,7 +2028,7 @@
     enabled))
 
 (define (compiler-load-session-state-program-cache-fill!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [index : i64]) : unit
   (if (>= index compiler-load-program-cache-capacity)
     unit
@@ -2052,12 +2048,9 @@
 (define (compiler-load-session-state-program-cache-clear!
   [state : CompilerLoadSessionState]) : unit
   (begin
-    (compiler-load-session-state-program-cache-fill!
-      (owned_view.compiler-owned-shared-view state)
-      0)
+    (compiler-load-session-state-program-cache-fill! state 0)
     (set! (array-ref state.program-cache-ready 0) true)
-    (compiler-load-session-state-program-admission-clear!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-load-session-state-program-admission-clear! state)
     (compiler-load-session-state-program-cache-stats-reset! state)))
 
 (define (compiler-load-program-cache-clear!) : unit
@@ -2280,7 +2273,7 @@
     key))
 
 (define (compiler-load-session-state-program-admission-fill!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [index : i64]) : unit
   (if (>= index compiler-load-program-cache-capacity)
     unit
@@ -2291,15 +2284,13 @@
       (compiler-load-session-state-program-admission-fill! state (+ index 1)))))
 
 (define (compiler-load-session-state-program-admission-clear!
-  [state : CompilerLoadSessionState]) : unit
+  [state : (& state CompilerLoadSessionState)]) : unit
   (begin
-    (compiler-load-session-state-program-admission-fill!
-      (owned_view.compiler-owned-shared-view state)
-      0)
+    (compiler-load-session-state-program-admission-fill! state 0)
     (set! (array-ref state.program-admission-ready 0) true)))
 
 (define (compiler-load-session-state-program-admission-ensure!
-  [state : CompilerLoadSessionState]) : unit
+  [state : (& state CompilerLoadSessionState)]) : unit
   (if (array-ref state.program-admission-ready 0)
     unit
     (compiler-load-session-state-program-admission-clear! state)))
@@ -2324,8 +2315,7 @@
   [state : CompilerLoadSessionState]
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
   (begin
-    (compiler-load-session-state-program-admission-ensure!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-load-session-state-program-admission-ensure! state)
     (compiler-load-session-state-program-admission-contains-from? state key 0)))
 
 (define (compiler-load-program-admission-contains?
@@ -2335,7 +2325,7 @@
     key))
 
 (define (compiler-load-session-state-program-admission-record-at
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [key : CompilerLoadProgramCacheKey]
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
@@ -2356,11 +2346,10 @@
             (+ index 1)))])))
 
 (define (compiler-load-session-state-program-admission-record
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [key : CompilerLoadProgramCacheKey]) : bool
   (begin
-    (compiler-load-session-state-program-admission-ensure!
-      (owned_view.compiler-owned-shared-view state))
+    (compiler-load-session-state-program-admission-ensure! state)
     (compiler-load-session-state-program-admission-record-at state key 0)))
 
 (define (compiler-load-session-state-program-admission-record-persistent
@@ -2679,7 +2668,7 @@
     (array-ref state.embedded-provenance-owner-arena 0)))
 
 (define (compiler-load-session-state-embedded-provenance-arena
-  [state : CompilerLoadSessionState]) : i64
+  [state : (& state CompilerLoadSessionState)]) : i64
   (if (array-ref state.intern-state-ready 0)
     (ci.intern-compat-state-persistent-arena-current-head
       (array-ref state.intern-state 0))
@@ -2734,8 +2723,7 @@
     ;; scratch arenas and remain valid until the next session intern reset.
     (in-arena
       (arena.Arena
-        (compiler-load-session-state-embedded-provenance-arena
-          (owned_view.compiler-owned-shared-view state)))
+        (compiler-load-session-state-embedded-provenance-arena state))
       (set!
         (array-ref state.embedded-stdlib-provenance.module-ids 0)
         (sym_i64_env.sym-i64-bind-id
@@ -2810,8 +2798,7 @@
         (begin
           (in-arena
             (arena.Arena
-              (compiler-load-session-state-embedded-provenance-arena
-                (owned_view.compiler-owned-shared-view state)))
+              (compiler-load-session-state-embedded-provenance-arena state))
             (set!
               (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
               (sym_i64_env.sym-i64-bind-id
@@ -2946,7 +2933,7 @@
       (ci.intern-compat-state-reset! intern-state))))
 
 (define (compiler-load-session-state-runtime-prelude-cache-fill!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
@@ -2961,9 +2948,7 @@
 (define (compiler-load-session-state-runtime-prelude-cache-clear!
   [state : CompilerLoadSessionState]) : unit
   (begin
-    (compiler-load-session-state-runtime-prelude-cache-fill!
-      (owned_view.compiler-owned-shared-view state)
-      0)
+    (compiler-load-session-state-runtime-prelude-cache-fill! state 0)
     (set! (array-ref state.runtime-prelude-cache-ready 0) true)))
 
 (define (compiler-load-runtime-prelude-cache-clear!) : unit
@@ -3044,7 +3029,7 @@
     (compiler-load-session-state-runtime-prelude-cache-lookup-from state key 0)))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store-at
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [key : CompilerLoadPreludeCacheKey]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
@@ -3083,7 +3068,7 @@
     (compiler-load-session-state-runtime-prelude-cache-ensure!
       (owned_view.compiler-owned-shared-view state))
     (compiler-load-session-state-runtime-prelude-cache-store-at
-      (owned_view.compiler-owned-shared-view state)
+      state
       key
       decls
       paths
@@ -3104,7 +3089,7 @@
     (compiler-load-session-state-runtime-prelude-cache-ensure!
       (owned_view.compiler-owned-shared-view state))
     (compiler-load-session-state-runtime-prelude-cache-store-at
-      (owned_view.compiler-owned-shared-view state)
+      state
       key
       decls
       paths
@@ -3561,7 +3546,7 @@
       (ResultPkgResolve.Ok (compiler-load-normalize-path resolved)))))
 
 (define (compiler-load-session-state-dotted-path-cache-clear-ready!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [index : i64]) : unit
   (if (>= index compiler-load-dotted-path-cache-capacity)
     unit
@@ -3573,7 +3558,7 @@
         (+ index 1)))))
 
 (define (compiler-load-session-state-dotted-path-arena-ensure!
-  [state : CompilerLoadSessionState]) : i64
+  [state : (& state CompilerLoadSessionState)]) : i64
   (begin
     (if (= (array-ref state.dotted-path-cache-owner-arena 0) 0)
       (set!
@@ -3585,9 +3570,7 @@
 (define (compiler-load-session-state-dotted-path-cache-reset!
   [state : CompilerLoadSessionState]) : unit
   (begin
-    (compiler-load-session-state-dotted-path-cache-clear-ready!
-      (owned_view.compiler-owned-shared-view state)
-      0)
+    (compiler-load-session-state-dotted-path-cache-clear-ready! state 0)
     (let
       [owner : i64 (array-ref state.dotted-path-cache-owner-arena 0)]
       (begin
@@ -3633,7 +3616,7 @@
     (compiler-load-session-state-dotted-path-cache-lookup bound-4 module-id)))
 
 (define (compiler-load-session-state-dotted-path-cache-store!
-  [state : CompilerLoadSessionState]
+  [state : (& state CompilerLoadSessionState)]
   [module-id : i64]
   [path : String]) : unit
   (let
@@ -3678,8 +3661,7 @@
           [retained : String
             (in-arena
               (arena.Arena
-                (compiler-load-session-state-dotted-path-arena-ensure!
-                  (owned_view.compiler-owned-shared-view state)))
+                (compiler-load-session-state-dotted-path-arena-ensure! state))
               (let
                 [path : String
                   (compiler-load-dotted-module-path-uncached module-name)]
@@ -3739,7 +3721,8 @@
       ""
       (string.substring module-name rest-start (- n rest-start)))))
 
-(define (compiler-load-dotted-module-last-dot [module-name : String]) : i64
+(define (compiler-load-dotted-module-last-dot
+  [module-name : (& module-name str)]) : i64
   (let
     [index : i64 (- (string.string-length module-name) 1)]
     [found : i64 -1]
@@ -3758,7 +3741,7 @@
         true]
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) false])))
 
-(define (compiler-load-import-module-id [module-name : String]) : i64
+(define (compiler-load-import-module-id [module-name : (& module-name str)]) : i64
   (compiler-load-parse-context-name-id module-name))
 
 (define (compiler-load-selected-item-id
@@ -3775,9 +3758,7 @@
   [module-name : String]
   [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
   (let
-    [module-id : i64
-      (compiler-load-import-module-id
-        (owned_view.compiler-owned-shared-view module-name))]
+    [module-id : i64 (compiler-load-import-module-id module-name)]
     (ResultCompilerLoadResolvedImport.Ok
       (CompilerLoadResolvedImport
         resolved
@@ -4109,9 +4090,7 @@
   [remaining-segments : i64]
   [alias : ast.AstMaybeImportAlias]) : ResultCompilerLoadResolvedImport
   (let
-    [candidate-id : i64
-      (compiler-load-import-module-id
-        (owned_view.compiler-owned-shared-view candidate))]
+    [candidate-id : i64 (compiler-load-import-module-id candidate)]
     (match (compiler-load-resolve-import-candidate
       (owned_view.compiler-owned-shared-view resolver)
       (owned_view.compiler-owned-shared-view candidate)
@@ -4130,9 +4109,7 @@
                 original-import-path
                 candidate)))
           (let
-            [dot : i64
-              (compiler-load-dotted-module-last-dot
-                (owned_view.compiler-owned-shared-view candidate))]
+            [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
             (if (< dot 0)
               (ResultCompilerLoadResolvedImport.Err "")
               (compiler-load-search-import-prefix
@@ -4144,9 +4121,7 @@
                 alias))))]
       [(ResultPkgResolve.Err _)
         (let
-          [dot : i64
-            (compiler-load-dotted-module-last-dot
-              (owned_view.compiler-owned-shared-view candidate))]
+          [dot : i64 (compiler-load-dotted-module-last-dot candidate)]
           (if (< dot 0)
             (ResultCompilerLoadResolvedImport.Err "")
             (compiler-load-search-import-prefix
@@ -4203,9 +4178,7 @@
                 import-path
                 alias)
               (let
-                [dot : i64
-                  (compiler-load-dotted-module-last-dot
-                    (owned_view.compiler-owned-shared-view import-path))]
+                [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
                 (if (< dot 0)
                   (compiler-load-resolved-import
                     resolved
@@ -4237,9 +4210,7 @@
                           (ResultCompilerLoadResolvedImport.Err message))])))))]
           [(ResultPkgResolve.Err original-message)
             (let
-              [dot : i64
-                (compiler-load-dotted-module-last-dot
-                  (owned_view.compiler-owned-shared-view import-path))]
+              [dot : i64 (compiler-load-dotted-module-last-dot import-path)]
               (if (< dot 0)
                 (ResultCompilerLoadResolvedImport.Err original-message)
                 (let
@@ -5240,7 +5211,9 @@
 (define (compiler-load-canonical-module-id-from-path [path : (& path str)]) : String
   (compiler-load-module-id-from-path-text path))
 
-(define (compiler-load-root-relative-path [root : String] [path : String]) : String
+(define (compiler-load-root-relative-path
+  [root : (& root str)]
+  [path : (& path str)]) : String
   (let
     [normalized-path : String (compiler-load-normalize-path path)]
     [prefix : String (compiler-load-root-prefix root)]
@@ -10562,7 +10535,7 @@
       result)))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg
-  [path : String]
+  [path : (& path str)]
   [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -10905,7 +10878,7 @@
   [records-end : i64]) : unit
   (begin
     (parser.compiler-parse-decl-origin-copy-direct-records!
-      (ast.ast-place-shared-view source)
+      source
       (& dest)
       0
       records-start
@@ -11537,7 +11510,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
   [load-state : CompilerLoadSessionState]
-  [path : String]
+  [path : (& path str)]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -11595,7 +11568,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
   [load-state : CompilerLoadSessionState]
-  [path : String]
+  [path : (& path str)]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [expected-module : ast.AstMaybeModuleName]
@@ -12019,7 +11992,7 @@
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
   [load-state : CompilerLoadSessionState]
-  [path : String]
+  [path : (& path str)]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -13937,7 +13910,7 @@
         loaded))))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
-  [path : String]
+  [path : (& path str)]
   [program : ast.AstProgram]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -19392,9 +19365,7 @@
       (compiler-load-session-state-program-cache-note-hit!
         (owned_view.compiler-owned-shared-view state-a))]
     [_admit : bool
-      (compiler-load-session-state-program-admission-record
-        (owned_view.compiler-owned-shared-view state-a)
-        program-key)]
+      (compiler-load-session-state-program-admission-record state-a program-key)]
     [prelude-key : CompilerLoadPreludeCacheKey
       (CompilerLoadPreludeCacheKey
         (CompilerLoadInternIdSeq (__tl_make-array i64 0) 0)
@@ -19708,7 +19679,7 @@
         (compiler-load-session-state-dotted-path-cache-reset!
           (owned_view.compiler-owned-shared-view state-b))
         (compiler-load-session-state-dotted-path-cache-store!
-          (owned_view.compiler-owned-shared-view state-b)
+          state-b
           dotted-id
           "pkg/member.tl")
         (compiler-load-session-state-dotted-path-cache-reset!
@@ -20778,10 +20749,7 @@
         (and
           (array-ref checks 0)
           release-ok
-          (=
-            (compiler-load-dependency-catalog-owner-arena
-              (compiler-load-global-shared-view state))
-            0)
+          (= (compiler-load-dependency-catalog-owner-arena state) 0)
           (= (array-ref state.dependency-catalog.entries 0).len 0))))))
 
 (define (compiler-load-self-test) : i64

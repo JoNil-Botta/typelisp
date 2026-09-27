@@ -8,6 +8,7 @@
 (import compiler_driver_core)
 (import compiler_ast_types)
 (import compiler_lower)
+(import compiler_lower_tests)
 (import compiler_symbols)
 (import compiler_optimize)
 (import compiler_cfg_core)
@@ -192,7 +193,7 @@
               stale-main-symbol-id
               compiler_lower.LowerNameEnv.Nil))]
         [derived-env : compiler_lower.LowerNameEnv
-          (compiler_lower.lower-name-env-bind-logical-id
+          (compiler_lower_tests.lower-name-env-bind-logical-id
             source-id
             "same-name"
             opaque-logical-id
@@ -987,8 +988,7 @@
         (owned_view.compiler-owned-shared-view state))]
     (begin
       (if (=
-        (compiler_driver_core.compiler-driver-state-intern-generation
-          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-intern-generation state)
         0)
         (ci.intern-compat-state-reset! (&mut intern-state))
         unit)
@@ -1058,7 +1058,7 @@
                   (clone spans-a)]
                 (begin
                   (compiler_driver_core.compiler-driver-state-adopt-pools!
-                    (owned_view.compiler-owned-shared-view state-b)
+                    state-b
                     pools-b)
                   (compiler-driver-reader-context-smoke-lowered-ok?
                     lowered-a
@@ -1435,7 +1435,7 @@
               (and
                 (=
                   (compiler_lower.compiler-lower-arena-state-scratch-arena
-                    (owned_view.compiler-owned-shared-view lower-a))
+                    lower-a)
                   0)
                 (=
                   (compiler_lower.compiler-lower-arena-state-ir-arena lower-a)
@@ -1450,7 +1450,7 @@
                 (owned_view.compiler-owned-shared-view state-a))
               ;; B parks its own arena chain in the selectors.
               (compiler_lower.compiler-lower-arena-state-set!
-                (owned_view.compiler-owned-shared-view lower-b)
+                lower-b
                 (arena.tl_arena_make)
                 (arena.tl_arena_make))
               (compiler_driver_core.compiler-driver-state-install-lower-arenas!
@@ -1467,11 +1467,11 @@
                     (=
                       (compiler_lower.lower-scratch-arena-get)
                       (compiler_lower.compiler-lower-arena-state-scratch-arena
-                        (owned_view.compiler-owned-shared-view lower-b)))
+                        lower-b))
                     (=
                       (compiler_lower.lower-ir-arena-get)
                       (compiler_lower.compiler-lower-arena-state-ir-arena
-                        (owned_view.compiler-owned-shared-view lower-b))))]
+                        lower-b)))]
                 (begin
                   ;; B's own release still zeroes the selectors it owns.
                   (compiler_driver_core.compiler-driver-state-release-lower-arenas!
@@ -1481,7 +1481,7 @@
                       (and
                         (=
                           (compiler_lower.compiler-lower-arena-state-scratch-arena
-                            (owned_view.compiler-owned-shared-view lower-b))
+                            lower-b)
                           0)
                         (=
                           (compiler_lower.compiler-lower-arena-state-ir-arena
@@ -1556,7 +1556,7 @@
               (owned_view.compiler-owned-shared-view state-b))
             (let
               [b-reset-before-reuse : bool
-                (compiler_lower.compiler-lower-state-reset? lower-b)]
+                (compiler_lower_tests.compiler-lower-state-reset? lower-b)]
               (match (compiler_lower.lower-compiler-source-with-path-mode-package-and-state
                 lower-b
                 "<state-b-reuse>"
@@ -1637,7 +1637,7 @@
                             (compiler-driver-reader-context-smoke-fail
                               "state B final reset mutated state A")]
                           [(not
-                              (compiler_lower.compiler-lower-state-reset?
+                              (compiler_lower_tests.compiler-lower-state-reset?
                                 lower-b))
                             (compiler-driver-reader-context-smoke-fail
                               "state B final reset did not restore logical fresh state")]
@@ -1672,16 +1672,14 @@
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (compiler_driver_core.compiler-driver-state-capture-active-builtins!
-        (owned_view.compiler-owned-shared-view state-a))
+        state-a)
       (compiler_driver_core.compiler-driver-state-capture-active-interns!
-        (owned_view.compiler-owned-shared-view state-a))
+        state-a)
       (let
         [gen-a : i64
-          (compiler_driver_core.compiler-driver-state-intern-generation
-            (owned_view.compiler-owned-shared-view state-a))]
+          (compiler_driver_core.compiler-driver-state-intern-generation state-a)]
         [gen-b0 : i64
-          (compiler_driver_core.compiler-driver-state-intern-generation
-            (owned_view.compiler-owned-shared-view state-b))]
+          (compiler_driver_core.compiler-driver-state-intern-generation state-b)]
         [loaded-ok? : bool
           (and
             ;; Builtin lookup + CTFE success: A's snapshot serves the ids and
@@ -1710,9 +1708,9 @@
               (cbi.compiler-builtin-reset!)
               (cbi.compiler-builtin-initialize-for-parse!)
               (compiler_driver_core.compiler-driver-state-capture-active-builtins!
-                (owned_view.compiler-owned-shared-view state-b))
+                state-b)
               (compiler_driver_core.compiler-driver-state-capture-active-interns!
-                (owned_view.compiler-owned-shared-view state-b))
+                state-b)
               ;; Isolation: resetting uninstalled A must not disturb B's
               ;; installed compatibility table -- the retired install/reset
               ;; bridge invalidated it unconditionally.
@@ -1721,7 +1719,7 @@
               (let
                 [gen-b : i64
                   (compiler_driver_core.compiler-driver-state-intern-generation
-                    (owned_view.compiler-owned-shared-view state-b))]
+                    state-b)]
                 [isolated-ok? : bool
                   (and
                     (cbi.compiler-builtin-table-current?)
@@ -1842,7 +1840,7 @@
           (compiler_driver_core.compiler-driver-state-typecheck
             (owned_view.compiler-owned-shared-view state-a))
           (& semantic))
-        (compiler_lower.compiler-lower-state-add-advisory!
+        (compiler_lower_tests.compiler-lower-state-add-advisory!
           (compiler_driver_core.compiler-driver-state-owned-lower-state
             (owned_view.compiler-owned-shared-view state-a))
           (& lowering))
@@ -1919,8 +1917,7 @@
     (begin
       ;; Reset A as a cache/retry boundary. B is interleaved and must retain
       ;; its own advisory; A's retired payload strings must not leak forward.
-      (compiler_driver_core.compiler-driver-state-prefix-cache-enable!
-        (owned_view.compiler-owned-shared-view state-a))
+      (compiler_driver_core.compiler-driver-state-prefix-cache-enable! state-a)
       (compiler_driver_core.compiler-driver-state-reset-typecheck!
         (owned_view.compiler-owned-shared-view state-a))
       (let

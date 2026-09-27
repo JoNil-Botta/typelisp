@@ -92,19 +92,19 @@
       env)))
 
 (define (compile-cli-cfg-names-to-env-with-intern-state
-  [names : cli_svec.Vec]
+  [names : (& names cli_svec.Vec)]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
     [index : i64 0]
     (begin
-      (while (< index (cli_svec.len (& names)))
+      (while (< index (cli_svec.len names))
         (begin
           (set!
             env
             (cfg_core.compiler-cfg-enable-with-intern-state
               env
-              (cli_svec.get (& names) index "")
+              (cli_svec.get names index "")
               intern-state))
           (set! index (+ index 1))))
       env)))
@@ -617,7 +617,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : cli_svec.Vec]
+  [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
@@ -630,8 +630,7 @@
     ;; process-level parser caches from CLI startup can mistake generation zero
     ;; for their owner and reuse ids from the bootstrap compatibility table.
     (if (=
-      (compiler_driver_core.compiler-driver-state-intern-generation
-        (owned_view.compiler-owned-shared-view state))
+      (compiler_driver_core.compiler-driver-state-intern-generation state)
       0)
       (ci.intern-compat-state-reset!
         (compiler_driver_core.compiler-driver-state-owned-interns-mut
@@ -911,7 +910,7 @@
   [assembly-path : String]
   [force-assembly : bool]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : cli_svec.Vec]
+  [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
   (begin
@@ -919,8 +918,7 @@
     ;; driver boundary. The selected bytes are written before the caller tears
     ;; down this entry's scratch arena.
     (if (=
-      (compiler_driver_core.compiler-driver-state-intern-generation
-        (owned_view.compiler-owned-shared-view state))
+      (compiler_driver_core.compiler-driver-state-intern-generation state)
       0)
       (ci.intern-compat-state-reset!
         (compiler_driver_core.compiler-driver-state-owned-interns-mut
@@ -1093,7 +1091,7 @@
     false))
 
 (define (compile-cli-batch-find-separator
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [end : i64]) : i64
   (let
@@ -1136,11 +1134,7 @@
           n
           entries)
         (let
-          [sep : i64
-            (compile-cli-batch-find-separator
-              (owned_view.compiler-owned-shared-view text)
-              start
-              line-end)]
+          [sep : i64 (compile-cli-batch-find-separator text start line-end)]
           (if (< sep 0)
             (compile-cli-batch-line-error line "expected input|output")
             (let
@@ -1181,7 +1175,7 @@
       (ResultCompileCliBatchEntryList.Err status))))
 
 (define (compile-cli-windows-batch-parse-entries-into!
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [line : i64]
   [n : i64]
@@ -1200,10 +1194,7 @@
           entries)
         (let
           [input-sep : i64
-            (compile-cli-batch-find-separator
-              (owned_view.compiler-owned-shared-view text)
-              start
-              line-end)]
+            (compile-cli-batch-find-separator text start line-end)]
           (if (< input-sep 0)
             (compile-cli-batch-line-error
               line
@@ -1211,10 +1202,7 @@
             (let
               [object-start : i64 (+ input-sep 1)]
               [object-sep : i64
-                (compile-cli-batch-find-separator
-                  (owned_view.compiler-owned-shared-view text)
-                  object-start
-                  line-end)]
+                (compile-cli-batch-find-separator text object-start line-end)]
               (if (= start input-sep)
                 (compile-cli-batch-line-error line "missing input path")
                 (if (< object-sep 0)
@@ -1223,7 +1211,7 @@
                     [assembly-start : i64 (+ object-sep 1)]
                     [mode-sep : i64
                       (compile-cli-batch-find-separator
-                        (owned_view.compiler-owned-shared-view text)
+                        text
                         assembly-start
                         line-end)]
                     [assembly-end : i64
@@ -1245,7 +1233,7 @@
                             (if (< mode-sep 0)
                               -1
                               (compile-cli-batch-find-separator
-                                (owned_view.compiler-owned-shared-view text)
+                                text
                                 mode-start
                                 line-end))]
                           [mode : String
@@ -1294,7 +1282,7 @@
                                     entries))))))))))))))))))
 
 (define (compile-cli-windows-batch-parse-entries-from
-  [text : String]
+  [text : (& text str)]
   [start : i64]
   [line : i64]
   [n : i64]) : ResultCompileCliWindowsBatchEntryList
@@ -1318,7 +1306,7 @@
   [has-target : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : cli_svec.Vec]
+  [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]) : i64
@@ -1360,7 +1348,7 @@
             has-target
             target
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs)
+            cfgs
             backend-mode
             opt-level
             false))]
@@ -1527,7 +1515,7 @@
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : cli_svec.Vec]
+  [cfgs : (& cfgs cli_svec.Vec)]
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]
@@ -1564,7 +1552,7 @@
             assembly-path
             force-assembly
             (owned_view.compiler-owned-shared-view stdlib-roots)
-            (owned_view.compiler-owned-shared-view cfgs)
+            cfgs
             backend-mode
             opt-level))]
       [_profile-emit : unit
@@ -1802,7 +1790,7 @@
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-windows-batch-parse-entries-from
-    (owned_view.compiler-owned-shared-view text)
+    text
     start
     line
     (string.string-length text))
@@ -1867,9 +1855,9 @@
           [status : i64
             (begin
               (compiler_driver_core.compiler-driver-state-prefix-cache-enable!
-                (owned_view.compiler-owned-shared-view state))
+                state)
               (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
-                (owned_view.compiler-owned-shared-view state))
+                state)
               (if has-windows-coff-plan
                 (let
                   [remove-status : i64
@@ -1903,11 +1891,11 @@
           (begin
             (if prefix-cache-stats
               (compiler_driver_core.compiler-driver-state-prefix-cache-print-stats
-                (owned_view.compiler-owned-shared-view state)
+                state
                 "compile-batch")
               unit)
             (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
-              (owned_view.compiler-owned-shared-view state))
+              state)
             (compiler_driver_core.compiler-driver-state-prefix-cache-disable!
               state)
             status))])))

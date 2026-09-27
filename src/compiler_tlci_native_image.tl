@@ -13,7 +13,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_object as cobj)
-(import compiler_object_elf)
+(import compiler_object_layout as layout)
 (import tlci_core)
 (import stdlib.byte_buf_core)
 (import stdlib.hashmap)
@@ -38,22 +38,18 @@
   256)
 
 (define (compiler-tlci-native-align [offset : i64] [align : i64]) : i64
-  (compiler_object_elf.compiler-object-elf-align-offset offset align))
+  (layout.compiler-object-layout-align-offset offset align))
 
 (define (compiler-tlci-native-section-instrs
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectX64InstrList
-  (match (cobj.compiler-object-section-list-find
-    (owned_view.compiler-owned-shared-view image.sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ _ instrs) instrs]))
 
 (define (compiler-tlci-native-section-data
   [image : cobj.CompilerObjectImage]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectDataRecordList
-  (match (cobj.compiler-object-section-list-find
-    (owned_view.compiler-owned-shared-view image.sections)
-    kind)
+  (match (cobj.compiler-object-section-list-find image.sections kind)
     [(cobj.CompilerObjectSection.Section _ data _) data]))
 
 ;; Every absolute SymbolAddress data record becomes exactly one load-base
@@ -63,17 +59,13 @@
 (define (compiler-tlci-native-data-fixup-count
   [records : cobj.CompilerObjectDataRecordList]) : i64
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [fixups : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-data-record-list-ref
-            (owned_view.compiler-owned-shared-view records)
-            index)
+          (match (cobj.compiler-object-data-record-list-ref records index)
             [(cobj.CompilerObjectDataRecord.SymbolAddress _)
               (set! fixups (+ fixups 1))]
             [_ unit])
@@ -110,17 +102,13 @@
   [records : cobj.CompilerObjectDataRecordList]
   [base : i64]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [offset : i64 base]
     (while (< index count)
       (let
         [record : cobj.CompilerObjectDataRecord
-          (cobj.compiler-object-data-record-list-ref
-            (owned_view.compiler-owned-shared-view records)
-            index)]
+          (cobj.compiler-object-data-record-list-ref records index)]
         (begin
           (match (owned_view.compiler-owned-shared-view record)
             [(cobj.CompilerObjectDataRecord.Label name)
@@ -133,9 +121,7 @@
             [_ unit])
           (set!
             offset
-            (compiler_object_elf.compiler-object-elf-data-record-end-offset
-              record
-              offset))
+            (cobj.compiler-object-data-record-end-offset record offset))
           (set! index (+ index 1)))))))
 
 (define (compiler-tlci-native-build-symbol-index
@@ -146,18 +132,14 @@
       (compiler-tlci-native-section-instrs
         (owned_view.compiler-owned-shared-view image)
         (cobj.CompilerObjectSectionKind.Text))]
-    [instr-count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
     [instr-index : i64 0]
     [offset : i64 bases.text]
     [symbols : cobj.CompilerObjectSymbolList
       (owned_view.compiler-owned-shared-view image.symbols)]
-    [symbol-count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [symbol-count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [externs : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ symbol-count 1))]
     [symbol-index : i64 0]
@@ -165,9 +147,7 @@
       (while (< instr-index instr-count)
         (let
           [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              instr-index)]
+            (cobj.compiler-object-instr-list-ref instrs instr-index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
               [(cobj.CompilerObjectX64Instr.Label name)
@@ -180,9 +160,7 @@
               [_ unit])
             (set!
               offset
-              (+
-                offset
-                (compiler_object_elf.compiler-object-elf-instr-size instr)))
+              (+ offset (layout.compiler-object-layout-instr-size instr)))
             (set! instr-index (+ instr-index 1)))))
       (compiler-tlci-native-index-data-labels!
         (&mut offsets)
@@ -204,9 +182,7 @@
         bases.bss)
       (while (< symbol-index symbol-count)
         (begin
-          (match (cobj.compiler-object-symbol-list-ref
-            (owned_view.compiler-owned-shared-view symbols)
-            symbol-index)
+          (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
             [(cobj.CompilerObjectSymbol.Symbol name binding _ _)
               (match binding
                 [(cobj.CompilerObjectSymbolBinding.Extern)
@@ -381,9 +357,7 @@
       (compiler-tlci-native-section-instrs
         image
         (cobj.CompilerObjectSectionKind.Text))]
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [offset : i64 bases.text]
     [ok : bool true]
@@ -391,9 +365,7 @@
       (while (and ok (< index count))
         (let
           [instr : cobj.CompilerObjectX64Instr
-            (cobj.compiler-object-instr-list-ref
-              (owned_view.compiler-owned-shared-view instrs)
-              index)]
+            (cobj.compiler-object-instr-list-ref instrs index)]
           (begin
             (match (owned_view.compiler-owned-shared-view instr)
               [(cobj.CompilerObjectX64Instr.Call target)
@@ -638,9 +610,7 @@
               [_ unit])
             (set!
               offset
-              (+
-                offset
-                (compiler_object_elf.compiler-object-elf-instr-size instr)))
+              (+ offset (layout.compiler-object-layout-instr-size instr)))
             (set! index (+ index 1)))))
       ok)))
 
@@ -663,9 +633,7 @@
   (let
     [records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data image kind)]
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [offset : i64 region-base]
     [ok : bool true]
@@ -673,9 +641,7 @@
       (while (and ok (< index count))
         (let
           [record : cobj.CompilerObjectDataRecord
-            (cobj.compiler-object-data-record-list-ref
-              (owned_view.compiler-owned-shared-view records)
-              index)]
+            (cobj.compiler-object-data-record-list-ref records index)]
           (begin
             (match (owned_view.compiler-owned-shared-view record)
               [(cobj.CompilerObjectDataRecord.SymbolAddress target)
@@ -713,9 +679,7 @@
               [_ unit])
             (set!
               offset
-              (compiler_object_elf.compiler-object-elf-data-record-end-offset
-                record
-                offset))
+              (cobj.compiler-object-data-record-end-offset record offset))
             (set! index (+ index 1)))))
       ok)))
 
@@ -730,7 +694,7 @@
         (owned_view.compiler-owned-shared-view image)
         (cobj.CompilerObjectSectionKind.Text))]
     [text-size : i64
-      (compiler_object_elf.compiler-object-elf-instrs-size
+      (layout.compiler-object-layout-instrs-size
         (owned_view.compiler-owned-shared-view text-instrs))]
     [rodata-records : cobj.CompilerObjectDataRecordList
       (compiler-tlci-native-section-data
@@ -738,7 +702,7 @@
         (cobj.CompilerObjectSectionKind.Rodata))]
     [rodata-base : i64 (compiler-tlci-native-align text-size 16)]
     [rodata-size : i64
-      (compiler_object_elf.compiler-object-elf-data-records-size-from
+      (layout.compiler-object-layout-data-records-size-from
         (owned_view.compiler-owned-shared-view rodata-records)
         rodata-base)]
     [data-records : cobj.CompilerObjectDataRecordList
@@ -747,7 +711,7 @@
         (cobj.CompilerObjectSectionKind.Data))]
     [data-base : i64 (compiler-tlci-native-align rodata-size 16)]
     [data-size : i64
-      (compiler_object_elf.compiler-object-elf-data-records-size-from
+      (layout.compiler-object-layout-data-records-size-from
         (owned_view.compiler-owned-shared-view data-records)
         data-base)]
     [got-base : i64 (compiler-tlci-native-align data-size 8)]
@@ -759,7 +723,7 @@
     [bss-base : i64 (compiler-tlci-native-align (+ got-base got-size) 16)]
     [bss-size : i64
       (-
-        (compiler_object_elf.compiler-object-elf-data-records-size-from
+        (layout.compiler-object-layout-data-records-size-from
           bss-records
           bss-base)
         bss-base)]
@@ -786,26 +750,22 @@
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]
     (begin
-      (compiler_object_elf.compiler-object-elf-render-instrs!
-        (&mut builder)
-        text-instrs)
-      (compiler_object_elf.compiler-object-elf-render-padding-to!
+      (layout.compiler-object-layout-render-instrs! (&mut builder) text-instrs)
+      (layout.compiler-object-layout-render-padding-to!
         (&mut builder)
         rodata-base)
-      (compiler_object_elf.compiler-object-elf-render-data-records!
+      (layout.compiler-object-layout-render-data-records!
         (&mut builder)
         rodata-records
         rodata-base)
-      (compiler_object_elf.compiler-object-elf-render-padding-to!
+      (layout.compiler-object-layout-render-padding-to!
         (&mut builder)
         data-base)
-      (compiler_object_elf.compiler-object-elf-render-data-records!
+      (layout.compiler-object-layout-render-data-records!
         (&mut builder)
         data-records
         data-base)
-      (compiler_object_elf.compiler-object-elf-render-padding-to!
-        (&mut builder)
-        bss-base)
+      (layout.compiler-object-layout-render-padding-to! (&mut builder) bss-base)
       (let
         [bytes : (__tl_dyn-array u8)
           (byte_buf_core.byte-buf-builder-to-array (& builder))]
@@ -922,7 +882,7 @@
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
-  (compiler_object_elf.compiler-object-elf-instr-label-offset-from
+  (layout.compiler-object-layout-instr-label-offset-from
     (compiler-tlci-native-section-instrs
       image
       (cobj.CompilerObjectSectionKind.Text))

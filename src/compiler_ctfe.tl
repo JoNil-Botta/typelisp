@@ -12671,7 +12671,9 @@
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
-        (ast.ast-pat-variant-id name (ctfe-quote-pattern-list args env)))]
+        (ast.ast-pat-variant-id
+          (ctfe-quote-name-id env name)
+          (ctfe-quote-pattern-list args env)))]
     [(ast.AstPattern.Literal lit) (ast.AstPattern.Literal lit)]))
 
 (define (ctfe-quote-let-binding-list

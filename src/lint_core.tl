@@ -588,8 +588,11 @@
         (LintFindings slots (+ n 1))))
     (lint-findings-add finding (lint-findings-grow items))))
 
-(define (lint-findings-ref [items : LintFindings] [index : i64]) : LintFinding
-  (array-ref (lint-findings-slots items) index))
+(define (lint-findings-ref [items : (& items LintFindings)] [index : i64]) : LintFinding
+  (let
+    [items : LintFindings
+      (owned_view.compiler-owned-reference-shared-view items)]
+    (array-ref (lint-findings-slots items) index)))
 
 ;: Default nested-`if`-ladder depth threshold (an else-chain of this many `if`s
 ;: or more is flagged).

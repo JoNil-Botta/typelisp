@@ -851,8 +851,10 @@
         (lower.lower-compiler-source "(define (main) : i64 0)")]
       [generation-after : i64 (ci.intern-generation)]
       [_restore : unit
-        (load.compiler-load-session-state-use!
-          (load.compiler-load-session-state-shared-view (& previous-state)))]
+        (let
+          [state
+            (load.compiler-load-session-state-shared-view (& previous-state))]
+          (load.compiler-load-session-state-use! state))]
       (and
         (load.compiler-load-session-state-standalone-reset-safe? previous-state)
         (= generation-before generation-after)
@@ -9474,8 +9476,7 @@
     [decoy-exprs-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-decoy))
+      (ci.intern-compat-state-install! intern-decoy)
       (ast.ast-node-pool-context-install! pools-b)
       (let
         [stripped-a : i64
@@ -10873,7 +10874,7 @@
         (+ 1 (lower-test-decl-list-count rest)))]))
 
 (define (lower-test-decl-list-defines?
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [name : String]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
@@ -10904,9 +10905,11 @@
           [(ast.AstDecl.Unsafe inner-box)
             (let
               [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-              (if (lower-test-decl-list-defines?
-                (ast.ast-decl-cons inner (ast.ast-decl-list-new))
-                (owned_view.compiler-owned-shared-view name))
+              (if (let
+                [arg (ast.ast-decl-cons inner (ast.ast-decl-list-new))]
+                (lower-test-decl-list-defines?
+                  arg
+                  (owned_view.compiler-owned-shared-view name)))
                 true
                 (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
@@ -11089,12 +11092,8 @@
         (lower-test-decl-list-count
           (owned_view.compiler-owned-shared-view kept))
         3)
-      (lower-test-decl-list-defines?
-        (owned_view.compiler-owned-shared-view kept)
-        "ExprClauseList")
-      (lower-test-decl-list-defines?
-        (owned_view.compiler-owned-shared-view kept)
-        "main")
+      (lower-test-decl-list-defines? kept "ExprClauseList")
+      (lower-test-decl-list-defines? kept "main")
       (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper")))))
 
 (define (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?) : bool
@@ -11152,12 +11151,8 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ExprClauseList")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
+                (lower-test-decl-list-defines? kept "ExprClauseList")
+                (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?) : bool
@@ -11588,15 +11583,9 @@
                             (lower-test-decl-list-count
                               (owned_view.compiler-owned-shared-view kept))
                             4)
-                          (lower-test-decl-list-defines?
-                            (owned_view.compiler-owned-shared-view kept)
-                            "main")
-                          (lower-test-decl-list-defines?
-                            (owned_view.compiler-owned-shared-view kept)
-                            "helper")
-                          (lower-test-decl-list-defines?
-                            (owned_view.compiler-owned-shared-view kept)
-                            "callback-target")
+                          (lower-test-decl-list-defines? kept "main")
+                          (lower-test-decl-list-defines? kept "helper")
+                          (lower-test-decl-list-defines? kept "callback-target")
                           (not (lower-test-decl-list-defines? kept "dead"))
                           (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
 
@@ -11629,19 +11618,10 @@
                   (lower-test-decl-list-count
                     (owned_view.compiler-owned-shared-view kept))
                   3)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "UsedBox")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "UsedEnum")
-                (not
-                  (lower-test-decl-list-defines?
-                    (owned_view.compiler-owned-shared-view kept)
-                    "DeadBox"))
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "UsedBox")
+                (lower-test-decl-list-defines? kept "UsedEnum")
+                (not (lower-test-decl-list-defines? kept "DeadBox"))
                 (not (lower-test-decl-list-defines? kept "DeadEnum"))))])])))
 
 (define (compiler-lower-type-decl-dce-qualified-base-ok?) : bool
@@ -11675,12 +11655,8 @@
                   (lower-test-decl-list-count
                     (owned_view.compiler-owned-shared-view kept))
                   2)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "io.ResultIoString")
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "io.ResultIoString")
                 (not (lower-test-decl-list-defines? kept "io.DeadResult"))))])])))
 
 (define (compiler-lower-type-decl-dce-arena-support-ok?) : bool
@@ -11710,18 +11686,10 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ThreadBox")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "Arena")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ArenaMark")
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ThreadBox")
+                (lower-test-decl-list-defines? kept "Arena")
+                (lower-test-decl-list-defines? kept "ArenaMark")
                 (not (lower-test-decl-list-defines? kept "DeadArenaPeer"))))])])))
 
 (define (compiler-lower-type-decl-dce-test-body-ok?) : bool
@@ -11753,12 +11721,8 @@
                   (lower-test-decl-list-count
                     (owned_view.compiler-owned-shared-view kept))
                   3)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "ImportedMark")
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ImportedMark")
                 (not (lower-test-decl-list-defines? kept "DeadMark"))))])])))
 
 (define (compiler-lower-type-decl-dce-body-pattern-ok?) : bool
@@ -11788,12 +11752,8 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "QPoint")
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "QPoint")
                 (not (lower-test-decl-list-defines? kept "DeadGeom"))))])])))
 
 (define (compiler-lower-macro-body-dce-ok?) : bool
@@ -11828,9 +11788,7 @@
                   (lower-test-decl-list-count
                     (owned_view.compiler-owned-shared-view kept))
                   2)
-                (lower-test-decl-list-defines?
-                  (owned_view.compiler-owned-shared-view kept)
-                  "main")
+                (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
@@ -11852,19 +11810,10 @@
     (=
       (lower-test-decl-list-count (owned_view.compiler-owned-shared-view kept))
       3)
-    (lower-test-decl-list-defines?
-      (owned_view.compiler-owned-shared-view kept)
-      "main")
-    (lower-test-decl-list-defines?
-      (owned_view.compiler-owned-shared-view kept)
-      "unsafe-helper")
-    (lower-test-decl-list-defines?
-      (owned_view.compiler-owned-shared-view kept)
-      "unsafe-entry")
-    (not
-      (lower-test-decl-list-defines?
-        (owned_view.compiler-owned-shared-view kept)
-        "dead-helper"))
+    (lower-test-decl-list-defines? kept "main")
+    (lower-test-decl-list-defines? kept "unsafe-helper")
+    (lower-test-decl-list-defines? kept "unsafe-entry")
+    (not (lower-test-decl-list-defines? kept "dead-helper"))
     (not (lower-test-decl-list-defines? kept "dead-unsafe"))))
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
@@ -12801,8 +12750,7 @@
       [expr-b-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
       [ok : bool false]
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-b))
+        (ci.intern-compat-state-install! intern-b)
         (ast.ast-node-pool-context-install! pools-b)
         (let
           [_active-generated-b : i64
@@ -12984,8 +12932,7 @@
         (lower.compiler-lower-state-observe lower-a)]
       [ok : bool false]
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-decoy))
+        (ci.intern-compat-state-install! intern-decoy)
         (cbi.state-install! builtins-decoy)
         (lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
         (lower.lower-comptime-error-ids-ensure! lower-b builtins-b)

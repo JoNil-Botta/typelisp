@@ -6614,7 +6614,7 @@
     [signed-positive : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (irt.blocks
           "entry:
              %2 = gt %1, 0 : bool
@@ -6627,7 +6627,7 @@
     [signed-mod-positive : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (irt.blocks
           "entry:
              %2 = ge %1, 1 : bool
@@ -6653,12 +6653,12 @@
     [lhs-not-min : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (opt-divrem-lhs-not-min-blocks))]
     [zero-reachable : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (irt.blocks
           "entry:
              %2 = ne %1, -1 : bool
@@ -6671,7 +6671,7 @@
     [neg-one-reachable : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (irt.blocks
           "entry:
              %2 = ne %1, 0 : bool
@@ -6684,7 +6684,7 @@
     [weak-negative-range : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (irt.blocks
           "entry:
              %2 = lt %1, 0 : bool
@@ -6697,17 +6697,17 @@
     [cast-unsupported : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (opt-divrem-cast-blocks))]
     [rhs-redefined-before-branch : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (opt-divrem-rhs-redefined-before-branch-blocks))]
     [rhs-redefined-in-safe : ir.CompilerIrBlockList
       (opt-divrem-safety-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.compiler-opt-global-shared-view i64-params)
+        i64-params
         (opt-divrem-rhs-redefined-in-safe-blocks))]
     [safe-unused : ir.CompilerIrBlockList
       (opt-divrem-dce-blocks
@@ -13855,15 +13855,18 @@
         (opt-count-direct-call-name-blocks blocks name))]))
 
 (define (opt-count-direct-call-name-function-seq
-  [functions : ir.CompilerIrFunctionSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [func-name : String]
   [call-name : String]) : i64
-  (match (opt-function-seq-find functions func-name)
-    [(opt.OptMaybeFunction.Some func)
-      (let
-        [blocks (opt.opt-function-blocks func)]
-        (opt-count-direct-call-name-blocks blocks call-name))]
-    [(opt.OptMaybeFunction.No) (- 0 1)]))
+  (let
+    [functions : ir.CompilerIrFunctionSeq
+      (owned_view.compiler-owned-reference-shared-view functions)]
+    (match (opt-function-seq-find functions func-name)
+      [(opt.OptMaybeFunction.Some func)
+        (let
+          [blocks (opt.opt-function-blocks func)]
+          (opt-count-direct-call-name-blocks blocks call-name))]
+      [(opt.OptMaybeFunction.No) (- 0 1)])))
 
 (define (opt-count-indirect-call-instrs-from
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -14098,7 +14101,7 @@
       [(not
           (=
             (opt-count-direct-call-name-function-seq
-              (opt.compiler-opt-global-shared-view shared)
+              shared
               "conv_walk"
               "conv_leaf")
             1))
@@ -14293,12 +14296,15 @@
     [(opt.OptMaybeFunction.No) ir.CompilerIrBlockList.Nil]))
 
 (define (opt-inline-mb2-main-verified?
-  [functions : ir.CompilerIrFunctionSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
   [name : String]) : bool
-  (match (opt-function-seq-find functions name)
-    [(opt.OptMaybeFunction.Some func)
-      (opt.opt-verify-ok? (opt.opt-verify-function func))]
-    [(opt.OptMaybeFunction.No) false]))
+  (let
+    [functions : ir.CompilerIrFunctionSeq
+      (owned_view.compiler-owned-reference-shared-view functions)]
+    (match (opt-function-seq-find functions name)
+      [(opt.OptMaybeFunction.Some func)
+        (opt.opt-verify-ok? (opt.opt-verify-function func))]
+      [(opt.OptMaybeFunction.No) false])))
 
 (define (compiler-optimize-inline-two-multiblock-self-test) : i64
   (let
@@ -15710,12 +15716,7 @@
         callee-name
         (opt-inline-dup-leaf-plain callee-name))]
     (and
-      (=
-        (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view two)
-          "main"
-          "inline_switch")
-        0)
+      (= (opt-count-direct-call-name-function-seq two "main" "inline_switch") 0)
       (=
         (opt-count-direct-call-name-function-seq
           two
@@ -15761,7 +15762,7 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         1)
@@ -16085,13 +16086,11 @@
       (= spent 0)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         0)
-      (opt-inline-mb2-main-verified?
-        (opt.compiler-opt-global-shared-view optimized)
-        "main")
+      (opt-inline-mb2-main-verified? optimized "main")
       (opt-inline-mb2-main-verified? optimized "inline_nonleaf"))))
 
 ;; The tier DECIDES a call-carrying candidate, and whichever side of the
@@ -16128,14 +16127,14 @@
         (*
           100
           (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view banked)
+            banked
             "main"
             "inline_switch"))
         (+
           (*
             10
             (opt-count-direct-call-name-function-seq
-              (opt.compiler-opt-global-shared-view banked)
+              banked
               "inline_nonleaf"
               "inline_switch"))
           (opt-count-direct-call-name-function-seq
@@ -16155,19 +16154,16 @@
       (+
         (*
           100
-          (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
-            "main"
-            "inline_switch"))
+          (opt-count-direct-call-name-function-seq armed "main" "inline_switch"))
         (+
           (*
             10
             (opt-count-direct-call-name-function-seq
-              (opt.compiler-opt-global-shared-view armed)
+              armed
               "inline_nonleaf"
               "inline_switch"))
           (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
+            armed
             "inline_loop"
             "inline_switch")))]
     [spent : i64
@@ -16176,12 +16172,8 @@
         (opt.opt-inline-checked-budget-current))]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "main")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "inline_nonleaf")
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_nonleaf")
         (opt-inline-mb2-main-verified? armed "inline_loop"))]
     [_disarm-after : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -16270,12 +16262,9 @@
       (+
         (*
           10
-          (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
-            "main"
-            "inline_switch"))
+          (opt-count-direct-call-name-function-seq armed "main" "inline_switch"))
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view armed)
+          armed
           "inline_nonleaf"
           "inline_switch"))]
     [spent : i64
@@ -16284,12 +16273,8 @@
         (opt.opt-inline-checked-budget-current))]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "main")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "inline_nonleaf")
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_nonleaf")
         (opt-inline-mb2-main-verified? armed "inline_switch"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -16515,12 +16500,8 @@
         (opt.opt-inline-checked-budget-current))]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "main")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "inline_nonleaf")
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_nonleaf")
         (opt-inline-mb2-main-verified? armed "inline_switch"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -16534,17 +16515,14 @@
     (*
       10
       (+
-        (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view armed)
-          "main"
-          "inline_switch")
+        (opt-count-direct-call-name-function-seq armed "main" "inline_switch")
         (opt-count-tail-call-name-function-seq
           (opt.compiler-opt-global-shared-view armed)
           "main"
           "inline_switch")))
     (+
       (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view armed)
+        armed
         "inline_nonleaf"
         "inline_switch")
       (opt-count-tail-call-name-function-seq
@@ -16655,15 +16633,9 @@
           (opt.opt-inline-checked-relaxed-budget-current)))]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "main")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "inline_nonleaf")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "inline_loop")
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_nonleaf")
+        (opt-inline-mb2-main-verified? armed "inline_loop")
         (opt-inline-mb2-main-verified? armed "inline_switch"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -16964,10 +16936,7 @@
         (opt.opt-inline-checked-program-budget)
         (opt.opt-inline-checked-budget-current))]
     [calls : i64
-      (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view armed)
-        "main"
-        "inline_switch")]
+      (opt-count-direct-call-name-function-seq armed "main" "inline_switch")]
     [verified? : bool (opt-inline-mb2-main-verified? armed "main")]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -17192,21 +17161,15 @@
       (+
         (*
           100
-          (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
-            "main"
-            "inline_loop"))
+          (opt-count-direct-call-name-function-seq armed "main" "inline_loop"))
         (+
           (*
             10
             (opt-count-direct-call-name-function-seq
-              (opt.compiler-opt-global-shared-view armed)
+              armed
               "main"
               "inline_nonleaf"))
-          (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
-            "main"
-            "inline_switch")))]
+          (opt-count-direct-call-name-function-seq armed "main" "inline_switch")))]
     ;; Core verdicts and RELAXED ones are counted apart, because the rescan's
     ;; candidate is a second body in this caller and every second body is a
     ;; relaxed candidate: reading only the core budget would not show that the
@@ -17221,12 +17184,8 @@
         (opt.opt-inline-checked-relaxed-budget-current))]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "main")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "inline_loop")
+        (opt-inline-mb2-main-verified? armed "main")
+        (opt-inline-mb2-main-verified? armed "inline_loop")
         (opt-inline-mb2-main-verified? armed "inline_nonleaf"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -17406,21 +17365,15 @@
       (+
         (*
           100
-          (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
-            "main"
-            "inline_loop"))
+          (opt-count-direct-call-name-function-seq armed "main" "inline_loop"))
         (+
           (*
             10
             (opt-count-direct-call-name-function-seq
-              (opt.compiler-opt-global-shared-view armed)
+              armed
               "main"
               "inline_nonleaf"))
-          (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view armed)
-            "main"
-            "inline_switch")))]
+          (opt-count-direct-call-name-function-seq armed "main" "inline_switch")))]
     [spent : i64
       (-
         (opt.opt-inline-checked-program-budget)
@@ -17431,9 +17384,7 @@
         (opt.opt-inline-checked-relaxed-budget-current))]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view armed)
-          "main")
+        (opt-inline-mb2-main-verified? armed "main")
         (opt-inline-mb2-main-verified? armed "inline_nonleaf"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -18814,17 +18765,13 @@
           (opt.opt-inline-checked-relaxed-budget-current)))]
     [dispatch-calls : i64
       (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view optimized)
+        optimized
         "inl9_dispatch"
         "inl9_leaf")]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view optimized)
-          "inl9_driver")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view optimized)
-          "inl9_dispatch")
+        (opt-inline-mb2-main-verified? optimized "inl9_driver")
+        (opt-inline-mb2-main-verified? optimized "inl9_dispatch")
         (opt-inline-mb2-main-verified? optimized "inl9_leaf"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -18942,25 +18889,19 @@
           (opt.opt-inline-checked-relaxed-budget-current)))]
     [holder-calls : i64
       (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view optimized)
+        optimized
         "inl8_holder"
         "inl8_leaf")]
     [wrapper-calls : i64
       (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view optimized)
+        optimized
         "inl8_wrapper"
         "inl8_leaf")]
     [verified? : bool
       (and
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view optimized)
-          "inl8_driver")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view optimized)
-          "inl8_holder")
-        (opt-inline-mb2-main-verified?
-          (opt.compiler-opt-global-shared-view optimized)
-          "inl8_wrapper")
+        (opt-inline-mb2-main-verified? optimized "inl8_driver")
+        (opt-inline-mb2-main-verified? optimized "inl8_holder")
+        (opt-inline-mb2-main-verified? optimized "inl8_wrapper")
         (opt-inline-mb2-main-verified? optimized "inl8_leaf"))]
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     (if verified?
@@ -19290,7 +19231,7 @@
     [_disarm : unit (opt.opt-inline-checked-set-active! false)]
     [holder-calls : i64
       (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view optimized)
+        optimized
         "inline_nonleaf"
         "inline_switch")]
     [verified? : bool
@@ -19981,7 +19922,7 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         1)
@@ -20902,7 +20843,7 @@
       (*
         10
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_nonleaf"))
       (+
@@ -21333,7 +21274,7 @@
         (*
           10
           (opt-count-direct-call-name-function-seq
-            (opt.compiler-opt-global-shared-view optimized)
+            optimized
             "main"
             "inline_nonleaf"))
         (+
@@ -21488,7 +21429,7 @@
             (+
               total
               (opt-count-direct-call-name-function-seq
-                (opt.compiler-opt-global-shared-view functions)
+                functions
                 (opt.compiler-opt-global-array-element-shared-view names i)
                 "inline_switch")))
           (set! i (+ i 1))))
@@ -21611,7 +21552,7 @@
     0
     (+
       (opt-count-direct-call-name-function-seq
-        (opt.compiler-opt-global-shared-view functions)
+        functions
         (opt-inline-dominant-caller-text index)
         "inline_switch")
       (opt-inline-dominant-remaining-calls functions (+ index 1) count))))
@@ -22075,10 +22016,7 @@
 (define (opt-inline-chain-remaining-calls
   [functions : ir.CompilerIrFunctionSeq]) : i64
   (+
-    (opt-count-direct-call-name-function-seq
-      (opt.compiler-opt-global-shared-view functions)
-      "main"
-      "inline_switch")
+    (opt-count-direct-call-name-function-seq functions "main" "inline_switch")
     (opt-count-direct-call-name-function-seq
       functions
       "inline_nonleaf"
@@ -22134,13 +22072,13 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         0)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         0)
@@ -22167,13 +22105,13 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         1)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         1)
@@ -22227,13 +22165,13 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         1)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         1)
@@ -22272,13 +22210,13 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         0)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         0)
@@ -22376,13 +22314,13 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         1)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         1)
@@ -22625,13 +22563,13 @@
     (and
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "main"
           "inline_switch")
         1)
       (=
         (opt-count-direct-call-name-function-seq
-          (opt.compiler-opt-global-shared-view optimized)
+          optimized
           "inline_nonleaf"
           "inline_switch")
         1)
@@ -73533,14 +73471,17 @@
 
 (define (opt-divrem-safety-blocks
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamSeq]
+  [params : (& params ir.CompilerIrParamSeq)]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt.opt-divrem-safety-blocks-with-context
-    type-segment-bases
-    (ir.compiler-ir-representation-index-empty)
-    (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
-    params
-    blocks))
+  (let
+    [params : ir.CompilerIrParamSeq
+      (owned_view.compiler-owned-reference-shared-view params)]
+    (opt.opt-divrem-safety-blocks-with-context
+      type-segment-bases
+      (ir.compiler-ir-representation-index-empty)
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+      params
+      blocks)))
 
 (define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (opt.opt-loop-call-function opt.opt-fill-call-try-rewrite func))

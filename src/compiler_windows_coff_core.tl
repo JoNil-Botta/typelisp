@@ -528,8 +528,7 @@
     (cfg
       compile-profile
       (compiler_driver_core.compiler-driver-profile-start-total
-        (compiler_driver_core.compiler-driver-state-profile
-          (owned_view.compiler-owned-shared-view state))))
+        (compiler_driver_core.compiler-driver-state-profile state)))
     (let
       [target : compiler_backend.CompilerBackendTarget
         (compiler_backend.CompilerBackendTarget.Windows)]

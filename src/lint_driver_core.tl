@@ -255,9 +255,7 @@
         (selfhost-lint-render-finding-line
           (owned_view.compiler-owned-shared-view path)
           (owned_view.compiler-owned-shared-view source)
-          (lint_core.lint-findings-ref
-            (owned_view.compiler-owned-shared-view items)
-            index)))
+          (lint_core.lint-findings-ref items index)))
       (selfhost-lint-print-findings-from
         path
         source
@@ -646,9 +644,7 @@
     out
     (let
       [finding : lint_core.LintFinding
-        (lint_core.lint-findings-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
+        (lint_core.lint-findings-ref items index)]
       [next : lint_core.LintFindings
         (if (or
           (selfhost-lint-derived-form-origin? source finding.span)
@@ -680,11 +676,7 @@
     (lint_core.lint-findings-count
       (owned_view.compiler-owned-shared-view items)))
     false
-    (if (string.eq
-      (lint_core.lint-findings-ref
-        (owned_view.compiler-owned-shared-view items)
-        index).rule-id
-      rule-id)
+    (if (string.eq (lint_core.lint-findings-ref items index).rule-id rule-id)
       true
       (selfhost-lint-findings-have-rule-from? items rule-id (+ index 1)))))
 
@@ -1285,9 +1277,9 @@
           (begin
             (set!
               selfhost-lint-typed-unused-unsafe-error
-              (cdiag.compiler-diagnostic-render
-                (cdiag.compiler-diagnostic-list-first
-                  (cdiag.compiler-diagnostic-list-box-shared-view diag))))
+              (let
+                [diag-arg (cdiag.compiler-diagnostic-list-first (deref diag))]
+                (cdiag.compiler-diagnostic-render diag-arg)))
             (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
             (lint_core.lint-findings-empty))]))))
 
@@ -1316,9 +1308,7 @@
     out
     (let
       [finding : lint_core.LintFinding
-        (lint_core.lint-findings-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
+        (lint_core.lint-findings-ref items index)]
       [next : lint_core.LintFindings
         (if (string.eq finding.rule-id (lint_core.lint-rule-unused-unsafe-id))
           out
@@ -1587,9 +1577,12 @@
     (selfhost-lint-dead-decls-add decl (selfhost-lint-dead-decls-grow items))))
 
 (define (selfhost-lint-dead-decls-ref
-  [items : SelfhostLintDeadDecls]
+  [items : (& items SelfhostLintDeadDecls)]
   [index : i64]) : SelfhostLintDeadDecl
-  (array-ref (selfhost-lint-dead-decls-slots items) index))
+  (let
+    [items : SelfhostLintDeadDecls
+      (owned_view.compiler-owned-reference-shared-view items)]
+    (array-ref (selfhost-lint-dead-decls-slots items) index)))
 
 (define (selfhost-lint-dead-decls-set
   [items : SelfhostLintDeadDecls]
@@ -2325,9 +2318,7 @@
     scan
     (let
       [decl : SelfhostLintDeadDecl
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view source-scan.decls)
-          index)]
+        (selfhost-lint-dead-decls-ref source-scan.decls index)]
       (selfhost-lint-dead-scan-append-owned-decls-from
         (selfhost-lint-dead-scan-add-decl scan decl)
         source-scan
@@ -2430,11 +2421,7 @@
   (if (>= index (selfhost-lint-dead-decls-count items))
     (- 0 1)
     (if (string.eq
-      (__tl-project-field
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)
-        name)
+      (__tl-project-field (selfhost-lint-dead-decls-ref items index) name)
       name)
       index
       (selfhost-lint-dead-decls-index-of-from items name (+ index 1)))))
@@ -2451,11 +2438,7 @@
   (if (>= index (selfhost-lint-dead-decls-count items))
     (- 0 1)
     (if (string.eq
-      (__tl-project-field
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)
-        key)
+      (__tl-project-field (selfhost-lint-dead-decls-ref items index) key)
       key)
       index
       (selfhost-lint-dead-decls-index-of-key-from items key (+ index 1)))))
@@ -2482,10 +2465,7 @@
   [items : SelfhostLintDeadDecls]
   [index : i64]) : SelfhostLintDeadDecls
   (let
-    [decl : SelfhostLintDeadDecl
-      (selfhost-lint-dead-decls-ref
-        (owned_view.compiler-owned-shared-view items)
-        index)]
+    [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
     (if decl.root
       items
       (let
@@ -2540,10 +2520,7 @@
   (if (>= index (selfhost-lint-dead-decls-count items))
     items
     (let
-      [decl : SelfhostLintDeadDecl
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
+      [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
       [next : SelfhostLintDeadDecls
         (if (string.eq decl.name name)
           (selfhost-lint-dead-mark-reachable-index items index)
@@ -2558,10 +2535,7 @@
   (if (>= index (selfhost-lint-dead-decls-count items))
     items
     (let
-      [decl : SelfhostLintDeadDecl
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
+      [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
       [next : SelfhostLintDeadDecls
         (if (and (string.eq decl.path path) (string.eq decl.name name))
           (selfhost-lint-dead-mark-reachable-index items index)
@@ -3353,10 +3327,7 @@
   (if (>= index (selfhost-lint-dead-decls-count items))
     printed
     (let
-      [decl : SelfhostLintDeadDecl
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
+      [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
       [next-printed : i64
         (if (and
           (string.eq decl.path path)
@@ -3845,9 +3816,7 @@
                 0))]
           [(ResultSelfhostLintDeadSources.Err diag)
             (begin
-              (io.print-error
-                (cdiag.compiler-diagnostic-render
-                  (cdiag.compiler-diagnostic-box-shared-view diag)))
+              (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
               1)]))]))
 
 ;; Run the `lint` command over arguments starting at `start`.

@@ -522,9 +522,7 @@
               paths
               (process.args-single
                 (build-package-graph-node-tlci-path
-                  (build.build-package-graph-node-vec-at
-                    (owned_view.compiler-owned-shared-view nodes)
-                    index)
+                  (build.build-package-graph-node-vec-at nodes index)
                   profile))))
           (set! index (+ index 1))))
       paths)))
@@ -1231,10 +1229,10 @@
               (owned_view.compiler-owned-shared-view stage.dir))]
           (begin
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (let
               [primary-needle : String "primary commit error"]
@@ -1302,7 +1300,7 @@
             (build.build-package-commit-plan-rollback plan 1 1)]
           (begin
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (let
               [ok : bool
@@ -1349,7 +1347,7 @@
           (build.build-package-commit-plan-rollback plan 1 0)]
         (begin
           (build.build-package-clean-stage-after-rollback
-            (owned_view.compiler-owned-shared-view stage)
+            stage
             (owned_view.compiler-owned-shared-view rollback))
           (let
             [needle : String
@@ -1390,7 +1388,7 @@
         [(build.ResultBuildPackageCommit.Err message rollback)
           (begin
             (build.build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
+              stage
               (owned_view.compiler-owned-shared-view rollback))
             (let
               [needle : String
@@ -1430,9 +1428,7 @@
         (match (build.build-package-commit-plan-run plan)
           [(build.ResultBuildPackageCommit.Err _ rollback)
             (begin
-              (build.build-package-clean-stage-after-rollback
-                (owned_view.compiler-owned-shared-view stage)
-                rollback)
+              (build.build-package-clean-stage-after-rollback stage rollback)
               (build-package-rollback-test-clean root stage final unused)
               false)]
           [(build.ResultBuildPackageCommit.Ok)

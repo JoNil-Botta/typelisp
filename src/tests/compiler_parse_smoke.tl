@@ -1015,8 +1015,7 @@
       ;; The temporary driver bridge seeds builtins through the installed
       ;; globals. Explicit lexing must capture that scalar advance, then publish
       ;; each file's new count so the next file cannot rewind the same owner.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-state))
+      (ci.intern-compat-state-install! intern-state)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -1056,13 +1055,11 @@
     (begin
       ;; Seed fixed builtin IDs identically in both inactive owners, then leave
       ;; the active table as a decoy while lexing and parsing through A and B.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-a))
+      (ci.intern-compat-state-install! state-a)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (ci.intern-compat-state-capture-from-globals! (&mut state-a))
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-b))
+      (ci.intern-compat-state-install! state-b)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (ci.intern-compat-state-capture-from-globals! (&mut state-b))

@@ -1019,18 +1019,12 @@
   (if (>= index count)
     unit
     (begin
-      (doc_item_vec.push-ref!
-        out
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+      (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
       (doc-generated-copy-items out items (+ index 1) count))))
 
 (define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec]) : doc_item_vec.Vec
   (let
-    [count : i64
-      (doc_extract.doc-item-list-count
-        (owned_view.compiler-owned-shared-view items))]
+    [count : i64 (doc_extract.doc-item-list-count items)]
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (+ count 1))]
     (begin
       (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
@@ -1157,8 +1151,7 @@
                   targets)))])]
       [(compiler_typecheck_api.ResultCompilerDocExpand.Err diag)
         (ResultDocExpandedModules.Err
-          (cdiag.compiler-diagnostic-render
-            (cdiag.compiler-diagnostic-box-shared-view diag)))])))
+          (cdiag.compiler-diagnostic-render (deref diag)))])))
 
 (define (doc-expand-find-prefix
   [text : (& text str)]
@@ -1283,11 +1276,10 @@
             [intern-state : ci.InternCompatState intern-state]
             (begin
               (compiler_load.compiler-load-session-state-use-with-intern-state!
-                (owned_view.compiler-owned-shared-view load-state)
+                load-state
                 (owned_view.compiler-owned-shared-view intern-state))
               (ast.ast-node-pool-context-install! pools)
-              (ci.intern-compat-state-install!
-                (owned_view.compiler-owned-shared-view intern-state))
+              (ci.intern-compat-state-install! intern-state)
               (let
                 [loaded : compiler_load.ResultCompilerLoadWithPaths
                   (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
@@ -1321,5 +1313,4 @@
                         intern-state)]
                     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
                       (ResultDocExpandedModules.Err
-                        (cdiag.compiler-diagnostic-render
-                          (cdiag.compiler-diagnostic-box-shared-view diag)))])))))))]))
+                        (cdiag.compiler-diagnostic-render (deref diag)))])))))))]))

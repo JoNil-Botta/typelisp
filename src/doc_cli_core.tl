@@ -299,11 +299,10 @@
     [intern-state : ci.InternCompatState intern-state]
     (begin
       (compiler_load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view load-state)
+        load-state
         (owned_view.compiler-owned-shared-view intern-state))
       (ast.ast-node-pool-context-install! pools)
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-state))
+      (ci.intern-compat-state-install! intern-state)
       (let
         [lazy-mode : bool
           (compiler_load.compiler-load-session-state-lazy-import-mode-enabled?
@@ -395,9 +394,7 @@
               1)])]
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (begin
-          (io.print-error
-            (cdiag.compiler-diagnostic-render
-              (cdiag.compiler-diagnostic-box-shared-view diag)))
+          (io.print-error (cdiag.compiler-diagnostic-render (deref diag)))
           1)])))
 
 (define (doc-ensure-directory [path : String]) : bool

@@ -143,8 +143,11 @@
     [(FormatToken.Comment text) text]
     [(FormatToken.End) ""]))
 
-(define (format-token-at [stream : FormatTokenStream] [idx : i64]) : FormatToken
-  (array-ref stream.tokens idx))
+(define (format-token-at [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatToken
+  (let
+    [stream : FormatTokenStream
+      (owned_view.compiler-owned-reference-shared-view stream)]
+    (array-ref stream.tokens idx)))
 
 (define (format-token-start [stream : (& stream FormatTokenStream)] [idx : i64]) : i64
   (array-ref stream.starts idx))

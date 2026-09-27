@@ -5,6 +5,7 @@
 (import compiler_ast_types as ast)
 (import stdlib.string)
 (import stdlib.text_buf)
+(import compiler_owned_view as owned_view)
 
 (defmacro (compiler-diagnostic-place-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -224,13 +225,17 @@
     CompilerDiagnosticList)
   (box (compiler-diagnostic-list-single (deref diag))))
 
-(define (compiler-diagnostic-list-count [diagnostics : CompilerDiagnosticList]) : i64
+(define (compiler-diagnostic-list-count
+  [diagnostics : (& diagnostics CompilerDiagnosticList)]) : i64
   diagnostics.len)
 
 (define (compiler-diagnostic-list-get
-  [diagnostics : CompilerDiagnosticList]
+  [diagnostics : (& diagnostics CompilerDiagnosticList)]
   [index : i64]) : CompilerDiagnostic
-  (array-ref diagnostics.slots index))
+  (let
+    [diagnostics : CompilerDiagnosticList
+      (owned_view.compiler-owned-reference-shared-view diagnostics)]
+    (array-ref diagnostics.slots index)))
 
 (define (compiler-diagnostic-list-ref
   [diagnostics : (& diagnostics CompilerDiagnosticList)]
@@ -301,7 +306,8 @@
           (set! (array-ref diagnostics.slots index) diag)
           (set! diagnostics.len (+ count 1)))))))
 
-(define (compiler-diagnostic-list-first [diagnostics : CompilerDiagnosticList]) : CompilerDiagnostic
+(define (compiler-diagnostic-list-first
+  [diagnostics : (& diagnostics CompilerDiagnosticList)]) : CompilerDiagnostic
   (if (> diagnostics.len 0)
     (compiler-diagnostic-copy-ref (& (array-ref diagnostics.slots 0)))
     (compiler-diagnostic-at-start "" "compiler: internal empty diagnostic list")))
@@ -1624,7 +1630,7 @@
           (set! index (+ index 1))))
       (text_buf.render out))))
 
-(define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
+(define (compiler-diagnostic-render [diag : (& diag CompilerDiagnostic)]) : String
   (str_cat.str-cat
     (compiler-diagnostic-path diag)
     ":"

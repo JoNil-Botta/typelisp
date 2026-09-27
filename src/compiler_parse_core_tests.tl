@@ -2263,8 +2263,7 @@
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (parser.compiler-parse-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 2)
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
@@ -2287,13 +2286,9 @@
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (parser.compiler-parse-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (parser.compiler-parse-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         (and
           (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 2)
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 2)
@@ -2319,8 +2314,7 @@
         (let
           [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
           [first : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (parser.compiler-parse-place-shared-view diagnostics))]
+            (cdiag.compiler-diagnostic-list-first diagnostics)]
           [message : String (cdiag.compiler-diagnostic-message first)]
           [needle : String "reader: mismatched delimiter"]
           (and

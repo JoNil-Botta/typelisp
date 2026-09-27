@@ -160,15 +160,15 @@
   [findings : lint_core.LintFindings]) : i64
   (+
     (driver_tests.selfhost-lint-findings-rule-count
-      (owned_view.compiler-owned-shared-view findings)
+      findings
       (lint_core.lint-rule-global-name-case-id))
     (+
       (driver_tests.selfhost-lint-findings-rule-count
-        (owned_view.compiler-owned-shared-view findings)
+        findings
         (lint_core.lint-rule-function-name-case-id))
       (+
         (driver_tests.selfhost-lint-findings-rule-count
-          (owned_view.compiler-owned-shared-view findings)
+          findings
           (lint_core.lint-rule-local-name-case-id))
         (driver_tests.selfhost-lint-findings-rule-count
           findings
@@ -184,9 +184,7 @@
     true
     (let
       [finding : lint_core.LintFinding
-        (lint_core.lint-findings-ref
-          (owned_view.compiler-owned-shared-view findings)
-          index)]
+        (lint_core.lint-findings-ref findings index)]
       [rule : String finding.rule-id]
       [is-name-case : bool
         (or
@@ -219,9 +217,7 @@
     false
     (let
       [finding : lint_core.LintFinding
-        (lint_core.lint-findings-ref
-          (owned_view.compiler-owned-shared-view findings)
-          index)]
+        (lint_core.lint-findings-ref findings index)]
       (if (string.eq finding.rule-id rule-id)
         (= (ast.ast-source-span-start-line finding.span) line)
         (lint-driver-smoke-name-case-rule-at-line?
@@ -233,9 +229,10 @@
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
   [source : String]
   [rule : String]) : i64
-  (driver_tests.selfhost-lint-findings-rule-count
-    (lint-driver-smoke-source-findings-with-redundant-function-name source)
-    rule))
+  (let
+    [arg
+      (lint-driver-smoke-source-findings-with-redundant-function-name source)]
+    (driver_tests.selfhost-lint-findings-rule-count arg rule)))
 
 (define (lint-driver-smoke-string-concat-finding-ok?
   [findings : lint_core.LintFindings]
@@ -471,7 +468,7 @@
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view reported)
+              reported
               (lint_core.lint-rule-unreachable-code-id))
             5))
         41]
@@ -532,7 +529,7 @@
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view reported)
+              reported
               (lint_core.lint-rule-redundant-divergence-padding-id))
             4))
         47]
@@ -889,9 +886,12 @@
       [else 42])))
 
 (define (lint-driver-smoke-raw-arena-op-count [path : String] [source : String]) : i64
-  (driver_tests.selfhost-lint-findings-rule-count
-    (driver_tests.selfhost-lint-source-with-roots path source (lint_svec.new))
-    (lint_core.lint-rule-raw-arena-op-id)))
+  (let
+    [arg
+      (driver_tests.selfhost-lint-source-with-roots path source (lint_svec.new))]
+    (driver_tests.selfhost-lint-findings-rule-count
+      arg
+      (lint_core.lint-rule-raw-arena-op-id))))
 
 (define (lint-driver-smoke-raw-arena-op-self-test) : i64
   (let
@@ -1311,7 +1311,7 @@
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view reported)
+              reported
               (owned_view.compiler-owned-shared-view rule))
             1))
         81]
@@ -1641,35 +1641,35 @@
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view findings)
+              findings
               (lint_core.lint-rule-global-name-case-id))
             1))
         86]
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view findings)
+              findings
               (lint_core.lint-rule-function-name-case-id))
             4))
         87]
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view findings)
+              findings
               (lint_core.lint-rule-type-name-case-id))
             2))
         88]
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view findings)
+              findings
               (lint_core.lint-rule-local-name-case-id))
             5))
         89]
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view binder-findings)
+              binder-findings
               (lint_core.lint-rule-local-name-case-id))
             6))
         90]
@@ -1750,7 +1750,7 @@
       [(not
           (=
             (driver_tests.selfhost-lint-findings-rule-count
-              (owned_view.compiler-owned-shared-view module-findings)
+              module-findings
               (lint_core.lint-rule-unused-variable-id))
             0))
         97]

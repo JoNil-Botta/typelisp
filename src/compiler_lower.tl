@@ -6690,9 +6690,7 @@
         (ci.intern-compat-state-intern
           (&mut intern-state)
           "lower-structural-module")]
-      [_install : unit
-        (ci.intern-compat-state-install!
-          (lower-global-shared-view intern-state))]
+      [_install : unit (ci.intern-compat-state-install! intern-state)]
       [lower-state : CompilerLowerState
         (compiler-lower-state-new-with-intern-state intern-state)]
       [owner-module-id : i64
@@ -71031,8 +71029,7 @@
         ;; Explicit specialization mutates owner pool/interner cells; publish
         ;; them before matching either result or entering legacy lowering.
         (ast.ast-node-pool-context-install! pools)
-        (ci.intern-compat-state-install!
-          (lower-global-shared-view intern-state))
+        (ci.intern-compat-state-install! intern-state)
         (match specialized-result
           [(spec.ResultSpecProgramWithPaths.Ok specialized specialized-paths)
             (begin
@@ -71366,8 +71363,7 @@
           ;; Publish explicit generation mutations before matching either result
           ;; or entering the legacy macro-expansion phase.
           (ast.ast-node-pool-context-install! pools)
-          (ci.intern-compat-state-install!
-            (lower-global-shared-view intern-state))
+          (ci.intern-compat-state-install! intern-state)
           (match generated-result
             [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
               (let

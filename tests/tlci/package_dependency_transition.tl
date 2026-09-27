@@ -121,8 +121,7 @@
         (owned_view.compiler-owned-shared-view state)
         (package-dependency-transition-source-set (string.copy manifest-path)))]
     [old-observed : load.CompilerLoadDependencyCatalogObservation
-      (load.compiler-load-dependency-catalog-observe
-        (owned_view.compiler-owned-shared-view state))]
+      (load.compiler-load-dependency-catalog-observe state)]
     [old-capability : load.CompilerLoadDependencyCatalogCapability
       (package-dependency-transition-capability
         (owned_view.compiler-owned-shared-view state)
@@ -144,8 +143,7 @@
             (package-dependency-transition-source-set
               (string.copy manifest-path)))]
         [stale-observed : load.CompilerLoadDependencyCatalogObservation
-          (load.compiler-load-dependency-catalog-observe
-            (owned_view.compiler-owned-shared-view state))]
+          (load.compiler-load-dependency-catalog-observe state)]
         [stale : PackageDependencyTransitionStale
           (package-dependency-transition-stale
             (owned_view.compiler-owned-shared-view state)
@@ -169,8 +167,7 @@
                 (package-dependency-transition-source-set
                   (string.copy manifest-path)))]
             [rebuilt-observed : load.CompilerLoadDependencyCatalogObservation
-              (load.compiler-load-dependency-catalog-observe
-                (owned_view.compiler-owned-shared-view state))]
+              (load.compiler-load-dependency-catalog-observe state)]
             [rebuilt-capability : load.CompilerLoadDependencyCatalogCapability
               (package-dependency-transition-capability
                 (owned_view.compiler-owned-shared-view state)
@@ -202,8 +199,7 @@
                     (package-dependency-transition-source-set
                       (string.copy manifest-path)))]
                 [restored-observed : load.CompilerLoadDependencyCatalogObservation
-                  (load.compiler-load-dependency-catalog-observe
-                    (owned_view.compiler-owned-shared-view state))]
+                  (load.compiler-load-dependency-catalog-observe state)]
                 [restored-capability : load.CompilerLoadDependencyCatalogCapability
                   (package-dependency-transition-capability
                     (owned_view.compiler-owned-shared-view state)
@@ -214,8 +210,7 @@
                     (owned_view.compiler-owned-shared-view state)
                     (package-dependency-transition-source-set manifest-path))]
                 [reused-observed : load.CompilerLoadDependencyCatalogObservation
-                  (load.compiler-load-dependency-catalog-observe
-                    (owned_view.compiler-owned-shared-view state))]
+                  (load.compiler-load-dependency-catalog-observe state)]
                 (begin
                   (package-dependency-transition-require
                     (and

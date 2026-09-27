@@ -139,7 +139,7 @@
       (lsp.lsp-structural-move-name-with-decls
         params
         (owned_view.compiler-owned-shared-view text)
-        (owned_view.compiler-owned-shared-view decls))]
+        decls)]
     (match (lsp.lsp-replace-form-at-position-with-decls
       text
       decls

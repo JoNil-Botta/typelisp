@@ -950,7 +950,7 @@
         [decls-ok : bool
           (match (lsp.lsp-get-document-decls
             (owned_view.compiler-owned-shared-view params)
-            (owned_view.compiler-owned-shared-view docs))
+            docs)
             [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry
@@ -978,9 +978,7 @@
               (string.contains (& text) (& overlay-name))]
             [(lsp.LspDocumentLookup.Missing) false])]
         [versioned-decls-ok : bool
-          (match (lsp.lsp-get-document-decls
-            params
-            (owned_view.compiler-owned-shared-view versioned-docs))
+          (match (lsp.lsp-get-document-decls params versioned-docs)
             [(lsp.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lvf.LspDeclEntry

@@ -1308,16 +1308,13 @@
                     (begin
                       (driver.compiler-driver-print-advisories (& advisories))
                       (build_run_core.ResultSourceToolString.Err
-                        (cdiag.compiler-diagnostic-render
-                          (cdiag.compiler-diagnostic-box-shared-view diag))))])]
+                        (cdiag.compiler-diagnostic-render (deref diag))))])]
               [(lower.ResultCompilerLower.Err diag)
                 (build_run_core.ResultSourceToolString.Err
-                  (cdiag.compiler-diagnostic-render
-                    (cdiag.compiler-diagnostic-box-shared-view diag)))])]
+                  (cdiag.compiler-diagnostic-render (deref diag)))])]
           [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
             (build_run_core.ResultSourceToolString.Err
-              (cdiag.compiler-diagnostic-render
-                (cdiag.compiler-diagnostic-box-shared-view diag)))])]
+              (cdiag.compiler-diagnostic-render (deref diag)))])]
       (begin
         (driver.compiler-driver-state-clear-pool-backed-caches!)
         (driver.compiler-driver-reset-file-state!)
@@ -1492,8 +1489,7 @@
                 index
                 (doc-test-unexpected-error-message
                   index
-                  (cdiag.compiler-diagnostic-list-first
-                    (cdiag.compiler-diagnostic-list-box-shared-view diag)))))))])))
+                  (cdiag.compiler-diagnostic-list-first (deref diag)))))))])))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
@@ -1555,8 +1551,7 @@
                 index
                 (doc-test-unexpected-error-message
                   index
-                  (cdiag.compiler-diagnostic-list-first
-                    (cdiag.compiler-diagnostic-list-box-shared-view diag)))))))])))
+                  (cdiag.compiler-diagnostic-list-first (deref diag)))))))])))
 
 (define (doc-test-check-example-with-roots
   [path : String]

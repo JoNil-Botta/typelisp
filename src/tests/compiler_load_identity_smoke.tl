@@ -77,8 +77,7 @@
       [b-ok : bool false]
       [restored-ok : bool false]
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view state-a))
+        (ci.intern-compat-state-install! state-a)
         (cbi.compiler-builtin-reset!)
         (cbi.compiler-builtin-initialize-for-parse!)
         (set!
@@ -87,8 +86,7 @@
             "loader.identity.same"))
         (set! a-ok (compiler-load-identity-current-ok?))
         (ci.intern-compat-state-capture-from-globals! (&mut state-a))
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view state-b))
+        (ci.intern-compat-state-install! state-b)
         (cbi.compiler-builtin-reset!)
         (cbi.compiler-builtin-initialize-for-parse!)
         (set!

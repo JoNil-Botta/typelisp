@@ -88,8 +88,7 @@
       [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
         (let
           [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+            (cdiag.compiler-diagnostic-list-first (deref diag-box))]
           [fixes : cdiag.CompilerDiagnosticFixSeq
             (cdiag.compiler-diagnostic-fixes diag)]
           (and
@@ -146,8 +145,7 @@
     [(compiler_check_core.ResultCompilerCheck.Err diag _)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (= (__tl-project-field (cdiag.compiler-diagnostic-fixes first) len) 0))]))
 
 (define (compiler-check-first-diagnostic-exact?
@@ -167,8 +165,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq (cdiag.compiler-diagnostic-message diagnostic) message)
@@ -254,8 +251,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         [fixes : cdiag.CompilerDiagnosticFixSeq
           (cdiag.compiler-diagnostic-fixes diagnostic)]
         (and
@@ -296,8 +292,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
@@ -319,8 +314,7 @@
     [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
       (let
         [diag : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+          (cdiag.compiler-diagnostic-list-first (deref diag-box))]
         [message : String (cdiag.compiler-diagnostic-message diag)]
         [diag-path : String (cdiag.compiler-diagnostic-path diag)]
         (and
@@ -342,17 +336,11 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            2)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
@@ -377,17 +365,11 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            2)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
@@ -442,8 +424,7 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq

@@ -15233,7 +15233,7 @@ g:
   (and (asm-has? text own) (asm-lacks? text other)))
 
 (define (compiler-backend-explicit-state-install!
-  [intern-state : ci.InternCompatState]
+  [intern-state : (& intern-state ci.InternCompatState)]
   [builtin-state : (& builtin-state cbi.CompilerBuiltinIdsState)]) : unit
   (begin
     (ci.intern-compat-state-install! intern-state)
@@ -15249,8 +15249,7 @@ g:
       (ci.intern-compat-state-capture-active)]
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-a : unit
-      (ci.intern-compat-state-install! (ci.intern-global-shared-view intern-a))]
+    [_install-a : unit (ci.intern-compat-state-install! intern-a)]
     [_reset-a : unit (cbi.compiler-builtin-reset!)]
     [_init-a : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-a : unit
@@ -15258,8 +15257,7 @@ g:
     [name-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "route_a")]
     [builtin-a : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-b : unit
-      (ci.intern-compat-state-install! (ci.intern-global-shared-view intern-b))]
+    [_install-b : unit (ci.intern-compat-state-install! intern-b)]
     [_reset-b : unit (cbi.compiler-builtin-reset!)]
     [_init-b : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-b : unit
@@ -15281,9 +15279,7 @@ g:
     [symbol-b : String "_tl_route_b"]
     [normal-a1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15297,9 +15293,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [normal-b1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15313,9 +15307,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [normal-a2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15329,9 +15321,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [normal-b2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15345,9 +15335,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-a1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15360,9 +15348,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-b1 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15375,9 +15361,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-a2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15390,9 +15374,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [final-b2 : backend.ResultCompilerBackendBuffer
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15405,9 +15387,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-a1 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15420,9 +15400,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-b1 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15435,9 +15413,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-a2 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15450,9 +15426,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [object-b2 : backend.ResultCompilerBackendObject
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15465,9 +15439,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [pic-a1 : backend.ResultCompilerBackendPic
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-b)
-          builtin-b)
+        (compiler-backend-explicit-state-install! intern-b builtin-b)
         (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
@@ -15480,9 +15452,7 @@ g:
           (profile_state.compiler-profile-state-new)))]
     [pic-b1 : backend.ResultCompilerBackendPic
       (begin
-        (compiler-backend-explicit-state-install!
-          (owned_view.compiler-owned-shared-view intern-a)
-          builtin-a)
+        (compiler-backend-explicit-state-install! intern-a builtin-a)
         (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
@@ -15707,9 +15677,7 @@ g:
       (ci.intern-compat-state-capture-active)]
     [builtin-before : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_install-state : unit
-      (ci.intern-compat-state-install!
-        (ci.intern-global-shared-view intern-state))]
+    [_install-state : unit (ci.intern-compat-state-install! intern-state)]
     [_reset-state : unit (cbi.compiler-builtin-reset!)]
     [_init-state : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [_capture-state : unit
@@ -15718,8 +15686,7 @@ g:
       (ci.intern-compat-state-intern (&mut intern-state) "dup_abort")]
     [_restore-active : unit
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view active-before))
+        (ci.intern-compat-state-install! active-before)
         (cbi.state-install! builtin-before))]
     [failure-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new intern-state)]
@@ -31954,13 +31921,11 @@ g:
         (owned_view.compiler-owned-shared-view intern-b))]
     [symbol-a1 : String
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-b))
+        (ci.intern-compat-state-install! intern-b)
         (backend.compiler-backend-state-user-symbol-id state-a id-a))]
     [symbol-b1 : String
       (begin
-        (ci.intern-compat-state-install!
-          (owned_view.compiler-owned-shared-view intern-a))
+        (ci.intern-compat-state-install! intern-a)
         (backend.compiler-backend-state-user-symbol-id state-b id-b))]
     [symbol-a2 : String
       (begin
@@ -32120,7 +32085,7 @@ g:
     [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [id-a : i64
       (begin
-        (ci.intern-compat-state-install! (ci.intern-global-shared-view state-a))
+        (ci.intern-compat-state-install! state-a)
         (ci.intern-reset!)
         (ci.intern "first-state-name"))]
     [symbol-a : String
@@ -32132,7 +32097,7 @@ g:
           id-a))]
     [id-b : i64
       (begin
-        (ci.intern-compat-state-install! (ci.intern-global-shared-view state-b))
+        (ci.intern-compat-state-install! state-b)
         (ci.intern-reset!)
         (ci.intern "second-state-name"))]
     [symbol-b : String

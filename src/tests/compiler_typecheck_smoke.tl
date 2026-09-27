@@ -220,8 +220,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         [message : String (diagnostic.compiler-diagnostic-message first)]
         (and
           (string.contains (& message) (& want-message-fragment))
@@ -526,8 +525,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq
             (diagnostic.compiler-diagnostic-message first)
@@ -551,8 +549,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq
             (diagnostic.compiler-diagnostic-message first)
@@ -1571,8 +1568,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+          (diagnostic.compiler-diagnostic-list-first (deref diag))]
         [notes : diagnostic.CompilerDiagnosticNoteList
           (diagnostic.compiler-diagnostic-notes value)]
         (and
@@ -2442,9 +2438,7 @@
         [(ast.AstDeclListStep.Nil)
           (io.panic "typecheck: generated import fixture parsed no declaration")])]
     [(parser.ResultAstProgramDiagnostic.Err diag)
-      (io.panic
-        (diagnostic.compiler-diagnostic-render
-          (diagnostic.compiler-diagnostic-box-shared-view diag)))]))
+      (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))]))
 
 ;; A load failure keeps its dependency primary and one actionable import site.
 (define (compiler-typecheck-smoke-generated-import-location-ok?
@@ -2543,8 +2537,7 @@
               (let
                 [first : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-list-first
-                    (diagnostic.compiler-diagnostic-list-box-shared-view
-                      diagnostics))]
+                    (deref diagnostics))]
                 (if (not (= mode 0))
                   (let
                     [span : diagnostic.CompilerDiagnosticSpan
@@ -2673,17 +2666,11 @@
                     (io.panic
                       "typecheck: generated missing import unexpectedly loaded")])]
               [(tc_core.ResultMacroMaterializeImport.Err diag)
-                (io.panic
-                  (diagnostic.compiler-diagnostic-render
-                    (diagnostic.compiler-diagnostic-box-shared-view diag)))])]
+                (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])]
           [(tc_core.ResultMacroMaterializeImport.Err diag)
-            (io.panic
-              (diagnostic.compiler-diagnostic-render
-                (diagnostic.compiler-diagnostic-box-shared-view diag)))])]
+            (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])]
       [(tc_core.ResultMacroMaterializeImport.Err diag)
-        (io.panic
-          (diagnostic.compiler-diagnostic-render
-            (diagnostic.compiler-diagnostic-box-shared-view diag)))])))
+        (io.panic (diagnostic.compiler-diagnostic-render (deref diag)))])))
 
 (define (compiler-typecheck-smoke-generated-import-state-isolation-ok?) : bool
   (let
@@ -2723,17 +2710,14 @@
         "(import tc_state_missing as missing)"
         "state-missing")]
     [_select-baseline : unit
-      (load.compiler-load-session-state-use!
-        (tc_core.tc-global-shared-view baseline-state))]
+      (load.compiler-load-session-state-use! baseline-state)]
     [baseline : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
         baseline-state
         (tc_core.tc-global-shared-view generated-import)
         (tc_core.tc-global-shared-view missing-import)
         pools)]
-    [_select-b : unit
-      (load.compiler-load-session-state-use!
-        (tc_core.tc-global-shared-view state-b))]
+    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [interleaved : CompilerTypecheckGeneratedImportStateSnapshot
       (compiler-typecheck-smoke-generated-import-state-run
         state-a
@@ -2834,9 +2818,7 @@
       (tc_api.typecheck-compiler-source-language-cfgs)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_reset-typecheck : unit (tc_core.compiler-typecheck-reset-file-state!)]
-    [_select-b : unit
-      (load.compiler-load-session-state-use!
-        (tc_core.tc-global-shared-view state-b))]
+    [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [result : tc_core.ResultCompilerTypecheck
       (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
         (tc_core.tc-global-shared-view state-a)
@@ -2893,9 +2875,10 @@
           [(tc_core.ResultCompilerTypecheck.Ok _) true]
           [(tc_core.ResultCompilerTypecheck.Err diag)
             (io.panic
-              (diagnostic.compiler-diagnostic-render
-                (diagnostic.compiler-diagnostic-list-first
-                  (diagnostic.compiler-diagnostic-list-box-shared-view diag))))])
+              (let
+                [diag-arg
+                  (diagnostic.compiler-diagnostic-list-first (deref diag))]
+                (diagnostic.compiler-diagnostic-render diag-arg)))])
         (match controlled-failure
           [(tc_core.ResultCompilerTypecheck.Err _) true]
           [(tc_core.ResultCompilerTypecheck.Ok _) false])
@@ -3013,8 +2996,7 @@
             [(tc_core.ResultCompilerTypecheck.Err diag)
               (let
                 [first : diagnostic.CompilerDiagnostic
-                  (diagnostic.compiler-diagnostic-list-first
-                    (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                  (diagnostic.compiler-diagnostic-list-first (deref diag))]
                 (and
                   (string.eq (diagnostic.compiler-diagnostic-path first) dep)
                   (string.eq
@@ -4267,9 +4249,7 @@
                 [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [first : diagnostic.CompilerDiagnostic
-                      (diagnostic.compiler-diagnostic-list-first
-                        (diagnostic.compiler-diagnostic-list-box-shared-view
-                          diag))]
+                      (diagnostic.compiler-diagnostic-list-first (deref diag))]
                     [message : String
                       (diagnostic.compiler-diagnostic-message first)]
                     (begin
@@ -4309,8 +4289,7 @@
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [first : diagnostic.CompilerDiagnostic
-                    (diagnostic.compiler-diagnostic-list-first
-                      (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                    (diagnostic.compiler-diagnostic-list-first (deref diag))]
                   [message : String
                     (diagnostic.compiler-diagnostic-message first)]
                   (begin
@@ -4353,8 +4332,7 @@
               [(tc_core.ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [first : diagnostic.CompilerDiagnostic
-                    (diagnostic.compiler-diagnostic-list-first
-                      (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+                    (diagnostic.compiler-diagnostic-list-first (deref diag))]
                   [message : String
                     (diagnostic.compiler-diagnostic-message first)]
                   (begin
@@ -4444,8 +4422,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : diagnostic.CompilerDiagnostic
-              (diagnostic.compiler-diagnostic-list-first
-                (diagnostic.compiler-diagnostic-list-box-shared-view diag))]
+              (diagnostic.compiler-diagnostic-list-first (deref diag))]
             (and
               (string.eq (diagnostic.compiler-diagnostic-message value) message)
               (string.eq (diagnostic.compiler-diagnostic-path value) path)
@@ -5076,7 +5053,7 @@
     (begin
       ;; Keep B installed while macro expansion and ordinary typecheck views
       ;; owned by A canonicalize, grow, and decode A's structural records.
-      (ci.intern-compat-state-install! (tc_core.tc-global-shared-view intern-b))
+      (ci.intern-compat-state-install! intern-b)
       (let
         [a-pair : cis.InternStructuralKey
           (cis.intern-structural-session-composite-pair-key session-a 71 81)]
@@ -5355,10 +5332,7 @@
       (match failed
         [(tc_core.ResultCompilerTypecheck.Ok _) false]
         [(tc_core.ResultCompilerTypecheck.Err diagnostics)
-          (=
-            (diagnostic.compiler-diagnostic-list-count
-              (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))
-            1)])]
+          (= (diagnostic.compiler-diagnostic-list-count (deref diagnostics)) 1)])]
     [reused : tc_core.ResultCompilerTypecheck
       (tc_api.typecheck-compiler-source
         "(define (checked-after-reset) : i64 42)")]

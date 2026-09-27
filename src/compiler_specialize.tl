@@ -14,7 +14,7 @@
 (import compiler_owned_view as owned_view)
 
 (define (compiler-specialize-decl-list-defines?
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [name : String]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
@@ -3959,8 +3959,7 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [owner : SpecOwnerContext
           (spec-owner-context-new
@@ -3985,8 +3984,7 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [owner : SpecOwnerContext
           (spec-owner-context-new
@@ -7378,8 +7376,7 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : ResultSpecProgram
           (compiler-specialize-program-with-pools-and-intern-state
@@ -7403,8 +7400,7 @@
       (spec_ci.intern-compat-state-capture-active)]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : ResultSpecProgramWithPaths
           (compiler-specialize-program-with-paths-and-pools-and-intern-state

@@ -47,8 +47,7 @@
     [restored : load.CompilerLoadSessionState
       (load.compiler-load-serial-test-session-state)]
     [restored-interns : ci.InternCompatState
-      (load.compiler-load-session-state-interns
-        (owned_view.compiler-owned-shared-view restored))]
+      (load.compiler-load-session-state-interns restored)]
     [ok : bool
       (and
         selectors-ok

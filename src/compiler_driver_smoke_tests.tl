@@ -839,11 +839,9 @@
   [state : driver.CompilerDriverState]) : bool
   (let
     [backend-state : compiler_backend.CompilerBackendState
-      (driver.compiler-driver-state-backend
-        (owned_view.compiler-owned-shared-view state))]
+      (driver.compiler-driver-state-backend state)]
     [intern-state : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state))]
+      (driver.compiler-driver-state-owned-interns state)]
     (and
       (= (compiler_backend.compiler-backend-state-size) 8)
       (> (compiler_backend.compiler-backend-state-owner-arena backend-state) 0)
@@ -924,8 +922,7 @@
           [state : driver.CompilerDriverState
             (driver.compiler-driver-state-new-for-compile)]
           [surface-arena : i64
-            (driver.compiler-driver-state-surface-arena
-              (owned_view.compiler-owned-shared-view state))]
+            (driver.compiler-driver-state-surface-arena state)]
           [state-restored? : bool
             (and
               (= (arena.tl_arena_current) caller-handle)
@@ -960,16 +957,13 @@
   [state : driver.CompilerDriverState]) : unit
   (let
     [intern-state : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state))]
+      (driver.compiler-driver-state-owned-interns state)]
     (begin
       (if (= (driver.compiler-driver-state-intern-generation state) 0)
         (ci.intern-compat-state-reset! (&mut intern-state))
         unit)
-      (driver.compiler-driver-state-install-pools!
-        (owned_view.compiler-owned-shared-view state))
-      (driver.compiler-driver-state-install-interns!
-        (owned_view.compiler-owned-shared-view state))
+      (driver.compiler-driver-state-install-pools! state)
+      (driver.compiler-driver-state-install-interns! state)
       (driver.compiler-driver-state-reset-file-state! state)
       unit)))
 
@@ -1037,10 +1031,8 @@
                       program-b
                       spans-b
                       pools-b
-                      (driver.compiler-driver-state-profile
-                        (owned_view.compiler-owned-shared-view state-b))
-                      (driver.compiler-driver-state-backend
-                        (owned_view.compiler-owned-shared-view state-b))
+                      (driver.compiler-driver-state-profile state-b)
+                      (driver.compiler-driver-state-backend state-b)
                       (driver.compiler-driver-state-typecheck state-b)))))]
             [(driver.ResultCompilerDriverLowered.Err diag _)
               (compiler-driver-reader-context-smoke-fail
@@ -1093,13 +1085,11 @@
         compiler_backend.CompilerBackendTarget.Linux
         true)]
     [a-intern : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state-a))]
+      (driver.compiler-driver-state-owned-interns state-a)]
     [a-table : i64 (ci.intern-compat-state-table-id a-intern)]
     [a-count : i64 (ci.intern-compat-state-pool-len a-intern)]
     [a-pools : ast.AstNodePoolContext
-      (driver.compiler-driver-state-pool-context
-        (owned_view.compiler-owned-shared-view state-a))]
+      (driver.compiler-driver-state-pool-context state-a)]
     [a-exprs : i64 (ast.ast-node-pool-context-expr-len a-pools)]
     [a-types : i64 (ast.ast-node-pool-context-type-len a-pools)]
     [b-disabled : bool
@@ -1110,11 +1100,9 @@
     [a-unchanged : bool
       (let
         [intern : ci.InternCompatState
-          (driver.compiler-driver-state-owned-interns
-            (owned_view.compiler-owned-shared-view state-a))]
+          (driver.compiler-driver-state-owned-interns state-a)]
         [pools : ast.AstNodePoolContext
-          (driver.compiler-driver-state-pool-context
-            (owned_view.compiler-owned-shared-view state-a))]
+          (driver.compiler-driver-state-pool-context state-a)]
         (and
           (= (ci.intern-compat-state-table-id intern) a-table)
           (= (ci.intern-compat-state-pool-len intern) a-count)
@@ -1166,15 +1154,11 @@
   (let
     [state : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
-    [job-state : tc.TcJobState
-      (driver.compiler-driver-state-typecheck
-        (owned_view.compiler-owned-shared-view state))]
+    [job-state : tc.TcJobState (driver.compiler-driver-state-typecheck state)]
     [macro-state : tc.TcMacroState (tc.tc-job-state-macro-state job-state)]
     (begin
-      (driver.compiler-driver-state-install-pools!
-        (owned_view.compiler-owned-shared-view state))
-      (driver.compiler-driver-state-install-interns!
-        (owned_view.compiler-owned-shared-view state))
+      (driver.compiler-driver-state-install-pools! state)
+      (driver.compiler-driver-state-install-interns! state)
       (driver.compiler-driver-state-reset-file-state!
         (owned_view.compiler-owned-shared-view state))
       (let
@@ -1233,26 +1217,18 @@
       (driver.compiler-driver-state-new-for-compile)]
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
-    [job-a : tc.TcJobState
-      (driver.compiler-driver-state-typecheck
-        (owned_view.compiler-owned-shared-view state-a))]
-    [job-b : tc.TcJobState
-      (driver.compiler-driver-state-typecheck
-        (owned_view.compiler-owned-shared-view state-b))]
+    [job-a : tc.TcJobState (driver.compiler-driver-state-typecheck state-a)]
+    [job-b : tc.TcJobState (driver.compiler-driver-state-typecheck state-b)]
     [macro-a : tc.TcMacroState (tc.tc-job-state-macro-state job-a)]
     [macro-b : tc.TcMacroState (tc.tc-job-state-macro-state job-b)]
     (begin
-      (driver.compiler-driver-state-install-pools!
-        (owned_view.compiler-owned-shared-view state-a))
-      (driver.compiler-driver-state-install-interns!
-        (owned_view.compiler-owned-shared-view state-a))
+      (driver.compiler-driver-state-install-pools! state-a)
+      (driver.compiler-driver-state-install-interns! state-a)
       (driver.compiler-driver-state-reset-file-state! state-a)
       (tc.tc-lazy-import-stub-record-for-job! job-a 11 12 13 true)
       (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-a)
-      (driver.compiler-driver-state-install-pools!
-        (owned_view.compiler-owned-shared-view state-b))
-      (driver.compiler-driver-state-install-interns!
-        (owned_view.compiler-owned-shared-view state-b))
+      (driver.compiler-driver-state-install-pools! state-b)
+      (driver.compiler-driver-state-install-interns! state-b)
       (driver.compiler-driver-state-reset-file-state! state-b)
       (tc.tc-lazy-import-stub-record-for-job! job-b 11 12 14 false)
       (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-b)
@@ -1277,15 +1253,12 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [intern-a : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state-a))]
+      (driver.compiler-driver-state-owned-interns state-a)]
     [intern-b : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state-b))]
+      (driver.compiler-driver-state-owned-interns state-b)]
     [cache-a : tc.TcSourceKeyCacheState
       (tc.tc-job-state-source-key-cache
-        (driver.compiler-driver-state-typecheck
-          (owned_view.compiler-owned-shared-view state-a)))]
+        (driver.compiler-driver-state-typecheck state-a))]
     [cache-b : tc.TcSourceKeyCacheState
       (tc.tc-job-state-source-key-cache
         (driver.compiler-driver-state-typecheck state-b))]
@@ -1433,8 +1406,7 @@
     [lower-a : lower.CompilerLowerState
       (driver.compiler-driver-state-owned-lower-state state-a)]
     [lower-b : lower.CompilerLowerState
-      (driver.compiler-driver-state-owned-lower-state
-        (owned_view.compiler-owned-shared-view state-b))]
+      (driver.compiler-driver-state-owned-lower-state state-b)]
     [initial-a : lower.CompilerLowerStateObservation
       (lower.compiler-lower-state-observe lower-a)]
     [b-prepopulate-failed : bool
@@ -1570,11 +1542,9 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [intern-a : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state-a))]
+      (driver.compiler-driver-state-owned-interns state-a)]
     [intern-b : ci.InternCompatState
-      (driver.compiler-driver-state-owned-interns
-        (owned_view.compiler-owned-shared-view state-b))]
+      (driver.compiler-driver-state-owned-interns state-b)]
     [builtins-a : cbi.CompilerBuiltinIdsState
       (driver.compiler-driver-state-owned-builtins
         (owned_view.compiler-owned-shared-view state-a))]
@@ -1742,14 +1712,12 @@
       (begin
         (cdiag_tests.compiler-advisory-sink-push!
           (tc.tc-job-state-advisory-sink
-            (driver.compiler-driver-state-typecheck
-              (owned_view.compiler-owned-shared-view state-a)))
+            (driver.compiler-driver-state-typecheck state-a))
           cdiag.CompilerAdvisoryPhase.Semantic
           (& semantic))
         (cdiag_tests.compiler-advisory-sink-push!
           (compiler_lower_tests.compiler-lower-state-advisory-sink
-            (driver.compiler-driver-state-owned-lower-state
-              (owned_view.compiler-owned-shared-view state-a)))
+            (driver.compiler-driver-state-owned-lower-state state-a))
           cdiag.CompilerAdvisoryPhase.Lowering
           (& lowering))
         (cdiag_tests.compiler-advisory-sink-push!
@@ -1762,14 +1730,12 @@
           (& regalloc))
         (cdiag_tests.compiler-advisory-sink-push!
           (compiler_backend.compiler-backend-state-advisory-sink
-            (driver.compiler-driver-state-backend
-              (owned_view.compiler-owned-shared-view state-a)))
+            (driver.compiler-driver-state-backend state-a))
           cdiag.CompilerAdvisoryPhase.Backend
           (& backend))
         (cdiag_tests.compiler-advisory-sink-push!
           (tc.tc-job-state-advisory-sink
-            (driver.compiler-driver-state-typecheck
-              (owned_view.compiler-owned-shared-view state-b)))
+            (driver.compiler-driver-state-typecheck state-b))
           cdiag.CompilerAdvisoryPhase.Semantic
           (& other))
         unit)]
@@ -1886,8 +1852,7 @@
                 (arena.tl_arena_set return-arena))
               session)))]
       [intern-state : ci.InternCompatState
-        (driver.compiler-driver-state-owned-interns
-          (owned_view.compiler-owned-shared-view state))]
+        (driver.compiler-driver-state-owned-interns state)]
       (begin
         (unsafe
           (arena.tl_arena_destroy transient-arena))

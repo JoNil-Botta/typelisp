@@ -4140,8 +4140,7 @@
     [state : ci.InternCompatState (ci.intern-compat-state-new)]
     [source-id : i64
       (ci.intern-compat-state-intern (&mut state) "structural.clone.module")]
-    [_install : unit
-      (ci.intern-compat-state-install! (ci.intern-global-shared-view state))]
+    [_install : unit (ci.intern-compat-state-install! state)]
     [source-names : ci.InternSourceNameSessionHandle
       (ci.intern-source-name-session-handle-from-state (& state))]
     [session : cis.InternStructuralSessionHandle

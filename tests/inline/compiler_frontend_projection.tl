@@ -32,10 +32,10 @@
                 out
                 (cat.str-cat
                   out
-                  (diag.compiler-diagnostic-render
-                    (diag.compiler-diagnostic-list-get
-                      (view.compiler-owned-shared-view diagnostics)
-                      index))
+                  (let
+                    [diag-arg
+                      (diag.compiler-diagnostic-list-get diagnostics index)]
+                    (diag.compiler-diagnostic-render diag-arg))
                   "\n"))
               (set! index (+ index 1))))
           out))]))

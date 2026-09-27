@@ -6,7 +6,6 @@
 (import compiler_parse_core as parser)
 (import compiler_ctfe as ctfe)
 (import compiler_diagnostic as diagnostic)
-(import compiler_owned_view as view)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -152,24 +151,24 @@
                       (begin
                         (test.assert-true
                           (spec.compiler-specialize-decl-list-defines?
-                            (view.compiler-owned-shared-view decls)
+                            decls
                             "__tl_specialized_pick_i64_1_none")
                           "own initializer sees template")
                         (test.assert-true
                           (spec.compiler-specialize-decl-list-defines?
-                            (view.compiler-owned-shared-view decls)
+                            decls
                             "__tl_specialized_pick_i64_2_none")
                           "own cleanup sees template")
                         (test.assert-true
                           (not
                             (spec.compiler-specialize-decl-list-defines?
-                              (view.compiler-owned-shared-view decls)
+                              decls
                               "__tl_specialized_pick_i64_3_none"))
                           "later initializer sees resource")
                         (test.assert-true
                           (not
                             (spec.compiler-specialize-decl-list-defines?
-                              (view.compiler-owned-shared-view decls)
+                              decls
                               "__tl_specialized_pick_i64_4_none"))
                           "body sees resource")
                         (test.assert-true

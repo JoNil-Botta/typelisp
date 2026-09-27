@@ -24404,16 +24404,11 @@
     [summaries : cload.CompilerLoadSurfaceSummaryList
       (cload.compiler-load-surface-summaries)]
     [index : i64 0]
-    (while (<
-      index
-      (cload.compiler-load-surface-summary-list-count
-        (tc-global-shared-view summaries)))
+    (while (< index (cload.compiler-load-surface-summary-list-count summaries))
       (begin
         (tc-lazy-import-surface-summary-stubs-record-for-job!
           job-state
-          (cload.compiler-load-surface-summary-list-at
-            (tc-global-shared-view summaries)
-            index))
+          (cload.compiler-load-surface-summary-list-at summaries index))
         (set! index (+ index 1))))))
 
 ;; Generated declarations can be checked before their source module's marker is
@@ -25815,9 +25810,7 @@
             (let
               [body : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view body-box)]
-              [body-count : i64
-                (csym.compiler-decl-list-index-count
-                  (tc-global-shared-view body))]
+              [body-count : i64 (csym.compiler-decl-list-index-count body)]
               (if (< target (+ index body-count))
                 (tc-nominal-owner-name-list
                   body
@@ -33097,13 +33090,10 @@
     (begin
       (while (<
         index
-        (cload.compiler-load-surface-summary-list-count
-          (tc-global-shared-view summaries)))
+        (cload.compiler-load-surface-summary-list-count summaries))
         (if (=
           (__tl-project-field
-            (cload.compiler-load-surface-summary-list-at
-              (tc-global-shared-view summaries)
-              index)
+            (cload.compiler-load-surface-summary-list-at summaries index)
             module-id)
           target-module-id)
           (return true)
@@ -85230,8 +85220,7 @@
     [(ast.AstProgram.Program decls-box)
       (let
         [decl-count : i64
-          (csym.compiler-decl-list-index-count
-            (ast.ast-decl-list-box-shared-view decls-box))]
+          (csym.compiler-decl-list-index-count (deref decls-box))]
         (+
           decl-count
           (if (< decl-count 256)
@@ -92073,13 +92062,10 @@
     (begin
       (while (<
         index
-        (cload.compiler-load-surface-summary-list-count
-          (tc-global-shared-view summaries)))
+        (cload.compiler-load-surface-summary-list-count summaries))
         (let
           [summary : cload.CompilerLoadSurfaceSummary
-            (cload.compiler-load-surface-summary-list-at
-              (tc-global-shared-view summaries)
-              index)]
+            (cload.compiler-load-surface-summary-list-at summaries index)]
           (begin
             (set!
               out
@@ -92201,13 +92187,10 @@
     (begin
       (while (<
         index
-        (cload.compiler-load-surface-summary-list-count
-          (tc-global-shared-view summaries)))
+        (cload.compiler-load-surface-summary-list-count summaries))
         (let
           [summary : cload.CompilerLoadSurfaceSummary
-            (cload.compiler-load-surface-summary-list-at
-              (tc-global-shared-view summaries)
-              index)]
+            (cload.compiler-load-surface-summary-list-at summaries index)]
           (if (macro-surface-decls-macro-in-module?
             summary.decls
             target-module-id
@@ -92251,13 +92234,10 @@
     (begin
       (while (<
         index
-        (cload.compiler-load-surface-summary-list-count
-          (tc-global-shared-view summaries)))
+        (cload.compiler-load-surface-summary-list-count summaries))
         (let
           [summary : cload.CompilerLoadSurfaceSummary
-            (cload.compiler-load-surface-summary-list-at
-              (tc-global-shared-view summaries)
-              index)]
+            (cload.compiler-load-surface-summary-list-at summaries index)]
           (if (macro-surface-decls-module-has-macro?
             summary.decls
             target-module-id)
@@ -92511,13 +92491,10 @@
     (begin
       (while (<
         index
-        (cload.compiler-load-surface-summary-list-count
-          (tc-global-shared-view summaries)))
+        (cload.compiler-load-surface-summary-list-count summaries))
         (let
           [summary : cload.CompilerLoadSurfaceSummary
-            (cload.compiler-load-surface-summary-list-at
-              (tc-global-shared-view summaries)
-              index)]
+            (cload.compiler-load-surface-summary-list-at summaries index)]
           (match (macro-surface-decls-call-decl-in-module
             state
             summary.decls
@@ -110262,7 +110239,7 @@
       ;; Legacy macro expansion still reads compatibility globals; bridge the
       ;; compile-owned pool and interner state at the phase boundary.
       (ast.ast-node-pool-context-install! pools)
-      (ci.intern-compat-state-install! (tc-global-shared-view intern-state))
+      (ci.intern-compat-state-install! intern-state)
       (macro-expand-program-structural-change-reset!
         (tc-job-state-macro-state job-state))
       ;; The route is a property of the compiler's embedded image plus the exact
@@ -112497,10 +112474,7 @@
                 (compiler-tc-decl-profile-finish (tc-context-job-state ctx)))
               (set!
                 result
-                (if (=
-                  (cdiag.compiler-diagnostic-list-count
-                    (tc-global-shared-view diagnostics))
-                  0)
+                (if (= (cdiag.compiler-diagnostic-list-count diagnostics) 0)
                   (ResultCompilerTypecheck.Ok cur-summary)
                   (ResultCompilerTypecheck.Err (box diagnostics))))
               (set! done true))]
@@ -112754,8 +112728,7 @@
                                           (set!
                                             last-hashmap-clone-diagnostic-index
                                             (cdiag.compiler-diagnostic-list-count
-                                              (tc-global-shared-view
-                                                diagnostics))))
+                                              diagnostics)))
                                         unit)
                                       (cdiag.compiler-diagnostic-list-push!
                                         (&mut diagnostics)
@@ -112910,7 +112883,7 @@
     ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
     [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
     [_install-intern-state : unit
-      (ci.intern-compat-state-install! (tc-global-shared-view intern-state))]
+      (ci.intern-compat-state-install! intern-state)]
     [_bind-source-names : unit
       (tc-macro-state-bind-source-names!
         (tc-job-state-macro-state job-state)

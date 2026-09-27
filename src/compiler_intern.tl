@@ -2160,8 +2160,10 @@
     (array-ref state.pool-macro-prefix-class-slots id)
     (cast (intern-macro-prefix-class-local) : u8)))
 
-(define (intern-compat-state-install! [state : InternCompatState]) : unit
+(define (intern-compat-state-install! [state : (& state InternCompatState)]) : unit
   (let
+    [state : InternCompatState
+      (owned_view.compiler-owned-reference-shared-view state)]
     [next-table-id : i64 (intern-compat-state-table-id state)]
     (begin
       (set! intern-active-table-id-value next-table-id)

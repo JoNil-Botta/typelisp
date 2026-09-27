@@ -71,9 +71,7 @@
   [diagnostics : cdiag.CompilerDiagnosticList]
   [path : String]) : cdiag.CompilerDiagnosticList
   (let
-    [count : i64
-      (cdiag.compiler-diagnostic-list-count
-        (owned_view.compiler-owned-shared-view diagnostics))]
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
     [out : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-with-capacity count)]
@@ -83,9 +81,7 @@
           (cdiag.compiler-diagnostic-list-push!
             (&mut out)
             (compiler-check-diagnostic-with-fallback-path
-              (cdiag.compiler-diagnostic-list-get
-                (owned_view.compiler-owned-shared-view diagnostics)
-                index)
+              (cdiag.compiler-diagnostic-list-get diagnostics index)
               (owned_view.compiler-owned-shared-view path)))
           (set! index (+ index 1))))
       out)))
@@ -127,31 +123,22 @@
   [incoming : cdiag.CompilerDiagnosticList]
   [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
   (let
-    [count : i64
-      (cdiag.compiler-diagnostic-list-count
-        (owned_view.compiler-owned-shared-view incoming))]
+    [count : i64 (cdiag.compiler-diagnostic-list-count incoming)]
     [index : i64 0]
     (while (< index count)
       (begin
         (compiler-check-diagnostic-list-insert-source-order
-          (cdiag.compiler-diagnostic-list-get
-            (owned_view.compiler-owned-shared-view incoming)
-            index)
+          (cdiag.compiler-diagnostic-list-get incoming index)
           sorted)
         (set! index (+ index 1))))))
 
 (define (compiler-check-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
   [result : ResultCompilerCheck]) : ResultCompilerCheck
-  (if (=
-    (cdiag.compiler-diagnostic-list-count
-      (owned_view.compiler-owned-shared-view parse-diagnostics))
-    0)
+  (if (= (cdiag.compiler-diagnostic-list-count parse-diagnostics) 0)
     result
     (let
-      [count : i64
-        (cdiag.compiler-diagnostic-list-count
-          (owned_view.compiler-owned-shared-view parse-diagnostics))]
+      [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
       [index : i64 0]
       [owned-parse : cdiag.CompilerDiagnosticList
         (cdiag.compiler-diagnostic-list-with-capacity count)]
@@ -160,9 +147,7 @@
           (begin
             (cdiag.compiler-diagnostic-list-push!
               (&mut owned-parse)
-              (cdiag.compiler-diagnostic-list-get
-                (owned_view.compiler-owned-shared-view parse-diagnostics)
-                index))
+              (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
             (set! index (+ index 1))))
         (match result
           [(ResultCompilerCheck.Ok _ advisories)

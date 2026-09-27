@@ -315,16 +315,12 @@
 
 (define (repl-report-diagnostics [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
-    [count : i64
-      (cdiag.compiler-diagnostic-list-count
-        (owned_view.compiler-owned-shared-view diagnostics))]
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
     (while (< index count)
       (begin
         (repl-report-diagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (owned_view.compiler-owned-shared-view diagnostics)
-            index))
+          (cdiag.compiler-diagnostic-list-get diagnostics index))
         (set! index (+ index 1))))))
 
 (define (repl-char-display-helpers-source) : String

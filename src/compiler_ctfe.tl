@@ -953,9 +953,7 @@
         (ci.intern-compat-state-intern
           (&mut intern-state)
           "ctfe-structural-string")]
-      [_install : unit
-        (ci.intern-compat-state-install!
-          (ci.intern-global-shared-view intern-state))]
+      [_install : unit (ci.intern-compat-state-install! intern-state)]
       [source-names : ci.InternSourceNameSessionHandle
         (ci.intern-source-name-session-handle-from-state (& intern-state))]
       [session : cis.InternStructuralSessionHandle

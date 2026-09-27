@@ -314,8 +314,7 @@
         (spec.spec-place-shared-view intern-state))]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec.spec-place-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : ast.AstType
           (spec.spec-substitute-type-with-owner owner ty subs)]
@@ -343,8 +342,7 @@
         (spec_ci.intern-global-shared-view intern-state))]
     (begin
       (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install!
-        (spec_ci.intern-global-shared-view intern-state))
+      (spec_ci.intern-compat-state-install! intern-state)
       (let
         [result : spec.ResultSpecSubExpr
           (spec.spec-substitute-values-expr-with-owner owner expr subs)]
@@ -390,9 +388,7 @@
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (and
                   (not
-                    (spec.compiler-specialize-decl-list-defines?
-                      (ast.ast-place-shared-view decls)
-                      "alloc"))
+                    (spec.compiler-specialize-decl-list-defines? decls "alloc"))
                   (spec.compiler-specialize-decl-list-defines?
                     decls
                     "__tl_specialized_alloc_type_i64_none")))])]
@@ -433,9 +429,7 @@
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 [original : bool
-                  (spec.compiler-specialize-decl-list-defines?
-                    (ast.ast-place-shared-view decls)
-                    "scale")]
+                  (spec.compiler-specialize-decl-list-defines? decls "scale")]
                 [generated : bool
                   (spec.compiler-specialize-decl-list-defines?
                     decls
@@ -980,9 +974,7 @@
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (and
                   (not
-                    (spec.compiler-specialize-decl-list-defines?
-                      (ast.ast-place-shared-view decls)
-                      "alloc"))
+                    (spec.compiler-specialize-decl-list-defines? decls "alloc"))
                   (=
                     (compiler-specialize-decl-list-count-defs
                       decls
@@ -1800,7 +1792,7 @@
             (match specialized
               [(ast.AstProgram.Program decls)
                 (spec.compiler-specialize-decl-list-defines?
-                  (ast.ast-decl-list-box-shared-view decls)
+                  (deref decls)
                   "__tl_specialized_pick_i64_7_none")])]
           [_ false])]
       [_ false])))

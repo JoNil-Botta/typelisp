@@ -707,8 +707,7 @@
                 (owned_view.compiler-owned-shared-view state)
                 (owned_view.compiler-owned-shared-view source-set))]
             [observed : load.CompilerLoadDependencyCatalogObservation
-              (load.compiler-load-dependency-catalog-observe
-                (owned_view.compiler-owned-shared-view state))]
+              (load.compiler-load-dependency-catalog-observe state)]
             (unless
               (and
                 (= first 0)
@@ -746,7 +745,7 @@
               (io.panic "dependency tlci: unable to write cross-host image")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view opposite-state)
+              opposite-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view opposite-state)
                 (owned_view.compiler-owned-shared-view source-set)))
@@ -775,7 +774,7 @@
             (return (io.panic "dependency tlci: unable to write stale image")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view stale-state)
+              stale-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view stale-state)
                 (owned_view.compiler-owned-shared-view source-set)))
@@ -802,7 +801,7 @@
               (io.panic "dependency tlci: unable to write identity mismatch")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view mismatch-state)
+              mismatch-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view mismatch-state)
                 (owned_view.compiler-owned-shared-view source-set)))
@@ -830,7 +829,7 @@
               (io.panic "dependency tlci: unable to write unsupported schema")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view unsupported-state)
+              unsupported-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view unsupported-state)
                 (owned_view.compiler-owned-shared-view source-set)))
@@ -856,7 +855,7 @@
               (io.panic "dependency tlci: unable to write malformed schema")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view malformed-state)
+              malformed-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view malformed-state)
                 (owned_view.compiler-owned-shared-view source-set)))
@@ -871,7 +870,7 @@
             [(io.ErrIoUnit error) (return (io.panic (io.error-message error)))])
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view missing-state)
+              missing-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view missing-state)
                 (owned_view.compiler-owned-shared-view source-set)))
@@ -886,7 +885,7 @@
             (return (io.panic "dependency tlci: unable to write parse failure")))
           (unless
             (match (load.compiler-load-dependency-catalog-admitted-image
-              (owned_view.compiler-owned-shared-view parse-state)
+              parse-state
               (compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view parse-state)
                 source-set))
@@ -901,12 +900,10 @@
           (unless
             (and
               (=
-                (load.compiler-load-dependency-catalog-observe
-                  (owned_view.compiler-owned-shared-view state)).entries
+                (load.compiler-load-dependency-catalog-observe state).entries
                 0)
               (=
-                (load.compiler-load-dependency-catalog-observe
-                  (owned_view.compiler-owned-shared-view opposite-state)).entries
+                (load.compiler-load-dependency-catalog-observe opposite-state).entries
                 1))
             (return (io.panic "dependency tlci: session release leaked state")))
           (compiler-dependency-tlci-test-release! opposite-state)

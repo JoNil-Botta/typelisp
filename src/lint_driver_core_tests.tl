@@ -226,17 +226,21 @@ end
           count)])))
 
 (define (selfhost-lint-findings-rule-count
-  [findings : lint_core.LintFindings]
+  [findings : (& findings lint_core.LintFindings)]
   [rule-id : String]) : i64
-  (selfhost-lint-findings-rule-count-from findings rule-id 0 0))
+  (let
+    [findings : lint_core.LintFindings
+      (owned_view.compiler-owned-reference-shared-view findings)]
+    (selfhost-lint-findings-rule-count-from findings rule-id 0 0)))
 
 (define (selfhost-lint-source-rule-count [source : String] [rule-id : String]) : i64
-  (selfhost-lint-findings-rule-count
-    (selfhost-lint-source-with-roots
-      "lint_driver_self_test.tl"
-      source
-      (lint_svec.new))
-    rule-id))
+  (let
+    [arg
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        source
+        (lint_svec.new))]
+    (selfhost-lint-findings-rule-count arg rule-id)))
 
 (define (selfhost-lint-source-unused-import-count [source : String]) : i64
   (selfhost-lint-source-rule-count
@@ -1914,9 +1918,7 @@ end
     count
     (let
       [decl : lint_driver.SelfhostLintDeadDecl
-        (lint_driver.selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
+        (lint_driver.selfhost-lint-dead-decls-ref items index)]
       [next-count : i64
         (if (and
           (string.eq decl.path path)

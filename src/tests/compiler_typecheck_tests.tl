@@ -151,8 +151,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (string.eq (cdiag.compiler-diagnostic-message first) want))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -182,8 +181,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [value : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq (cdiag.compiler-diagnostic-message value) want)
           (= (cdiag.compiler-diagnostic-line value) want-line)
@@ -198,8 +196,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (match (cdiag.compiler-diagnostic-code first)
           [(CompilerDiagnosticSomeString code)
             (if (string.eq code want-code)
@@ -230,8 +227,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (and
           (string.eq (cdiag.compiler-diagnostic-message first) want)
           (= (cdiag.compiler-diagnostic-line first) want-line)
@@ -250,8 +246,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (string.eq (cdiag.compiler-diagnostic-message first) want))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
@@ -433,8 +428,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (string.eq
         (cdiag.compiler-diagnostic-render-source
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))
+          (cdiag.compiler-diagnostic-list-first (deref diag))
           src)
         want)]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
@@ -4619,8 +4613,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (if (= (cdiag.compiler-diagnostic-line first) 2)
           (if (> (cdiag.compiler-diagnostic-col first) 0)
             (string.eq
@@ -4649,8 +4642,7 @@
       [(tc_core.ResultCompilerTypecheck.Err diag)
         (let
           [first : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+            (cdiag.compiler-diagnostic-list-first (deref diag))]
           (and
             (string.eq
               (cdiag.compiler-diagnostic-message first)
@@ -7754,8 +7746,7 @@
       [(tc_core.ResultCompilerTypecheck.Err diag)
         (let
           [first : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+            (cdiag.compiler-diagnostic-list-first (deref diag))]
           (io.panic (cdiag.compiler-diagnostic-message first)))])
     unit))
 
@@ -9541,8 +9532,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+              (cdiag.compiler-diagnostic-list-first (deref diag))]
             [message : String (cdiag.compiler-diagnostic-message value)]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
             [main-path : String "src/main.tl"]
@@ -9563,8 +9553,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+              (cdiag.compiler-diagnostic-list-first (deref diag))]
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
@@ -9584,8 +9573,7 @@
         [(tc_core.ResultCompilerTypecheck.Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+              (cdiag.compiler-diagnostic-list-first (deref diag))]
             (and
               (string.contains
                 (cdiag.compiler-diagnostic-message value)
@@ -9635,9 +9623,7 @@
                     [(tc_core.ResultCompilerTypecheck.Err diag)
                       (let
                         [value : cdiag.CompilerDiagnostic
-                          (cdiag.compiler-diagnostic-list-first
-                            (cdiag.compiler-diagnostic-list-box-shared-view
-                              diag))]
+                          (cdiag.compiler-diagnostic-list-first (deref diag))]
                         (and
                           (string.eq
                             (cdiag.compiler-diagnostic-message value)
@@ -9669,8 +9655,7 @@
           [(tc_core.ResultCompilerTypecheck.Err diag)
             (let
               [value : cdiag.CompilerDiagnostic
-                (cdiag.compiler-diagnostic-list-first
-                  (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+                (cdiag.compiler-diagnostic-list-first (deref diag))]
               (and
                 (string.eq
                   (cdiag.compiler-diagnostic-message value)

@@ -125,8 +125,7 @@
             owner-context)]
         (begin
           (ast.ast-node-pool-context-install! pools)
-          (ci.intern-compat-state-install!
-            (owned_view.compiler-owned-shared-view intern-state))
+          (ci.intern-compat-state-install! intern-state)
           (match generated-result
             [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
               (match (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
@@ -203,8 +202,7 @@
               (begin
                 (ast.ast-node-pool-context-install! pools)
                 ;; Publish generated IDs before legacy macro/symbol consumers run.
-                (ci.intern-compat-state-install!
-                  (owned_view.compiler-owned-shared-view intern-state))
+                (ci.intern-compat-state-install! intern-state)
                 (match generated-result
                   [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
                     (let
@@ -248,9 +246,7 @@
                                   ;; Publish explicit normalization mutations before
                                   ;; matching either result or entering legacy phases.
                                   (ast.ast-node-pool-context-install! pools)
-                                  (ci.intern-compat-state-install!
-                                    (owned_view.compiler-owned-shared-view
-                                      intern-state))
+                                  (ci.intern-compat-state-install! intern-state)
                                   (match normalized-result
                                     [(spec.ResultGenProgramWithPaths.Ok
                                         normalized
@@ -290,8 +286,7 @@
                                                     (ast.ast-node-pool-context-install!
                                                       pools)
                                                     (ci.intern-compat-state-install!
-                                                      (owned_view.compiler-owned-shared-view
-                                                        intern-state))
+                                                      intern-state)
                                                     (match specialized-result
                                                       [(spec.ResultSpecProgramWithPaths.Ok
                                                           specialized

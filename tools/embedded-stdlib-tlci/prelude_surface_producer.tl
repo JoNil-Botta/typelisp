@@ -97,10 +97,7 @@
   [prefix : String]
   [diag : (Box cdiag.CompilerDiagnostic)]) : ResultPreludeSurfaceFacts
   (ResultPreludeSurfaceFacts.Err
-    (str_cat.str-cat
-      prefix
-      (cdiag.compiler-diagnostic-render
-        (cdiag.compiler-diagnostic-box-shared-view diag)))))
+    (str_cat.str-cat prefix (cdiag.compiler-diagnostic-render (deref diag)))))
 
 (define (prelude-surface-typecheck-facts-specialized
   [load-state : load.CompilerLoadSessionState]
@@ -155,9 +152,7 @@
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
             "prelude surface typecheck failed: "
-            (box
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag)))))]
+            (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
       [(tc.ResultCompilerTypecheckChecked.Ok summary ctx _ _)
         (let
           [_finish-clone-roots : clone.CloneRootEntries
@@ -391,8 +386,7 @@
             (ResultPreludeSurface.Err
               (str_cat.str-cat
                 "prelude surface load failed: "
-                (cdiag.compiler-diagnostic-render
-                  (cdiag.compiler-diagnostic-box-shared-view diag)))))]
+                (cdiag.compiler-diagnostic-render (deref diag)))))]
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
           (match (prelude-surface-typecheck-facts
             load-state

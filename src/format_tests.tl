@@ -271,28 +271,16 @@
           (tokens.fmt-tag-int))
         2)
       (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            1))
+        (tokens.format-token-tag (tokens.format-token-at stream 1))
         (tokens.fmt-tag-int))
       (string.eq
-        (tokens.format-token-text
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            1))
+        (tokens.format-token-text (tokens.format-token-at stream 1))
         "0x2a")
       (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            2))
+        (tokens.format-token-tag (tokens.format-token-at stream 2))
         (tokens.fmt-tag-int))
       (string.eq
-        (tokens.format-token-text
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            2))
+        (tokens.format-token-text (tokens.format-token-at stream 2))
         "-0b101010")
       (=
         (tokens.format-token-tag (tokens.format-token-at stream 4))
@@ -603,10 +591,7 @@
       (while (< i stream.count)
         (begin
           (if (=
-            (tokens.format-token-tag
-              (tokens.format-token-at
-                (owned_view.compiler-owned-shared-view stream)
-                i))
+            (tokens.format-token-tag (tokens.format-token-at stream i))
             wanted)
             (set! hits (+ hits 1))
             (set! hits hits))

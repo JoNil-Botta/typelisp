@@ -33,15 +33,11 @@
   [right : build_run.SourceToolLinkInputs]) : bool
   (and
     (source-tool-string-list-eq?
-      (build_run.source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view left))
-      (build_run.source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view right)))
+      (build_run.source-tool-link-inputs-libs left)
+      (build_run.source-tool-link-inputs-libs right))
     (source-tool-string-list-eq?
-      (build_run.source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view left))
-      (build_run.source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view right)))
+      (build_run.source-tool-link-inputs-search-dirs left)
+      (build_run.source-tool-link-inputs-search-dirs right))
     (source-tool-string-list-eq?
       (build_run.source-tool-link-inputs-raw-args left)
       (build_run.source-tool-link-inputs-raw-args right))))

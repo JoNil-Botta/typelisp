@@ -33,18 +33,26 @@
 
 (define (compiler-diagnostic-render-ok?) : bool
   (string.eq
-    (cdiag.compiler-diagnostic-render
-      (cdiag.compiler-diagnostic-simple "demo.tl" 3 7 "parse: malformed define"))
+    (let
+      [diag
+        (cdiag.compiler-diagnostic-simple
+          "demo.tl"
+          3
+          7
+          "parse: malformed define")]
+      (cdiag.compiler-diagnostic-render diag))
     "demo.tl:3:7: parse: malformed define"))
 
 (define (compiler-diagnostic-flat-secondary-ok?) : bool
   (string.eq
-    (cdiag.compiler-diagnostic-render
-      (cdiag.compiler-diagnostic-with-secondary
-        (cdiag.compiler-diagnostic-simple "template.tl" 2 14 "type mismatch")
-        (cdiag.CompilerDiagnosticSpan "caller.tl" 7 9 7 15)
-        (cdiag.CompilerDiagnosticSomeString
-          "in expansion of macro `demo` invoked here")))
+    (let
+      [diag
+        (cdiag.compiler-diagnostic-with-secondary
+          (cdiag.compiler-diagnostic-simple "template.tl" 2 14 "type mismatch")
+          (cdiag.CompilerDiagnosticSpan "caller.tl" 7 9 7 15)
+          (cdiag.CompilerDiagnosticSomeString
+            "in expansion of macro `demo` invoked here"))]
+      (cdiag.compiler-diagnostic-render diag))
     "template.tl:2:14: type mismatch\nrelated: caller.tl:7:9: in expansion of macro `demo` invoked here"))
 
 (define (compiler-diagnostic-source-error-ok?) : bool
@@ -293,7 +301,7 @@
         (= (cdiag.compiler-diagnostic-label-list-count two-labels) 2)
         (= (cdiag.compiler-diagnostic-list-count empty-diagnostics) 0)
         (= (cdiag.compiler-diagnostic-list-count single-diagnostics) 1)
-        (= (cdiag.compiler-diagnostic-list-count (clone diagnostics)) 3)
+        (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
         (=
           (cdiag.compiler-diagnostic-line
             (cdiag.compiler-diagnostic-list-ref (& diagnostics) 0))

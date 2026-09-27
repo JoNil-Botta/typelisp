@@ -2464,8 +2464,7 @@
         (begin
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first
-                (cdiag.compiler-diagnostic-list-box-shared-view diag))))
+              (cdiag.compiler-diagnostic-list-first (deref diag))))
           1)])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -3233,8 +3232,7 @@
     (begin
       (compiler_load.compiler-load-default-session-state-set!
         (owned_view.compiler-owned-shared-view entry-load))
-      (compiler_load.compiler-load-session-state-use!
-        (owned_view.compiler-owned-shared-view entry-load))
+      (compiler_load.compiler-load-session-state-use! entry-load)
       (compiler_load.compiler-load-session-cache-enable!)
       (compiler_load.compiler-load-session-program-cache-disable!)
       (tc_core.tc-serial-job-state-set!
@@ -3264,7 +3262,7 @@
       entry.parent-default)
     (if (array-ref entry.parent-load.intern-state-ready 0)
       (compiler_load.compiler-load-session-state-use-with-intern-state!
-        (owned_view.compiler-owned-shared-view entry.parent-load)
+        entry.parent-load
         (owned_view.compiler-owned-array-element-shared-view
           entry.parent-load.intern-state
           0))

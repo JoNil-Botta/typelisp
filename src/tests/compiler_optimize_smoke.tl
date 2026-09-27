@@ -928,8 +928,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function
           (opt.compiler-opt-global-shared-view dense-source)))]
-    [dense-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view dense))]
+    [dense-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks dense)]
     [short : ir.CompilerIrFunction
       (ot.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-short-blocks)))]
@@ -944,8 +943,7 @@
             3
             4
             (ir.compiler-ir-label "fallback"))))]
-    [sparse-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view sparse))]
+    [sparse-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks sparse)]
     [sparse-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         sparse-blocks
@@ -985,8 +983,7 @@
             1
             3
             (ir.compiler-ir-label "fallback"))))]
-    [prefix-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view prefix))]
+    [prefix-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks prefix)]
     [prefix-twice : ir.CompilerIrFunction
       (ot.opt-switch-form-function (opt.compiler-opt-global-shared-view prefix))]
     [prefix-entry : ir.CompilerIrBlock
@@ -1000,8 +997,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function
           (opt-switch-test-bare-blocks (ir.compiler-ir-label "fallback"))))]
-    [bare-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view bare))]
+    [bare-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks bare)]
     [bare-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block bare-blocks (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
@@ -1012,7 +1008,7 @@
         (opt-switch-test-function
           (opt-switch-test-copy-head-blocks (ir.compiler-ir-label "fallback"))))]
     [copy-head-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view copy-head))]
+      (opt.opt-function-blocks copy-head)]
     [copy-head-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         copy-head-blocks
@@ -1027,8 +1023,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function
           (opt-switch-test-total-chain-blocks 0 1 2 3 total-final-label)))]
-    [total-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view total))]
+    [total-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks total)]
     [total-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         total-blocks
@@ -1041,7 +1036,7 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         total)]
     [total-late-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view total-late))]
+      (opt.opt-function-blocks total-late)]
     [total-late-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         total-late-blocks
@@ -1122,8 +1117,7 @@
         (opt-switch-test-function
           (opt-switch-test-total-chain-blocks 0 1 3 4 marked-sparse-final-label)))]
     [marked-sparse-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks
-        (opt.compiler-opt-global-shared-view marked-sparse))]
+      (opt.opt-function-blocks marked-sparse)]
     [marked-sparse-late : ir.CompilerIrFunction
       (ot.opt-late-total-switch-function
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -1158,9 +1152,7 @@
         (opt-switch-test-function (opt-switch-test-span-blocks 8 0 65)))]
     [long-sparse-entry : ir.CompilerIrBlock
       (match (let
-        [blocks
-          (opt.opt-function-blocks
-            (opt.compiler-opt-global-shared-view long-sparse))]
+        [blocks (opt.opt-function-blocks long-sparse)]
         (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry")))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1177,8 +1169,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function
           (opt-switch-test-hop-blocks 2 4 (ir.CompilerIrBlockList.Nil))))]
-    [hop-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view hop))]
+    [hop-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks hop)]
     [hop-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block hop-blocks (ir.compiler-ir-label "entry"))
         [(opt.OptMaybeBlock.No)
@@ -1192,15 +1183,12 @@
         (opt-switch-test-function
           (opt-switch-test-hop-blocks 1 80 (ir.CompilerIrBlockList.Nil))))]
     [hop-fallback-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks
-        (opt.compiler-opt-global-shared-view hop-fallback))]
+      (opt.opt-function-blocks hop-fallback)]
     [hop-twice : ir.CompilerIrFunction
       (ot.opt-switch-form-function (opt.compiler-opt-global-shared-view hop))]
     [hop-twice-entry : ir.CompilerIrBlock
       (match (let
-        [blocks
-          (opt.opt-function-blocks
-            (opt.compiler-opt-global-shared-view hop-twice))]
+        [blocks (opt.opt-function-blocks hop-twice)]
         (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry")))
         [(opt.OptMaybeBlock.No)
           (opt-switch-test-return-block (ir.compiler-ir-label "missing") 0)]
@@ -1218,7 +1206,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-hop-shared-blocks)))]
     [hop-shared-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view hop-shared))]
+      (opt.opt-function-blocks hop-shared)]
     [hop-shared-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         hop-shared-blocks
@@ -1232,7 +1220,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-repeat-tag-blocks)))]
     [repeat-tag-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks (opt.compiler-opt-global-shared-view repeat-tag))]
+      (opt.opt-function-blocks repeat-tag)]
     [repeat-tag-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         repeat-tag-blocks
@@ -1246,8 +1234,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-forwarded-arm-blocks false)))]
     [forwarded-arm-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks
-        (opt.compiler-opt-global-shared-view forwarded-arm))]
+      (opt.opt-function-blocks forwarded-arm)]
     [forwarded-arm-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         forwarded-arm-blocks
@@ -1259,8 +1246,7 @@
       (ot.opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-forwarded-arm-blocks true)))]
     [forwarded-phi-arm-blocks : ir.CompilerIrBlockList
-      (opt.opt-function-blocks
-        (opt.compiler-opt-global-shared-view forwarded-phi-arm))]
+      (opt.opt-function-blocks forwarded-phi-arm)]
     [forwarded-phi-arm-entry : ir.CompilerIrBlock
       (match (opt.opt-cfg-find-block
         forwarded-phi-arm-blocks
@@ -1491,11 +1477,7 @@
       ;; a 67-slot span at eight compares, and a 58-slot span at seven, are
       ;; both back under the 50% floor and stay chains.
       [(not
-          (=
-            (opt-count-switch-blocks
-              (opt.opt-function-blocks
-                (opt.compiler-opt-global-shared-view long-sparse)))
-            1))
+          (= (opt-count-switch-blocks (opt.opt-function-blocks long-sparse)) 1))
         70]
       [(not (= (opt-switch-test-block-tail-case-count long-sparse-entry) 66))
         71]
@@ -2760,24 +2742,26 @@
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (smoke-c27-mask-dce-blocks [fn : ir.CompilerIrFunction]) : ir.CompilerIrBlockList
-  (opt.opt-function-blocks
-    (match fn
-      [(ir.CompilerIrFunction.Function
-          name
-          params
-          ret
-          frame
-          blocks
-          function-abi)
-        (ir.CompilerIrFunction.Function
-          name
-          params
-          ret
-          frame
-          (opt.opt-dce-block-list-array
-            (opt.opt-collect-blocks-uses-array frame blocks)
-            blocks)
-          function-abi)])))
+  (let
+    [func
+      (match fn
+        [(ir.CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            blocks
+            function-abi)
+          (ir.CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            (opt.opt-dce-block-list-array
+              (opt.opt-collect-blocks-uses-array frame blocks)
+              blocks)
+            function-abi)])]
+    (opt.opt-function-blocks func)))
 
 ;; 1 when the pair collapsed to BitTestNe, 2 when it collapsed to BitTestEq,
 ;; 0 when the `and` survived (the rewrite was refused), -1 for anything else.

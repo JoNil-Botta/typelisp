@@ -20663,7 +20663,7 @@
       func
       (compiler-opt-global-shared-view context)
       (opt-cfg-natural-loops-with-context
-        (opt-function-blocks (compiler-opt-global-shared-view func))
+        (opt-function-blocks func)
         (compiler-opt-global-shared-view context)))
       [(OptFunctionCtxMaybe.No) (OptFunctionCtxResult.Result func context)]
       [(OptFunctionCtxMaybe.Some next next-context)
@@ -37525,8 +37525,7 @@
 ;; keeps the defensive entry verify.
 (define (opt-flag-exit-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt-flag-exit-function-with-context-result
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-context-build (opt-function-blocks func))
     false
     func)
     [(OptFunctionCtxResult.Result next _) next]))
@@ -66983,8 +66982,7 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt-loop-call-function-with-context-result
     try-rewrite
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-context-build (opt-function-blocks func))
     false
     func)
     [(OptFunctionCtxResult.Result out _) out]))
@@ -95483,8 +95481,7 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt-successor-sink-function-with-context-result
     type-segment-bases
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-context-build (opt-function-blocks func))
     func)
     [(OptFunctionCtxResult.Result f _) f]))
 
@@ -95798,8 +95795,9 @@
   [right : ir.CompilerIrFunction]) : bool
   (let
     [left-blocks : ir.CompilerIrBlockList
-      (opt-function-blocks
-        (owned_view.compiler-owned-reference-shared-view left))]
+      (let
+        [func (owned_view.compiler-owned-reference-shared-view left)]
+        (opt-function-blocks func))]
     [right-blocks : ir.CompilerIrBlockList (opt-function-blocks right)]
     (and
       (=
@@ -95813,8 +95811,7 @@
 
 (define (opt-uniform-phi-rotate [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt-rotate-ssa-function-with-context-result
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-context-build (opt-function-blocks func))
     false
     func)
     [(OptFunctionCtxResult.Result f _) f]))
@@ -97715,8 +97712,7 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt-guard-sink-function-with-context-result
     cells
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-context-build (opt-function-blocks func))
     func)
     [(OptFunctionCtxResult.Result f _) f]))
 
@@ -102014,8 +102010,7 @@
 ;; keeps the defensive entry verify.
 (define (opt-bg-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (opt-bg-function-changed-result
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-context-build (opt-function-blocks func))
     false
     func)
     [(OptFunctionRewriteResult.Result next _ changed)
@@ -102049,12 +102044,11 @@
 (define (opt-bg-function-verified-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (if (not
     (let
-      [blocks (opt-function-blocks (compiler-opt-global-shared-view func))]
+      [blocks (opt-function-blocks func)]
       (opt-bg-blocks-have-candidate? blocks)))
     (OptFunctionPassResult.Result func false)
     (match (opt-bg-function-changed-result
-      (opt-cfg-context-build
-        (opt-function-blocks (compiler-opt-global-shared-view func)))
+      (opt-cfg-context-build (opt-function-blocks func))
       true
       func)
       [(OptFunctionRewriteResult.Result next _ changed)
@@ -102133,13 +102127,13 @@
   `(compiler-opt-global-shared-view (__tl-project-field ,state ctx)))
 
 (defmacro (opt-pass-frame [state : Expr]) : Expr
-  `(opt-function-frame (opt-pass-func ,state)))
+  `(opt-function-frame (__tl-project-field ,state func)))
 
 (defmacro (opt-pass-blocks [state : Expr]) : Expr
-  `(opt-function-blocks (opt-pass-func ,state)))
+  `(opt-function-blocks (__tl-project-field ,state func)))
 
 (defmacro (opt-pass-params [state : Expr]) : Expr
-  `(opt-function-params (opt-pass-func ,state)))
+  `(opt-function-params (__tl-project-field ,state func)))
 
 ;; The context a branch rewrite reads: the state's own while it is exact, else
 ;; one built only when the pass has a candidate to look at.
@@ -102189,7 +102183,7 @@
   `(compiler-opt-profile-pass-note
     (__tl-project-field ,state profile-state)
     ,pass
-    (opt-function-name (opt-pass-func ,state))
+    (opt-function-name (__tl-project-field ,state func))
     ,start-ms))
 
 (define (opt-pass-observed [state : OptPassState] [pass : String]) : OptPassState
@@ -102352,9 +102346,7 @@
   [func : ir.CompilerIrFunction]
   [state : OptPassState]) : OptPassState
   (begin
-    (opt-cfg-index-refresh-blocks!
-      state.ctx.index
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
+    (opt-cfg-index-refresh-blocks! state.ctx.index (opt-function-blocks func))
     (opt-pass-with-func func state)))
 
 ;; Rotation, with the speculative literal-edge normalization kept only if the
@@ -102435,7 +102427,9 @@
       (opt-pass-with-blocks
         (opt-const-length-rewrite-summary-blocks
           type-segment-bases
-          (opt-function-name (opt-pass-func s))
+          (let
+            [func (opt-pass-func s)]
+            (opt-function-name func))
           summaries
           (opt-const-divisor-rewrite-summary-blocks
             summaries
@@ -102586,7 +102580,10 @@
             (opt-len-eq-use-build
               (compiler-opt-global-shared-view summaries.global-cell.len-eq)
               summaries.global-cell.len-eq-clean
-              (ir.compiler-ir-symbol-id (opt-function-name (opt-pass-func s)))
+              (ir.compiler-ir-symbol-id
+                (let
+                  [func (opt-pass-func s)]
+                  (opt-function-name func)))
               gvn-frame
               (opt-pass-blocks s)
               ;; GAP-1's facts are NOT read here; see opt-arg-global-final-sweep
@@ -103415,7 +103412,7 @@
         frame
         blocks
         function-abi)
-      (if (<= frame (opt-function-frame (compiler-opt-global-shared-view func)))
+      (if (<= frame (opt-function-frame func))
         (OptFunctionPassResult.Result func false)
         (OptFunctionPassResult.Result
           (compiler-opt-debug-observe-function
@@ -129241,21 +129238,23 @@
     spans
     (compiler-optimize-default-level)))
 
-(define (opt-function-blocks [func : ir.CompilerIrFunction]) : ir.CompilerIrBlockList
+(define (opt-function-blocks [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrBlockList
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _) blocks]))
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      (owned_view.compiler-owned-reference-shared-view blocks)]))
 
-(define (opt-function-frame [func : ir.CompilerIrFunction]) : i64
+(define (opt-function-frame [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(ir.CompilerIrFunction.Function _ _ _ frame _ _) frame]))
+    [(ir.CompilerIrFunction.Function _ _ _ frame _ _) (deref frame)]))
 
-(define (opt-function-name [func : ir.CompilerIrFunction]) : i64
+(define (opt-function-name [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(ir.CompilerIrFunction.Function name _ _ _ _ _) name]))
+    [(ir.CompilerIrFunction.Function name _ _ _ _ _) (deref name)]))
 
-(define (opt-function-params [func : ir.CompilerIrFunction]) : ir.CompilerIrParamSeq
+(define (opt-function-params [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrParamSeq
   (match func
-    [(ir.CompilerIrFunction.Function _ params _ _ _ _) params]))
+    [(ir.CompilerIrFunction.Function _ params _ _ _ _)
+      (owned_view.compiler-owned-reference-shared-view params)]))
 
 (define (opt-function-with-frame-blocks
   [func : (& func ir.CompilerIrFunction)]
@@ -135371,8 +135370,9 @@
   (if opt-pure-call-inline-memory-on
     (opt-pure-call-sites-collect
       opt-pure-call-inline-memory
-      (opt-function-blocks
-        (owned_view.compiler-owned-reference-shared-view func))
+      (let
+        [func-2 (owned_view.compiler-owned-reference-shared-view func)]
+        (opt-function-blocks func-2))
       (OptPureCallTable.Nil))
     (OptPureCallTable.Nil)))
 
@@ -136062,7 +136062,9 @@
     [(option_i64.Some slot)
       (>=
         (ir.compiler-ir-block-list-instruction-count
-          (opt-function-blocks (opt-function-index-at-slot functions slot)))
+          (let
+            [func (opt-function-index-at-slot functions slot)]
+            (opt-function-blocks func)))
         16)]))
 
 (define (opt-loop-call-find-in-body
@@ -136636,11 +136638,7 @@
                 (or
                   (= head site)
                   (= head pre)
-                  (=
-                    head
-                    (opt-cfg-entry-label
-                      (opt-function-blocks
-                        (compiler-opt-global-shared-view func)))))
+                  (= head (opt-cfg-entry-label (opt-function-blocks func))))
                 (return (OptMaybeFunction.No)))
               (unless
                 (and
@@ -136908,16 +136906,12 @@
           [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
           (begin
             (opt-def-counts-params! (&mut defs) params)
-            (opt-def-counts-blocks!
-              (&mut defs)
-              (opt-function-blocks (compiler-opt-global-shared-view func)))
+            (opt-def-counts-blocks! (&mut defs) (opt-function-blocks func))
             (match (opt-loop-call-find
               functions
               memory
               defs
-              (opt-loop-call-addr-taken
-                frame
-                (opt-function-blocks (compiler-opt-global-shared-view func)))
+              (opt-loop-call-addr-taken frame (opt-function-blocks func))
               loops)
               [(OptLoopCallSite.No) func]
               [(OptLoopCallSite.Some pre site at)

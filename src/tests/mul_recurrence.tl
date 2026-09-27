@@ -181,7 +181,7 @@
             (opt.opt-verify-function (view.compiler-owned-shared-view out)))
           "rewriting retains a valid SSA control-flow graph"))
       (test.assert-i64-eq
-        (opt.opt-function-frame (view.compiler-owned-shared-view out))
+        (opt.opt-function-frame out)
         (if rewritten
           8
           7)

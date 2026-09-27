@@ -864,6 +864,11 @@ build_invariance_digest() {
 }
 
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
+# wide_struct_literal imports the generated #7921 declarations. Generate them
+# before the source digest, so a fresh checkout does not see tests/ change
+# during the comparison.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 SOURCE_INPUTS='src stdlib tests scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/lib-native-link.sh'
 # shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
 SOURCE_DIGEST=$(build_invariance_digest $SOURCE_INPUTS)
@@ -885,9 +890,6 @@ echo "[build-invariance] compiler construction: ${construction_seconds}s"
 CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
 RIGHT_DIR="$WORKDIR/compare/opt2-built"
-# wide_struct_literal imports the generated wide-struct declarations.
-awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
-mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 write_corpus "$CORPUS"
 rm -rf "$LEFT_DIR" "$RIGHT_DIR"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"

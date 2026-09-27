@@ -10,6 +10,7 @@
 (import compiler_semantic_index)
 (import compiler_typecheck_tests as tc_tests)
 (import compiler_ctfe)
+(import compiler_ctfe_tests)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
 (import compiler_intern as ci)
@@ -83,11 +84,11 @@
   [builtin-index : i64]
   [arity : i64]) : i64
   (if (= arity 1)
-    (compiler_ctfe.compiler-ctfe-call1-in-env
+    (compiler_ctfe_tests.compiler-ctfe-call1-in-env
       env
       (cbi.compiler-builtin-ctfe-ref builtin-index)
       (compiler-ctfe-source-parity-param-var env params 0))
-    (compiler_ctfe.compiler-ctfe-call2-in-env
+    (compiler_ctfe_tests.compiler-ctfe-call2-in-env
       env
       (cbi.compiler-builtin-ctfe-ref builtin-index)
       (compiler-ctfe-source-parity-param-var env params 0)
@@ -596,7 +597,7 @@
         1)]
     [(string.eq name "ctfe")
       (if (and
-        (= (compiler_ctfe.compiler-ctfe-self-test) 42)
+        (= (compiler_ctfe_tests.compiler-ctfe-self-test) 42)
         (compiler-ctfe-stdlib-source-parity-ok?))
         42
         1)]

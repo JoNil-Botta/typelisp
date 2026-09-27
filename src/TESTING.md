@@ -349,8 +349,9 @@ The package follows the standard layout: `typelisp build` resolves the default
 `src/*.tl` is reachable from `main.tl` except deliberate test/staging modules:
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
 modules with dedicated smokes, #2651/#2671/#2657), plus
-`compiler_backend_tests.tl`, `compiler_driver_smoke_tests.tl`,
-`compiler_lower_package_tests.tl`, `tlci_core_tests.tl`,
+`compiler_backend_tests.tl`, `compiler_ctfe_tests.tl`,
+`compiler_driver_smoke_tests.tl`, `compiler_lower_package_tests.tl`,
+`tlci_core_tests.tl`,
 `tlci_loader_tests.tl`, `compiler_tlci_native_image_tests.tl`, and
 `compiler_surface_tests.tl` (main-less test helpers; the last runs only through
 `tools/compiler-surface-ast-smoke.tl` with `--cfg compiler-surface-selftest`).

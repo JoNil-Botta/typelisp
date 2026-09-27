@@ -72289,7 +72289,6 @@
 ;; the literal step.
 (define (opt-bce-version-strided-derived
   [instrs : ir.CompilerIrInstrSeq]
-  [phi-count : i64]
   [last : i64]
   [defs : (& defs opt_i64_i64_map.Map)]
   [loop-label : i64]
@@ -72339,7 +72338,6 @@
 ;; negative scales still reject.
 (define (opt-bce-version-strided-side
   [instrs : ir.CompilerIrInstrSeq]
-  [phi-count : i64]
   [last : i64]
   [defs : (& defs opt_i64_i64_map.Map)]
   [loop-label : i64]
@@ -72355,7 +72353,6 @@
     [(OptBceCounterAffine.No)
       (opt-bce-version-strided-derived
         instrs
-        phi-count
         last
         defs
         loop-label
@@ -73873,7 +73870,6 @@
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match (opt-bce-version-strided-side
     (compiler-opt-global-shared-view instrs)
-    phi-count
     last
     defs
     loop-label
@@ -73989,7 +73985,6 @@
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match (opt-bce-version-strided-side
     (compiler-opt-global-shared-view instrs)
-    phi-count
     last
     defs
     loop-label

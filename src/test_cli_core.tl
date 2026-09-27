@@ -2905,11 +2905,6 @@
         normalized
         (tltest-package-tests-subdir-prefix
           (owned_view.compiler-owned-shared-view tests-prefix)
-          "diagnostics"))
-      (source_text.starts-with?
-        normalized
-        (tltest-package-tests-subdir-prefix
-          (owned_view.compiler-owned-shared-view tests-prefix)
           "format_golden"))
       (source_text.starts-with?
         normalized

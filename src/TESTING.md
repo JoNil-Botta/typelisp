@@ -390,9 +390,8 @@ sources they own and then drop them from production codegen.
 imported files provide runtime declarations but do not contribute their own
 tests to the harness.
 
-Package integration discovery skips the reserved
-`tests/diagnostics/**`, `tests/format_golden/**`, `tests/golden/**`,
-`tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
+Package integration discovery skips the reserved `tests/format_golden/**`,
+`tests/golden/**`, `tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
 `tests/safety/**`, `tests/spmd/**`, and `tests/tlci/**` fixture corpora. When
 `tests/integration/native.manifest` exists, package discovery also leaves
 `tests/integration/**` to the explicit integration runner. Dedicated

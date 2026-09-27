@@ -2433,13 +2433,13 @@
         5)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_empty"
           0)
         1)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_empty"
           0)
         1)
@@ -2451,13 +2451,13 @@
         1)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_string"
           0)
         8)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_string"
           0)
         8)
@@ -2469,13 +2469,13 @@
         8)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_fixup"
           0)
         16)
       (=
         (layout.compiler-object-layout-data-label-offset-from
-          (owned_view.compiler-owned-shared-view records)
+          records
           ".L_after_fixup"
           0)
         16)

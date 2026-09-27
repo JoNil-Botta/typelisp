@@ -1716,10 +1716,14 @@
     (ir.compiler-ir-representation-index-empty)
     metrics))
 
-(define (compiler-reg-function-var-types [func : ir.CompilerIrFunction]) : CompilerRegVarTypes
-  (compiler-reg-function-var-types-with-representations
-    func
-    (ir.compiler-ir-representation-index-empty)))
+(define (compiler-reg-function-var-types
+  [func : (& func ir.CompilerIrFunction)]) : CompilerRegVarTypes
+  (let
+    [func : ir.CompilerIrFunction
+      (owned_view.compiler-owned-reference-shared-view func)]
+    (compiler-reg-function-var-types-with-representations
+      func
+      (ir.compiler-ir-representation-index-empty))))
 
 (define (compiler-reg-move-list-contains?
   [moves : (& moves CompilerRegMoveSeq)]

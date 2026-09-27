@@ -1644,8 +1644,7 @@
       [count : i64 (compiler-reg-call-hole-round-values)]
       [vars : i64 (compiler-reg-call-hole-round-vars)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (reg.compiler-reg-global-shared-view func))]
+        (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
         (reg.compiler-reg-plan-function-scalar-cold-for-abi
           cabi.CompilerRegTargetAbi.Linux
@@ -1691,8 +1690,7 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-leaf-csr-split-function)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (reg.compiler-reg-global-shared-view func))]
+        (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
         (reg.compiler-reg-plan-function-scalar-cold-for-abi
           cabi.CompilerRegTargetAbi.Linux
@@ -1763,8 +1761,7 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-call-hole-csr-function)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (reg.compiler-reg-global-shared-view func))]
+        (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
         (reg.compiler-reg-plan-function-scalar-cold-for-abi
           cabi.CompilerRegTargetAbi.Linux
@@ -1940,8 +1937,7 @@
       [func : ir.CompilerIrFunction
         (compiler-reg-call-hole-cold-arms-function arms callee)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (reg.compiler-reg-global-shared-view func))]
+        (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
         (reg.compiler-reg-plan-function-scalar-cold-for-abi
           cabi.CompilerRegTargetAbi.Linux
@@ -2274,8 +2270,9 @@
                 (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r13))
               (reg.compiler-reg-assignment-table-empty))))]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (compiler-reg-loop-park-direct-function))]
+        (let
+          [func (compiler-reg-loop-park-direct-function)]
+          (reg.compiler-reg-function-var-types func))]
       [ineligible : live.CompilerLiveI64Set
         (live.compiler-live-set-insert (live.compiler-live-set-empty) 3)]
       [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
@@ -2556,8 +2553,9 @@
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [type-info : reg.CompilerRegVarTypes
-            (reg.compiler-reg-function-var-types
-              (compiler-reg-loop-park-direct-function))]
+            (let
+              [func (compiler-reg-loop-park-direct-function)]
+              (reg.compiler-reg-function-var-types func))]
           [pre : i64
             (compiler-reg-loop-park-block-index
               (ir.compiler-ir-global-shared-view seq)
@@ -2634,8 +2632,9 @@
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [type-info : reg.CompilerRegVarTypes
-            (reg.compiler-reg-function-var-types
-              (compiler-reg-loop-park-splice-function))]
+            (let
+              [func (compiler-reg-loop-park-splice-function)]
+              (reg.compiler-reg-function-var-types func))]
           [pre : i64
             (compiler-reg-loop-park-block-index
               (ir.compiler-ir-global-shared-view seq)
@@ -2788,8 +2787,7 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-loop-park-direct-function)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (reg.compiler-reg-global-shared-view func))]
+        (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
         (reg.CompilerRegPlan.Plan
           (reg.compiler-reg-assignments-prepend
@@ -2839,8 +2837,7 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-loop-park-direct-function)]
       [type-info : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (reg.compiler-reg-global-shared-view func))]
+        (reg.compiler-reg-function-var-types func)]
       [plan : reg.CompilerRegPlan
         (reg.CompilerRegPlan.Plan
           (reg.compiler-reg-assignments-prepend
@@ -7948,8 +7945,9 @@
   (define (compiler-reg-select-var-types-ok?) : bool
     (let
       [types : reg.CompilerRegVarTypes
-        (reg.compiler-reg-function-var-types
-          (compiler-reg-select-var-types-function))]
+        (let
+          [func (compiler-reg-select-var-types-function)]
+          (reg.compiler-reg-function-var-types func))]
       (and
         (match (reg.compiler-reg-var-types-lookup types 3)
           [(reg.CompilerRegMaybeType.Some (ast.AstType.I64)) true]
@@ -8667,9 +8665,7 @@
 (define (compiler-reg-early-scratch-model-for-test) : reg.CompilerRegEarlyScratchModel
   (let
     [func : ir.CompilerIrFunction (compiler-reg-early-scratch-test-function)]
-    [types : reg.CompilerRegVarTypes
-      (reg.compiler-reg-function-var-types
-        (ir.compiler-ir-global-shared-view func))]
+    [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
     (match (reg.compiler-reg-live-interval-selection
       (ir.compiler-ir-global-shared-view func)
       (live.compiler-live-analyze-function

@@ -35465,7 +35465,7 @@
       (not
         (compiler_optimize.opt-type-eq
           type-segment-bases
-          (compiler-backend-global-shared-view from-ty)
+          from-ty
           (compiler_ast_types.AstType.U64)))
       (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
       (not (string.eq src-reg "")))
@@ -35474,7 +35474,7 @@
       (if (not
         (compiler_optimize.opt-type-eq
           type-segment-bases
-          (compiler-backend-global-shared-view from-ty)
+          from-ty
           (compiler_ast_types.AstType.U64)))
         (let
           [src-tmp : String
@@ -35678,7 +35678,7 @@
   (if (and
     (compiler_optimize.opt-type-eq
       type-segment-bases
-      (compiler-backend-global-shared-view from-ty)
+      from-ty
       (compiler-backend-global-shared-view to-ty))
     (compiler-backend-value-same-home?
       backend-state
@@ -83209,7 +83209,7 @@
               [(not
                   (compiler_optimize.opt-type-eq
                     type-segment-bases
-                    (compiler-backend-global-shared-view ret-ty)
+                    ret-ty
                     indexed-ret))
                 (CompilerBackendObjectEligibility.Unsupported
                   (compiler-backend-object-unsupported-abi-category

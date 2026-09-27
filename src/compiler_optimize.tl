@@ -1452,105 +1452,51 @@
   [result-ty : (& result-ty ast.AstType)]) : ast.AstType
   (match op
     [(ir.CompilerIrBinOp.Eq)
-      (if (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view lhs-ty)
-        (ast.AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (ast.AstType.I64))
         (owned_view.compiler-owned-reference-shared-view rhs-ty)
         (if (and
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view lhs-ty)
-            (ast.AstType.F64))
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view rhs-ty)
-            (ast.AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (ast.AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (ast.AstType.F32)))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
     [(ir.CompilerIrBinOp.Ne)
-      (if (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view lhs-ty)
-        (ast.AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (ast.AstType.I64))
         (owned_view.compiler-owned-reference-shared-view rhs-ty)
         (if (and
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view lhs-ty)
-            (ast.AstType.F64))
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view rhs-ty)
-            (ast.AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (ast.AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (ast.AstType.F32)))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
     [(ir.CompilerIrBinOp.Lt)
-      (if (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view lhs-ty)
-        (ast.AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (ast.AstType.I64))
         (owned_view.compiler-owned-reference-shared-view rhs-ty)
         (if (and
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view lhs-ty)
-            (ast.AstType.F64))
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view rhs-ty)
-            (ast.AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (ast.AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (ast.AstType.F32)))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
     [(ir.CompilerIrBinOp.Le)
-      (if (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view lhs-ty)
-        (ast.AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (ast.AstType.I64))
         (owned_view.compiler-owned-reference-shared-view rhs-ty)
         (if (and
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view lhs-ty)
-            (ast.AstType.F64))
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view rhs-ty)
-            (ast.AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (ast.AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (ast.AstType.F32)))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
     [(ir.CompilerIrBinOp.Gt)
-      (if (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view lhs-ty)
-        (ast.AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (ast.AstType.I64))
         (owned_view.compiler-owned-reference-shared-view rhs-ty)
         (if (and
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view lhs-ty)
-            (ast.AstType.F64))
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view rhs-ty)
-            (ast.AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (ast.AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (ast.AstType.F32)))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
     [(ir.CompilerIrBinOp.Ge)
-      (if (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view lhs-ty)
-        (ast.AstType.I64))
+      (if (opt-type-eq type-segment-bases lhs-ty (ast.AstType.I64))
         (owned_view.compiler-owned-reference-shared-view rhs-ty)
         (if (and
-          (opt-type-eq
-            type-segment-bases
-            (compiler-opt-global-shared-view lhs-ty)
-            (ast.AstType.F64))
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view rhs-ty)
-            (ast.AstType.F32)))
+          (opt-type-eq type-segment-bases lhs-ty (ast.AstType.F64))
+          (opt-type-eq type-segment-bases rhs-ty (ast.AstType.F32)))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
     [(ir.CompilerIrBinOp.BitAnd) lhs-ty]
@@ -5756,11 +5702,7 @@
         (begin
           (set! (array-ref word-ty slot) ty)
           (set! (array-ref word-set slot) 1))]
-      [(opt-type-eq
-          type-segment-bases
-          (compiler-opt-global-array-element-shared-view word-ty slot)
-          ty)
-        unit]
+      [(opt-type-eq type-segment-bases (array-ref word-ty slot) ty) unit]
       [else
         (opt-aggregate-split-refuse!
           (&mut cand)
@@ -6131,9 +6073,7 @@
         (not
           (opt-type-eq
             type-segment-bases
-            (compiler-opt-global-array-element-shared-view
-              plan.cand-ty
-              dst-index)
+            (array-ref plan.cand-ty dst-index)
             (compiler-opt-global-array-element-shared-view
               plan.cand-ty
               src-index))))
@@ -7033,200 +6973,207 @@
 
 (define (opt-type-eq
   [type-segment-bases : i64]
-  [a : ast.AstType]
+  [a : (& a ast.AstType)]
   [b : ast.AstType]) : bool
-  (match a
-    [(ast.AstType.I64)
-      (match b
-        [(ast.AstType.I64) true]
-        [_ false])]
-    [(ast.AstType.I32)
-      (match b
-        [(ast.AstType.I32) true]
-        [_ false])]
-    [(ast.AstType.I16)
-      (match b
-        [(ast.AstType.I16) true]
-        [_ false])]
-    [(ast.AstType.I8)
-      (match b
-        [(ast.AstType.I8) true]
-        [_ false])]
-    [(ast.AstType.U64)
-      (match b
-        [(ast.AstType.U64) true]
-        [_ false])]
-    [(ast.AstType.U32)
-      (match b
-        [(ast.AstType.U32) true]
-        [_ false])]
-    [(ast.AstType.U16)
-      (match b
-        [(ast.AstType.U16) true]
-        [_ false])]
-    [(ast.AstType.U8)
-      (match b
-        [(ast.AstType.U8) true]
-        [_ false])]
-    [(ast.AstType.F64)
-      (match b
-        [(ast.AstType.F64) true]
-        [_ false])]
-    [(ast.AstType.F32)
-      (match b
-        [(ast.AstType.F32) true]
-        [_ false])]
-    [(ast.AstType.Bool)
-      (match b
-        [(ast.AstType.Bool) true]
-        [_ false])]
-    [(ast.AstType.Char)
-      (match b
-        [(ast.AstType.Char) true]
-        [_ false])]
-    [(ast.AstType.String)
-      (match b
-        [(ast.AstType.String) true]
-        [_ false])]
-    [(ast.AstType.Str)
-      (match b
-        [(ast.AstType.Str) true]
-        [_ false])]
-    [(ast.AstType.Bytes)
-      (match b
-        [(ast.AstType.Bytes) true]
-        [_ false])]
-    [(ast.AstType.Unit)
-      (match b
-        [(ast.AstType.Unit) true]
-        [_ false])]
-    [(ast.AstType.Never)
-      (match b
-        [(ast.AstType.Never) true]
-        [_ false])]
-    [(ast.AstType.Expr)
-      (match b
-        [(ast.AstType.Expr) true]
-        [_ false])]
-    [(ast.AstType.ExprList)
-      (match b
-        [(ast.AstType.ExprList) true]
-        [_ false])]
-    [(ast.AstType.Func a-params a-ret)
-      (match b
-        [(ast.AstType.Func b-params b-ret)
-          (and
+  (let
+    [a : ast.AstType (owned_view.compiler-owned-reference-shared-view a)]
+    (match a
+      [(ast.AstType.I64)
+        (match b
+          [(ast.AstType.I64) true]
+          [_ false])]
+      [(ast.AstType.I32)
+        (match b
+          [(ast.AstType.I32) true]
+          [_ false])]
+      [(ast.AstType.I16)
+        (match b
+          [(ast.AstType.I16) true]
+          [_ false])]
+      [(ast.AstType.I8)
+        (match b
+          [(ast.AstType.I8) true]
+          [_ false])]
+      [(ast.AstType.U64)
+        (match b
+          [(ast.AstType.U64) true]
+          [_ false])]
+      [(ast.AstType.U32)
+        (match b
+          [(ast.AstType.U32) true]
+          [_ false])]
+      [(ast.AstType.U16)
+        (match b
+          [(ast.AstType.U16) true]
+          [_ false])]
+      [(ast.AstType.U8)
+        (match b
+          [(ast.AstType.U8) true]
+          [_ false])]
+      [(ast.AstType.F64)
+        (match b
+          [(ast.AstType.F64) true]
+          [_ false])]
+      [(ast.AstType.F32)
+        (match b
+          [(ast.AstType.F32) true]
+          [_ false])]
+      [(ast.AstType.Bool)
+        (match b
+          [(ast.AstType.Bool) true]
+          [_ false])]
+      [(ast.AstType.Char)
+        (match b
+          [(ast.AstType.Char) true]
+          [_ false])]
+      [(ast.AstType.String)
+        (match b
+          [(ast.AstType.String) true]
+          [_ false])]
+      [(ast.AstType.Str)
+        (match b
+          [(ast.AstType.Str) true]
+          [_ false])]
+      [(ast.AstType.Bytes)
+        (match b
+          [(ast.AstType.Bytes) true]
+          [_ false])]
+      [(ast.AstType.Unit)
+        (match b
+          [(ast.AstType.Unit) true]
+          [_ false])]
+      [(ast.AstType.Never)
+        (match b
+          [(ast.AstType.Never) true]
+          [_ false])]
+      [(ast.AstType.Expr)
+        (match b
+          [(ast.AstType.Expr) true]
+          [_ false])]
+      [(ast.AstType.ExprList)
+        (match b
+          [(ast.AstType.ExprList) true]
+          [_ false])]
+      [(ast.AstType.Func a-params a-ret)
+        (match b
+          [(ast.AstType.Func b-params b-ret)
+            (and
+              (opt-type-list-eq
+                type-segment-bases
+                (deref a-params)
+                (deref b-params))
+              (opt-type-ids-eq? type-segment-bases a-ret b-ret))]
+          [_ false])]
+      [(ast.AstType.CFunc a-signature a-mode)
+        (match b
+          [(ast.AstType.CFunc b-signature b-mode)
+            (and
+              (ast.ast-c-function-mode-eq? a-mode b-mode)
+              (opt-type-ids-eq? type-segment-bases a-signature b-signature))]
+          [_ false])]
+      [(ast.AstType.Tuple a-items)
+        (match b
+          [(ast.AstType.Tuple b-items)
             (opt-type-list-eq
               type-segment-bases
-              (deref a-params)
-              (deref b-params))
-            (opt-type-ids-eq? type-segment-bases a-ret b-ret))]
-        [_ false])]
-    [(ast.AstType.CFunc a-signature a-mode)
-      (match b
-        [(ast.AstType.CFunc b-signature b-mode)
-          (and
-            (ast.ast-c-function-mode-eq? a-mode b-mode)
-            (opt-type-ids-eq? type-segment-bases a-signature b-signature))]
-        [_ false])]
-    [(ast.AstType.Tuple a-items)
-      (match b
-        [(ast.AstType.Tuple b-items)
-          (opt-type-list-eq type-segment-bases (deref a-items) (deref b-items))]
-        [_ false])]
-    [(ast.AstType.Array a-item a-len)
-      (match b
-        [(ast.AstType.Array b-item b-len)
-          (and
-            (= a-len b-len)
-            (opt-type-ids-eq? type-segment-bases a-item b-item))]
-        [_ false])]
-    [(ast.AstType.DynArray a-item)
-      (match b
-        [(ast.AstType.DynArray b-item)
-          (opt-type-ids-eq? type-segment-bases a-item b-item)]
-        [_ false])]
-    [(ast.AstType.Slice a-item)
-      (match b
-        [(ast.AstType.Slice b-item)
-          (opt-type-ids-eq? type-segment-bases a-item b-item)]
-        [_ false])]
-    [(ast.AstType.Box a-item)
-      (match b
-        [(ast.AstType.Box b-item)
-          (opt-type-ids-eq? type-segment-bases a-item b-item)]
-        [_ false])]
-    [(ast.AstType.Ptr a-item)
-      (match b
-        [(ast.AstType.Ptr b-item)
-          (opt-type-ids-eq? type-segment-bases a-item b-item)]
-        [_ false])]
-    [(ast.AstType.MutPtr a-item)
-      (match b
-        [(ast.AstType.MutPtr b-item)
-          (opt-type-ids-eq? type-segment-bases a-item b-item)]
-        [_ false])]
-    [(ast.AstType.Ref a-region a-inner)
-      (match b
-        [(ast.AstType.Ref b-region b-inner)
-          (and
-            (= a-region b-region)
-            (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
-        [_ false])]
-    [(ast.AstType.MutRef a-region a-inner)
-      (match b
-        [(ast.AstType.MutRef b-region b-inner)
-          (and
-            (= a-region b-region)
-            (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
-        [_ false])]
-    [(ast.AstType.Region a-region a-inner)
-      (match b
-        [(ast.AstType.Region b-region b-inner)
-          (and
-            (= a-region b-region)
-            (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
-        [_ false])]
-    [(ast.AstType.Enum a-name)
-      (match b
-        [(ast.AstType.Enum b-name) (= a-name b-name)]
-        [_ false])]
-    [(ast.AstType.EnumArgs a-name a-lifetimes)
-      (match b
-        [(ast.AstType.EnumArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(ast.AstType.Struct a-name)
-      (match b
-        [(ast.AstType.Struct b-name) (= a-name b-name)]
-        [_ false])]
-    [(ast.AstType.StructArgs a-name a-lifetimes)
-      (match b
-        [(ast.AstType.StructArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]
-    [(ast.AstType.Var a-name)
-      (match b
-        [(ast.AstType.Var b-name) (= a-name b-name)]
-        [_ false])]
-    [(ast.AstType.VarArgs a-name a-lifetimes)
-      (match b
-        [(ast.AstType.VarArgs b-name b-lifetimes)
-          (and
-            (= a-name b-name)
-            (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
-        [_ false])]))
+              (deref a-items)
+              (deref b-items))]
+          [_ false])]
+      [(ast.AstType.Array a-item a-len)
+        (match b
+          [(ast.AstType.Array b-item b-len)
+            (and
+              (= a-len b-len)
+              (opt-type-ids-eq? type-segment-bases a-item b-item))]
+          [_ false])]
+      [(ast.AstType.DynArray a-item)
+        (match b
+          [(ast.AstType.DynArray b-item)
+            (opt-type-ids-eq? type-segment-bases a-item b-item)]
+          [_ false])]
+      [(ast.AstType.Slice a-item)
+        (match b
+          [(ast.AstType.Slice b-item)
+            (opt-type-ids-eq? type-segment-bases a-item b-item)]
+          [_ false])]
+      [(ast.AstType.Box a-item)
+        (match b
+          [(ast.AstType.Box b-item)
+            (opt-type-ids-eq? type-segment-bases a-item b-item)]
+          [_ false])]
+      [(ast.AstType.Ptr a-item)
+        (match b
+          [(ast.AstType.Ptr b-item)
+            (opt-type-ids-eq? type-segment-bases a-item b-item)]
+          [_ false])]
+      [(ast.AstType.MutPtr a-item)
+        (match b
+          [(ast.AstType.MutPtr b-item)
+            (opt-type-ids-eq? type-segment-bases a-item b-item)]
+          [_ false])]
+      [(ast.AstType.Ref a-region a-inner)
+        (match b
+          [(ast.AstType.Ref b-region b-inner)
+            (and
+              (= a-region b-region)
+              (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
+          [_ false])]
+      [(ast.AstType.MutRef a-region a-inner)
+        (match b
+          [(ast.AstType.MutRef b-region b-inner)
+            (and
+              (= a-region b-region)
+              (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
+          [_ false])]
+      [(ast.AstType.Region a-region a-inner)
+        (match b
+          [(ast.AstType.Region b-region b-inner)
+            (and
+              (= a-region b-region)
+              (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
+          [_ false])]
+      [(ast.AstType.Enum a-name)
+        (match b
+          [(ast.AstType.Enum b-name) (= a-name b-name)]
+          [_ false])]
+      [(ast.AstType.EnumArgs a-name a-lifetimes)
+        (match b
+          [(ast.AstType.EnumArgs b-name b-lifetimes)
+            (and
+              (= a-name b-name)
+              (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
+          [_ false])]
+      [(ast.AstType.Struct a-name)
+        (match b
+          [(ast.AstType.Struct b-name) (= a-name b-name)]
+          [_ false])]
+      [(ast.AstType.StructArgs a-name a-lifetimes)
+        (match b
+          [(ast.AstType.StructArgs b-name b-lifetimes)
+            (and
+              (= a-name b-name)
+              (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
+          [_ false])]
+      [(ast.AstType.Var a-name)
+        (match b
+          [(ast.AstType.Var b-name) (= a-name b-name)]
+          [_ false])]
+      [(ast.AstType.VarArgs a-name a-lifetimes)
+        (match b
+          [(ast.AstType.VarArgs b-name b-lifetimes)
+            (and
+              (= a-name b-name)
+              (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
+          [_ false])])))
 
 ;; `opt-type-eq` of the types two type ids name.
 (define (opt-type-ids-eq? [type-segment-bases : i64] [a : i64] [b : i64]) : bool
-  (opt-type-eq
-    type-segment-bases
-    (ast.ast-type-segment-bases-get type-segment-bases a)
-    (ast.ast-type-segment-bases-get type-segment-bases b)))
+  (let
+    [a-arg (ast.ast-type-segment-bases-get type-segment-bases a)]
+    (opt-type-eq
+      type-segment-bases
+      a-arg
+      (ast.ast-type-segment-bases-get type-segment-bases b))))
 
 (define (opt-symbol-hash [symbol : i64]) : i64
   (let
@@ -9539,16 +9486,10 @@
       (or
         (and
           (= (deref value) 1)
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view ty)
-            (ast.AstType.I64)))
+          (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
         (and
           (= (deref value) 8)
-          (opt-type-eq
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view ty)
-            (ast.AstType.U8))))]
+          (opt-type-eq type-segment-bases ty (ast.AstType.U8))))]
     [_ false]))
 
 (define (opt-bounds-update-facts
@@ -9728,14 +9669,8 @@
           (opt-object-length-invalidate-var ptrs dst)]
         [lengths3 : OptObjectLengthFact
           (if (and
-            (opt-type-eq
-              type-segment-bases
-              (compiler-opt-global-shared-view from-ty)
-              (ast.AstType.I64))
-            (opt-type-eq
-              type-segment-bases
-              (compiler-opt-global-shared-view to-ty)
-              (ast.AstType.U64)))
+            (opt-type-eq type-segment-bases from-ty (ast.AstType.I64))
+            (opt-type-eq type-segment-bases to-ty (ast.AstType.U64)))
             (match (compiler-opt-global-shared-view src)
               [(ir.CompilerIrValue.Var length-var)
                 (match (opt-object-length-lookup lengths2 length-var)
@@ -40471,11 +40406,7 @@
   (if (or
     (not (= dst cond-var))
     (not (= (opt-bool-branch-use-count uses dst) 1))
-    (not
-      (opt-type-eq
-        type-segment-bases
-        (owned_view.compiler-owned-reference-shared-view ty)
-        (ast.AstType.Bool)))
+    (not (opt-type-eq type-segment-bases ty (ast.AstType.Bool)))
     (= merge-label true-label)
     (= merge-label false-label))
     false
@@ -40662,11 +40593,7 @@
   (if (or
     (not (= dst cond-var))
     (not (= (opt-bool-branch-use-count uses dst) 1))
-    (not
-      (opt-type-eq
-        type-segment-bases
-        (owned_view.compiler-owned-reference-shared-view ty)
-        (ast.AstType.Bool)))
+    (not (opt-type-eq type-segment-bases ty (ast.AstType.Bool)))
     (= merge-label true-label)
     (= merge-label false-label)
     (opt-bool-branch-target-has-phi? blocks true-label)
@@ -41670,7 +41597,7 @@
       (not
         (opt-type-eq
           type-segment-bases
-          (compiler-opt-global-shared-view phi-ty)
+          phi-ty
           (compiler-opt-global-shared-view cmp-ty)))
       (not (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty)))
       (= true-label merge-label)
@@ -41856,7 +41783,7 @@
                   (not
                     (opt-type-eq
                       type-segment-bases
-                      (owned_view.compiler-owned-reference-shared-view phi-ty)
+                      phi-ty
                       (compiler-opt-global-shared-view cmp-ty)))
                   (not
                     (or phi-left (opt-phi-cmp-fold-value-is-var? rhs phi-var)))
@@ -51153,11 +51080,7 @@
   [ty : ast.AstType]) : OptDomCmpLookup
   (match fact
     [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value _)
-      (if (not
-        (opt-type-eq
-          type-segment-bases
-          (compiler-opt-global-shared-view ty)
-          fact-ty))
+      (if (not (opt-type-eq type-segment-bases ty fact-ty))
         (OptDomCmpLookup.No)
         (cond
           [(and
@@ -51285,11 +51208,7 @@
   [ty : (& ty ast.AstType)]) : OptDomCmpBelow
   (match (owned_view.compiler-owned-reference-shared-view fact)
     [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value _)
-      (if (not
-        (opt-type-eq
-          type-segment-bases
-          (owned_view.compiler-owned-reference-shared-view ty)
-          fact-ty))
+      (if (not (opt-type-eq type-segment-bases ty fact-ty))
         (OptDomCmpBelow.No)
         (cond
           [(opt-value-eq
@@ -51569,14 +51488,8 @@
   [to : ast.AstType]) : bool
   (or
     (and
-      (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view from)
-        (ast.AstType.I64))
-      (opt-type-eq
-        type-segment-bases
-        (compiler-opt-global-shared-view to)
-        (ast.AstType.U64)))
+      (opt-type-eq type-segment-bases from (ast.AstType.I64))
+      (opt-type-eq type-segment-bases to (ast.AstType.U64)))
     (and
       (opt-type-eq type-segment-bases from (ast.AstType.U64))
       (opt-type-eq type-segment-bases to (ast.AstType.I64)))))
@@ -55733,11 +55646,7 @@
   [lhs : (& lhs ir.CompilerIrValue)]
   [rhs : (& rhs ir.CompilerIrValue)]
   [ty : ast.AstType]) : OptDomCmpLookup
-  (if (not
-    (opt-type-eq
-      env.type-segment-bases
-      (compiler-opt-global-shared-view ty)
-      (ast.AstType.I64)))
+  (if (not (opt-type-eq env.type-segment-bases ty (ast.AstType.I64)))
     (OptDomCmpLookup.No)
     (match (opt-dom-cmp-var-lit lhs rhs)
       [(OptDomCmpVarLit.No) (OptDomCmpLookup.No)]
@@ -90132,9 +90041,7 @@
                                   idx))
                               (opt-type-eq
                                 type-segment-bases
-                                (compiler-opt-global-array-element-shared-view
-                                  derived-ty
-                                  b)
+                                (array-ref derived-ty b)
                                 (compiler-opt-global-shared-view elem-ty)))]
                           [derived : i64
                             (if reuse?
@@ -97189,7 +97096,7 @@
                             [bool-ty? : bool
                               (opt-type-eq
                                 type-segment-bases
-                                (compiler-opt-global-shared-view ty)
+                                ty
                                 (ast.AstType.Bool))]
                             (begin
                               (when
@@ -131384,12 +131291,15 @@
         (opt-value-eq
           (opt-load-entry-value (compiler-opt-global-shared-view entry))
           (compiler-opt-global-shared-view value))
-        (opt-type-eq
-          type-segment-bases
-          (let
-            [key (opt-load-entry-key entry)]
-            (opt-load-key-type key))
-          (compiler-opt-global-shared-view ty)))
+        (let
+          [a
+            (let
+              [key (opt-load-entry-key entry)]
+              (opt-load-key-type key))]
+          (opt-type-eq
+            type-segment-bases
+            a
+            (compiler-opt-global-shared-view ty))))
         true
         (opt-load-table-has-value-with-type?
           type-segment-bases
@@ -134322,9 +134232,7 @@
             end
             ity)
           (begin
-            (unless
-              (opt-type-eq 0 (compiler-opt-global-shared-view ty) ity)
-              (return (OptLoopCallMaybeSum.No)))
+            (unless (opt-type-eq 0 ty ity) (return (OptLoopCallMaybeSum.No)))
             (set! compare dst)
             (set! counter iv)
             (set! bound end))]
@@ -134342,9 +134250,7 @@
             aty)
           (begin
             (unless
-              (and
-                (opt-type-eq 0 (compiler-opt-global-shared-view ty) aty)
-                (or (= lhs call) (= rhs call)))
+              (and (opt-type-eq 0 ty aty) (or (= lhs call) (= rhs call)))
               (return (OptLoopCallMaybeSum.No)))
             (set! sum dst)
             (set!
@@ -134356,10 +134262,7 @@
       (match (ir.compiler-ir-instr-seq-ref instrs (+ at 2))
         [(ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var src) aty)
           (unless
-            (and
-              (= dst acc)
-              (= src sum)
-              (opt-type-eq 0 (compiler-opt-global-shared-view ty) aty))
+            (and (= dst acc) (= src sum) (opt-type-eq 0 ty aty))
             (return (OptLoopCallMaybeSum.No)))]
         [_ (return (OptLoopCallMaybeSum.No))])
       (when
@@ -134369,7 +134272,7 @@
             (begin
               (unless
                 (and
-                  (opt-type-eq 0 (compiler-opt-global-shared-view ty) sty)
+                  (opt-type-eq 0 ty sty)
                   (opt-pure-call-single-def? defs dst))
                 (return (OptLoopCallMaybeSum.No)))
               (set! step dst))]
@@ -134385,7 +134288,7 @@
             (unless
               (and
                 (= iv counter)
-                (opt-type-eq 0 (compiler-opt-global-shared-view ty) ity)
+                (opt-type-eq 0 ty ity)
                 (if (< step 0)
                   (match increment
                     [(ir.CompilerIrValue.I64 1) true]
@@ -134397,10 +134300,7 @@
       (match (ir.compiler-ir-instr-seq-ref instrs (- instrs.len 2))
         [(ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var src) ity)
           (unless
-            (and
-              (= dst counter)
-              (= src next)
-              (opt-type-eq 0 (compiler-opt-global-shared-view ty) ity))
+            (and (= dst counter) (= src next) (opt-type-eq 0 ty ity))
             (return (OptLoopCallMaybeSum.No)))]
         [_ (return (OptLoopCallMaybeSum.No))])
       ;; Distinct state and temporary names, including the optional literal.

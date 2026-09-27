@@ -36922,7 +36922,7 @@
                   args-code
                   requested-index-param
                   ret
-                  (lower-global-shared-view origin))
+                  origin)
                   [(ResultLowerImportedSpmdSpecialization.Err message)
                     (LowerMaybeSpmdCall.Err message)]
                   [(ResultLowerImportedSpmdSpecialization.Ok specialization)
@@ -58724,8 +58724,10 @@
   [args-code : String]
   [requested-index-param : i64]
   [ret : ast.AstType]
-  [origin : ast.AstExpr]) : ResultLowerImportedSpmdSpecialization
+  [origin : (& origin ast.AstExpr)]) : ResultLowerImportedSpmdSpecialization
   (let
+    [origin : ast.AstExpr
+      (owned_view.compiler-owned-reference-shared-view origin)]
     [canonical-name : String
       (ci.intern-compat-state-id-str interns canonical-name-id)]
     [backend-name : String (lower-imported-spmd-backend-name backend)]
@@ -60607,7 +60609,7 @@
                         args-code
                         requested-index-param
                         ret
-                        (lower-global-shared-view expr))
+                        expr)
                         [(ResultLowerImportedSpmdSpecialization.Err message)
                           (ResultLowerExpr.Err message)]
                         [(ResultLowerImportedSpmdSpecialization.Ok

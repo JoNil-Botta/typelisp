@@ -66448,7 +66448,7 @@
         (if (= found dst)
           (if (opt.opt-type-eq
             (ast.ast-node-pool-reader-type-segment-bases)
-            (opt.compiler-opt-global-shared-view ty)
+            ty
             (ast.AstType.I64))
             1
             (if (opt.opt-type-eq

@@ -9631,7 +9631,7 @@
           "v"
           0
           (ast.AstType.I64)
-          (owned_view.compiler-owned-shared-view origin))
+          origin)
           [(lower.ResultLowerImportedSpmdSpecialization.Ok selected)
             (and
               (string.eq
@@ -9654,7 +9654,7 @@
           "v"
           0
           (ast.AstType.I64)
-          (owned_view.compiler-owned-shared-view origin))
+          origin)
           [(lower.ResultLowerImportedSpmdSpecialization.Ok _) false]
           [(lower.ResultLowerImportedSpmdSpecialization.Err diag)
             (let
@@ -9673,7 +9673,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           signature-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9687,7 +9687,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9701,7 +9701,7 @@
             "v"
             -1
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9715,7 +9715,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           abi-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select
@@ -9729,7 +9729,7 @@
             "v"
             0
             (ast.AstType.I64)
-            (owned_view.compiler-owned-shared-view origin))
+            origin)
           duplicate-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (lower.lower-imported-spmd-select

@@ -95,10 +95,6 @@
   (slots (__tl_dyn-array LintPolicyAssignment))
   (len i64))
 
-(define (lint-policy-assignments-count
-  [items : (& items LintPolicyAssignments)]) : i64
-  items.len)
-
 (define (lint-policy-assignments-ref
   [items : (& items LintPolicyAssignments)]
   [index : i64]) : LintPolicyAssignment

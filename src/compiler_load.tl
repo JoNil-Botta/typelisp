@@ -2720,28 +2720,6 @@
     suffix
     disk-path))
 
-(define (compiler-load-session-state-embedded-stdlib-module-id?
-  [state : CompilerLoadSessionState]
-  [module : String]) : bool
-  (let
-    [ids : sym_i64_env.SymI64Env
-      (compiler-load-session-state-embedded-module-ids-shared-view
-        (owned_view.compiler-owned-shared-view state))]
-    (if (array-ref state.intern-state-ready 0)
-      (match (ci.intern-compat-state-lookup
-        (& (array-ref state.intern-state 0))
-        (& module))
-        [(ci.InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
-        [(ci.InternLookupMissing) false])
-      (match (ci.intern-lookup-content module)
-        [(ci.InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
-        [(ci.InternLookupMissing) false]))))
-
-(define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
-  (compiler-load-session-state-embedded-stdlib-module-id?
-    (compiler-load-active-session-state-shared-view)
-    module))
-
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (compiler-load-session-state-note-embedded-stdlib-source!
     (compiler-load-active-session-state-shared-view)))
@@ -3210,10 +3188,6 @@
 (define (compiler-load-session-state-lazy-import-mode-enabled?
   [state : CompilerLoadSessionState]) : bool
   (array-ref state.cache-enabled 2))
-
-(define (compiler-load-session-lazy-import-mode-enabled?) : bool
-  (compiler-load-session-state-lazy-import-mode-enabled?
-    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-session-state-lazy-import-mode-set-enabled!
   [state : CompilerLoadSessionState]
@@ -11737,14 +11711,6 @@
       (string.substring decl-path base-len (- decl-len base-len))
       decl-path)))
 
-(define (compiler-load-package-module-id
-  [entry-path : String]
-  [decl-path : String]) : String
-  (let
-    [entry-path : String (compiler-load-normalize-path entry-path)]
-    [decl-path : String (compiler-load-normalize-path decl-path)]
-    (compiler-load-package-module-id-normalized entry-path decl-path)))
-
 (define (compiler-load-package-module-logical-name-normalized
   [entry-path : String]
   [decl-path : String]
@@ -11901,20 +11867,6 @@
         entry-path
         decl-path
         (compiler-load-package-module-key module source-name)))))
-
-(define (compiler-load-package-decl-logical-name
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [source-name : String]) : String
-  (let
-    [entry-path : String (compiler-load-normalize-path entry-path)]
-    [decl-path : String (compiler-load-normalize-path decl-path)]
-    (compiler-load-package-decl-logical-name-normalized
-      entry-path
-      decl-path
-      module
-      source-name)))
 
 (define (compiler-load-param-type-list [params : ast.AstParamList]) : ast.AstTypeList
   (let
@@ -12558,10 +12510,6 @@
               (set! cursor rest))]))
       module-id)))
 
-(define (compiler-load-session-state-dependency-surface-decl-count
-  [state : CompilerLoadSessionState]) : i64
-  (array-ref state.dependency-surfaces.surface-decl-count 0))
-
 (define (compiler-load-session-state-dependency-surface-provenance?
   [state : CompilerLoadSessionState]
   [provenance-id : i64]) : bool
@@ -12605,10 +12553,6 @@
   [state : CompilerLoadSessionState]
   [count : i64]) : unit
   (set! (array-ref state.dependency-surfaces.typecheck-skip-count 0) count))
-
-(define (compiler-load-dependency-surface-decl-count) : i64
-  (compiler-load-session-state-dependency-surface-decl-count
-    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-dependency-surface-import
   [resolved : String]

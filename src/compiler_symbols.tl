@@ -1133,17 +1133,6 @@
         (compiler-symbol-handle-index handle)
         (compiler-symbol-root-module-id)))))
 
-(define (compiler-symbol-owner-storage-handle-from-nonroot?
-  [owner-module-ids : (& owner-module-ids (__tl_dyn-array i64))]
-  [decl-count : i64]
-  [handle : i64]) : bool
-  (let
-    [index : i64 (compiler-symbol-handle-index handle)]
-    (and
-      (>= index 0)
-      (< index decl-count)
-      (not (compiler-symbol-root-module-id? (array-ref owner-module-ids index))))))
-
 (define (compiler-symbols-add-root-macro-id
   [symbols : CompilerSymbols]
   [name-id : i64]

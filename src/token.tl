@@ -254,9 +254,6 @@
 (define (spanned-token-col [s : (& s SpannedToken)]) : i64
   (cast s.col : i64))
 
-(define (spanned-token-token [s : SpannedToken]) : Token
-  (spanned-token-tok s))
-
 ;; Parser cursors borrow the stream-owned token instead of materializing a
 ;; representation copy. Callers match the borrow and copy only literal text
 ;; that crosses into the parsed AST.

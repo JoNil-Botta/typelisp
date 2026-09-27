@@ -327,15 +327,6 @@
   (compiler-driver-advisories-for-job
     (compiler_typecheck_core.tc-serial-job-state)))
 
-(define (compiler-driver-state-add-advisory!
-  [state : CompilerDriverState]
-  [phase : compiler_diagnostic.CompilerAdvisoryPhase]
-  [diagnostic : (& diagnostic compiler_diagnostic.CompilerDiagnostic)]) : bool
-  (compiler_diagnostic.compiler-advisory-sink-push!
-    (compiler-driver-state-advisory-sink state)
-    phase
-    diagnostic))
-
 (define (compiler-driver-state-reset-typecheck! [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-job-state-reset-file-state!
     (compiler-driver-state-typecheck state)))
@@ -2503,12 +2494,6 @@
       typecheck-state)
     (compiler_lower.lower-scratch-arena-release!)))
 
-;; Serial compatibility adapter. State-owned compiler entrypoints carry their
-;; typecheck job through ResultCompilerDriverLowered and use the explicit form.
-(define (compiler-driver-release-typecheck-caches-after-lower!) : unit
-  (compiler-driver-release-typecheck-caches-after-lower-for-job!
-    (compiler_typecheck_core.tc-serial-job-state)))
-
 ;; Package builds may run TLci, direct-object, and doctest passes after an
 ;; assembly emit while keeping the loaded AST alive. A full file-state reset
 ;; would invalidate those loaded pools, but the lowered IR has already been
@@ -3939,14 +3924,6 @@
       stdlib-roots
       cfgs
       profile-state)))
-
-(define (compiler-driver-load-runtime-prelude
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
-  (compiler-driver-load-runtime-prelude-and-profile-state
-    stdlib-roots
-    cfgs
-    (profile_state.compiler-profile-state-new)))
 
 (define (compiler-driver-load-file-with-runtime-and-profile-state
   [input-path : String]

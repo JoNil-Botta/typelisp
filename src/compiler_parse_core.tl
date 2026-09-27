@@ -1720,22 +1720,6 @@
       (ptr->int (ptr-cast (__tl_array-data ,items) : (Ptr u8))))
     : i64))
 
-(define (compiler-parse-intern-owner-data-addr
-  [items : (__tl_dyn-array ci.InternCompatState)]) : i64
-  (if (= (array-length items) 0)
-    0
-    (cast
-      (unsafe
-        (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
-      : i64)))
-
-(define (compiler-parse-dispatch-cache-handle-data-addr
-  [items : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))))
-    : i64))
-
 (define (compiler-parse-state-new-from-owner
   [owner : (__tl_dyn-array ci.InternCompatState)]) : CompilerParseState
   (let

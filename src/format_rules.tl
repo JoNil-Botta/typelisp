@@ -96,16 +96,6 @@
       (format-rules-top-form-family-list (deref items))]
     [_ ""]))
 
-(define (format-rules-adjacent-top-forms?
-  [previous : cst.FormatCst]
-  [node : cst.FormatCst]) : bool
-  (let
-    [previous-family : String (format-rules-top-form-family previous)]
-    [node-family : String (format-rules-top-form-family node)]
-    (and
-      (> (string.string-length previous-family) 0)
-      (string.eq previous-family node-family))))
-
 (define (format-rules-list-append
   [left : cst.FormatCstList]
   [right : cst.FormatCstList]) : cst.FormatCstList

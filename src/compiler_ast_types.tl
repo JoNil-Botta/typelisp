@@ -6481,9 +6481,6 @@
 (defmacro (ast-child-unit [_ignored : Expr ...]) : Expr
   `unit)
 
-(defmacro (ast-child-false [_ignored : Expr ...]) : Expr
-  `false)
-
 (defmacro (ast-fold-1
   [combine : Expr]
   [seed : Expr]
@@ -6878,23 +6875,6 @@
     ,expr
     ast-fold-seq
     unit
-    ,on-expr
-    ,on-type-id
-    ,on-type
-    ,on-pattern
-    ,@contexts))
-
-(defmacro (ast-expr-any-child?
-  [expr : Expr]
-  [on-expr : Expr]
-  [on-type-id : Expr]
-  [on-type : Expr]
-  [on-pattern : Expr]
-  [contexts : Expr ...]) : bool
-  `(ast-expr-fold-children
-    ,expr
-    ast-fold-or
-    false
     ,on-expr
     ,on-type-id
     ,on-type
@@ -10311,12 +10291,6 @@
     ;; pass before each compaction.
     ;; Pool ids are bounded below i32::MAX by the 4096-segment pool ceiling.
     (__tl_make-array i32 cap)))
-
-(define (ast-compaction-remap-source-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
-  remap.source-pools)
-
-(define (ast-compaction-remap-dest-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
-  remap.dest-pools)
 
 (define (ast-compaction-remap-source-type-get
   [remap : (& remap AstProgramCompactionRemap)]

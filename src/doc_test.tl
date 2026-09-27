@@ -1793,21 +1793,6 @@
           stdlib-roots
           cfgs))]))
 
-(define (doc-test-typecheck-package-source-with-roots-and-cfg
-  [path : String]
-  [source : String]
-  [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
-  (doc-test-typecheck-package-extraction-with-roots-and-cfg
-    path
-    (doc-test-extract-source source)
-    stdlib-roots
-    manifest-dir
-    deps
-    cfgs))
-
 (define (doc-test-typecheck-package-extraction-with-roots-and-cfg
   [path : String]
   [extraction : DocTestExtraction]

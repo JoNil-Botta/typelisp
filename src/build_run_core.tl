@@ -106,9 +106,6 @@
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or (string.eq value "0") (string.eq value "1") (string.eq value "2")))
 
-(define (source-tool-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
 (define (source-tool-args-append
   [args : process.ProcessStringList]
   [value : String]) : process.ProcessStringList

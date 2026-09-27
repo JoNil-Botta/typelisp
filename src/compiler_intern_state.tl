@@ -645,20 +645,6 @@
                         (- encoded-index 1))))
                   : i64)))))))))
 
-;; Total mixed-id adapter for callers that have not already classified the raw
-;; identity. Hot compiler name paths use the proven form above so they do not
-;; repeat the structural-range branch for every lookup.
-(define (intern-structural-session-record-kind-or
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]
-  [fallback : i64]) : i64
-  (if (< raw (ci.intern-structural-key-base))
-    fallback
-    (intern-structural-session-record-kind-for-structural-or
-      handle
-      raw
-      fallback)))
-
 ;; Measurement/test boundary: report exact retained records by structural kind
 ;; without exposing table storage or making callers classify raw handles.
 (define (intern-structural-session-kind-count
@@ -826,14 +812,6 @@
     [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
     [(InternMaybeFreshLocalRecord.No) fallback]))
 
-(define (intern-structural-session-fresh-local-ordinal-or
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]
-  [fallback : i64]) : i64
-  (match (intern-structural-session-fresh-local-record-for-raw handle raw)
-    [(InternMaybeFreshLocalRecord.Some record) record.ordinal]
-    [(InternMaybeFreshLocalRecord.No) fallback]))
-
 (define (intern-structural-session-macro-definition-identity
   [handle : InternStructuralSessionHandle]
   [definition-module-id : i64]
@@ -859,15 +837,6 @@
         (InternMaybeMacroDefinitionRecord.Some
           (InternMacroDefinitionRecord record.left-id record.right-id))
         InternMaybeMacroDefinitionRecord.No)]))
-
-(define (intern-structural-session-macro-definition-record-for-raw
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]) : InternMaybeMacroDefinitionRecord
-  (if (< raw (ci.intern-structural-key-base))
-    InternMaybeMacroDefinitionRecord.No
-    (intern-structural-session-macro-definition-record
-      handle
-      (InternMacroDefinitionIdentity raw))))
 
 (define (intern-macro-global-role-code [role : InternMacroGlobalRole]) : i64
   (match role

@@ -237,10 +237,6 @@
   (Ok BuildPackageGraphNode)
   (Err String))
 
-(defenum ResultBuildPkgDep
-  (Ok load.CompilerPkgDep)
-  (Err String))
-
 (defstruct BuildGitDependency
   (remote String)
   (pin-kind String)
@@ -1863,18 +1859,6 @@
         (BuildResolvedPkgDep
           (load.CompilerPkgDep alias path)
           (BuildMaybeLockEntry.No))))))
-
-(define (build-package-resolve-dep
-  [manifest-dir : String]
-  [dep : load.CompilerPkgDep]) : ResultBuildPkgDep
-  (match (build-package-resolve-dep-with-lock
-    manifest-dir
-    (package_lock_entry_vec.new)
-    (BuildPackageLockPolicy.Default)
-    dep)
-    [(ResultBuildResolvedPkgDep.Err message) (ResultBuildPkgDep.Err message)]
-    [(ResultBuildResolvedPkgDep.Ok resolved)
-      (ResultBuildPkgDep.Ok resolved.dep)]))
 
 (define (build-package-lock-entry-list-add
   [entries : package_lock_entry_vec.Vec]

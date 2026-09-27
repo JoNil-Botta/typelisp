@@ -4130,18 +4130,18 @@
           (and
             (= id-a id-b)
             (= id-b id-decoy)
-            (load.compiler-load-session-state-embedded-stdlib-module-id?
+            (compiler-load-session-state-embedded-stdlib-module-id?
               (owned_view.compiler-owned-shared-view state-a)
               (string.copy module-a))
             (not
-              (load.compiler-load-session-state-embedded-stdlib-module-id?
+              (compiler-load-session-state-embedded-stdlib-module-id?
                 (owned_view.compiler-owned-shared-view state-a)
                 (string.copy module-b)))
-            (load.compiler-load-session-state-embedded-stdlib-module-id?
+            (compiler-load-session-state-embedded-stdlib-module-id?
               (owned_view.compiler-owned-shared-view state-b)
               (string.copy module-b))
             (not
-              (load.compiler-load-session-state-embedded-stdlib-module-id?
+              (compiler-load-session-state-embedded-stdlib-module-id?
                 (owned_view.compiler-owned-shared-view state-b)
                 (string.copy module-a)))
             (load.compiler-load-session-state-embedded-provenance-noted?
@@ -4161,13 +4161,13 @@
               ok
               (and
                 before
-                (load.compiler-load-session-state-embedded-stdlib-module-id?
+                (compiler-load-session-state-embedded-stdlib-module-id?
                   (owned_view.compiler-owned-shared-view state-a)
                   (string.copy module-a))
                 (load.compiler-load-session-state-embedded-provenance-noted?
                   (owned_view.compiler-owned-shared-view state-a))
                 (not
-                  (load.compiler-load-session-state-embedded-stdlib-module-id?
+                  (compiler-load-session-state-embedded-stdlib-module-id?
                     (owned_view.compiler-owned-shared-view state-b)
                     (string.copy module-b)))
                 (not
@@ -4198,7 +4198,7 @@
                 (ci.intern-pool-len)
                 (ci.intern-compat-state-pool-len
                   (& (array-ref state-a.intern-state 0))))
-              (load.compiler-load-session-state-embedded-stdlib-module-id?
+              (compiler-load-session-state-embedded-stdlib-module-id?
                 state-a
                 "stdlib.state_active")))
           (load.compiler-load-session-state-restore! previous-state)
@@ -5782,3 +5782,20 @@
   [path : String]
   [seen : sym_i64_env.SymI64Env]) : load.ResultCompilerLoadWithPaths
   (load.compiler-load-file-with-paths-and-roots path seen (svec.new)))
+
+(define (compiler-load-session-state-embedded-stdlib-module-id?
+  [state : load.CompilerLoadSessionState]
+  [module : String]) : bool
+  (let
+    [ids : sym_i64_env.SymI64Env
+      (load.compiler-load-session-state-embedded-module-ids-shared-view
+        (owned_view.compiler-owned-shared-view state))]
+    (if (array-ref state.intern-state-ready 0)
+      (match (ci.intern-compat-state-lookup
+        (& (array-ref state.intern-state 0))
+        (& module))
+        [(ci.InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
+        [(ci.InternLookupMissing) false])
+      (match (ci.intern-lookup-content module)
+        [(ci.InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
+        [(ci.InternLookupMissing) false]))))

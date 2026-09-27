@@ -65,13 +65,6 @@
     [(LintLevel.Deny) 2]
     [(LintLevel.Forbid) 3]))
 
-(define (lint-level-name [level : LintLevel]) : String
-  (match level
-    [(LintLevel.Allow) "allow"]
-    [(LintLevel.Warn) "warn"]
-    [(LintLevel.Deny) "deny"]
-    [(LintLevel.Forbid) "forbid"]))
-
 (define lint-group-correctness-mask : i64
   1)
 (define lint-group-style-mask : i64

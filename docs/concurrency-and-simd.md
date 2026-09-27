@@ -19,7 +19,9 @@ arena whose lifetime spans both, such as a shared atomic arena.
 arena proves allocation lifetime, not data-race freedom — use mutexes,
 channels, or atomics for shared mutation. See
 [`../examples/safe_threading.tl`](../examples/safe_threading.tl) for a complete
-safe program and [SPEC.md](../SPEC.md) section 6.5 for the model.
+safe program and [SPEC.md](../SPEC.md) section 6.5 for the model. The
+[thread and sync effect inventory](thread-sync-unsafe-effects.md) lists which
+`stdlib.thread` and `stdlib.sync` declarations are `unsafe` and why.
 
 ## SPMD and SIMD
 

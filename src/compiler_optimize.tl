@@ -6037,7 +6037,7 @@
     [_ 0]))
 
 (define (opt-aggregate-split-link!
-  [plan : OptSplitPlan]
+  [plan : (& plan OptSplitPlan)]
   [dst : i64]
   [index : i64]
   [offset : i64]) : unit
@@ -6069,7 +6069,7 @@
             (opt-aggregate-split-reason-alias)))])))
 
 (define (opt-aggregate-split-propagate!
-  [plan : OptSplitPlan]
+  [plan : (& plan OptSplitPlan)]
   [flat : (& flat OptSplitFlat)]
   [index : i64]) : unit
   (if (>= index flat.count)
@@ -6089,7 +6089,7 @@
                   source
                   (opt-aggregate-split-reason-gep-scale))
                 (opt-aggregate-split-link!
-                  (compiler-opt-global-shared-view plan)
+                  plan
                   dst
                   source
                   (+
@@ -6103,7 +6103,7 @@
             (if (< source 0)
               unit
               (opt-aggregate-split-link!
-                (compiler-opt-global-shared-view plan)
+                plan
                 dst
                 source
                 (opt-aggregate-split-ptr-offset
@@ -6884,10 +6884,7 @@
                   flat
                   0
                   0)
-                (opt-aggregate-split-propagate!
-                  (compiler-opt-global-shared-view plan)
-                  flat
-                  0)
+                (opt-aggregate-split-propagate! plan flat 0)
                 (opt-aggregate-split-count-defs! plan flat 0)
                 (opt-aggregate-split-count-param-defs!
                   plan
@@ -16275,8 +16272,7 @@
   [block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (compiler-opt-global-shared-view instrs.slots)]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr count)]
@@ -19689,7 +19685,7 @@
   [latch : i64]
   [slots : (&mut slots (__tl_dyn-array ir.CompilerIrInstr))]
   [index : i64]) : unit
-  (match (compiler-opt-global-shared-view recs)
+  (match (& recs)
     [(OptRotateSsaPhiRecs.Nil) unit]
     [(OptRotateSsaPhiRecs.Dense _ _)
       (match (opt-rotate-ssa-phi-rec-ref recs 0)
@@ -20192,7 +20188,7 @@
   [var : i64]
   [other : ir.CompilerIrValue]
   [nonphi-uses : (& nonphi-uses opt_i64_i64_map.Map)]) : bool
-  (match (compiler-opt-global-shared-view recs)
+  (match (& recs)
     [(OptRotateSsaPhiRecs.Nil) false]
     [(OptRotateSsaPhiRecs.Dense _ _)
       (match (opt-rotate-ssa-phi-rec-ref recs 0)
@@ -33285,7 +33281,7 @@
   [next-var : i64]
   [edges : OptFlagExitEdgeList]
   [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
-  (match (compiler-opt-global-shared-view edges)
+  (match (& edges)
     [(OptFlagExitEdgeList.Nil) acc]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
@@ -33782,7 +33778,7 @@
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (if (or
-        (match (compiler-opt-global-shared-view instr)
+        (match (& instr)
           [(ir.CompilerIrInstr.Phi _ _ _) true]
           [_ false])
         (and
@@ -35151,7 +35147,7 @@
   [arrival : i64]
   [at : i64]
   [fixes : OptFlagExitPhiFixes]) : OptFlagExitMaybePhiFixes
-  (match (compiler-opt-global-shared-view fixes)
+  (match (& fixes)
     [(OptFlagExitPhiFixes.Nil)
       (OptFlagExitMaybePhiFixes.Some (OptFlagExitPhiFixes.Nil))]
     [(OptFlagExitPhiFixes.Dense _ _)
@@ -35195,7 +35191,7 @@
   [arrival : i64]
   [at : i64]
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
-  (match (compiler-opt-global-shared-view mints)
+  (match (& mints)
     [(OptFlagExitMints.Nil) (OptFlagExitMaybeMints.Some (OptFlagExitMints.Nil))]
     [(OptFlagExitMints.Dense _ _)
       (let
@@ -35356,7 +35352,7 @@
   [gate : i64]
   [dropped : OptLabelSet]
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
-  (match (compiler-opt-global-shared-view mints)
+  (match (& mints)
     [(OptFlagExitMints.Nil) (OptFlagExitMaybeMints.Some (OptFlagExitMints.Nil))]
     [(OptFlagExitMints.Dense _ _)
       (let
@@ -35389,7 +35385,7 @@
                     tail))])]))]))
 
 (define (opt-flag-exit-mint-env [mints : OptFlagExitMints] [env : OptCopyEnv]) : OptCopyEnv
-  (match (compiler-opt-global-shared-view mints)
+  (match (& mints)
     [(OptFlagExitMints.Nil) env]
     [(OptFlagExitMints.Dense _ _)
       (let
@@ -36489,7 +36485,7 @@
   [edges : OptFlagExitEdgeList]
   [pred : i64]
   [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (compiler-opt-global-shared-view edges)
+  (match (& edges)
     [(OptFlagExitEdgeList.Nil) rest]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
@@ -48398,7 +48394,7 @@
 (define (opt-switch-candidate-min-from
   [items : OptSwitchCandidateList]
   [current : i64]) : i64
-  (match (compiler-opt-global-shared-view items)
+  (match (& items)
     [(OptSwitchCandidateList.Nil) current]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
@@ -48412,7 +48408,7 @@
 (define (opt-switch-candidate-max-from
   [items : OptSwitchCandidateList]
   [current : i64]) : i64
-  (match (compiler-opt-global-shared-view items)
+  (match (& items)
     [(OptSwitchCandidateList.Nil) current]
     [(OptSwitchCandidateList.Dense _ _)
       (match (opt-switch-candidate-ref items 0)
@@ -49768,7 +49764,7 @@
 
 (define (opt-bit-test-collect-chain
   [index : (& index OptCfgIndex)]
-  [facts : OptBitTestCompareFacts]
+  [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [value-var : i64]
   [head-label : i64]) : OptBitTestMaybeChain
@@ -50007,7 +50003,7 @@
 
 (define (opt-bit-test-plan-head!
   [index : (& index OptCfgIndex)]
-  [facts : OptBitTestCompareFacts]
+  [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [plans : OptBitTestPlans]
   [skip : OptLabelSet]
@@ -50056,7 +50052,7 @@
 
 (define (opt-bit-test-plan-blocks!
   [index : (& index OptCfgIndex)]
-  [facts : OptBitTestCompareFacts]
+  [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [plans : OptBitTestPlans]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -50066,7 +50062,7 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (opt-bit-test-plan-blocks!
         index
-        (compiler-opt-global-shared-view facts)
+        facts
         chain
         (compiler-opt-global-shared-view plans)
         (deref rest)
@@ -50673,7 +50669,7 @@
 
 (define (opt-gvn-reassociate-maybe
   [type-segment-bases : i64]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [dst : i64]
   [op : ir.CompilerIrBinOp]
   [l : ir.CompilerIrValue]
@@ -50726,7 +50722,7 @@
 ;; peel those heads directly; retaining a boxed copy of every old head is
 ;; redundant and made the rollback log itself a cons chain.
 (define (opt-gvn-table-restore!
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [changes : OptGvnScopeChanges]) : unit
   (let
     [logged : opt_dense_i64_vec.Vec changes.buckets]
@@ -50833,7 +50829,7 @@
 
 (define (opt-gvn-rewrite-instr-maybe
   [type-segment-bases : i64]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [instr : ir.CompilerIrInstr]) : OptMaybeInstr
   (match (opt-expr-def instr)
@@ -50860,7 +50856,7 @@
 
 (define (opt-gvn-seq-rewrite-changed?
   [type-segment-bases : i64]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]) : bool
@@ -50868,7 +50864,7 @@
     false
     (match (opt-gvn-rewrite-instr-maybe
       type-segment-bases
-      (compiler-opt-global-shared-view table)
+      table
       sources
       (ir.compiler-ir-instr-seq-ref instrs index))
       [(OptMaybeInstr.Some _) true]
@@ -50882,7 +50878,7 @@
 
 (define (opt-gvn-rewrite-instr-seq
   [type-segment-bases : i64]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
@@ -50897,7 +50893,7 @@
             (&mut builder)
             (match (opt-gvn-rewrite-instr-maybe
               type-segment-bases
-              (compiler-opt-global-shared-view table)
+              table
               sources
               (ir.compiler-ir-instr-seq-ref instrs index))
               [(OptMaybeInstr.Some rewritten) rewritten]
@@ -50907,14 +50903,14 @@
 
 (define (opt-gvn-rewrite-block
   [type-segment-bases : i64]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [block : ir.CompilerIrBlock]) : OptBlockPassResult
   (match (compiler-opt-global-shared-view block)
     [(ir.CompilerIrBlock.Block label instrs)
       (if (opt-gvn-seq-rewrite-changed?
         type-segment-bases
-        (compiler-opt-global-shared-view table)
+        table
         sources
         instrs
         (- (ir.compiler-ir-instr-seq-count instrs) 1))
@@ -50966,7 +50962,7 @@
   [type-segment-bases : i64]
   [context : (& context OptCfgContext)]
   [children : (& children OptCfgCsr)]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [out : (&mut out (__tl_dyn-array OptGvnBlockResult))]
@@ -50984,11 +50980,7 @@
                 (opt-induction-switch-arm? index blocks label instrs)
                 (opt-bool-branch-chain-check-block? label instrs))
                 (OptBlockPassResult.Result block false)
-                (opt-gvn-rewrite-block
-                  type-segment-bases
-                  (compiler-opt-global-shared-view table)
-                  sources
-                  block))
+                (opt-gvn-rewrite-block type-segment-bases table sources block))
                 [(OptBlockPassResult.Result rewritten block-changed)
                   (begin
                     (if block-changed
@@ -51011,7 +51003,7 @@
                           type-segment-bases
                           context
                           children
-                          (compiler-opt-global-shared-view table)
+                          table
                           sources
                           blocks
                           out
@@ -51027,7 +51019,7 @@
   [type-segment-bases : i64]
   [context : (& context OptCfgContext)]
   [children : (& children OptCfgCsr)]
-  [table : OptGvnMap]
+  [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [out : (&mut out (__tl_dyn-array OptGvnBlockResult))]
@@ -51046,7 +51038,7 @@
               type-segment-bases
               context
               children
-              (compiler-opt-global-shared-view table)
+              table
               sources
               blocks
               out
@@ -51064,10 +51056,8 @@
   [sources : (& sources OptValueSources)]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
-    [doms : OptDomInfo
-      (compiler-opt-global-shared-view (__tl-project-field context doms))]
-    [index : OptCfgIndex
-      (compiler-opt-global-shared-view (__tl-project-field context index))]
+    [doms : OptDomInfo (__tl-project-field context doms)]
+    [index : OptCfgIndex (__tl-project-field context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     [children : OptCfgCsr
       (opt-gvn-dom-children (compiler-opt-global-shared-view doms))]
@@ -59487,8 +59477,7 @@
     ;; equals the input; skip the SSA facts build and the per-block copies.
     blocks
     (let
-      [index : OptCfgIndex
-        (compiler-opt-global-shared-view (__tl-project-field context index))]
+      [index : OptCfgIndex (__tl-project-field context index)]
       [count : i64 (opt-cfg-index-block-count index)]
       [ssa-facts : OptSsaFacts
         (opt-ssa-facts-from-function-with-representations
@@ -63260,7 +63249,7 @@
   (let
     [copies : i64
       (opt-unroll-body-copies
-        (compiler-opt-global-shared-view instrs.slots)
+        instrs.slots
         phi-count
         (- (ir.compiler-ir-instr-seq-count instrs) 1))]
     [reason : i64
@@ -64395,7 +64384,7 @@
           ;; two ends of the range the wrong way round.
           (not
             (opt-unroll-step-descending?
-              (compiler-opt-global-shared-view instrs.slots)
+              instrs.slots
               instrs
               shape.phi-count
               (- count 1)
@@ -65247,7 +65236,7 @@
               guard-label
               unrolled-label
               builder))
-          (match (compiler-opt-global-shared-view others)
+          (match (& others)
             [(OptUnrollPhiList.Dense _ _)
               (match (opt-unroll-phi-list-ref others 0)
                 [(OptUnrollPhi.Phi _ _ back _)
@@ -69269,7 +69258,7 @@
     (if (or
       (< trips 4)
       (not
-        (match (compiler-opt-global-shared-view ity)
+        (match (& ity)
           [(ast.AstType.I64) true]
           [_ false]))
       (not (opt-unroll-pred-retargetable? blocks shape.pred-label))
@@ -75535,7 +75524,7 @@
   [masks : OptBceMaskList]
   [length-value : ir.CompilerIrValue]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match (compiler-opt-global-shared-view masks)
+  (match (& masks)
     [(OptBceMaskList.Empty) acc]
     [(OptBceMaskList.Dense _ _)
       (let
@@ -77099,7 +77088,7 @@
   [guard-label : i64]
   [fast-label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (compiler-opt-global-shared-view others)
+  (match (& others)
     [(OptUnrollPhiList.Nil) unit]
     [(OptUnrollPhiList.Dense _ _)
       (match (opt-unroll-phi-list-ref others 0)
@@ -80099,7 +80088,7 @@
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (opt-bce-mb-nonphi-uses-seq
-        (match (compiler-opt-global-shared-view instr)
+        (match (& instr)
           [(ir.CompilerIrInstr.Phi _ _ _) set]
           [_ (opt-collect-instr-uses set instr)])
         instrs
@@ -86373,7 +86362,7 @@
               [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
                 (if (and
                   (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
-                  (match (compiler-opt-global-shared-view src)
+                  (match (& src)
                     [(ir.CompilerIrValue.Var _) true]
                     [_ false]))
                   (opt-bce-mb-canon-value blocks src)
@@ -86509,7 +86498,7 @@
 ;; refuses costs nothing.
 (define (opt-bce-mb-apply-repaired
   [doms : (& doms OptDomInfo)]
-  [descriptor : OptBceMbDescriptor]
+  [descriptor : (& descriptor OptBceMbDescriptor)]
   [pred-map : (& pred-map OptPredMap)]
   [original : ir.CompilerIrBlockList]
   [blocks : ir.CompilerIrBlockList]
@@ -86631,7 +86620,7 @@
                           frame))))])))]))))
 
 (define (opt-bce-mb-apply
-  [descriptor : OptBceMbDescriptor]
+  [descriptor : (& descriptor OptBceMbDescriptor)]
   [pred-map : (& pred-map OptPredMap)]
   [doms : (& doms OptDomInfo)]
   [blocks : ir.CompilerIrBlockList]
@@ -86679,7 +86668,7 @@
 ;; `regions-only?` restricts a nested pass to REGION candidates (see the phase
 ;; order below); it is meaningless for the flat pass, which passes false.
 (define (opt-bce-mb-loops-scan
-  [descriptor : OptBceMbDescriptor]
+  [descriptor : (& descriptor OptBceMbDescriptor)]
   [pred-map : (& pred-map OptPredMap)]
   [doms : (& doms OptDomInfo)]
   [blocks : ir.CompilerIrBlockList]
@@ -86726,7 +86715,7 @@
                 (compiler-opt-global-shared-view blocks)
                 frame)
               (opt-bce-mb-apply
-                (compiler-opt-global-shared-view descriptor)
+                descriptor
                 pred-map
                 doms
                 (compiler-opt-global-shared-view blocks)
@@ -86834,7 +86823,7 @@
   (if (>= phase (opt-bce-mb-scan-phase-count))
     (OptBceVersionScan.Scan blocks frame false (ir.compiler-ir-label-none))
     (match (opt-bce-mb-loops-scan
-      (compiler-opt-global-shared-view descriptor)
+      descriptor
       pred-map
       doms
       (compiler-opt-global-shared-view blocks)
@@ -88765,7 +88754,7 @@
       (let
         [_scan : OptBceVersionScan
           (opt-bce-mb-loops-scan
-            (compiler-opt-global-shared-view descriptor)
+            descriptor
             (__tl-project-field context pred-map)
             (__tl-project-field context doms)
             (compiler-opt-global-shared-view blocks)
@@ -92431,8 +92420,7 @@
     [(ir.CompilerIrBlock.Block label instrs)
       (let
         [count : i64 instrs.len]
-        [slots : (__tl_dyn-array ir.CompilerIrInstr)
-          (compiler-opt-global-shared-view instrs.slots)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
         (if (or
           (< count 4)
           (not (opt-load-sink-block-moves? use-counts instrs slots count)))
@@ -94010,7 +93998,7 @@
   [instr : (& instr ir.CompilerIrInstr)]) : option_i64.Option
   (match instr
     [(ir.CompilerIrInstr.BinOp _ (ir.CompilerIrBinOp.Mul) lhs rhs _)
-      (match (compiler-opt-global-shared-view lhs)
+      (match lhs
         [(ir.CompilerIrValue.Var iv)
           (if (opt-successor-sink-mul-scale-source
             blocks
@@ -94020,7 +94008,7 @@
             rhs
             scale)
             (option_i64.Some (deref iv))
-            (match (compiler-opt-global-shared-view rhs)
+            (match rhs
               [(ir.CompilerIrValue.Var other-iv)
                 (if (opt-successor-sink-mul-scale-source
                   blocks
@@ -94033,7 +94021,7 @@
                   (option_i64.None))]
               [_ (option_i64.None)]))]
         [_
-          (match (compiler-opt-global-shared-view rhs)
+          (match rhs
             [(ir.CompilerIrValue.Var iv)
               (if (opt-successor-sink-mul-scale-source
                 blocks
@@ -98044,8 +98032,7 @@
     [source : OptIfConvertBlockFact
       (compiler-opt-global-array-element-shared-view facts id)]
     [source-label : i64 source.label]
-    [source-instrs : ir.CompilerIrInstrSeq
-      (compiler-opt-global-shared-view source.instrs)]
+    [source-instrs : ir.CompilerIrInstrSeq source.instrs]
     (begin
       (when (< source.count 1) (return false))
       (match source.last
@@ -101975,7 +101962,7 @@
             (OptLabelSet.Nil)
             frame))
           [(OptBgPlanState.State plans _ _ next-var)
-            (match (compiler-opt-global-shared-view plans)
+            (match (& plans)
               [(OptBgPlanList.Nil)
                 (OptBgBlocksResult.Result blocks frame false)]
               [(OptBgPlanList.Dense _ _ _)
@@ -120609,7 +120596,7 @@
             (ir.compiler-ir-symbol-id name)
             1)]
         [_ unit])
-      (match (compiler-opt-global-shared-view instr)
+      (match (& instr)
         [(ir.CompilerIrInstr.Pack _ _ _) unit]
         [_ (opt-note-uses! (OptUseNote.GlobalAddr) (&mut out) instr)])
       out)))
@@ -128056,7 +128043,7 @@
 
 ;; `budget` slot 0 = remaining pops, slot 1 = truncated flag.
 (define (opt-global-cell-reach-drain
-  [index : OptCfgIndex]
+  [index : (& index OptCfgIndex)]
   [visited : (__tl_dyn-array bool)]
   [stack : (__tl_dyn-array i64)]
   [sp-cell-input : (__tl_dyn-array i64)]
@@ -128093,7 +128080,7 @@
                   (opt-global-cell-refs-add ref-list out))])))))))
 
 (define (opt-global-cell-observable-stores-reach-block
-  [index : OptCfgIndex]
+  [index : (& index OptCfgIndex)]
   [visited : (__tl_dyn-array bool)]
   [stack : (__tl_dyn-array i64)]
   [sp-cell-input : (__tl_dyn-array i64)]
@@ -128132,7 +128119,7 @@
           out)))))
 
 (define (opt-global-cell-observable-stores-reach
-  [index : OptCfgIndex]
+  [index : (& index OptCfgIndex)]
   [visited : (__tl_dyn-array bool)]
   [stack : (__tl_dyn-array i64)]
   [sp-cell : (__tl_dyn-array i64)]
@@ -128157,7 +128144,7 @@
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
             (opt-global-cell-observable-stores-reach
-              (compiler-opt-global-shared-view index)
+              index
               (compiler-opt-global-shared-view visited)
               (compiler-opt-global-shared-view stack)
               (compiler-opt-global-shared-view sp-cell)
@@ -137902,7 +137889,7 @@
 
 (define (opt-load-gvn-entry-state
   [type-segment-bases : i64]
-  [context : OptCfgContext]
+  [context : (& context OptCfgContext)]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
   [sources : OptValueSources]
@@ -137912,7 +137899,7 @@
   [id : i64]) : OptLoadCseState
   (let
     [index : OptCfgIndex context.index]
-    [preds : OptCfgCsr (compiler-opt-global-shared-view index.preds)]
+    [preds : OptCfgCsr index.preds]
     [entry-label : i64 context.entry-label]
     (match (opt-cfg-index-id index entry-label)
       [(option_i64.Some entry-id)
@@ -138518,7 +138505,7 @@
 (define (opt-load-cell-region-clear?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [cells : (& cells OptGlobalCellSummary)]
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [global : i64]
   [from : i64]
   [to : i64]) : bool
@@ -138542,7 +138529,7 @@
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [cells : (& cells OptGlobalCellSummary)]
   [promote : (& promote OptLoadCellPromote)]
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
   [cursor : i64]
   [read-end : i64]
@@ -139336,7 +139323,7 @@
 
 (define (opt-load-join-augment
   [type-segment-bases : i64]
-  [context : OptCfgContext]
+  [context : (& context OptCfgContext)]
   [sources : (& sources OptValueSources)]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -143008,7 +142995,7 @@
 (define (opt-load-gvn-instr-seq
   [type-segment-bases : i64]
   [canon : (&mut canon (__tl_dyn-array i64))]
-  [hs : OptLoadHeaderSet]
+  [hs : (& hs OptLoadHeaderSet)]
   [state : OptLoadCseState]
   [sources : (& sources OptValueSources)]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
@@ -143057,7 +143044,7 @@
                   call-memory
                   cells
                   promote
-                  (compiler-opt-global-shared-view instrs)
+                  instrs
                   index
                   (+ read-cursor 1)
                   read-end
@@ -143094,7 +143081,7 @@
 (define (opt-load-gvn-rewrite-block
   [type-segment-bases : i64]
   [canon : (&mut canon (__tl_dyn-array i64))]
-  [hs : OptLoadHeaderSet]
+  [hs : (& hs OptLoadHeaderSet)]
   [entry-state : OptLoadCseState]
   [sources : (& sources OptValueSources)]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
@@ -143120,7 +143107,7 @@
   [type-segment-bases : i64]
   [canon : (&mut canon (__tl_dyn-array i64))]
   [context : OptCfgContext]
-  [hs : OptLoadHeaderSet]
+  [hs : (& hs OptLoadHeaderSet)]
   [sources : OptValueSources]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [cells : (& cells OptGlobalCellSummary)]
@@ -143138,7 +143125,7 @@
     [entry-state : OptLoadCseState
       (opt-load-join-augment
         type-segment-bases
-        (compiler-opt-global-shared-view context)
+        context
         sources
         (compiler-opt-global-shared-view exit-states)
         (compiler-opt-global-shared-view processed)
@@ -143210,7 +143197,7 @@
             type-segment-bases
             canon
             (compiler-opt-global-shared-view context)
-            (compiler-opt-global-shared-view hs)
+            hs
             (compiler-opt-global-shared-view sources)
             call-memory
             cells

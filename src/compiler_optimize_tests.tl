@@ -1515,7 +1515,7 @@
         (opt.compiler-opt-global-shared-view last-key))]
     (begin
       (opt.opt-gvn-table-restore!
-        (opt.compiler-opt-global-shared-view table)
+        table
         (opt.compiler-opt-global-shared-view changes))
       (and
         (= (opt-gvn-scope-changes-count changes) 16)

@@ -49,23 +49,6 @@
 (define (scaffold-lib-source) : String
   "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
 
-(test
-  scaffold-first-run-source-smoke
-  (let
-    [bin-source : String (scaffold-bin-source)]
-    [lib-source : String (scaffold-lib-source)]
-    [greeting : String "(io.print-format \"{}\" \"Hello, TypeLisp!\\n\")"]
-    [test-import : String "(cfg test (import stdlib.test))"]
-    [test-item : String "(test\n  answer-is-42"]
-    (unless
-      (and
-        (string.contains (& bin-source) (& greeting))
-        (string.contains (& bin-source) (& test-import))
-        (string.contains (& bin-source) (& test-item))
-        (string.contains (& lib-source) (& test-import))
-        (string.contains (& lib-source) (& test-item)))
-      (io.panic "scaffold: first-run source smoke mismatch"))))
-
 (define (scaffold-try-mkdir [path : (& path str)]) : io.ResultIoUnit
   (fs.try-mkdir path))
 

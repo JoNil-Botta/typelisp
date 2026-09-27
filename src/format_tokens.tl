@@ -5,7 +5,6 @@
 ;; as trivia tokens so later layout rules can place them deliberately.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.io)
 (import stdlib.string)
 (import stdlib.result)
 
@@ -171,18 +170,6 @@
 (define (format-source-span-start-col [span : FormatSourceSpan]) : i64
   span.start-col)
 
-(define (format-source-span-eq?
-  [span : FormatSourceSpan]
-  [start-line : i64]
-  [start-col : i64]
-  [end-line : i64]
-  [end-col : i64]) : bool
-  (and
-    (= span.start-line start-line)
-    (= span.start-col start-col)
-    (= span.end-line end-line)
-    (= span.end-col end-col)))
-
 (define (fmt-source-position-at [src : (& src str)] [target : i64]) : FormatPosition
   (let
     [n : i64 (string.string-length src)]
@@ -222,22 +209,6 @@
       (fmt-position-col pos)
       (fmt-position-line pos)
       (fmt-position-col pos))))
-
-(define (format-token-tag-count [stream : FormatTokenStream] [wanted : i64]) : i64
-  (let
-    [i : i64 0]
-    [hits : i64 0]
-    (begin
-      (while (< i stream.count)
-        (begin
-          (if (=
-            (format-token-tag
-              (format-token-at (owned_view.compiler-owned-shared-view stream) i))
-            wanted)
-            (set! hits (+ hits 1))
-            (set! hits hits))
-          (set! i (+ i 1))))
-      hits)))
 
 (define (fmt-is-digit [c : char]) : bool
   (and (>= c '0') (<= c '9')))
@@ -994,9 +965,3 @@
         (__tl_make-array FormatToken 0)
         (__tl_make-array i64 0)
         0)]))
-
-(define (format-lex [src : String]) : FormatTokenStream
-  (match (format-lex-result src)
-    [(ResultFormatTokenStream.Ok stream) stream]
-    [(ResultFormatTokenStream.Err err)
-      (io.panic (format-source-error-message err))]))

@@ -1,10 +1,14 @@
 ;; lint_policy_core_tests.tl - Executable coverage for pure lint policy
 ;; resolution. Main-less companion imported by src/tests/lint_smoke.tl.
 (import lint_core)
+(import lint_core_tests)
 (import lint_policy_core as policy)
 (import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
+(import stdlib.hashmap)
+(import (hashmap.hashmap String i64) as lint_policy_string_i64_map)
 
 (define (lint-policy-test-expect [condition : bool] [message : String]) : unit
   (unless condition (io.panic message)))
@@ -35,12 +39,10 @@
     [index : i64 0]
     [count : i64 0]
     (begin
-      (while (<
-        index
-        (policy.lint-policy-diagnostics-count resolution.diagnostics))
+      (while (< index (lint-policy-diagnostics-count resolution.diagnostics))
         (let
           [diagnostic : policy.LintPolicyDiagnostic
-            (policy.lint-policy-diagnostics-ref resolution.diagnostics index)]
+            (lint-policy-diagnostics-ref resolution.diagnostics index)]
           (begin
             (when
               (= (lint-policy-test-kind-code diagnostic.kind) kind-code)
@@ -58,7 +60,7 @@
       (while (< index (policy.lint-policy-trace-count resolution.trace))
         (let
           [entry : policy.LintPolicyTraceEntry
-            (policy.lint-policy-trace-ref resolution.trace index)]
+            (lint-policy-trace-ref resolution.trace index)]
           (begin
             (when
               (= (lint-policy-test-outcome-code entry.outcome) outcome-code)
@@ -79,7 +81,7 @@
         (< index (policy.lint-policy-trace-count resolution.trace)))
         (let
           [entry : policy.LintPolicyTraceEntry
-            (policy.lint-policy-trace-ref resolution.trace index)]
+            (lint-policy-trace-ref resolution.trace index)]
           (begin
             (when
               (and
@@ -99,7 +101,7 @@
     [(policy.LintMaybePolicyDecision.NotFound) false]
     [(policy.LintMaybePolicyDecision.Found decision)
       (and
-        (lint_core.lint-level-eq? decision.level level)
+        (lint_core_tests.lint-level-eq? decision.level level)
         (=
           (policy.lint-policy-layer-rank decision.layer)
           (policy.lint-policy-layer-rank layer))
@@ -128,7 +130,7 @@
   [layer : policy.LintPolicyLayer]
   [selected : bool]
   [source : String]) : policy.LintPolicyAssignment
-  (policy.lint-policy-group-assignment
+  (lint-policy-group-assignment
     name
     level
     layer
@@ -149,12 +151,13 @@
 (define (lint-policy-test-registry-and-defaults) : unit
   (let
     [rules : lint_core.LintRuleList (lint_core.lint-rule-registry)]
-    [resolution : policy.LintPolicyResolution (policy.lint-policy-default)]
+    [resolution : policy.LintPolicyResolution (lint-policy-default)]
     [deprecated-default : lint_core.LintLevel
-      (lint_core.lint-rule-default-level
+      (lint_core_tests.lint-rule-default-level
         (lint_core.lint-rule-deprecated-string-concat-id))]
     [nested-let-default : lint_core.LintLevel
-      (lint_core.lint-rule-default-level (lint_core.lint-rule-nested-let-id))]
+      (lint_core_tests.lint-rule-default-level
+        (lint_core.lint-rule-nested-let-id))]
     [index : i64 0]
     (begin
       (lint-policy-test-expect
@@ -192,9 +195,9 @@
           (= resolution.stats.assignments 0)
           (= resolution.stats.expanded-rule-updates 0)
           (= resolution.stats.trace-entries 0)
-          (= (policy.lint-policy-decisions-count resolution.decisions) 27)
-          (= (policy.lint-policy-resolution-diagnostics-count resolution) 0)
-          (= (policy.lint-policy-resolution-trace-count resolution) 0))
+          (= (lint-policy-decisions-count resolution.decisions) 27)
+          (= (lint-policy-resolution-diagnostics-count resolution) 0)
+          (= (lint-policy-resolution-trace-count resolution) 0))
         "lint policy: disabled policy work must be one fixed registry pass"))))
 
 (define (lint-policy-test-same-layer-order) : unit
@@ -202,7 +205,7 @@
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-group-assignment
               "style"
@@ -226,7 +229,7 @@
           "project-rule")
         "lint policy: a rule assignment must override its group in one layer")
       (lint-policy-test-expect
-        (= (policy.lint-policy-resolution-diagnostics-count resolution) 0)
+        (= (lint-policy-resolution-diagnostics-count resolution) 0)
         "lint policy: group/rule layering should not diagnose a conflict"))))
 
 (define (lint-policy-test-scope-and-cfg-precedence) : unit
@@ -234,7 +237,7 @@
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
@@ -279,7 +282,7 @@
         (lint-policy-test-trace-has-source? resolution 1 "cfg-disabled")
         "lint policy: unselected cfg input must remain visible as inactive")
       (lint-policy-test-expect
-        (= (policy.lint-policy-resolution-trace-count resolution) 5)
+        (= (lint-policy-resolution-trace-count resolution) 5)
         "lint policy: every selected and inactive rule assignment needs trace"))))
 
 (define (lint-policy-test-forbid) : unit
@@ -287,7 +290,7 @@
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
@@ -322,7 +325,7 @@
     [unknown : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "not-a-rule"
@@ -339,7 +342,7 @@
     [contradictory : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
@@ -355,17 +358,17 @@
               "duplicate-b"))))]
     [duplicate-group : policy.LintPolicyResolution
       (policy.lint-policy-resolve
-        (policy.lint-policy-groups-from
+        (lint-policy-groups-from
           (__tl_make-array
             (lint-policy-test-group
               "same-group"
-              (policy.lint-policy-group-members-empty)
+              (lint-policy-group-members-empty)
               "group-a")
             (lint-policy-test-group
               "same-group"
-              (policy.lint-policy-group-members-empty)
+              (lint-policy-group-members-empty)
               "group-b")))
-        (policy.lint-policy-assignments-empty))]
+        (lint-policy-assignments-empty))]
     (begin
       (lint-policy-test-expect
         (and
@@ -391,16 +394,16 @@
 (define (lint-policy-test-custom-groups) : unit
   (let
     [groups : policy.LintPolicyGroups
-      (policy.lint-policy-groups-from
+      (lint-policy-groups-from
         (__tl_make-array
           (lint-policy-test-group
             "style-leaf"
-            (policy.lint-policy-group-members-from
+            (lint-policy-group-members-from
               (__tl_make-array (policy.LintPolicyGroupMember.Group "style")))
             "leaf")
           (lint-policy-test-group
             "project-strict"
-            (policy.lint-policy-group-members-from
+            (lint-policy-group-members-from
               (__tl_make-array
                 (policy.LintPolicyGroupMember.Group "style-leaf")
                 (policy.LintPolicyGroupMember.Rule "no-effect")))
@@ -408,7 +411,7 @@
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         groups
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-group-assignment
               "project-strict"
@@ -418,7 +421,7 @@
               "strict-assignment"))))]
     (begin
       (lint-policy-test-expect
-        (= (policy.lint-policy-resolution-diagnostics-count resolution) 0)
+        (= (lint-policy-resolution-diagnostics-count resolution) 0)
         "lint policy: valid nested groups should resolve cleanly")
       (lint-policy-test-expect
         (and
@@ -448,22 +451,22 @@
 (define (lint-policy-test-group-cycle) : unit
   (let
     [groups : policy.LintPolicyGroups
-      (policy.lint-policy-groups-from
+      (lint-policy-groups-from
         (__tl_make-array
           (lint-policy-test-group
             "cycle-a"
-            (policy.lint-policy-group-members-from
+            (lint-policy-group-members-from
               (__tl_make-array (policy.LintPolicyGroupMember.Group "cycle-b")))
             "cycle-a")
           (lint-policy-test-group
             "cycle-b"
-            (policy.lint-policy-group-members-from
+            (lint-policy-group-members-from
               (__tl_make-array (policy.LintPolicyGroupMember.Group "cycle-a")))
             "cycle-b")))]
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         groups
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-group-assignment
               "cycle-a"
@@ -500,19 +503,19 @@
               (array-ref slots index)
               (lint-policy-test-group
                 name
-                (policy.lint-policy-group-members-from
+                (lint-policy-group-members-from
                   (__tl_make-array
                     (policy.LintPolicyGroupMember.Group member-name)))
                 "linear-chain"))
             (set! index (+ index 1)))))
-      (policy.lint-policy-groups-from slots))))
+      (lint-policy-groups-from slots))))
 
 (define (lint-policy-test-linear-chain) : unit
   (let
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (lint-policy-test-chain-groups 64)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-group-assignment
               "chain-0"
@@ -522,7 +525,7 @@
               "chain-assignment"))))]
     (begin
       (lint-policy-test-expect
-        (= (policy.lint-policy-resolution-diagnostics-count resolution) 0)
+        (= (lint-policy-resolution-diagnostics-count resolution) 0)
         "lint policy: a deep acyclic group chain should remain valid")
       (lint-policy-test-expect
         (lint-policy-test-decision-is?
@@ -547,7 +550,7 @@
     [floor-resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
@@ -612,7 +615,7 @@
     [resolution : policy.LintPolicyResolution
       (policy.lint-policy-resolve
         (policy.lint-policy-groups-empty)
-        (policy.lint-policy-assignments-from
+        (lint-policy-assignments-from
           (__tl_make-array
             (lint-policy-test-rule-assignment
               "nested-let"
@@ -620,8 +623,8 @@
               (policy.LintPolicyLayer.Project)
               true
               "finding-policy"))))]
-    [resolved : policy.LintPolicyResolvedFinding
-      (policy.lint-policy-resolve-finding
+    [resolved : LintPolicyResolvedFinding
+      (lint-policy-resolve-finding
         resolution
         (lint_core.LintFinding
           "nested let"
@@ -635,7 +638,7 @@
         (= resolved.finding.depth 2)
         (= (lint_core.lint-level-rank resolved.decision.level) 2)
         (string.eq resolved.decision.origin.source "finding-policy")
-        (policy.lint-policy-resolved-finding-enabled? resolved))
+        (lint-policy-resolved-finding-enabled? resolved))
       "lint policy: resolved findings must carry effective level and origin")))
 
 (define (compiler-lint-policy-self-test) : i64
@@ -657,3 +660,108 @@
   (unless
     (= (compiler-lint-policy-self-test) 42)
     (io.panic "lint policy: focused self-test failed")))
+
+(define (lint-policy-assignments-empty) : policy.LintPolicyAssignments
+  (policy.LintPolicyAssignments
+    (__tl_make-array policy.LintPolicyAssignment 0)
+    0))
+
+(define (lint-policy-assignments-from
+  [slots : (__tl_dyn-array policy.LintPolicyAssignment)]) : policy.LintPolicyAssignments
+  (let
+    [len : i64 (array-length slots)]
+    (policy.LintPolicyAssignments slots len)))
+
+(define (lint-policy-group-members-empty) : policy.LintPolicyGroupMembers
+  (policy.LintPolicyGroupMembers
+    (__tl_make-array policy.LintPolicyGroupMember 0)
+    0))
+
+(define (lint-policy-group-members-from
+  [slots : (__tl_dyn-array policy.LintPolicyGroupMember)]) : policy.LintPolicyGroupMembers
+  (let
+    [len : i64 (array-length slots)]
+    (policy.LintPolicyGroupMembers slots len)))
+
+(define (lint-policy-groups-from
+  [slots : (__tl_dyn-array policy.LintPolicyGroup)]) : policy.LintPolicyGroups
+  (let
+    [len : i64 (array-length slots)]
+    (policy.LintPolicyGroups slots len)))
+
+(define (lint-policy-diagnostics-count
+  [items : (& items policy.LintPolicyDiagnostics)]) : i64
+  items.len)
+
+(define (lint-policy-diagnostics-ref
+  [items : (& items policy.LintPolicyDiagnostics)]
+  [index : i64]) : policy.LintPolicyDiagnostic
+  (owned_view.compiler-owned-array-element-shared-view items.slots index))
+
+(define (lint-policy-decisions-count
+  [items : (& items policy.LintPolicyDecisions)]) : i64
+  items.len)
+
+(define (lint-policy-trace-ref
+  [items : (& items policy.LintPolicyTrace)]
+  [index : i64]) : policy.LintPolicyTraceEntry
+  (owned_view.compiler-owned-array-element-shared-view items.slots index))
+
+(define (lint-policy-resolution-diagnostics-count
+  [resolution : (& resolution policy.LintPolicyResolution)]) : i64
+  (lint-policy-diagnostics-count resolution.diagnostics))
+
+(define (lint-policy-resolution-trace-count
+  [resolution : (& resolution policy.LintPolicyResolution)]) : i64
+  (policy.lint-policy-trace-count resolution.trace))
+
+(define (lint-policy-default) : policy.LintPolicyResolution
+  (policy.lint-policy-resolve
+    (policy.lint-policy-groups-empty)
+    (lint-policy-assignments-empty)))
+
+(define (lint-policy-group-assignment
+  [name : String]
+  [level : lint_core.LintLevel]
+  [layer : policy.LintPolicyLayer]
+  [mode : policy.LintPolicyAssignmentMode]
+  [selected : bool]
+  [origin : policy.LintPolicyOrigin]) : policy.LintPolicyAssignment
+  (policy.LintPolicyAssignment
+    (policy.LintPolicySubject.Group name)
+    level
+    layer
+    mode
+    selected
+    origin))
+
+(defstruct LintPolicyResolvedFinding
+  (finding lint_core.LintFinding)
+  (decision policy.LintPolicyDecision))
+
+;: Attach the effective level and exact winning origin to a policy-neutral
+;: finding. Unknown collector rule ids fail closed to `allow`; registry-aware
+;: composition services should diagnose such collector bugs separately.
+(define (lint-policy-resolve-finding
+  [resolution : policy.LintPolicyResolution]
+  [finding : lint_core.LintFinding]) : LintPolicyResolvedFinding
+  (let
+    [rule-id : String (owned_view.compiler-owned-shared-view finding.rule-id)]
+    (match (policy.lint-policy-decision-find resolution rule-id)
+      [(policy.LintMaybePolicyDecision.Found decision)
+        (LintPolicyResolvedFinding finding decision)]
+      [(policy.LintMaybePolicyDecision.NotFound)
+        (LintPolicyResolvedFinding
+          finding
+          (policy.LintPolicyDecision
+            rule-id
+            (lint_core.LintLevel.Allow)
+            policy.LintPolicyLayer.Builtin
+            -1
+            (policy.lint-policy-origin
+              "registry"
+              "unknown collector rule fails closed")))])))
+
+(define (lint-policy-resolved-finding-enabled?
+  [finding : LintPolicyResolvedFinding]) : bool
+  (policy.lint-policy-level-enabled? finding.decision.level))

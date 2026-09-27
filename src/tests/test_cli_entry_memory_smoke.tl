@@ -2,6 +2,7 @@
 ;; one process. Warming first excludes fixed intern/reader/IR-name tables; the
 ;; eight measured entries must not retain per-entry compiler owners.
 (import test_cli_core as tltest)
+(import test_cli_core_tests as tltest_tests)
 (import compiler_backend)
 (import compiler_driver_core as driver)
 (import compiler_load)
@@ -29,7 +30,7 @@
               (tltest.tltest-run-batch-run-path
                 "tests/inline/test_batch_retention_leaf.tl"
                 (clone target)
-                (tltest.tltest-roots-for-self-test)
+                (tltest_tests.tltest-roots-for-self-test)
                 1
                 (compiler_backend.CompilerBackendMode.Scalar)
                 backend-target)

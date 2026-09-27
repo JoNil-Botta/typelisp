@@ -51,60 +51,6 @@
         [(compiler_load.ResultCompilerLoadModuleId.Ok _ _) false]
         [(compiler_load.ResultCompilerLoadModuleId.Err _) true]))))
 
-(define (compiler-load-identity-snapshot-ok?) : bool
-  (let
-    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
-    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [_b-decoy : i64
-      (ci.intern-compat-state-intern (&mut state-b) "loader.identity.decoy")]
-    [source-a : i64 -1]
-    [source-b : i64 -1]
-    [restored-source-a : i64 -1]
-    [a-ok : bool false]
-    [b-ok : bool false]
-    [restored-ok : bool false]
-    (begin
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-a))
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (set!
-        source-a
-        (compiler_load.compiler-load-parse-context-name-id
-          "loader.identity.same"))
-      (set! a-ok (compiler-load-identity-current-ok?))
-      (ci.intern-compat-state-capture-from-globals! (&mut state-a))
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-b))
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (set!
-        source-b
-        (compiler_load.compiler-load-parse-context-name-id
-          "loader.identity.same"))
-      (set! b-ok (compiler-load-identity-current-ok?))
-      (ci.intern-compat-state-capture-from-globals! (&mut state-b))
-      (ci.intern-compat-state-install! state-a)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (set!
-        restored-source-a
-        (compiler_load.compiler-load-parse-context-name-id
-          "loader.identity.same"))
-      (set!
-        restored-ok
-        (and
-          a-ok
-          b-ok
-          (not (= source-a source-b))
-          (= restored-source-a source-a)
-          (compiler-load-identity-current-ok?)))
-      (ci.intern-compat-state-install! home)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      restored-ok)))
-
 (test
   compiler-load-module-identity-ids
   (begin
@@ -118,6 +64,57 @@
     (unless
       (compiler-load-identity-current-ok?)
       (io.panic "compiler-load: module identity ID reset failed"))
-    (if (compiler-load-identity-snapshot-ok?)
+    (if (let
+      [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [_b-decoy : i64
+        (ci.intern-compat-state-intern (&mut state-b) "loader.identity.decoy")]
+      [source-a : i64 -1]
+      [source-b : i64 -1]
+      [restored-source-a : i64 -1]
+      [a-ok : bool false]
+      [b-ok : bool false]
+      [restored-ok : bool false]
+      (begin
+        (ci.intern-compat-state-install!
+          (owned_view.compiler-owned-shared-view state-a))
+        (cbi.compiler-builtin-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (set!
+          source-a
+          (compiler_load.compiler-load-parse-context-name-id
+            "loader.identity.same"))
+        (set! a-ok (compiler-load-identity-current-ok?))
+        (ci.intern-compat-state-capture-from-globals! (&mut state-a))
+        (ci.intern-compat-state-install!
+          (owned_view.compiler-owned-shared-view state-b))
+        (cbi.compiler-builtin-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (set!
+          source-b
+          (compiler_load.compiler-load-parse-context-name-id
+            "loader.identity.same"))
+        (set! b-ok (compiler-load-identity-current-ok?))
+        (ci.intern-compat-state-capture-from-globals! (&mut state-b))
+        (ci.intern-compat-state-install! state-a)
+        (cbi.compiler-builtin-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (set!
+          restored-source-a
+          (compiler_load.compiler-load-parse-context-name-id
+            "loader.identity.same"))
+        (set!
+          restored-ok
+          (and
+            a-ok
+            b-ok
+            (not (= source-a source-b))
+            (= restored-source-a source-a)
+            (compiler-load-identity-current-ok?)))
+        (ci.intern-compat-state-install! home)
+        (cbi.compiler-builtin-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
+        restored-ok))
       unit
       (io.panic "compiler-load: module identity ID snapshot failed"))))

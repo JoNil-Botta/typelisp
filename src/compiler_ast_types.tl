@@ -9,7 +9,6 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.dense_list)
-(cfg test (import stdlib.io))
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -239,9 +238,6 @@
 
 (define (ast-lit-generated-string [text : String]) : AstLiteral
   (AstLiteral.String (ci.intern-generated-canonical-name text)))
-
-(define (ast-lit-string-text [string-id : i64]) : String
-  (ci.intern-str string-id))
 
 (define (ast-lit-int [value : i64]) : AstLiteral
   (AstLiteral.Int value ""))
@@ -755,15 +751,6 @@
         (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
     (unsafe
       (ptr-read (int->ptr (cast address : u64) : (Ptr AstPatternList))))))
-
-(define (ast-spmd-param-class-list-box-shared-view
-  [value : (Box AstSpmdParamClassList)]) : AstSpmdParamClassList
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast address : u64) : (Ptr AstSpmdParamClassList))))))
 
 (define (ast-imported-spmd-callable-list-box-shared-view
   [value : (Box AstImportedSpmdCallableList)]) : AstImportedSpmdCallableList
@@ -2048,9 +2035,6 @@
   [pool : (& pool AstExprNodePoolState)]) : i64
   (* pool.segment-count ast-expr-node-pool-segment-size))
 
-(define (ast-expr-node-pool-state-mark [pool : (& pool AstExprNodePoolState)]) : i64
-  (ast-expr-node-pool-state-len pool))
-
 (define (ast-expr-node-pool-state-with-canonical-spans
   [pool : AstExprNodePoolState]
   [records : (__tl_dyn-array AstExprCanonicalSpanRecord)]
@@ -2270,11 +2254,6 @@
   [pool : AstExprNodePoolState]
   [mark : i64]) : AstExprNodePoolState
   (ast-expr-node-pool-state-span-reset-to pool mark))
-
-(define (ast-expr-node-pool-state-reset-to-mark
-  [pool : AstExprNodePoolState]
-  [mark : i64]) : AstExprNodePoolState
-  (ast-expr-node-pool-state-reset-to pool mark))
 
 ;; Hot explicit-owner pushes mutate the one-element pool cell directly. The
 ;; segment table is stable for the owner's lifetime: growth installs a fresh
@@ -2819,9 +2798,6 @@
 (define (ty-node-pool-len) : i64
   ty-node-pool-count)
 
-(define (ty-node-pool-capacity) : i64
-  (* ty-node-pool-segment-count ast-type-node-pool-segment-size))
-
 (define (ty-node-pool-exhausted?) : bool
   ty-node-pool-exhausted)
 
@@ -3015,13 +2991,6 @@
   [pool : (& pool AstTypeNodePoolState)]) : i64
   (* pool.segment-count ast-type-node-pool-segment-size))
 
-(define (ast-type-node-pool-state-exhausted?
-  [pool : (& pool AstTypeNodePoolState)]) : bool
-  pool.exhausted)
-
-(define (ast-type-node-pool-state-mark [pool : (& pool AstTypeNodePoolState)]) : i64
-  (ast-type-node-pool-state-len pool))
-
 (define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
     [slots : (__tl_dyn-array i64) pool.dedup-slots]
@@ -3057,11 +3026,6 @@
       pool.dedup-count
       pool.storage-arena
       pool.segment-count)))
-
-(define (ast-type-node-pool-state-reset-to-mark
-  [pool : AstTypeNodePoolState]
-  [mark : i64]) : AstTypeNodePoolState
-  (ast-type-node-pool-state-reset-to pool mark))
 
 (define (ast-type-node-pool-state-grow [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
@@ -3203,34 +3167,6 @@
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
-
-(define (ast-type-node-pool-state-set!
-  [pool : AstTypeNodePoolState]
-  [id : i64]
-  [node : AstType]) : AstTypeNodePoolState
-  (let
-    [base-arena : i64 pool.base-arena]
-    [persistent : AstType
-      (in-arena (arena.Arena base-arena) (ty-node-persist node))]
-    [biased-base : i64
-      (unsafe
-        (ptr-read
-          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 10))))]
-    [dest : (MutPtr i64)
-      (unsafe
-        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
-    [source : (Ptr i64)
-      (unsafe
-        (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
-    (begin
-      (unsafe
-        (begin
-          (ptr-write! dest (ptr-read source))
-          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
-      ;; Overwriting an existing id can make hash entries stale. Clear the
-      ;; private table and let future pushes repopulate it from new candidates.
-      (ast-type-node-pool-state-dedup-clear pool))))
 
 ;: Append `node` to the pool unconditionally and return its ty id.
 (define (ty-node-push-raw [node : AstType]) : i64
@@ -4443,12 +4379,6 @@
         (ast-type-pool-cell-read pools.type-pool)))
     (ast-node-pool-compat-context-sync-installed!)))
 
-(define (ast-node-pool-context-expr-cell-address [pools : AstNodePoolContext]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (ast-expr-pool-cell-ptr pools.expr-pool) : (Ptr u8))))
-    : i64))
-
 (define (ast-node-pool-context-expr-installed? [pools : AstNodePoolContext]) : bool
   (if (ast-node-pool-compat-context-active?)
     (=
@@ -4461,6 +4391,12 @@
         (ast-node-pool-context-expr-cell-address pools)
         (ast-node-pool-context-expr-cell-address
           (ast-node-pool-context-active-live))))))
+
+(define (ast-node-pool-context-expr-cell-address [pools : AstNodePoolContext]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (ast-expr-pool-cell-ptr pools.expr-pool) : (Ptr u8))))
+    : i64))
 
 ;; Publish a completed explicit expression-pool transaction to transitional
 ;; global constructors when its cells belong to the installed owner. Callers
@@ -4604,13 +4540,6 @@
   (ast-expr-segment-bases-get
     (ast-node-pool-context-expr-segment-bases pools)
     id))
-
-(define (ast-node-pool-context-expr-canonical-span
-  [pools : (& pools AstNodePoolContext)]
-  [id : i64]) : AstMaybeSourceSpan
-  (let
-    [bound-1 (ast-expr-pool-cell-read pools.expr-pool)]
-    (ast-expr-node-pool-state-canonical-span bound-1 id)))
 
 (define (ast-node-pool-context-expr-view-span
   [pools : (& pools AstNodePoolContext)]
@@ -5247,12 +5176,6 @@
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
   (ast-type-list-cons-id (ast-node-pool-reader-type-push head) rest))
-
-(define (ast-ty-c-func
-  [args : AstTypeList]
-  [ret : AstType]
-  [mode : AstCFunctionMode]) : AstType
-  (AstType.CFunc (ast-node-pool-reader-type-push (ast-ty-func args ret)) mode))
 
 (define (ast-ty-c-func-with-pools
   [pools : AstNodePoolContext]
@@ -6368,23 +6291,6 @@
   minimum-one
   compiler-dense-list-unused-shared-zero-storage)
 
-(define (ast-expr-clause-list-tail [items : AstExprClauseList]) : AstExprClauseList
-  (let
-    [out : AstExprClauseList
-      (ast-expr-clause-list-with-capacity (- items.len 1))]
-    [index : i64 1]
-    (begin
-      (while (< index items.len)
-        (begin
-          (ast-expr-clause-list-push
-            (&mut out)
-            (ast-expr-clause-list-get
-              (& items)
-              index
-              (ast-expr-clause-fallback)))
-          (set! index (+ index 1))))
-      out)))
-
 (define (ast-expr-binding-clause-id
   [name : ci.InternSyntaxId]
   [has-type : bool]
@@ -6410,23 +6316,6 @@
   caller-provided-fallback
   minimum-one
   compiler-dense-list-unused-shared-zero-storage)
-
-(define (ast-expr-binding-clause-list-tail [items : AstExprBindingClauseList]) : AstExprBindingClauseList
-  (let
-    [out : AstExprBindingClauseList
-      (ast-expr-binding-clause-list-with-capacity (- items.len 1))]
-    [index : i64 1]
-    (begin
-      (while (< index items.len)
-        (begin
-          (ast-expr-binding-clause-list-push
-            (&mut out)
-            (ast-expr-binding-clause-list-get
-              (& items)
-              index
-              (ast-expr-binding-clause-fallback)))
-          (set! index (+ index 1))))
-      out)))
 
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
   (ast-node-push (AstExpr.Spanned inner span)))
@@ -6591,9 +6480,6 @@
 ;; Hooks for child kinds a walker does not visit.
 (defmacro (ast-child-unit [_ignored : Expr ...]) : Expr
   `unit)
-
-(defmacro (ast-child-false [_ignored : Expr ...]) : Expr
-  `false)
 
 (defmacro (ast-fold-1
   [combine : Expr]
@@ -6989,23 +6875,6 @@
     ,expr
     ast-fold-seq
     unit
-    ,on-expr
-    ,on-type-id
-    ,on-type
-    ,on-pattern
-    ,@contexts))
-
-(defmacro (ast-expr-any-child?
-  [expr : Expr]
-  [on-expr : Expr]
-  [on-type-id : Expr]
-  [on-type : Expr]
-  [on-pattern : Expr]
-  [contexts : Expr ...]) : bool
-  `(ast-expr-fold-children
-    ,expr
-    ast-fold-or
-    false
     ,on-expr
     ,on-type-id
     ,on-type
@@ -8537,13 +8406,6 @@
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.Set name value)))
 
-;; The AstType-taking constructors keep their signature and intern the type
-;; themselves, so the ~50 call sites that build a literal type are unchanged.
-;; The `-id` twins below are for walks that already hold an AstTypeId and
-;; would otherwise round-trip it through `ty-node-get`/`ty-node-push`.
-(define (ast-expr-ann [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExpr.Ann expr (ty-node-push ty))))
-
 (define (ast-expr-ann-id [expr : i64] [ty-id : i64]) : i64
   (ast-node-push (AstExpr.Ann expr ty-id)))
 
@@ -8645,17 +8507,8 @@
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (AstExpr.Comptime inner)))
 
-(define (ast-expr-quasiquote [inner : i64]) : i64
-  (ast-node-push (AstExpr.Quasiquote inner)))
-
 (define (ast-expr-return [inner : i64]) : i64
   (ast-node-push (AstExpr.Return inner)))
-
-(define (ast-expr-break) : i64
-  (ast-node-push (AstExpr.Break)))
-
-(define (ast-expr-continue) : i64
-  (ast-node-push (AstExpr.Continue)))
 
 (define (ast-expr-ptr-null-check [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrNullCheck ptr)))
@@ -9280,9 +9133,6 @@
 (define (ast-decl-list-len [v : (& v AstDeclList)]) : i64
   v.len)
 
-(define (ast-decl-list-empty? [v : (& v AstDeclList)]) : bool
-  (= (ast-decl-list-len v) 0))
-
 (define (ast-decl-list-get
   [v : (& v AstDeclList)]
   [index : i64]
@@ -9402,11 +9252,6 @@
       (begin
         (set! (array-ref v.slots index) (array-ref src src-index))
         (set! v.len (+ v.len 1))))))
-
-(define (ast-decl-list-tail [items : AstDeclList]) : AstDeclList
-  (if (<= (ast-decl-list-len (& items)) 0)
-    (ast-decl-list-new)
-    (AstDeclList items.slots (+ items.offset 1) (- items.len 1) false)))
 
 (define (ast-decl-list-step [items : AstDeclList]) : AstDeclListStep
   (let
@@ -10076,14 +9921,6 @@
 (define (ast-decl-module-list-len [v : (& v AstDeclModuleList)]) : i64
   v.len)
 
-(define (ast-decl-module-list-get
-  [v : (& v AstDeclModuleList)]
-  [index : i64]
-  [fallback : String]) : String
-  (if (and (>= index 0) (< index (ast-decl-module-list-len v)))
-    (ci.intern-str (array-ref v.slots (+ v.offset index)))
-    fallback))
-
 (define (ast-decl-module-list-get-id
   [v : (& v AstDeclModuleList)]
   [index : i64]
@@ -10454,12 +10291,6 @@
     ;; pass before each compaction.
     ;; Pool ids are bounded below i32::MAX by the 4096-segment pool ceiling.
     (__tl_make-array i32 cap)))
-
-(define (ast-compaction-remap-source-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
-  remap.source-pools)
-
-(define (ast-compaction-remap-dest-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
-  remap.dest-pools)
 
 (define (ast-compaction-remap-source-type-get
   [remap : (& remap AstProgramCompactionRemap)]
@@ -11401,95 +11232,6 @@
     [(AstType.VarArgs _ _) 34]
     [(AstType.Slice _) 37]))
 
-(define (ast-expr-tag [expr : AstExpr]) : i64
-  (match expr
-    [(AstExpr.Spanned _ _) 1]
-    [(AstExpr.Literal _) 2]
-    [(AstExpr.Var _) 3]
-    [(AstExpr.Binary _ _ _) 4]
-    [(AstExpr.Unary _ _) 5]
-    [(AstExpr.Call _ _) 6]
-    [(AstExpr.If _ _ _) 7]
-    [(AstExpr.Let _) 8]
-    [(AstExpr.Lambda _) 9]
-    [(AstExpr.Tuple _) 10]
-    [(AstExpr.TupleRef _ _) 11]
-    [(AstExpr.Array _) 12]
-    [(AstExpr.DynArray _) 74]
-    [(AstExpr.FixedMakeArray _ _) 81]
-    [(AstExpr.MakeArray _ _) 13]
-    [(AstExpr.ArrayRef _ _) 14]
-    [(AstExpr.ArraySet _ _ _) 15]
-    [(AstExpr.ArrayTake _ _ _) 75]
-    [(AstExpr.FixedArrayTake _ _) 76]
-    [(AstExpr.ArrayPush _ _) 41]
-    [(AstExpr.StringRef _ _) 16]
-    [(AstExpr.While _ _) 17]
-    [(AstExpr.ForOwnedState _) 77]
-    [(AstExpr.ForOwnedStep _) 78]
-    [(AstExpr.MacroExpansion _ _ _) 79]
-    [(AstExpr.Replace _ _) 80]
-    [(AstExpr.Begin _) 18]
-    [(AstExpr.Unsafe _) 32]
-    [(AstExpr.Set _ _) 19]
-    [(AstExpr.Ann _ _) 20]
-    [(AstExpr.Cast _ _) 21]
-    [(AstExpr.Borrow _ _ _) 40]
-    [(AstExpr.Match _) 22]
-    [(AstExpr.Foreach _) 23]
-    [(AstExpr.StructGet _ _) 24]
-    [(AstExpr.StructSet _ _ _) 63]
-    [(AstExpr.WithRegion _ _) 25]
-    [(AstExpr.WithEscape _ _) 48]
-    [(AstExpr.WithScratch _) 67]
-    [(AstExpr.InArena _ _) 65]
-    [(AstExpr.TypeLiteral _) 26]
-    [(AstExpr.Init _) 61]
-    [(AstExpr.Comptime _) 27]
-    [(AstExpr.SpmdReduce _) 28]
-    [(AstExpr.SpmdScan _) 68]
-    [(AstExpr.SpmdCompact _) 82]
-    [(AstExpr.SpmdBroadcast _ _) 64]
-    [(AstExpr.SpmdShuffle _ _) 71]
-    [(AstExpr.SpmdProgramIndex) 69]
-    [(AstExpr.SpmdProgramCount) 70]
-    [(AstExpr.Try _) 29]
-    [(AstExpr.Return _) 48]
-    [(AstExpr.Break) 72]
-    [(AstExpr.Continue) 73]
-    [(AstExpr.PtrNull _) 30]
-    [(AstExpr.PtrNullCheck _) 31]
-    [(AstExpr.WithResource _) 33]
-    [(AstExpr.PtrAddrOf _) 62]
-    [(AstExpr.PtrRead _) 34]
-    [(AstExpr.PtrWrite _ _) 35]
-    [(AstExpr.PtrOffset _ _) 36]
-    [(AstExpr.PtrCast _ _) 37]
-    [(AstExpr.PtrToInt _) 38]
-    [(AstExpr.IntToPtr _ _) 39]
-    [(AstExpr.Box _) 42]
-    [(AstExpr.BoxGet _) 43]
-    [(AstExpr.BoxTake _) 65]
-    [(AstExpr.BoxSet _ _) 66]
-    [(AstExpr.Quote _) 44]
-    [(AstExpr.Quasiquote _) 45]
-    [(AstExpr.Unquote _) 46]
-    [(AstExpr.UnquoteSplicing _) 47]
-    [(AstExpr.BracketClause _) 63]
-    [(AstExpr.StringData _) 49]
-    [(AstExpr.StringFromBytes _ _) 50]
-    [(AstExpr.ArrayData _) 51]
-    [(AstExpr.BinaryData _) 64]
-    [(AstExpr.ProgramArgc) 52]
-    [(AstExpr.ProgramArgv) 53]
-    [(AstExpr.ProgramEnvp) 54]
-    [(AstExpr.CpuIdEax _ _) 55]
-    [(AstExpr.CpuIdEbx _ _) 56]
-    [(AstExpr.CpuIdEcx _ _) 57]
-    [(AstExpr.CpuIdEdx _ _) 58]
-    [(AstExpr.Xgetbv _) 59]
-    [(AstExpr.Syscall _) 60]))
-
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (let
     [fallback : AstExpr (ast-global-shared-view expr)]
@@ -11523,27 +11265,6 @@
           segment-bases
           (ast-expr-segment-bases-shared-view segment-bases inner-id))]
       [_ fallback])))
-
-(define (ast-decl-tag [decl : AstDecl]) : i64
-  (match decl
-    [(AstDecl.Def decl-meta _ _ _) 1]
-    [(AstDecl.DefFn decl-meta _ _ _ _ _) 2]
-    [(AstDecl.DefMacro decl-meta _ _ _ _) 10]
-    [(AstDecl.Extern decl-meta _ _ _ _) 3]
-    [(AstDecl.DefEnum decl-meta _ _ _) 4]
-    [(AstDecl.DefStruct decl-meta _ _ _ _) 5]
-    [(AstDecl.Import decl-meta _) 6]
-    [(AstDecl.Test _ _ _ _) 7]
-    [(AstDecl.Module _) 9]
-    [(AstDecl.ModuleBody _ _) 18]
-    [(AstDecl.IncludeStr _ _) 12]
-    [(AstDecl.IncludeStrComptime _ _) 19]
-    [(AstDecl.IncludeStrLzss _ _) 20]
-    [(AstDecl.Unsafe _) 13]
-    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) 14]
-    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) 15]
-    [(AstDecl.DefDispatch decl-meta _ _) 16]
-    [(AstDecl.IncludeBin _ _) 17]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr
@@ -11731,603 +11452,3 @@
     [(AstVariantPayloadCleanup.Fn _) true]
     [(AstVariantPayloadCleanup.Owned) true]
     [(AstVariantPayloadCleanup.No) false]))
-
-(define (compiler-ast-begin-expr? [expr : AstExpr]) : bool
-  (match expr
-    [(AstExpr.Begin _) true]
-    [_ false]))
-
-(define (compiler-ast-nested-pattern-box-ok? [pattern : AstPattern]) : bool
-  (match pattern
-    [(AstPattern.Variant name args-box)
-      (let
-        [args : AstPatternList (deref args-box)]
-        (and
-          (= name cbi.compiler-builtin-id-fix-Some)
-          (= args.len 1)
-          (match (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))
-            [(AstPattern.Tuple items-box)
-              (let
-                [items : AstPatternList (deref items-box)]
-                (and
-                  (= items.len 2)
-                  (match (ast-pattern-list-get
-                    (& items)
-                    0
-                    (ast-pattern-fallback))
-                    [(AstPattern.Binding bind-name)
-                      (= bind-name cbi.compiler-builtin-id-fix-item)]
-                    [_ false])
-                  (match (ast-pattern-list-get
-                    (& items)
-                    1
-                    (ast-pattern-fallback))
-                    [(AstPattern.Wildcard) true]
-                    [_ false])))]
-            [_ false])))]
-    [_ false]))
-
-(define (compiler-ast-single-arm-box-ok? [arms : AstMatchArmList]) : bool
-  (and
-    (= (ast-match-arm-list-len (& arms)) 1)
-    (match (ast-match-arm-list-get (& arms) 0 (ast-match-arm-fallback))
-      [(AstMatchArm.Arm pattern body-id)
-        (let
-          [body : AstExpr (ast-node-get body-id)]
-          (and
-            (compiler-ast-nested-pattern-box-ok? pattern)
-            (compiler-ast-begin-expr? body)))]
-      [_ false])))
-
-(define (compiler-ast-nested-expr-box-ok? [expr : AstExpr]) : bool
-  (match expr
-    [(AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(AstLet.Let bindings body-box)
-          (let
-            [body : AstExpr (ast-node-get body-box)]
-            (and
-              (= (ast-let-binding-list-len (& bindings)) 1)
-              (match (ast-let-binding-list-get
-                (& bindings)
-                0
-                (ast-let-binding-fallback))
-                [(AstLetBinding.Binding name _ init-box)
-                  (let
-                    [init : AstExpr (ast-node-get init-box)]
-                    (and
-                      (= name cbi.compiler-builtin-id-fix-x)
-                      (compiler-ast-begin-expr? init)))]
-                [_ false])
-              (match body
-                [(AstExpr.If cond-box then-box else-box)
-                  (let
-                    [cond : AstExpr (ast-node-get cond-box)]
-                    [then-expr : AstExpr (ast-node-get then-box)]
-                    [else-expr : AstExpr (ast-node-get else-box)]
-                    (and
-                      (match cond
-                        [(AstExpr.Var name)
-                          (string.eq (ci.intern-str name) "cond")]
-                        [_ false])
-                      (match then-expr
-                        [(AstExpr.Match match-box)
-                          (match (__tl-box-place match-box)
-                            [(AstMatch.Match scrut-box arms)
-                              (let
-                                [scrut : AstExpr (ast-node-get scrut-box)]
-                                (and
-                                  (match scrut
-                                    [(AstExpr.Var name)
-                                      (string.eq (ci.intern-str name) "input")]
-                                    [_ false])
-                                  (compiler-ast-single-arm-box-ok? arms)))])]
-                        [_ false])
-                      (compiler-ast-begin-expr? else-expr)))]
-                [_ false])))])]
-    [_ false]))
-
-(define (compiler-ast-expr-pattern-box-smoke?) : bool
-  (let
-    [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
-    [two : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 2)))]
-    [begin-expr : i64
-      (ast-node-push
-        (AstExpr.Begin
-          (ast-expr-cons one (ast-expr-cons two (ast-expr-list-new)))))]
-    [bindings : AstLetBindingList
-      (ast-let-binding-cons
-        (ast-let-binding-id
-          cbi.compiler-builtin-id-fix-x
-          (AstMaybeType.No)
-          begin-expr)
-        (ast-let-binding-list-new))]
-    [tuple-pattern : AstPattern
-      (ast-pat-tuple
-        (ast-pattern-cons
-          (ast-pat-binding-id cbi.compiler-builtin-id-fix-item)
-          (ast-pattern-cons (AstPattern.Wildcard) (ast-pattern-list-new))))]
-    [variant-pattern : AstPattern
-      (ast-pat-variant-id
-        cbi.compiler-builtin-id-fix-Some
-        (ast-pattern-cons tuple-pattern (ast-pattern-list-new)))]
-    [arms : AstMatchArmList
-      (ast-match-arm-cons
-        (ast-match-arm variant-pattern begin-expr)
-        (ast-match-arm-list-new))]
-    [match-expr : i64
-      (ast-expr-match
-        (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-input))
-        arms)]
-    [nested : i64
-      (ast-expr-let
-        bindings
-        (ast-expr-if
-          (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-cond))
-          match-expr
-          begin-expr))]
-    (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))
-
-(define (compiler-ast-decl-def-lit-ok?
-  [decl : AstDecl]
-  [want-name-id : i64]
-  [want-value : i64]) : bool
-  (match decl
-    [(AstDecl.Def decl-meta name _ value-box)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        (and
-          (= name want-name-id)
-          (match value
-            [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual want-value)]
-            [_ false])))]
-    [_ false]))
-
-(define (compiler-ast-nested-decl-box-ok?
-  [decl : AstDecl]
-  [generated-name-id : i64]) : bool
-  (match decl
-    [(AstDecl.Unsafe inner-box)
-      (let
-        [inner : AstDecl (deref inner-box)]
-        (and
-          (ast-decl-comptime-only? (ast-global-shared-view inner))
-          (compiler-ast-decl-def-lit-ok? inner generated-name-id 7)))]
-    [_ false]))
-
-(define (compiler-ast-decl-program-box-smoke?) : bool
-  (let
-    [generated-name-id : i64 (ci.intern-generated-name "generated")]
-    [runtime-name-id : i64 (ci.intern-generated-name "runtime")]
-    [generated : AstDecl
-      (ast-decl-def-id
-        generated-name-id
-        (AstMaybeType.Some (AstType.I64))
-        (ast-node-push (AstExpr.Literal (ast-lit-int 7))))]
-    [runtime : AstDecl
-      (ast-decl-def-id
-        runtime-name-id
-        (AstMaybeType.Some (AstType.I64))
-        (ast-node-push (AstExpr.Literal (ast-lit-int 9))))]
-    [nested : AstDecl (ast-decl-unsafe (ast-decl-comptime-decl generated))]
-    [program : AstProgram
-      (ast-program
-        (ast-decl-cons nested (ast-decl-cons runtime (ast-decl-list-new))))]
-    (match program
-      [(AstProgram.Program decls-box)
-        (let
-          [decls : AstDeclList (deref decls-box)]
-          (match (ast-decl-list-step decls)
-            [(AstDeclListStep.Cons first rest-box)
-              (let
-                [rest : AstDeclList rest-box]
-                (and
-                  (compiler-ast-nested-decl-box-ok? first generated-name-id)
-                  (match (ast-decl-list-step rest)
-                    [(AstDeclListStep.Cons second done-box)
-                      (let
-                        [done : AstDeclList done-box]
-                        (and
-                          (compiler-ast-decl-def-lit-ok?
-                            second
-                            runtime-name-id
-                            9)
-                          (match (ast-decl-list-step done)
-                            [(AstDeclListStep.Nil) true]
-                            [_ false])))]
-                    [_ false])))]
-            [_ false]))])))
-
-;; The ty-node pool grows on demand (see ty-node-pool-grow!) rather
-;; than failing closed, so a push at capacity allocates a larger backing array and
-;; assigns the next sequential id -- it never exhausts. Verify that growth.
-(define (compiler-ast-type-pool-exhaustion-smoke?) : bool
-  (let
-    [capacity : i64 (ty-node-pool-capacity)]
-    (begin
-      (ty-node-pool-reset!)
-      (ty-node-pool-truncate! capacity)
-      (let
-        [id : i64 (ty-node-push (AstType.I64))]
-        [len : i64 (ty-node-pool-len)]
-        [exhausted : bool (ty-node-pool-exhausted?)]
-        [grew : bool (> (ty-node-pool-capacity) capacity)]
-        (begin
-          (ty-node-pool-reset!)
-          (and (not exhausted) (= id capacity) (= len (+ capacity 1)) grew))))))
-
-(define (compiler-ast-type-dedup-smoke?) : bool
-  (begin
-    (ty-node-pool-reset!)
-    (let
-      [first-i64 : i64 (ty-node-push (AstType.I64))]
-      [first-len : i64 (ty-node-pool-len)]
-      [second-i64 : i64 (ty-node-push (AstType.I64))]
-      [second-len : i64 (ty-node-pool-len)]
-      [first-array : i64 (ty-node-push (ast-ty-array (AstType.I64) 4))]
-      [array-len : i64 (ty-node-pool-len)]
-      [second-array : i64 (ty-node-push (ast-ty-array (AstType.I64) 4))]
-      [final-len : i64 (ty-node-pool-len)]
-      [first-bytes : i64 (ty-node-push (AstType.Bytes))]
-      [bytes-len : i64 (ty-node-pool-len)]
-      [second-bytes : i64 (ty-node-push (AstType.Bytes))]
-      [second-bytes-len : i64 (ty-node-pool-len)]
-      [str-ty : i64 (ty-node-push (AstType.Str))]
-      [str-len : i64 (ty-node-pool-len)]
-      [first-slice : i64 (ty-node-push (ast-ty-slice (AstType.I64)))]
-      [slice-len : i64 (ty-node-pool-len)]
-      [second-slice : i64 (ty-node-push (ast-ty-slice (AstType.I64)))]
-      [second-slice-len : i64 (ty-node-pool-len)]
-      [first-dyn-array : i64 (ty-node-push (ast-ty-dyn-array (AstType.I64)))]
-      [dyn-array-len : i64 (ty-node-pool-len)]
-      [nested-slice : i64
-        (ty-node-push (ast-ty-slice (ast-ty-slice (AstType.I64))))]
-      [nested-slice-again : i64
-        (ty-node-push (ast-ty-slice (ast-ty-slice (AstType.I64))))]
-      [ok : bool
-        (and
-          (= first-i64 second-i64)
-          (= first-len 1)
-          (= second-len 1)
-          (= first-array second-array)
-          (= array-len 2)
-          (= final-len 2)
-          (= first-bytes second-bytes)
-          (= bytes-len 3)
-          (= second-bytes-len 3)
-          (not (= first-bytes str-ty))
-          (= str-len 4)
-          (= first-slice second-slice)
-          (= slice-len 5)
-          (= second-slice-len 5)
-          (not (= first-slice first-dyn-array))
-          (= dyn-array-len 6)
-          (= nested-slice nested-slice-again)
-          (= (ast-type-tag (ty-node-get first-slice)) 37)
-          (not
-            (=
-              (ty-node-hash-value (ty-node-get first-slice))
-              (ty-node-hash-value (ty-node-get first-dyn-array)))))]
-      (begin
-        (ty-node-pool-reset!)
-        ok))))
-
-(define (compiler-ast-spmd-metadata-clone-smoke?) : bool
-  (let
-    [classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
-    [specializations : AstSpmdSpecializationList
-      (ast-spmd-specialization-list-new)]
-    (begin
-      (ast-spmd-param-class-list-push (&mut classes) AstSpmdParamClass.Varying)
-      (ast-spmd-param-class-list-push (&mut classes) AstSpmdParamClass.Uniform)
-      (ast-spmd-specialization-list-push
-        (&mut specializations)
-        (AstSpmdSpecialization 8 (box classes) AstSpmdResultClass.Varying 0))
-      (let
-        [copied : AstFnMetadata
-          (ast-fn-metadata-clone
-            (AstFnMetadata.SpmdCallable (box specializations)))]
-        (match (ast-fn-metadata-spmd-callable copied)
-          [(AstSpmdCallable.Callable copied-items)
-            (let
-              [fallback : AstSpmdSpecialization
-                (AstSpmdSpecialization
-                  2
-                  (box (ast-spmd-param-class-list-new))
-                  AstSpmdResultClass.Unit
-                  -1)]
-              [item : AstSpmdSpecialization
-                (ast-spmd-specialization-list-get (& copied-items) 0 fallback)]
-              [copied-classes : AstSpmdParamClassList
-                (ast-spmd-param-class-list-box-shared-view item.args)]
-              (and
-                (= (ast-spmd-specialization-list-len (& copied-items)) 1)
-                (= item.lanes 8)
-                (= item.index-param 0)
-                (match item.result
-                  [(AstSpmdResultClass.Varying) true]
-                  [_ false])
-                (match (ast-spmd-param-class-list-get
-                  (& copied-classes)
-                  0
-                  AstSpmdParamClass.Uniform)
-                  [(AstSpmdParamClass.Varying) true]
-                  [_ false])
-                (match (ast-spmd-param-class-list-get
-                  (& copied-classes)
-                  1
-                  AstSpmdParamClass.Varying)
-                  [(AstSpmdParamClass.Uniform) true]
-                  [_ false])))]
-          [_ false])))))
-
-(define (compiler-ast-imported-spmd-metadata-clone-smoke?) : bool
-  (let
-    [abi : ci.InternId (ci.intern-id-from-renderable 1)]
-    [backend : ci.InternId (ci.intern-id-from-renderable 2)]
-    [args : ci.InternId (ci.intern-id-from-renderable 3)]
-    [result : ci.InternId (ci.intern-id-from-renderable 4)]
-    [symbol : ci.InternId (ci.intern-id-from-renderable 5)]
-    [signature : ci.InternId (ci.intern-id-from-renderable 6)]
-    [name-id : ci.InternId (ci.intern-id-from-renderable 7)]
-    [specializations : AstImportedSpmdSpecializationList
-      (ast-imported-spmd-specialization-list-new)]
-    [callables : AstImportedSpmdCallableList
-      (ast-imported-spmd-callable-list-new)]
-    (begin
-      (ast-imported-spmd-specialization-list-push
-        (&mut specializations)
-        (AstImportedSpmdSpecialization abi backend 8 args result 0 symbol))
-      (ast-imported-spmd-callable-list-push
-        (&mut callables)
-        (AstImportedSpmdCallable signature specializations))
-      (match (ast-imported-spmd-metadata-clone
-        (AstImportedSpmdMetadata.Package
-          "fixture"
-          "1.0.0"
-          name-id
-          (box callables)))
-        [(AstImportedSpmdMetadata.Package owner version name copied-callables)
-          (let
-            [copied : AstImportedSpmdCallableList (deref copied-callables)]
-            [callable : AstImportedSpmdCallable
-              (ast-imported-spmd-callable-list-get
-                (& copied)
-                0
-                (ast-imported-spmd-callable-fallback))]
-            [copied-specializations : AstImportedSpmdSpecializationList
-              callable.specializations]
-            [item : AstImportedSpmdSpecialization
-              (ast-imported-spmd-specialization-list-get
-                (& copied-specializations)
-                0
-                (ast-imported-spmd-specialization-fallback))]
-            (and
-              (string.eq owner "fixture")
-              (string.eq version "1.0.0")
-              (ci.intern-id-eq? name name-id)
-              (= (ast-imported-spmd-callable-list-len (& copied)) 1)
-              (ci.intern-id-eq? callable.signature signature)
-              (=
-                (ast-imported-spmd-specialization-list-len
-                  (& copied-specializations))
-                1)
-              (= item.lanes 8)
-              (ci.intern-id-eq? item.symbol symbol)))]
-        [(AstImportedSpmdMetadata.No) false]))))
-
-;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
-;; inline array stride.
-;;
-;; `size-of` on an enum reports the handle width, so the two stride constants
-;; are stated by hand and consumed by unchecked pointer arithmetic in every
-;; pool load and store. If a constant ever disagrees with the layout the
-;; compiler actually gives `(__tl_dyn-array AstExpr)` /
-;; `(__tl_dyn-array AstType)`, every pool access computes a wrong address and
-;; the failure is silent memory corruption, not a type error.
-;;
-;; The check plays the two representations against each other: `array-set!`
-;; addresses a slot with the compiler's own stride, while the reader below
-;; addresses it as `base + index * <the constant>`. They agree only when the
-;; constant is right. Distinct payloads at both indices mean an off-by-one
-;; stride cannot alias into a passing answer.
-(define (ast-expr-node-stride-pinned?) : bool
-  (let
-    [slots : (__tl_dyn-array AstExpr) (__tl_make-array AstExpr 2)]
-    [_w0 : unit (set! (array-ref slots 0) (AstExpr.Var 0))]
-    [_w1 : unit (set! (array-ref slots 1) (AstExpr.Comptime 987654321))]
-    [base : i64
-      (cast
-        (unsafe
-          (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
-        : i64)]
-    (and
-      (match (unsafe
-        (ptr-read
-          (int->ptr (+ base (* 0 (ast-expr-node-bytes))) : (Ptr AstExpr))))
-        [(AstExpr.Var name) (= name 0)]
-        [_ false])
-      (match (unsafe
-        (ptr-read
-          (int->ptr (+ base (* 1 (ast-expr-node-bytes))) : (Ptr AstExpr))))
-        [(AstExpr.Comptime inner) (= inner 987654321)]
-        [_ false]))))
-
-(define (ast-type-node-stride-pinned?) : bool
-  (let
-    [slots : (__tl_dyn-array AstType) (__tl_make-array AstType 2)]
-    [_w0 : unit (set! (array-ref slots 0) (AstType.I64))]
-    [_w1 : unit (set! (array-ref slots 1) (AstType.Array 123456789 42))]
-    [base : i64
-      (cast
-        (unsafe
-          (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
-        : i64)]
-    (and
-      (match (unsafe
-        (ptr-read
-          (int->ptr (+ base (* 0 (ast-type-node-bytes))) : (Ptr AstType))))
-        [(AstType.I64) true]
-        [_ false])
-      (match (unsafe
-        (ptr-read
-          (int->ptr (+ base (* 1 (ast-type-node-bytes))) : (Ptr AstType))))
-        [(AstType.Array elem count) (and (= elem 123456789) (= count 42))]
-        [_ false]))))
-
-(define (ast-node-stride-pinned?) : bool
-  (and (ast-expr-node-stride-pinned?) (ast-type-node-stride-pinned?)))
-
-(define (compiler-ast-smoke) : i64
-  (let
-    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
-    [string-ty : AstType (AstType.String)]
-    [arg-tys : AstTypeList
-      (ast-type-cons
-        (AstType.I64)
-        (ast-type-cons string-ty (ast-type-list-new)))]
-    [ret-ty : AstType
-      (ast-ty-ref
-        (ci.intern-generated-name "r")
-        (ast-ty-ptr (ast-ty-array (AstType.I64) 4)))]
-    [fn-ty : AstType (ast-ty-func arg-tys ret-ty)]
-    [nested-ty-ok? : bool
-      (match (ast-place-shared-view fn-ty)
-        [(AstType.Func _ ret)
-          (match (ty-node-get ret)
-            [(AstType.Ref region ptr)
-              (and
-                (string.eq (ci.intern-str region) "r")
-                (match (ty-node-get ptr)
-                  [(AstType.Ptr array)
-                    (match (ty-node-get array)
-                      [(AstType.Array elem count)
-                        (and
-                          (= count 4)
-                          (match (ty-node-get elem)
-                            [(AstType.I64) true]
-                            [_ false]))]
-                      [_ false])]
-                  [_ false]))]
-            [_ false])]
-        [_ false])]
-    [lit : AstLiteral (ast-lit-int 41)]
-    [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
-    [expr : i64
-      (ast-expr-binary (AstBinOp.Add) (ast-node-push (AstExpr.Literal lit)) one)]
-    [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
-    [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
-    [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
-    [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
-    [node-stride-ok? : bool (ast-node-stride-pinned?)]
-    [spmd-metadata-clone-ok? : bool (compiler-ast-spmd-metadata-clone-smoke?)]
-    [imported-spmd-metadata-clone-ok? : bool
-      (compiler-ast-imported-spmd-metadata-clone-smoke?)]
-    [param : AstParam
-      (ast-param-id cbi.compiler-builtin-id-fix-x (AstType.I64) false)]
-    [params : AstParamList (ast-param-cons param (ast-param-list-new))]
-    [decl : AstDecl
-      (ast-decl-def-fn-id
-        cbi.compiler-builtin-id-fix-main
-        params
-        (AstType.I64)
-        expr)]
-    [program : AstProgram
-      (ast-program
-        (ast-decl-cons (ast-place-shared-view decl) (ast-decl-list-new)))]
-    (match program
-      [(AstProgram.Program _)
-        (if (and
-          nested-ty-ok?
-          nested-expr-pattern-ok?
-          decl-program-ok?
-          type-dedup-ok?
-          pool-exhaustion-ok?
-          node-stride-ok?
-          spmd-metadata-clone-ok?
-          imported-spmd-metadata-clone-ok?)
-          (+
-            (ast-type-tag fn-ty)
-            (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))
-          0)])))
-
-(cfg
-  test
-  (test
-    compiler-ast-name-layout
-    (unless
-      (and
-        (= (ci.intern-id-size) 4)
-        (= (ci.intern-syntax-id-size) 8)
-        (= (comptime (size-of (type AstExprBindingClause))) 72)
-        (= (comptime (size-of (type AstImportedSpmdSpecialization))) 40)
-        (= (comptime (size-of (type AstImportedSpmdCallable))) 24))
-      (io.panic
-        (str_cat.str-cat
-          "compiler AST name layout changed: InternId="
-          (string.int->string (ci.intern-id-size))
-          " InternSyntaxId="
-          (string.int->string (ci.intern-syntax-id-size))
-          " binding-clause="
-          (string.int->string (comptime (size-of (type AstExprBindingClause))))
-          " specialization="
-          (string.int->string
-            (comptime (size-of (type AstImportedSpmdSpecialization))))
-          " callable="
-          (string.int->string
-            (comptime (size-of (type AstImportedSpmdCallable)))))))))
-
-(cfg
-  test
-  (test
-    compiler-ast-aggregate-marker-wrappers
-    (let
-      [unmarked : AstDecl
-        (ast-decl-def-struct-id
-          (ci.intern-generated-name "Marked")
-          AstStructRepr.Default
-          AstStructCleanup.No
-          (ast-field-def-list-new))]
-      [marked : AstDecl
-        (ast-decl-with-aggregate-markers (ast-place-shared-view unmarked) 1)]
-      [comptime-decl : AstDecl
-        (ast-decl-comptime-decl (ast-place-shared-view marked))]
-      [generated-decl : AstDecl
-        (ast-decl-comptime-decl-with-meta
-          AstGeneratedDeclMeta.No
-          (ast-place-shared-view marked))]
-      [unsafe-decl : AstDecl
-        (ast-decl-unsafe (ast-place-shared-view comptime-decl))]
-      [cleared-comptime : AstDecl
-        (ast-decl-with-aggregate-markers
-          (ast-place-shared-view generated-decl)
-          0)]
-      [before : arena.ArenaMark (arena.mark)]
-      [same-runtime : AstDecl (ast-decl-with-aggregate-markers unmarked 0)]
-      [same-marked : AstDecl
-        (ast-decl-with-aggregate-markers (ast-place-shared-view marked) 1)]
-      [same-comptime : AstDecl
-        (ast-decl-with-aggregate-markers
-          (ast-place-shared-view generated-decl)
-          1)]
-      [same-unsafe : AstDecl
-        (ast-decl-with-aggregate-markers (ast-place-shared-view unsafe-decl) 1)]
-      [cleared-runtime : AstDecl
-        (ast-decl-with-aggregate-markers (ast-place-shared-view marked) 0)]
-      [after : arena.ArenaMark (arena.mark)]
-      (unless
-        (and
-          (arena.mark-eq? before after)
-          (not (ast-decl-must-use? same-runtime))
-          (ast-decl-must-use? same-marked)
-          (ast-decl-must-use? same-comptime)
-          (ast-decl-must-use? same-unsafe)
-          (not (ast-decl-must-use? cleared-runtime))
-          (not (ast-decl-must-use? (ast-place-shared-view cleared-comptime)))
-          (ast-decl-comptime-only? cleared-comptime)
-          (ast-decl-must-use? marked)
-          (ast-decl-must-use? comptime-decl)
-          (ast-decl-must-use? generated-decl)
-          (ast-decl-must-use? (ast-place-shared-view unsafe-decl))
-          (ast-decl-comptime-only? unsafe-decl))
-        (io.panic "aggregate marker wrapper semantics or allocation changed")))))

@@ -3,13 +3,14 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
+(import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg)
 (import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (define (main) : i64
-  (match (compiler_load.compiler-load-decls-with-module-and-roots-cfg-root
+  (match (load_tests.compiler-load-decls-with-module-and-roots-cfg-root
     (ast.ast-decl-list-new)
     "src/tests/compiler_load_decls_nil_smoke.tl"
     cbi.compiler-builtin-id-fix-empty

@@ -33,9 +33,9 @@ line-start matches.
 The 84 fixture lines occur in:
 
 - `src/compiler_check_core.tl`
-- `src/compiler_load.tl`
+- `src/compiler_load_tests.tl`
 - `src/compiler_lower_tests.tl`
-- `src/compiler_symbols.tl`
+- `src/compiler_symbols_tests.tl`
 - `src/tests/compiler_load_lazy_smoke.tl`
 - `src/tests/compiler_lower_smoke.tl`
 - `src/tests/compiler_typecheck_reverse_mixed_smoke.tl`

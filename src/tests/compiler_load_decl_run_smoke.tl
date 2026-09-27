@@ -11,6 +11,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
+(import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg)
 (import compiler_intern as ci)
@@ -183,7 +184,7 @@
         (sym_i64_env.sym-i64-empty)
         (compiler-load-decl-run-name-id "fixture.seeded")
         7)]
-    (match (compiler_load.compiler-load-decls-with-module-and-roots-cfg-root
+    (match (load_tests.compiler-load-decls-with-module-and-roots-cfg-root
       (compiler-load-decl-run-fixture)
       "src/tests/compiler_load_decl_run_smoke.tl"
       path-id
@@ -292,7 +293,7 @@
       (io.write-file
         "target/cl_decl_run_origin.tl"
         (byte_buf.str-as-bytes (& source)))
-      (match (compiler_load.compiler-load-file-with-paths
+      (match (load_tests.compiler-load-file-with-paths
         "target/cl_decl_run_origin.tl"
         (sym_i64_env.sym-i64-empty))
         [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)

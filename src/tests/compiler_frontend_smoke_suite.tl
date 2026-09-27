@@ -5,9 +5,9 @@
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.str_cat)
-(import compiler_symbols)
+(import compiler_symbols_tests as sym_tests)
 (import compiler_check_tests)
-(import compiler_semantic_index)
+(import compiler_semantic_index_tests as sem_tests)
 (import compiler_typecheck_tests as tc_tests)
 (import compiler_ctfe)
 (import compiler_ast_types as ast)
@@ -15,7 +15,7 @@
 (import compiler_intern as ci)
 (import compiler_diagnostic as cdiag)
 (import compiler_embedded_stdlib as embedded_stdlib)
-(import doc_test)
+(import doc_test_tests as doc_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
 
@@ -569,14 +569,13 @@
 
 (define (compiler-smoke-suite-require-child [name : String] [message : String]) : unit
   (let
-    [started-ms : i64
-      (compiler_semantic_index.compiler-semantic-index-smoke-timing-start)]
+    [started-ms : i64 (sem_tests.compiler-semantic-index-smoke-timing-start)]
     [result : process.ResultProcessOutput
       (process.output
         (process.command (io.arg 0) (process.args-single (string.copy name))))]
     [status : i64 (process.result-status-or (clone result) -1)]
     [timing-ok : bool
-      (compiler_semantic_index.compiler-semantic-index-smoke-timing-record
+      (sem_tests.compiler-semantic-index-smoke-timing-record
         (str_cat.str-cat "child-" name)
         started-ms
         status)]
@@ -589,7 +588,7 @@
     [(string.eq name "symbols")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler_symbols.compiler-symbols-self-test))]
+        (sym_tests.compiler-symbols-self-test))]
     [(string.eq name "check")
       (if (compiler_check_tests.compiler-check-tests-ok?)
         42
@@ -606,7 +605,7 @@
         (if (tc_tests.compiler-typecheck-reflection-tests-ok?)
           42
           1))]
-    [(string.eq name "doc-test") (doc_test.doc-test-smoke-all)]
+    [(string.eq name "doc-test") (doc_tests.doc-test-smoke-all)]
     [else 1]))
 
 (define (main) : i64

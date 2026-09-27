@@ -1,4 +1,5 @@
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import stdlib.test)
 
@@ -6,7 +7,7 @@
   [mode : ast.AstCFunctionMode]
   [result : ast.AstType]) : i64
   (ast.ast-node-pool-reader-type-push
-    (ast.ast-ty-c-func
+    (ast_tests.ast-ty-c-func
       (ast.ast-type-cons ast.AstType.I64 (ast.ast-type-list-new))
       result
       mode)))
@@ -21,7 +22,7 @@
 (test
   c-function-type-node-stride
   (test.assert-true
-    (ast.ast-node-stride-pinned?)
+    (ast_tests.ast-node-stride-pinned?)
     "adding C callable identity must preserve the real 24-byte type node stride"))
 
 (test

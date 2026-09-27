@@ -6,9 +6,11 @@
 (import compiler_typecheck_core as tc_core)
 (import compiler_typecheck_core_tests as core_tests)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_diagnostic as cdiag)
-(import compiler_clone as clone_support)
+(import compiler_clone_tests as clone_tests)
 (import compiler_parse_core as parser)
 (import compiler_symbols as csym)
 (import compiler_embedded_stdlib as ces)
@@ -17,6 +19,7 @@
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_tests as intern_tests)
 (import compiler_intern_state as cis)
 
 (define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
@@ -258,14 +261,14 @@
 ;; pressure (and that the pool grew).
 (define (compiler-typecheck-pool-exhaustion-diagnostic-ok?) : bool
   (let
-    [capacity : i64 (ast.ty-node-pool-capacity)]
+    [capacity : i64 (ast_tests.ty-node-pool-capacity)]
     (begin
       (ast.ty-node-pool-reset!)
       (ast.ty-node-pool-truncate! capacity)
       (let
         [result : tc_core.ResultCompilerTypecheck
           (tc_api.typecheck-compiler-source "(define (main) : i64 0)")]
-        [grew : bool (> (ast.ty-node-pool-capacity) capacity)]
+        [grew : bool (> (ast_tests.ty-node-pool-capacity) capacity)]
         [ok : bool
           (match result
             [(tc_core.ResultCompilerTypecheck.Ok _) grew]
@@ -571,8 +574,8 @@
 
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
-    (clone_support.clone-name-set-smoke-ok?)
-    (clone_support.clone-root-entries-smoke-ok?)
+    (clone_tests.clone-name-set-smoke-ok?)
+    (clone_tests.clone-root-entries-smoke-ok?)
     (compiler-typecheck-ok?
       "(defstruct Holder
   (name String)
@@ -4661,7 +4664,7 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 7 5 7 12)]
     [inner : i64 (ast.ast-node-push (ast.AstExpr.Var (ci.intern "missing")))]
     [spanned-inner : i64 (ast.ast-expr-spanned inner span)]
-    [wrapped : i64 (ast.ast-expr-ann spanned-inner (ast.AstType.I64))]
+    [wrapped : i64 (ast_tests.ast-expr-ann spanned-inner (ast.AstType.I64))]
     [diag : cdiag.CompilerDiagnostic
       (tc_core.tc-expr-diag
         (ast.ast-node-pool-active-expr-segment-bases)
@@ -7690,14 +7693,14 @@
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
-    (if (ci.intern-id-space-capacity-tests-ok?)
+    (if (intern_tests.intern-id-space-capacity-tests-ok?)
       unit
       (io.panic
         "typecheck: intern id space layout exceeds the intern capacity budget"))
-    (if (ci.intern-syntax-id-tests-ok?)
+    (if (intern_tests.intern-syntax-id-tests-ok?)
       unit
       (io.panic "typecheck: typed syntax identity boundary tests failed"))
-    (if (ci.intern-qualified-metadata-tests-ok?)
+    (if (intern_tests.intern-qualified-metadata-tests-ok?)
       unit
       (io.panic "typecheck: intern qualified metadata tests failed"))
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -9686,7 +9689,7 @@
       "(module tc.decl_origin_entry)
 (import tc_decl_origin_dep as dep)
 (define (main) : i64 0)")
-    (match (load.compiler-load-file-with-paths
+    (match (load_tests.compiler-load-file-with-paths
       "target/tc_decl_origin_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)

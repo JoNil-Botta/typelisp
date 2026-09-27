@@ -6,8 +6,9 @@
 ;; finding helpers, and the six lint driver self-test entries. The production
 ;; module keeps the lint driver itself.
 (import stdlib.str_cat_runtime as str_cat)
-(import lint_driver_core)
+(import lint_driver_core as lint_driver)
 (import lint_core)
+(import lint_core_tests)
 (import stdlib.io)
 (import stdlib.byte_buf)
 (import stdlib.string)
@@ -41,18 +42,6 @@
             50
             0))))))")
 
-(define (selfhost-lint-guard-ladder-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : i64
-  (begin
-    (if a
-      (return 1)
-      (if b
-        (return 2)
-        (if c
-          (return 3)
-          unit)))
-    42))")
-
 ;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive that
 ;; suppresses the ladder finding via its stable rule id.
 (define (selfhost-lint-suppressed-ladder-source) : String
@@ -79,71 +68,6 @@
         30
         0))))")
 
-(define (selfhost-lint-all-exit-ladder-source) : String
-  "(define (classify [x : i64]) : i64
-  (if (= x 0)
-    (return 10)
-    (if (= x 1)
-      (return 20)
-      (if (= x 2)
-        (return 30)
-        (return 0)))))")
-
-(define (selfhost-lint-return-path-chain-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : i64
-  (if a
-    (if b
-      (if c
-        42
-        3)
-      2)
-    1))")
-
-(define (selfhost-lint-suppressed-return-path-chain-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : i64
-  ;; lint-allow: return-path-chain
-  (if a
-    (if b
-      (if c
-        42
-        3)
-      2)
-    1))")
-
-(define (selfhost-lint-unit-if-source) : String
-  "(define (check [ok : bool]) : i64
-  (begin
-    (if ok
-      (return 1)
-      unit)
-    42))")
-
-(define (selfhost-lint-unit-set-source) : String
-  "(define (check [ok : bool]) : i64
-  (let
-    [seen : bool true]
-    (begin
-      (if (not ok)
-        unit
-        (set! seen false))
-      (if seen 42 0))))")
-
-(define (selfhost-lint-suppressed-unit-if-source) : String
-  "(define (check [ok : bool]) : i64
-  (begin
-    ;; lint-allow: unit-if-guard
-    (if ok
-      (return 1)
-      unit)
-    42))")
-
-(define (selfhost-lint-when-unless-source) : String
-  "(define (check [a : bool] [b : bool]) : i64
-  (begin
-    (when a (return 1))
-    (unless b (return 2))
-    42))")
-
 (define (selfhost-lint-redundant-divergence-padding-source) : String
   "(define (main [flag : bool]) : i64
   (begin
@@ -166,136 +90,9 @@
         3)
       4)))")
 
-(define (selfhost-lint-clean-divergence-source) : String
-  "(define (main [flag : bool]) : i64
-  (if flag
-    (io.panic \"stop\")
-    4))")
-
-(define (selfhost-lint-suppressed-divergence-padding-source) : String
-  "(define (main) : i64
-  (begin
-    ;; lint-allow: redundant-divergence-padding
-    (io.panic \"stop\")
-    ;; lint-allow: unreachable-code
-    0))")
-
 ;; A clean source with no nested-`if` ladder - zero findings.
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
-
-(define (selfhost-lint-unused-dotted-import-source) : String
-  "(import pkg.data)
-(define (main) : i64 42)")
-
-(define (selfhost-lint-used-dotted-import-alias-source) : String
-  "(import pkg.data)
-(define (main) : i64 (data.value))")
-
-(define (selfhost-lint-used-dotted-import-full-path-source) : String
-  "(import pkg.data)
-(define (main) : i64 (pkg.data.value))")
-
-(define (selfhost-lint-unused-explicit-import-alias-source) : String
-  "(import pkg.data as d)
-(define (main) : i64 42)")
-
-(define (selfhost-lint-used-explicit-import-alias-source) : String
-  "(import pkg.data as d)
-(define (main) : i64 (d.value))")
-
-(define (selfhost-lint-unused-underscore-import-source) : String
-  "(import pkg.data as _data)
-(define (main) : i64 42)")
-
-(define (selfhost-lint-used-import-type-source) : String
-  "(import pkg.data)
-(define (make) : data.Item (init : data.Item))")
-
-(define (selfhost-lint-used-import-pattern-source) : String
-  "(import pkg.data)
-(define (read [x : data.Maybe]) : i64
-  (match x
-    [(data.Maybe.Some y) y]
-    [_ 0]))")
-
-(define (selfhost-lint-used-import-macro-call-source) : String
-  "(import pkg.macros)
-(pkg.macros.emit i64)")
-
-(define (selfhost-lint-used-import-macro-alias-source) : String
-  "(import stdlib.core_macros as core)
-(define (check [flag : bool]) : bool (core/and flag true))")
-
-(define (selfhost-lint-stdlib-string-bare-helpers-source) : String
-  "(import stdlib.string)
-(define (main) : i64
-  (begin
-    (string-length \"abc\")
-    (string-ref \"abc\" 0)
-    (char-at \"abc\" 0)
-    (eq \"a\" \"b\")
-    (string-eq \"a\" \"b\")
-    (string=? \"a\" \"b\")
-    (string-append \"a\" \"b\")
-    (string-concat \"a\" \"b\")
-    42))")
-
-(define (selfhost-lint-stdlib-string-bare-explicit-alias-source) : String
-  "(import stdlib.string as s)
-(define (main) : i64 (string-length \"abc\"))")
-
-(define (selfhost-lint-stdlib-string-bare-top-level-shadow-source) : String
-  "(import stdlib.string)
-(define (string-length [text : String]) : i64 1)
-(define (main) : i64 (string-length \"abc\"))")
-
-(define (selfhost-lint-stdlib-string-bare-param-shadow-source) : String
-  "(import stdlib.string)
-(define (main [string-length : (-> String i64)]) : i64
-  (string-length \"abc\"))")
-
-(define (selfhost-lint-stdlib-string-bare-let-shadow-source) : String
-  "(import stdlib.string)
-(define (main) : i64
-  (let
-    [string-length : (-> String i64)
-      (lambda ([text : String]) : i64 1)]
-    (string-length \"abc\")))")
-
-(define (selfhost-lint-stdlib-string-bare-lambda-shadow-source) : String
-  "(import stdlib.string)
-(define (main) : i64
-  ((lambda ([string-length : (-> String i64)]) : i64
-    (string-length \"abc\"))
-   (lambda ([text : String]) : i64 1)))")
-
-(define (selfhost-lint-stdlib-string-bare-trim-source) : String
-  "(import stdlib.string)
-(define (main) : String (trim \" abc \"))")
-
-(define (selfhost-lint-stdlib-string-removed-bare-helper-source) : String
-  "(import stdlib.string)
-(define (main) : i64 (string->int \"42\"))")
-
-(define (selfhost-lint-stdlib-string-other-module-shadow-source) : String
-  "(module first)
-(import stdlib.string)
-(define (main) : i64 (string-length \"abc\"))
-(module second)
-(define (string-length) : i64 42)")
-
-(define (selfhost-lint-stdlib-string-other-module-use-source) : String
-  "(module first)
-(import stdlib.string)
-(define (main) : i64 42)
-(module second)
-(define (other) : i64 (string-length \"abc\"))")
-
-(define (selfhost-lint-suppressed-unused-import-source) : String
-  ";; lint-allow: unused-import
-(import pkg.data)
-(define (main) : i64 42)")
 
 (define (selfhost-lint-package-dead-source-a) : String
   "(define (main) : i64 (pkg.public-api 1))
@@ -317,9 +114,6 @@
   "(define (main) : i64 42)
 (define (test-reached-helper) : i64 7)
 (define (unused-entry-helper) : i64 9)")
-
-(define (selfhost-lint-package-dead-test-root-source) : String
-  "(define (main) : i64 (test-reached-helper))")
 
 (define (selfhost-lint-package-dead-manifest-root-source) : String
   "(define (manifest-entry) : i64 (manifest-helper))
@@ -384,12 +178,6 @@ end
 (define (live) : i64 (helper))
 (define (helper) : i64 2)")
 
-(define (selfhost-lint-package-dead-qualified-main-source) : String
-  "(module main)
-(import left)
-(import right)
-(define (main) : i64 (right.live))")
-
 (define (selfhost-lint-package-dead-moduleless-left-source) : String
   "(define (live) : i64 (helper))
 (define (helper) : i64 1)
@@ -400,365 +188,11 @@ end
 (define (helper) : i64 2)
 (define (unused) : i64 12)")
 
-(define (selfhost-lint-package-dead-moduleless-main-source) : String
-  "(import pkg.left as first)
-(import pkg.right as second)
-(define (main) : i64 (+ (first.live) (second.live)))")
-
-(define (selfhost-lint-unused-assignment-init-source) : String
-  "(define (main) : i64
-  (let
-    [x : i64 1]
-    (begin
-      (set! x 2)
-      x)))")
-
-(define (selfhost-lint-unused-assignment-set-source) : String
-  "(define (main) : i64
-  (let
-    [x : i64 0]
-    (begin
-      (set! x (+ x 1))
-      (set! x 2)
-      x)))")
-
-(define (selfhost-lint-used-before-overwrite-source) : String
-  "(define (main) : i64
-  (let
-    [x : i64 1]
-    (begin
-      (set! x (+ x 1))
-      x)))")
-
-(define (selfhost-lint-branch-conservative-assignment-source) : String
-  "(define (main [flag : bool]) : i64
-  (let
-    [x : i64 1]
-    (begin
-      (if flag
-        (set! x 2)
-        unit)
-      (set! x 3)
-      x)))")
-
-(define (selfhost-lint-underscore-assignment-source) : String
-  "(define (main) : i64
-  (let
-    [_x : i64 1]
-    (begin
-      (set! _x 2)
-      _x)))")
-
-(define (selfhost-lint-suppressed-unused-assignment-source) : String
-  "(define (main) : i64
-  (let
-    ;; lint-allow: unused-assignment
-    [x : i64 1]
-    (begin
-      (set! x 2)
-      x)))")
-
-(define (selfhost-lint-single-element-array-fixed-source) : String
-  "(define (main) : i64
-  (let
-    [cur : (Array i64 1) (array 0)]
-    (begin
-      (set! (array-ref cur 0) 3)
-      (array-ref cur 0))))")
-
-(define (selfhost-lint-single-element-array-param-source) : String
-  "(define (read-cell [cur : (Array i64 1)]) : i64
-  (array-ref cur 0))")
-
-(define (selfhost-lint-single-element-array-dynamic-source) : String
-  "(define (main) : i64
-  (let
-    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! (array-ref cur 0) 3)
-      (array-ref cur 0))))")
-
-(define (selfhost-lint-single-element-array-dotted-source) : String
-  "(define (main) : i64
-  (let
-    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! (array-ref cur 0) 3)
-      (array-ref cur 0))))")
-
-(define (selfhost-lint-single-element-array-nonzero-source) : String
-  "(define (main) : i64
-  (let
-    [cur : (Array i64 2) (array 1 2)]
-    (array-ref cur 1)))")
-
-(define (selfhost-lint-single-element-array-dynamic-index-source) : String
-  "(define (main [index : i64]) : i64
-  (let
-    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (array-ref cur index)))")
-
-(define (selfhost-lint-single-element-array-escape-source) : String
-  "(define (use-array [items : (__tl_dyn-array i64)]) : i64
-  (array-length items))
-(define (main) : i64
-  (let
-    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (use-array cur)))")
-
-(define (selfhost-lint-single-element-array-aggregate-source) : String
-  "(define (main) : String
-  (let
-    [cur : (Array String 1) (array \"x\")]
-    (array-ref cur 0)))")
-
-(define (selfhost-lint-single-element-array-suppressed-source) : String
-  "(define (main) : i64
-  (let
-    ;; lint-allow: single-element-array-cell
-    [cur : (Array i64 1) (array 0)]
-    (array-ref cur 0)))")
-
-(define (selfhost-lint-dynamic-array-literal-dotted-source) : String
-  "(define (make-items [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    (begin
-      (set! (array-ref items 0) a)
-      (set! (array-ref items 1) b)
-      (set! (array-ref items 2) c)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-private-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (set! (array-ref items 1) 7)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-return-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (set! (array-ref items 1) 7)
-      (return items))))")
-
-(define (selfhost-lint-dynamic-array-literal-assignment-source) : String
-  "(define (set-items [result : (__tl_dyn-array i64)]) : unit
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (set! (array-ref items 1) 7)
-      (set! result items))))")
-
-(define (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source) : String
-  "(define (make-items [first : i64] [second : i64]) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) first)
-      (set! (array-ref items 1) second)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-read-before-complete-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (array-ref items 0)
-      (set! (array-ref items 1) 7)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-computed-index-source) : String
-  "(define (make-items [index : i64]) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items index) 4)
-      (set! (array-ref items 1) 7)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-duplicate-index-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (set! (array-ref items 0) 7)
-      (set! (array-ref items 2) 9)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-gapped-index-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (set! (array-ref items 2) 7)
-      (set! (array-ref items 1) 9)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-partial-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-escape-source) : String
-  "(define (consume [items : (__tl_dyn-array i64)]) : unit unit)
-(define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (consume items)
-      (set! (array-ref items 1) 7)
-      items)))")
-
-(define (selfhost-lint-dynamic-array-literal-suppressed-source) : String
-  "(define (make-items) : (__tl_dyn-array i64)
-  (let
-    ;; lint-allow: prefer-dynamic-array-literal
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 4)
-      (set! (array-ref items 1) 7)
-      items)))")
-
-(define (selfhost-lint-nested-let-source) : String
-  "(define (main) : i64
-  (let
-    [a : i64 1]
-    (let
-      [b : i64 (+ a 1)]
-      (+ a b))))")
-
-(define (selfhost-lint-shadowing-nested-let-source) : String
-  "(define (main) : i64
-  (let
-    [a : i64 1]
-    (let
-      [a : i64 (+ a 1)]
-      a)))")
-
-(define (selfhost-lint-begin-inner-let-source) : String
-  "(define (main) : i64
-  (let
-    [a : i64 1]
-    (begin
-      (let [b : i64 (+ a 1)] b)
-      a)))")
-
-(define (selfhost-lint-suppressed-nested-let-source) : String
-  "(define (main) : i64
-  ;; lint-allow: nested-let
-  (let
-    [a : i64 1]
-    (let
-      [b : i64 (+ a 1)]
-      (+ a b))))")
-
-(define (selfhost-lint-single-begin-source) : String
-  "(define (main) : i64
-  (begin 42))")
-
-(define (selfhost-lint-clean-begin-source) : String
-  "(define (main) : i64
-  (begin
-    unit
-    42))")
-
-(define (selfhost-lint-cfg-begin-source) : String
-  "(define (main) : i64
-  (begin
-    (cfg compile-profile (io.panic \"profile\"))
-    42))")
-
-(define (selfhost-lint-suppressed-single-begin-source) : String
-  "(define (main) : i64
-  ;; lint-allow: single-begin
-  (begin 42))")
-
-(define (selfhost-lint-cascading-and-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  (and a (and b c)))")
-
-(define (selfhost-lint-cascading-or-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  (or (or a b) c))")
-
-(define (selfhost-lint-cascading-core-and-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  (and a (and b c)))")
-
-(define (selfhost-lint-flat-and-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  (and a b c))")
-
-(define (selfhost-lint-mixed-and-or-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  (and a (or b c)))")
-
-(define (selfhost-lint-suppressed-cascading-and-source) : String
-  "(define (check [a : bool] [b : bool] [c : bool]) : bool
-  ;; lint-allow: cascading-and-or
-  (and a (and b c)))")
-
-(define (selfhost-lint-transitional-core-macro-source) : String
-  "(define (check [flag : bool]) : i64
-  (begin
-    (core.when flag unit)
-    (core.unless false unit)
-    (if (core.and flag (core.or false true))
-      (if (core.cond [flag true] [else false]) 42 1)
-      1)))")
-
-(define (selfhost-lint-clean-core-macro-text-source) : String
-  ";; core.cond in a comment is not an expression call head.
-(import stdlib.core_macros as core)
-(define core-dot-cond-text : String \"core.cond\")
-(define (main) : i64
-  (let
-    [value : i64 core.cond]
-    value))")
-
-(define (selfhost-lint-suppressed-transitional-core-macro-source) : String
-  "(define (main) : i64
-  ;; lint-allow: transitional-core-macro-qualifier
-  (if (core.cond [true true] [else false]) 42 1))")
-
-(define (selfhost-lint-two-findings-source) : String
-  "(define (first [x : i64]) : i64
-  (if (= x 0)
-    0
-    (if (= x 1)
-      1
-      (if (= x 2)
-        2
-        3))))
-
-(define (second [x : i64]) : i64
-  (if (= x 0)
-    10
-    (if (= x 1)
-      20
-      (if (= x 2)
-        30
-        40))))")
-
 ;; Number of findings reported for `source` (after derived-form-origin +
 ;; suppression filtering), via the public source-lint path.
 (define (selfhost-lint-source-finding-count [source : String]) : i64
   (lint_core.lint-findings-count
-    (lint_driver_core.selfhost-lint-source-with-roots
+    (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
       (lint_svec.new))))
@@ -773,7 +207,7 @@ end
     (lint_core.lint-findings-count
       (owned_view.compiler-owned-shared-view findings)))
     count
-    (match (lint_core.lint-findings-get
+    (match (lint_core_tests.lint-findings-get
       (owned_view.compiler-owned-shared-view findings)
       index)
       [(lint_core.LintMaybeFinding.Some finding)
@@ -798,7 +232,7 @@ end
 
 (define (selfhost-lint-source-rule-count [source : String] [rule-id : String]) : i64
   (selfhost-lint-findings-rule-count
-    (lint_driver_core.selfhost-lint-source-with-roots
+    (selfhost-lint-source-with-roots
       "lint_driver_self_test.tl"
       source
       (lint_svec.new))
@@ -811,7 +245,7 @@ end
 
 (define (selfhost-lint-unused-import-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
+  (match (lint_core_tests.lint-findings-get
     (owned_view.compiler-owned-shared-view findings)
     0)
     [(lint_core.LintMaybeFinding.Some finding)
@@ -826,14 +260,16 @@ end
 (define (selfhost-lint-unused-imports-self-test) : i64
   (let
     [unused : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-unused-dotted-import-source)
+        "(import pkg.data)
+(define (main) : i64 42)"
         (lint_svec.new))]
     [unused-explicit-alias : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-unused-explicit-import-alias-source)
+        "(import pkg.data as d)
+(define (main) : i64 42)"
         (lint_svec.new))]
     (cond
       [(not (selfhost-lint-unused-import-finding-ok? unused)) 30]
@@ -841,115 +277,163 @@ end
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-dotted-import-alias-source))
+              "(import pkg.data)
+(define (main) : i64 (data.value))")
             0))
         32]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-dotted-import-full-path-source))
+              "(import pkg.data)
+(define (main) : i64 (pkg.data.value))")
             0))
         33]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-explicit-import-alias-source))
+              "(import pkg.data as d)
+(define (main) : i64 (d.value))")
             0))
         34]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-unused-underscore-import-source))
+              "(import pkg.data as _data)
+(define (main) : i64 42)")
             0))
         35]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-type-source))
+              "(import pkg.data)
+(define (make) : data.Item (init : data.Item))")
             0))
         37]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-pattern-source))
+              "(import pkg.data)
+(define (read [x : data.Maybe]) : i64
+  (match x
+    [(data.Maybe.Some y) y]
+    [_ 0]))")
             0))
         38]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-macro-call-source))
+              "(import pkg.macros)
+(pkg.macros.emit i64)")
             0))
         40]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-unused-import-source))
+              ";; lint-allow: unused-import
+(import pkg.data)
+(define (main) : i64 42)")
             0))
         41]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-macro-alias-source))
+              "(import stdlib.core_macros as core)
+(define (check [flag : bool]) : bool (core/and flag true))")
             0))
         43]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-helpers-source))
+              "(import stdlib.string)
+(define (main) : i64
+  (begin
+    (string-length \"abc\")
+    (string-ref \"abc\" 0)
+    (char-at \"abc\" 0)
+    (eq \"a\" \"b\")
+    (string-eq \"a\" \"b\")
+    (string=? \"a\" \"b\")
+    (string-append \"a\" \"b\")
+    (string-concat \"a\" \"b\")
+    42))")
             0))
         44]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-explicit-alias-source))
+              "(import stdlib.string as s)
+(define (main) : i64 (string-length \"abc\"))")
             0))
         45]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-top-level-shadow-source))
+              "(import stdlib.string)
+(define (string-length [text : String]) : i64 1)
+(define (main) : i64 (string-length \"abc\"))")
             1))
         46]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-param-shadow-source))
+              "(import stdlib.string)
+(define (main [string-length : (-> String i64)]) : i64
+  (string-length \"abc\"))")
             1))
         47]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-let-shadow-source))
+              "(import stdlib.string)
+(define (main) : i64
+  (let
+    [string-length : (-> String i64)
+      (lambda ([text : String]) : i64 1)]
+    (string-length \"abc\")))")
             1))
         48]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-lambda-shadow-source))
+              "(import stdlib.string)
+(define (main) : i64
+  ((lambda ([string-length : (-> String i64)]) : i64
+    (string-length \"abc\"))
+   (lambda ([text : String]) : i64 1)))")
             1))
         49]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-bare-trim-source))
+              "(import stdlib.string)
+(define (main) : String (trim \" abc \"))")
             1))
         50]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-removed-bare-helper-source))
+              "(import stdlib.string)
+(define (main) : i64 (string->int \"42\"))")
             1))
         51]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-other-module-shadow-source))
+              "(module first)
+(import stdlib.string)
+(define (main) : i64 (string-length \"abc\"))
+(module second)
+(define (string-length) : i64 42)")
             0))
         52]
       [(not
           (=
             (selfhost-lint-source-unused-import-count
-              (selfhost-lint-stdlib-string-other-module-use-source))
+              "(module first)
+(import stdlib.string)
+(define (main) : i64 42)
+(module second)
+(define (other) : i64 (string-length \"abc\"))")
             1))
         53]
       [(not
@@ -967,65 +451,59 @@ end
 (define (selfhost-lint-package-dead-code-fixture-decls
   [source-a : String]
   [source-b : String]
-  [kind : compiler_load.CompilerPkgKind]) : lint_driver_core.SelfhostLintDeadDecls
+  [kind : compiler_load.CompilerPkgKind]) : lint_driver.SelfhostLintDeadDecls
   (let
     [visible-root : bool
-      (lint_driver_core.selfhost-lint-package-dead-visible-root? kind)]
+      (lint_driver.selfhost-lint-package-dead-visible-root? kind)]
     [reportable : bool
-      (lint_driver_core.selfhost-lint-package-dead-reportable? kind)]
-    [scan-a : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+      (lint_driver.selfhost-lint-package-dead-reportable? kind)]
+    [scan-a : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/a.tl"
         source-a
         visible-root
         reportable)]
-    [scan-b : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
+    [scan-b : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
         scan-a
         "pkg/b.tl"
         source-b
         visible-root
         reportable)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots scan-b kind)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots scan-b kind)]
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
-(define (selfhost-lint-package-dead-code-test-root-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-code-test-root-fixture-decls) : lint_driver.SelfhostLintDeadDecls
   (let
     [entry-source : String (selfhost-lint-package-dead-entry-source)]
-    [test-source : String (selfhost-lint-package-dead-test-root-source)]
-    [scan-entry : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [test-source : String "(define (main) : i64 (test-reached-helper))"]
+    [scan-entry : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/src/main.tl"
         entry-source
         false
         true)]
-    [scan-test : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
+    [scan-test : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
         scan-entry
         "pkg/src/tests/entry_smoke.tl"
         test-source
         false
         false)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots
         scan-test
         CompilerPkgKindBin)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
-(define (selfhost-lint-package-dead-code-manifest-root-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-code-manifest-root-fixture-decls) : lint_driver.SelfhostLintDeadDecls
   (let
     [manifest-dir : String "pkg"]
     [path : String
@@ -1035,167 +513,156 @@ end
           "src/manifest_api.tl"))]
     [source : String (selfhost-lint-package-dead-manifest-root-source)]
     [roots : lint_svec.Vec
-      (lint_driver_core.selfhost-lint-dead-manifest-roots
+      (lint_driver.selfhost-lint-dead-manifest-roots
         (selfhost-lint-package-dead-manifest-root-manifest)
         manifest-dir)]
-    [scan-source : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [scan-source : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         path
         source
         false
         true)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-add-roots scan-source roots)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-add-roots scan-source roots)]
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
-(define (selfhost-lint-package-dead-code-explicit-root-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-code-explicit-root-fixture-decls) : lint_driver.SelfhostLintDeadDecls
   (let
     [source : String (selfhost-lint-package-dead-explicit-root-source)]
-    [scan-source : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [scan-source : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/explicit_api.tl"
         source
         false
         true)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots
         scan-source
         CompilerPkgKindBin)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
-(define (selfhost-lint-package-dead-code-cfg-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-code-cfg-fixture-decls) : lint_driver.SelfhostLintDeadDecls
   (let
     [source : String (selfhost-lint-package-dead-cfg-source)]
-    [scan-source : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [scan-source : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/cfg.tl"
         source
         false
         true)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots
         scan-source
         CompilerPkgKindBin)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
 (define (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
-  [target : target_cfg.CompilerTargetCfg]) : lint_driver_core.SelfhostLintDeadDecls
+  [target : target_cfg.CompilerTargetCfg]) : lint_driver.SelfhostLintDeadDecls
   (let
     [source : String (selfhost-lint-package-dead-platform-cfg-source)]
     [cfgs : sym_i64_env.SymI64Env
       (parser.compiler-cfg-union
         (target_cfg.compiler-target-cfgs target (parser.compiler-cfg-empty))
         "compile-profile")]
-    [scan-source : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source-with-cfgs
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [scan-source : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source-with-cfgs
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/platform_cfg.tl"
         source
         false
         true
         cfgs)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots
         scan-source
         CompilerPkgKindBin)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
-(define (selfhost-lint-package-dead-qualified-import-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-qualified-import-fixture-decls) : lint_driver.SelfhostLintDeadDecls
   (let
     [left-source : String (selfhost-lint-package-dead-qualified-left-source)]
     [right-source : String (selfhost-lint-package-dead-qualified-right-source)]
-    [main-source : String (selfhost-lint-package-dead-qualified-main-source)]
-    [scan-left : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [main-source : String
+      "(module main)
+(import left)
+(import right)
+(define (main) : i64 (right.live))"]
+    [scan-left : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/left.tl"
         left-source
         false
         true)]
-    [scan-right : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
+    [scan-right : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
         scan-left
         "pkg/right.tl"
         right-source
         false
         true)]
-    [scan-main : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
+    [scan-main : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
         scan-right
         "pkg/main.tl"
         main-source
         false
         true)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots
         scan-main
         CompilerPkgKindBin)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
-(define (selfhost-lint-package-dead-moduleless-import-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-moduleless-import-fixture-decls) : lint_driver.SelfhostLintDeadDecls
   (let
     [left-source : String (selfhost-lint-package-dead-moduleless-left-source)]
     [right-source : String (selfhost-lint-package-dead-moduleless-right-source)]
-    [main-source : String (selfhost-lint-package-dead-moduleless-main-source)]
-    [scan-left : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
-        (lint_driver_core.SelfhostLintDeadScan
-          (lint_driver_core.selfhost-lint-dead-decls-empty)
+    [main-source : String
+      "(import pkg.left as first)
+(import pkg.right as second)
+(define (main) : i64 (+ (first.live) (second.live)))"]
+    [scan-left : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
+        (lint_driver.SelfhostLintDeadScan
+          (lint_driver.selfhost-lint-dead-decls-empty)
           (lint_svec.new))
         "pkg/left.tl"
         left-source
         false
         true)]
-    [scan-right : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
+    [scan-right : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
         scan-left
         "pkg/right.tl"
         right-source
         false
         true)]
-    [scan-main : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-dead-scan-source
+    [scan-main : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-dead-scan-source
         scan-right
         "pkg/main.tl"
         main-source
         false
         true)]
-    [scan : lint_driver_core.SelfhostLintDeadScan
-      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+    [scan : lint_driver.SelfhostLintDeadScan
+      (lint_driver.selfhost-lint-package-dead-add-kind-roots
         scan-main
         CompilerPkgKindBin)]
-    (lint_driver_core.selfhost-lint-dead-mark-roots-from
-      scan.decls
-      scan.roots
-      0)))
+    (lint_driver.selfhost-lint-dead-mark-roots-from scan.decls scan.roots 0)))
 
 (define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
   (let
@@ -1266,23 +733,23 @@ end
         true)
         [(package_source_core.ResultPackageSourceSet.Err _) false]
         [(package_source_core.ResultPackageSourceSet.Ok source-set)
-          (match (lint_driver_core.selfhost-lint-package-dead-sources
+          (match (lint_driver.selfhost-lint-package-dead-sources
             (owned_view.compiler-owned-shared-view source-set)
             (lint_svec.new))
-            [(lint_driver_core.ResultSelfhostLintDeadSources.Err _) false]
-            [(lint_driver_core.ResultSelfhostLintDeadSources.Ok dead-source-set)
+            [(lint_driver.ResultSelfhostLintDeadSources.Err _) false]
+            [(lint_driver.ResultSelfhostLintDeadSources.Ok dead-source-set)
               (let
                 [roots : lint_svec.Vec
-                  (lint_driver_core.selfhost-lint-package-import-roots
+                  (lint_driver.selfhost-lint-package-import-roots
                     (owned_view.compiler-owned-shared-view source-set)
                     (lint_svec.new))]
-                [dead-decls : lint_driver_core.SelfhostLintDeadDecls
-                  (lint_driver_core.selfhost-lint-package-dead-code
+                [dead-decls : lint_driver.SelfhostLintDeadDecls
+                  (lint_driver.selfhost-lint-package-dead-code
                     dead-source-set
                     (owned_view.compiler-owned-shared-view roots)
                     source-set.manifest.kind)]
                 [core-count : i64
-                  (lint_driver_core.selfhost-lint-package-dead-count-for-source
+                  (selfhost-lint-package-dead-count-for-source
                     (compiler_load.compiler-load-normalize-path core-path)
                     (byte_buf.to-string (io.read-file core-path))
                     dead-decls)]
@@ -1297,49 +764,49 @@ end
     [source-a : String (selfhost-lint-package-dead-source-a)]
     [source-b : String (selfhost-lint-package-dead-source-b)]
     [cfg-source : String (selfhost-lint-package-dead-cfg-source)]
-    [bin-decls : lint_driver_core.SelfhostLintDeadDecls
+    [bin-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-fixture-decls
         (owned_view.compiler-owned-shared-view source-a)
         (owned_view.compiler-owned-shared-view source-b)
         CompilerPkgKindBin)]
-    [lib-decls : lint_driver_core.SelfhostLintDeadDecls
+    [lib-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-fixture-decls
         (owned_view.compiler-owned-shared-view source-a)
         (owned_view.compiler-owned-shared-view source-b)
         CompilerPkgKindLib)]
     [bin-count-a : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
         (owned_view.compiler-owned-shared-view source-a)
         (owned_view.compiler-owned-shared-view bin-decls))]
     [bin-count-b : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
         (owned_view.compiler-owned-shared-view source-b)
         bin-decls)]
     [lib-count-a : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
         source-a
         (owned_view.compiler-owned-shared-view lib-decls))]
     [lib-count-b : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
         source-b
         lib-decls)]
-    [test-root-decls : lint_driver_core.SelfhostLintDeadDecls
+    [test-root-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-test-root-fixture-decls)]
     [test-root-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/src/main.tl"
         (selfhost-lint-package-dead-entry-source)
         test-root-decls)]
     [manifest-root-source : String
       (selfhost-lint-package-dead-manifest-root-source)]
-    [manifest-root-decls : lint_driver_core.SelfhostLintDeadDecls
+    [manifest-root-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-manifest-root-fixture-decls)]
     [manifest-root-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         (compiler_load.compiler-load-normalize-path
           (compiler_load.compiler-load-join-root-path
             "pkg"
@@ -1348,67 +815,67 @@ end
         manifest-root-decls)]
     [explicit-root-source : String
       (selfhost-lint-package-dead-explicit-root-source)]
-    [explicit-root-decls : lint_driver_core.SelfhostLintDeadDecls
+    [explicit-root-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-explicit-root-fixture-decls)]
     [explicit-root-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/explicit_api.tl"
         explicit-root-source
         explicit-root-decls)]
-    [cfg-bin-decls : lint_driver_core.SelfhostLintDeadDecls
+    [cfg-bin-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-cfg-fixture-decls)]
     [cfg-bin-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/cfg.tl"
         cfg-source
         (owned_view.compiler-owned-shared-view cfg-bin-decls))]
     [ordinary-mode-index : i64
-      (lint_driver_core.selfhost-lint-dead-decls-index-of
+      (lint_driver.selfhost-lint-dead-decls-index-of
         (owned_view.compiler-owned-shared-view cfg-bin-decls)
         "ordinary-mode-helper")]
     [platform-cfg-source : String
       (selfhost-lint-package-dead-platform-cfg-source)]
-    [platform-linux-decls : lint_driver_core.SelfhostLintDeadDecls
+    [platform-linux-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
         target_cfg.CompilerTargetCfg.Linux)]
-    [platform-windows-decls : lint_driver_core.SelfhostLintDeadDecls
+    [platform-windows-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
         target_cfg.CompilerTargetCfg.Windows)]
     [platform-linux-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         (owned_view.compiler-owned-string-place-shared-view platform-cfg-source)
         platform-linux-decls)]
     [platform-windows-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         platform-cfg-source
         (owned_view.compiler-owned-shared-view platform-windows-decls))]
     [platform-windows-storage-index : i64
-      (lint_driver_core.selfhost-lint-dead-decls-index-of
+      (lint_driver.selfhost-lint-dead-decls-index-of
         (owned_view.compiler-owned-shared-view platform-windows-decls)
         "profile-clock-storage")]
-    [qualified-import-decls : lint_driver_core.SelfhostLintDeadDecls
+    [qualified-import-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]
     [qualified-left-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-qualified-left-source)
         (owned_view.compiler-owned-shared-view qualified-import-decls))]
     [qualified-right-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
         (selfhost-lint-package-dead-qualified-right-source)
         qualified-import-decls)]
-    [moduleless-import-decls : lint_driver_core.SelfhostLintDeadDecls
+    [moduleless-import-decls : lint_driver.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-moduleless-import-fixture-decls)]
     [moduleless-left-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-moduleless-left-source)
         (owned_view.compiler-owned-shared-view moduleless-import-decls))]
     [moduleless-right-count : i64
-      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+      (selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
         (selfhost-lint-package-dead-moduleless-right-source)
         moduleless-import-decls)]
@@ -1437,7 +904,7 @@ end
           (< ordinary-mode-index 0)
           (not
             (__tl-project-field
-              (lint_driver_core.selfhost-lint-dead-decls-ref
+              (lint_driver.selfhost-lint-dead-decls-ref
                 cfg-bin-decls
                 ordinary-mode-index)
               root)))
@@ -1450,7 +917,7 @@ end
           (not (= platform-windows-count 1))
           (< platform-windows-storage-index 0)
           (__tl-project-field
-            (lint_driver_core.selfhost-lint-dead-decls-ref
+            (lint_driver.selfhost-lint-dead-decls-ref
               platform-windows-decls
               platform-windows-storage-index)
             root))
@@ -1479,42 +946,77 @@ end
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-unused-assignment-init-source)
+              "(define (main) : i64
+  (let
+    [x : i64 1]
+    (begin
+      (set! x 2)
+      x)))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         50]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-unused-assignment-set-source)
+              "(define (main) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (set! x (+ x 1))
+      (set! x 2)
+      x)))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         51]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-used-before-overwrite-source)
+              "(define (main) : i64
+  (let
+    [x : i64 1]
+    (begin
+      (set! x (+ x 1))
+      x)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         52]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-branch-conservative-assignment-source)
+              "(define (main [flag : bool]) : i64
+  (let
+    [x : i64 1]
+    (begin
+      (if flag
+        (set! x 2)
+        unit)
+      (set! x 3)
+      x)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         53]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-underscore-assignment-source)
+              "(define (main) : i64
+  (let
+    [_x : i64 1]
+    (begin
+      (set! _x 2)
+      _x)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         54]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-suppressed-unused-assignment-source)
+              "(define (main) : i64
+  (let
+    ;; lint-allow: unused-assignment
+    [x : i64 1]
+    (begin
+      (set! x 2)
+      x)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         55]
@@ -1532,63 +1034,97 @@ end
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-fixed-source)
+              "(define (main) : i64
+  (let
+    [cur : (Array i64 1) (array 0)]
+    (begin
+      (set! (array-ref cur 0) 3)
+      (array-ref cur 0))))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         60]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-param-source)
+              "(define (read-cell [cur : (Array i64 1)]) : i64
+  (array-ref cur 0))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         61]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-dynamic-source)
+              "(define (main) : i64
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (begin
+      (set! (array-ref cur 0) 3)
+      (array-ref cur 0))))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         62]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-dotted-source)
+              "(define (main) : i64
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (begin
+      (set! (array-ref cur 0) 3)
+      (array-ref cur 0))))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         63]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-nonzero-source)
+              "(define (main) : i64
+  (let
+    [cur : (Array i64 2) (array 1 2)]
+    (array-ref cur 1)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         64]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-dynamic-index-source)
+              "(define (main [index : i64]) : i64
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (array-ref cur index)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         65]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-escape-source)
+              "(define (use-array [items : (__tl_dyn-array i64)]) : i64
+  (array-length items))
+(define (main) : i64
+  (let
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (use-array cur)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         66]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-aggregate-source)
+              "(define (main) : String
+  (let
+    [cur : (Array String 1) (array \"x\")]
+    (array-ref cur 0)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         67]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-element-array-suppressed-source)
+              "(define (main) : i64
+  (let
+    ;; lint-allow: single-element-array-cell
+    [cur : (Array i64 1) (array 0)]
+    (array-ref cur 0)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         68]
@@ -1606,84 +1142,162 @@ end
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-dotted-source)
+              "(define (make-items [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    (begin
+      (set! (array-ref items 0) a)
+      (set! (array-ref items 1) b)
+      (set! (array-ref items 2) c)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         140]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-private-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         141]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-return-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
+      (return items))))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         152]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-assignment-source)
+              "(define (set-items [result : (__tl_dyn-array i64)]) : unit
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
+      (set! result items))))"
               (owned_view.compiler-owned-shared-view rule))
             1))
         153]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source)
+              "(define (make-items [first : i64] [second : i64]) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) first)
+      (set! (array-ref items 1) second)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         149]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-read-before-complete-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (array-ref items 0)
+      (set! (array-ref items 1) 7)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         142]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-computed-index-source)
+              "(define (make-items [index : i64]) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items index) 4)
+      (set! (array-ref items 1) 7)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         143]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-duplicate-index-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 0) 7)
+      (set! (array-ref items 2) 9)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         150]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-gapped-index-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 2) 7)
+      (set! (array-ref items 1) 9)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         151]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-partial-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         144]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-escape-source)
+              "(define (consume [items : (__tl_dyn-array i64)]) : unit unit)
+(define (make-items) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (consume items)
+      (set! (array-ref items 1) 7)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         145]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-dynamic-array-literal-suppressed-source)
+              "(define (make-items) : (__tl_dyn-array i64)
+  (let
+    ;; lint-allow: prefer-dynamic-array-literal
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (begin
+      (set! (array-ref items 0) 4)
+      (set! (array-ref items 1) 7)
+      items)))"
               (owned_view.compiler-owned-shared-view rule))
             0))
         146]
@@ -1705,7 +1319,7 @@ end
   [findings : lint_core.LintFindings]
   [depth : i64]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1718,7 +1332,7 @@ end
 
 (define (selfhost-lint-nested-let-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1729,7 +1343,7 @@ end
 
 (define (selfhost-lint-return-path-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1740,7 +1354,7 @@ end
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1753,7 +1367,7 @@ end
 (define (selfhost-lint-cascading-and-or-finding-ok?
   [findings : lint_core.LintFindings]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core_tests.lint-findings-get findings 0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1766,7 +1380,7 @@ end
 
 (define (selfhost-lint-transitional-core-macro-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get
+  (match (lint_core_tests.lint-findings-get
     (owned_view.compiler-owned-shared-view findings)
     0)
     [(lint_core.LintMaybeFinding.Some finding)
@@ -1783,59 +1397,119 @@ end
 (define (compiler-lint-driver-self-test) : i64
   (let
     [reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         (lint_svec.new))]
     [guard-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-guard-ladder-source)
+        "(define (check [a : bool] [b : bool] [c : bool]) : i64
+  (begin
+    (if a
+      (return 1)
+      (if b
+        (return 2)
+        (if c
+          (return 3)
+          unit)))
+    42))"
         (lint_svec.new))]
     [return-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-return-path-chain-source)
+        "(define (check [a : bool] [b : bool] [c : bool]) : i64
+  (if a
+    (if b
+      (if c
+        42
+        3)
+      2)
+    1))"
         (lint_svec.new))]
     [all-exit-ladder-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-all-exit-ladder-source)
+        "(define (classify [x : i64]) : i64
+  (if (= x 0)
+    (return 10)
+    (if (= x 1)
+      (return 20)
+      (if (= x 2)
+        (return 30)
+        (return 0)))))"
         (lint_svec.new))]
     [unit-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-unit-if-source)
+        "(define (check [ok : bool]) : i64
+  (begin
+    (if ok
+      (return 1)
+      unit)
+    42))"
         (lint_svec.new))]
     [unit-set-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-unit-set-source)
+        "(define (check [ok : bool]) : i64
+  (let
+    [seen : bool true]
+    (begin
+      (if (not ok)
+        unit
+        (set! seen false))
+      (if seen 42 0))))"
         (lint_svec.new))]
     [two-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-two-findings-source)
+        "(define (first [x : i64]) : i64
+  (if (= x 0)
+    0
+    (if (= x 1)
+      1
+      (if (= x 2)
+        2
+        3))))
+
+(define (second [x : i64]) : i64
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        40))))"
         (lint_svec.new))]
     [cascading-and-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-cascading-and-source)
+        "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a (and b c)))"
         (lint_svec.new))]
     [cascading-or-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-cascading-or-source)
+        "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (or (or a b) c))"
         (lint_svec.new))]
     [cascading-core-and-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-cascading-core-and-source)
+        "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a (and b c)))"
         (lint_svec.new))]
     [transitional-core-reported : lint_core.LintFindings
-      (lint_driver_core.selfhost-lint-source-with-roots
+      (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
-        (selfhost-lint-transitional-core-macro-source)
+        "(define (check [flag : bool]) : i64
+  (begin
+    (core.when flag unit)
+    (core.unless false unit)
+    (if (core.and flag (core.or false true))
+      (if (core.cond [flag true] [else false]) 42 1)
+      1)))"
         (lint_svec.new))]
     (cond
       [(or
@@ -1938,50 +1612,81 @@ end
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-clean-core-macro-text-source)
+              ";; core.cond in a comment is not an expression call head.
+(import stdlib.core_macros as core)
+(define core-dot-cond-text : String \"core.cond\")
+(define (main) : i64
+  (let
+    [value : i64 core.cond]
+    value))"
               (lint_core.lint-rule-transitional-core-macro-qualifier-id))
             0))
         39]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-suppressed-transitional-core-macro-source)
+              "(define (main) : i64
+  ;; lint-allow: transitional-core-macro-qualifier
+  (if (core.cond [true true] [else false]) 42 1))"
               (lint_core.lint-rule-transitional-core-macro-qualifier-id))
             0))
         40]
       [(not
           (=
-            (selfhost-lint-source-finding-count (selfhost-lint-flat-and-source))
+            (selfhost-lint-source-finding-count
+              "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a b c))")
             0))
         26]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-mixed-and-or-source))
+              "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  (and a (or b c)))")
             0))
         27]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-cascading-and-source))
+              "(define (check [a : bool] [b : bool] [c : bool]) : bool
+  ;; lint-allow: cascading-and-or
+  (and a (and b c)))")
             0))
         28]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-return-path-chain-source))
+              "(define (check [a : bool] [b : bool] [c : bool]) : i64
+  ;; lint-allow: return-path-chain
+  (if a
+    (if b
+      (if c
+        42
+        3)
+      2)
+    1))")
             0))
         11]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-unit-if-source))
+              "(define (check [ok : bool]) : i64
+  (begin
+    ;; lint-allow: unit-if-guard
+    (if ok
+      (return 1)
+      unit)
+    42))")
             0))
         14]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-when-unless-source))
+              "(define (check [a : bool] [b : bool]) : i64
+  (begin
+    (when a (return 1))
+    (unless b (return 2))
+    42))")
             0))
         15]
       [(not
@@ -2000,13 +1705,21 @@ end
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-clean-divergence-source))
+              "(define (main [flag : bool]) : i64
+  (if flag
+    (io.panic \"stop\")
+    4))")
             0))
         31]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-suppressed-divergence-padding-source)
+              "(define (main) : i64
+  (begin
+    ;; lint-allow: redundant-divergence-padding
+    (io.panic \"stop\")
+    ;; lint-allow: unreachable-code
+    0))"
               (lint_core.lint-rule-redundant-divergence-padding-id))
             0))
         32]
@@ -2029,57 +1742,196 @@ end
         5]
       [(not
           (selfhost-lint-nested-let-finding-ok?
-            (lint_driver_core.selfhost-lint-source-with-roots
+            (selfhost-lint-source-with-roots
               "lint_driver_self_test.tl"
-              (selfhost-lint-nested-let-source)
+              "(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))"
               (lint_svec.new))))
         9]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-shadowing-nested-let-source))
+              "(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [a : i64 (+ a 1)]
+      a)))")
             0))
         10]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-begin-inner-let-source))
+              "(define (main) : i64
+  (let
+    [a : i64 1]
+    (begin
+      (let [b : i64 (+ a 1)] b)
+      a)))")
             0))
         11]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-suppressed-nested-let-source))
+              "(define (main) : i64
+  ;; lint-allow: nested-let
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))")
             0))
         12]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-single-begin-source)
+              "(define (main) : i64
+  (begin 42))"
               (lint_core.lint-rule-single-begin-id))
             1))
         33]
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-clean-begin-source))
+              "(define (main) : i64
+  (begin
+    unit
+    42))")
             0))
         34]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-cfg-begin-source)
+              "(define (main) : i64
+  (begin
+    (cfg compile-profile (io.panic \"profile\"))
+    42))"
               (lint_core.lint-rule-single-begin-id))
             0))
         36]
       [(not
           (=
             (selfhost-lint-source-rule-count
-              (selfhost-lint-suppressed-single-begin-source)
+              "(define (main) : i64
+  ;; lint-allow: single-begin
+  (begin 42))"
               (lint_core.lint-rule-single-begin-id))
             0))
         35]
-      [(not (= (lint_driver_core.selfhost-lint-enforce-exit true 1) 1)) 6]
-      [(not (= (lint_driver_core.selfhost-lint-enforce-exit true 0) 0)) 7]
-      [(not (= (lint_driver_core.selfhost-lint-enforce-exit false 1) 0)) 8]
+      [(not (= (lint_driver.selfhost-lint-enforce-exit true 1) 1)) 6]
+      [(not (= (lint_driver.selfhost-lint-enforce-exit true 0) 0)) 7]
+      [(not (= (lint_driver.selfhost-lint-enforce-exit false 1) 0)) 8]
       [else 42])))
+
+(define (selfhost-lint-typed-unused-unsafe-error-shared-view) : String
+  (unsafe
+    (ptr-read (ptr-addr-of lint_driver.selfhost-lint-typed-unused-unsafe-error))))
+
+(define (selfhost-lint-unsafe-surface-cache-parse-count) : i64
+  lint_driver.selfhost-lint-unsafe-surface-parse-count)
+
+(define (selfhost-lint-unsafe-surface-cache-hit-count) : i64
+  lint_driver.selfhost-lint-unsafe-surface-hit-count)
+
+(define (selfhost-lint-unused-unsafe-fallback-count) : i64
+  lint_driver.selfhost-lint-unused-unsafe-fallback-file-count)
+
+(define (selfhost-lint-unused-unsafe-surface-required-total) : i64
+  lint_driver.selfhost-lint-unused-unsafe-surface-required-count)
+
+(define (selfhost-lint-unused-unsafe-surface-classified-total) : i64
+  (+
+    lint_driver.selfhost-lint-unused-unsafe-surface-required-count
+    lint_driver.selfhost-lint-unused-unsafe-surface-unused-count))
+
+(define (selfhost-lint-source-with-roots-and-all-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : lint_core.LintFindings
+  (lint_driver.selfhost-lint-source-with-roots-and-all-options-with-cfg
+    path
+    source
+    stdlib-roots
+    (lint_driver.selfhost-lint-language-cfgs)
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    name-case))
+
+(define (selfhost-lint-source-with-roots-and-staged-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : lint_core.LintFindings
+  (selfhost-lint-source-with-roots-and-all-options
+    path
+    source
+    stdlib-roots
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    false))
+
+(define (selfhost-lint-source-with-roots-and-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]) : lint_core.LintFindings
+  (selfhost-lint-source-with-roots-and-staged-options
+    path
+    source
+    stdlib-roots
+    deprecated-string-concat
+    false
+    false))
+
+;; Parse `source` (attributed to `path`) and run the lint rules over this source
+;; unit only. Imports are linted when their own files are selected by the repo
+;; lint gate, so a public driver does not duplicate every imported finding.
+(define (selfhost-lint-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]) : lint_core.LintFindings
+  (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
+
+(define (selfhost-lint-package-dead-count-for-source-from
+  [path : String]
+  [source : (& source str)]
+  [items : lint_driver.SelfhostLintDeadDecls]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (lint_driver.selfhost-lint-dead-decls-count items))
+    count
+    (let
+      [decl : lint_driver.SelfhostLintDeadDecl
+        (lint_driver.selfhost-lint-dead-decls-ref
+          (owned_view.compiler-owned-shared-view items)
+          index)]
+      [next-count : i64
+        (if (and
+          (string.eq decl.path path)
+          (lint_driver.selfhost-lint-package-dead-finding-active? source decl))
+          (+ count 1)
+          count)]
+      (selfhost-lint-package-dead-count-for-source-from
+        path
+        source
+        items
+        (+ index 1)
+        next-count))))
+
+(define (selfhost-lint-package-dead-count-for-source
+  [path : String]
+  [source : String]
+  [items : lint_driver.SelfhostLintDeadDecls]) : i64
+  (selfhost-lint-package-dead-count-for-source-from path source items 0 0))

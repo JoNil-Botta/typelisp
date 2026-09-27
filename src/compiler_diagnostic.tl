@@ -224,9 +224,6 @@
       (int->ptr (cast sink.address : u64) : (MutPtr CompilerAdvisorySinkData))
       data)))
 
-(define (compiler-advisory-sink-generation [sink : CompilerAdvisorySink]) : i64
-  (compiler-advisory-sink-data sink).generation)
-
 (define (compiler-advisory-sink-snapshot [sink : CompilerAdvisorySink]) : CompilerAdvisoryList
   (compiler-advisory-sink-data sink).advisories)
 
@@ -585,20 +582,6 @@
     [(= index 19) "compile-time constraint"]
     [(= index 20) "unsafe callable effect erasure"]
     [(= index 21) "global written outside its module"]
-    [else ""]))
-
-(define (compiler-diagnostic-code-registry-category [index : i64]) : String
-  (cond
-    [(= index 0) "parse"]
-    [(and (> index 0) (< index (compiler-diagnostic-code-registry-count)))
-      "typecheck"]
-    [else ""]))
-
-(define (compiler-diagnostic-code-registry-owner [index : i64]) : String
-  (cond
-    [(= index 0) "parser"]
-    [(and (> index 0) (< index (compiler-diagnostic-code-registry-count)))
-      "typechecker"]
     [else ""]))
 
 ;; Ordered, first match wins. `arity mismatch` is tested before `type mismatch`

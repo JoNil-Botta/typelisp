@@ -877,10 +877,6 @@
 (define selfhost-lint-typed-unused-unsafe-error : String
   "")
 
-(define (selfhost-lint-typed-unused-unsafe-error-shared-view) : String
-  (unsafe
-    (ptr-read (ptr-addr-of selfhost-lint-typed-unused-unsafe-error))))
-
 (define (selfhost-lint-unsafe-surface-cache-reset!) : unit
   (begin
     (set!
@@ -905,23 +901,6 @@
   (if (= selfhost-lint-unsafe-surface-cache-arena 0)
     (selfhost-lint-unsafe-surface-cache-reset!)
     unit))
-
-(define (selfhost-lint-unsafe-surface-cache-parse-count) : i64
-  selfhost-lint-unsafe-surface-parse-count)
-
-(define (selfhost-lint-unsafe-surface-cache-hit-count) : i64
-  selfhost-lint-unsafe-surface-hit-count)
-
-(define (selfhost-lint-unused-unsafe-fallback-count) : i64
-  selfhost-lint-unused-unsafe-fallback-file-count)
-
-(define (selfhost-lint-unused-unsafe-surface-required-total) : i64
-  selfhost-lint-unused-unsafe-surface-required-count)
-
-(define (selfhost-lint-unused-unsafe-surface-classified-total) : i64
-  (+
-    selfhost-lint-unused-unsafe-surface-required-count
-    selfhost-lint-unused-unsafe-surface-unused-count))
 
 ;; Paths are stored at most once (only the miss path stores), so scanning the
 ;; slots front to back returns the same entry the newest-first chain did.
@@ -1464,62 +1443,6 @@
         ;; caller's request arena after returning its findings.
         (selfhost-lint-unsafe-surface-cache-release!)
         findings))))
-
-(define (selfhost-lint-source-with-roots-and-all-options
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]
-  [deprecated-string-concat : bool]
-  [redundant-function-name : bool]
-  [prefer-dotted-field : bool]
-  [name-case : bool]) : lint_core.LintFindings
-  (selfhost-lint-source-with-roots-and-all-options-with-cfg
-    path
-    source
-    stdlib-roots
-    (selfhost-lint-language-cfgs)
-    deprecated-string-concat
-    redundant-function-name
-    prefer-dotted-field
-    name-case))
-
-(define (selfhost-lint-source-with-roots-and-staged-options
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]
-  [deprecated-string-concat : bool]
-  [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : lint_core.LintFindings
-  (selfhost-lint-source-with-roots-and-all-options
-    path
-    source
-    stdlib-roots
-    deprecated-string-concat
-    redundant-function-name
-    prefer-dotted-field
-    false))
-
-(define (selfhost-lint-source-with-roots-and-options
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]
-  [deprecated-string-concat : bool]) : lint_core.LintFindings
-  (selfhost-lint-source-with-roots-and-staged-options
-    path
-    source
-    stdlib-roots
-    deprecated-string-concat
-    false
-    false))
-
-;; Parse `source` (attributed to `path`) and run the lint rules over this source
-;; unit only. Imports are linted when their own files are selected by the repo
-;; lint gate, so a public driver does not duplicate every imported finding.
-(define (selfhost-lint-source-with-roots
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]) : lint_core.LintFindings
-  (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 (define (selfhost-lint-source-with-roots-and-cfg
   [path : String]
@@ -3424,38 +3347,6 @@
         (selfhost-lint-suppressed?
           source
           (lint_core.lint-dead-code-finding decl.name decl.span))))))
-
-(define (selfhost-lint-package-dead-count-for-source-from
-  [path : String]
-  [source : (& source str)]
-  [items : SelfhostLintDeadDecls]
-  [index : i64]
-  [count : i64]) : i64
-  (if (>= index (selfhost-lint-dead-decls-count items))
-    count
-    (let
-      [decl : SelfhostLintDeadDecl
-        (selfhost-lint-dead-decls-ref
-          (owned_view.compiler-owned-shared-view items)
-          index)]
-      [next-count : i64
-        (if (and
-          (string.eq decl.path path)
-          (selfhost-lint-package-dead-finding-active? source decl))
-          (+ count 1)
-          count)]
-      (selfhost-lint-package-dead-count-for-source-from
-        path
-        source
-        items
-        (+ index 1)
-        next-count))))
-
-(define (selfhost-lint-package-dead-count-for-source
-  [path : String]
-  [source : String]
-  [items : SelfhostLintDeadDecls]) : i64
-  (selfhost-lint-package-dead-count-for-source-from path source items 0 0))
 
 (define (selfhost-lint-package-dead-print-for-source-from
   [path : String]

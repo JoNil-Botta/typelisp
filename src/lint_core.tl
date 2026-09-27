@@ -45,17 +45,6 @@
   (span ast.AstSourceSpan)
   (fix LintFixDecision))
 
-;: Attach a rule-proved fix without inventing a second edit coordinate type.
-(define (lint-finding-with-fix
-  [finding : LintFinding]
-  [fix : cdiag.CompilerDiagnosticFix]) : LintFinding
-  (LintFinding
-    finding.message
-    finding.rule-id
-    finding.depth
-    finding.span
-    (LintFixAvailable fix)))
-
 (define (lint-rule-nested-if-ladder-value-message) : String
   "nested if-ladder: value dispatch chain; prefer bracket-arm cond or match")
 
@@ -75,18 +64,6 @@
     [(LintLevel.Warn) 1]
     [(LintLevel.Deny) 2]
     [(LintLevel.Forbid) 3]))
-
-(define (lint-level-eq?
-  [left : (& left LintLevel)]
-  [right : (& right LintLevel)]) : bool
-  (= (lint-level-rank left) (lint-level-rank right)))
-
-(define (lint-level-name [level : LintLevel]) : String
-  (match level
-    [(LintLevel.Allow) "allow"]
-    [(LintLevel.Warn) "warn"]
-    [(LintLevel.Deny) "deny"]
-    [(LintLevel.Forbid) "forbid"]))
 
 (define lint-group-correctness-mask : i64
   1)
@@ -528,13 +505,6 @@
     [mask : i64 (lint-built-in-group-mask group)]
     (and (> mask 0) (not (= (bit-and rule.group-mask mask) 0)))))
 
-;: Registry default for one rule. Unknown ids fail closed to `allow`; callers
-;: that accept user policy must also report the unknown id structurally.
-(define (lint-rule-default-level [rule-id : String]) : LintLevel
-  (match (lint-rule-find rule-id)
-    [(LintMaybeRule.Found rule) rule.default-level]
-    [(LintMaybeRule.NotFound) LintLevel.Allow]))
-
 ;: Rule registry message lookup. Unknown ids return the empty string.
 (define (lint-rule-message [rule-id : String]) : String
   (match (lint-rule-find rule-id)
@@ -620,15 +590,6 @@
 
 (define (lint-findings-ref [items : LintFindings] [index : i64]) : LintFinding
   (array-ref (lint-findings-slots items) index))
-
-(define (lint-findings-get [items : LintFindings] [index : i64]) : LintMaybeFinding
-  (if (if (>= index 0)
-    (<
-      index
-      (lint-findings-count (owned_view.compiler-owned-shared-view items)))
-    false)
-    (LintMaybeFinding.Some (lint-findings-ref items index))
-    (LintMaybeFinding.No)))
 
 ;: Default nested-`if`-ladder depth threshold (an else-chain of this many `if`s
 ;: or more is flagged).

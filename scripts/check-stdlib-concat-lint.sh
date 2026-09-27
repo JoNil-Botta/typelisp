@@ -2,7 +2,6 @@
 set -eu
 
 # check-stdlib-concat-lint.sh - keep runtime string concatenation out of stdlib.
-# refs #5175, #5444
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

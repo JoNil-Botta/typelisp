@@ -296,8 +296,8 @@
         ;; The aux section's schema-version is what
         ;; `compiler_surface_hydrate.tl` compares against
         ;; `surface-ast-schema-version`; it must BE that constant, not a
-        ;; literal that happens to equal it. The facts section below
-        ;; already does this correctly.
+        ;; literal that happens to equal it. The facts section below does
+        ;; the same.
         (tlci.TlciAuxSection
           tlci.tlci-aux-kind-frontend-ast
           surface_ast.surface-ast-schema-version

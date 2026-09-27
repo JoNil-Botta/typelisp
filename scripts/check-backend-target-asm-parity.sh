@@ -125,7 +125,7 @@ normalize_asm() {
         function normalize_frame_teardown(s) {
             # The function epilogue restores %rsp before `ret`. Frame-pointer
             # omission tears the frame down with `addq $N, %rsp`; an audited
-            # fallback that retains %rbp uses `leave`. Both targets now attempt
+            # fallback that retains %rbp uses `leave`. Both targets attempt
             # FPO, but Win64 deliberately keeps %rbp for shapes its SEH audit
             # cannot describe (including misaligned XMM-save layouts). Collapse
             # both epilogue spellings to one token so the gate accepts that
@@ -483,7 +483,7 @@ check_register_group_phi_return_opt2_shapes() {
     # (and should) delete that block once both arms return directly. The
     # normalizer rewrites every stack slot to a per-function SLOTn token and
     # gives a red-zone leaf the teardown token the framed side spells, so this
-    # shape is now identical on both targets -- and the two returned words must
+    # shape is identical on both targets -- and the two returned words must
     # come from DISTINCT slots.
     for _assembly in "$_linux" "$_windows"; do
         if ! awk '
@@ -608,27 +608,26 @@ check_frame_form_parity() {
 expected_target_asm_mismatch() {
     _etm_opt=$1
     _etm_name=$2
-    # #perf call-spanning-aware partition: the scalar opt2 allocator homes
+    # Call-spanning-aware partition: the scalar opt2 allocator homes
     # non-call-spanning values in the caller-saved zero-call pool (%r9/%rcx/%rdx),
     # which overlap the SysV and Win64 parameter registers at DIFFERENT positions
     # (Win64 passes only 4 args in registers vs SysV's 6). For arg-combining /
     # arg-heavy / capture bodies the two targets therefore pick different but
-    # equally-correct register homes; the divergence is register-choice only
-    # (opt2 cross-fixpoint + 26/26
-    # TL-vs-C parity green). The gate flags a stale entry if the output matches
-    # again, so remove an entry once a future change re-converges the two targets.
+    # equally-correct register homes; the divergence is register-choice only.
+    # The gate flags a stale entry if the output matches again, so remove an
+    # entry once a future change re-converges the two targets.
     #
-    # #6248 edge-precise liveness: allocation now runs on EP intervals, and the
+    # Edge-precise liveness: allocation runs on EP intervals, and the
     # different SysV/Win64 volatile pools pick different homes for the div/mod
     # magic-multiplier constants (register operand on one target, spill slot on
     # the other). Both sides execute one `imulq` per iteration, so the
     # divergence is home-choice only and instruction-count neutral; the loop
     # structure, unroll guard, and magic-number sequences are identical.
     #
-    # #6846 red-zone leaf frames are NOT an expected mismatch: the normalizer
+    # Red-zone leaf frames are NOT an expected mismatch: the normalizer
     # canonicalizes stack slots to per-function SLOTn tokens and hands a
     # red-zone leaf the teardown token the framed side spells, so the SysV and
-    # Win64 forms compare on their bodies again. check_frame_form_parity pins
+    # Win64 forms compare on their bodies. check_frame_form_parity pins
     # the frame forms themselves.
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;

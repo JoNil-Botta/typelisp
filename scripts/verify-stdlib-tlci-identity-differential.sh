@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Exhaustive per-identity embedded stdlib TLCI route differential (#6609).
+# Exhaustive per-identity embedded stdlib TLCI route differential.
 # The supplied profile compiler must contain embedded-stdlib-tlci and the
 # runtime-gated identity records compiled with tlci-native-route-stress.
 

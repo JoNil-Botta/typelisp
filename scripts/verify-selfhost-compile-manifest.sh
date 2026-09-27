@@ -3,10 +3,9 @@ set -eu
 
 # verify-selfhost-compile-manifest.sh - selfhost assembly compile manifest.
 #
-# The manifest lists TypeLisp sources whose generated assembly used to be
-# checked by Rust *_compile.rs harnesses. This runner compiles each entry with an
-# already-built TypeLisp compiler, then checks the generated assembly for the
-# expected main-label policy and text markers.
+# The manifest lists TypeLisp sources to compile. This runner compiles each
+# entry with an already-built TypeLisp compiler, then checks the generated
+# assembly for the expected main-label policy and text markers.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -44,20 +43,16 @@ esac
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
-# #2357: the batch driver scopes each entry's compile in its own arena region
+# The batch driver scopes each entry's compile in its own arena region
 # (compile-cli-run-batch-entries), so a chunk's peak memory is the heaviest
-# single compile (~2.8GB for the whole-compiler drivers), not the sum of all
-# entries. Without that scoping a 16-case chunk accumulated 9.7GB and
-# SIGSEGV'd the Windows CI runner (freestanding runtime: a failed memory
-# commit surfaces as an access violation, exit 139). Linux keeps the 16-case
-# stress chunk; Windows CI runners have tighter commit headroom, so split the
-# same manifest coverage into smaller default chunks unless explicitly
-# overridden. As the compiler grows, two heavy entries in one Windows batch can
+# single compile, not the sum of all entries. Windows CI runners have tighter
+# commit headroom (freestanding runtime: a failed memory commit surfaces as an
+# access violation, exit 139), and two heavy entries in one Windows batch can
 # trip the freestanding allocator after the first compile has emitted assembly,
-# so keep the default at one manifest entry per process on Windows. Linux keeps
-# the 16-entry stress size: allocation-owner snapshots and absolute batch live
-# baselines make cross-entry retention diagnosable and enforce that repeated
-# entries return to a bounded steady state.
+# so the Windows default is one manifest entry per process unless explicitly
+# overridden. Linux keeps the 16-entry stress size: allocation-owner snapshots
+# and absolute batch live baselines make cross-entry retention diagnosable and
+# enforce that repeated entries return to a bounded steady state.
 if [ -n "${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-}" ]; then
     BATCH_CHUNK_SIZE=$TYPELISP_COMPILE_MANIFEST_BATCH_SIZE
 elif [ "$HOST_OS" = windows ]; then
@@ -89,9 +84,9 @@ fi
 # TYPELISP_COMPILE_MANIFEST_WORKERS compiler processes at once (1-3, default
 # 2), each under an enforced memory cap and timeout (a user cgroup on Linux, a
 # Job Object on Windows), so at most workers x cap MiB of caps run
-# concurrently. A chunk's peak is its heaviest entry's (see above): main.tl,
-# the largest, peaked at 1,753 MiB on Linux (#7998), so the cap leaves over 2x
-# headroom while two capped chunks stay within half of a 16 GB hosted runner.
+# concurrently. A chunk's peak is its heaviest entry's (see above), main.tl's;
+# the cap leaves over 2x headroom above it while two capped chunks stay within
+# half of a 16 GB hosted runner.
 MANIFEST_POOL_WORKERS=${TYPELISP_COMPILE_MANIFEST_WORKERS:-2}
 case "$MANIFEST_POOL_WORKERS" in
     1 | 2 | 3) ;;
@@ -532,7 +527,7 @@ manifest_compile_chunk() {
 }
 
 # Account for one compiled chunk in the parent, in chunk order. A failing
-# compile fails the gate with the chunk's output, as the serial loop did; a
+# compile fails the gate with the chunk's output; a
 # chunk stopped by its memory cap or timeout, or one that left no status, is a
 # resource regression and fails the gate too.
 manifest_settle_chunk() {
@@ -723,7 +718,7 @@ ensure_compiled() {
     compiled=1
 }
 
-# Pool self-test (#7998): drive run_compile_batch with a fake compiler and pin
+# Pool self-test: drive run_compile_batch with a fake compiler and pin
 # what the pooled route must keep from the serial one. Every job runs; timing
 # rows are published in chunk order even when chunks finish out of order; a
 # failing chunk fails the gate with its label and stderr while the other chunks

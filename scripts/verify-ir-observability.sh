@@ -190,7 +190,7 @@ grep -F "after total_switch @main" "$WORKDIR/optimizer_fold.after-total_switch.i
     >"$WORKDIR/verify.stdout" 2>"$WORKDIR/verify.stderr"
 test -s "$WORKDIR/optimizer_fold.s"
 
-# #7145: the source-level hash loop exercises distinct, equivalent length
+# The source-level hash loop exercises distinct, equivalent length
 # operands in a widened bounds-check run. Verify both supported target routes;
 # native manifests separately execute its empty/short/full-loop cases.
 for HASH_TARGET in linux-x86_64 windows-x86_64; do
@@ -264,13 +264,12 @@ fi
 grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& chunk bytes)" >/dev/null
 grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& rendered bytes)" >/dev/null
 
-# #6115 regression: a scaled dump must render with memory proportional to the
-# output, not the retired quadratic recursive concatenation. 6000 tiny
-# functions render ~1.5MB of IR text; the old render copied the remaining
-# suffix once per element and blew past 11GB within seconds on this input, so
-# a 6GB address-space cap fails fast there while the buffered render finishes
-# well under 250MB. On Windows hosts the runner's commit limit bounds the old
-# behavior the same way.
+# A scaled dump must render with memory proportional to the output, not by
+# quadratic recursive concatenation. 6000 tiny functions render ~1.5MB of IR
+# text; a render that copies the remaining suffix once per element blows far
+# past the 6GB address-space cap on this input, so it fails fast while the
+# buffered render stays well under the cap. On Windows hosts the runner's
+# commit limit bounds a quadratic render the same way.
 STRESS_SOURCE="$WORKDIR/dump_ir_stress.tl"
 awk 'BEGIN {
   for (i = 0; i < 6000; i++) {

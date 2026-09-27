@@ -2,7 +2,7 @@
 set -eu
 
 # verify-process-runtime-linux.sh - deterministic Linux process syscall,
-# exec-channel, capture, reaping, and cleanup fault coverage. refs #7570
+# exec-channel, capture, reaping, and cleanup fault coverage.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

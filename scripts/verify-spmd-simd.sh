@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-spmd-simd.sh - scalar-vs-SIMD execution-comparison harness (#1149).
+# verify-spmd-simd.sh - scalar-vs-SIMD execution-comparison harness.
 #
 # Builds each SPMD corpus program at `scalar`, `avx2`, and `avx512`, runs every
 # available variant, and asserts they produce IDENTICAL exit codes (with empty
@@ -9,10 +9,9 @@ set -eu
 # an explicit diagnostic. `scalar` is always the reference; a SIMD mode is only
 # run when the host CPU can actually execute that ISA (via
 # scripts/detect-simd-isa.sh), and is skipped cleanly otherwise. This is the
-# comparison the SPMD acceptance criteria need (#1011-#1014): proving SIMD
-# lowering -- including the masked `foreach` tail (#1014) and `spmd-reduce`
-# folds -- matches scalar semantics, not merely that a mode runs on a trivial
-# program (cf. #1148, full-width only).
+# comparison the SPMD acceptance criteria need: proving SIMD lowering --
+# including the masked `foreach` tail and `spmd-reduce` folds -- matches scalar
+# semantics, not merely that a mode runs on a trivial full-width program.
 #
 # The corpus deliberately includes non-power-of-two lengths (the SIMD tail),
 # foreach lanes across i64/i32/i8/u8/f64/f32, and reductions across the scalar

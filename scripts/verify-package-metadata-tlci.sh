@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# End-to-end metadata-only dependency catalog verification (#2778). The
+# End-to-end metadata-only dependency catalog verification. The
 # supplied compiler is built with `dependency-tlci-verification`; runtime
 # telemetry exposes only stable catalog counts and admitted section totals.
 

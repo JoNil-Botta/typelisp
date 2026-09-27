@@ -17,7 +17,7 @@ set -eu
 # baseline: once it approaches the tolerance, the next change to cross the line
 # reports the accumulated total rather than its own cost, and gets blamed for it.
 # Rows using a large share of their budget are flagged so that is visible before
-# it happens rather than after. Refs #5641.
+# it happens rather than after.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -342,8 +342,7 @@ compare_counts() {
 }
 
 # Host-independent coverage for the comparison itself: no compiler, no
-# valgrind, no measurement. Fixtures use the real numbers from the runs that
-# motivated the budget annotation so the cases stay recognizable.
+# valgrind, no measurement.
 self_test_row() {
     printf 'name\tir_count\nbenchmark/typelisp/arith_loop\t%s\nself_compile/compile_cli_opt1\t%s\n' \
         "$1" "$2"
@@ -390,7 +389,6 @@ self_test_case() {
 # row never refreshes on its own, so a no-op refresh that still prints
 # "baseline updated" is how baseline drift accumulates against an author who
 # ran the step and saw it pass. Every measured row must reach the file.
-# Refs #5697, #5641.
 count_baseline_rows() {
     if [ ! -f "$1" ]; then
         printf '0\n'
@@ -473,7 +471,7 @@ merge_baseline_rows() {
 # beside it. Checking the *baseline* rather than the measurement keeps the hole
 # from reopening: a leg that stopped measuring scalar-fair rows, or a refresh
 # taken without them, would otherwise compare cleanly against a baseline that
-# had quietly lost the comparison (#5678).
+# had quietly lost the comparison.
 assert_scalar_fair_baseline() {
     _asfb_baseline=$1
     awk -F '\t' -v file="$_asfb_baseline" '
@@ -527,11 +525,10 @@ self_test() {
         > "$SELF_TEST_DIR/missing-row.tsv"
 
     _st_status=0
-    # A tolerated row at 91% of budget still passes, and says so. This is the
-    # case that silently consumed the budget before the annotation existed.
+    # A tolerated row at 91% of budget still passes, and says so.
     self_test_case drifted "$SELF_TEST_DIR/drifted.tsv" \
         "within-tolerance (91% of tolerance)" 0 yes || _st_status=1
-    # A regression still fails, now with the share of budget it used.
+    # A regression still fails, with the share of budget it used.
     self_test_case regressed "$SELF_TEST_DIR/regressed.tsv" \
         "REGRESSION (112% of tolerance)" 1 yes || _st_status=1
     # Ordinary small drift stays quiet so the note keeps its meaning.
@@ -541,7 +538,7 @@ self_test() {
     # Exact-tolerance rows cannot be partially consumed, so they never annotate.
     self_test_case improved "$SELF_TEST_DIR/improved.tsv" \
         "| IMPROVEMENT" 1 no || _st_status=1
-    # Fail-closed shapes are unchanged.
+    # Fail-closed shapes still fail.
     self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
         "missing-current" 1 no || _st_status=1
 
@@ -567,7 +564,7 @@ self_test() {
     SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
 
     # Explicit benchmark subsets compare only their selected rows, even when
-    # the baseline carries other cases (#5592). Selected mismatches still fail.
+    # the baseline carries other cases. Selected mismatches still fail.
     printf 'name\tir_count\nbenchmark/typelisp/a\t20\nbenchmark/c-scalar/a\t10\nbenchmark/typelisp/b\t30\nbenchmark/c-scalar/b\t15\n' \
         > "$SELF_TEST_DIR/subset-base.tsv"
     printf 'benchmark/typelisp/a\t20\nbenchmark/c-scalar/a\t10\n' \
@@ -626,7 +623,7 @@ self_test() {
     fi
 
     # The refresh guard: a baseline that was not actually rewritten must not
-    # report success, which is the failure shape #5697 is about.
+    # report success.
     printf 'self_compile/compile_cli_opt1\t1\n' \
         > "$SELF_TEST_DIR/refresh-current.tsv"
     printf 'name\tir_count\nself_compile/compile_cli_opt1\t1\n' \
@@ -666,9 +663,9 @@ self_test() {
         _st_status=1
     fi
 
-    # The scalar-fair row contract (#5678). The committed baselines are checked
-    # too, not just fixtures: the hole this closes was a real baseline missing
-    # real rows, so a fixture-only test would have passed throughout it.
+    # The scalar-fair row contract. The committed baselines are checked too,
+    # not just fixtures: a real baseline missing real rows would pass a
+    # fixture-only test.
     printf 'name\tir_count\nbenchmark/typelisp/a\t1\nbenchmark/c-scalar/a\t3\n' \
         > "$SELF_TEST_DIR/scalar-complete.tsv"
     if ! (assert_scalar_fair_baseline "$SELF_TEST_DIR/scalar-complete.tsv") \
@@ -731,15 +728,9 @@ assert_baseline_update_origin \
     "$SELF_COMPILE_ABSOLUTE_AUTHORITATIVE"
 
 # Scalar-fair C rows are required of every benchmark leg, not of one baseline
-# file. This used to key off the baseline's *name*, which made the rows
-# structurally unreachable for the heavy leg and left 5 of 16 cases with no
-# scalar-fair comparison at all (#5678) -- an ordering artifact of #5176 writing
-# the policy and #5184 promoting the heavy corpus into the gate afterwards.
-# `string_scan` was the worst of it: its C baseline is a serial
-# `acc = acc*131 + byte` recurrence clang cannot vectorize, so its ratio was
-# measured only against auto-vectorized clang, which is exactly the conflation
-# between "our scalar codegen is behind" and "their auto-vectorizer won" that
-# #5176 existed to remove.
+# file: keying the requirement off a baseline's name leaves the other legs'
+# cases measured only against auto-vectorized clang, which conflates "our
+# scalar codegen is behind" with "their auto-vectorizer won".
 SCALAR_FAIR=1
 if [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
     SCALAR_FAIR=0

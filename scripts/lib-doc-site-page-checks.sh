@@ -12,14 +12,12 @@
 # the site, and an anchored href into an .html page must match an id="..."
 # attribute there.
 #
-# GitHub's Windows runner pays about 17 ms per Git Bash process launch, and one
-# grep per anchored link across the site's 11,000 links spent two minutes there
-# (#8063). This pass launches three processes for the whole site. Its checks
-# are literal and at least as strict as the grep probes it replaced: those read
-# the markers, page names and anchors as basic regular expressions, while every
-# string here must occur exactly. An anchor matches wherever the target holds
-# id="ANCHOR", so ids inside other attributes (data-id="...") still count, as
-# grep's substring match did.
+# Git Bash process launches are expensive on GitHub's Windows runner, so a
+# probe per anchored link does not scale to the site's link count. This pass
+# launches three processes for the whole site. Its checks are literal: every
+# marker, page name and anchor string must occur exactly. An anchor matches
+# wherever the target holds id="ANCHOR", so ids inside other attributes
+# (data-id="...") still count.
 
 doc_site_check_pages() {
     _dscp_site=$1
@@ -126,7 +124,7 @@ doc_site_check_pages() {
                     } else {
                         continue
                     }
-                    # The former shell loop split hrefs into words.
+                    # Each whitespace-separated word of a value is a link.
                     words = split(value, word, /[ \t]+/)
                     for (w = 1; w <= words; w++)
                         if (word[w] != "")

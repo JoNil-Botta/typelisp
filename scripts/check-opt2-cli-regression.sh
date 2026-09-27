@@ -6,15 +6,15 @@ set -eu
 # Builds the repository root package as a release opt2 compiler (from the
 # converged opt2-built compiler in TYPELISP_BIN), then checks two things WITHOUT
 # a second bootstrap:
-#   1. crash gate (#2515): the opt2-built compiler can compile src/main.tl at
-#      opt2 to non-empty assembly.
-#   2. correctness cross-fixpoint (#2921 class): the opt2-built compiler must
-#      emit byte-identical opt1 assembly to the validated reference compiler.
-#      A miscompile in the opt2 self-build (e.g. the #2921 magic-division
-#      corruption) still produces non-empty output, so the crash gate alone
-#      cannot see it; the cross-fixpoint diff can. Linux CI reuses the stage4
-#      opt1 output already validated by check-build-invariance.sh; standalone
-#      and Windows invocations compile that reference locally.
+#   1. crash gate: the opt2-built compiler can compile src/main.tl at opt2 to
+#      non-empty assembly.
+#   2. correctness cross-fixpoint: the opt2-built compiler must emit
+#      byte-identical opt1 assembly to the validated reference compiler.
+#      A miscompile in the opt2 self-build still produces non-empty output,
+#      so the crash gate alone cannot see it; the cross-fixpoint diff can.
+#      Linux CI reuses the stage4 opt1 output already validated by
+#      check-build-invariance.sh; standalone and Windows invocations compile
+#      that reference locally.
 # Both checks reuse the single opt2 build below plus a few single-file compiles -
 # no extra stage1->stage2->stage3 bootstrap.
 
@@ -170,13 +170,12 @@ echo "[opt2-cli-gate] wrote $ASM"
 
 # Correctness cross-fixpoint. The crash gate above only proves the opt2-built
 # compiler does not crash and emits non-empty assembly; it cannot see a
-# miscompile that still produces output (#2921: the opt2 pipeline corrupted
-# constant division when inlined into magic-division, garbling every constant
-# `/` and `%`). A CORRECT opt2-built compiler must emit byte-identical opt1
-# assembly to the validated reference compiler, so we compare opt2-built@opt1
-# against that reference over src/main.tl. No second bootstrap: this reuses
-# $GENERATED (built above) plus one generated-compiler single-file compile. A
-# standalone invocation also performs the local reference compile below.
+# miscompile that still produces output. A CORRECT opt2-built compiler must
+# emit byte-identical opt1 assembly to the validated reference compiler, so we
+# compare opt2-built@opt1 against that reference over src/main.tl. No second
+# bootstrap: this reuses $GENERATED (built above) plus one generated-compiler
+# single-file compile. A standalone invocation also performs the local
+# reference compile below.
 CROSS_OPT1="$WORKDIR/cli-opt2built-opt1.s"
 REF_STDOUT="$WORKDIR/ref.stdout"
 REF_STDERR="$WORKDIR/ref.stderr"

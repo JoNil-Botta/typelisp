@@ -2,7 +2,6 @@
 set -eu
 
 # verify-stdlib.sh - verify canonical stdlib modules through --stdlib-root.
-# refs #285, #814, #863
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -50,7 +49,7 @@ fi
 # Linux verifies through the GNU `as`/`ld` pipeline with libc linked for stdlib
 # host FFI bindings; Windows (Git Bash / MSYS / Cygwin on the CI runner)
 # verifies through the host-default native toolchain (`typelisp build` ->
-# `clang`/`lld-link`), mirroring tests/windows_native.rs.
+# `clang`/`lld-link`).
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;

@@ -151,8 +151,8 @@ exercise_nested_backend() {
             done
         done
     done
-    # The real full-CI failure also lost systemd's OOM classification. Terminate
-    # the outer workload after its nested helper finishes, using a small cap.
+    # A nested run must also keep systemd's OOM classification. Terminate the
+    # outer workload after its nested helper finishes, using a small cap.
     _nested_prefix="$WORKDIR/$_nested_backend-nested-oom"
     _nested_status=0
     "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \

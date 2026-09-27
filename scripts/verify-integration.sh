@@ -3,8 +3,8 @@ set -eu
 
 # verify-integration.sh - manifest-driven native integration runner.
 #
-# The runner builds each listed TypeLisp program to a native executable, runs it
-# outside the Rust test harness, and checks exit code, stdout, and stderr. Linux
+# The runner builds each listed TypeLisp program to a native executable, runs
+# it, and checks exit code, stdout, and stderr. Linux
 # uses the explicit compile -> as -> ld flow; Windows Git Bash/MSYS/Cygwin uses
 # bounded native-link and persistent execution queues so independent links can
 # overlap while full Windows exit values and byte streams survive without a
@@ -250,7 +250,7 @@ INTEGRATION_POOL_PEAK_LABEL=
 
 # Compile one batch chunk. The timing row deliberately describes the actual
 # compiler process rather than attributing its elapsed time to individual
-# cases, which would turn a measurement into a derived estimate (#5793).
+# cases, which would turn a measurement into a derived estimate.
 #
 # This half runs inside a pool worker, so it touches no shared counter: it
 # leaves the compiler's status, its elapsed time and, when CAP_MIB is set, the
@@ -526,11 +526,10 @@ WINDOWS_DIRECT_POWERSHELL_STARTS=0
 WINDOWS_DIRECT_CYGPATH_CONVERSIONS=0
 WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=0
 WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=0
-# Five native-Windows samples over the 355-case manifest (#5817) put jobs=4 at
-# p10/median/p90 3.577/4.050/4.742s. Jobs=8 had a faster median but a worse
-# 5.446s p90 and substantially more summed child time, so four is the
-# conservative CI default. Set TYPELISP_WINDOWS_LINK_JOBS=1 for serial debugging
-# or override it up to 64 for host-specific measurements.
+# Four link jobs is the conservative CI default: eight gives a faster median
+# but a worse tail and substantially more summed child time. Set
+# TYPELISP_WINDOWS_LINK_JOBS=1 for serial debugging or override it up to 64 for
+# host-specific measurements.
 WINDOWS_LINK_JOBS=${TYPELISP_WINDOWS_LINK_JOBS:-4}
 
 if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
@@ -1233,8 +1232,8 @@ windows_queue_manifest_case() {
             ;;
         *)
             # The manifest argument field is an already whitespace-separated
-            # vector; preserve the same splitting contract as the old
-            # `deps_or_empty` command substitution without its subshell.
+            # vector; preserve the same splitting contract as a `deps_or_empty`
+            # command substitution without its subshell.
             # shellcheck disable=SC2086
             windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
                 "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
@@ -2811,8 +2810,8 @@ windows_compare_legacy_case() {
 windows_runner_differential_self_test() {
     # These are ordinary, already-built manifest binaries: successful no-output
     # exit, nonzero exit with stdout + argv, and a runtime trap with stderr.
-    # The old one-shot path is intentionally exercised only here as an oracle;
-    # the 292-case corpus itself uses the one persistent queue runner above.
+    # The one-shot path is intentionally exercised only here as an oracle; the
+    # corpus itself uses the one persistent queue runner above.
     windows_compare_legacy_case aggregate_globals || return 1
     windows_compare_legacy_case argv alpha beta || return 1
     windows_compare_legacy_case div_zero_trap || return 1
@@ -2906,7 +2905,7 @@ if [ "$BACKEND_CMP_MEM_FOLD_PARITY_ONLY" -eq 1 ]; then
     exit 0
 fi
 
-# The #7921 wide-struct declarations are generated, not committed.
+# The wide-struct literal declarations are generated, not committed.
 awk -f "$ROOT/tests/integration/wide_struct_literal_decls.awk" > "$WORKDIR/wide_struct_literal_decls.tl"
 mv "$WORKDIR/wide_struct_literal_decls.tl" "$ROOT/tests/integration/wide_struct_literal_decls.tl"
 
@@ -2916,7 +2915,7 @@ if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     exit 0
 fi
 
-# Batched compile pre-pass (#5555). Every manifest case is a compile-success
+# Batched compile pre-pass. Every manifest case is a compile-success
 # case -- the third field is the *program's* exit code, not a compile
 # expectation -- so the only thing that partitions them is whether the case
 # opted into the on-disk stdlib layout. That makes two argv groups per host, and
@@ -3056,8 +3055,8 @@ integration_batch_sentinel() {
         _list="$WORKDIR/batch-$_group-1.list"
         [ -s "$_list" ] || continue
         # The final entry has the most warmed-session predecessors available in
-        # a chunk. Selecting it exercises state contamination while retaining
-        # the original one-standalone-compile-per-group cost (#5793).
+        # a chunk. Selecting it exercises state contamination at a cost of one
+        # standalone compile per group.
         _entry=$(integration_batch_sentinel_entry "$_list")
         _sent_src=${_entry%%|*}
         _sent_asm=${_entry#*|}
@@ -3133,7 +3132,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     work_src="$case_dir/$name.tl"
     # The batch pre-pass already staged every case, and staging is a
     # deterministic file copy, so repeating it here would double the corpus's
-    # I/O for no change in inputs (#5555).
+    # I/O for no change in inputs.
     if [ ! -s "$work_src" ]; then
         cp "$source_path" "$work_src"
 
@@ -3284,7 +3283,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         # Stdlib comes from the embedded payload unless the case opted into
         # the on-disk layout (stage-stdlib), matching the staged copies.
         if [ -s "$asm" ]; then
-            # Produced by the batch pre-pass (#5555). A failed chunk removes its
+            # Produced by the batch pre-pass. A failed chunk removes its
             # outputs, so reaching here with no assembly means compiling now.
             INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
             : > "$build_stdout"

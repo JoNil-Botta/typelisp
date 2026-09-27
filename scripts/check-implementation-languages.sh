@@ -2,7 +2,7 @@
 set -eu
 
 # Baseline gate for the implementation language policy in CONTRIBUTING.md.
-# The Rust stage0 was removed in #795. The baseline should stay empty except
+# The baseline should stay empty except
 # for documented temporary implementation-language exceptions; new non-allowed
 # implementation-language files fail.
 

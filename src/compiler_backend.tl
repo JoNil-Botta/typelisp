@@ -8938,7 +8938,8 @@
     (compiler_ir_types.CompilerIrValue.I64 0)
     index))
 
-(define (compiler-backend-emit-avx2-gather-adjustments
+(define (compiler-backend-emit-simd-gather-adjustments
+  [mode : CompilerBackendMode]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [logical-base : compiler_ir_types.CompilerIrValue]
@@ -8948,7 +8949,7 @@
   (if (not lane-offset)
     (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
     (match (compiler-backend-simd-splat-load
-      (CompilerBackendMode.Avx2)
+      mode
       assignments
       dst
       (compiler-backend-global-shared-view logical-base)
@@ -8958,7 +8959,7 @@
       backend-state)
       [(ResultCompilerBackend.Ok first-load)
         (match (compiler-backend-simd-splat-load
-          (CompilerBackendMode.Avx2)
+          mode
           assignments
           dst
           logical-base
@@ -8967,74 +8968,50 @@
           ""
           backend-state)
           [(ResultCompilerBackend.Ok second-load)
-            (let
-              [label : String (compiler-backend-avx2-i64-lane-id-label)]
-              (ResultBackendGatherAdjust.Ok
-                (CompilerBackendGatherAdjust
-                  (str_cat.str-cat
-                    first-load
-                    "%ymm14\n    vpaddq "
-                    label
-                    "(%rip), %ymm14, %ymm14\n    vpaddq %ymm14, %ymm15, %ymm15\n")
-                  (if dword
-                    (str_cat.str-cat
-                      second-load
-                      "%ymm14\n    vpaddq "
-                      label
-                      "+32(%rip), %ymm14, %ymm14\n    vpaddq %ymm14, %ymm15, %ymm15\n")
-                    ""))))]
+            (ResultBackendGatherAdjust.Ok
+              (CompilerBackendGatherAdjust
+                (compiler-backend-gather-lane-add mode first-load "")
+                (if dword
+                  (compiler-backend-gather-lane-add
+                    mode
+                    second-load
+                    (match mode
+                      [(CompilerBackendMode.Avx512) "+64"]
+                      [_ "+32"]))
+                  "")))]
           [(ResultCompilerBackend.Err diag)
             (ResultBackendGatherAdjust.Err diag)])]
       [(ResultCompilerBackend.Err diag) (ResultBackendGatherAdjust.Err diag)])))
 
-(define (compiler-backend-emit-avx512-gather-adjustments
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [logical-base : compiler_ir_types.CompilerIrValue]
-  [lane-offset : bool]
-  [dword : bool]
-  [backend-state : CompilerBackendState]) : ResultBackendGatherAdjust
-  (if (not lane-offset)
-    (ResultBackendGatherAdjust.Ok (CompilerBackendGatherAdjust "" ""))
-    (match (compiler-backend-simd-splat-load
-      (CompilerBackendMode.Avx512)
-      assignments
-      dst
-      (compiler-backend-global-shared-view logical-base)
-      (compiler_ast_types.AstType.I64)
-      ""
-      ""
-      backend-state)
-      [(ResultCompilerBackend.Ok first-load)
-        (match (compiler-backend-simd-splat-load
-          (CompilerBackendMode.Avx512)
-          assignments
-          dst
-          logical-base
-          (compiler_ast_types.AstType.I64)
-          ""
-          ""
-          backend-state)
-          [(ResultCompilerBackend.Ok second-load)
-            (let
-              [label : String (compiler-backend-avx512-i64-lane-id-label)]
-              (ResultBackendGatherAdjust.Ok
-                (CompilerBackendGatherAdjust
-                  (str_cat.str-cat
-                    first-load
-                    "%zmm14\n    vpaddq "
-                    label
-                    "(%rip), %zmm14, %zmm14\n    vpaddq %zmm14, %zmm15, %zmm15\n")
-                  (if dword
-                    (str_cat.str-cat
-                      second-load
-                      "%zmm14\n    vpaddq "
-                      label
-                      "+64(%rip), %zmm14, %zmm14\n    vpaddq %zmm14, %zmm15, %zmm15\n")
-                    ""))))]
-          [(ResultCompilerBackend.Err diag)
-            (ResultBackendGatherAdjust.Err diag)])]
-      [(ResultCompilerBackend.Err diag) (ResultBackendGatherAdjust.Err diag)])))
+;; LOAD ends by broadcasting the logical base into v14; add the i64 lane ids at
+;; OFFSET into the lane-id row and fold them into the v15 index vector.
+(define (compiler-backend-gather-lane-add
+  [mode : CompilerBackendMode]
+  [load : String]
+  [offset : String]) : String
+  (let
+    [w : String (compiler-backend-mode-width mode)]
+    (str_cat.str-cat
+      load
+      "%"
+      w
+      "14\n    vpaddq "
+      (match mode
+        [(CompilerBackendMode.Avx512)
+          (compiler-backend-avx512-i64-lane-id-label)]
+        [_ (compiler-backend-avx2-i64-lane-id-label)])
+      offset
+      "(%rip), %"
+      w
+      "14, %"
+      w
+      "14\n    vpaddq %"
+      w
+      "14, %"
+      w
+      "15, %"
+      w
+      "15\n")))
 
 (define (compiler-backend-emit-avx2-gather-load
   [type-segment-bases : i64]
@@ -9114,7 +9091,8 @@
                   (compiler-backend-global-shared-view base-reg)
                   backend-state)
                   [(ResultCompilerBackend.Ok base-asm)
-                    (match (compiler-backend-emit-avx2-gather-adjustments
+                    (match (compiler-backend-emit-simd-gather-adjustments
+                      (CompilerBackendMode.Avx2)
                       assignments
                       dst
                       index
@@ -9309,7 +9287,8 @@
                   (compiler-backend-global-shared-view base-reg)
                   backend-state)
                   [(ResultCompilerBackend.Ok base-asm)
-                    (match (compiler-backend-emit-avx512-gather-adjustments
+                    (match (compiler-backend-emit-simd-gather-adjustments
+                      (CompilerBackendMode.Avx512)
                       assignments
                       dst
                       index

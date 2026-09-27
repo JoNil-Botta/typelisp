@@ -1308,8 +1308,8 @@
   [ty : ast.AstType]) : OptConstEnv
   (OptConstEnv.Cons var value ty (box env)))
 
-(define (opt-const-lookup [env : (& env OptConstEnv)] [var : i64]) : OptKnownConst
-  (match (owned_view.compiler-owned-reference-shared-view env)
+(define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
+  (match env
     [(OptConstEnv.Nil) (OptKnownConst.NoConst)]
     [(OptConstEnv.Cons id value ty rest)
       (if (= id var)
@@ -1523,7 +1523,9 @@
   [fallback-ty : (& fallback-ty ast.AstType)]) : OptKnownConst
   (match (compiler-opt-global-shared-view value)
     [(ir.CompilerIrValue.Var id)
-      (match (opt-const-lookup env id)
+      (match (opt-const-lookup
+        (owned_view.compiler-owned-reference-shared-view env)
+        id)
         [(OptKnownConst.SomeConst v ty) (OptKnownConst.SomeConst v ty)]
         [(OptKnownConst.NoConst) (OptKnownConst.NoConst)])]
     [_
@@ -1536,7 +1538,9 @@
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (compiler-opt-global-shared-view value)
     [(ir.CompilerIrValue.Var id)
-      (match (opt-const-lookup env id)
+      (match (opt-const-lookup
+        (owned_view.compiler-owned-reference-shared-view env)
+        id)
         [(OptKnownConst.SomeConst v _) v]
         [(OptKnownConst.NoConst) value])]
     [_ value]))
@@ -3109,7 +3113,7 @@
     [(ir.CompilerIrInstr.Word _ _ _ _) (OptInstrResult.Result env instr)]
     [_
       (OptInstrResult.Result
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
           [(option_i64.Some dst) (opt-const-unbind env dst)]
           [(option_i64.None) env])
         instr)]))
@@ -3181,7 +3185,7 @@
         instr)]
     [_
       (OptInstrResult.Result
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
           [(option_i64.Some dst) (opt-const-unbind env dst)]
           [(option_i64.None)
             (owned_view.compiler-owned-reference-shared-view env)])
@@ -4020,8 +4024,8 @@
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
   [count : i64]
   [index : i64]
-  [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
     [(ir.CompilerIrInstr.Alloc dst _)
       (and
         (not (opt-used-array-contains items dst))
@@ -4268,7 +4272,7 @@
               (compiler-opt-global-shared-view slots)
               count
               index
-              instr)
+              (compiler-opt-global-shared-view instr))
               (opt-uncount-instr-uses-array (&mut items) instr)
               (begin
                 (cond
@@ -4535,8 +4539,8 @@
         [_ (option_i64.None)])]
     [_ (option_i64.None)]))
 
-(define (opt-aggregate-direct-alloc [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeAggregateAlloc
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+(define (opt-aggregate-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+  (match instr
     [(ir.CompilerIrInstr.Call dst name args ty)
       (if (and
         (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
@@ -5213,7 +5217,8 @@
                 [instr : ir.CompilerIrInstr
                   (ir.compiler-ir-instr-seq-ref instrs index)]
                 (begin
-                  (match (opt-aggregate-direct-alloc instr)
+                  (match (opt-aggregate-direct-alloc
+                    (compiler-opt-global-shared-view instr))
                     [(OptMaybeAggregateAlloc.Some base ty size)
                       (match (opt-aggregate-promote-lookup slots base)
                         [(option_i64.Some storage)
@@ -8695,7 +8700,7 @@
   [type-segment-bases : i64]
   [table : OptExprTable]
   [instr : ir.CompilerIrInstr]) : OptCseResult
-  (match (opt-expr-def instr)
+  (match (opt-expr-def (compiler-opt-global-shared-view instr))
     [(OptMaybeExprDef.Some key dst ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
@@ -8726,7 +8731,7 @@
         ;; invalidate their dst and keep the instruction; the rest clear the
         ;; table.
         [_
-          (match (opt-instr-def-var instr)
+          (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
             [(option_i64.Some dst)
               (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
             [(option_i64.None) (OptCseResult.Result (OptExprTable.Nil) instr)])])]))
@@ -8738,8 +8743,8 @@
   (No)
   (Some OptExprKey i64 ast.AstType))
 
-(define (opt-expr-def [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeExprDef
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+(define (opt-expr-def [instr : ir.CompilerIrInstr]) : OptMaybeExprDef
+  (match instr
     [(ir.CompilerIrInstr.BinOp dst op l r ty)
       (OptMaybeExprDef.Some
         (OptExprKey.BinKey
@@ -9395,7 +9400,8 @@
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
     [_
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var
+        (owned_view.compiler-owned-reference-shared-view instr))
         [(option_i64.Some dst) (opt-copy-invalidate-var env dst)]
         [(option_i64.None) env])]))
 
@@ -9736,7 +9742,8 @@
     [(ir.CompilerIrInstr.Phi _ _ _) (OptBoundsFacts.Nil)]
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) facts]
     [_
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var
+        (owned_view.compiler-owned-reference-shared-view instr))
         [(option_i64.Some dst) (opt-bounds-invalidate-var facts dst)]
         [(option_i64.None) (OptBoundsFacts.Nil)])]))
 
@@ -9754,7 +9761,8 @@
 (define (opt-bounds-casts-after
   [casts : OptBoundsCastEnv]
   [instr : (& instr ir.CompilerIrInstr)]) : OptBoundsCastEnv
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var
+    (owned_view.compiler-owned-reference-shared-view instr))
     [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
     [(option_i64.None) casts]))
 
@@ -9965,7 +9973,8 @@
               (OptBoundsSeqState.Plain next-facts next-casts)
               true)]
           [_
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var
+              (owned_view.compiler-owned-reference-shared-view instr))
               [(option_i64.Some dst)
                 (OptBoundsSeqStep.Step
                   (OptBoundsSeqState.Object
@@ -12065,8 +12074,8 @@
 ;; indirect-call definition arms stay at the back. The shapes left in the
 ;; catch-all (aggregate C-ABI store-result calls, vector and predicated stores,
 ;; TailCallIndirect) keep answering `None` exactly as before.
-(define (opt-instr-def-var [instr : (& instr ir.CompilerIrInstr)]) : option_i64.Option
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+(define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
+  (match instr
     [(ir.CompilerIrInstr.Alloc dst _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Gep dst _ _ _) (option_i64.Some dst)]
     [(ir.CompilerIrInstr.Mov dst _ _) (option_i64.Some dst)]
@@ -12165,8 +12174,8 @@
   (IndirectCall)
   (Store i64))
 
-(define (opt-instr-target [instr : (& instr ir.CompilerIrInstr)]) : OptInstrTarget
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+(define (opt-instr-target [instr : ir.CompilerIrInstr]) : OptInstrTarget
+  (match instr
     [(ir.CompilerIrInstr.Mov _ _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.Alloc _ _) (OptInstrTarget.Plain)]
     [(ir.CompilerIrInstr.AddrOf _ _) (OptInstrTarget.Plain)]
@@ -12333,7 +12342,7 @@
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       (begin
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
           [(option_i64.Some var)
             (opt-var-defs-index-add!
               items
@@ -12431,7 +12440,7 @@
         (let
           [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs i)]
           (begin
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
               [(option_i64.Some var)
                 (unless
                   (opt-var-defs-checked-add!
@@ -13661,7 +13670,7 @@
     [(ir.CompilerIrInstr.Word _ _ _ _) facts]
     ;; Every other def has the type it states, or is bad without one.
     [_
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.None) facts]
         [(option_i64.Some dst)
           (match (ir.compiler-ir-instr-dst-type instr)
@@ -16144,7 +16153,7 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (opt-global-key-for-instr instr)
     [(OptMaybeGlobalExprKey.Some key)
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
           (match (opt-global-fact-lookup
             type-segment-bases
@@ -20202,7 +20211,7 @@
     false
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
-      (if (match (opt-instr-def-var instr)
+      (if (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some found) (= found dst)]
         [(option_i64.None) false])
         (opt-rotate-ssa-flag-gate-helper-instr?
@@ -22848,7 +22857,8 @@
 (define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
   [instr : (& instr ir.CompilerIrInstr)]) : OptLicmStoreState
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var
+    (owned_view.compiler-owned-reference-shared-view instr))
     [(option_i64.Some var) (opt-licm-store-state-invalidate-ptr-def state var)]
     [(option_i64.None) state]))
 
@@ -29826,7 +29836,7 @@
     (option_i64.None)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
           (if (= dst next-var)
             (opt-induction-update-step-instr
@@ -31204,7 +31214,7 @@
     scaled
     derived
     instr)
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
       [(option_i64.Some dst)
         (ir.CompilerIrInstr.Mov
           dst
@@ -32799,7 +32809,7 @@
     (OptFlagExitMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some found)
           (if (= found dst)
             (OptFlagExitMaybeInstr.Some instr)
@@ -33408,7 +33418,7 @@
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
       [hit? : bool
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
           [(option_i64.Some dst) (or (= dst a) (= dst b))]
           [(option_i64.None) false])]
       (match (compiler-opt-global-shared-view want)
@@ -33744,7 +33754,7 @@
           [_ false])
         (and
           (>= extra 0)
-          (match (opt-instr-def-var instr)
+          (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
             [(option_i64.Some found) (= found extra)]
             [(option_i64.None) false])))
         (opt-flag-exit-gate-block-clean? instrs (+ index 1) extra)
@@ -34401,7 +34411,8 @@
 (define (opt-flag-exit-defines-closure?
   [instr : (& instr ir.CompilerIrInstr)]
   [closure : (& closure (__tl_dyn-array i64))]) : bool
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var
+    (owned_view.compiler-owned-reference-shared-view instr))
     [(option_i64.Some dst)
       (and
         (>= dst 0)
@@ -34438,7 +34449,8 @@
                   [_ false])
                 (and
                   (>= extra 0)
-                  (match (opt-instr-def-var instr)
+                  (match (opt-instr-def-var
+                    (compiler-opt-global-shared-view instr))
                     [(option_i64.Some found) (= found extra)]
                     [(option_i64.None) false]))))
             (opt-collect-instr-uses-array
@@ -36368,7 +36380,8 @@
   (and
     gate?
     (>= plan.gate-extra 0)
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var
+      (owned_view.compiler-owned-reference-shared-view instr))
       [(option_i64.Some found) (= found plan.gate-extra)]
       [(option_i64.None) false])))
 
@@ -37642,7 +37655,7 @@
     (OptLftrMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
           (if (= dst var)
             (OptLftrMaybeInstr.Some instr)
@@ -38074,7 +38087,7 @@
     (if (not
       (opt-lftr-reads-kill? scratch kills before-phi before-next before-back))
       true
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.None) false]
         [(option_i64.Some dst)
           (cond
@@ -38560,7 +38573,7 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (owned_view.compiler-owned-reference-shared-view plan)
     [(OptLftrPlan.Plan _ _ compare-dst compare _ _ _)
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
           (if (= dst compare-dst)
             compare
@@ -38582,7 +38595,7 @@
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
           (begin
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
               [(option_i64.Some dst)
                 (if (opt-lftr-in-kills? plan dst)
                   unit
@@ -40167,7 +40180,7 @@
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
           (begin
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
               [(option_i64.Some dst)
                 (if (and
                   (>= dst 0)
@@ -44680,7 +44693,7 @@
         instrs
         (+ slot 1)
         var
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
           [(option_i64.Some dst)
             (if (= dst var)
               (match instr
@@ -48219,7 +48232,7 @@
 (define (opt-switch-copy-env-note
   [env : OptSwitchCopyEnv]
   [instr : ir.CompilerIrInstr]) : OptSwitchCopyEnv
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
     [(option_i64.Some dst)
       (let
         [without-dependents : OptSwitchCopyEnv
@@ -50791,7 +50804,7 @@
   [table : (& table OptGvnMap)]
   [sources : (& sources OptValueSources)]
   [instr : ir.CompilerIrInstr]) : OptMaybeInstr
-  (match (opt-expr-def instr)
+  (match (opt-expr-def (compiler-opt-global-shared-view instr))
     [(OptMaybeExprDef.Some key dst ty)
       (if (opt-gvn-key-stable? sources (compiler-opt-global-shared-view key))
         (let
@@ -56425,7 +56438,9 @@
             (match base
               [(ir.CompilerIrValue.Var base-var)
                 (if (and
-                  (opt-load-header-var? header base-var)
+                  (opt-load-header-var?
+                    (owned_view.compiler-owned-reference-shared-view header)
+                    base-var)
                   (opt-bounds-object-length-slot?
                     type-segment-bases
                     offset
@@ -60338,7 +60353,7 @@
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]
     [_
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
           (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
         [(option_i64.None) (OptCseResult.Result table instr)])]))
@@ -60347,7 +60362,10 @@
   [hs : (& hs OptLoadHeaderSet)]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(ir.CompilerIrValue.Var var) (opt-load-slice-word-var? hs (deref var))]
+    [(ir.CompilerIrValue.Var var)
+      (opt-load-slice-word-var?
+        (owned_view.compiler-owned-reference-shared-view hs)
+        (deref var))]
     [_ false]))
 
 ;; Only the consumers that establish the repeated Slice guard/load key need
@@ -64105,7 +64123,9 @@
               (match base
                 [(ir.CompilerIrValue.Var base-var)
                   (and
-                    (opt-load-header-var? header base-var)
+                    (opt-load-header-var?
+                      (owned_view.compiler-owned-reference-shared-view header)
+                      base-var)
                     (opt-bounds-object-length-slot?
                       type-segment-bases
                       offset
@@ -70190,7 +70210,8 @@
 (define (opt-unroll-simd-recurrent-vector-dst
   [instr : (& instr ir.CompilerIrInstr)]) : option_i64.Option
   (if (opt-unroll-simd-vector-instr? instr)
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var
+      (owned_view.compiler-owned-reference-shared-view instr))
       [(option_i64.Some dst)
         (if (let
           [set (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 8) instr)]
@@ -82596,7 +82617,8 @@
                                                       (if (or
                                                         (not
                                                           (opt-load-header-var?
-                                                            header-set
+                                                            (owned_view.compiler-owned-reference-shared-view
+                                                              header-set)
                                                             base-id))
                                                         (not
                                                           (opt-bounds-object-length-slot?
@@ -90162,7 +90184,7 @@
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
           (if (opt-gep-offset-strandable? instr)
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
               [(option_i64.Some dst)
                 (if (and
                   (>= dst 0)
@@ -92733,7 +92755,7 @@
             (ir.compiler-ir-instr-seq-ref instrs index)]
           [cond-var : i64 (opt-cmp-dup-branch-cond instr)]
           (begin
-            (match (opt-instr-def-var instr)
+            (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
               [(option_i64.Some dst)
                 (if (and (>= dst 0) (< dst frame))
                   (begin
@@ -93608,7 +93630,7 @@
     (OptSuccessorSinkMaybeInstr.No)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst)
           (if (= dst var)
             (OptSuccessorSinkMaybeInstr.Some instr)
@@ -94881,7 +94903,8 @@
                         index
                         terminator-index
                         (compiler-opt-global-shared-view instr)))
-                      (match (opt-instr-def-var instr)
+                      (match (opt-instr-def-var
+                        (compiler-opt-global-shared-view instr))
                         [(option_i64.Some dst)
                           (match (opt-successor-sink-find-target
                             frame
@@ -95985,7 +96008,7 @@
   [ptr-root : (& ptr-root (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : OptGuardSinkCand
   (if (not
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
       [(option_i64.None) false]
       [(option_i64.Some dst)
         (and (>= dst 0) (< dst frame) (= (array-ref ptr-root dst) 1))]))
@@ -96732,7 +96755,7 @@
             (compiler-opt-global-shared-view instr))
             [(OptGuardSinkCand.No) (- 0 1)]
             [(OptGuardSinkCand.Yes mem)
-              (match (opt-instr-def-var instr)
+              (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
                 [(option_i64.None) (- 0 1)]
                 [(option_i64.Some var)
                   (if (or
@@ -105107,7 +105130,7 @@
   [index : (& index OptFunctionIndex)]
   [census : OptInlineCensus]
   [instr : ir.CompilerIrInstr]) : OptInlineCensus
-  (match (opt-instr-target instr)
+  (match (opt-instr-target (compiler-opt-global-shared-view instr))
     [(OptInstrTarget.Direct name _)
       (opt-inline-census-add-ref
         index
@@ -106043,7 +106066,7 @@
   [states : (&mut states (__tl_dyn-array i64))]
   [names : (&mut names (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
     [(option_i64.None) unit]
     [(option_i64.Some dst)
       (if (or (< dst 0) (>= dst (array-length states)))
@@ -118550,7 +118573,7 @@
   [index : OptFunctionIndex]
   [state : OptReachState]
   [instr : ir.CompilerIrInstr]) : OptReachState
-  (match (opt-instr-target instr)
+  (match (opt-instr-target (compiler-opt-global-shared-view instr))
     [(OptInstrTarget.Direct name _)
       (opt-reach-add-call-target index (opt-reach-uses index state instr) name)]
     [(OptInstrTarget.NamedCall name)
@@ -119278,7 +119301,7 @@
   [sources : (& sources OptValueSources)]
   [roots : (&mut roots OptLicmRootEnv)]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
     [(option_i64.None) unit]
     [(option_i64.Some dst)
       (if (not (opt-gvn-stable-var? sources dst))
@@ -119511,7 +119534,7 @@
   [types : (& types OptSsaVarTypes)]
   [elements : (&mut elements opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
     [(option_i64.None) unit]
     [(option_i64.Some dst)
       (let
@@ -120533,7 +120556,7 @@
   (let
     [out : opt_i64_i64_map.Map disq]
     (begin
-      (match (opt-instr-target instr)
+      (match (opt-instr-target (compiler-opt-global-shared-view instr))
         [(OptInstrTarget.Store name)
           (opt_i64_i64_map.insert-ref!
             (&mut out)
@@ -121850,7 +121873,7 @@
   [counts : (&mut counts opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : unit
   (begin
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
       [(option_i64.Some var)
         (opt_i64_i64_map.insert-ref!
           counts
@@ -122354,7 +122377,7 @@
   [entry? : bool]
   [scan : OptGlobalCellScan]
   [instr : ir.CompilerIrInstr]) : OptGlobalCellScan
-  (match (opt-instr-target instr)
+  (match (opt-instr-target (compiler-opt-global-shared-view instr))
     [(OptInstrTarget.Direct name _)
       (opt-global-cell-scan-uses
         (opt-global-cell-scan-direct-call scan name)
@@ -124253,7 +124276,8 @@
   [tables : OptLenEqDefs]
   [region : i64]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var
+    (owned_view.compiler-owned-reference-shared-view instr))
     [(option_i64.Some dst)
       (if (and (>= dst 0) (< dst (array-length tables.rdef)))
         (set! (array-ref tables.rdef dst) region)
@@ -124357,7 +124381,7 @@
   [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
   (begin
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
       [(option_i64.Some dst)
         (if (and (>= dst 0) (< dst (array-length tables.defs)))
           (begin
@@ -125908,7 +125932,7 @@
 (define (opt-arg-global-scan-instr
   [scan : OptArgGlobalScan]
   [instr : ir.CompilerIrInstr]) : OptArgGlobalScan
-  (match (opt-instr-target instr)
+  (match (opt-instr-target (compiler-opt-global-shared-view instr))
     [(OptInstrTarget.Direct name args)
       (opt-arg-global-scan-direct scan name args)]
     ;; The other two forms that name a callee DIRECTLY. Their argument lists do
@@ -127268,7 +127292,7 @@
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
   [counts : (&mut counts (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (match (opt-instr-def-var instr)
+  (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
     [(option_i64.Some dst)
       (if (and (>= dst 0) (< dst (array-length defs)))
         (begin
@@ -128785,7 +128809,8 @@
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _) (OptRemapSpanKey.NoKey)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) (OptRemapSpanKey.NoKey)]
       [_
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var
+          (owned_view.compiler-owned-reference-shared-view instr))
           [(option_i64.Some dst)
             (OptRemapSpanKey.SomeKey
               (ir.CompilerSourceSpansInstrKey.Value function dst))]
@@ -129286,16 +129311,16 @@
   (No)
   (Some OptAliasKind))
 
-(define (opt-alias-lookup [facts : (& facts OptAliasFacts)] [var : i64]) : OptMaybeAliasKind
-  (match (owned_view.compiler-owned-reference-shared-view facts)
+(define (opt-alias-lookup [facts : OptAliasFacts] [var : i64]) : OptMaybeAliasKind
+  (match facts
     [(OptAliasFacts.Facts map)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value)
           (OptMaybeAliasKind.Some (opt-alias-kind-decode value))]
         [(opt_i64_i64_map.LookupMissing) (OptMaybeAliasKind.No)])]))
 
-(define (opt-alias-remove-var [facts : (& facts OptAliasFacts)] [var : i64]) : OptAliasFacts
-  (match (owned_view.compiler-owned-reference-shared-view facts)
+(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (match facts
     [(OptAliasFacts.Facts map)
       (let
         [out : opt_i64_i64_map.Map map]
@@ -129338,7 +129363,7 @@
 ;; copying Unique/ExclusiveRef would incorrectly make the copy look disjoint.
 ;; An untracked source conservatively yields a MayAlias destination.
 (define (opt-alias-copy-var [facts : OptAliasFacts] [dst : i64] [src : i64]) : OptAliasFacts
-  (match (opt-alias-lookup facts src)
+  (match (opt-alias-lookup (compiler-opt-global-shared-view facts) src)
     [(OptMaybeAliasKind.Some kind)
       (if (= dst src)
         facts
@@ -129359,7 +129384,7 @@
 ;; A unique or already-derived base propagates the underlying root; anything
 ;; else is conservatively MayAlias.
 (define (opt-alias-derive-var [facts : OptAliasFacts] [dst : i64] [base : i64]) : OptAliasFacts
-  (match (opt-alias-lookup facts base)
+  (match (opt-alias-lookup (compiler-opt-global-shared-view facts) base)
     [(OptMaybeAliasKind.Some kind)
       (match kind
         [(OptAliasKind.Unique _)
@@ -129403,18 +129428,15 @@
     [(OptAliasKind.Invalidated) (OptAliasRoot.NoRoot)]))
 
 (define (opt-alias-root-of-var [facts : OptAliasFacts] [var : i64]) : OptAliasRoot
-  (match (opt-alias-lookup facts var)
+  (match (opt-alias-lookup (compiler-opt-global-shared-view facts) var)
     [(OptMaybeAliasKind.Some kind) (opt-alias-root-from-kind facts var kind)]
     [(OptMaybeAliasKind.No) (OptAliasRoot.NoRoot)]))
 
 (define (opt-alias-root-of-value
-  [facts : (& facts OptAliasFacts)]
+  [facts : OptAliasFacts]
   [value : (& value ir.CompilerIrValue)]) : OptAliasRoot
   (match value
-    [(ir.CompilerIrValue.Var var)
-      (opt-alias-root-of-var
-        (owned_view.compiler-owned-reference-shared-view facts)
-        (deref var))]
+    [(ir.CompilerIrValue.Var var) (opt-alias-root-of-var facts (deref var))]
     [_ (OptAliasRoot.NoRoot)]))
 
 ;; Whether a store through STORE-ROOT leaves a load table entry on ENTRY-ROOT
@@ -129618,8 +129640,12 @@
   [epoch : i64]) : OptAliasFacts
   (let
     [base : OptAliasFacts
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some dst) (opt-alias-remove-var facts dst)]
+      (match (opt-instr-def-var
+        (owned_view.compiler-owned-reference-shared-view instr))
+        [(option_i64.Some dst)
+          (opt-alias-remove-var
+            (owned_view.compiler-owned-reference-shared-view facts)
+            dst)]
         [(option_i64.None)
           (owned_view.compiler-owned-reference-shared-view facts)])]
     (match (owned_view.compiler-owned-reference-shared-view instr)
@@ -129825,7 +129851,9 @@
   [roots : OptScratchRootList]
   [facts : (& facts OptAliasFacts)]
   [var : i64]) : bool
-  (match (opt-alias-lookup facts var)
+  (match (opt-alias-lookup
+    (owned_view.compiler-owned-reference-shared-view facts)
+    var)
     [(OptMaybeAliasKind.Some kind)
       (match kind
         [(OptAliasKind.Unique _) (opt-scratch-root-list-contains? roots var)]
@@ -131164,8 +131192,8 @@
             unit)
           set))]))
 
-(define (opt-load-header-var? [set : (& set OptLoadHeaderSet)] [var : i64]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view set)
+(define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
+  (match set
     [(OptLoadHeaderSet.Sparse map)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (or (= value 1) (= value 3))]
@@ -131188,8 +131216,8 @@
         false
         (= (array-ref items var) 3))]))
 
-(define (opt-load-slice-word-var? [set : (& set OptLoadHeaderSet)] [var : i64]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view set)
+(define (opt-load-slice-word-var? [set : OptLoadHeaderSet] [var : i64]) : bool
+  (match set
     [(OptLoadHeaderSet.Sparse map)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (= value 4)]
@@ -131915,8 +131943,8 @@
     (opt_i64_i64_map.with-capacity 17)
     opt-load-cse-kinds-cap-floor))
 
-(define (opt-load-kinds-lookup [kinds : (& kinds OptLoadPtrKinds)] [var : i64]) : OptLoadLocKind
-  (match (owned_view.compiler-owned-reference-shared-view kinds)
+(define (opt-load-kinds-lookup [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadLocKind
+  (match kinds
     [(OptLoadPtrKinds.Sparse map _ _)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (opt-load-loc-kind-decode value)]
@@ -132155,7 +132183,9 @@
         kinds
         (let
           [bound-var : i64 (array-ref work.active index)]
-          (match (opt-load-kinds-lookup kinds bound-var)
+          (match (opt-load-kinds-lookup
+            (compiler-opt-global-shared-view kinds)
+            bound-var)
             [(OptLoadLocField found-base _ _ _)
               (if (= found-base base)
                 (opt-load-kinds-dense-drop-base-from
@@ -132237,7 +132267,9 @@
               profile-state
               out
               var
-              (opt-load-kinds-lookup kinds var)))))]
+              (opt-load-kinds-lookup
+                (owned_view.compiler-owned-reference-shared-view kinds)
+                var)))))]
     [_ out]))
 
 (define (opt-load-kinds-clone
@@ -132489,14 +132521,16 @@
   [instr : ir.CompilerIrInstr]) : OptLoadPtrKinds
   (let
     [invalidated : OptLoadPtrKinds
-      (match (opt-instr-def-var instr)
+      (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
         [(option_i64.Some dst) (opt-load-kinds-invalidate-def kinds dst)]
         [(option_i64.None) kinds])]
     (match instr
       [(ir.CompilerIrInstr.Gep dst base offset ty)
         (match base
           [(ir.CompilerIrValue.Var bvar)
-            (match (opt-load-kinds-lookup invalidated bvar)
+            (match (opt-load-kinds-lookup
+              (compiler-opt-global-shared-view invalidated)
+              bvar)
               [(OptLoadLocElement)
                 (match offset
                   ;; A variable index into an element base yields a scaled
@@ -132573,7 +132607,10 @@
                             canon-base
                             (* k sz)
                             sz
-                            (opt-load-header-var? hs canon-base)))
+                            (opt-load-header-var?
+                              (owned_view.compiler-owned-reference-shared-view
+                                hs)
+                              canon-base)))
                         invalidated))]
                   [_ invalidated])]
               [(OptLoadLocScaledField _ _ _ _)
@@ -132590,7 +132627,9 @@
       [(ir.CompilerIrInstr.Load dst src ty)
         (match src
           [(ir.CompilerIrValue.Var p)
-            (match (opt-load-kinds-lookup invalidated p)
+            (match (opt-load-kinds-lookup
+              (compiler-opt-global-shared-view invalidated)
+              p)
               [(OptLoadLocField _ off _ header?)
                 (if (and
                   header?
@@ -132604,7 +132643,9 @@
                   invalidated)]
               [_
                 (if (and
-                  (opt-load-header-var? hs p)
+                  (opt-load-header-var?
+                    (owned_view.compiler-owned-reference-shared-view hs)
+                    p)
                   (= (opt-load-loc-type-size type-segment-bases ty) 8))
                   ;; A header var's first word is the data pointer (the element
                   ;; base), whether or not the var already has a Field kind.
@@ -132642,7 +132683,9 @@
           (opt-load-canon-note-mov! canon sources dst src)
           (match src
             [(ir.CompilerIrValue.Var s)
-              (match (opt-load-kinds-lookup invalidated s)
+              (match (opt-load-kinds-lookup
+                (compiler-opt-global-shared-view invalidated)
+                s)
                 [(OptLoadLocUnknown) invalidated]
                 [(OptLoadLocElement)
                   (opt-load-kinds-bind
@@ -132683,10 +132726,15 @@
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(ir.CompilerIrInstr.Load dst src ty)
       (let
-        [base : OptAliasFacts (opt-alias-remove-var facts dst)]
+        [base : OptAliasFacts
+          (opt-alias-remove-var
+            (owned_view.compiler-owned-reference-shared-view facts)
+            dst)]
         (match src
           [(ir.CompilerIrValue.Var ptr)
-            (match (opt-load-kinds-lookup kinds ptr)
+            (match (opt-load-kinds-lookup
+              (owned_view.compiler-owned-reference-shared-view kinds)
+              ptr)
               [(OptLoadLocField _ off _ header?)
                 (if (and
                   header?
@@ -132701,7 +132749,10 @@
     ;; Word operations, whose backing may be mutable.
     [(ir.CompilerIrInstr.Word dst source index ty)
       (let
-        [base : OptAliasFacts (opt-alias-remove-var facts dst)]
+        [base : OptAliasFacts
+          (opt-alias-remove-var
+            (owned_view.compiler-owned-reference-shared-view facts)
+            dst)]
         (if (and
           (= index 0)
           (match ty
@@ -132710,7 +132761,9 @@
           (match source
             [(ir.CompilerIrValue.Var source-var)
               (if (opt-load-slice-var? hs source-var)
-                (match (opt-alias-lookup base source-var)
+                (match (opt-alias-lookup
+                  (compiler-opt-global-shared-view base)
+                  source-var)
                   [(OptMaybeAliasKind.Some _)
                     (opt-alias-copy-var base dst source-var)]
                   [(OptMaybeAliasKind.No) base])
@@ -132725,11 +132778,8 @@
 ;; and the back-edge reset keeps the accumulated predecessors' value), so an
 ;; allocation's epoch is strictly greater than the creation epoch of every
 ;; load-table entry that already exists when it runs.
-(define (opt-load-cse-epoch-step
-  [epoch : i64]
-  [instr : (& instr ir.CompilerIrInstr)]) : i64
-  (if (opt-alias-instr-fresh-alloc?
-    (owned_view.compiler-owned-reference-shared-view instr))
+(define (opt-load-cse-epoch-step [epoch : i64] [instr : ir.CompilerIrInstr]) : i64
+  (if (opt-alias-instr-fresh-alloc? instr)
     (+ epoch 1)
     epoch))
 
@@ -133089,7 +133139,8 @@
     [_
       (if (and (= bases.len 0) (< bases.cell 0))
         bases
-        (match (opt-instr-def-var instr)
+        (match (opt-instr-def-var
+          (owned_view.compiler-owned-reference-shared-view instr))
           [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
           [(option_i64.None) bases]))]))
 
@@ -133105,10 +133156,10 @@
 (define (opt-load-key-eq
   [type-segment-bases : i64]
   [a : OptLoadKey]
-  [b : (& b OptLoadKey)]) : bool
+  [b : OptLoadKey]) : bool
   (match a
     [(OptLoadKey.Raw av aty aelem)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(OptLoadKey.Raw bv bty belem)
           (and
             (opt-value-eq av bv)
@@ -133122,7 +133173,7 @@
                 0)))]
         [_ false])]
     [(OptLoadKey.Field abase aoff aty ah)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(OptLoadKey.Field bbase boff bty bh)
           (and
             (= abase bbase)
@@ -133137,7 +133188,7 @@
                 0)))]
         [_ false])]
     [(OptLoadKey.ScaledField abase aindex aty ah)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(OptLoadKey.ScaledField bbase bindex bty bh)
           (and
             (= abase bbase)
@@ -133152,7 +133203,7 @@
                 0)))]
         [_ false])]
     [(OptLoadKey.GlobalField aglobal aoff aty avalue)
-      (match (owned_view.compiler-owned-reference-shared-view b)
+      (match b
         [(OptLoadKey.GlobalField bglobal boff bty bvalue)
           (and
             (= aglobal bglobal)
@@ -133202,7 +133253,9 @@
   [ty : ast.AstType]) : OptLoadKey
   (match (compiler-opt-global-shared-view addr)
     [(ir.CompilerIrValue.Var p)
-      (match (opt-load-kinds-lookup kinds p)
+      (match (opt-load-kinds-lookup
+        (owned_view.compiler-owned-reference-shared-view kinds)
+        p)
         ;; MF-1: a kind bound before its base became a known copy still names
         ;; the copy, so the key resolves base and index here as well as at bind
         ;; time. Both ends of a comparison go through this one function, so a
@@ -133233,12 +133286,12 @@
             [(OptMaybeGlobalBase.No) (OptLoadKey.Raw addr ty false)])])]
     [_ (OptLoadKey.Raw addr ty false)]))
 
-(define (opt-load-entry-key [entry : (& entry OptLoadEntry)]) : OptLoadKey
-  (match (owned_view.compiler-owned-reference-shared-view entry)
+(define (opt-load-entry-key [entry : OptLoadEntry]) : OptLoadKey
+  (match entry
     [(OptLoadEntry.Entry key _ _) key]))
 
-(define (opt-load-entry-value [entry : (& entry OptLoadEntry)]) : ir.CompilerIrValue
-  (match (owned_view.compiler-owned-reference-shared-view entry)
+(define (opt-load-entry-value [entry : OptLoadEntry]) : ir.CompilerIrValue
+  (match entry
     [(OptLoadEntry.Entry _ value _) value]))
 
 (define (opt-load-entry-epoch [entry : OptLoadEntry]) : i64
@@ -133252,8 +133305,14 @@
   (match table
     [(OptLoadTable.Nil) (ir.CompilerIrMaybeValue.No)]
     [(OptLoadTable.Cons entry rest)
-      (if (opt-load-key-eq type-segment-bases (opt-load-entry-key entry) key)
-        (ir.CompilerIrMaybeValue.Some (opt-load-entry-value entry))
+      (if (opt-load-key-eq
+        type-segment-bases
+        (opt-load-entry-key
+          (owned_view.compiler-owned-reference-shared-view entry))
+        (owned_view.compiler-owned-reference-shared-view key))
+        (ir.CompilerIrMaybeValue.Some
+          (opt-load-entry-value
+            (owned_view.compiler-owned-reference-shared-view entry)))
         (opt-load-table-lookup type-segment-bases (deref (deref rest)) key))]))
 
 (define (opt-load-table-has-value-with-type?
@@ -133266,7 +133325,7 @@
     [(OptLoadTable.Cons entry rest)
       (if (and
         (opt-value-eq
-          (opt-load-entry-value entry)
+          (opt-load-entry-value (compiler-opt-global-shared-view entry))
           (compiler-opt-global-shared-view value))
         (opt-type-eq
           type-segment-bases
@@ -133291,7 +133350,10 @@
       (let
         [tail : OptLoadTable
           (opt-load-table-remove-key-scan type-segment-bases (deref rest) key)]
-        (if (opt-load-key-eq type-segment-bases (opt-load-entry-key entry) key)
+        (if (opt-load-key-eq
+          type-segment-bases
+          (opt-load-entry-key (compiler-opt-global-shared-view entry))
+          (owned_view.compiler-owned-reference-shared-view key))
           tail
           (OptLoadTable.Cons entry (box tail))))]))
 
@@ -133354,7 +133416,8 @@
   [src-base : i64]
   [src-off : i64]
   [size : i64]) : bool
-  (match (opt-load-entry-key entry)
+  (match (opt-load-entry-key
+    (owned_view.compiler-owned-reference-shared-view entry))
     [(OptLoadKey.Field base off ty _)
       (let
         [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
@@ -133388,7 +133451,7 @@
     src-base
     src-off
     size)
-    (match (opt-load-entry-key entry)
+    (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
       [(OptLoadKey.Field _ off ty _)
         (let
           [key : OptLoadKey
@@ -133472,10 +133535,14 @@
   [var : i64]) : bool
   (or
     (let
-      [value (opt-load-entry-value entry)]
+      [value
+        (opt-load-entry-value
+          (owned_view.compiler-owned-reference-shared-view entry))]
       (opt-value-is-var? value var))
     (let
-      [key (opt-load-entry-key entry)]
+      [key
+        (opt-load-entry-key
+          (owned_view.compiler-owned-reference-shared-view entry))]
       (opt-load-key-uses-var? key var))))
 
 (define (opt-load-table-mentions-var?
@@ -133525,7 +133592,10 @@
   [facts : (& facts OptAliasFacts)]
   [key : OptLoadKey]) : OptAliasRoot
   (match key
-    [(OptLoadKey.Raw value _ _) (opt-alias-root-of-value facts value)]
+    [(OptLoadKey.Raw value _ _)
+      (opt-alias-root-of-value
+        (owned_view.compiler-owned-reference-shared-view facts)
+        value)]
     [(OptLoadKey.Field base _ _ _)
       (opt-alias-root-of-var
         (owned_view.compiler-owned-reference-shared-view facts)
@@ -133639,7 +133709,10 @@
   (or
     (opt-alias-store-root-disjoint?
       store-root
-      (opt-load-key-alias-root facts (opt-load-entry-key entry)))
+      (opt-load-key-alias-root
+        facts
+        (opt-load-entry-key
+          (owned_view.compiler-owned-reference-shared-view entry))))
     (opt-load-entry-precedes-fresh-alloc? store-root entry)
     (opt-load-entry-survives-store-location?
       type-segment-bases
@@ -133668,7 +133741,8 @@
 (define (opt-load-entry-survives-global-cell-store?
   [global : i64]
   [entry : (& entry OptLoadEntry)]) : bool
-  (match (opt-load-entry-key entry)
+  (match (opt-load-entry-key
+    (owned_view.compiler-owned-reference-shared-view entry))
     [(OptLoadKey.GlobalField entry-global _ _ _) (not (= entry-global global))]
     [(OptLoadKey.Field _ _ _ header?) header?]
     [(OptLoadKey.ScaledField _ _ _ _) false]
@@ -133727,7 +133801,9 @@
     (OptLoadStoreUnknown)
     (match ptr
       [(ir.CompilerIrValue.Var p)
-        (match (opt-load-kinds-lookup kinds (deref p))
+        (match (opt-load-kinds-lookup
+          (owned_view.compiler-owned-reference-shared-view kinds)
+          (deref p))
           [(OptLoadLocElement) (OptLoadStoreElement ty)]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header? ty)]
@@ -133963,7 +134039,8 @@
             (owned_view.compiler-owned-reference-shared-view instr))
             pending
             (opt-dead-store-set-clear pending))])]
-    (match (opt-instr-def-var instr)
+    (match (opt-instr-def-var
+      (owned_view.compiler-owned-reference-shared-view instr))
       [(option_i64.Some dst) (opt-dead-store-filter-def after-memory dst)]
       [(option_i64.None) after-memory])))
 
@@ -134116,9 +134193,9 @@
   [canon : (&mut canon (__tl_dyn-array i64))]
   [sources : (& sources OptValueSources)]
   [hs : (& hs OptLoadHeaderSet)]
-  [state : (& state OptLoadCseState)]
+  [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
-  (match (owned_view.compiler-owned-reference-shared-view state)
+  (match state
     [(OptLoadCseState.State
         facts
         table
@@ -134128,7 +134205,10 @@
         bases
         profile-state)
       (let
-        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [next-epoch : i64
+          (opt-load-cse-epoch-step
+            epoch
+            (compiler-opt-global-shared-view instr))]
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
@@ -134137,7 +134217,7 @@
             kinds
             instr
             next-epoch)
-          (match (opt-instr-def-var instr)
+          (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
             [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
             [(option_i64.None) table])
           (opt-load-kinds-step
@@ -134170,7 +134250,10 @@
   (match state
     [(OptLoadCseState.State facts _ kinds table-cap epoch bases profile-state)
       (let
-        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [next-epoch : i64
+          (opt-load-cse-epoch-step
+            epoch
+            (compiler-opt-global-shared-view instr))]
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
@@ -134250,7 +134333,10 @@
         bases
         profile-state)
       (let
-        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [next-epoch : i64
+          (opt-load-cse-epoch-step
+            epoch
+            (compiler-opt-global-shared-view instr))]
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
@@ -134350,7 +134436,9 @@
               type-segment-bases
               table
               facts
-              (opt-alias-root-of-value facts value)
+              (opt-alias-root-of-value
+                (owned_view.compiler-owned-reference-shared-view facts)
+                value)
               (OptLoadStoreUnknown))
             facts
             args
@@ -134446,7 +134534,8 @@
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
   [entry : (& entry OptLoadEntry)]) : bool
-  (match (opt-load-entry-key entry)
+  (match (opt-load-entry-key
+    (owned_view.compiler-owned-reference-shared-view entry))
     [(OptLoadKey.GlobalField entry-global _ _ _)
       (not (opt-global-mod-ref-mask-may-write? index row entry-global))]
     [(OptLoadKey.Field _ _ _ _) false]
@@ -134463,7 +134552,8 @@
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
   [entry : (& entry OptLoadEntry)]) : bool
-  (match (opt-load-entry-key entry)
+  (match (opt-load-entry-key
+    (owned_view.compiler-owned-reference-shared-view entry))
     [(OptLoadKey.GlobalField entry-global _ _ _)
       (not (opt-global-obj-mask-may-write? index row entry-global))]
     [(OptLoadKey.Field _ _ _ _) false]
@@ -134716,7 +134806,10 @@
                 ;; this verdict for the non-call instruction forms.
                 [(ir.CompilerIrEffect.ControlFlow) table]
                 [_ (OptLoadTable.Nil)])])]
-        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [next-epoch : i64
+          (opt-load-cse-epoch-step
+            epoch
+            (compiler-opt-global-shared-view instr))]
         (OptLoadCseState.State
           (opt-load-alias-update-facts
             type-segment-bases
@@ -134783,8 +134876,12 @@
             ptr
             width
             (compiler-opt-global-shared-view ty))]
-        [store-root : OptAliasRoot (opt-alias-root-of-value facts ptr)]
-        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [store-root : OptAliasRoot
+          (opt-alias-root-of-value (compiler-opt-global-shared-view facts) ptr)]
+        [next-epoch : i64
+          (opt-load-cse-epoch-step
+            epoch
+            (owned_view.compiler-owned-reference-shared-view instr))]
         [facts2 : OptAliasFacts
           (opt-load-alias-update-facts
             type-segment-bases
@@ -134893,8 +134990,12 @@
           (opt-load-classify-store kinds dst size (ast.AstType.U8))]
         [src-class : OptLoadStoreClass
           (opt-load-classify-store kinds src size (ast.AstType.U8))]
-        [store-root : OptAliasRoot (opt-alias-root-of-value facts dst)]
-        [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+        [store-root : OptAliasRoot
+          (opt-alias-root-of-value (compiler-opt-global-shared-view facts) dst)]
+        [next-epoch : i64
+          (opt-load-cse-epoch-step
+            epoch
+            (compiler-opt-global-shared-view instr))]
         [facts2 : OptAliasFacts
           (opt-load-alias-update-facts
             type-segment-bases
@@ -135021,7 +135122,10 @@
             (let
               [new-instr : ir.CompilerIrInstr
                 (ir.CompilerIrInstr.Mov dst earlier ty)]
-              [next-epoch : i64 (opt-load-cse-epoch-step epoch new-instr)]
+              [next-epoch : i64
+                (opt-load-cse-epoch-step
+                  epoch
+                  (compiler-opt-global-shared-view new-instr))]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
                   (opt-load-alias-update-facts
@@ -135052,7 +135156,10 @@
             (let
               [record? : bool
                 (and eligible? (not (opt-load-key-uses-var? key dst)))]
-              [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
+              [next-epoch : i64
+                (opt-load-cse-epoch-step
+                  epoch
+                  (compiler-opt-global-shared-view instr))]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
                   (opt-load-alias-update-facts
@@ -135189,7 +135296,7 @@
           canon
           sources
           hs
-          state
+          (compiler-opt-global-shared-view state)
           (compiler-opt-global-shared-view instr))
         (opt-load-cse-forward-cell state instr))]
     [_
@@ -135209,7 +135316,7 @@
             canon
             sources
             hs
-            state
+            (compiler-opt-global-shared-view state)
             (compiler-opt-global-shared-view instr))
           (opt-load-cse-forward-cell state instr)))]))
 
@@ -137085,7 +137192,10 @@
   (match table
     [(OptLoadTable.Nil) (OptMaybeLoadEntry.No)]
     [(OptLoadTable.Cons entry rest)
-      (if (opt-load-key-eq type-segment-bases (opt-load-entry-key entry) key)
+      (if (opt-load-key-eq
+        type-segment-bases
+        (opt-load-entry-key (compiler-opt-global-shared-view entry))
+        (owned_view.compiler-owned-reference-shared-view key))
         (OptMaybeLoadEntry.Some entry)
         (opt-load-table-find-entry type-segment-bases (deref rest) key))]))
 
@@ -137102,7 +137212,7 @@
         [(OptMaybeLoadEntry.No) (OptMaybeLoadEntry.No)]
         [(OptMaybeLoadEntry.Some found)
           (if (opt-value-eq
-            (opt-load-entry-value found)
+            (opt-load-entry-value (compiler-opt-global-shared-view found))
             (compiler-opt-global-shared-view value))
             (OptMaybeLoadEntry.Some
               (OptLoadEntry.Entry
@@ -137185,7 +137295,7 @@
       (let
         [tail : OptLoadTable
           (opt-load-table-filter-descriptor-stable (deref rest) sources)]
-        (match (opt-load-entry-key entry)
+        (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
           [(OptLoadKey.Field base _ _ header?)
             (if (and header? (opt-gvn-stable-var? sources base))
               (OptLoadTable.Cons entry (box tail))
@@ -137270,7 +137380,9 @@
           [(ir.CompilerIrInstr.Load _ src _)
             (match src
               [(ir.CompilerIrValue.Var pvar)
-                (if (opt-load-header-var? hs pvar)
+                (if (opt-load-header-var?
+                  (owned_view.compiler-owned-reference-shared-view hs)
+                  pvar)
                   true
                   (match (opt-load-gvn-find-def blocks pvar)
                     [(OptMaybeInstr.Some addr-def)
@@ -137279,7 +137391,10 @@
                           (and
                             (match gbase
                               [(ir.CompilerIrValue.Var dvar)
-                                (opt-load-header-var? hs dvar)]
+                                (opt-load-header-var?
+                                  (owned_view.compiler-owned-reference-shared-view
+                                    hs)
+                                  dvar)]
                               [_ false])
                             (match goff
                               [(ir.CompilerIrValue.I64 0) true]
@@ -137591,12 +137706,12 @@
         [descriptor-entry? : bool
           (and
             descriptor?
-            (match (opt-load-entry-key entry)
+            (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
               [(OptLoadKey.Field base _ _ header?)
                 (and header? (opt-gvn-stable-var? sources base))]
               [_ false]))]
         [key-stable? : bool
-          (match (opt-load-entry-key entry)
+          (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
             [(OptLoadKey.Raw value _ _)
               (match value
                 [(ir.CompilerIrValue.Var v) (opt-gvn-stable-var? sources v)]
@@ -139198,7 +139313,8 @@
     [(OptLoadTable.Nil) state]
     [(OptLoadTable.Cons entry rest)
       (let
-        [key : OptLoadKey (opt-load-entry-key entry)]
+        [key : OptLoadKey
+          (opt-load-entry-key (compiler-opt-global-shared-view entry))]
         [value : ir.CompilerIrValue (opt-load-entry-value entry)]
         [next : OptLoadCseState
           (if (>= (opt-load-join-count joins) (opt-load-join-phi-cap))
@@ -139575,7 +139691,9 @@
                       (opt-load-pre-descriptor-offset?
                         (opt-load-pre-byte-offset type-segment-bases k ty))
                       (= (opt-load-loc-type-size type-segment-bases load-ty) 8)
-                      (opt-load-header-var? hs bvar)
+                      (opt-load-header-var?
+                        (owned_view.compiler-owned-reference-shared-view hs)
+                        bvar)
                       (opt-gvn-stable-var? sources bvar)
                       (opt-gvn-stable-var? sources gep-dst)
                       (opt-gvn-stable-var? sources load-dst)
@@ -140310,7 +140428,10 @@
                                       type-segment-bases
                                       load-ty)
                                     8)
-                                  (opt-load-header-var? hs bvar)
+                                  (opt-load-header-var?
+                                    (owned_view.compiler-owned-reference-shared-view
+                                      hs)
+                                    bvar)
                                   (opt-gvn-stable-var? sources bvar)
                                   (opt-gvn-stable-var? sources gep-dst)
                                   (opt-gvn-stable-var? sources load-dst)

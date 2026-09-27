@@ -2631,11 +2631,13 @@
               (opt.compiler-opt-global-shared-view hygienic-alloc))
             ir.CompilerIrEffect.Unknown))
         4]
-      [(match (opt.opt-aggregate-direct-alloc runtime-alloc)
+      [(match (opt.opt-aggregate-direct-alloc
+          (opt.compiler-opt-global-shared-view runtime-alloc))
           [(opt.OptMaybeAggregateAlloc.Some _ _ _) false]
           [(opt.OptMaybeAggregateAlloc.No) true])
         5]
-      [(match (opt.opt-aggregate-direct-alloc hygienic-alloc)
+      [(match (opt.opt-aggregate-direct-alloc
+          (opt.compiler-opt-global-shared-view hygienic-alloc))
           [(opt.OptMaybeAggregateAlloc.No) false]
           [(opt.OptMaybeAggregateAlloc.Some _ _ _) true])
         6]
@@ -2651,12 +2653,16 @@
           [(opt.OptScratchAlloc.NoAlloc) false]
           [(opt.OptScratchAlloc.Alloc _ _) true])
         8]
-      [(match (opt.opt-alias-lookup runtime-facts 91)
+      [(match (opt.opt-alias-lookup
+          (opt.compiler-opt-global-shared-view runtime-facts)
+          91)
           [(opt.OptMaybeAliasKind.Some kind)
             (not (opt-alias-kind-eq kind (opt.OptAliasKind.Unique 0)))]
           [(opt.OptMaybeAliasKind.No) true])
         9]
-      [(match (opt.opt-alias-lookup hygienic-facts 92)
+      [(match (opt.opt-alias-lookup
+          (opt.compiler-opt-global-shared-view hygienic-facts)
+          92)
           [(opt.OptMaybeAliasKind.No) false]
           [(opt.OptMaybeAliasKind.Some _) true])
         10]
@@ -5096,12 +5102,12 @@
     "sret role requires a live pointer variable, in-range index and pointer result"))
 
 (define (opt-indirect-call-def-is? [instr : ir.CompilerIrInstr] [want : i64]) : bool
-  (match (opt.opt-instr-def-var instr)
+  (match (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr))
     [(option_i64.Some found) (= found want)]
     [(option_i64.None) false]))
 
 (define (opt-indirect-call-nondef? [instr : ir.CompilerIrInstr]) : bool
-  (match (opt.opt-instr-def-var instr)
+  (match (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr))
     [(option_i64.Some _) false]
     [(option_i64.None) true]))
 
@@ -9413,7 +9419,7 @@
     false
     (match (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt.opt-instr-def-var instr))
+      (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr)))
       [(option_i64.Some found)
         (if (= found dst)
           true
@@ -35072,7 +35078,7 @@
     (+
       (match (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-        (opt.opt-instr-def-var instr))
+        (opt.opt-instr-def-var (opt.compiler-opt-global-shared-view instr)))
         [(option_i64.Some dst)
           (if (= dst var)
             1
@@ -52911,10 +52917,14 @@
             [(ir.CompilerIrValue.Var id) (= id 12)]
             [_ false])]
         [(ir.CompilerIrMaybeValue.No) false])
-      (match (opt.opt-load-kinds-lookup kinds2 1)
+      (match (opt.opt-load-kinds-lookup
+        (opt.compiler-opt-global-shared-view kinds2)
+        1)
         [(OptLoadLocElement) true]
         [_ false])
-      (match (opt.opt-load-kinds-lookup kinds2 2)
+      (match (opt.opt-load-kinds-lookup
+        (opt.compiler-opt-global-shared-view kinds2)
+        2)
         [(OptLoadLocUnknown) true]
         [_ false])
       (match field-ok
@@ -72503,7 +72513,7 @@
           slots
           1
           0
-          instr)
+          (opt.compiler-opt-global-shared-view instr))
         want
         "array DCE agrees on typed shift bounds"))))
 
@@ -74168,12 +74178,16 @@
   [facts : (& facts opt.OptAliasFacts)]
   [var : i64]
   [kind : opt.OptAliasKind]) : bool
-  (match (opt.opt-alias-lookup facts var)
+  (match (opt.opt-alias-lookup
+    (owned_view.compiler-owned-reference-shared-view facts)
+    var)
     [(opt.OptMaybeAliasKind.Some found) (opt-alias-kind-eq found kind)]
     [(opt.OptMaybeAliasKind.No) false]))
 
 (define (opt-alias-absent? [facts : (& facts opt.OptAliasFacts)] [var : i64]) : bool
-  (match (opt.opt-alias-lookup facts var)
+  (match (opt.opt-alias-lookup
+    (owned_view.compiler-owned-reference-shared-view facts)
+    var)
     [(opt.OptMaybeAliasKind.No) true]
     [(opt.OptMaybeAliasKind.Some _) false]))
 

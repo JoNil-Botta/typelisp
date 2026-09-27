@@ -60,7 +60,7 @@
   (string.eq message ""))
 
 ;; Numeric code point of a char, used only when a code value is intentionally
-;; observed (for example in the lexer demo's character-code checksum).
+;; observed.
 (define (code [c : char]) : i64
   (cast c : i64))
 
@@ -405,7 +405,7 @@
 ;; while ASCII case-folding and range tests need no second safety check.
 ;;
 ;; `:` is itself a symbol char, so testing membership first and the `:` rule
-;; second is equivalent to the original order: a non-`:` byte was decided by
+;; second is equivalent to testing `:` first: a non-`:` byte is decided by
 ;; `is-symbol-char` either way, and a `:` byte reaches the `pkg` rule either way.
 (define (scan-symbol-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
@@ -934,14 +934,10 @@
 
 ;; Reusable spanned-token buffer, sized by TOKEN COUNT.
 ;;
-;; This buffer used to be reserved from the SOURCE BYTE COUNT (`srclen + 1`, a
-;; safe upper bound since a token spans >= 1 byte). Measured density in this
-;; repository is one token per 8.84 source bytes, so that reservation was 8.8x
-;; oversized - and `make-array` zero-writes every slot it reserves. Sources
-;; above the old hard cap fell out of the reuse path entirely and allocated a
-;; fresh `(srclen+1) x sizeof(SpannedToken)` array per file: 523 MB of zero-fill
-;; per self-compile, 8.13M D1 write misses and 7.72M LL misses, all of it into
-;; slots that no consumer ever reads (packet E1, target/e1-notes.md).
+;; Reserving from the SOURCE BYTE COUNT (`srclen + 1`, a safe upper bound since
+;; a token spans >= 1 byte) oversizes it many times over, because a typical
+;; token spans several bytes, and `make-array` zero-writes every slot it
+;; reserves, all of it into slots that no consumer ever reads.
 ;;
 ;; So: no source-derived reservation and no cap. The lexer grows this buffer
 ;; on demand while it scans (geometric, contents preserved), which makes the

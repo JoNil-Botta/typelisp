@@ -1950,8 +1950,8 @@
 ;; Iterate the reachability marker to a fixpoint. The reachable-name set only
 ;; ever grows (marking is monotonic and dedup'd), so a pass that adds no new
 ;; names means we have converged and can stop. `fuel` (the decl count) stays as
-;; a safety bound, but convergence normally takes only a handful of passes -
-;; avoiding the previous unconditional O(decls^2) full-program walks.
+;; a safety bound, but convergence normally takes only a handful of passes
+;; rather than `fuel` full-program walks.
 (define (tltest-reach-fixed
   [session : cis.InternStructuralSessionHandle]
   [decls : ast.AstDeclList]
@@ -2119,9 +2119,9 @@
                 (tltest-generated-test-paths source tests))
               count))])]))
 
-;; Standalone tltest runs serially over the compatibility driver. Keep the
-;; active-session capture at this outer adapter; every reachability predicate
-;; below it receives and validates the resulting explicit capability.
+;; Standalone tltest runs serially. Keep the active-session capture at this
+;; outer adapter; every reachability predicate below it receives and validates
+;; the resulting explicit capability.
 (define (tltest-active-structural-session) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
     (ci.intern-source-name-session-capture-active-handle)))

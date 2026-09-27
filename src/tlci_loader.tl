@@ -1,7 +1,6 @@
-;; tlci_loader.tl - Dormant tlci comptime image loader core.
+;; tlci_loader.tl - tlci comptime image loader core.
 ;;
-;; General package/stdlib macro dispatch lands in later slices. This module
-;; owns the loader boundary: parse/validate a tlci image, map it into
+;; This module owns the loader boundary: parse/validate a tlci image, map it into
 ;; page-backed host memory, apply load-base fixups while pages are writable,
 ;; finalize code pages as RX through tlci_pages, and run the image registration
 ;; entry point through the backend runtime's raw C-ABI bridge, validate its

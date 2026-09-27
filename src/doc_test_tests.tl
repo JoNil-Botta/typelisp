@@ -84,9 +84,9 @@
             (doc_line_vec.get (& lines) 4 (doc_test.DocTestLine.Line 0 "")))
           5)))))
 
-;; The two formerly hand-written collections also contain move-only strings.
-;; Exercise canonical core growth across the initial capacity without requiring
-;; clone/pop support, and confirm that source order survives the move-based copy.
+;; Both doc-test collections contain move-only strings. Exercise canonical core
+;; growth across the initial capacity without requiring clone/pop support, and
+;; confirm that source order survives the move-based copy.
 (define (doc-test-example-vector-growth-smoke-ok?) : bool
   (let
     [examples : doc_example_vec.Vec (doc_test.doc-test-example-list-empty)]

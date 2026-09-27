@@ -12743,6 +12743,34 @@
       (OptLabelSet.Nil))
     (opt-label-set-eq? (opt-phi-input-labels inputs) preds)))
 
+;; The values a two-input phi receives along its edges from `first` and
+;; `second`, in that order, when those two edges are exactly its inputs.
+(defenum OptPhiEdgeValues
+  (No)
+  (Some ir.CompilerIrValue ir.CompilerIrValue))
+
+(define (opt-phi-edge-values
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [first : i64]
+  [second : i64]) : OptPhiEdgeValues
+  (if (= inputs.len 2)
+    (let
+      [a : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          0)]
+      [b : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          1)]
+      (cond
+        [(and (= a.label first) (= b.label second))
+          (OptPhiEdgeValues.Some a.value b.value)]
+        [(and (= b.label first) (= a.label second))
+          (OptPhiEdgeValues.Some b.value a.value)]
+        [else (OptPhiEdgeValues.No)]))
+    (OptPhiEdgeValues.No)))
+
 (define (opt-verify-phi-predecessors-instr-seq-from
   [pred-map : (& pred-map OptPredMap)]
   [block-label : i64]
@@ -18869,66 +18897,13 @@
       [(OptRotateSsaMaybePhiRecs.Some recs)
         (match (ir.compiler-ir-instr-seq-ref phis index)
           [(ir.CompilerIrInstr.Phi dst inputs ty)
-            (let
-              [phi-inputs-at-20698-13 : ir.CompilerIrPhiInputSeq inputs]
-              (if (<= phi-inputs-at-20698-13.len 0)
-                (OptRotateSsaMaybePhiRecs.No)
-                (let
-                  [phi-input-at-20698-13 : ir.CompilerIrPhiInput
-                    (ir.compiler-ir-phi-input-seq-ref
-                      (ir.compiler-ir-global-shared-view phi-inputs-at-20698-13)
-                      0)]
-                  [first-value : ir.CompilerIrValue phi-input-at-20698-13.value]
-                  [first-label : i64 phi-input-at-20698-13.label]
-                  [rest1 : ir.CompilerIrPhiInputSeq
-                    (ir.CompilerIrPhiInputSeq
-                      phi-inputs-at-20698-13.slots
-                      (+ phi-inputs-at-20698-13.start 1)
-                      (- phi-inputs-at-20698-13.len 1))]
-                  [phi-inputs-at-20700-17 : ir.CompilerIrPhiInputSeq rest1]
-                  (if (<= phi-inputs-at-20700-17.len 0)
-                    (OptRotateSsaMaybePhiRecs.No)
-                    (let
-                      [phi-input-at-20700-17 : ir.CompilerIrPhiInput
-                        (ir.compiler-ir-phi-input-seq-ref
-                          (ir.compiler-ir-global-shared-view
-                            phi-inputs-at-20700-17)
-                          0)]
-                      [second-value : ir.CompilerIrValue
-                        phi-input-at-20700-17.value]
-                      [second-label : i64 phi-input-at-20700-17.label]
-                      [rest2 : ir.CompilerIrPhiInputSeq
-                        (ir.CompilerIrPhiInputSeq
-                          phi-inputs-at-20700-17.slots
-                          (+ phi-inputs-at-20700-17.start 1)
-                          (- phi-inputs-at-20700-17.len 1))]
-                      [phi-inputs-at-20706-21 : ir.CompilerIrPhiInputSeq rest2]
-                      (if (<= phi-inputs-at-20706-21.len 0)
-                        (cond
-                          [(and
-                              (= first-label preheader)
-                              (= second-label latch))
-                            (OptRotateSsaMaybePhiRecs.Some
-                              (opt-rotate-ssa-phi-recs-cons
-                                (OptRotateSsaPhiRec.Rec
-                                  dst
-                                  first-value
-                                  second-value
-                                  ty)
-                                recs))]
-                          [(and
-                              (= first-label latch)
-                              (= second-label preheader))
-                            (OptRotateSsaMaybePhiRecs.Some
-                              (opt-rotate-ssa-phi-recs-cons
-                                (OptRotateSsaPhiRec.Rec
-                                  dst
-                                  second-value
-                                  first-value
-                                  ty)
-                                recs))]
-                          [else (OptRotateSsaMaybePhiRecs.No)])
-                        (OptRotateSsaMaybePhiRecs.No)))))))]
+            (match (opt-phi-edge-values inputs preheader latch)
+              [(OptPhiEdgeValues.Some pre-value latch-value)
+                (OptRotateSsaMaybePhiRecs.Some
+                  (opt-rotate-ssa-phi-recs-cons
+                    (OptRotateSsaPhiRec.Rec dst pre-value latch-value ty)
+                    recs))]
+              [(OptPhiEdgeValues.No) (OptRotateSsaMaybePhiRecs.No)])]
           [_ (OptRotateSsaMaybePhiRecs.No)])])))
 
 (define (opt-rotate-ssa-phi-recs
@@ -29452,69 +29427,18 @@
     (option_i64.None)
     (option_i64.Some step)))
 
-(define (opt-induction-phi-input-pair
-  [a-value : ir.CompilerIrValue]
-  [a-label : i64]
-  [b-value : ir.CompilerIrValue]
-  [b-label : i64]
-  [preheader : i64]
-  [latch : i64]) : OptInductionPhiInputs
-  (if (and (= a-label preheader) (= b-label latch))
-    (match b-value
-      [(ir.CompilerIrValue.Var back) (OptInductionPhiInputs.Some a-value back)]
-      [_ (OptInductionPhiInputs.No)])
-    (if (and (= b-label preheader) (= a-label latch))
-      (match a-value
-        [(ir.CompilerIrValue.Var back)
-          (OptInductionPhiInputs.Some b-value back)]
-        [_ (OptInductionPhiInputs.No)])
-      (OptInductionPhiInputs.No))))
-
+;; The start value from the preheader and the back var from the latch.
 (define (opt-induction-phi-inputs
   [inputs : ir.CompilerIrPhiInputSeq]
   [preheader : i64]
   [latch : i64]) : OptInductionPhiInputs
-  (let
-    [phi-inputs-at-28317-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-28317-3.len 0)
-      (OptInductionPhiInputs.No)
-      (let
-        [phi-input-at-28317-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-28317-3)
-            0)]
-        [a-value : ir.CompilerIrValue phi-input-at-28317-3.value]
-        [a-label : i64 phi-input-at-28317-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-28317-3.slots
-            (+ phi-inputs-at-28317-3.start 1)
-            (- phi-inputs-at-28317-3.len 1))]
-        [phi-inputs-at-28319-7 : ir.CompilerIrPhiInputSeq rest]
-        (if (<= phi-inputs-at-28319-7.len 0)
-          (OptInductionPhiInputs.No)
-          (let
-            [phi-input-at-28319-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-28319-7)
-                0)]
-            [b-value : ir.CompilerIrValue phi-input-at-28319-7.value]
-            [b-label : i64 phi-input-at-28319-7.label]
-            [rest2 : ir.CompilerIrPhiInputSeq
-              (ir.CompilerIrPhiInputSeq
-                phi-inputs-at-28319-7.slots
-                (+ phi-inputs-at-28319-7.start 1)
-                (- phi-inputs-at-28319-7.len 1))]
-            [phi-inputs-at-28322-11 : ir.CompilerIrPhiInputSeq rest2]
-            (if (<= phi-inputs-at-28322-11.len 0)
-              (opt-induction-phi-input-pair
-                a-value
-                a-label
-                b-value
-                b-label
-                preheader
-                latch)
-              (OptInductionPhiInputs.No))))))))
+  (match (opt-phi-edge-values inputs preheader latch)
+    [(OptPhiEdgeValues.Some start back)
+      (match back
+        [(ir.CompilerIrValue.Var back-var)
+          (OptInductionPhiInputs.Some start back-var)]
+        [_ (OptInductionPhiInputs.No)])]
+    [(OptPhiEdgeValues.No) (OptInductionPhiInputs.No)]))
 
 (define (opt-induction-step-from-add
   [lhs : ir.CompilerIrValue]
@@ -62270,47 +62194,25 @@
 (define (opt-unroll-split-phi-inputs
   [inputs : ir.CompilerIrPhiInputSeq]
   [loop-label : i64]) : OptUnrollPhiSplit
-  (let
-    [phi-inputs-at-67178-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-67178-3.len 0)
-      (OptUnrollPhiSplit.No)
-      (let
-        [phi-input-at-67178-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-67178-3)
-            0)]
-        [first-value : ir.CompilerIrValue phi-input-at-67178-3.value]
-        [first-label : i64 phi-input-at-67178-3.label]
-        [rest-box : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-67178-3.slots
-            (+ phi-inputs-at-67178-3.start 1)
-            (- phi-inputs-at-67178-3.len 1))]
-        [phi-inputs-at-67181-7 : ir.CompilerIrPhiInputSeq rest-box]
-        (if (<= phi-inputs-at-67181-7.len 0)
-          (OptUnrollPhiSplit.No)
-          (let
-            [phi-input-at-67181-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-67181-7)
-                0)]
-            [second-value : ir.CompilerIrValue phi-input-at-67181-7.value]
-            [second-label : i64 phi-input-at-67181-7.label]
-            [tail-box : ir.CompilerIrPhiInputSeq
-              (ir.CompilerIrPhiInputSeq
-                phi-inputs-at-67181-7.slots
-                (+ phi-inputs-at-67181-7.start 1)
-                (- phi-inputs-at-67181-7.len 1))]
-            [phi-inputs-at-67184-11 : ir.CompilerIrPhiInputSeq tail-box]
-            (cond
-              [(> phi-inputs-at-67184-11.len 0) (OptUnrollPhiSplit.No)]
-              [(and (= first-label loop-label) (= second-label loop-label))
-                (OptUnrollPhiSplit.No)]
-              [(= first-label loop-label)
-                (OptUnrollPhiSplit.Split second-value first-value second-label)]
-              [(= second-label loop-label)
-                (OptUnrollPhiSplit.Split first-value second-value first-label)]
-              [else (OptUnrollPhiSplit.No)])))))))
+  (if (= inputs.len 2)
+    (let
+      [first : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          0)]
+      [second : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          1)]
+      (cond
+        [(and (= first.label loop-label) (= second.label loop-label))
+          (OptUnrollPhiSplit.No)]
+        [(= first.label loop-label)
+          (OptUnrollPhiSplit.Split second.value first.value second.label)]
+        [(= second.label loop-label)
+          (OptUnrollPhiSplit.Split first.value second.value first.label)]
+        [else (OptUnrollPhiSplit.No)]))
+    (OptUnrollPhiSplit.No)))
 
 (define (opt-unroll-collect-other-phis
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -98671,45 +98573,9 @@
   [inputs : ir.CompilerIrPhiInputSeq]
   [pre-label : i64]
   [latch-label : i64]) : OptUboundMaybeEdges
-  (let
-    [phi-inputs-at-100754-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-100754-3.len 0)
-      (OptUboundMaybeEdges.No)
-      (let
-        [phi-input-at-100754-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-100754-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-100754-3.value]
-        [label : i64 phi-input-at-100754-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-100754-3.slots
-            (+ phi-inputs-at-100754-3.start 1)
-            (- phi-inputs-at-100754-3.len 1))]
-        [phi-inputs-at-100757-7 : ir.CompilerIrPhiInputSeq rest]
-        (if (<= phi-inputs-at-100757-7.len 0)
-          (OptUboundMaybeEdges.No)
-          (let
-            [phi-input-at-100757-7 : ir.CompilerIrPhiInput
-              (ir.compiler-ir-phi-input-seq-ref
-                (ir.compiler-ir-global-shared-view phi-inputs-at-100757-7)
-                0)]
-            [value2 : ir.CompilerIrValue phi-input-at-100757-7.value]
-            [label2 : i64 phi-input-at-100757-7.label]
-            [rest2 : ir.CompilerIrPhiInputSeq
-              (ir.CompilerIrPhiInputSeq
-                phi-inputs-at-100757-7.slots
-                (+ phi-inputs-at-100757-7.start 1)
-                (- phi-inputs-at-100757-7.len 1))]
-            [phi-inputs-at-100760-11 : ir.CompilerIrPhiInputSeq rest2]
-            (if (<= phi-inputs-at-100760-11.len 0)
-              (if (and (= label pre-label) (= label2 latch-label))
-                (opt-ubound-phi-edge-values value value2)
-                (if (and (= label2 pre-label) (= label latch-label))
-                  (opt-ubound-phi-edge-values value2 value)
-                  (OptUboundMaybeEdges.No)))
-              (OptUboundMaybeEdges.No))))))))
+  (match (opt-phi-edge-values inputs pre-label latch-label)
+    [(OptPhiEdgeValues.Some seed back) (opt-ubound-phi-edge-values seed back)]
+    [(OptPhiEdgeValues.No) (OptUboundMaybeEdges.No)]))
 
 ;; Find the phi defining `var` inside the prefix and return its two edges.
 (define (opt-ubound-header-edges

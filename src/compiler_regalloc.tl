@@ -23982,9 +23982,10 @@
 ;; needs `GlobalOpt` + `IPSCCP` to prove it.
 ;;
 ;; The set is seeded once per program from the backend's whole-program value
-;; walk (compiler-backend-collect-program-collections, a TOTAL match over the IR
-;; that already visits every operand of every instruction of every function AND
-;; every global initializer, so a new IR shape cannot silently escape it), and
+;; walk (compiler-backend-collect-program-collections-with-iag, a TOTAL match
+;; over the IR that already visits every operand of every instruction of every
+;; function AND every global initializer, so a new IR shape cannot silently
+;; escape it), and
 ;; `known?` gates every answer: any path that reaches the allocator without that
 ;; walk having run gets `false` and the old behaviour.
 (define compiler-reg-nonfrozen-globals : reg_i64_i64_map.Map

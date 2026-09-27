@@ -9058,7 +9058,7 @@
             (ast.AstType.String)
             (ir.CompilerIrValue.String "global-string"))]
         [collections : backend.CompilerBackendProgramCollections
-          (backend.compiler-backend-collect-program-collections
+          (compiler-backend-collect-program-collections
             (ir.CompilerIrProgram.Program
               globals
               functions
@@ -21371,7 +21371,7 @@ g:
             ir.CompilerIrBlockList.Nil)
           ir.CompilerIrFunctionAbi.Ordinary)
         (ir.compiler-ir-function-seq-empty))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       functions
       (ir.compiler-ir-extern-seq-empty))
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -21400,7 +21400,7 @@ g:
           cbi.compiler-builtin-id-tl-region-reset
           "tl_region_reset"
           (ast.AstType.Unit)))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -21424,7 +21424,7 @@ g:
           link-id
           (ast.ast-extern-link-input-list-new)
           true))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -21435,7 +21435,7 @@ g:
             (backend.compiler-backend-runtime-tail-startup-profile?
               (backend.compiler-backend-runtime-plan-tail plan))
             features.startup-profile
-            (match (backend.compiler-backend-runtime-plan-for
+            (match (compiler-backend-runtime-plan-for
               (ir.compiler-ir-function-seq-empty)
               (ir.compiler-ir-extern-seq-empty))
               [(backend.ResultBackendRuntimePlan.Ok empty-plan)
@@ -21484,7 +21484,7 @@ g:
           debug-id
           (ast.ast-extern-link-input-list-new)
           false))]
-    (match (backend.compiler-backend-runtime-plan-for functions externs)
+    (match (compiler-backend-runtime-plan-for functions externs)
       [(backend.ResultBackendRuntimePlan.Ok plan)
         (let
           [features : runtime_common.CompilerBackendRuntimeFeatures
@@ -21534,7 +21534,7 @@ g:
               (compiler-backend-runtime-prelude-test-function
                 "stdlib/runtime.tl::int-to-string")
               (ir.compiler-ir-function-seq-empty)))))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       functions
       (ir.compiler-ir-extern-seq-empty))
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -30220,7 +30220,7 @@ g:
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (backend.compiler-backend-global-shared-view externs))]
-    (match (backend.compiler-backend-runtime-plan-for
+    (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       (backend.compiler-backend-global-shared-view externs))
       [(backend.ResultBackendRuntimePlan.Ok plan)
@@ -40498,3 +40498,20 @@ b_keep:
     (cobj.CompilerObjectSectionKind.Text))
     [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))
+
+(define (compiler-backend-collect-program-collections
+  [program : ir.CompilerIrProgram]) : backend.CompilerBackendProgramCollections
+  (match program
+    [(ir.CompilerIrProgram.Program globals functions _)
+      (backend.compiler-backend-collect-program-collections-with-iag
+        globals
+        functions
+        (backend.compiler-backend-iag-census-disabled))]))
+
+(define (compiler-backend-runtime-plan-for
+  [functions : ir.CompilerIrFunctionSeq]
+  [externs : ir.CompilerIrExternSeq]) : backend.ResultBackendRuntimePlan
+  (backend.compiler-backend-runtime-plan-for-with-backend-state
+    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))
+    functions
+    externs))

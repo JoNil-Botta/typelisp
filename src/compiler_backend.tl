@@ -76276,15 +76276,6 @@
   [globals : compiler_ir_types.CompilerIrGlobalSeq]) : CompilerBackendProgramCollections
   (compiler-backend-collect-global-collections-from collections globals 0))
 
-(define (compiler-backend-collect-program-collections
-  [program : compiler_ir_types.CompilerIrProgram]) : CompilerBackendProgramCollections
-  (match program
-    [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
-      (compiler-backend-collect-program-collections-with-iag
-        globals
-        functions
-        (compiler-backend-iag-census-disabled))]))
-
 ;; The one whole-program walk. `functions` must be the sequence the program
 ;; index was built from (the entry list), so a census row index is that
 ;; function's program-index slot; the global-initializer part runs with the
@@ -78582,14 +78573,6 @@
       (ResultBackendRuntimePlan.Ok planned.plan)]
     [(ResultBackendRuntimePlanWithIndex.Err message)
       (ResultBackendRuntimePlan.Err message)]))
-
-(define (compiler-backend-runtime-plan-for
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlan
-  (compiler-backend-runtime-plan-for-with-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    functions
-    externs))
 
 (define (compiler-backend-runtime-plan-with-backend-state
   [backend-state : CompilerBackendState]

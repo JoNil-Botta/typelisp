@@ -536,13 +536,11 @@
                 0)
               (>
                 (string.string-length
-                  (compiler_diagnostic.compiler-diagnostic-code-registry-category
-                    index))
+                  (compiler-diagnostic-code-registry-category index))
                 0)
               (>
                 (string.string-length
-                  (compiler_diagnostic.compiler-diagnostic-code-registry-owner
-                    index))
+                  (compiler-diagnostic-code-registry-owner index))
                 0))
               unit
               (set! ok false))
@@ -564,12 +562,8 @@
         (string.eq
           (compiler_diagnostic.compiler-diagnostic-code-registry-title count)
           "")
-        (string.eq
-          (compiler_diagnostic.compiler-diagnostic-code-registry-category count)
-          "")
-        (string.eq
-          (compiler_diagnostic.compiler-diagnostic-code-registry-owner count)
-          "")))))
+        (string.eq (compiler-diagnostic-code-registry-category count) "")
+        (string.eq (compiler-diagnostic-code-registry-owner count) "")))))
 
 (define (compiler-diagnostic-advisory-warning
   [path : String]
@@ -681,7 +675,7 @@
           (=
             (compiler_diagnostic.compiler-advisory-list-count (& after-reset))
             0)
-          (= (compiler_diagnostic.compiler-advisory-sink-generation sink-a) 1)
+          (= (compiler-advisory-sink-generation sink-a) 1)
           (let
             [still-b : compiler_diagnostic.CompilerAdvisoryList
               (compiler_diagnostic.compiler-advisory-sink-snapshot sink-b)]
@@ -709,3 +703,25 @@
     (unless (compiler-diagnostic-advisory-sink-ok?) (return 4))
     (unless (compiler-diagnostic-typecheck-code-kinds-ok?) (return 5))
     42))
+
+(define (compiler-advisory-sink-generation
+  [sink : compiler_diagnostic.CompilerAdvisorySink]) : i64
+  (compiler_diagnostic.compiler-advisory-sink-data sink).generation)
+
+(define (compiler-diagnostic-code-registry-category [index : i64]) : String
+  (cond
+    [(= index 0) "parse"]
+    [(and
+        (> index 0)
+        (< index (compiler_diagnostic.compiler-diagnostic-code-registry-count)))
+      "typecheck"]
+    [else ""]))
+
+(define (compiler-diagnostic-code-registry-owner [index : i64]) : String
+  (cond
+    [(= index 0) "parser"]
+    [(and
+        (> index 0)
+        (< index (compiler_diagnostic.compiler-diagnostic-code-registry-count)))
+      "typechecker"]
+    [else ""]))

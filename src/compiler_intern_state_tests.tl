@@ -2,6 +2,15 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import stdlib.test)
+(import compiler_owned_view as owned_view)
+
+;; Layout queries need the struct names unqualified. Lint does not count a use
+;; inside `(type ...)`.
+;; lint-allow: unused-import
+(import compiler_intern_state.InternFreshLocalIdentity)
+
+;; lint-allow: unused-import
+(import compiler_intern_state.InternTemplateSourceIdentity)
 
 (define (intern-identity-test-session [state : (& state ci.InternCompatState)]) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
@@ -91,11 +100,11 @@
           left-source))]
     (begin
       (test.assert-i64-eq
-        (cis.intern-template-source-identity-size)
+        (intern-template-source-identity-size)
         8
         "template identity remains one machine word")
       (test.assert-i64-eq
-        (cis.intern-fresh-local-identity-size)
+        (intern-fresh-local-identity-size)
         8
         "fresh-local identity remains one machine word")
       (test.assert-i64-eq
@@ -283,11 +292,11 @@
         1
         "template-source kind count remains independent")
       (test.assert-i64-eq
-        (cis.intern-structural-session-record-count session)
+        (intern-structural-session-record-count session)
         (+ limit 1)
         "structural record count is independent of source-name capacity")
       (test.assert-true
-        (>= (cis.intern-structural-session-record-capacity session) limit)
+        (>= (intern-structural-session-record-capacity session) limit)
         "record columns grow to retain collision-probed insertions")
       (test.assert-i64-eq
         (ci.intern-structural-record-slot-bytes)
@@ -295,6 +304,62 @@
         "each reserved structural record slot uses 37 payload bytes")
       (test.assert-true
         (>=
-          (cis.intern-structural-session-record-reserved-bytes session)
+          (intern-structural-session-record-reserved-bytes session)
           (* limit (ci.intern-structural-record-slot-bytes)))
         "reserved-byte metric covers all retained records"))))
+
+(cfg
+  test
+  (define (intern-template-source-identity-size) : i64
+    (comptime (size-of (type InternTemplateSourceIdentity)))))
+
+(cfg
+  test
+  (define (intern-fresh-local-identity-size) : i64
+    (comptime (size-of (type InternFreshLocalIdentity)))))
+
+(define (intern-structural-session-key-middle
+  [handle : cis.InternStructuralSessionHandle]
+  [key : cis.InternStructuralKey]) : i64
+  (if (cis.intern-structural-session-key-owned? handle key)
+    (let
+      [session : ci.InternSourceNameSession
+        (cis.intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
+      (array-ref table.middles (cis.intern-structural-session-key-index key)))
+    (ci.tl_oob_abort)))
+
+(define (intern-structural-session-record-count
+  [handle : cis.InternStructuralSessionHandle]) : i64
+  (if (not (cis.intern-structural-session-valid? handle))
+    0
+    (let
+      [session : ci.InternSourceNameSession
+        (cis.intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
+      table.len)))
+
+(define (intern-structural-session-record-capacity
+  [handle : cis.InternStructuralSessionHandle]) : i64
+  (if (not (cis.intern-structural-session-valid? handle))
+    0
+    (let
+      [session : ci.InternSourceNameSession
+        (cis.intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
+      (array-length table.kinds))))
+
+(define (intern-structural-session-record-reserved-bytes
+  [handle : cis.InternStructuralSessionHandle]) : i64
+  (*
+    (intern-structural-session-record-capacity handle)
+    (ci.intern-structural-record-slot-bytes)))

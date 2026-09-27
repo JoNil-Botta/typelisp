@@ -18,6 +18,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
+(import compiler_intern_state_tests as cis_tests)
 (import stdlib.string)
 (import sym_i64_env)
 
@@ -5681,7 +5682,9 @@
                 (begin
                   (unless
                     (=
-                      (cis.intern-structural-session-key-middle session-a key)
+                      (cis_tests.intern-structural-session-key-middle
+                        session-a
+                        key)
                       (+ 2000 index))
                     (set! ok false))
                   (match (cis.intern-structural-session-arena-phase-record

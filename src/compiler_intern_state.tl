@@ -31,21 +31,11 @@
 (defmacro (intern-template-source-identity-raw [identity : Expr]) : i64
   `(__tl-project-field-name ,identity "value"))
 
-(cfg
-  test
-  (define (intern-template-source-identity-size) : i64
-    (comptime (size-of (type InternTemplateSourceIdentity)))))
-
 (defstruct InternFreshLocalIdentity
   (value i64))
 
 (defmacro (intern-fresh-local-identity-raw [identity : Expr]) : i64
   `(__tl-project-field-name ,identity "value"))
-
-(cfg
-  test
-  (define (intern-fresh-local-identity-size) : i64
-    (comptime (size-of (type InternFreshLocalIdentity)))))
 
 (defstruct InternMacroDefinitionIdentity
   (value i64))
@@ -669,20 +659,6 @@
       raw
       fallback)))
 
-(define (intern-structural-session-key-middle
-  [handle : InternStructuralSessionHandle]
-  [key : InternStructuralKey]) : i64
-  (if (intern-structural-session-key-owned? handle key)
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      (array-ref table.middles (intern-structural-session-key-index key)))
-    (ci.tl_oob_abort)))
-
 ;; Measurement/test boundary: report exact retained records by structural kind
 ;; without exposing table storage or making callers classify raw handles.
 (define (intern-structural-session-kind-count
@@ -709,38 +685,6 @@
               unit)
             (set! index (+ index 1))))
         count))))
-
-(define (intern-structural-session-record-count
-  [handle : InternStructuralSessionHandle]) : i64
-  (if (not (intern-structural-session-valid? handle))
-    0
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      table.len)))
-
-(define (intern-structural-session-record-capacity
-  [handle : InternStructuralSessionHandle]) : i64
-  (if (not (intern-structural-session-valid? handle))
-    0
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      (array-length table.kinds))))
-
-(define (intern-structural-session-record-reserved-bytes
-  [handle : InternStructuralSessionHandle]) : i64
-  (*
-    (intern-structural-session-record-capacity handle)
-    (ci.intern-structural-record-slot-bytes)))
 
 (define (intern-structural-session-source-name-component-valid?
   [handle : InternStructuralSessionHandle]

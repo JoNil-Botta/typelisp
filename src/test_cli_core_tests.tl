@@ -10,6 +10,7 @@
 (import (vector.vector String) as cli_svec)
 (import build_run_core)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
@@ -1268,7 +1269,7 @@
         macro-id
         (ast.ast-macro-param-list-new)
         (ast.AstType.Expr)
-        (ast.ast-expr-quasiquote (tltest.tltest-call-expr-id helper-id)))]
+        (ast_tests.ast-expr-quasiquote (tltest.tltest-call-expr-id helper-id)))]
     [span : ast.AstSourceSpan (ast.ast-source-span 31 1 31 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons

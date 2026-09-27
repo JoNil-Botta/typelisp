@@ -89,18 +89,6 @@
 (define (span-end-col [span : SourceSpan]) : i64
   span.end-col)
 
-(define (span-eq?
-  [span : SourceSpan]
-  [start-line : i64]
-  [start-col : i64]
-  [end-line : i64]
-  [end-col : i64]) : bool
-  (and
-    (= (span-start-line span) start-line)
-    (= (span-start-col span) start-col)
-    (= (span-end-line span) end-line)
-    (= (span-end-col span) end-col)))
-
 (define (source-error-message [err : SourceError]) : String
   err.message)
 

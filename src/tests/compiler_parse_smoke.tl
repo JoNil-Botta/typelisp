@@ -1,7 +1,9 @@
 ;; compiler_parse_smoke.tl - Runnable structural smoke for compiler_parse_core.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_parse_core)
+(import compiler_parse_core_tests as parse_tests)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import read as reader)
 (import stdlib.string)
 (import compiler_diagnostic as diagnostic)
@@ -36,10 +38,10 @@
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             [tail1 : ast.AstDeclList
-              (ast.ast-decl-list-tail
+              (ast_tests.ast-decl-list-tail
                 (owned_view.compiler-owned-shared-view decls))]
             [tail2 : ast.AstDeclList
-              (ast.ast-decl-list-tail
+              (ast_tests.ast-decl-list-tail
                 (owned_view.compiler-owned-shared-view tail1))]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
@@ -676,7 +678,7 @@
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             [tail : ast.AstDeclList
-              (ast.ast-decl-list-tail
+              (ast_tests.ast-decl-list-tail
                 (owned_view.compiler-owned-shared-view decls))]
             [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
             [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
@@ -957,16 +959,16 @@
 
 (define (compiler-parse-removed-declaration-errors-ok?) : bool
   (and
-    (compiler_parse_core.compiler-parse-error-ok?
+    (parse_tests.compiler-parse-error-ok?
       "(comptime-decl (define value : i64 1))"
       (compiler_parse_core.parse-ast-removed-declaration-message))
-    (compiler_parse_core.compiler-parse-error-ok?
+    (parse_tests.compiler-parse-error-ok?
       "(comptime-decls (define value : i64 1))"
       (compiler_parse_core.parse-ast-removed-declaration-message))
-    (compiler_parse_core.compiler-parse-error-ok?
+    (parse_tests.compiler-parse-error-ok?
       "(define (main) : i64 (comptime-decl (define value : i64 1)))"
       (compiler_parse_core.parse-ast-removed-declaration-message))
-    (compiler_parse_core.compiler-parse-error-ok?
+    (parse_tests.compiler-parse-error-ok?
       "(define (main) : i64 (comptime-decls (define value : i64 1)))"
       (compiler_parse_core.parse-ast-removed-declaration-message))))
 
@@ -1372,5 +1374,5 @@
       (compiler-diagnostic-fix-model-ok?)
       (compiler-diagnostic-invalid-fixes-rejected-ok?)
       (compiler-diagnostic-unicode-byte-edit-ok?))
-      (compiler_parse_core.compiler-parse-smoke)
+      (parse_tests.compiler-parse-smoke)
       1)))

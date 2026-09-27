@@ -5,7 +5,7 @@
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.str_cat)
-(import compiler_symbols)
+(import compiler_symbols_tests as sym_tests)
 (import compiler_check_tests)
 (import compiler_semantic_index_tests as sem_tests)
 (import compiler_typecheck_tests as tc_tests)
@@ -588,7 +588,7 @@
     [(string.eq name "symbols")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler_symbols.compiler-symbols-self-test))]
+        (sym_tests.compiler-symbols-self-test))]
     [(string.eq name "check")
       (if (compiler_check_tests.compiler-check-tests-ok?)
         42

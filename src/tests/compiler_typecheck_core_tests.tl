@@ -7,6 +7,7 @@
 (import compiler_symbols as csym)
 (import compiler_load as cload)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -2656,7 +2657,7 @@
     [base : tc_core.TcTypeEnv
       (tc_core.tc-env-with-cache (tc_core.tc-empty-env))]
     [callback-ty : ast.AstType
-      (ast.ast-ty-c-func
+      (ast_tests.ast-ty-c-func
         (ast.ast-type-list-new)
         (ast.AstType.I64)
         ast.AstCFunctionMode.NonNull)]
@@ -2873,7 +2874,7 @@
       [local-id : i64 (ci.intern "selected-key-local")]
       [layer-id : i64 (ci.intern "selected-key-layer")]
       [callback-ty : ast.AstType
-        (ast.ast-ty-c-func
+        (ast_tests.ast-ty-c-func
           (ast.ast-type-list-new)
           (ast.AstType.I64)
           ast.AstCFunctionMode.NonNull)]
@@ -2980,7 +2981,7 @@
   (define (tc-type-env-explicit-cache-layering-flags-smoke?) : bool
     (let
       [callback-ty : ast.AstType
-        (ast.ast-ty-c-func
+        (ast_tests.ast-ty-c-func
           (ast.ast-type-list-new)
           (ast.AstType.I64)
           ast.AstCFunctionMode.NonNull)]
@@ -4332,7 +4333,7 @@
       ;; Tail shares grown source storage but is not prependable. Rebuilding a
       ;; root row in front gives the index a non-zero-offset source and mirrors
       ;; the generated-list prepend/rebuild shapes used by macro expansion.
-      [tail : ast.AstDeclList (ast.ast-decl-list-tail base)]
+      [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail base)]
       [all-decls : ast.AstDeclList
         (ast.ast-decl-list-prepend-builder
           (ast.ast-decl-def-id root-name (ast.AstMaybeType.No) 11)
@@ -4517,7 +4518,9 @@
                 message
                 "typecheck: non-finite f32 literal is not supported")]
             [_ false])
-          (match (ast.ast-node-pool-context-expr-canonical-span pools-c root-c)
+          (match (ast_tests.ast-node-pool-context-expr-canonical-span
+            pools-c
+            root-c)
             [(ast.AstMaybeSourceSpan.Some span)
               (and
                 (= (ast.ast-source-span-start-line span) 83)

@@ -10,6 +10,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_intern as ci)
 (import compiler_owned_view as owned_view)
 (import compiler_diagnostic as cdiag)
@@ -747,8 +748,8 @@
         (ast.ast-expr-if vx (ast.ast-expr-if vx one one) one)
         one)]
     [return-one : i64 (ast.ast-expr-return one)]
-    [break-expr : i64 (ast.ast-expr-break)]
-    [continue-expr : i64 (ast.ast-expr-continue)]
+    [break-expr : i64 (ast_tests.ast-expr-break)]
+    [continue-expr : i64 (ast_tests.ast-expr-continue)]
     [all-return-ladder3 : i64
       (ast.ast-expr-if
         vx

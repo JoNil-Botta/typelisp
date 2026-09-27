@@ -4,6 +4,7 @@
 ;; production self-tests so the compiler profile does not carry test-only
 ;; declarations or generated symbols.
 (import lex as lx)
+(import reader_tests)
 (import token as tk)
 (import compiler_float as cf)
 (import format_tokens as ft)
@@ -72,11 +73,11 @@
 
 (define (fe-lex-malformed-exponents-ok?) : bool
   (and
-    (lx.error-ok? "1e" 1 1 "lexer: malformed number literal")
-    (lx.error-ok? "1e+" 1 1 "lexer: malformed number literal")
-    (lx.error-ok? "1.5e" 1 1 "lexer: malformed number literal")
-    (lx.error-ok? "\n  1.5e-" 2 3 "lexer: malformed number literal")
-    (lx.error-ok? "1e2foo" 1 1 "lexer: malformed number literal")))
+    (reader_tests.error-ok? "1e" 1 1 "lexer: malformed number literal")
+    (reader_tests.error-ok? "1e+" 1 1 "lexer: malformed number literal")
+    (reader_tests.error-ok? "1.5e" 1 1 "lexer: malformed number literal")
+    (reader_tests.error-ok? "\n  1.5e-" 2 3 "lexer: malformed number literal")
+    (reader_tests.error-ok? "1e2foo" 1 1 "lexer: malformed number literal")))
 
 (define (fe-lex-printer-roundtrip-ok?) : bool
   (let

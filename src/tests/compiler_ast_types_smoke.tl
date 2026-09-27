@@ -1,6 +1,7 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -98,26 +99,26 @@
 (define (compiler-ast-state-owned-expr-pool-smoke?) : bool
   (let
     [a0 : ast.AstExprNodePoolState (ast.ast-expr-node-pool-state-create 1)]
-    [aid0 : i64 (ast.ast-expr-node-pool-state-mark a0)]
+    [aid0 : i64 (ast_tests.ast-expr-node-pool-state-mark a0)]
     [a1 : ast.AstExprNodePoolState
       (compiler-ast-state-expr-push-pool
         a0
         (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [aid1 : i64 (ast.ast-expr-node-pool-state-mark a1)]
+    [aid1 : i64 (ast_tests.ast-expr-node-pool-state-mark a1)]
     [a2 : ast.AstExprNodePoolState
       (compiler-ast-state-expr-push-pool
         a1
         (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
     [b0 : ast.AstExprNodePoolState (ast.ast-expr-node-pool-state-create 1)]
-    [bmark : i64 (ast.ast-expr-node-pool-state-mark b0)]
-    [bid0 : i64 (ast.ast-expr-node-pool-state-mark b0)]
+    [bmark : i64 (ast_tests.ast-expr-node-pool-state-mark b0)]
+    [bid0 : i64 (ast_tests.ast-expr-node-pool-state-mark b0)]
     [b1 : ast.AstExprNodePoolState
       (compiler-ast-state-expr-push-pool
         b0
         (ast.AstExpr.Literal (ast.ast-lit-int 10)))]
     [breset : ast.AstExprNodePoolState
-      (ast.ast-expr-node-pool-state-reset-to-mark b1 bmark)]
-    [bid1 : i64 (ast.ast-expr-node-pool-state-mark breset)]
+      (ast_tests.ast-expr-node-pool-state-reset-to-mark b1 bmark)]
+    [bid1 : i64 (ast_tests.ast-expr-node-pool-state-mark breset)]
     [b2 : ast.AstExprNodePoolState
       (compiler-ast-state-expr-push-pool
         breset
@@ -141,24 +142,24 @@
 (define (compiler-ast-state-owned-type-pool-smoke?) : bool
   (let
     [a0 : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
-    [aid0 : i64 (ast.ast-type-node-pool-state-mark a0)]
+    [aid0 : i64 (ast_tests.ast-type-node-pool-state-mark a0)]
     [a1 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool a0 (ast.AstType.I64))]
-    [aid1 : i64 (ast.ast-type-node-pool-state-mark a1)]
+    [aid1 : i64 (ast_tests.ast-type-node-pool-state-mark a1)]
     [a2 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool a1 (ast.AstType.String))]
     [b0 : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
-    [bmark : i64 (ast.ast-type-node-pool-state-mark b0)]
-    [bid0 : i64 (ast.ast-type-node-pool-state-mark b0)]
+    [bmark : i64 (ast_tests.ast-type-node-pool-state-mark b0)]
+    [bid0 : i64 (ast_tests.ast-type-node-pool-state-mark b0)]
     [b1 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool b0 (ast.AstType.Bool))]
     [breset : ast.AstTypeNodePoolState
-      (ast.ast-type-node-pool-state-reset-to-mark b1 bmark)]
-    [bid1 : i64 (ast.ast-type-node-pool-state-mark breset)]
+      (ast_tests.ast-type-node-pool-state-reset-to-mark b1 bmark)]
+    [bid1 : i64 (ast_tests.ast-type-node-pool-state-mark breset)]
     [b2 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool breset (ast.AstType.I64))]
     [b3 : ast.AstTypeNodePoolState
-      (ast.ast-type-node-pool-state-set! b2 bid1 (ast.AstType.Char))]
+      (ast_tests.ast-type-node-pool-state-set! b2 bid1 (ast.AstType.Char))]
     (and
       (= aid0 0)
       (= aid1 1)
@@ -166,7 +167,7 @@
       (= bid1 0)
       (= (ast.ast-type-node-pool-state-len a2) 2)
       (= (ast.ast-type-node-pool-state-len b3) 1)
-      (not (ast.ast-type-node-pool-state-exhausted? a2))
+      (not (ast_tests.ast-type-node-pool-state-exhausted? a2))
       (compiler-ast-state-type-i64? a2 aid0)
       (compiler-ast-state-type-string? a2 aid1)
       (compiler-ast-state-type-char? b3 bid1))))
@@ -216,7 +217,7 @@
         [(ast.AstTypeNodePoolPushOk p2 string-id)
           (let
             [reset : ast.AstTypeNodePoolState
-              (ast.ast-type-node-pool-state-reset-to-mark p2 1)]
+              (ast_tests.ast-type-node-pool-state-reset-to-mark p2 1)]
             (match (ast.ast-type-node-pool-state-push
               reset
               (ast.AstType.String))
@@ -943,7 +944,7 @@
           [_ false])
         (match (ast.ast-node-pool-context-expr-get pools value)
           [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
-            (string.eq (ast.ast-lit-string-text string-id) "hello")]
+            (string.eq (ast_tests.ast-lit-string-text string-id) "hello")]
           [_ false]))]
     [_ false]))
 
@@ -1262,7 +1263,8 @@
             (set! i (- i 1)))))
       (let
         [tail : ast.AstDeclList
-          (ast.ast-decl-list-tail (owned_view.compiler-owned-shared-view decls))]
+          (ast_tests.ast-decl-list-tail
+            (owned_view.compiler-owned-shared-view decls))]
         (and
           (= (ast.ast-decl-list-len (& decls)) 16)
           (= (ast.ast-decl-path-list-len (& paths)) 16)
@@ -1273,8 +1275,10 @@
           (compiler-ast-decl-list-module-name? tail 0 "m1")
           (string.eq (ast.ast-decl-path-list-get (& paths) 0 "") "p0")
           (string.eq (ast.ast-decl-path-list-get (& paths) 15 "") "p15")
-          (string.eq (ast.ast-decl-module-list-get (& modules) 0 "") "m0")
-          (string.eq (ast.ast-decl-module-list-get (& modules) 15 "") "m15"))))))
+          (string.eq (ast_tests.ast-decl-module-list-get (& modules) 0 "") "m0")
+          (string.eq
+            (ast_tests.ast-decl-module-list-get (& modules) 15 "")
+            "m15"))))))
 
 (define (compiler-ast-decl-cons-pure-smoke?) : bool
   (let
@@ -1335,9 +1339,9 @@
           (ast.ast-source-span 3 1 3 2)))
       (let
         [clause-tail : ast.AstExprClauseList
-          (ast.ast-expr-clause-list-tail clauses)]
+          (ast_tests.ast-expr-clause-list-tail clauses)]
         [binding-tail : ast.AstExprBindingClauseList
-          (ast.ast-expr-binding-clause-list-tail bindings)]
+          (ast_tests.ast-expr-binding-clause-list-tail bindings)]
         [first-clause : ast.AstExprClause
           (ast.ast-expr-clause-list-get
             (& clause-tail)
@@ -1515,7 +1519,7 @@
         (= (ast.ast-node-pool-context-expr-respan-count pools) 1)
         (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
         (compiler-ast-maybe-span-start-line?
-          (ast.ast-node-pool-context-expr-canonical-span pools outer-view)
+          (ast_tests.ast-node-pool-context-expr-canonical-span pools outer-view)
           2)
         (compiler-ast-maybe-span-start-line?
           (ast.ast-node-pool-context-expr-view-span pools inner-view)
@@ -1548,7 +1552,9 @@
           (and
             (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 2)
             (compiler-ast-maybe-span-start-line?
-              (ast.ast-node-pool-context-expr-canonical-span pools outer-view)
+              (ast_tests.ast-node-pool-context-expr-canonical-span
+                pools
+                outer-view)
               9)
             (compiler-ast-maybe-span-start-line?
               (ast.ast-node-pool-context-expr-view-span pools outer-view)
@@ -1573,7 +1579,9 @@
             (= (ast.ast-node-pool-context-expr-respan-count pools) 0)
             (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
             (compiler-ast-maybe-span-start-line?
-              (ast.ast-node-pool-context-expr-canonical-span pools new-literal)
+              (ast_tests.ast-node-pool-context-expr-canonical-span
+                pools
+                new-literal)
               20)))))))
 
 ;; The in-place expression-pool path grows both sparse provenance tables. Keep
@@ -1995,7 +2003,7 @@
 
 (define (main) : i64
   (begin
-    (unless (= (ast.compiler-ast-smoke) 23) (return 2))
+    (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
     (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
     (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
     (unless (compiler-ast-active-context-sync-smoke?) (return 4))

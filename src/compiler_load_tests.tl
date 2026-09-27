@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
@@ -637,7 +638,7 @@
                               (let
                                 [done : ast.AstDeclList done-box]
                                 (and
-                                  (ast.ast-decl-list-empty? (& done))
+                                  (ast_tests.ast-decl-list-empty? (& done))
                                   (string.eq
                                     (ci.intern-str imported-module)
                                     "cl_restore_dep")
@@ -661,8 +662,8 @@
   [want : String]) : bool
   (and
     (= (ast.ast-decl-module-list-len (& modules)) 2)
-    (string.eq (ast.ast-decl-module-list-get (& modules) 0 "") want)
-    (string.eq (ast.ast-decl-module-list-get (& modules) 1 "") want)))
+    (string.eq (ast_tests.ast-decl-module-list-get (& modules) 0 "") want)
+    (string.eq (ast_tests.ast-decl-module-list-get (& modules) 1 "") want)))
 
 (define (compiler-load-entry-cycle-module-name? [name : String]) : bool
   (or
@@ -676,7 +677,7 @@
     (= count 10)
     (and
       (compiler-load-entry-cycle-module-name?
-        (ast.ast-decl-module-list-get (& modules) count ""))
+        (ast_tests.ast-decl-module-list-get (& modules) count ""))
       (compiler-load-entry-cycle-modules-loop modules (+ count 1)))))
 
 (define (compiler-load-entry-cycle-modules? [modules : ast.AstDeclModuleList]) : bool
@@ -1216,7 +1217,7 @@
                             (let
                               [done : ast.AstDeclList done-box]
                               (and
-                                (ast.ast-decl-list-empty? (& done))
+                                (ast_tests.ast-decl-list-empty? (& done))
                                 (string.eq
                                   (ci.intern-str nested-module)
                                   "local.helper")
@@ -1495,8 +1496,8 @@
         (begin
           (unless
             (string.eq
-              (ast.ast-decl-module-list-get (& left) index "")
-              (ast.ast-decl-module-list-get (& right) index ""))
+              (ast_tests.ast-decl-module-list-get (& left) index "")
+              (ast_tests.ast-decl-module-list-get (& right) index ""))
             (set! same false))
           (set! index (+ index 1))))
       same)))
@@ -2879,7 +2880,7 @@
                 (compiler-load-test-path-at paths 0)
                 (load.compiler-load-runtime-prelude-path-shared-view))
               (string.eq
-                (ast.ast-decl-module-list-get (& modules) 0 "")
+                (ast_tests.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.runtime"))]
           [(load.ResultCompilerLoadWithPaths.Err _) false])
         (match (load.compiler-load-core-macro-prelude-with-roots-cfg
@@ -2897,10 +2898,10 @@
                 (compiler-load-test-path-at paths 0)
                 (load.compiler-load-core-macro-prelude-path-shared-view))
               (string.eq
-                (ast.ast-decl-module-list-get (& modules) 0 "")
+                (ast_tests.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.core_macros")
               (string.eq
-                (ast.ast-decl-module-list-get
+                (ast_tests.ast-decl-module-list-get
                   (& modules)
                   (- (ast.ast-decl-module-list-len (& modules)) 1)
                   "missing")
@@ -2924,7 +2925,7 @@
                 (compiler-load-test-path-at paths 0)
                 (load.compiler-load-runtime-prelude-path-shared-view))
               (string.eq
-                (ast.ast-decl-module-list-get (& modules) 0 "")
+                (ast_tests.ast-decl-module-list-get (& modules) 0 "")
                 "stdlib.runtime"))]
           [(load.ResultCompilerLoadWithPaths.Err _) false])))))
 

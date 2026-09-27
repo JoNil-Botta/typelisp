@@ -183,14 +183,16 @@
 
 (define (spec-owner-context-new
   [pools : ast.AstNodePoolContext]
-  [intern-state : spec_ci.InternCompatState]) : SpecOwnerContext
+  [intern-state : (& intern-state spec_ci.InternCompatState)]) : SpecOwnerContext
   (cfg
     (any compile-profile test)
     (spec-owner-context-new-with-profile-state
       pools
-      intern-state
+      (owned_view.compiler-owned-reference-shared-view intern-state)
       (profile_state.compiler-profile-state-new))
     (let
+      [intern-state : spec_ci.InternCompatState
+        (owned_view.compiler-owned-reference-shared-view intern-state)]
       [expr-segment-bases : i64
         (ast.ast-node-pool-context-expr-segment-bases (& pools))]
       [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
@@ -3961,10 +3963,7 @@
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
       (let
-        [owner : SpecOwnerContext
-          (spec-owner-context-new
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
+        [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
         [result : ResultGenProgram
           (gen-normalize-program-with-pools-and-intern-state program owner)]
         (begin
@@ -3986,10 +3985,7 @@
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
       (let
-        [owner : SpecOwnerContext
-          (spec-owner-context-new
-            pools
-            (spec_ci.intern-global-shared-view intern-state))]
+        [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
         [result : ResultGenProgramWithPaths
           (gen-normalize-program-with-paths-and-pools-and-intern-state
             program

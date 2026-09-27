@@ -13096,9 +13096,7 @@
       (lower-cleanup-stack-entry? cleanups 0 201 301)
       (lower-cleanup-stack-entry? cleanups 1 202 302)
       (= (lower.lower-c-abi-slot-list-count slots) 2)
-      (match (lower.lower-c-abi-slot-list-ref
-        (lower.lower-global-shared-view slots)
-        0)
+      (match (lower.lower-c-abi-slot-list-ref slots 0)
         [(lower.LowerCAbiSlot.Slot ty offset)
           (and (= offset 0) (tc_core.tc-type-eq ty (ast.AstType.I64)))])
       (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -13991,9 +13989,7 @@
               (and
                 (= size 16)
                 (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref
-                  (lower.lower-global-shared-view slots)
-                  0)
+                (match (lower.lower-c-abi-slot-list-ref slots 0)
                   [(lower.LowerCAbiSlot.Slot ty _)
                     (tc_core.tc-type-eq ty (ast.AstType.U64))])
                 (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -14020,9 +14016,7 @@
               (and
                 (= size 16)
                 (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref
-                  (lower.lower-global-shared-view slots)
-                  0)
+                (match (lower.lower-c-abi-slot-list-ref slots 0)
                   [(lower.LowerCAbiSlot.Slot ty _)
                     (tc_core.tc-type-eq ty (ast.AstType.U64))])
                 (match (lower.lower-c-abi-slot-list-ref slots 1)
@@ -14068,9 +14062,7 @@
               (and
                 (= size 16)
                 (= (lower.lower-c-abi-slot-list-count slots) 2)
-                (match (lower.lower-c-abi-slot-list-ref
-                  (lower.lower-global-shared-view slots)
-                  0)
+                (match (lower.lower-c-abi-slot-list-ref slots 0)
                   [(lower.LowerCAbiSlot.Slot ty _)
                     (tc_core.tc-type-eq ty (ast.AstType.U64))])
                 (match (lower.lower-c-abi-slot-list-ref slots 1)

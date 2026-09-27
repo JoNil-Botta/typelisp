@@ -114,9 +114,7 @@
         (tc_core.tc-job-state-macro-call-sites job-state))
       (let
         [owner-context : spec.SpecOwnerContext
-          (spec.spec-owner-context-new
-            pools
-            (owned_view.compiler-owned-shared-view intern-state))]
+          (spec.spec-owner-context-new pools intern-state)]
         [generated-result : spec.ResultGenProgramWithPaths
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             program
@@ -190,9 +188,7 @@
             job-state
             (let
               [owner-context : spec.SpecOwnerContext
-                (spec.spec-owner-context-new
-                  pools
-                  (owned_view.compiler-owned-shared-view intern-state))]
+                (spec.spec-owner-context-new pools intern-state)]
               [generated-result : spec.ResultGenProgramWithPaths
                 (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
                   program
@@ -231,8 +227,7 @@
                                 [owner-context : spec.SpecOwnerContext
                                   (spec.spec-owner-context-new
                                     pools
-                                    (owned_view.compiler-owned-shared-view
-                                      intern-state))]
+                                    intern-state)]
                                 [normalized-result : spec.ResultGenProgramWithPaths
                                   (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
                                     expanded

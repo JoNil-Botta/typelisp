@@ -30615,7 +30615,7 @@
     [loops : opt.OptNaturalLoopList
       (opt.opt-cfg-natural-loops-with-context
         (opt.compiler-opt-global-shared-view blocks)
-        (opt.compiler-opt-global-shared-view context))]
+        context)]
     (match (opt.opt-natural-loop-find
       (opt.compiler-opt-global-shared-view loops)
       (ir.compiler-ir-label "outer")
@@ -36517,7 +36517,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (opt.opt-bce-version-check-count
-            (ir.compiler-ir-global-shared-view instrs)
+            instrs
             0
             (ir.compiler-ir-instr-seq-count instrs)
             0)])]))
@@ -36792,7 +36792,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (opt.opt-bce-version-check-count
-            (ir.compiler-ir-global-shared-view instrs)
+            instrs
             0
             (ir.compiler-ir-instr-seq-count instrs)
             0)])]))
@@ -37226,7 +37226,7 @@
               (+
                 acc
                 (opt.opt-bce-version-check-count
-                  (ir.compiler-ir-global-shared-view instrs)
+                  instrs
                   0
                   (ir.compiler-ir-instr-seq-count instrs)
                   0))
@@ -43883,7 +43883,7 @@
               (+
                 acc
                 (opt.opt-bce-version-check-count
-                  (ir.compiler-ir-global-shared-view instrs)
+                  instrs
                   0
                   (ir.compiler-ir-instr-seq-count instrs)
                   0))

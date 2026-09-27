@@ -7682,7 +7682,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -7716,7 +7716,7 @@
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -8174,22 +8174,29 @@
     [ty : ast.AstType (compiler-backend-register-group-test-type)]
     [index : backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    (match (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      (regalloc.compiler-reg-assignment-table-empty)
-      (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 7))
-      (ast.ast-type-cons ty (ast.ast-type-list-new))
-      false
-      0
-      0
-      0
-      0
-      0
-      (cdiag.compiler-diagnostic-at-start "" "")
-      index
-      4
-      index.backend-state)
+    (match (let
+      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+      [target (backend.CompilerBackendTarget.Linux)]
+      [assignments (regalloc.compiler-reg-assignment-table-empty)]
+      [args (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 7))]
+      [types (ast.ast-type-cons ty (ast.ast-type-list-new))]
+      [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+      (backend.compiler-backend-emit-call-args
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        func-diag
+        index
+        4
+        index.backend-state))
       [(backend.ResultCompilerBackend.Err diag)
         (string.eq
           (cdiag.compiler-diagnostic-message (__tl-box-place diag))
@@ -14261,26 +14268,31 @@ g:
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
     (asm-ok?
-      (backend.compiler-backend-emit-call-args
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        assignments
-        args
-        (compiler-backend-i64-type-list8)
-        false
-        0
-        1
-        0
-        1
-        0
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty))
-        2
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [target (backend.CompilerBackendTarget.Linux)]
+        [types (compiler-backend-i64-type-list8)]
+        [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+        (backend.compiler-backend-emit-call-args
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          false
+          0
+          1
+          0
+          1
+          0
+          func-diag
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          2
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))))
       (has ", %rsi\n" ", %rdx\n")
       (lacks "%rdi"))))
 
@@ -14293,26 +14305,31 @@ g:
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
     (asm-ok?
-      (backend.compiler-backend-emit-call-args
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        assignments
-        args
-        (compiler-backend-i64-type-list8)
-        false
-        0
-        1
-        0
-        1
-        0
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty))
-        2
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [target (backend.CompilerBackendTarget.Linux)]
+        [types (compiler-backend-i64-type-list8)]
+        [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+        (backend.compiler-backend-emit-call-args
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          false
+          0
+          1
+          0
+          1
+          0
+          func-diag
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          2
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))))
       (has "    movq %rsi, %rdx\n    movq %rdi, %rsi\n"))))
 
 (define (compiler-backend-c-abi-arg-cycle-ok?) : bool
@@ -14324,26 +14341,31 @@ g:
         (ir.CompilerIrValue.Var 0)
         (ir.CompilerIrValue.Var 1))]
     (asm-ok?
-      (backend.compiler-backend-emit-call-args
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (backend.CompilerBackendTarget.Linux)
-        assignments
-        args
-        (compiler-backend-i64-type-list8)
-        true
-        0
-        0
-        0
-        0
-        0
-        (cdiag.compiler-diagnostic-at-start "" "")
-        (compiler-backend-program-index-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (ir.compiler-ir-function-seq-empty)
-          (ir.compiler-ir-extern-seq-empty))
-        2
-        (backend.compiler-backend-state-new
-          (ci.intern-compat-state-capture-active)))
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [target (backend.CompilerBackendTarget.Linux)]
+        [types (compiler-backend-i64-type-list8)]
+        [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+        (backend.compiler-backend-emit-call-args
+          type-segment-bases
+          target
+          assignments
+          args
+          types
+          true
+          0
+          0
+          0
+          0
+          0
+          func-diag
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          2
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))))
       (has ", %rdi\n" ", %rsi\n")
       (lacks "    movq %rsi, %rdi\n    movq %rdi, %rsi\n"))))
 
@@ -29083,26 +29105,33 @@ g:
 
 (define (compiler-backend-immediate-stack-call-args-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-call-args
-      (ast.ast-node-pool-reader-type-segment-bases)
-      (backend.CompilerBackendTarget.Linux)
-      (regalloc.compiler-reg-assignment-table-empty)
-      (compiler-backend-i64-immediate-call-args8)
-      (compiler-backend-i64-type-list8)
-      false
-      0
-      0
-      0
-      0
-      0
-      (cdiag.compiler-diagnostic-at-start "" "")
-      (compiler-backend-program-index-build
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty))
-      0
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+    (let
+      [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+      [target (backend.CompilerBackendTarget.Linux)]
+      [assignments (regalloc.compiler-reg-assignment-table-empty)]
+      [args (compiler-backend-i64-immediate-call-args8)]
+      [types (compiler-backend-i64-type-list8)]
+      [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
+      (backend.compiler-backend-emit-call-args
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        false
+        0
+        0
+        0
+        0
+        0
+        func-diag
+        (compiler-backend-program-index-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty))
+        0
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))))
     (has "    movq $7, 0(%rsp)\n" "    movq $8, 8(%rsp)\n")
     (lacks "    movq %r11, 0(%rsp)\n")))
 
@@ -29354,7 +29383,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -29432,7 +29461,7 @@ g:
         0
         0
         0
-        (owned_view.compiler-owned-shared-view diag)
+        diag
         index
         1
         index.backend-state)]
@@ -40191,32 +40220,22 @@ b_keep:
         (ParallelMoveEdge 5 8 0 12 13)
         (compiler-parallel-move-test-edge 6 12 20))]
     (and
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view empty)
-        empty)
+      (match (pmove.compiler-parallel-move-decision empty empty)
         [(CompilerParallelMoveDone) true]
         [_ false])
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view chain)
-        chain)
+      (match (pmove.compiler-parallel-move-decision chain chain)
         [(CompilerParallelMoveUnblocked id) (= id 1)]
         [_ false])
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view cycle)
-        cycle)
+      (match (pmove.compiler-parallel-move-decision cycle cycle)
         [(CompilerParallelMoveCycle id) (= id 1)]
         [_ false])
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view pair)
-        (pmove.compiler-parallel-move-shared-view pair))
+      (match (pmove.compiler-parallel-move-decision pair pair)
         [(CompilerParallelMoveUnblocked id) (= id 4)]
         [_ false])
       (pmove.compiler-parallel-move-seq-has-blocked?
         (pmove.compiler-parallel-move-shared-view pair)
         pair)
-      (match (pmove.compiler-parallel-move-decision
-        (pmove.compiler-parallel-move-shared-view pair-source)
-        (pmove.compiler-parallel-move-shared-view pair-source))
+      (match (pmove.compiler-parallel-move-decision pair-source pair-source)
         [(CompilerParallelMoveUnblocked id) (= id 5)]
         [_ false])
       (pmove.compiler-parallel-move-seq-has-blocked?

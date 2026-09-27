@@ -309,9 +309,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (spec.spec-place-shared-view intern-state))]
+      (spec.spec-owner-context-new pools intern-state)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
@@ -337,9 +335,7 @@
     [intern-state : spec_ci.InternCompatState
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (spec_ci.intern-global-shared-view intern-state))]
+      (spec.spec-owner-context-new pools intern-state)]
     (begin
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
@@ -783,9 +779,7 @@
     [intern-a : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [intern-b : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner-a : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools-a
-        (spec_ci.intern-global-shared-view intern-a))]
+      (spec.spec-owner-context-new pools-a intern-a)]
     [owner-b : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools-b intern-b)]
     [array-a : ast.AstType
@@ -1625,9 +1619,7 @@
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : spec.SpecOwnerContext
-      (spec.spec-owner-context-new
-        pools
-        (spec_ci.intern-global-shared-view intern-state))]
+      (spec.spec-owner-context-new pools intern-state)]
     [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]

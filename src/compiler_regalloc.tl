@@ -25111,12 +25111,14 @@
 ;; measured never to fire, so the fallback is a correctness backstop, not a
 ;; performance path.
 (define (compiler-reg-greedy-reg-free?
-  [occupancy : CompilerRegGreedyOccupancy]
+  [occupancy : (& occupancy CompilerRegGreedyOccupancy)]
   [interval-index : (& interval-index CompilerRegIntervalIndex)]
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [var : i64]
   [reg-index : i64]) : bool
   (let
+    [occupancy : CompilerRegGreedyOccupancy
+      (owned_view.compiler-owned-reference-shared-view occupancy)]
     [primary : (__tl_dyn-array i64) occupancy.primary]
     [coarse : (__tl_dyn-array i64) occupancy.live-union-coarse]
     [segs : CompilerRegIntervalSeq
@@ -25193,7 +25195,7 @@
             (compiler-reg-global-shared-view forbidden)
             reg))
         (compiler-reg-greedy-reg-free?
-          (compiler-reg-global-shared-view occupancy)
+          occupancy
           interval-index
           ref-counts
           var

@@ -9688,8 +9688,8 @@
         env
         type-env
         head
-        (lower-global-shared-view subst)
-        (lower-global-shared-view shadowed))
+        subst
+        shadowed)
         [(ResultLowerAstExpr.Ok rewritten-head)
           (begin
             (ast.ast-expr-list-push
@@ -9765,8 +9765,8 @@
             env
             type-env
             init
-            (lower-global-shared-view subst)
-            (lower-global-shared-view shadowed))
+            subst
+            shadowed)
             [(ResultLowerAstExpr.Ok rewritten-init)
               (begin
                 (ast.ast-let-binding-list-push
@@ -9825,14 +9825,16 @@
             (lower-id-set-insert (lower-global-shared-view previous) handle))
           (set!
             result
-            (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              body
-              helper-subst
-              (lower-id-set-empty)))
+            (let
+              [shadowed (lower-id-set-empty)]
+              (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                body
+                helper-subst
+                shadowed)))
           (compiler-lower-function-state-inline-helper-stack-set!
             function-state
             previous)
@@ -10058,707 +10060,715 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]
-  [subst : LowerSpmdInlineSubst]
-  [shadowed : LowerIdSet]) : ResultLowerAstExpr
-  (match (lower-global-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [rewritten : ast.AstExpr
-          (try
-            (lower-spmd-inline-expr
+  [subst : (& subst LowerSpmdInlineSubst)]
+  [shadowed : (& shadowed LowerIdSet)]) : ResultLowerAstExpr
+  (let
+    [subst : LowerSpmdInlineSubst
+      (owned_view.compiler-owned-reference-shared-view subst)]
+    [shadowed : LowerIdSet
+      (owned_view.compiler-owned-reference-shared-view shadowed)]
+    (match (lower-global-shared-view expr)
+      [(ast.AstExpr.Spanned inner-box span)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          [rewritten : ast.AstExpr
+            (try
+              (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                inner
+                subst
+                shadowed))]
+          [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+          (ResultLowerAstExpr.Ok
+            (lower-context-expr-get
               ctx
-              function-state
-              env
-              type-env
-              inner
-              subst
-              shadowed))]
-        [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-        (ResultLowerAstExpr.Ok
-          (lower-context-expr-get
+              (ast.ast-expr-spanned-with-pools
+                pools
+                (lower-context-expr-push ctx rewritten)
+                span))))]
+      [(ast.AstExpr.Var name)
+        (match (lower-spmd-inline-subst-lookup subst name)
+          [(LowerMaybeAstExpr.Some value) (ResultLowerAstExpr.Ok value)]
+          [(LowerMaybeAstExpr.No) (ResultLowerAstExpr.Ok expr)])]
+      [(ast.AstExpr.Binary op left-box right-box)
+        (let
+          [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
+          [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
+          (match (lower-spmd-inline-expr
             ctx
-            (ast.ast-expr-spanned-with-pools
-              pools
-              (lower-context-expr-push ctx rewritten)
-              span))))]
-    [(ast.AstExpr.Var name)
-      (match (lower-spmd-inline-subst-lookup subst name)
-        [(LowerMaybeAstExpr.Some value) (ResultLowerAstExpr.Ok value)]
-        [(LowerMaybeAstExpr.No) (ResultLowerAstExpr.Ok expr)])]
-    [(ast.AstExpr.Binary op left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          left
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-left)
-            (let
-              [rewritten-right : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    right
-                    subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-binary-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    op
-                    (lower-context-expr-push ctx rewritten-left)
-                    (lower-context-expr-push ctx rewritten-right)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.Unary op inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [rewritten : ast.AstExpr
-          (try
-            (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              inner
-              subst
-              shadowed))]
-        (ResultLowerAstExpr.Ok
-          (lower-context-expr-get
-            ctx
-            (ast.ast-expr-unary-with-pools
-              (tc_core.tc-context-pools ctx)
-              op
-              (lower-context-expr-push ctx rewritten)))))]
-    [(ast.AstExpr.Call func-box args)
-      (let
-        [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-        (lower-spmd-inline-call
-          ctx
-          function-state
-          env
-          type-env
-          func
-          args
-          subst
-          shadowed
-          expr))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          cond
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-cond)
-            (match (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              then-branch
-              (lower-global-shared-view subst)
-              (lower-global-shared-view shadowed))
-              [(ResultLowerAstExpr.Ok rewritten-then)
-                (let
-                  [rewritten-else : ast.AstExpr
-                    (try
-                      (lower-spmd-inline-expr
-                        ctx
-                        function-state
-                        env
-                        type-env
-                        else-branch
-                        subst
-                        shadowed))]
-                  (ResultLowerAstExpr.Ok
-                    (lower-context-expr-get
-                      ctx
-                      (ast.ast-expr-if-with-pools
-                        (tc_core.tc-context-pools ctx)
-                        (lower-context-expr-push ctx rewritten-cond)
-                        (lower-context-expr-push ctx rewritten-then)
-                        (lower-context-expr-push ctx rewritten-else)))))]
-              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            [rewritten : LowerSpmdInlineLetBindings
-              (try
-                (lower-spmd-inline-let-bindings
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  bindings
-                  subst
-                  shadowed))]
-            (match rewritten
-              [(LowerSpmdInlineLetBindings.Bindings
-                  rewritten-bindings
-                  body-subst
-                  body-shadowed)
-                (let
-                  [rewritten-body : ast.AstExpr
-                    (try
-                      (lower-spmd-inline-expr
-                        ctx
-                        function-state
-                        env
-                        type-env
-                        body
-                        body-subst
-                        body-shadowed))]
-                  (ResultLowerAstExpr.Ok
-                    (lower-context-expr-get
-                      ctx
-                      (ast.ast-expr-let-with-pools
-                        (tc_core.tc-context-pools ctx)
-                        rewritten-bindings
-                        (lower-context-expr-push ctx rewritten-body)))))]))])]
-    [(ast.AstExpr.Begin exprs)
-      (let
-        [rewritten : ast.AstExprList
-          (try
-            (lower-spmd-inline-expr-list
-              ctx
-              function-state
-              env
-              type-env
-              exprs
-              subst
-              shadowed))]
-        (ResultLowerAstExpr.Ok (ast.AstExpr.Begin rewritten)))]
-    [(ast.AstExpr.Ann inner-box ty-id)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [rewritten : ast.AstExpr
-          (try
-            (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              inner
-              subst
-              shadowed))]
-        (ResultLowerAstExpr.Ok
-          (lower-context-expr-get
-            ctx
-            (ast.ast-expr-ann-with-pools-id
-              (tc_core.tc-context-pools ctx)
-              (lower-context-expr-push ctx rewritten)
-              ty-id))))]
-    [(ast.AstExpr.Cast inner-box ty-id)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [rewritten : ast.AstExpr
-          (try
-            (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              inner
-              subst
-              shadowed))]
-        (ResultLowerAstExpr.Ok
-          (lower-context-expr-get
-            ctx
-            (ast.ast-expr-cast-with-pools-id
-              (tc_core.tc-context-pools ctx)
-              (lower-context-expr-push ctx rewritten)
-              ty-id))))]
-    [(ast.AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          array
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-array)
-            (let
-              [rewritten-index : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    index
-                    subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-array-ref-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    (lower-context-expr-push ctx rewritten-array)
-                    (lower-context-expr-push ctx rewritten-index)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          array
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-array)
-            (match (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              index
-              (lower-global-shared-view subst)
-              (lower-global-shared-view shadowed))
-              [(ResultLowerAstExpr.Ok rewritten-index)
-                (let
-                  [rewritten-value : ast.AstExpr
-                    (try
-                      (lower-spmd-inline-expr
-                        ctx
-                        function-state
-                        env
-                        type-env
-                        value
-                        subst
-                        shadowed))]
-                  (ResultLowerAstExpr.Ok
-                    (lower-context-expr-get
-                      ctx
-                      (ast.ast-expr-array-set-with-pools
-                        (tc_core.tc-context-pools ctx)
-                        (lower-context-expr-push ctx rewritten-array)
-                        (lower-context-expr-push ctx rewritten-index)
-                        (lower-context-expr-push ctx rewritten-value)))))]
-              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-        [live : ast.AstExpr (lower-context-expr-get ctx live-box)]
-        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          array
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-array)
-            (match (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              live
-              (lower-global-shared-view subst)
-              (lower-global-shared-view shadowed))
-              [(ResultLowerAstExpr.Ok rewritten-live)
-                (let
-                  [rewritten-index : ast.AstExpr
-                    (try
-                      (lower-spmd-inline-expr
-                        ctx
-                        function-state
-                        env
-                        type-env
-                        index
-                        subst
-                        shadowed))]
-                  (ResultLowerAstExpr.Ok
-                    (lower-context-expr-get
-                      ctx
-                      (ast.ast-expr-array-take-with-pools
-                        (tc_core.tc-context-pools ctx)
-                        (lower-context-expr-push ctx rewritten-array)
-                        (lower-context-expr-push ctx rewritten-live)
-                        (lower-context-expr-push ctx rewritten-index)))))]
-              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.FixedArrayTake array-box index-box)
-      (let
-        [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-        [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          array
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-array)
-            (let
-              [rewritten-index : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    index
-                    subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-fixed-array-take-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    (lower-context-expr-push ctx rewritten-array)
-                    (lower-context-expr-push ctx rewritten-index)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.Replace place-box replacement-box)
-      (let
-        [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
-        [replacement : ast.AstExpr (lower-context-expr-get ctx replacement-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          place
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-place)
-            (let
-              [rewritten-replacement : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    replacement
-                    subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-replace-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    (lower-context-expr-push ctx rewritten-place)
-                    (lower-context-expr-push ctx rewritten-replacement)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.StructSet receiver-box field value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          receiver
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-receiver)
-            (let
-              [rewritten-value : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    value
-                    subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-struct-set-id-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    (lower-context-expr-push ctx rewritten-receiver)
-                    field
-                    (lower-context-expr-push ctx rewritten-value)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan
-            op
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (match (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              start
-              (lower-global-shared-view subst)
-              (lower-global-shared-view shadowed))
-              [(ResultLowerAstExpr.Ok rewritten-start)
-                (match (lower-spmd-inline-expr
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  end
-                  (lower-global-shared-view subst)
-                  (lower-global-shared-view shadowed))
-                  [(ResultLowerAstExpr.Ok rewritten-end)
-                    (match (lower-spmd-inline-expr
+            function-state
+            env
+            type-env
+            left
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-left)
+              (let
+                [rewritten-right : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
                       ctx
                       function-state
                       env
                       type-env
-                      init
-                      (lower-global-shared-view subst)
-                      (lower-global-shared-view shadowed))
-                      [(ResultLowerAstExpr.Ok rewritten-init)
-                        (match (lower-spmd-inline-expr
+                      right
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-binary-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      op
+                      (lower-context-expr-push ctx rewritten-left)
+                      (lower-context-expr-push ctx rewritten-right)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.Unary op inner-box)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          [rewritten : ast.AstExpr
+            (try
+              (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                inner
+                subst
+                shadowed))]
+          (ResultLowerAstExpr.Ok
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-unary-with-pools
+                (tc_core.tc-context-pools ctx)
+                op
+                (lower-context-expr-push ctx rewritten)))))]
+      [(ast.AstExpr.Call func-box args)
+        (let
+          [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
+          (lower-spmd-inline-call
+            ctx
+            function-state
+            env
+            type-env
+            func
+            args
+            subst
+            shadowed
+            expr))]
+      [(ast.AstExpr.If cond-box then-box else-box)
+        (let
+          [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
+          [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
+          [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            cond
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-cond)
+              (match (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                then-branch
+                subst
+                shadowed)
+                [(ResultLowerAstExpr.Ok rewritten-then)
+                  (let
+                    [rewritten-else : ast.AstExpr
+                      (try
+                        (lower-spmd-inline-expr
+                          ctx
+                          function-state
+                          env
+                          type-env
+                          else-branch
+                          subst
+                          shadowed))]
+                    (ResultLowerAstExpr.Ok
+                      (lower-context-expr-get
+                        ctx
+                        (ast.ast-expr-if-with-pools
+                          (tc_core.tc-context-pools ctx)
+                          (lower-context-expr-push ctx rewritten-cond)
+                          (lower-context-expr-push ctx rewritten-then)
+                          (lower-context-expr-push ctx rewritten-else)))))]
+                [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body-box)
+            (let
+              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+              [rewritten : LowerSpmdInlineLetBindings
+                (try
+                  (lower-spmd-inline-let-bindings
+                    ctx
+                    function-state
+                    env
+                    type-env
+                    bindings
+                    subst
+                    shadowed))]
+              (match rewritten
+                [(LowerSpmdInlineLetBindings.Bindings
+                    rewritten-bindings
+                    body-subst
+                    body-shadowed)
+                  (let
+                    [rewritten-body : ast.AstExpr
+                      (try
+                        (lower-spmd-inline-expr
+                          ctx
+                          function-state
+                          env
+                          type-env
+                          body
+                          body-subst
+                          body-shadowed))]
+                    (ResultLowerAstExpr.Ok
+                      (lower-context-expr-get
+                        ctx
+                        (ast.ast-expr-let-with-pools
+                          (tc_core.tc-context-pools ctx)
+                          rewritten-bindings
+                          (lower-context-expr-push ctx rewritten-body)))))]))])]
+      [(ast.AstExpr.Begin exprs)
+        (let
+          [rewritten : ast.AstExprList
+            (try
+              (lower-spmd-inline-expr-list
+                ctx
+                function-state
+                env
+                type-env
+                exprs
+                subst
+                shadowed))]
+          (ResultLowerAstExpr.Ok (ast.AstExpr.Begin rewritten)))]
+      [(ast.AstExpr.Ann inner-box ty-id)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          [rewritten : ast.AstExpr
+            (try
+              (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                inner
+                subst
+                shadowed))]
+          (ResultLowerAstExpr.Ok
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-ann-with-pools-id
+                (tc_core.tc-context-pools ctx)
+                (lower-context-expr-push ctx rewritten)
+                ty-id))))]
+      [(ast.AstExpr.Cast inner-box ty-id)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          [rewritten : ast.AstExpr
+            (try
+              (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                inner
+                subst
+                shadowed))]
+          (ResultLowerAstExpr.Ok
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-cast-with-pools-id
+                (tc_core.tc-context-pools ctx)
+                (lower-context-expr-push ctx rewritten)
+                ty-id))))]
+      [(ast.AstExpr.ArrayRef array-box index-box)
+        (let
+          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
+          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            array
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-array)
+              (let
+                [rewritten-index : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      index
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-array-ref-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-array)
+                      (lower-context-expr-push ctx rewritten-index)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.ArraySet array-box index-box value-box)
+        (let
+          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
+          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            array
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-array)
+              (match (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                index
+                subst
+                shadowed)
+                [(ResultLowerAstExpr.Ok rewritten-index)
+                  (let
+                    [rewritten-value : ast.AstExpr
+                      (try
+                        (lower-spmd-inline-expr
                           ctx
                           function-state
                           env
                           type-env
                           value
-                          (lower-global-shared-view subst)
-                          (lower-global-shared-view shadowed))
-                          [(ResultLowerAstExpr.Ok rewritten-value)
-                            (let
-                              [rewritten-body : ast.AstExpr
-                                (try
-                                  (lower-spmd-inline-expr
-                                    ctx
-                                    function-state
-                                    env
-                                    type-env
-                                    body
-                                    subst
-                                    shadowed))]
-                              (ResultLowerAstExpr.Ok
-                                (ast.AstExpr.SpmdScan
-                                  (box
-                                    (ast.AstSpmdScan.Scan
-                                      op
-                                      index
-                                      index-ty
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-start)
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-end)
-                                      prefix
-                                      prefix-ty
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-init)
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-value)
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-body))))))]
-                          [(ResultLowerAstExpr.Err diag)
-                            (ResultLowerAstExpr.Err diag)])]
-                      [(ResultLowerAstExpr.Err diag)
-                        (ResultLowerAstExpr.Err diag)])]
-                  [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
-              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact
-            index
-            index-ty
-            start-box
-            end-box
-            slot
-            slot-ty
-            init-box
-            keep-box
-            body-box)
-          (let
-            [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-            [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-            [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-            [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (match (lower-spmd-inline-expr
-              ctx
-              function-state
-              env
-              type-env
-              start
-              (lower-global-shared-view subst)
-              (lower-global-shared-view shadowed))
-              [(ResultLowerAstExpr.Ok rewritten-start)
-                (match (lower-spmd-inline-expr
-                  ctx
-                  function-state
-                  env
-                  type-env
-                  end
-                  (lower-global-shared-view subst)
-                  (lower-global-shared-view shadowed))
-                  [(ResultLowerAstExpr.Ok rewritten-end)
-                    (match (lower-spmd-inline-expr
-                      ctx
-                      function-state
-                      env
-                      type-env
-                      init
-                      (lower-global-shared-view subst)
-                      (lower-global-shared-view shadowed))
-                      [(ResultLowerAstExpr.Ok rewritten-init)
-                        (match (lower-spmd-inline-expr
+                          subst
+                          shadowed))]
+                    (ResultLowerAstExpr.Ok
+                      (lower-context-expr-get
+                        ctx
+                        (ast.ast-expr-array-set-with-pools
+                          (tc_core.tc-context-pools ctx)
+                          (lower-context-expr-push ctx rewritten-array)
+                          (lower-context-expr-push ctx rewritten-index)
+                          (lower-context-expr-push ctx rewritten-value)))))]
+                [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.ArrayTake array-box live-box index-box)
+        (let
+          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
+          [live : ast.AstExpr (lower-context-expr-get ctx live-box)]
+          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            array
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-array)
+              (match (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                live
+                subst
+                shadowed)
+                [(ResultLowerAstExpr.Ok rewritten-live)
+                  (let
+                    [rewritten-index : ast.AstExpr
+                      (try
+                        (lower-spmd-inline-expr
                           ctx
                           function-state
                           env
                           type-env
-                          keep
-                          (lower-global-shared-view subst)
-                          (lower-global-shared-view shadowed))
-                          [(ResultLowerAstExpr.Ok rewritten-keep)
-                            (let
-                              [rewritten-body : ast.AstExpr
-                                (try
-                                  (lower-spmd-inline-expr
-                                    ctx
-                                    function-state
-                                    env
-                                    type-env
-                                    body
-                                    subst
-                                    shadowed))]
-                              (ResultLowerAstExpr.Ok
-                                (ast.AstExpr.SpmdCompact
-                                  (box
-                                    (ast.AstSpmdCompact.Compact
-                                      index
-                                      index-ty
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-start)
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-end)
-                                      slot
-                                      slot-ty
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-init)
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-keep)
-                                      (lower-context-expr-push
-                                        ctx
-                                        rewritten-body))))))]
-                          [(ResultLowerAstExpr.Err diag)
-                            (ResultLowerAstExpr.Err diag)])]
-                      [(ResultLowerAstExpr.Err diag)
-                        (ResultLowerAstExpr.Err diag)])]
-                  [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
-              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
-    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          value
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-value)
+                          index
+                          subst
+                          shadowed))]
+                    (ResultLowerAstExpr.Ok
+                      (lower-context-expr-get
+                        ctx
+                        (ast.ast-expr-array-take-with-pools
+                          (tc_core.tc-context-pools ctx)
+                          (lower-context-expr-push ctx rewritten-array)
+                          (lower-context-expr-push ctx rewritten-live)
+                          (lower-context-expr-push ctx rewritten-index)))))]
+                [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.FixedArrayTake array-box index-box)
+        (let
+          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
+          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            array
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-array)
+              (let
+                [rewritten-index : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      index
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-fixed-array-take-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-array)
+                      (lower-context-expr-push ctx rewritten-index)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.Replace place-box replacement-box)
+        (let
+          [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+          [replacement : ast.AstExpr
+            (lower-context-expr-get ctx replacement-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            place
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-place)
+              (let
+                [rewritten-replacement : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      replacement
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-replace-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-place)
+                      (lower-context-expr-push ctx rewritten-replacement)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.StructSet receiver-box field value-box)
+        (let
+          [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            receiver
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-receiver)
+              (let
+                [rewritten-value : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      value
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-struct-set-id-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-receiver)
+                      field
+                      (lower-context-expr-push ctx rewritten-value)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.SpmdScan scan-box)
+        (match (__tl-box-place scan-box)
+          [(ast.AstSpmdScan.Scan
+              op
+              index
+              index-ty
+              start-box
+              end-box
+              prefix
+              prefix-ty
+              init-box
+              value-box
+              body-box)
             (let
-              [rewritten-lane : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
+              [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+              [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+              [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+              [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+              (match (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                start
+                subst
+                shadowed)
+                [(ResultLowerAstExpr.Ok rewritten-start)
+                  (match (lower-spmd-inline-expr
                     ctx
                     function-state
                     env
                     type-env
-                    lane
+                    end
                     subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-spmd-broadcast-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    (lower-context-expr-push ctx rewritten-value)
-                    (lower-context-expr-push ctx rewritten-lane)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-        (match (lower-spmd-inline-expr
-          ctx
-          function-state
-          env
-          type-env
-          value
-          (lower-global-shared-view subst)
-          (lower-global-shared-view shadowed))
-          [(ResultLowerAstExpr.Ok rewritten-value)
+                    shadowed)
+                    [(ResultLowerAstExpr.Ok rewritten-end)
+                      (match (lower-spmd-inline-expr
+                        ctx
+                        function-state
+                        env
+                        type-env
+                        init
+                        subst
+                        shadowed)
+                        [(ResultLowerAstExpr.Ok rewritten-init)
+                          (match (lower-spmd-inline-expr
+                            ctx
+                            function-state
+                            env
+                            type-env
+                            value
+                            subst
+                            shadowed)
+                            [(ResultLowerAstExpr.Ok rewritten-value)
+                              (let
+                                [rewritten-body : ast.AstExpr
+                                  (try
+                                    (lower-spmd-inline-expr
+                                      ctx
+                                      function-state
+                                      env
+                                      type-env
+                                      body
+                                      subst
+                                      shadowed))]
+                                (ResultLowerAstExpr.Ok
+                                  (ast.AstExpr.SpmdScan
+                                    (box
+                                      (ast.AstSpmdScan.Scan
+                                        op
+                                        index
+                                        index-ty
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-start)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-end)
+                                        prefix
+                                        prefix-ty
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-init)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-value)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-body))))))]
+                            [(ResultLowerAstExpr.Err diag)
+                              (ResultLowerAstExpr.Err diag)])]
+                        [(ResultLowerAstExpr.Err diag)
+                          (ResultLowerAstExpr.Err diag)])]
+                    [(ResultLowerAstExpr.Err diag)
+                      (ResultLowerAstExpr.Err diag)])]
+                [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
+      [(ast.AstExpr.SpmdCompact compact-box)
+        (match (__tl-box-place compact-box)
+          [(ast.AstSpmdCompact.Compact
+              index
+              index-ty
+              start-box
+              end-box
+              slot
+              slot-ty
+              init-box
+              keep-box
+              body-box)
             (let
-              [rewritten-lane : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
+              [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
+              [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
+              [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
+              [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
+              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+              (match (lower-spmd-inline-expr
+                ctx
+                function-state
+                env
+                type-env
+                start
+                subst
+                shadowed)
+                [(ResultLowerAstExpr.Ok rewritten-start)
+                  (match (lower-spmd-inline-expr
                     ctx
                     function-state
                     env
                     type-env
-                    lane
+                    end
                     subst
-                    shadowed))]
-              (ResultLowerAstExpr.Ok
-                (lower-context-expr-get
-                  ctx
-                  (ast.ast-expr-spmd-shuffle-with-pools
-                    (tc_core.tc-context-pools ctx)
-                    (lower-context-expr-push ctx rewritten-value)
-                    (lower-context-expr-push ctx rewritten-lane)))))]
-          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
-    [_ (ResultLowerAstExpr.Ok expr)]))
+                    shadowed)
+                    [(ResultLowerAstExpr.Ok rewritten-end)
+                      (match (lower-spmd-inline-expr
+                        ctx
+                        function-state
+                        env
+                        type-env
+                        init
+                        subst
+                        shadowed)
+                        [(ResultLowerAstExpr.Ok rewritten-init)
+                          (match (lower-spmd-inline-expr
+                            ctx
+                            function-state
+                            env
+                            type-env
+                            keep
+                            subst
+                            shadowed)
+                            [(ResultLowerAstExpr.Ok rewritten-keep)
+                              (let
+                                [rewritten-body : ast.AstExpr
+                                  (try
+                                    (lower-spmd-inline-expr
+                                      ctx
+                                      function-state
+                                      env
+                                      type-env
+                                      body
+                                      subst
+                                      shadowed))]
+                                (ResultLowerAstExpr.Ok
+                                  (ast.AstExpr.SpmdCompact
+                                    (box
+                                      (ast.AstSpmdCompact.Compact
+                                        index
+                                        index-ty
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-start)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-end)
+                                        slot
+                                        slot-ty
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-init)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-keep)
+                                        (lower-context-expr-push
+                                          ctx
+                                          rewritten-body))))))]
+                            [(ResultLowerAstExpr.Err diag)
+                              (ResultLowerAstExpr.Err diag)])]
+                        [(ResultLowerAstExpr.Err diag)
+                          (ResultLowerAstExpr.Err diag)])]
+                    [(ResultLowerAstExpr.Err diag)
+                      (ResultLowerAstExpr.Err diag)])]
+                [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
+      [(ast.AstExpr.SpmdBroadcast value-box lane-box)
+        (let
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            value
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-value)
+              (let
+                [rewritten-lane : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      lane
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-spmd-broadcast-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-value)
+                      (lower-context-expr-push ctx rewritten-lane)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [(ast.AstExpr.SpmdShuffle value-box lane-box)
+        (let
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
+          (match (lower-spmd-inline-expr
+            ctx
+            function-state
+            env
+            type-env
+            value
+            subst
+            shadowed)
+            [(ResultLowerAstExpr.Ok rewritten-value)
+              (let
+                [rewritten-lane : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      lane
+                      subst
+                      shadowed))]
+                (ResultLowerAstExpr.Ok
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-spmd-shuffle-with-pools
+                      (tc_core.tc-context-pools ctx)
+                      (lower-context-expr-push ctx rewritten-value)
+                      (lower-context-expr-push ctx rewritten-lane)))))]
+            [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+      [_ (ResultLowerAstExpr.Ok expr)])))
 
 (define (lower-function-logical-id-from-decl
   [lower-state : CompilerLowerState]
@@ -18540,7 +18550,7 @@
               value
               ret-ty
               class
-              (lower-c-abi-slot-list-ref (lower-global-shared-view slots) 0)
+              (lower-c-abi-slot-list-ref slots 0)
               (lower-c-abi-slot-list-ref slots 1)))]
         [(LowerCAbiAggregate.Sret size)
           (let
@@ -33325,8 +33335,13 @@
 (define (lower-c-abi-slot-list-count [slots : (& slots LowerCAbiSlotList)]) : i64
   slots.count)
 
-(define (lower-c-abi-slot-list-ref [slots : LowerCAbiSlotList] [index : i64]) : LowerCAbiSlot
-  (array-ref slots.items index))
+(define (lower-c-abi-slot-list-ref
+  [slots : (& slots LowerCAbiSlotList)]
+  [index : i64]) : LowerCAbiSlot
+  (let
+    [slots : LowerCAbiSlotList
+      (owned_view.compiler-owned-reference-shared-view slots)]
+    (array-ref slots.items index)))
 
 (define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
@@ -34046,8 +34061,7 @@
 (define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
   (if (= (lower-c-abi-slot-list-count slots) 2)
     (let
-      [first : LowerCAbiSlot
-        (lower-c-abi-slot-list-ref (lower-global-shared-view slots) 0)]
+      [first : LowerCAbiSlot (lower-c-abi-slot-list-ref slots 0)]
       [second : LowerCAbiSlot (lower-c-abi-slot-list-ref slots 1)]
       [first-sse : bool
         (match first
@@ -34386,7 +34400,7 @@
   [index : i64]) : ResultLowerArgs
   (if (>= index (lower-c-abi-slot-list-count slots))
     (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
-    (match (lower-c-abi-slot-list-ref (lower-global-shared-view slots) index)
+    (match (lower-c-abi-slot-list-ref slots index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
         (match (if (lower-type-register-resident?
           ctx
@@ -34437,7 +34451,7 @@
   [count : i64]) : unit
   (if (>= index count)
     unit
-    (match (lower-c-abi-slot-list-ref (lower-global-shared-view slots) index)
+    (match (lower-c-abi-slot-list-ref slots index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
         (begin
           (set!
@@ -34709,9 +34723,7 @@
         [slot-count : i64 (lower-c-abi-slot-list-count slots)]
         (cond
           [(= slot-count 1)
-            (match (lower-c-abi-slot-list-ref
-              (lower-global-shared-view slots)
-              0)
+            (match (lower-c-abi-slot-list-ref slots 0)
               [(LowerCAbiSlot.Slot scalar-ty _)
                 (match (lower-state-alloc-var state)
                   [(LowerAlloc.Alloc allocated var-id)
@@ -35094,7 +35106,7 @@
   [slots : LowerCAbiSlotList]
   [storage : ir.CompilerIrValue]
   [storage-state : LowerState]) : ResultLowerExpr
-  (match (lower-c-abi-slot-list-ref (lower-global-shared-view slots) 0)
+  (match (lower-c-abi-slot-list-ref slots 0)
     [(LowerCAbiSlot.Slot first-ty first-offset)
       (match (lower-emit-word
         storage-state
@@ -37283,15 +37295,18 @@
   [index : String]
   [arg : ast.AstExpr]) : bool
   (>
-    (lower-masked-vector-expr-lanes-with-locals
-      ctx
-      function-state
-      (CompilerLowerMode.Avx512)
-      env
-      type-env
-      index
-      (lower-masked-vector-empty-lane-locals)
-      arg)
+    (let
+      [mode (CompilerLowerMode.Avx512)]
+      [lane-locals (lower-masked-vector-empty-lane-locals)]
+      (lower-masked-vector-expr-lanes-with-locals
+        ctx
+        function-state
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        arg))
     0))
 
 (define (lower-spmd-call-args-from-values
@@ -46168,7 +46183,7 @@
           env
           type-env
           (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
+          lane-locals
           expr)
         (lower-masked-vector-expr-list-lanes-with-locals-at
           ctx
@@ -46228,7 +46243,7 @@
               env
               type-env
               (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
+              lane-locals
               init)]
           [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
@@ -46293,7 +46308,7 @@
               env
               type-env
               (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
+              lane-locals
               init)]
           [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
@@ -46482,7 +46497,7 @@
         env
         type-env
         (lower-global-shared-view index)
-        (lower-global-shared-view lane-locals)
+        lane-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get args arg-index 0)))
       (lower-spmd-call-args-lanes-at
         ctx
@@ -46545,7 +46560,7 @@
               env
               type-env
               (lower-global-shared-view index)
-              (lower-global-shared-view caller-locals)
+              caller-locals
               (lower-context-expr-get
                 ctx
                 (ast.ast-expr-list-get args arg-index 0)))]
@@ -46583,7 +46598,7 @@
           env
           type-env
           (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
+          lane-locals
           (lower-context-expr-get ctx (ast.ast-expr-list-get args arg-index 0)))]
       (str_cat.str-cat
         (cond [(> arg-lanes 0) "v"] [(= arg-lanes 0) "u"] [else "?"])
@@ -46739,24 +46754,27 @@
                               name))
                           (set!
                             result
-                            (lower-masked-vector-expr-lanes-with-locals
-                              ctx
-                              function-state
-                              mode
-                              env
-                              type-env
-                              ""
-                              (lower-spmd-helper-param-locals
+                            (let
+                              [lane-locals-arg
+                                (lower-spmd-helper-param-locals
+                                  ctx
+                                  function-state
+                                  mode
+                                  env
+                                  type-env
+                                  index
+                                  lane-locals
+                                  params
+                                  args)]
+                              (lower-masked-vector-expr-lanes-with-locals
                                 ctx
                                 function-state
                                 mode
                                 env
                                 type-env
-                                index
-                                lane-locals
-                                params
-                                args)
-                              body))
+                                ""
+                                lane-locals-arg
+                                body)))
                           (compiler-lower-function-state-inline-helper-stack-set!
                             function-state
                             previous)
@@ -46793,90 +46811,13 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
+  [lane-locals : (& lane-locals lower_i64_i64_map.Map)]
   [expr : ast.AstExpr]) : i64
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-expr-lanes-with-locals
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-expr-lanes-with-locals
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(ast.AstExpr.Cast inner-box cast-ty-id)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [target-ty : ast.AstType
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type
-              ctx
-              (tc_core.tc-context-type-get ctx cast-ty-id)))]
-        (if (or
-          (tc_core.tc-integer-literal-expr?
-            ctx
-            (lower-global-shared-view inner))
-          (tc_core.tc-float-literal-expr? ctx (lower-global-shared-view inner)))
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            inner)
-          (match (lower-masked-spmd-numeric-expr-type
-            ctx
-            env
-            type-env
-            (lower-global-shared-view inner))
-            [(tc_core.ResultTcType.Ok source-ty)
-              (if (lower-masked-spmd-numeric-conversion-supported?
-                function-state
-                mode
-                (tc_core.tc-type-without-regions
-                  (tc_core.tc-resolve-type ctx source-ty))
-                target-ty)
-                (lower-masked-vector-expr-lanes-with-locals
-                  ctx
-                  function-state
-                  mode
-                  env
-                  type-env
-                  index
-                  lane-locals
-                  inner)
-                -1)]
-            [(tc_core.ResultTcType.Err _) -1])))]
-    [(ast.AstExpr.Literal _) 0]
-    [(ast.AstExpr.Var name)
-      (let
-        [name-text : String (tc_core.tc-env-key-name-text name)]
-        (match (lower_i64_i64_map.get (& lane-locals) name)
-          [(lower_i64_i64_map.LookupFound lanes) lanes]
-          [(lower_i64_i64_map.LookupMissing)
-            (if (string.eq name-text index)
-              (lower-simd-lanes-for-elem mode (ast.AstType.I64))
-              0)]))]
-    [(ast.AstExpr.Unary op inner-box)
-      (if (lower-masked-vector-unop-supported? op)
+  (let
+    [lane-locals : lower_i64_i64_map.Map
+      (owned_view.compiler-owned-reference-shared-view lane-locals)]
+    (match expr
+      [(ast.AstExpr.Spanned inner-box _)
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-masked-vector-expr-lanes-with-locals
@@ -46887,130 +46828,10 @@
             type-env
             index
             lane-locals
-            inner))
-        -1)]
-    [(ast.AstExpr.Binary op left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        [operand-lanes : i64
-          (lower-masked-vector-lanes-merge
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              left)
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              index
-              lane-locals
-              right))]
-        (if (lower-masked-vector-binop-supported? function-state mode op)
-          operand-lanes
-          -1))]
-    [(ast.AstExpr.Call func-box args)
-      (lower-spmd-direct-call-result-lanes
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx func-box)
-        args)]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : lower_i64_i64_map.Map
-              (lower-masked-vector-let-bindings-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-global-shared-view lane-locals)
-                bindings)]
-            [body-type-env : tc_core.TcTypeEnv
-              (lower-spmd-numeric-let-type-env ctx type-env bindings)]
-            (lower-masked-vector-lanes-merge
-              (lower-masked-vector-let-bindings-lanes-with-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                lane-locals
-                bindings)
-              (lower-masked-vector-expr-lanes-with-locals
-                ctx
-                function-state
-                mode
-                env
-                body-type-env
-                index
-                body-locals
-                body)))])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            cond)
-          (lower-masked-vector-lanes-merge
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              then-branch)
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              index
-              lane-locals
-              else-branch))))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-        (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            cond)
+            inner))]
+      [(ast.AstExpr.Ann inner-box _)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
           (lower-masked-vector-expr-lanes-with-locals
             ctx
             function-state
@@ -47019,83 +46840,43 @@
             type-env
             index
             lane-locals
-            body)))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-box)]
-            [scrut-lanes : i64
-              (lower-masked-vector-expr-lanes-with-locals
+            inner))]
+      [(ast.AstExpr.Cast inner-box cast-ty-id)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          [target-ty : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type
                 ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-global-shared-view lane-locals)
-                scrutinee)]
-            (lower-masked-vector-lanes-merge
-              scrut-lanes
-              (lower-masked-vector-match-arms-lanes-with-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                index
-                lane-locals
-                scrut-lanes
-                arms)))])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-lanes-with-locals
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        exprs)]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
-          (match (lower-contiguous-sequence-var ctx env type-env arr)
-            [(LowerMaybeArrayVar.Some _ elem-ty)
-              (if (lower-type-bool? (lower-global-shared-view elem-ty))
-                (lower-avx512-bool-lanes mode)
-                (lower-simd-lanes-for-elem mode elem-ty))]
-            [(LowerMaybeArrayVar.No) -1])
-          -1))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
-          (match (lower-contiguous-sequence-var ctx env type-env arr)
-            [(LowerMaybeArrayVar.Some _ elem-ty)
-              (if (lower-type-bool? (lower-global-shared-view elem-ty))
-                (let
-                  [value-lanes : i64
-                    (lower-masked-vector-expr-lanes-with-locals
-                      ctx
-                      function-state
-                      mode
-                      env
-                      type-env
-                      index
-                      lane-locals
-                      value)]
-                  (if (< value-lanes 0)
-                    -1
-                    (if (= value-lanes 0)
-                      (lower-avx512-bool-lanes mode)
-                      value-lanes)))
-                (lower-masked-vector-lanes-merge
-                  (lower-simd-lanes-for-elem mode elem-ty)
+                (tc_core.tc-context-type-get ctx cast-ty-id)))]
+          (if (or
+            (tc_core.tc-integer-literal-expr?
+              ctx
+              (lower-global-shared-view inner))
+            (tc_core.tc-float-literal-expr?
+              ctx
+              (lower-global-shared-view inner)))
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner)
+            (match (lower-masked-spmd-numeric-expr-type
+              ctx
+              env
+              type-env
+              (lower-global-shared-view inner))
+              [(tc_core.ResultTcType.Ok source-ty)
+                (if (lower-masked-spmd-numeric-conversion-supported?
+                  function-state
+                  mode
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-resolve-type ctx source-ty))
+                  target-ty)
                   (lower-masked-vector-expr-lanes-with-locals
                     ctx
                     function-state
@@ -47104,33 +46885,276 @@
                     type-env
                     index
                     lane-locals
-                    value)))]
-            [(LowerMaybeArrayVar.No) -1])
-          -1))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-masked-vector-lanes-merge
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            receiver)
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            value)))]
-    [_ -1]))
+                    inner)
+                  -1)]
+              [(tc_core.ResultTcType.Err _) -1])))]
+      [(ast.AstExpr.Literal _) 0]
+      [(ast.AstExpr.Var name)
+        (let
+          [name-text : String (tc_core.tc-env-key-name-text name)]
+          (match (lower_i64_i64_map.get (& lane-locals) name)
+            [(lower_i64_i64_map.LookupFound lanes) lanes]
+            [(lower_i64_i64_map.LookupMissing)
+              (if (string.eq name-text index)
+                (lower-simd-lanes-for-elem mode (ast.AstType.I64))
+                0)]))]
+      [(ast.AstExpr.Unary op inner-box)
+        (if (lower-masked-vector-unop-supported? op)
+          (let
+            [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              inner))
+          -1)]
+      [(ast.AstExpr.Binary op left-box right-box)
+        (let
+          [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
+          [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
+          [operand-lanes : i64
+            (lower-masked-vector-lanes-merge
+              (lower-masked-vector-expr-lanes-with-locals
+                ctx
+                function-state
+                mode
+                env
+                type-env
+                (lower-global-shared-view index)
+                lane-locals
+                left)
+              (lower-masked-vector-expr-lanes-with-locals
+                ctx
+                function-state
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                right))]
+          (if (lower-masked-vector-binop-supported? function-state mode op)
+            operand-lanes
+            -1))]
+      [(ast.AstExpr.Call func-box args)
+        (lower-spmd-direct-call-result-lanes
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (lower-context-expr-get ctx func-box)
+          args)]
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body-box)
+            (let
+              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+              [body-locals : lower_i64_i64_map.Map
+                (lower-masked-vector-let-bindings-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  (lower-global-shared-view index)
+                  (lower-global-shared-view lane-locals)
+                  bindings)]
+              [body-type-env : tc_core.TcTypeEnv
+                (lower-spmd-numeric-let-type-env ctx type-env bindings)]
+              (lower-masked-vector-lanes-merge
+                (lower-masked-vector-let-bindings-lanes-with-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  (lower-global-shared-view index)
+                  lane-locals
+                  bindings)
+                (lower-masked-vector-expr-lanes-with-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  body-type-env
+                  index
+                  body-locals
+                  body)))])]
+      [(ast.AstExpr.If cond-box then-box else-box)
+        (let
+          [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
+          [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
+          [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
+          (lower-masked-vector-lanes-merge
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              (lower-global-shared-view index)
+              lane-locals
+              cond)
+            (lower-masked-vector-lanes-merge
+              (lower-masked-vector-expr-lanes-with-locals
+                ctx
+                function-state
+                mode
+                env
+                type-env
+                (lower-global-shared-view index)
+                lane-locals
+                then-branch)
+              (lower-masked-vector-expr-lanes-with-locals
+                ctx
+                function-state
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                else-branch))))]
+      [(ast.AstExpr.While cond-box body-box)
+        (let
+          [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
+          [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+          (lower-masked-vector-lanes-merge
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              (lower-global-shared-view index)
+              lane-locals
+              cond)
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              body)))]
+      [(ast.AstExpr.Match match-box)
+        (match (__tl-box-place match-box)
+          [(ast.AstMatch.Match scrutinee-box arms)
+            (let
+              [scrutinee : ast.AstExpr
+                (lower-context-expr-get ctx scrutinee-box)]
+              [scrut-lanes : i64
+                (lower-masked-vector-expr-lanes-with-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  (lower-global-shared-view index)
+                  lane-locals
+                  scrutinee)]
+              (lower-masked-vector-lanes-merge
+                scrut-lanes
+                (lower-masked-vector-match-arms-lanes-with-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  scrut-lanes
+                  arms)))])]
+      [(ast.AstExpr.Begin exprs)
+        (lower-masked-vector-expr-list-lanes-with-locals
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          exprs)]
+      [(ast.AstExpr.ArrayRef arr-box idx-box)
+        (let
+          [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
+          [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
+          (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
+            (match (lower-contiguous-sequence-var ctx env type-env arr)
+              [(LowerMaybeArrayVar.Some _ elem-ty)
+                (if (lower-type-bool? (lower-global-shared-view elem-ty))
+                  (lower-avx512-bool-lanes mode)
+                  (lower-simd-lanes-for-elem mode elem-ty))]
+              [(LowerMaybeArrayVar.No) -1])
+            -1))]
+      [(ast.AstExpr.ArraySet arr-box idx-box value-box)
+        (let
+          [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
+          [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          (if (>= (lower-masked-vector-index-offset ctx index idx) 0)
+            (match (lower-contiguous-sequence-var ctx env type-env arr)
+              [(LowerMaybeArrayVar.Some _ elem-ty)
+                (if (lower-type-bool? (lower-global-shared-view elem-ty))
+                  (let
+                    [value-lanes : i64
+                      (lower-masked-vector-expr-lanes-with-locals
+                        ctx
+                        function-state
+                        mode
+                        env
+                        type-env
+                        index
+                        lane-locals
+                        value)]
+                    (if (< value-lanes 0)
+                      -1
+                      (if (= value-lanes 0)
+                        (lower-avx512-bool-lanes mode)
+                        value-lanes)))
+                  (lower-masked-vector-lanes-merge
+                    (lower-simd-lanes-for-elem mode elem-ty)
+                    (lower-masked-vector-expr-lanes-with-locals
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      index
+                      lane-locals
+                      value)))]
+              [(LowerMaybeArrayVar.No) -1])
+            -1))]
+      [(ast.AstExpr.StructSet receiver-box _ value-box)
+        (let
+          [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          (lower-masked-vector-lanes-merge
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              (lower-global-shared-view index)
+              lane-locals
+              receiver)
+            (lower-masked-vector-expr-lanes-with-locals
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              value)))]
+      [_ -1])))
 
 (define (lower-masked-vector-expr-lanes
   [ctx : tc_core.TcContext]
@@ -47140,15 +47164,17 @@
   [type-env : tc_core.TcTypeEnv]
   [index : String]
   [expr : ast.AstExpr]) : i64
-  (lower-masked-vector-expr-lanes-with-locals
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    expr))
+  (let
+    [lane-locals (lower-masked-vector-empty-lane-locals)]
+    (lower-masked-vector-expr-lanes-with-locals
+      ctx
+      function-state
+      mode
+      env
+      type-env
+      index
+      lane-locals
+      expr)))
 
 ;; The control forms that need the masked SPMD strategy when their condition or
 ;; scrutinee varies across lanes.
@@ -47171,65 +47197,13 @@
   [type-env : tc_core.TcTypeEnv]
   [form : LowerMaskedVaryingForm]
   [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
+  [lane-locals : (& lane-locals lower_i64_i64_map.Map)]
   [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-masked-vector-body-has-varying-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (or
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx left-box))
+  (let
+    [lane-locals : lower_i64_i64_map.Map
+      (owned_view.compiler-owned-reference-shared-view lane-locals)]
+    (match expr
+      [(ast.AstExpr.Spanned inner-box _)
         (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
@@ -47239,43 +47213,8 @@
           form
           index
           lane-locals
-          (lower-context-expr-get ctx right-box)))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (or
-        (match form
-          [(LowerMaskedVaryingForm.If)
-            (>
-              (lower-masked-vector-expr-lanes-with-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-global-shared-view lane-locals)
-                (lower-context-expr-get ctx cond-box))
-              0)]
-          [_
-            (lower-masked-vector-body-has-varying-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              form
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              (lower-context-expr-get ctx cond-box))])
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx then-box))
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Ann inner-box _)
         (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
@@ -47285,13 +47224,55 @@
           form
           index
           lane-locals
-          (lower-context-expr-get ctx else-box)))]
-    [(ast.AstExpr.While cond-box body-box)
-      (match form
-        [(LowerMaskedVaryingForm.While)
-          (let
-            [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-            (or
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Cast inner-box _)
+        (lower-masked-vector-body-has-varying-with-locals?
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          form
+          index
+          lane-locals
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Unary _ inner-box)
+        (lower-masked-vector-body-has-varying-with-locals?
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          form
+          index
+          lane-locals
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Binary _ left-box right-box)
+        (or
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            (lower-global-shared-view index)
+            lane-locals
+            (lower-context-expr-get ctx left-box))
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            index
+            lane-locals
+            (lower-context-expr-get ctx right-box)))]
+      [(ast.AstExpr.If cond-box then-box else-box)
+        (or
+          (match form
+            [(LowerMaskedVaryingForm.If)
               (>
                 (lower-masked-vector-expr-lanes-with-locals
                   ctx
@@ -47300,9 +47281,10 @@
                   env
                   type-env
                   (lower-global-shared-view index)
-                  (lower-global-shared-view lane-locals)
-                  (lower-global-shared-view cond))
-                0)
+                  lane-locals
+                  (lower-context-expr-get ctx cond-box))
+                0)]
+            [_
               (lower-masked-vector-body-has-varying-with-locals?
                 ctx
                 function-state
@@ -47311,26 +47293,35 @@
                 type-env
                 form
                 (lower-global-shared-view index)
-                (lower-global-shared-view lane-locals)
-                cond)
-              (lower-masked-vector-body-has-varying-with-locals?
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                form
-                index
                 lane-locals
-                (lower-context-expr-get ctx body-box))))]
-        [_ false])]
-    [(ast.AstExpr.Match match-box)
-      (match form
-        [(LowerMaskedVaryingForm.Match)
-          (match (__tl-box-place match-box)
-            [(ast.AstMatch.Match scrutinee-box arms)
-              (let
-                [scrut-lanes : i64
+                (lower-context-expr-get ctx cond-box))])
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            (lower-global-shared-view index)
+            lane-locals
+            (lower-context-expr-get ctx then-box))
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            index
+            lane-locals
+            (lower-context-expr-get ctx else-box)))]
+      [(ast.AstExpr.While cond-box body-box)
+        (match form
+          [(LowerMaskedVaryingForm.While)
+            (let
+              [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
+              (or
+                (>
                   (lower-masked-vector-expr-lanes-with-locals
                     ctx
                     function-state
@@ -47338,42 +47329,8 @@
                     env
                     type-env
                     (lower-global-shared-view index)
-                    (lower-global-shared-view lane-locals)
-                    (lower-context-expr-get ctx scrutinee-box))]
-                (or
-                  (> scrut-lanes 0)
-                  (lower-masked-vector-match-arms-have-varying-with-locals-at?
-                    ctx
-                    function-state
-                    mode
-                    env
-                    type-env
-                    form
-                    index
                     lane-locals
-                    scrut-lanes
-                    (& arms)
-                    0)))])]
-        [_ false])]
-    [(ast.AstExpr.Let let-box)
-      ;; The body's lane locals extend views of `lane-locals` in place, so the
-      ;; binding scan can see them when they are computed first. If and While
-      ;; compute them first and Match last; each keeps its order.
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (match form
-            [(LowerMaskedVaryingForm.Match)
-              (or
-                (lower-masked-vector-let-bindings-have-varying-with-locals-at?
-                  ctx
-                  function-state
-                  mode
-                  env
-                  type-env
-                  form
-                  (lower-global-shared-view index)
-                  (lower-global-shared-view lane-locals)
-                  (& bindings)
+                    (lower-global-shared-view cond))
                   0)
                 (lower-masked-vector-body-has-varying-with-locals?
                   ctx
@@ -47383,28 +47340,58 @@
                   type-env
                   form
                   (lower-global-shared-view index)
-                  (lower-masked-vector-let-bindings-locals
-                    ctx
-                    function-state
-                    mode
-                    env
-                    type-env
-                    index
-                    lane-locals
-                    bindings)
-                  (lower-context-expr-get ctx body-box)))]
-            [_
-              (let
-                [body-locals : lower_i64_i64_map.Map
-                  (lower-masked-vector-let-bindings-locals
-                    ctx
-                    function-state
-                    mode
-                    env
-                    type-env
-                    (lower-global-shared-view index)
-                    (lower-global-shared-view lane-locals)
-                    bindings)]
+                  lane-locals
+                  cond)
+                (lower-masked-vector-body-has-varying-with-locals?
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  form
+                  index
+                  lane-locals
+                  (lower-context-expr-get ctx body-box))))]
+          [_ false])]
+      [(ast.AstExpr.Match match-box)
+        (match form
+          [(LowerMaskedVaryingForm.Match)
+            (match (__tl-box-place match-box)
+              [(ast.AstMatch.Match scrutinee-box arms)
+                (let
+                  [scrut-lanes : i64
+                    (lower-masked-vector-expr-lanes-with-locals
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      (lower-global-shared-view index)
+                      lane-locals
+                      (lower-context-expr-get ctx scrutinee-box))]
+                  (or
+                    (> scrut-lanes 0)
+                    (lower-masked-vector-match-arms-have-varying-with-locals-at?
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      form
+                      index
+                      lane-locals
+                      scrut-lanes
+                      (& arms)
+                      0)))])]
+          [_ false])]
+      [(ast.AstExpr.Let let-box)
+        ;; The body's lane locals extend views of `lane-locals` in place, so the
+        ;; binding scan can see them when they are computed first. If and While
+        ;; compute them first and Match last; each keeps its order.
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body-box)
+            (match form
+              [(LowerMaskedVaryingForm.Match)
                 (or
                   (lower-masked-vector-let-bindings-have-varying-with-locals-at?
                     ctx
@@ -47414,76 +47401,67 @@
                     type-env
                     form
                     (lower-global-shared-view index)
-                    lane-locals
+                    (lower-global-shared-view lane-locals)
                     (& bindings)
                     0)
-                  (lower-masked-vector-body-has-varying-with-locals?
-                    ctx
-                    function-state
-                    mode
-                    env
-                    type-env
-                    form
-                    index
-                    body-locals
-                    (lower-context-expr-get ctx body-box))))])])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-has-varying-with-locals-at?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        (& exprs)
-        0)]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (or
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          index
-          lane-locals
-          (lower-context-expr-get ctx idx-box)))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (or
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx idx-box))
-        (lower-masked-vector-body-has-varying-with-locals?
+                  (let
+                    [index-arg (lower-global-shared-view index)]
+                    [lane-locals-arg
+                      (lower-masked-vector-let-bindings-locals
+                        ctx
+                        function-state
+                        mode
+                        env
+                        type-env
+                        index
+                        lane-locals
+                        bindings)]
+                    (lower-masked-vector-body-has-varying-with-locals?
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      form
+                      index-arg
+                      lane-locals-arg
+                      (lower-context-expr-get ctx body-box))))]
+              [_
+                (let
+                  [body-locals : lower_i64_i64_map.Map
+                    (lower-masked-vector-let-bindings-locals
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      (lower-global-shared-view index)
+                      (lower-global-shared-view lane-locals)
+                      bindings)]
+                  (or
+                    (lower-masked-vector-let-bindings-have-varying-with-locals-at?
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      form
+                      (lower-global-shared-view index)
+                      lane-locals
+                      (& bindings)
+                      0)
+                    (lower-masked-vector-body-has-varying-with-locals?
+                      ctx
+                      function-state
+                      mode
+                      env
+                      type-env
+                      form
+                      index
+                      body-locals
+                      (lower-context-expr-get ctx body-box))))])])]
+      [(ast.AstExpr.Begin exprs)
+        (lower-masked-vector-expr-list-has-varying-with-locals-at?
           ctx
           function-state
           mode
@@ -47492,30 +47470,85 @@
           form
           index
           lane-locals
-          (lower-context-expr-get ctx value-box)))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (or
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx receiver-box))
-        (lower-masked-vector-body-has-varying-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          form
-          index
-          lane-locals
-          (lower-context-expr-get ctx value-box)))]
-    [_ false]))
+          (& exprs)
+          0)]
+      [(ast.AstExpr.ArrayRef arr-box idx-box)
+        (or
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            (lower-global-shared-view index)
+            lane-locals
+            (lower-context-expr-get ctx arr-box))
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            index
+            lane-locals
+            (lower-context-expr-get ctx idx-box)))]
+      [(ast.AstExpr.ArraySet arr-box idx-box value-box)
+        (or
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            (lower-global-shared-view index)
+            lane-locals
+            (lower-context-expr-get ctx arr-box))
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            (lower-global-shared-view index)
+            lane-locals
+            (lower-context-expr-get ctx idx-box))
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            index
+            lane-locals
+            (lower-context-expr-get ctx value-box)))]
+      [(ast.AstExpr.StructSet receiver-box _ value-box)
+        (or
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            (lower-global-shared-view index)
+            lane-locals
+            (lower-context-expr-get ctx receiver-box))
+          (lower-masked-vector-body-has-varying-with-locals?
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            form
+            index
+            lane-locals
+            (lower-context-expr-get ctx value-box)))]
+      [_ false])))
 
 (define (lower-masked-vector-expr-list-has-varying-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -47539,7 +47572,7 @@
         type-env
         form
         (lower-global-shared-view index)
-        (lower-global-shared-view lane-locals)
+        lane-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
       (lower-masked-vector-expr-list-has-varying-with-locals-at?
         ctx
@@ -47581,7 +47614,7 @@
               env
               type-env
               (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
+              lane-locals
               (lower-global-shared-view init))]
           [init-has-varying : bool
             (lower-masked-vector-body-has-varying-with-locals?
@@ -47592,7 +47625,7 @@
               type-env
               form
               (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
+              lane-locals
               init)]
           [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
@@ -47633,19 +47666,23 @@
       (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
         (or
-          (lower-masked-vector-body-has-varying-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            (lower-global-shared-view index)
-            (lower-masked-vector-pattern-locals
-              pattern
-              scrut-lanes
-              (lower-global-shared-view lane-locals))
-            (lower-context-expr-get ctx body-box))
+          (let
+            [index-arg (lower-global-shared-view index)]
+            [lane-locals-arg
+              (lower-masked-vector-pattern-locals
+                pattern
+                scrut-lanes
+                (lower-global-shared-view lane-locals))]
+            (lower-masked-vector-body-has-varying-with-locals?
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              form
+              index-arg
+              lane-locals-arg
+              (lower-context-expr-get ctx body-box)))
           (lower-masked-vector-match-arms-have-varying-with-locals-at?
             ctx
             function-state
@@ -47668,16 +47705,18 @@
   [form : LowerMaskedVaryingForm]
   [index : String]
   [expr : ast.AstExpr]) : bool
-  (lower-masked-vector-body-has-varying-with-locals?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    form
-    index
-    (lower-masked-vector-empty-lane-locals)
-    expr))
+  (let
+    [lane-locals (lower-masked-vector-empty-lane-locals)]
+    (lower-masked-vector-body-has-varying-with-locals?
+      ctx
+      function-state
+      mode
+      env
+      type-env
+      form
+      index
+      lane-locals
+      expr)))
 
 (define (lower-spmd-enum-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
@@ -47798,195 +47837,202 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
-  [enum-locals : LowerIdSet]
+  [enum-locals : (& enum-locals LowerIdSet)]
   [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-masked-vector-body-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (or
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx left-box))
+  (let
+    [enum-locals : LowerIdSet
+      (owned_view.compiler-owned-reference-shared-view enum-locals)]
+    (match expr
+      [(ast.AstExpr.Spanned inner-box _)
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
           ctx
           env
           type-env
           index
           enum-locals
-          (lower-context-expr-get ctx right-box)))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (or
-            (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
-              ctx
-              env
-              type-env
-              index
-              (lower-global-shared-view enum-locals)
-              bindings)
-            (lower-masked-vector-body-has-varying-enum-match-with-locals?
-              ctx
-              env
-              type-env
-              index
-              (lower-masked-vector-enum-let-locals
-                ctx
-                env
-                type-env
-                index
-                enum-locals
-                bindings)
-              (lower-context-expr-get ctx body-box)))])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (or
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx then-box))
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Ann inner-box _)
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
           ctx
           env
           type-env
           index
           enum-locals
-          (lower-context-expr-get ctx else-box)))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-box)]
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Cast inner-box _)
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
+          env
+          type-env
+          index
+          enum-locals
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Unary _ inner-box)
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
+          env
+          type-env
+          index
+          enum-locals
+          (lower-context-expr-get ctx inner-box))]
+      [(ast.AstExpr.Binary _ left-box right-box)
+        (or
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx left-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx right-box)))]
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body-box)
             (or
-              (lower-masked-vector-expr-varying-enum-with-locals?
-                ctx
-                env
-                type-env
-                index
-                enum-locals
-                (lower-global-shared-view scrutinee))
-              (lower-masked-vector-body-has-varying-enum-match-with-locals?
+              (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
                 ctx
                 env
                 type-env
                 index
                 (lower-global-shared-view enum-locals)
-                scrutinee)
-              (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
-                ctx
-                env
-                type-env
-                index
-                enum-locals
-                arms)))])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        exprs)]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (or
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                bindings)
+              (let
+                [enum-locals-arg
+                  (lower-masked-vector-enum-let-locals
+                    ctx
+                    env
+                    type-env
+                    index
+                    enum-locals
+                    bindings)]
+                (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                  ctx
+                  env
+                  type-env
+                  index
+                  enum-locals-arg
+                  (lower-context-expr-get ctx body-box))))])]
+      [(ast.AstExpr.If cond-box then-box else-box)
+        (or
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx cond-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx then-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx else-box)))]
+      [(ast.AstExpr.Match match-box)
+        (match (__tl-box-place match-box)
+          [(ast.AstMatch.Match scrutinee-box arms)
+            (let
+              [scrutinee : ast.AstExpr
+                (lower-context-expr-get ctx scrutinee-box)]
+              (or
+                (lower-masked-vector-expr-varying-enum-with-locals?
+                  ctx
+                  env
+                  type-env
+                  index
+                  enum-locals
+                  (lower-global-shared-view scrutinee))
+                (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                  ctx
+                  env
+                  type-env
+                  index
+                  enum-locals
+                  scrutinee)
+                (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+                  ctx
+                  env
+                  type-env
+                  index
+                  enum-locals
+                  arms)))])]
+      [(ast.AstExpr.Begin exprs)
+        (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
           ctx
           env
           type-env
           index
           enum-locals
-          (lower-context-expr-get ctx idx-box)))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (or
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx idx-box))
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (lower-context-expr-get ctx value-box)))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (or
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          (lower-global-shared-view enum-locals)
-          (lower-context-expr-get ctx receiver-box))
-        (lower-masked-vector-body-has-varying-enum-match-with-locals?
-          ctx
-          env
-          type-env
-          index
-          enum-locals
-          (lower-context-expr-get ctx value-box)))]
-    [_ false]))
+          exprs)]
+      [(ast.AstExpr.ArrayRef arr-box idx-box)
+        (or
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx arr-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx idx-box)))]
+      [(ast.AstExpr.ArraySet arr-box idx-box value-box)
+        (or
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx arr-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx idx-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx value-box)))]
+      [(ast.AstExpr.StructSet receiver-box _ value-box)
+        (or
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx receiver-box))
+          (lower-masked-vector-body-has-varying-enum-match-with-locals?
+            ctx
+            env
+            type-env
+            index
+            enum-locals
+            (lower-context-expr-get ctx value-box)))]
+      [_ false])))
 
 (define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
   [ctx : tc_core.TcContext]
@@ -48020,7 +48066,7 @@
         env
         type-env
         index
-        (lower-global-shared-view enum-locals)
+        enum-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
       (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
         ctx
@@ -48128,7 +48174,7 @@
             env
             type-env
             index
-            (lower-global-shared-view enum-locals)
+            enum-locals
             (lower-context-expr-get ctx body-box))
           (lower-masked-vector-match-arms-have-varying-enum-match-with-locals-at?
             ctx
@@ -48145,13 +48191,15 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [expr : ast.AstExpr]) : bool
-  (lower-masked-vector-body-has-varying-enum-match-with-locals?
-    ctx
-    env
-    type-env
-    index
-    (lower-id-set-empty)
-    expr))
+  (let
+    [enum-locals (lower-id-set-empty)]
+    (lower-masked-vector-body-has-varying-enum-match-with-locals?
+      ctx
+      env
+      type-env
+      index
+      enum-locals
+      expr)))
 
 (define (lower-masked-vector-bool-array-lane?
   [ctx : tc_core.TcContext]
@@ -50651,9 +50699,12 @@
       (LowerVectorMapStoreList items (+ count 1)))))
 
 (define (lower-vector-map-store-list-ref
-  [stores : LowerVectorMapStoreList]
+  [stores : (& stores LowerVectorMapStoreList)]
   [index : i64]) : LowerVectorMapStore
-  (array-ref stores.items index))
+  (let
+    [stores : LowerVectorMapStoreList
+      (owned_view.compiler-owned-reference-shared-view stores)]
+    (array-ref stores.items index)))
 
 (define (lower-vector-map-store-list-has-destination?
   [stores : LowerVectorMapStoreList]
@@ -50664,9 +50715,7 @@
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (lower-vector-map-store-list-ref
-          (lower-global-shared-view stores)
-          index)
+        (match (lower-vector-map-store-list-ref stores index)
           [(LowerVectorMapStore array-var-found _)
             (if (= array-var-found array-var)
               (set! found true)
@@ -50681,17 +50730,13 @@
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (lower-vector-map-store-list-ref
-          (lower-global-shared-view stores)
-          index)
+        (match (lower-vector-map-store-list-ref stores index)
           [(LowerVectorMapStore _ value-plan)
             (let
               [dst-index : i64 0]
               (begin
                 (while (and (not found) (< dst-index count))
-                  (match (lower-vector-map-store-list-ref
-                    (lower-global-shared-view stores)
-                    dst-index)
+                  (match (lower-vector-map-store-list-ref stores dst-index)
                     [(LowerVectorMapStore dst-array _)
                       (if (lower-vector-map-value-uses-array?
                         (lower-global-shared-view value-plan)
@@ -50709,9 +50754,7 @@
     [arrays : LowerArrayVarSet (lower-array-var-set-empty)]
     (begin
       (while (< index count)
-        (match (lower-vector-map-store-list-ref
-          (lower-global-shared-view stores)
-          index)
+        (match (lower-vector-map-store-list-ref stores index)
           [(LowerVectorMapStore dst-array value-plan)
             (begin
               (set!
@@ -53915,7 +53958,7 @@
     0))
 
 (define (lower-vector-map-value-cache-lookup
-  [cache : LowerVectorMapValueCache]
+  [cache : (& cache LowerVectorMapValueCache)]
   [key : LowerVectorMapValueKey]) : LowerMaybeIrValue
   (let
     [index : i64 0]
@@ -53963,7 +54006,7 @@
   (match plan
     [(LowerVectorMapValue.Uniform value)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.Uniform (lower-global-shared-view value)))
         [(LowerMaybeIrValue.Some cached)
           (LowerVectorMapCachedEmit.Emit state cached cache)]
@@ -53978,7 +54021,7 @@
             cache)])]
     [(LowerVectorMapValue.LaneIndex)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.LaneIndex))
         [(LowerMaybeIrValue.Some cached)
           (LowerVectorMapCachedEmit.Emit state cached cache)]
@@ -53989,7 +54032,7 @@
             cache)])]
     [(LowerVectorMapValue.LaneCount)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.LaneCount))
         [(LowerMaybeIrValue.Some cached)
           (LowerVectorMapCachedEmit.Emit state cached cache)]
@@ -54084,9 +54127,7 @@
         [index : i64 0]
         (begin
           (while (< index stores.count)
-            (match (lower-vector-map-store-list-ref
-              (lower-global-shared-view stores)
-              index)
+            (match (lower-vector-map-store-list-ref stores index)
               [(LowerVectorMapStore _ value-plan)
                 (match (lower-vector-map-preheader-cache-leaves
                   s
@@ -54608,13 +54649,13 @@
   (match plan
     [(LowerVectorMapValue.Array array-var)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.Array array-var))
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
         [(LowerMaybeIrValue.No)
           (match (lower-vector-map-value-cache-lookup
-            (lower-global-shared-view cache)
+            cache
             (LowerVectorMapValueKey.ArrayData array-var))
             [(LowerMaybeIrValue.Some data-ptr)
               (lower-vector-map-cache-emitted
@@ -54641,7 +54682,7 @@
                 cache)])])]
     [(LowerVectorMapValue.Gather source-var indexes-var)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.Gather source-var indexes-var))
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
@@ -54659,7 +54700,7 @@
             cache)])]
     [(LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.GatherLaneOffset source-var offsets-var))
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
@@ -54677,7 +54718,7 @@
             cache)])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.LaneArray array-var))
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
@@ -54695,7 +54736,7 @@
             cache)])]
     [(LowerVectorMapValue.Uniform uniform-value)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.Uniform
           (lower-global-shared-view uniform-value)))
         [(LowerMaybeIrValue.Some value)
@@ -54715,7 +54756,7 @@
             cache)])]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.BroadcastArray
           array-var
           (lower-global-shared-view lane)))
@@ -54737,7 +54778,7 @@
             cache)])]
     [(LowerVectorMapValue.LaneIndex)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.LaneIndex))
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
@@ -54755,7 +54796,7 @@
             cache)])]
     [(LowerVectorMapValue.LaneCount)
       (match (lower-vector-map-value-cache-lookup
-        (lower-global-shared-view cache)
+        cache
         (LowerVectorMapValueKey.LaneCount))
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
@@ -54805,7 +54846,7 @@
             lhs-cache)
             [(LowerVectorMapCachedEmit.Emit rhs-state rhs-value rhs-cache)
               (match (lower-vector-map-value-cache-lookup
-                (lower-global-shared-view rhs-cache)
+                rhs-cache
                 (LowerVectorMapValueKey.BinOp
                   (lower-global-shared-view op)
                   (lower-global-shared-view lhs-value)
@@ -54967,9 +55008,7 @@
     [needs-tail : bool false]
     (begin
       (while (and (not needs-tail) (< index count))
-        (match (lower-vector-map-store-list-ref
-          (lower-global-shared-view stores)
-          index)
+        (match (lower-vector-map-store-list-ref stores index)
           [(LowerVectorMapStore _ value-plan)
             (if (lower-vector-map-value-needs-scalar-tail? value-plan)
               (set! needs-tail true)
@@ -54984,9 +55023,7 @@
     [has-gather : bool false]
     (begin
       (while (and (not has-gather) (< index count))
-        (match (lower-vector-map-store-list-ref
-          (lower-global-shared-view stores)
-          index)
+        (match (lower-vector-map-store-list-ref stores index)
           [(LowerVectorMapStore _ value-plan)
             (if (lower-vector-map-value-has-gather? value-plan)
               (set! has-gather true)
@@ -55001,9 +55038,7 @@
     [has-shuffle : bool false]
     (begin
       (while (and (not has-shuffle) (< index count))
-        (match (lower-vector-map-store-list-ref
-          (lower-global-shared-view stores)
-          index)
+        (match (lower-vector-map-store-list-ref stores index)
           [(LowerVectorMapStore _ value-plan)
             (if (lower-vector-map-value-has-shuffle? value-plan)
               (set! has-shuffle true)
@@ -55316,9 +55351,7 @@
                 (ir.CompilerIrInstr.Branch tail-cond body-label exit-label))
               body-label))
           (while (< store-index stores.count)
-            (match (lower-vector-map-store-list-ref
-              (lower-global-shared-view stores)
-              store-index)
+            (match (lower-vector-map-store-list-ref stores store-index)
               [(LowerVectorMapStore dst-array value-plan)
                 (begin
                   (match (lower-emit-scalar-vector-map-value
@@ -55414,9 +55447,7 @@
           ;; Evaluate all values before the first store so common loads and
           ;; products stay in one side-effect-free region for normal CSE.
           (while (< store-index count)
-            (match (lower-vector-map-store-list-ref
-              (lower-global-shared-view stores)
-              store-index)
+            (match (lower-vector-map-store-list-ref stores store-index)
               [(LowerVectorMapStore _ value-plan)
                 (begin
                   (match (lower-emit-vector-map-value-cached
@@ -55437,13 +55468,11 @@
                   (set! store-index (+ store-index 1)))]))
           (set! store-index 0)
           (while (< store-index count)
-            (match (lower-vector-map-store-list-ref
-              (lower-global-shared-view stores)
-              store-index)
+            (match (lower-vector-map-store-list-ref stores store-index)
               [(LowerVectorMapStore dst-array _)
                 (begin
                   (match (lower-vector-map-value-cache-lookup
-                    (lower-global-shared-view cache)
+                    cache
                     (LowerVectorMapValueKey.ArrayData dst-array))
                     [(LowerMaybeIrValue.Some data-ptr)
                       (set!
@@ -56219,7 +56248,7 @@
                 state
                 env
                 type-env
-                (lower-global-shared-view lane-locals)
+                lane-locals
                 (lower-global-shared-view index)
                 index-var
                 (lower-global-shared-view active-mask)
@@ -56301,7 +56330,7 @@
         state
         env
         type-env
-        (lower-global-shared-view lane-locals)
+        lane-locals
         (lower-global-shared-view index)
         index-var
         (lower-global-shared-view active-mask)
@@ -56393,7 +56422,7 @@
                 s
                 env
                 type-env
-                (lower-global-shared-view lane-locals)
+                lane-locals
                 (lower-global-shared-view index)
                 index-var
                 (ir.CompilerIrMaybeValue.Some
@@ -56488,7 +56517,7 @@
     state
     env
     type-env
-    (lower-global-shared-view lane-locals)
+    lane-locals
     (lower-global-shared-view index)
     index-var
     (lower-global-shared-view active-mask)
@@ -56968,7 +56997,7 @@
         state
         env
         type-env
-        (lower-global-shared-view lane-locals)
+        lane-locals
         (lower-global-shared-view index)
         index-var
         (lower-global-shared-view active-mask)
@@ -57007,7 +57036,7 @@
         state
         env
         type-env
-        (lower-global-shared-view lane-locals)
+        lane-locals
         (lower-global-shared-view index)
         index-var
         (lower-global-shared-view active-mask)
@@ -57341,7 +57370,7 @@
     state
     env
     type-env
-    (lower-global-shared-view lane-locals)
+    lane-locals
     (lower-global-shared-view index)
     index-var
     (lower-global-shared-view active-mask)
@@ -58755,7 +58784,7 @@
       state
       env
       type-env
-      (lower-global-shared-view lane-locals)
+      lane-locals
       (lower-global-shared-view index)
       index-var
       (lower-global-shared-view active-mask)
@@ -58872,7 +58901,7 @@
                 env
                 type-env
                 (lower-global-shared-view index)
-                (lower-global-shared-view analysis-locals)
+                analysis-locals
                 (lower-global-shared-view arg))]
             [varying : bool (> arg-lanes 0)]
             (if (< arg-lanes 0)
@@ -59971,19 +60000,23 @@
         function-state
         false)]
     [body-lanes : i64
-      (lower-masked-vector-expr-lanes-with-locals
-        ctx
-        function-state
-        (CompilerLowerMode.Avx512)
-        env
-        type-env
-        index-name
-        (let
-          [lane-locals (lower-spmd-call-lane-locals params call-args)]
-          (lower-masked-vector-lane-locals-from-set
-            lane-locals
-            specialization.lanes))
-        body)]
+      (let
+        [mode (CompilerLowerMode.Avx512)]
+        [lane-locals-arg
+          (let
+            [lane-locals (lower-spmd-call-lane-locals params call-args)]
+            (lower-masked-vector-lane-locals-from-set
+              lane-locals
+              specialization.lanes))]
+        (lower-masked-vector-expr-lanes-with-locals
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          index-name
+          lane-locals-arg
+          body))]
     (cond
       [(not (lower-spmd-package-lane-width-supported? specialization.lanes))
         "lower: :spmd-callable lane width is not supported by private ABI v1"]
@@ -61428,17 +61461,84 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [lane-locals : LowerIdSet]
+  [lane-locals : (& lane-locals LowerIdSet)]
   [index : String]
   [index-var : i64]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [expr : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-global-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr
+  (let
+    [lane-locals : LowerIdSet
+      (owned_view.compiler-owned-reference-shared-view lane-locals)]
+    (match (lower-global-shared-view expr)
+      [(ast.AstExpr.Spanned inner-box _)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          (lower-avx512-masked-expr
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            inner))]
+      [(ast.AstExpr.Ann inner-box _)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          (lower-avx512-masked-expr
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            inner))]
+      [(ast.AstExpr.Cast inner-box _)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          (lower-avx512-masked-expr
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            inner))]
+      [(ast.AstExpr.Literal lit)
+        (match (lower-global-shared-view lit)
+          [(ast.AstLiteral.Bool value)
+            (ResultLowerExpr.Ok
+              (lower-avx512-masked-bool-literal state active-mask lanes value))]
+          [_
+            (ResultLowerExpr.Ok
+              (lower-emit-masked-preheader-splat
+                state
+                (lower-literal-value-with-type
+                  (tc_core.tc-context-source-names ctx)
+                  (lower-global-shared-view lit)
+                  (tc_core.tc-literal-type (lower-global-shared-view lit)))
+                lanes
+                (tc_core.tc-literal-type lit)))])]
+      [(ast.AstExpr.SpmdProgramIndex)
+        (ResultLowerExpr.Ok (lower-emit-lane-id state lanes (ast.AstType.I64)))]
+      [(ast.AstExpr.SpmdProgramCount)
+        (ResultLowerExpr.Ok
+          (lower-emit-masked-preheader-splat
+            state
+            (ir.CompilerIrValue.I64 lanes)
+            lanes
+            (ast.AstType.I64)))]
+      [(ast.AstExpr.Var name)
+        (lower-avx512-masked-var
           ctx
           state
           env
@@ -61446,192 +61546,104 @@
           lane-locals
           index
           index-var
-          active-mask
-          lanes
-          inner))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-avx512-masked-expr
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          inner))]
-    [(ast.AstExpr.Literal lit)
-      (match (lower-global-shared-view lit)
-        [(ast.AstLiteral.Bool value)
-          (ResultLowerExpr.Ok
-            (lower-avx512-masked-bool-literal state active-mask lanes value))]
-        [_
-          (ResultLowerExpr.Ok
-            (lower-emit-masked-preheader-splat
-              state
-              (lower-literal-value-with-type
-                (tc_core.tc-context-source-names ctx)
-                (lower-global-shared-view lit)
-                (tc_core.tc-literal-type (lower-global-shared-view lit)))
-              lanes
-              (tc_core.tc-literal-type lit)))])]
-    [(ast.AstExpr.SpmdProgramIndex)
-      (ResultLowerExpr.Ok (lower-emit-lane-id state lanes (ast.AstType.I64)))]
-    [(ast.AstExpr.SpmdProgramCount)
-      (ResultLowerExpr.Ok
-        (lower-emit-masked-preheader-splat
-          state
-          (ir.CompilerIrValue.I64 lanes)
-          lanes
-          (ast.AstType.I64)))]
-    [(ast.AstExpr.Var name)
-      (lower-avx512-masked-var
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        lanes
-        expr
-        name)]
-    [(ast.AstExpr.Unary op inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (match op
-          [(ast.AstUnOp.Not)
-            (match (lower-avx512-masked-expr
-              ctx
-              state
-              env
-              type-env
-              lane-locals
-              index
-              index-var
-              active-mask
-              lanes
-              inner)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr next-state value _)
-                    (ResultLowerExpr.Ok
-                      (lower-emit-mask-not next-state value lanes))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-          [_ (lower-avx512-masked-unsupported ctx expr "this unary operator")]))]
-    [(ast.AstExpr.Binary op left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (lower-avx512-masked-binary
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
           lanes
           expr
-          op
-          left
-          right))]
-    [(ast.AstExpr.Call func-box args)
-      (lower-masked-load-cache-invalidate-result
-        (lower-avx512-spmd-call
-          ctx
-          state
-          env
-          type-env
-          lane-locals
-          index
-          index-var
-          active-mask
-          lanes
-          expr
-          (lower-context-expr-get ctx func-box)
-          args))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (match (lower-avx512-masked-let-bindings
-              ctx
-              state
-              env
-              type-env
-              (lower-global-shared-view lane-locals)
-              (lower-global-shared-view index)
-              index-var
-              (lower-global-shared-view active-mask)
-              lanes
-              bindings)
-              [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
-                (lower-avx512-masked-expr
-                  ctx
-                  bound-state
-                  bound-env
-                  bound-type-env
-                  (lower-masked-vector-let-binding-names bindings lane-locals)
-                  index
-                  index-var
-                  active-mask
-                  lanes
-                  body)]
-              [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (match (lower-expr-result-type-or-check
-          ctx
-          env
-          type-env
-          (lower-state-type-cache state)
-          (lower-state-function-state state)
-          (lower-global-shared-view expr))
-          [(tc_core.ResultTcType.Ok result-ty)
-            (lower-avx512-masked-if
-              ctx
-              state
-              env
-              type-env
-              lane-locals
-              index
-              index-var
-              active-mask
-              lanes
-              result-ty
-              expr
-              cond
-              then-branch
-              else-branch)]
-          [(tc_core.ResultTcType.Err message)
-            (ResultLowerExpr.Err
-              (box (lower-diagnostic-at-expr ctx expr message)))]))]
-    [(ast.AstExpr.Match match-box)
-      (match (deref match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
+          name)]
+      [(ast.AstExpr.Unary op inner-box)
+        (let
+          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
+          (match op
+            [(ast.AstUnOp.Not)
+              (match (lower-avx512-masked-expr
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                inner)
+                [(ResultLowerExpr.Ok lowered)
+                  (match lowered
+                    [(LowerExpr.Expr next-state value _)
+                      (ResultLowerExpr.Ok
+                        (lower-emit-mask-not next-state value lanes))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+            [_ (lower-avx512-masked-unsupported ctx expr "this unary operator")]))]
+      [(ast.AstExpr.Binary op left-box right-box)
+        (let
+          [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
+          [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
+          (lower-avx512-masked-binary
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr
+            op
+            left
+            right))]
+      [(ast.AstExpr.Call func-box args)
+        (lower-masked-load-cache-invalidate-result
+          (lower-avx512-spmd-call
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr
+            (lower-context-expr-get ctx func-box)
+            args))]
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body-box)
+            (let
+              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+              (match (lower-avx512-masked-let-bindings
+                ctx
+                state
+                env
+                type-env
+                (lower-global-shared-view lane-locals)
+                (lower-global-shared-view index)
+                index-var
+                (lower-global-shared-view active-mask)
+                lanes
+                bindings)
+                [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
+                  (let
+                    [lane-locals-arg
+                      (lower-masked-vector-let-binding-names
+                        bindings
+                        lane-locals)]
+                    (lower-avx512-masked-expr
+                      ctx
+                      bound-state
+                      bound-env
+                      bound-type-env
+                      lane-locals-arg
+                      index
+                      index-var
+                      active-mask
+                      lanes
+                      body))]
+                [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))])]
+      [(ast.AstExpr.If cond-box then-box else-box)
+        (let
+          [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
+          [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
+          [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
           (match (lower-expr-result-type-or-check
             ctx
             env
@@ -61640,7 +61652,7 @@
             (lower-state-function-state state)
             (lower-global-shared-view expr))
             [(tc_core.ResultTcType.Ok result-ty)
-              (lower-avx512-masked-match
+              (lower-avx512-masked-if
                 ctx
                 state
                 env
@@ -61652,76 +61664,105 @@
                 lanes
                 result-ty
                 expr
-                (lower-context-expr-get ctx scrutinee-box)
-                arms)]
+                cond
+                then-branch
+                else-branch)]
             [(tc_core.ResultTcType.Err message)
               (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr ctx expr message)))])])]
-    [(ast.AstExpr.While cond-box body-box)
-      (begin
-        (lower-masked-load-cache-invalidate! state)
-        (lower-masked-load-cache-invalidate-result
-          (lower-avx512-masked-while
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            (lower-context-expr-get ctx cond-box)
-            (lower-context-expr-get ctx body-box))))]
-    [(ast.AstExpr.Begin exprs)
-      (lower-avx512-masked-begin
-        ctx
-        state
-        env
-        type-env
-        lane-locals
-        index
-        index-var
-        active-mask
-        lanes
-        exprs)]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        (lower-avx512-masked-array-ref
+                (box (lower-diagnostic-at-expr ctx expr message)))]))]
+      [(ast.AstExpr.Match match-box)
+        (match (deref match-box)
+          [(ast.AstMatch.Match scrutinee-box arms)
+            (match (lower-expr-result-type-or-check
+              ctx
+              env
+              type-env
+              (lower-state-type-cache state)
+              (lower-state-function-state state)
+              (lower-global-shared-view expr))
+              [(tc_core.ResultTcType.Ok result-ty)
+                (lower-avx512-masked-match
+                  ctx
+                  state
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  active-mask
+                  lanes
+                  result-ty
+                  expr
+                  (lower-context-expr-get ctx scrutinee-box)
+                  arms)]
+              [(tc_core.ResultTcType.Err message)
+                (ResultLowerExpr.Err
+                  (box (lower-diagnostic-at-expr ctx expr message)))])])]
+      [(ast.AstExpr.While cond-box body-box)
+        (begin
+          (lower-masked-load-cache-invalidate! state)
+          (lower-masked-load-cache-invalidate-result
+            (lower-avx512-masked-while
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              (lower-context-expr-get ctx cond-box)
+              (lower-context-expr-get ctx body-box))))]
+      [(ast.AstExpr.Begin exprs)
+        (lower-avx512-masked-begin
           ctx
           state
           env
           type-env
+          lane-locals
           index
           index-var
           active-mask
           lanes
-          expr
-          arr
-          idx))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (lower-masked-load-cache-invalidate-result
-          (lower-avx512-masked-array-set
+          exprs)]
+      [(ast.AstExpr.ArrayRef arr-box idx-box)
+        (let
+          [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
+          [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
+          (lower-avx512-masked-array-ref
             ctx
             state
             env
             type-env
-            lane-locals
             index
             index-var
             active-mask
             lanes
             expr
             arr
-            idx
-            value)))]
-    [_ (lower-avx512-masked-unsupported ctx expr "this branch expression")]))
+            idx))]
+      [(ast.AstExpr.ArraySet arr-box idx-box value-box)
+        (let
+          [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
+          [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
+          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+          (lower-masked-load-cache-invalidate-result
+            (lower-avx512-masked-array-set
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              expr
+              arr
+              idx
+              value)))]
+      [_ (lower-avx512-masked-unsupported ctx expr "this branch expression")])))
 
 (define (lower-avx512-masked-expr-expected
   [ctx : tc_core.TcContext]
@@ -61910,9 +61951,7 @@
                 (set! s next-s)
                 (set! mask value))])
           (while (< store-index count)
-            (match (lower-vector-map-store-list-ref
-              (lower-global-shared-view stores)
-              store-index)
+            (match (lower-vector-map-store-list-ref stores store-index)
               [(LowerVectorMapStore _ value-plan)
                 (begin
                   (match (lower-emit-vector-map-value-cached
@@ -61935,9 +61974,7 @@
                   (set! store-index (+ store-index 1)))]))
           (set! store-index 0)
           (while (< store-index count)
-            (match (lower-vector-map-store-list-ref
-              (lower-global-shared-view stores)
-              store-index)
+            (match (lower-vector-map-store-list-ref stores store-index)
               [(LowerVectorMapStore dst-array _)
                 (begin
                   (set!
@@ -61989,17 +62026,21 @@
   [body : ast.AstExpr]) : ResultLowerExpr
   (begin
     (lower-masked-load-cache-enable! state)
-    (lower-avx512-masked-expr
-      ctx
-      state
-      (sym_i64_env.sym-i64-bind-id env index-id index-var)
-      (tc_core.tc-bind-id type-env index-id index-ty)
-      (lower-id-set-empty)
-      index
-      index-var
-      active-mask
-      lanes
-      body)))
+    (let
+      [env-arg (sym_i64_env.sym-i64-bind-id env index-id index-var)]
+      [type-env-arg (tc_core.tc-bind-id type-env index-id index-ty)]
+      [lane-locals (lower-id-set-empty)]
+      (lower-avx512-masked-expr
+        ctx
+        state
+        env-arg
+        type-env-arg
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        body))))
 
 (define (lower-avx512-masked-foreach-lowered
   [ctx : tc_core.TcContext]
@@ -62992,14 +63033,12 @@
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-spmd-inline-expr
-    ctx
-    (lower-state-function-state state)
-    env
-    type-env
-    (lower-global-shared-view body)
-    (lower-spmd-inline-subst-empty)
-    (lower-id-set-insert (lower-id-set-empty) index-id))
+  (match (let
+    [function-state (lower-state-function-state state)]
+    [expr (lower-global-shared-view body)]
+    [subst (lower-spmd-inline-subst-empty)]
+    [shadowed (lower-id-set-insert (lower-id-set-empty) index-id)]
+    (lower-spmd-inline-expr ctx function-state env type-env expr subst shadowed))
     [(ResultLowerAstExpr.Ok inlined-body)
       (lower-foreach-lowered-inlined
         ctx
@@ -66747,7 +66786,7 @@
   [slots : LowerCAbiSlotList]
   [storage : ir.CompilerIrValue]
   [storage-state : LowerState]) : ResultLowerExpr
-  (match (lower-c-abi-slot-list-ref (lower-global-shared-view slots) 0)
+  (match (lower-c-abi-slot-list-ref slots 0)
     [(LowerCAbiSlot.Slot first-ty first-offset)
       (match (lower-emit-word
         storage-state
@@ -71347,9 +71386,7 @@
               pools
               (ci.intern-global-shared-view intern-state)
               (compiler-lower-state-profile lower-state))
-            (spec.spec-owner-context-new
-              pools
-              (ci.intern-global-shared-view intern-state)))]
+            (spec.spec-owner-context-new pools intern-state))]
         [generated-result : spec.ResultGenProgramWithPaths
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             program

@@ -17402,40 +17402,45 @@
 
 (define (opt-cfg-natural-loops-with-context
   [blocks : ir.CompilerIrBlockList]
-  [context : OptCfgContext]) : OptNaturalLoopList
-  (match (compiler-opt-global-shared-view blocks)
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-cfg-natural-loop-block-seq-csr
-        blocks
-        seq
-        (- (ir.compiler-ir-block-seq-count seq) 1)
-        (compiler-opt-global-shared-view context)
-        context.pred-map
-        context.reachable
-        context.doms
-        (OptNaturalLoopList.Nil))]
-    ;; A cons list scans as the array it spells: the scan emits the same loops
-    ;; in the same order either way, and each loop's body blocks are then read
-    ;; off the array by id instead of by walking the list to its last member.
-    [_
-      (let
-        [seq : ir.CompilerIrBlockSeq
-          (ir.compiler-ir-block-seq-from-list blocks)]
+  [context : (& context OptCfgContext)]) : OptNaturalLoopList
+  (let
+    [context : OptCfgContext
+      (owned_view.compiler-owned-reference-shared-view context)]
+    (match (compiler-opt-global-shared-view blocks)
+      [(ir.CompilerIrBlockList.Array seq)
         (opt-cfg-natural-loop-block-seq-csr
-          (ir.CompilerIrBlockList.Array (compiler-opt-global-shared-view seq))
+          blocks
           seq
           (- (ir.compiler-ir-block-seq-count seq) 1)
           (compiler-opt-global-shared-view context)
           context.pred-map
           context.reachable
           context.doms
-          (OptNaturalLoopList.Nil)))]))
+          (OptNaturalLoopList.Nil))]
+      ;; A cons list scans as the array it spells: the scan emits the same loops
+      ;; in the same order either way, and each loop's body blocks are then read
+      ;; off the array by id instead of by walking the list to its last member.
+      [_
+        (let
+          [seq : ir.CompilerIrBlockSeq
+            (ir.compiler-ir-block-seq-from-list blocks)]
+          (opt-cfg-natural-loop-block-seq-csr
+            (ir.CompilerIrBlockList.Array (compiler-opt-global-shared-view seq))
+            seq
+            (- (ir.compiler-ir-block-seq-count seq) 1)
+            (compiler-opt-global-shared-view context)
+            context.pred-map
+            context.reachable
+            context.doms
+            (OptNaturalLoopList.Nil)))])))
 
 (define (opt-cfg-natural-loops [blocks : (& blocks ir.CompilerIrBlockList)]) : OptNaturalLoopList
-  (opt-cfg-natural-loops-with-context
-    (owned_view.compiler-owned-reference-shared-view blocks)
-    (opt-cfg-context-build
-      (owned_view.compiler-owned-reference-shared-view blocks))))
+  (let
+    [blocks-arg (owned_view.compiler-owned-reference-shared-view blocks)]
+    [context
+      (opt-cfg-context-build
+        (owned_view.compiler-owned-reference-shared-view blocks))]
+    (opt-cfg-natural-loops-with-context blocks-arg context)))
 
 ;; --- safe loop preheader synthesis ------------------------------------------
 ;;
@@ -18583,7 +18588,7 @@
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context
         (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view context))]
+        context)]
     (match (opt-loop-rotation-loops pools blocks context loops loops)
       [(OptBlockListPassResult.Result next changed)
         (OptLoopRotationCtxResult.Result next changed context)])))
@@ -20529,9 +20534,7 @@
     (match (opt-rotate-ssa-loops
       func
       (compiler-opt-global-shared-view context)
-      (opt-cfg-natural-loops-with-context
-        (opt-function-blocks func)
-        (compiler-opt-global-shared-view context)))
+      (opt-cfg-natural-loops-with-context (opt-function-blocks func) context))
       [(OptFunctionCtxMaybe.No) (OptFunctionCtxResult.Result func context)]
       [(OptFunctionCtxMaybe.Some next next-context)
         (opt-rotate-ssa-rounds next next-context (- remaining 1))])))
@@ -27593,7 +27596,7 @@
           [loops : OptNaturalLoopList
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view context))]
+              context)]
           (if (not
             (opt-licm-loops-may-change?
               (not (= global-cells.word-cell 0))
@@ -29429,7 +29432,7 @@
           [loops : OptNaturalLoopList
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view context))]
+              context)]
           (match (opt-licm-unswitch-loops
             blocks
             context
@@ -31736,7 +31739,7 @@
           (__tl-project-field context index)
           (opt-cfg-natural-loops-with-context
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context))
+            context)
           blocks
           frame
           false)
@@ -37246,7 +37249,7 @@
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context))]
+          context)]
       (match (compiler-opt-global-shared-view loops)
         [(OptNaturalLoopList.Nil)
           (OptFlagExitPassResult.Result blocks frame false)]
@@ -46767,9 +46770,7 @@
     [context : OptCfgContext
       (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
     [loops : OptNaturalLoopList
-      (opt-cfg-natural-loops-with-context
-        blocks
-        (compiler-opt-global-shared-view context))]
+      (opt-cfg-natural-loops-with-context blocks context)]
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
     (begin
       (opt-cfg-straighten-loop-boundary-fill!
@@ -62166,7 +62167,7 @@
     unit))
 
 (define (opt-unroll-phi-prefix-count
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]) : i64
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     index
@@ -62174,7 +62175,9 @@
       (opt-unroll-phi-prefix-count instrs (+ index 1))
       index)))
 
-(define (opt-unroll-no-phi-from? [instrs : ir.CompilerIrInstrSeq] [index : i64]) : bool
+(define (opt-unroll-no-phi-from?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     true
     (if (ir.compiler-ir-instr-seq-phi? instrs index)
@@ -63683,8 +63686,7 @@
   [cond-var : i64]) : OptUnrollMaybeShape
   (let
     [last : i64 (- count 1)]
-    [phi-count : i64
-      (opt-unroll-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)]
+    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
     ;; Asked only once the size clauses have passed, exactly where the old
     ;; short-circuiting `or` asked it.
     [copies : i64
@@ -63703,10 +63705,7 @@
         [(< phi-count 1) (opt-unroll-reason-phi-prefix)]
         [(< (- last phi-count) 2) (opt-unroll-reason-body-size)]
         [(> (- last phi-count) 16) (opt-unroll-reason-body-size)]
-        [(not
-            (opt-unroll-no-phi-from?
-              (compiler-opt-global-shared-view instrs)
-              phi-count))
+        [(not (opt-unroll-no-phi-from? instrs phi-count))
           (opt-unroll-reason-phi-prefix)]
         [(< copies 2) (opt-unroll-reason-body-class)]
         ;; the c-def is dropped from the clones, so the final branch must be c's
@@ -65956,18 +65955,14 @@
   [exit-label : i64]) : OptLoopCallMaybeShape
   (let
     [last : i64 (- count 1)]
-    [phi-count : i64
-      (opt-unroll-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)]
+    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
     ;; The body cap is a compile-time bound on the quadratic gep lookup, not a
     ;; correctness condition; a versioned fill body is 4 to 8 instructions.
     (if (or
       (< phi-count 1)
       (< (- last phi-count) 4)
       (> (- last phi-count) 16)
-      (not
-        (opt-unroll-no-phi-from?
-          (compiler-opt-global-shared-view instrs)
-          phi-count)))
+      (not (opt-unroll-no-phi-from? instrs phi-count)))
       (OptLoopCallMaybeShape.No)
       (opt-loop-call-shape-cond label instrs phi-count last cond-var exit-label))))
 
@@ -67844,20 +67839,14 @@
                 [(ir.CompilerIrValue.Var cond-var)
                   (let
                     [last : i64 (- count 1)]
-                    [phi-count : i64
-                      (opt-unroll-phi-prefix-count
-                        (compiler-opt-global-shared-view instrs)
-                        0)]
+                    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
                     (if (or
                       (!= then-label label)
                       (= else-label label)
                       (= label entry-label)
                       (< phi-count 1)
                       (< (- last phi-count) 2)
-                      (not
-                        (opt-unroll-no-phi-from?
-                          (compiler-opt-global-shared-view instrs)
-                          phi-count))
+                      (not (opt-unroll-no-phi-from? instrs phi-count))
                       (not (opt-unroll-body-ok? instrs.slots phi-count last))
                       ;; the cond def is dropped from the copies, so the final
                       ;; branch must be its only use inside the block.
@@ -68930,7 +68919,7 @@
       (match block
         [(ir.CompilerIrBlock.Block _ instrs)
           (and
-            (opt-unroll-no-phi-from? (compiler-opt-global-shared-view instrs) 0)
+            (opt-unroll-no-phi-from? instrs 0)
             (opt-unroll-const-guard-exit-instrs-ok? instrs 0))])]))
 
 ;; The consolidation plan: merged guard groups, the grouped checks' body
@@ -70710,7 +70699,7 @@
                   [loops : OptNaturalLoopList
                     (opt-cfg-natural-loops-with-context
                       (compiler-opt-global-shared-view blocks)
-                      (compiler-opt-global-shared-view context))]
+                      context)]
                   (match (opt-unroll-mb-loops-scan
                     (compiler-opt-global-shared-view blocks)
                     (compiler-opt-global-shared-view loops)
@@ -71970,7 +71959,7 @@
             label
             versioned?
             (opt-bce-version-check-count
-              (compiler-opt-global-shared-view instrs)
+              instrs
               0
               (- (ir.compiler-ir-instr-seq-count instrs) 1)
               0)
@@ -72111,14 +72100,14 @@
       (opt-bce-version-body-ok? instrs (+ index 1) last))))
 
 (define (opt-bce-version-check-count
-  [instrs : ir.CompilerIrInstrSeq]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
   [last : i64]
   [acc : i64]) : i64
   (if (>= index last)
     acc
     (opt-bce-version-check-count
-      (compiler-opt-global-shared-view instrs)
+      instrs
       (+ index 1)
       last
       (if (ir.compiler-ir-instr-seq-bounds-check? instrs index)
@@ -76614,10 +76603,7 @@
     [(< (- last phi-count) 2) (opt-bce-reason-body-size)]
     [(> (- last phi-count) (opt-bce-version-body-max))
       (opt-bce-reason-body-too-big)]
-    [(not
-        (opt-unroll-no-phi-from?
-          (compiler-opt-global-shared-view instrs)
-          phi-count))
+    [(not (opt-unroll-no-phi-from? instrs phi-count))
       (opt-bce-reason-phi-prefix)]
     [(not (opt-bce-version-body-ok? instrs phi-count last))
       (opt-bce-reason-body-instr)]
@@ -76652,10 +76638,7 @@
                     (let
                       [_examined : unit (opt-bce-trace-examined!)]
                       [last : i64 (- count 1)]
-                      [phi-count : i64
-                        (opt-unroll-phi-prefix-count
-                          (compiler-opt-global-shared-view instrs)
-                          0)]
+                      [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
                       [reason : i64
                         (if (= label entry-label)
                           (opt-bce-reason-entry-block)
@@ -78867,14 +78850,8 @@
     [(ir.CompilerIrBlock.Block _ instrs)
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-        [phi-count : i64
-          (opt-unroll-phi-prefix-count
-            (compiler-opt-global-shared-view instrs)
-            0)]
-        (if (not
-          (opt-unroll-no-phi-from?
-            (compiler-opt-global-shared-view instrs)
-            phi-count))
+        [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+        (if (not (opt-unroll-no-phi-from? instrs phi-count))
           (- 0 1)
           (if (opt-cfg-instr-seq-can-fallthrough? instrs)
             (if (and
@@ -79911,26 +79888,16 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            [phi-count : i64
-              (opt-unroll-phi-prefix-count
-                (compiler-opt-global-shared-view instrs)
-                0)]
+            [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
             (if (or
               (< count 1)
-              (not
-                (opt-unroll-no-phi-from?
-                  (compiler-opt-global-shared-view instrs)
-                  phi-count))
+              (not (opt-unroll-no-phi-from? instrs phi-count))
               (opt-cfg-instr-seq-can-fallthrough? instrs)
               (> (- (- count 1) phi-count) (opt-bce-version-body-max))
               (not (opt-bce-version-body-ok? instrs phi-count (- count 1)))
               (not
                 (=
-                  (opt-bce-version-check-count
-                    (compiler-opt-global-shared-view instrs)
-                    phi-count
-                    (- count 1)
-                    0)
+                  (opt-bce-version-check-count instrs phi-count (- count 1) 0)
                   0))
               (opt-cfg-block-exists?
                 blocks
@@ -80907,8 +80874,7 @@
   [env : OptCopyEnv]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [phi-count : i64
-      (opt-unroll-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)]
+    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
     [index : i64 0]
@@ -81009,9 +80975,7 @@
                     (compiler-opt-global-shared-view defs)
                     instrs
                     0
-                    (opt-unroll-phi-prefix-count
-                      (compiler-opt-global-shared-view instrs)
-                      0)
+                    (opt-unroll-phi-prefix-count instrs 0)
                     plan)]
                 [vars : OptBceMbVarList
                   (opt-bce-mb-body-defs-used
@@ -86546,7 +86510,7 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (if (>=
             (opt-bce-version-check-count
-              (compiler-opt-global-shared-view instrs)
+              instrs
               0
               (ir.compiler-ir-instr-seq-count instrs)
               0)
@@ -87058,9 +87022,7 @@
                         (let
                           [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
                           [phi-count : i64
-                            (opt-unroll-phi-prefix-count
-                              (compiler-opt-global-shared-view instrs)
-                              0)]
+                            (opt-unroll-phi-prefix-count instrs 0)]
                           [latch-cond : i64
                             (opt-bce-hoist-latch-cond
                               blocks
@@ -87853,9 +87815,7 @@
                               [count : i64
                                 (ir.compiler-ir-instr-seq-count instrs)]
                               [phi-count : i64
-                                (opt-unroll-phi-prefix-count
-                                  (compiler-opt-global-shared-view instrs)
-                                  0)]
+                                (opt-unroll-phi-prefix-count instrs 0)]
                               [defs : opt_i64_i64_map.Map
                                 (opt-bce-mb-collect-defs
                                   body-blocks
@@ -87991,10 +87951,8 @@
           (compiler-opt-global-shared-view blocks)
           (opt-cfg-natural-loops-with-context
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context))
-          (opt-cfg-natural-loops-with-context
-            blocks
-            (compiler-opt-global-shared-view context))
+            context)
+          (opt-cfg-natural-loops-with-context blocks context)
           rejected
           frame)
           [(OptBceHoistScan.Scan next-blocks next-frame changed applied)
@@ -88182,7 +88140,7 @@
           [loops : OptNaturalLoopList
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view context))]
+              context)]
           ;; A negative bases value disables descriptor-length recognition (no
           ;; type-pool access); a real one classifies the function's
           ;; descriptor handles for it.
@@ -88473,7 +88431,7 @@
             [loops : OptNaturalLoopList
               (opt-cfg-natural-loops-with-context
                 (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view context))]
+                context)]
             [descriptor : OptBceMbDescriptor
               (if (< type-segment-bases 0)
                 (OptBceMbDescriptor.No)
@@ -88636,15 +88594,10 @@
     [(ir.CompilerIrBlock.Block _ instrs)
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-        [phi-count : i64
-          (opt-unroll-phi-prefix-count
-            (compiler-opt-global-shared-view instrs)
-            0)]
+        [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
         (if (and
           (> count phi-count)
-          (opt-unroll-no-phi-from?
-            (compiler-opt-global-shared-view instrs)
-            phi-count)
+          (opt-unroll-no-phi-from? instrs phi-count)
           (opt-unroll-mb-block-terminator-ok?
             (ir.compiler-ir-instr-seq-ref instrs (- count 1))))
           (opt-unroll-mb-body-instrs-status instrs phi-count (- count 1))
@@ -88901,10 +88854,7 @@
           (match block
             [(ir.CompilerIrBlock.Block _ instrs)
               (let
-                [phi-count : i64
-                  (opt-unroll-phi-prefix-count
-                    (compiler-opt-global-shared-view instrs)
-                    0)]
+                [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
                 (if (and
                   ;; The shared recognizer also admits literal steps > 1 (for
                   ;; bce_version's guarded versioning); the 2x unroller's own
@@ -90188,7 +90138,7 @@
       (match (opt-gep-offset-synthesize-first-candidate
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context))
+          context)
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view context)
         uses
@@ -94972,7 +94922,7 @@
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context
         (compiler-opt-global-shared-view ready)
-        (compiler-opt-global-shared-view cfg-context))]
+        cfg-context)]
     [all-defs : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_all-defs : unit
       (opt-successor-sink-fill-all-defs! frame ready (&mut all-defs))]
@@ -96743,7 +96693,7 @@
         (&mut depth)
         (opt-cfg-natural-loops-with-context
           (owned_view.compiler-owned-reference-shared-view blocks)
-          (compiler-opt-global-shared-view context)))
+          context))
       (OptGuardSinkState
         cells
         index
@@ -99292,10 +99242,7 @@
           (let
             [header-instrs : ir.CompilerIrInstrSeq
               (opt-ubound-block-instrs header-block)]
-            [phi-count : i64
-              (opt-unroll-phi-prefix-count
-                (compiler-opt-global-shared-view header-instrs)
-                0)]
+            [phi-count : i64 (opt-unroll-phi-prefix-count header-instrs 0)]
             (match (opt-ubound-header-check header-instrs phi-count)
               [(OptUboundMaybeCheck.No) (OptUboundMaybeSite.No)]
               [(OptUboundMaybeCheck.Some iphi len ok)
@@ -99727,8 +99674,7 @@
 
 (define (opt-ubound-header-candidate? [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
-    [phi-count : i64
-      (opt-unroll-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)]
+    [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
     (and
       (> phi-count 0)
       (match (opt-ubound-header-check instrs phi-count)
@@ -99806,9 +99752,9 @@
                   (opt-ubound-apply
                     func
                     site
-                    (opt-unroll-phi-prefix-count
-                      (opt-ubound-block-instrs header-block)
-                      0))])])))]))
+                    (let
+                      [instrs (opt-ubound-block-instrs header-block)]
+                      (opt-unroll-phi-prefix-count instrs 0)))])])))]))
 
 ;; --- same-block bounds-check group coalescing (bounds_group) ----------------
 ;;
@@ -101519,7 +101465,7 @@
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context))]
+          context)]
       (if (or (<= width 0) (not (opt-bg-loops-need-preheader? loops)))
         (OptBgPreheaderResult.Result blocks context changed)
         (match (opt-bg-synthesize-first-candidate
@@ -101553,7 +101499,7 @@
         [loops : OptNaturalLoopList
           (opt-cfg-natural-loops-with-context
             (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context))]
+            context)]
         [marks : (__tl_dyn-array bool)
           (__tl_make-array bool (ir.compiler-ir-block-list-count blocks))]
         [_marks : unit (opt-bg-loop-marks! loops (&mut marks))]
@@ -136198,10 +136144,7 @@
                       (or
                         (= guard.len 0)
                         (> guard.len 8)
-                        (not
-                          (opt-unroll-no-phi-from?
-                            (compiler-opt-global-shared-view guard)
-                            0)))
+                        (not (opt-unroll-no-phi-from? guard 0)))
                       (return (OptMaybeFunction.No)))
                     ;; Guard destinations are duplicated before SSA. A trapping
                     ;; definition would lose its unique source-span key during
@@ -136435,9 +136378,7 @@
           [context : OptCfgContext
             (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
           [loops : OptNaturalLoopList
-            (opt-cfg-natural-loops-with-context
-              blocks
-              (compiler-opt-global-shared-view context))]
+            (opt-cfg-natural-loops-with-context blocks context)]
           [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
           (begin
             (opt-def-counts-params! (&mut defs) params)
@@ -142297,7 +142238,7 @@
               [loops : OptNaturalLoopList
                 (opt-cfg-natural-loops-with-context
                   (compiler-opt-global-shared-view blocks)
-                  (compiler-opt-global-shared-view context))]
+                  context)]
               [before-gep : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
               [_before : unit
                 (opt-guard-dedup-gep-blocks-fill!
@@ -143255,7 +143196,7 @@
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context
           (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view context))]
+          context)]
       ;; One var-id-indexed table per function, shared by the whole sweep: the
       ;; copy-canonical rename (MF-1). Substitution mode needs the same bound,
       ;; so the frame is computed once here instead of twice.

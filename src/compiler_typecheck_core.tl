@@ -109743,9 +109743,7 @@
                       8)
                     (let
                       [owner : spec.SpecOwnerContext
-                        (spec.spec-owner-context-new
-                          pools
-                          (tc-global-shared-view intern-state))]
+                        (spec.spec-owner-context-new pools intern-state)]
                       [normalized-result : spec.ResultGenProgramWithPaths
                         (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
                           expanded

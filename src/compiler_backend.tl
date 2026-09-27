@@ -23677,337 +23677,332 @@
                         ;; region is a layout span rather than a loop, so it
                         ;; still has to be proved side-entry-free -- and the
                         ;; member set has to lie inside the span being proved.
-                        (let
-                          [strict-shape? : bool
-                            (if (= h 0)
-                              (= p (- 0 1))
-                              (and
-                                (>= p 0)
-                                (< p h)
-                                (compiler-backend-const-hoist-block-call-free?
+                        [strict-shape? : bool
+                          (if (= h 0)
+                            (= p (- 0 1))
+                            (and
+                              (>= p 0)
+                              (< p h)
+                              (compiler-backend-const-hoist-block-call-free?
+                                (compiler-backend-global-array-element-shared-view
+                                  orig
+                                  p))
+                              (=
+                                (compiler-backend-const-hoist-jump-target
                                   (compiler-backend-global-array-element-shared-view
                                     orig
                                     p))
-                                (=
-                                  (compiler-backend-const-hoist-jump-target
-                                    (compiler-backend-global-array-element-shared-view
+                                h-label)))]
+                        [site : i64
+                          (if strict-shape?
+                            p
+                            (compiler-backend-const-hoist-resolve-inject
+                              (compiler-backend-global-shared-view orig)
+                              ids
+                              h
+                              le))]
+                        (if (and
+                          (if (= h 0)
+                            (= site (- 0 1))
+                            (>= site 0))
+                          ;; The function's ENTRY block may be in the set
+                          ;; only when it is the header. Control arrives at
+                          ;; block 0 from the caller and not through any
+                          ;; predecessor at all, so a member set that
+                          ;; contains it under some later header has a way
+                          ;; in that no injection can dominate -- and the
+                          ;; natural-loop walk does produce such a set,
+                          ;; because an irreducible entry makes it run back
+                          ;; past the loop until it runs out of graph.
+                          (or (= h 0) (> rlo 0))
+                          (if strict-shape?
+                            true
+                            (and
+                              (<= site rlo)
+                              (not
+                                (compiler-backend-const-hoist-side-entry?
+                                  (compiler-backend-global-shared-view orig)
+                                  ids
+                                  site
+                                  le)))))
+                          ;; qualifying loop: collect its unclaimed magic sites
+                          (let
+                            [loop-count : i64 0]
+                            [b : i64 rlo]
+                            [lo : i64
+                              (if (and (>= site 0) (< site rlo))
+                                (array-ref points site)
+                                (array-ref points rlo))]
+                            [hi : i64 (array-ref points (+ le 1))]
+                            [inject-label : i64
+                              (if (= h 0)
+                                h-label
+                                (compiler-backend-const-hoist-block-label
+                                  (compiler-backend-global-array-element-shared-view
+                                    orig
+                                    site)))]
+                            [inject-pre : bool (= h 0)]
+                            (begin
+                              (while (<= b le)
+                                (begin
+                                  (if (compiler_regalloc.compiler-reg-loop-nest-member?
+                                    nest
+                                    b
+                                    generation)
+                                    (match (compiler-backend-global-array-element-shared-view
                                       orig
-                                      p))
-                                  h-label)))]
-                          [site : i64
-                            (if strict-shape?
-                              p
-                              (compiler-backend-const-hoist-resolve-inject
-                                (compiler-backend-global-shared-view orig)
-                                ids
-                                h
-                                le))]
-                          (if (and
-                            (if (= h 0)
-                              (= site (- 0 1))
-                              (>= site 0))
-                            ;; The function's ENTRY block may be in the set
-                            ;; only when it is the header. Control arrives at
-                            ;; block 0 from the caller and not through any
-                            ;; predecessor at all, so a member set that
-                            ;; contains it under some later header has a way
-                            ;; in that no injection can dominate -- and the
-                            ;; natural-loop walk does produce such a set,
-                            ;; because an irreducible entry makes it run back
-                            ;; past the loop until it runs out of graph.
-                            (or (= h 0) (> rlo 0))
-                            (if strict-shape?
-                              true
-                              (and
-                                (<= site rlo)
-                                (not
-                                  (compiler-backend-const-hoist-side-entry?
-                                    (compiler-backend-global-shared-view orig)
-                                    ids
-                                    site
-                                    le)))))
-                            ;; qualifying loop: collect its unclaimed magic sites
-                            (let
-                              [loop-count : i64 0]
-                              [b : i64 rlo]
-                              [lo : i64
-                                (if (and (>= site 0) (< site rlo))
-                                  (array-ref points site)
-                                  (array-ref points rlo))]
-                              [hi : i64 (array-ref points (+ le 1))]
-                              [inject-label : i64
-                                (if (= h 0)
-                                  h-label
-                                  (compiler-backend-const-hoist-block-label
-                                    (compiler-backend-global-array-element-shared-view
-                                      orig
-                                      site)))]
-                              [inject-pre : bool (= h 0)]
-                              (begin
-                                (while (<= b le)
-                                  (begin
-                                    (if (compiler_regalloc.compiler-reg-loop-nest-member?
-                                      nest
-                                      b
-                                      generation)
-                                      (match (compiler-backend-global-array-element-shared-view
-                                        orig
-                                        b)
-                                        [(compiler_ir_types.CompilerIrBlock.Block
-                                            _
-                                            instrs)
-                                          (let
-                                            [slots : (__tl_dyn-array
-                                              compiler_ir_types.CompilerIrInstr)
-                                              instrs.slots]
-                                            [icount : i64 instrs.len]
-                                            [k : i64 0]
-                                            (while (< k icount)
-                                              (let
-                                                [instr : compiler_ir_types.CompilerIrInstr
-                                                  (compiler-backend-global-array-element-shared-view
-                                                    slots
-                                                    k)]
-                                                [magic : i64
-                                                  (compiler-backend-const-hoist-instr-constant
-                                                    type-segment-bases
-                                                    (compiler-backend-global-shared-view
-                                                      instr))]
-                                                [wide? : bool
-                                                  (compiler-backend-const-hoist-instr-wide?
-                                                    type-segment-bases
-                                                    instr)]
-                                                [point : i64
-                                                  (+
-                                                    (array-ref points b)
-                                                    (* 2 k))]
-                                                (begin
-                                                  (if (and
-                                                    (not (= magic 0))
-                                                    (< loop-count site-cap)
-                                                    (not
-                                                      (compiler-backend-const-hoist-point-recorded?
-                                                        site-points
-                                                        site-count
-                                                        point)))
-                                                    (begin
-                                                      (set!
-                                                        (array-ref
-                                                          loop-points
-                                                          loop-count)
-                                                        point)
-                                                      (set!
-                                                        (array-ref
-                                                          loop-values
-                                                          loop-count)
-                                                        magic)
-                                                      (set!
-                                                        (array-ref
-                                                          loop-wide
-                                                          loop-count)
-                                                        wide?)
-                                                      (set!
-                                                        loop-count
-                                                        (+ loop-count 1)))
-                                                    unit)
-                                                  (set! k (+ k 1))))))])
-                                      unit)
-                                    (set! b (+ b 1))))
-                                ;; assign registers per distinct magic value,
-                                ;; heaviest claim (most static sites) first
-                                (let
-                                  [awards : i64
-                                    (compiler-backend-const-hoist-award-order!
-                                      loop-values
-                                      loop-wide
-                                      loop-count
-                                      (&mut loop-order)
-                                      (&mut loop-tally))]
-                                  [o : i64 0]
-                                  (while (< o awards)
-                                    (let
-                                      [g : i64 (array-ref loop-order o)]
-                                      [magic : i64 (array-ref loop-values g)]
-                                      [wide? : bool (array-ref loop-wide g)]
-                                      (begin
-                                        (if (and
-                                          (< synth-count synth-cap)
-                                          (< inject-count synth-cap))
-                                          (match (let
-                                            [regs
-                                              (compiler-backend-const-hoist-free-candidates
-                                                (compiler-backend-const-hoist-candidate-regs
-                                                  target)
-                                                synth-regs
-                                                synth-lo
-                                                synth-hi
-                                                synth-count
-                                                lo
-                                                hi)]
-                                            [region-intervals
-                                              (compiler_regalloc.compiler-reg-loop-split-region-interval
-                                                (- 0 1)
-                                                lo
-                                                hi)]
-                                            (compiler_regalloc.compiler-reg-loop-split-first-register
-                                              regs
-                                              assignments
-                                              interval-index
-                                              region-intervals
-                                              (- 0 1)))
-                                            [(compiler_regalloc.CompilerRegMaybeId.No)
-                                              unit]
-                                            [(compiler_regalloc.CompilerRegMaybeId.Some
-                                                reg)
-                                              (let
-                                                [frame? : bool
-                                                  (and
-                                                    (not wide?)
-                                                    (=
-                                                      reg
-                                                      compiler_abi.compiler-reg-id-rbx))]
-                                                [reg-name : String
-                                                  (compiler_abi.compiler-abi-register-spelling
-                                                    reg)]
-                                                [home : String
+                                      b)
+                                      [(compiler_ir_types.CompilerIrBlock.Block
+                                          _
+                                          instrs)
+                                        (let
+                                          [slots : (__tl_dyn-array
+                                            compiler_ir_types.CompilerIrInstr)
+                                            instrs.slots]
+                                          [icount : i64 instrs.len]
+                                          [k : i64 0]
+                                          (while (< k icount)
+                                            (let
+                                              [instr : compiler_ir_types.CompilerIrInstr
+                                                (compiler-backend-global-array-element-shared-view
+                                                  slots
+                                                  k)]
+                                              [magic : i64
+                                                (compiler-backend-const-hoist-instr-constant
+                                                  type-segment-bases
+                                                  (compiler-backend-global-shared-view
+                                                    instr))]
+                                              [wide? : bool
+                                                (compiler-backend-const-hoist-instr-wide?
+                                                  type-segment-bases
+                                                  instr)]
+                                              [point : i64
+                                                (+ (array-ref points b) (* 2 k))]
+                                              (begin
+                                                (if (and
+                                                  (not (= magic 0))
+                                                  (< loop-count site-cap)
+                                                  (not
+                                                    (compiler-backend-const-hoist-point-recorded?
+                                                      site-points
+                                                      site-count
+                                                      point)))
+                                                  (begin
+                                                    (set!
+                                                      (array-ref
+                                                        loop-points
+                                                        loop-count)
+                                                      point)
+                                                    (set!
+                                                      (array-ref
+                                                        loop-values
+                                                        loop-count)
+                                                      magic)
+                                                    (set!
+                                                      (array-ref
+                                                        loop-wide
+                                                        loop-count)
+                                                      wide?)
+                                                    (set!
+                                                      loop-count
+                                                      (+ loop-count 1)))
+                                                  unit)
+                                                (set! k (+ k 1))))))])
+                                    unit)
+                                  (set! b (+ b 1))))
+                              ;; assign registers per distinct magic value,
+                              ;; heaviest claim (most static sites) first
+                              (let
+                                [awards : i64
+                                  (compiler-backend-const-hoist-award-order!
+                                    loop-values
+                                    loop-wide
+                                    loop-count
+                                    (&mut loop-order)
+                                    (&mut loop-tally))]
+                                [o : i64 0]
+                                (while (< o awards)
+                                  (let
+                                    [g : i64 (array-ref loop-order o)]
+                                    [magic : i64 (array-ref loop-values g)]
+                                    [wide? : bool (array-ref loop-wide g)]
+                                    (begin
+                                      (if (and
+                                        (< synth-count synth-cap)
+                                        (< inject-count synth-cap))
+                                        (match (let
+                                          [regs
+                                            (compiler-backend-const-hoist-free-candidates
+                                              (compiler-backend-const-hoist-candidate-regs
+                                                target)
+                                              synth-regs
+                                              synth-lo
+                                              synth-hi
+                                              synth-count
+                                              lo
+                                              hi)]
+                                          [region-intervals
+                                            (compiler_regalloc.compiler-reg-loop-split-region-interval
+                                              (- 0 1)
+                                              lo
+                                              hi)]
+                                          (compiler_regalloc.compiler-reg-loop-split-first-register
+                                            regs
+                                            assignments
+                                            interval-index
+                                            region-intervals
+                                            (- 0 1)))
+                                          [(compiler_regalloc.CompilerRegMaybeId.No)
+                                            unit]
+                                          [(compiler_regalloc.CompilerRegMaybeId.Some
+                                              reg)
+                                            (let
+                                              [frame? : bool
+                                                (and
+                                                  (not wide?)
+                                                  (=
+                                                    reg
+                                                    compiler_abi.compiler-reg-id-rbx))]
+                                              [reg-name : String
+                                                (compiler_abi.compiler-abi-register-spelling
+                                                  reg)]
+                                              [home : String
+                                                (if frame?
+                                                  (compiler-backend-frame-offset-with-backend-state
+                                                    backend-state
+                                                    (-
+                                                      0
+                                                      (*
+                                                        8
+                                                        (+
+                                                          frame-base-slots
+                                                          frame-count
+                                                          1))))
+                                                  reg-name)]
+                                              (begin
+                                                ;; synthetic occupancy entry
+                                                (set!
+                                                  (array-ref
+                                                    synth-regs
+                                                    synth-count)
                                                   (if frame?
-                                                    (compiler-backend-frame-offset-with-backend-state
-                                                      backend-state
-                                                      (-
-                                                        0
-                                                        (*
-                                                          8
-                                                          (+
-                                                            frame-base-slots
-                                                            frame-count
-                                                            1))))
-                                                    reg-name)]
-                                                (begin
-                                                  ;; synthetic occupancy entry
-                                                  (set!
-                                                    (array-ref
-                                                      synth-regs
-                                                      synth-count)
-                                                    (if frame?
-                                                      compiler_abi.compiler-reg-id-invalid
-                                                      reg))
-                                                  (set!
-                                                    (array-ref
-                                                      synth-lo
-                                                      synth-count)
-                                                    lo)
-                                                  (set!
-                                                    (array-ref
-                                                      synth-hi
-                                                      synth-count)
-                                                    hi)
-                                                  (set!
-                                                    synth-count
-                                                    (+ synth-count 1))
-                                                  ;; preheader injection
-                                                  (set!
-                                                    (array-ref
-                                                      inject-labels
-                                                      inject-count)
-                                                    inject-label)
-                                                  (set!
-                                                    (array-ref
-                                                      inject-texts
-                                                      inject-count)
-                                                    (if frame?
-                                                      (str_cat.str-cat
-                                                        (compiler-backend-emit-load-i64-absolute
-                                                          magic
-                                                          "%rbx")
-                                                        (str_cat.str-cat
-                                                          "    movq %rbx, "
-                                                          home
-                                                          "\n"))
+                                                    compiler_abi.compiler-reg-id-invalid
+                                                    reg))
+                                                (set!
+                                                  (array-ref
+                                                    synth-lo
+                                                    synth-count)
+                                                  lo)
+                                                (set!
+                                                  (array-ref
+                                                    synth-hi
+                                                    synth-count)
+                                                  hi)
+                                                (set!
+                                                  synth-count
+                                                  (+ synth-count 1))
+                                                ;; preheader injection
+                                                (set!
+                                                  (array-ref
+                                                    inject-labels
+                                                    inject-count)
+                                                  inject-label)
+                                                (set!
+                                                  (array-ref
+                                                    inject-texts
+                                                    inject-count)
+                                                  (if frame?
+                                                    (str_cat.str-cat
                                                       (compiler-backend-emit-load-i64-absolute
                                                         magic
-                                                        reg-name)))
-                                                  (set!
-                                                    (array-ref
-                                                      inject-pres
-                                                      inject-count)
-                                                    inject-pre)
-                                                  (set!
-                                                    inject-count
-                                                    (+ inject-count 1))
-                                                  ;; every site of this magic in the loop
-                                                  (let
-                                                    [j : i64 g]
-                                                    (while (< j loop-count)
-                                                      (begin
-                                                        (if (and
-                                                          (=
-                                                            (array-ref
-                                                              loop-values
-                                                              j)
-                                                            magic)
-                                                          (=
-                                                            (array-ref
-                                                              loop-wide
-                                                              j)
-                                                            wide?)
-                                                          (<
-                                                            site-count
-                                                            site-cap))
-                                                          (begin
-                                                            (set!
-                                                              (array-ref
-                                                                site-points
-                                                                site-count)
-                                                              (array-ref
-                                                                loop-points
-                                                                j))
-                                                            (set!
-                                                              (array-ref
-                                                                site-regs
-                                                                site-count)
-                                                              (if frame?
-                                                                compiler_abi.compiler-reg-id-invalid
-                                                                reg))
-                                                            (set!
-                                                              (array-ref
-                                                                site-frame-operands
-                                                                site-count)
-                                                              (if frame?
-                                                                home
-                                                                ""))
-                                                            (set!
-                                                              (array-ref
-                                                                site-values
-                                                                site-count)
-                                                              magic)
-                                                            (set!
-                                                              (array-ref
-                                                                site-wide
-                                                                site-count)
-                                                              wide?)
-                                                            (set!
-                                                              (array-ref
-                                                                site-frame
-                                                                site-count)
-                                                              frame?)
-                                                            (set!
-                                                              site-count
-                                                              (+ site-count 1)))
-                                                          unit)
-                                                        (set! j (+ j 1)))))
-                                                  (if frame?
+                                                        "%rbx")
+                                                      (str_cat.str-cat
+                                                        "    movq %rbx, "
+                                                        home
+                                                        "\n"))
+                                                    (compiler-backend-emit-load-i64-absolute
+                                                      magic
+                                                      reg-name)))
+                                                (set!
+                                                  (array-ref
+                                                    inject-pres
+                                                    inject-count)
+                                                  inject-pre)
+                                                (set!
+                                                  inject-count
+                                                  (+ inject-count 1))
+                                                ;; every site of this magic in the loop
+                                                (let
+                                                  [j : i64 g]
+                                                  (while (< j loop-count)
                                                     (begin
-                                                      (compiler-backend-function-scratch-set-bool!
-                                                        function-state
-                                                        compiler-backend-scratch-bool-const-hoist-frame-rbx
-                                                        true)
-                                                      (set!
-                                                        frame-count
-                                                        (+ frame-count 1)))
-                                                    unit)))])
-                                          unit)
-                                        (set! o (+ o 1))))))))
-                            unit)))
+                                                      (if (and
+                                                        (=
+                                                          (array-ref
+                                                            loop-values
+                                                            j)
+                                                          magic)
+                                                        (=
+                                                          (array-ref
+                                                            loop-wide
+                                                            j)
+                                                          wide?)
+                                                        (< site-count site-cap))
+                                                        (begin
+                                                          (set!
+                                                            (array-ref
+                                                              site-points
+                                                              site-count)
+                                                            (array-ref
+                                                              loop-points
+                                                              j))
+                                                          (set!
+                                                            (array-ref
+                                                              site-regs
+                                                              site-count)
+                                                            (if frame?
+                                                              compiler_abi.compiler-reg-id-invalid
+                                                              reg))
+                                                          (set!
+                                                            (array-ref
+                                                              site-frame-operands
+                                                              site-count)
+                                                            (if frame?
+                                                              home
+                                                              ""))
+                                                          (set!
+                                                            (array-ref
+                                                              site-values
+                                                              site-count)
+                                                            magic)
+                                                          (set!
+                                                            (array-ref
+                                                              site-wide
+                                                              site-count)
+                                                            wide?)
+                                                          (set!
+                                                            (array-ref
+                                                              site-frame
+                                                              site-count)
+                                                            frame?)
+                                                          (set!
+                                                            site-count
+                                                            (+ site-count 1)))
+                                                        unit)
+                                                      (set! j (+ j 1)))))
+                                                (if frame?
+                                                  (begin
+                                                    (compiler-backend-function-scratch-set-bool!
+                                                      function-state
+                                                      compiler-backend-scratch-bool-const-hoist-frame-rbx
+                                                      true)
+                                                    (set!
+                                                      frame-count
+                                                      (+ frame-count 1)))
+                                                  unit)))])
+                                        unit)
+                                      (set! o (+ o 1))))))))
+                          unit))
                       unit)
                     (set! hx (+ hx 1)))))
               ;; commit
@@ -40183,9 +40178,7 @@
         assignments
         moves
         0)]
-    (pmove.compiler-parallel-move-decision
-      (compiler-backend-global-shared-view edges)
-      edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-arg-moves-conflict?
   [backend-state : CompilerBackendState]
@@ -41590,11 +41583,13 @@
   [float-idx : i64]
   [position : i64]
   [stack-idx : i64]
-  [func-diag : compiler_diagnostic.CompilerDiagnostic]
+  [func-diag : (& func-diag compiler_diagnostic.CompilerDiagnostic)]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
+    [func-diag : compiler_diagnostic.CompilerDiagnostic
+      (owned_view.compiler-owned-reference-shared-view func-diag)]
     [seq : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
     (match (compiler-backend-emit-call-args-into
@@ -42173,9 +42168,7 @@
         assignments
         copies
         0)]
-    (pmove.compiler-parallel-move-decision
-      (compiler-backend-global-shared-view edges)
-      edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-phi-copy-list-find-id
   [copies : CompilerBackendPhiCopySeq]
@@ -47715,7 +47708,7 @@
       0
       0
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       vars
       program-index.backend-state)
@@ -47844,7 +47837,7 @@
       0
       0
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       vars
       program-index.backend-state)
@@ -56050,7 +56043,7 @@
       0
       0
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       vars
       program-index.backend-state)
@@ -56537,7 +56530,7 @@
       0
       1
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       vars
       backend-state)
@@ -56698,7 +56691,7 @@
       0
       0
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       ;; Real frame var count for group-word1 slot addressing (see
       ;; emit-indirect-call): latent today because C-ABI lowering never passes
@@ -56815,7 +56808,7 @@
       0
       0
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       vars
       backend-state)
@@ -56921,7 +56914,7 @@
       0
       0
       0
-      (compiler-backend-global-shared-view instr-diag)
+      instr-diag
       program-index
       vars
       backend-state)
@@ -62042,9 +62035,7 @@
   (let
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (compiler-backend-spmd-mask-entry-move-parallel-edges moves)]
-    (pmove.compiler-parallel-move-decision
-      (compiler-backend-global-shared-view edges)
-      edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-spmd-mask-entry-move-find
   [moves : CompilerBackendSpmdMaskEntryMoveSeq]

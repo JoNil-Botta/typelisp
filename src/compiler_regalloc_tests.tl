@@ -7566,152 +7566,148 @@
               false
               (reg.compiler-reg-global-shared-view empty-split)
               cabi.compiler-reg-id-r12)]
-          (let
-            [_caller-placed : unit
-              (let
-                [ast-node-pool-reader-type-segment-bases
-                  (ast.ast-node-pool-reader-type-segment-bases)]
-                [coalesce-test-i64-types
-                  (compiler-reg-coalesce-test-i64-types vars)]
-                [set1 (live.compiler-live-set1 0)]
-                [set-empty (live.compiler-live-set-empty)]
-                [set-empty-b (live.compiler-live-set-empty)]
-                (let
-                  [interval-index-copy
-                    (reg.compiler-reg-global-shared-view interval-index)]
-                  [caller-occupied-copy caller-occupied]
-                  [set-empty-2 (live.compiler-live-set-empty)]
-                  (reg.compiler-reg-assign-group-pair-component
-                    ast-node-pool-reader-type-segment-bases
-                    0
-                    vars
-                    coalesce-test-i64-types
-                    set1
-                    set-empty
-                    set-empty-b
-                    interval-index.starts
-                    interval-index.ends
-                    poisoned
-                    (&mut parents)
-                    (&mut members)
-                    interval-index-copy
-                    caller-occupied-copy
-                    weights
-                    set-empty-2
-                    (reg.compiler-reg-global-shared-view empty-split))))]
-            [_csr-placed : unit
-              (let
-                [ast-node-pool-reader-type-segment-bases
-                  (ast.ast-node-pool-reader-type-segment-bases)]
-                [coalesce-test-i64-types
-                  (compiler-reg-coalesce-test-i64-types vars)]
-                [set1 (live.compiler-live-set1 0)]
-                [set-empty (live.compiler-live-set-empty)]
-                [set1-b (live.compiler-live-set1 0)]
-                (let
-                  [interval-index-copy
-                    (reg.compiler-reg-global-shared-view interval-index)]
-                  [csr-assignments-copy csr-assignments]
-                  [set-empty-2 (live.compiler-live-set-empty)]
-                  (reg.compiler-reg-assign-group-pair-component
-                    ast-node-pool-reader-type-segment-bases
-                    0
-                    vars
-                    coalesce-test-i64-types
-                    set1
-                    set-empty
-                    set1-b
-                    interval-index.starts
-                    interval-index.ends
-                    poisoned
-                    (&mut parents)
-                    (&mut members)
-                    interval-index-copy
-                    csr-assignments-copy
-                    weights
-                    set-empty-2
-                    (reg.compiler-reg-global-shared-view empty-split))))]
-            [_placed : unit
-              (let
-                [ast-node-pool-reader-type-segment-bases
-                  (ast.ast-node-pool-reader-type-segment-bases)]
-                [coalesce-test-i64-types
-                  (compiler-reg-coalesce-test-i64-types vars)]
-                [set1 (live.compiler-live-set1 0)]
-                [set-empty (live.compiler-live-set-empty)]
-                [set-empty-b (live.compiler-live-set-empty)]
-                (let
-                  [interval-index-copy
-                    (reg.compiler-reg-global-shared-view interval-index)]
-                  [assignments-copy assignments]
-                  [set-empty-2 (live.compiler-live-set-empty)]
-                  (reg.compiler-reg-assign-group-pair-component
-                    ast-node-pool-reader-type-segment-bases
-                    0
-                    vars
-                    coalesce-test-i64-types
-                    set1
-                    set-empty
-                    set-empty-b
-                    interval-index.starts
-                    interval-index.ends
-                    poisoned
-                    (&mut parents)
-                    (&mut members)
-                    interval-index-copy
-                    assignments-copy
-                    weights
-                    set-empty-2
-                    empty-split)))]
-            (and
-              (= (reg.compiler-reg-group-pair-candidate-count true) 7)
-              (=
-                (reg.compiler-reg-group-pair-candidate true 0)
-                cabi.compiler-reg-id-r8)
-              (=
-                (reg.compiler-reg-group-pair-candidate true 1)
-                cabi.compiler-reg-id-r9)
-              (=
-                (reg.compiler-reg-group-pair-candidate true 2)
-                cabi.compiler-reg-id-r12)
-              (= (reg.compiler-reg-group-pair-candidate-count false) 5)
-              (=
-                (reg.compiler-reg-group-pair-candidate false 0)
-                cabi.compiler-reg-id-r12)
-              (let
-                [interval-index-copy
-                  (reg.compiler-reg-global-shared-view interval-index)]
-                [set-empty (live.compiler-live-set-empty)]
-                (reg.compiler-reg-group-pair-component-clobber-free?
-                  interval-index-copy
-                  set-empty
-                  members
-                  1))
-              (not
-                (let
-                  [set1 (live.compiler-live-set1 5)]
-                  (reg.compiler-reg-group-pair-component-clobber-free?
-                    interval-index
-                    set1
-                    members
-                    1)))
-              (not (live.compiler-live-set-contains? phi-excluded 0))
-              (live.compiler-live-set-contains? call-caller-unsafe 0)
-              (live.compiler-live-set-contains? indirect-call-caller-unsafe 0)
-              (live.compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
-              (reg.compiler-reg-group-pair-component-contains?
-                call-caller-unsafe
+          [_caller-placed : unit
+            (let
+              [ast-node-pool-reader-type-segment-bases
+                (ast.ast-node-pool-reader-type-segment-bases)]
+              [coalesce-test-i64-types
+                (compiler-reg-coalesce-test-i64-types vars)]
+              [set1 (live.compiler-live-set1 0)]
+              [set-empty (live.compiler-live-set-empty)]
+              [set-empty-b (live.compiler-live-set-empty)]
+              [interval-index-copy
+                (reg.compiler-reg-global-shared-view interval-index)]
+              [caller-occupied-copy caller-occupied]
+              [set-empty-2 (live.compiler-live-set-empty)]
+              (reg.compiler-reg-assign-group-pair-component
+                ast-node-pool-reader-type-segment-bases
+                0
+                vars
+                coalesce-test-i64-types
+                set1
+                set-empty
+                set-empty-b
+                interval-index.starts
+                interval-index.ends
+                poisoned
+                (&mut parents)
+                (&mut members)
+                interval-index-copy
+                caller-occupied-copy
+                weights
+                set-empty-2
+                (reg.compiler-reg-global-shared-view empty-split)))]
+          [_csr-placed : unit
+            (let
+              [ast-node-pool-reader-type-segment-bases
+                (ast.ast-node-pool-reader-type-segment-bases)]
+              [coalesce-test-i64-types
+                (compiler-reg-coalesce-test-i64-types vars)]
+              [set1 (live.compiler-live-set1 0)]
+              [set-empty (live.compiler-live-set-empty)]
+              [set1-b (live.compiler-live-set1 0)]
+              [interval-index-copy
+                (reg.compiler-reg-global-shared-view interval-index)]
+              [csr-assignments-copy csr-assignments]
+              [set-empty-2 (live.compiler-live-set-empty)]
+              (reg.compiler-reg-assign-group-pair-component
+                ast-node-pool-reader-type-segment-bases
+                0
+                vars
+                coalesce-test-i64-types
+                set1
+                set-empty
+                set1-b
+                interval-index.starts
+                interval-index.ends
+                poisoned
+                (&mut parents)
+                (&mut members)
+                interval-index-copy
+                csr-assignments-copy
+                weights
+                set-empty-2
+                (reg.compiler-reg-global-shared-view empty-split)))]
+          [_placed : unit
+            (let
+              [ast-node-pool-reader-type-segment-bases
+                (ast.ast-node-pool-reader-type-segment-bases)]
+              [coalesce-test-i64-types
+                (compiler-reg-coalesce-test-i64-types vars)]
+              [set1 (live.compiler-live-set1 0)]
+              [set-empty (live.compiler-live-set-empty)]
+              [set-empty-b (live.compiler-live-set-empty)]
+              [interval-index-copy
+                (reg.compiler-reg-global-shared-view interval-index)]
+              [assignments-copy assignments]
+              [set-empty-2 (live.compiler-live-set-empty)]
+              (reg.compiler-reg-assign-group-pair-component
+                ast-node-pool-reader-type-segment-bases
+                0
+                vars
+                coalesce-test-i64-types
+                set1
+                set-empty
+                set-empty-b
+                interval-index.starts
+                interval-index.ends
+                poisoned
+                (&mut parents)
+                (&mut members)
+                interval-index-copy
+                assignments-copy
+                weights
+                set-empty-2
+                empty-split))]
+          (and
+            (= (reg.compiler-reg-group-pair-candidate-count true) 7)
+            (=
+              (reg.compiler-reg-group-pair-candidate true 0)
+              cabi.compiler-reg-id-r8)
+            (=
+              (reg.compiler-reg-group-pair-candidate true 1)
+              cabi.compiler-reg-id-r9)
+            (=
+              (reg.compiler-reg-group-pair-candidate true 2)
+              cabi.compiler-reg-id-r12)
+            (= (reg.compiler-reg-group-pair-candidate-count false) 5)
+            (=
+              (reg.compiler-reg-group-pair-candidate false 0)
+              cabi.compiler-reg-id-r12)
+            (let
+              [interval-index-copy
+                (reg.compiler-reg-global-shared-view interval-index)]
+              [set-empty (live.compiler-live-set-empty)]
+              (reg.compiler-reg-group-pair-component-clobber-free?
+                interval-index-copy
+                set-empty
                 members
-                1)
-              (= shadow-cost (- 0 1))
-              (= free-r8-cost 0)
-              (> occupied-r8-cost 0)
-              (> csr-evict-cost 0)
-              (= blocked-r12-cost (- 0 1))
-              (compiler-reg-group-pair-placement-shapes?
-                assignments
-                caller-occupied
-                csr-assignments))))))))
+                1))
+            (not
+              (let
+                [set1 (live.compiler-live-set1 5)]
+                (reg.compiler-reg-group-pair-component-clobber-free?
+                  interval-index
+                  set1
+                  members
+                  1)))
+            (not (live.compiler-live-set-contains? phi-excluded 0))
+            (live.compiler-live-set-contains? call-caller-unsafe 0)
+            (live.compiler-live-set-contains? indirect-call-caller-unsafe 0)
+            (live.compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
+            (reg.compiler-reg-group-pair-component-contains?
+              call-caller-unsafe
+              members
+              1)
+            (= shadow-cost (- 0 1))
+            (= free-r8-cost 0)
+            (> occupied-r8-cost 0)
+            (> csr-evict-cost 0)
+            (= blocked-r12-cost (- 0 1))
+            (compiler-reg-group-pair-placement-shapes?
+              assignments
+              caller-occupied
+              csr-assignments)))))))
 
 (cfg
   test
@@ -8884,16 +8880,11 @@
             resident-0-ok?
             (and
               ;; touch at 4 is half-open, so [4,8) may share the register
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                1
-                0)
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
               ;; [3,6) genuinely overlaps [0,4)
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  (reg.compiler-reg-global-shared-view occupancy)
+                  occupancy
                   index
                   ref-counts
                   2
@@ -8901,55 +8892,30 @@
               ;; a point-0 touch counts as overlap (M-A RC1)
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  (reg.compiler-reg-global-shared-view occupancy)
+                  occupancy
                   index
                   ref-counts
                   3
                   0))
               ;; both of var 4's segments clear [0,4)
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                4
-                0)
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 4 0)
               ;; var 5 has no segments: coarse [4,8) vs [0,4) via the fallback
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                5
-                0)))
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 5 0)))
           (reg.compiler-reg-greedy-occupancy-clear! occupancy 0)
           (set!
             emptied-ok?
             (and
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                2
-                0)
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                3
-                0)))
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 2 0)
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 3 0)))
           (reg.compiler-reg-greedy-occupancy-assign! occupancy 4 0 -1)
           (set!
             multi-ok?
             (and
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                1
-                0)
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 1 0)
               ;; [13,15) overlaps var 4's second segment [12,14)
               (not
                 (reg.compiler-reg-greedy-reg-free?
-                  (reg.compiler-reg-global-shared-view occupancy)
+                  occupancy
                   index
                   ref-counts
                   6
@@ -8961,12 +8927,7 @@
             (and
               ;; a segment-less resident forces the per-resident scan: var 0's
               ;; coarse [0,4) clears var 5's coarse [4,8) ...
-              (reg.compiler-reg-greedy-reg-free?
-                (reg.compiler-reg-global-shared-view occupancy)
-                index
-                ref-counts
-                0
-                0)
+              (reg.compiler-reg-greedy-reg-free? occupancy index ref-counts 0 0)
               ;; ... while var 1 has no coarse interval at all, which the
               ;; predicate answers conservatively as interference
               (not
@@ -14959,9 +14920,7 @@
   (let
     [edges : pmove.CompilerParallelMoveEdgeSeq
       (compiler-reg-move-list-parallel-edges moves)]
-    (pmove.compiler-parallel-move-decision
-      (reg.compiler-reg-global-shared-view edges)
-      edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-reg-move-list-parallel-decision-ok?) : bool
   (let

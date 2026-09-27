@@ -3333,7 +3333,7 @@
   [right : i64]
   [scope : LintUnsafeScope]) : LintUnsafeScan
   (lint-unsafe-scan-combine
-    (lint-unsafe-scan-node left (owned_view.compiler-owned-shared-view scope))
+    (lint-unsafe-scan-node left scope)
     (lint-unsafe-scan-node right scope)))
 
 (define (lint-unsafe-scan-three-nodes
@@ -3342,7 +3342,7 @@
   [third : i64]
   [scope : LintUnsafeScope]) : LintUnsafeScan
   (lint-unsafe-scan-combine
-    (lint-unsafe-scan-node first (owned_view.compiler-owned-shared-view scope))
+    (lint-unsafe-scan-node first scope)
     (lint-unsafe-scan-two-nodes second third scope)))
 
 (define (lint-unsafe-scan-expr-list
@@ -3357,9 +3357,7 @@
   (if (>= index exprs.len)
     (lint-unsafe-scan-empty)
     (lint-unsafe-scan-combine
-      (lint-unsafe-scan-node
-        (ast.ast-expr-list-get exprs index 0)
-        (owned_view.compiler-owned-shared-view scope))
+      (lint-unsafe-scan-node (ast.ast-expr-list-get exprs index 0) scope)
       (lint-unsafe-scan-expr-list-at exprs scope (+ index 1)))))
 
 (define (lint-unsafe-scan-let-bindings
@@ -3375,9 +3373,7 @@
       (ast.ast-let-binding-fallback))
       [(ast.AstLetBinding.Binding name _ init)
         (lint-unsafe-scan-combine
-          (lint-unsafe-scan-node
-            init
-            (owned_view.compiler-owned-shared-view scope))
+          (lint-unsafe-scan-node init scope)
           (lint-unsafe-scan-let-bindings
             bindings
             body
@@ -3393,11 +3389,12 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body)
         (lint-unsafe-scan-combine
-          (lint-unsafe-scan-node
-            body
-            (lint-unsafe-pattern-add-bindings
-              pattern
-              (owned_view.compiler-owned-shared-view scope)))
+          (let
+            [scope-arg
+              (lint-unsafe-pattern-add-bindings
+                pattern
+                (owned_view.compiler-owned-shared-view scope))]
+            (lint-unsafe-scan-node body scope-arg))
           (lint-unsafe-scan-match-arms arms scope (+ index 1)))])))
 
 (define (lint-unsafe-scan-resource-bindings
@@ -3415,15 +3412,9 @@
         (let
           ;; Finish the ancestor scan before retaining a child snapshot. Dense
           ;; name sets may reuse an ancestor's spare slot for a nested scope.
-          [init-scan : LintUnsafeScan
-            (lint-unsafe-scan-node
-              init
-              (owned_view.compiler-owned-shared-view scope))]
+          [init-scan : LintUnsafeScan (lint-unsafe-scan-node init scope)]
           [bound : LintUnsafeScope (lint-unsafe-scope-add-id scope name)]
-          [cleanup-scan : LintUnsafeScan
-            (lint-unsafe-scan-node
-              cleanup
-              (owned_view.compiler-owned-shared-view bound))]
+          [cleanup-scan : LintUnsafeScan (lint-unsafe-scan-node cleanup bound)]
           [rest-scan : LintUnsafeScan
             (lint-unsafe-scan-resource-bindings bindings body bound (+ index 1))]
           (lint-unsafe-scan-combine
@@ -3437,148 +3428,152 @@
     [ids : ast.AstExprList (ast.ast-expr-child-ids expr)]
     (lint-unsafe-scan-expr-list (& ids) scope)))
 
-(define (lint-unsafe-scan-node [node-id : i64] [scope : LintUnsafeScope]) : LintUnsafeScan
+(define (lint-unsafe-scan-node
+  [node-id : i64]
+  [scope : (& scope LintUnsafeScope)]) : LintUnsafeScan
   ;; The arms below bind names, mark unsafe calls and blocks, or scan the
   ;; for-owned forms; every other variant's children are scanned through the
   ;; AstExpr child list.
-  (match (ast.ast-node-get node-id)
-    [(ast.AstExpr.Call func _)
-      (let
-        [children : LintUnsafeScan
-          (lint-unsafe-scan-children
-            (ast.ast-node-get node-id)
-            (owned_view.compiler-owned-shared-view scope))]
-        (match (ast.ast-expr-unspan (ast.ast-node-get func))
-          [(ast.AstExpr.Var name)
+  (let
+    [scope : LintUnsafeScope
+      (owned_view.compiler-owned-reference-shared-view scope)]
+    (match (ast.ast-node-get node-id)
+      [(ast.AstExpr.Call func _)
+        (let
+          [children : LintUnsafeScan
+            (lint-unsafe-scan-children
+              (ast.ast-node-get node-id)
+              (owned_view.compiler-owned-shared-view scope))]
+          (match (ast.ast-expr-unspan (ast.ast-node-get func))
+            [(ast.AstExpr.Var name)
+              (let
+                [with-string-use : LintUnsafeScan
+                  (if (lint-stdlib-string-bare-call-unshadowed? name scope)
+                    (lint-unsafe-scan-note-stdlib-string-bare-use children)
+                    children)]
+                (if (lint-unsafe-call-unshadowed? name scope)
+                  (lint-unsafe-scan-require with-string-use)
+                  with-string-use))]
+            [_ children]))]
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body)
+            (lint-unsafe-scan-let-bindings bindings body scope 0)])]
+      [(ast.AstExpr.Lambda lambda-box)
+        (match (__tl-box-place lambda-box)
+          [(ast.AstLambda.Lambda params _ body)
             (let
-              [with-string-use : LintUnsafeScan
-                (if (lint-stdlib-string-bare-call-unshadowed? name scope)
-                  (lint-unsafe-scan-note-stdlib-string-bare-use children)
-                  children)]
-              (if (lint-unsafe-call-unshadowed? name scope)
-                (lint-unsafe-scan-require with-string-use)
-                with-string-use))]
-          [_ children]))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body)
-          (lint-unsafe-scan-let-bindings bindings body scope 0)])]
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params _ body)
-          (lint-unsafe-scan-node
-            body
-            (lint-unsafe-scope-add-params scope params))])]
-    [(ast.AstExpr.ForOwnedState payload)
-      (lint-unsafe-scan-two-nodes
-        (ast.ast-for-owned-state-source (& payload))
-        (ast.ast-for-owned-state-body (& payload))
-        scope)]
-    [(ast.AstExpr.ForOwnedStep payload)
-      (let
-        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        [body : i64 (ast.ast-for-owned-step-body (& payload))]
-        (if (>= expected-type 0)
-          (lint-unsafe-scan-two-nodes expected-type body scope)
-          (lint-unsafe-scan-node body scope)))]
-    [(ast.AstExpr.Unsafe items)
-      (let
-        [inside : LintUnsafeScan (lint-unsafe-scan-expr-list items scope)]
-        (LintUnsafeScan
-          false
-          (or (not inside.requires) inside.candidate)
-          inside.stdlib-string-bare-use))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee arms)
-          (lint-unsafe-scan-combine
-            (lint-unsafe-scan-node
-              scrutinee
-              (owned_view.compiler-owned-shared-view scope))
-            (lint-unsafe-scan-match-arms arms scope 0))])]
-    [(ast.AstExpr.Foreach foreach-box)
-      (match (__tl-box-place foreach-box)
-        [(ast.AstForeach.Foreach index _ start end body)
-          (lint-unsafe-scan-combine
-            (lint-unsafe-scan-two-nodes
-              start
-              end
-              (owned_view.compiler-owned-shared-view scope))
-            (lint-unsafe-scan-node body (lint-unsafe-scope-add-id scope index)))])]
-    [(ast.AstExpr.SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(ast.AstSpmdReduce.Reduce _ index _ start end init value)
-          (lint-unsafe-scan-combine
-            (lint-unsafe-scan-three-nodes
-              start
-              end
-              init
-              (owned_view.compiler-owned-shared-view scope))
-            (lint-unsafe-scan-node value (lint-unsafe-scope-add-id scope index)))])]
-    [(ast.AstExpr.SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(ast.AstSpmdScan.Scan _ index _ start end prefix _ init value body)
-          (let
-            ;; Scan each ancestor before retaining descendants that share its
-            ;; dense name-set capacity.
-            [outer : LintUnsafeScan
+              [scope-arg (lint-unsafe-scope-add-params scope params)]
+              (lint-unsafe-scan-node body scope-arg))])]
+      [(ast.AstExpr.ForOwnedState payload)
+        (lint-unsafe-scan-two-nodes
+          (ast.ast-for-owned-state-source (& payload))
+          (ast.ast-for-owned-state-body (& payload))
+          scope)]
+      [(ast.AstExpr.ForOwnedStep payload)
+        (let
+          [expected-type : i64
+            (ast.ast-for-owned-step-expected-type (& payload))]
+          [body : i64 (ast.ast-for-owned-step-body (& payload))]
+          (if (>= expected-type 0)
+            (lint-unsafe-scan-two-nodes expected-type body scope)
+            (lint-unsafe-scan-node body scope)))]
+      [(ast.AstExpr.Unsafe items)
+        (let
+          [inside : LintUnsafeScan (lint-unsafe-scan-expr-list items scope)]
+          (LintUnsafeScan
+            false
+            (or (not inside.requires) inside.candidate)
+            inside.stdlib-string-bare-use))]
+      [(ast.AstExpr.Match match-box)
+        (match (__tl-box-place match-box)
+          [(ast.AstMatch.Match scrutinee arms)
+            (lint-unsafe-scan-combine
+              (lint-unsafe-scan-node scrutinee scope)
+              (lint-unsafe-scan-match-arms arms scope 0))])]
+      [(ast.AstExpr.Foreach foreach-box)
+        (match (__tl-box-place foreach-box)
+          [(ast.AstForeach.Foreach index _ start end body)
+            (lint-unsafe-scan-combine
+              (lint-unsafe-scan-two-nodes
+                start
+                end
+                (owned_view.compiler-owned-shared-view scope))
+              (let
+                [scope-arg (lint-unsafe-scope-add-id scope index)]
+                (lint-unsafe-scan-node body scope-arg)))])]
+      [(ast.AstExpr.SpmdReduce reduce-box)
+        (match (__tl-box-place reduce-box)
+          [(ast.AstSpmdReduce.Reduce _ index _ start end init value)
+            (lint-unsafe-scan-combine
               (lint-unsafe-scan-three-nodes
                 start
                 end
                 init
-                (owned_view.compiler-owned-shared-view scope))]
-            [index-scope : LintUnsafeScope
-              (lint-unsafe-scope-add-id scope index)]
-            [value-scan : LintUnsafeScan
-              (lint-unsafe-scan-node
-                value
-                (owned_view.compiler-owned-shared-view index-scope))]
-            [body-scope : LintUnsafeScope
-              (lint-unsafe-scope-add-id index-scope prefix)]
-            (lint-unsafe-scan-combine
-              outer
+                (owned_view.compiler-owned-shared-view scope))
+              (let
+                [scope-arg (lint-unsafe-scope-add-id scope index)]
+                (lint-unsafe-scan-node value scope-arg)))])]
+      [(ast.AstExpr.SpmdScan scan-box)
+        (match (__tl-box-place scan-box)
+          [(ast.AstSpmdScan.Scan _ index _ start end prefix _ init value body)
+            (let
+              ;; Scan each ancestor before retaining descendants that share its
+              ;; dense name-set capacity.
+              [outer : LintUnsafeScan
+                (lint-unsafe-scan-three-nodes
+                  start
+                  end
+                  init
+                  (owned_view.compiler-owned-shared-view scope))]
+              [index-scope : LintUnsafeScope
+                (lint-unsafe-scope-add-id scope index)]
+              [value-scan : LintUnsafeScan
+                (lint-unsafe-scan-node value index-scope)]
+              [body-scope : LintUnsafeScope
+                (lint-unsafe-scope-add-id index-scope prefix)]
               (lint-unsafe-scan-combine
-                value-scan
-                (lint-unsafe-scan-node body body-scope))))])]
-    [(ast.AstExpr.SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(ast.AstSpmdCompact.Compact index _ start end slot _ init keep body)
-          (let
-            [outer : LintUnsafeScan
-              (lint-unsafe-scan-three-nodes
-                start
-                end
-                init
-                (owned_view.compiler-owned-shared-view scope))]
-            [index-scope : LintUnsafeScope
-              (lint-unsafe-scope-add-id scope index)]
-            [keep-scan : LintUnsafeScan
-              (lint-unsafe-scan-node
-                keep
-                (owned_view.compiler-owned-shared-view index-scope))]
-            [body-scope : LintUnsafeScope
-              (lint-unsafe-scope-add-id index-scope slot)]
-            (lint-unsafe-scan-combine
-              outer
+                outer
+                (lint-unsafe-scan-combine
+                  value-scan
+                  (lint-unsafe-scan-node body body-scope))))])]
+      [(ast.AstExpr.SpmdCompact compact-box)
+        (match (__tl-box-place compact-box)
+          [(ast.AstSpmdCompact.Compact index _ start end slot _ init keep body)
+            (let
+              [outer : LintUnsafeScan
+                (lint-unsafe-scan-three-nodes
+                  start
+                  end
+                  init
+                  (owned_view.compiler-owned-shared-view scope))]
+              [index-scope : LintUnsafeScope
+                (lint-unsafe-scope-add-id scope index)]
+              [keep-scan : LintUnsafeScan
+                (lint-unsafe-scan-node keep index-scope)]
+              [body-scope : LintUnsafeScope
+                (lint-unsafe-scope-add-id index-scope slot)]
               (lint-unsafe-scan-combine
-                keep-scan
-                (lint-unsafe-scan-node body body-scope))))])]
-    [(ast.AstExpr.WithResource resource-box)
-      (match (__tl-box-place resource-box)
-        [(ast.AstWithResource.WithResource bindings body)
-          (lint-unsafe-scan-resource-bindings bindings body scope 0)])]
-    [(ast.AstExpr.ProgramArgv)
-      (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
-    [(ast.AstExpr.ProgramEnvp)
-      (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
-    [_
-      (let
-        [expr : ast.AstExpr (ast.ast-node-get node-id)]
-        [unsafe-operation : bool (lint-expr-unsafe-operation? (& expr))]
-        [children : LintUnsafeScan (lint-unsafe-scan-children expr scope)]
-        (if unsafe-operation
-          (lint-unsafe-scan-require children)
-          children))]))
+                outer
+                (lint-unsafe-scan-combine
+                  keep-scan
+                  (lint-unsafe-scan-node body body-scope))))])]
+      [(ast.AstExpr.WithResource resource-box)
+        (match (__tl-box-place resource-box)
+          [(ast.AstWithResource.WithResource bindings body)
+            (lint-unsafe-scan-resource-bindings bindings body scope 0)])]
+      [(ast.AstExpr.ProgramArgv)
+        (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
+      [(ast.AstExpr.ProgramEnvp)
+        (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
+      [_
+        (let
+          [expr : ast.AstExpr (ast.ast-node-get node-id)]
+          [unsafe-operation : bool (lint-expr-unsafe-operation? (& expr))]
+          [children : LintUnsafeScan (lint-unsafe-scan-children expr scope)]
+          (if unsafe-operation
+            (lint-unsafe-scan-require children)
+            children))])))
 
 (define (lint-unsafe-decl-add-global [decl : ast.AstDecl] [names : LintNameSet]) : LintNameSet
   (match decl
@@ -3663,13 +3658,13 @@
         (lint-unsafe-scan-decl-list (deref body))]
       [(ast.AstDecl.Def _ _ _ body) (lint-unsafe-scan-node body body-scope)]
       [(ast.AstDecl.DefFn _ _ params _ body _)
-        (lint-unsafe-scan-node
-          body
-          (lint-unsafe-scope-add-params body-scope params))]
+        (let
+          [scope (lint-unsafe-scope-add-params body-scope params)]
+          (lint-unsafe-scan-node body scope))]
       [(ast.AstDecl.DefMacro _ _ params _ body)
-        (lint-unsafe-scan-node
-          body
-          (lint-unsafe-scope-add-macro-params body-scope params))]
+        (let
+          [scope (lint-unsafe-scope-add-macro-params body-scope params)]
+          (lint-unsafe-scan-node body scope))]
       [(ast.AstDecl.Extern _ _ _ _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.DefEnum _ _ _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.DefEnumLifetimes _ _ _ _ _) (lint-unsafe-scan-empty)]

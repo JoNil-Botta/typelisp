@@ -2604,8 +2604,7 @@
               (CompilerPkgKindBin)
               (owned_view.compiler-owned-shared-view image))
               [(build_run_core.ResultSourceToolLinuxDirectObject.Ok typed)
-                (match (compiler_object_elf.compiler-object-elf-render
-                  (owned_view.compiler-owned-shared-view image))
+                (match (compiler_object_elf.compiler-object-elf-render image)
                   [(compiler_object_elf.ResultCompilerObjectElf.Ok serialized)
                     (string.eq typed serialized)]
                   [_ false])]

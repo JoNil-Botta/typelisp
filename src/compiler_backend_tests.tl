@@ -1988,21 +1988,21 @@
         [relocs : cobj.CompilerObjectRelocationList
           (owned_view.compiler-owned-shared-view image.relocations)]
         (and
-          (cobj.compiler-object-image-dense? image)
+          (compiler-object-image-dense? image)
           (backend.backend-and8
             (= (cobj.compiler-object-section-list-count sections) 4)
             (>
-              (cobj.compiler-object-section-instr-count
+              (compiler-object-section-instr-count
                 sections
                 (cobj.CompilerObjectSectionKind.Text))
               0)
             (>
-              (cobj.compiler-object-section-data-count
+              (compiler-object-section-data-count
                 sections
                 (cobj.CompilerObjectSectionKind.Data))
               0)
             (>
-              (cobj.compiler-object-section-data-count
+              (compiler-object-section-data-count
                 sections
                 (cobj.CompilerObjectSectionKind.Rodata))
               0)
@@ -2083,36 +2083,34 @@
               [kind (cobj.CompilerObjectSectionKind.Rodata)]
               [label (backend.compiler-backend-string-fat-label "hi")]
               (cobj.compiler-object-section-contains-label? sections kind label))
-            (cobj.compiler-object-section-contains-string?
+            (compiler-object-section-contains-string?
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               "hi")
-            (cobj.compiler-object-section-contains-align?
+            (compiler-object-section-contains-align?
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               8)
-            (cobj.compiler-object-section-contains-i64?
+            (compiler-object-section-contains-i64?
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               2)
-            (cobj.compiler-object-section-contains-f64?
+            (compiler-object-section-contains-f64?
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               (compiler-backend-test-f64-bits "4.0"))
             true)
-          (cobj.compiler-object-section-contains-f32?
+          (compiler-object-section-contains-f32?
             sections
             (cobj.CompilerObjectSectionKind.Data)
             (compiler-backend-test-f32-bits "2.5"))
-          (cobj.compiler-object-section-contains-f32?
+          (compiler-object-section-contains-f32?
             sections
             (cobj.CompilerObjectSectionKind.Rodata)
             (compiler-backend-test-f32-bits "3.0"))
           (backend.backend-and8
-            (cobj.compiler-object-section-contains-call? sections "_tl_inc")
-            (cobj.compiler-object-section-contains-call?
-              sections
-              "foreign_exact")
+            (compiler-object-section-contains-call? sections "_tl_inc")
+            (compiler-object-section-contains-call? sections "foreign_exact")
             (cobj.compiler-object-relocation-list-contains?
               relocs
               (cobj.CompilerObjectRelocationKind.Call)
@@ -2632,7 +2630,7 @@
           (owned_view.compiler-owned-shared-view image.relocations)]
         [shape-ok : bool
           (and
-            (cobj.compiler-object-image-dense?
+            (compiler-object-image-dense?
               (owned_view.compiler-owned-shared-view image))
             (backend.backend-and8
               (= (cobj.compiler-object-section-list-count sections) 7)
@@ -16663,7 +16661,7 @@ g:
             sections
             (cobj.CompilerObjectSectionKind.Rodata)
             table-label)
-          (cobj.compiler-object-section-contains-align?
+          (compiler-object-section-contains-align?
             sections
             (cobj.CompilerObjectSectionKind.Rodata)
             8)
@@ -26515,17 +26513,17 @@ g:
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               label)
-            (cobj.compiler-object-section-contains-align?
+            (compiler-object-section-contains-align?
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               16)
-            (cobj.compiler-object-section-label-has-i64-pair?
+            (compiler-object-section-label-has-i64-pair?
               sections
               (cobj.CompilerObjectSectionKind.Rodata)
               label
               -9223372036854775808
               0)
-            (cobj.compiler-object-section-contains-xorpd-rip? sections label)
+            (compiler-object-section-contains-xorpd-rip? sections label)
             (cobj.compiler-object-relocation-list-contains?
               relocs
               (cobj.CompilerObjectRelocationKind.RipValue)
@@ -26601,17 +26599,17 @@ g:
             sections
             (cobj.CompilerObjectSectionKind.Rodata)
             label)
-          (cobj.compiler-object-section-contains-align?
+          (compiler-object-section-contains-align?
             sections
             (cobj.CompilerObjectSectionKind.Rodata)
             16)
-          (cobj.compiler-object-section-label-has-i64-pair?
+          (compiler-object-section-label-has-i64-pair?
             sections
             (cobj.CompilerObjectSectionKind.Rodata)
             label
             2147483648
             0)
-          (cobj.compiler-object-section-contains-xorpd-rip? sections label)
+          (compiler-object-section-contains-xorpd-rip? sections label)
           (cobj.compiler-object-relocation-list-contains?
             relocs
             (cobj.CompilerObjectRelocationKind.RipValue)
@@ -41861,3 +41859,244 @@ b_keep:
       (pmove.compiler-parallel-move-seq-has-blocked?
         (pmove.compiler-parallel-move-shared-view pair-source)
         pair-source))))
+
+(define (compiler-object-image-dense? [_image : cobj.CompilerObjectImage]) : bool
+  true)
+
+(define (compiler-object-section-data-count
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (cobj.compiler-object-data-record-list-count data)]))
+
+(define (compiler-object-section-instr-count
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ _ instrs)
+      (cobj.compiler-object-instr-list-count instrs)]))
+
+(define (compiler-object-data-record-list-contains-string?
+  [records : cobj.CompilerObjectDataRecordList]
+  [text : String]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-data-record-list-ref records index)
+          [(cobj.CompilerObjectDataRecord.String value)
+            (if (string.eq value text)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-data-record-list-contains-f64?
+  [records : cobj.CompilerObjectDataRecordList]
+  [bits : u64]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-data-record-list-ref records index)
+          [(cobj.CompilerObjectDataRecord.F64 value)
+            (if (= value bits)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-data-record-list-contains-f32?
+  [records : cobj.CompilerObjectDataRecordList]
+  [bits : u64]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-data-record-list-ref records index)
+          [(cobj.CompilerObjectDataRecord.F32 value)
+            (if (= value bits)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-data-record-list-contains-align?
+  [records : cobj.CompilerObjectDataRecordList]
+  [align : i64]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-data-record-list-ref records index)
+          [(cobj.CompilerObjectDataRecord.Align value)
+            (if (= value align)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-data-record-list-contains-i64?
+  [records : cobj.CompilerObjectDataRecordList]
+  [value : i64]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-data-record-list-ref records index)
+          [(cobj.CompilerObjectDataRecord.I64 found-value)
+            (if (= found-value value)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-data-record-list-label-has-i64-pair?
+  [records : cobj.CompilerObjectDataRecordList]
+  [label : (& label str)]
+  [first : i64]
+  [second : i64]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-data-record-list-ref records index)
+          [(cobj.CompilerObjectDataRecord.Label value)
+            (if (and (string.eq value label) (< (+ index 2) count))
+              (match (cobj.compiler-object-data-record-list-ref
+                records
+                (+ index 1))
+                [(cobj.CompilerObjectDataRecord.I64 first-found)
+                  (if (= first-found first)
+                    (match (cobj.compiler-object-data-record-list-ref
+                      records
+                      (+ index 2))
+                      [(cobj.CompilerObjectDataRecord.I64 second-found)
+                        (if (= second-found second)
+                          (set! found true)
+                          (set! index (+ index 1)))]
+                      [_ (set! index (+ index 1))])
+                    (set! index (+ index 1)))]
+                [_ (set! index (+ index 1))])
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-section-contains-string?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]
+  [text : String]) : bool
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-contains-string? data text)]))
+
+(define (compiler-object-section-contains-f64?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]
+  [bits : u64]) : bool
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-contains-f64? data bits)]))
+
+(define (compiler-object-section-contains-f32?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]
+  [bits : u64]) : bool
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-contains-f32? data bits)]))
+
+(define (compiler-object-section-contains-align?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]
+  [align : i64]) : bool
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-contains-align? data align)]))
+
+(define (compiler-object-section-contains-i64?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]
+  [value : i64]) : bool
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-contains-i64? data value)]))
+
+(define (compiler-object-section-label-has-i64-pair?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [kind : cobj.CompilerObjectSectionKind]
+  [label : (& label str)]
+  [first : i64]
+  [second : i64]) : bool
+  (match (cobj.compiler-object-section-list-find sections kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-label-has-i64-pair?
+        data
+        label
+        first
+        second)]))
+
+(define (compiler-object-instr-list-contains-call?
+  [instrs : cobj.CompilerObjectX64InstrList]
+  [target : String]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-instr-list-ref instrs index)
+          [(cobj.CompilerObjectX64Instr.Call value)
+            (if (string.eq value target)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-section-contains-call?
+  [sections : (& sections cobj.CompilerObjectSectionList)]
+  [target : String]) : bool
+  (match (cobj.compiler-object-section-list-find
+    sections
+    (cobj.CompilerObjectSectionKind.Text))
+    [(cobj.CompilerObjectSection.Section _ _ instrs)
+      (compiler-object-instr-list-contains-call? instrs target)]))
+
+(define (compiler-object-instr-list-contains-xorpd-rip?
+  [instrs : cobj.CompilerObjectX64InstrList]
+  [target : (& target str)]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (cobj.compiler-object-instr-list-ref instrs index)
+          [(cobj.CompilerObjectX64Instr.XorpdRip value)
+            (if (string.eq value target)
+              (set! found true)
+              (set! index (+ index 1)))]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (compiler-object-section-contains-xorpd-rip?
+  [sections : cobj.CompilerObjectSectionList]
+  [target : (& target str)]) : bool
+  (match (cobj.compiler-object-section-list-find
+    sections
+    (cobj.CompilerObjectSectionKind.Text))
+    [(cobj.CompilerObjectSection.Section _ _ instrs)
+      (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))

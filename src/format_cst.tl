@@ -127,7 +127,7 @@
         (owned_view.compiler-owned-array-element-shared-view items.slots start)
         (FormatCstList items.slots (+ start 1) (- count 1))))))
 
-(define (fmt-cst-list-empty? [items : FormatCstList]) : bool
+(define (fmt-cst-list-empty? [items : (& items FormatCstList)]) : bool
   (<= items.len 0))
 
 (define (fmt-list-count [items : FormatCstList]) : i64
@@ -346,9 +346,7 @@
 
 (define (fmt-token-end [stream : tokens.FormatTokenStream] [idx : i64]) : i64
   (+
-    (tokens.format-token-start
-      (owned_view.compiler-owned-shared-view stream)
-      idx)
+    (tokens.format-token-start stream idx)
     (string.string-length
       (tokens.format-token-text (tokens.format-token-at stream idx)))))
 
@@ -551,12 +549,7 @@
     [stream : tokens.FormatTokenStream (tokens.format-lex (format-cst-fixture))]
     [tree : FormatCst (parse-format-source (format-cst-fixture))]
     (begin
-      (unless
-        (>
-          (tokens.format-token-count
-            (owned_view.compiler-owned-shared-view stream))
-          40)
-        (return 1))
+      (unless (> (tokens.format-token-count stream) 40) (return 1))
       (unless
         (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 40)
         (return 2))

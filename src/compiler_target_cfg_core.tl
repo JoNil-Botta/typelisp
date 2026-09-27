@@ -2,7 +2,6 @@
 ;;
 ;; Keep target predicate aliases in one place so compiler emission and
 ;; non-emitting tooling parse exactly the same source configuration.
-(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
@@ -66,18 +65,16 @@
 
 (define (compiler-target-cfgs-with-names-from
   [target : CompilerTargetCfg]
-  [names : target_cfg_svec.Vec]
+  [names : (& names target_cfg_svec.Vec)]
   [index : i64]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index (target_cfg_svec.len (& names)))
+  (if (>= index (target_cfg_svec.len names))
     (compiler-target-cfgs target cfgs)
     (compiler-target-cfgs-with-names-from
       target
-      (owned_view.compiler-owned-shared-view names)
+      names
       (+ index 1)
-      (cfg_core.compiler-cfg-enable
-        cfgs
-        (target_cfg_svec.get (& names) index "")))))
+      (cfg_core.compiler-cfg-enable cfgs (target_cfg_svec.get names index "")))))
 
 (define (compiler-target-cfgs-with-names
   [target : CompilerTargetCfg]

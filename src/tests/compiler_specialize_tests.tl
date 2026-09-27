@@ -552,9 +552,7 @@
           (ast.AstMaybeType.No)
           binding-value))]
     [binding-both : spec.SpecTemplateEnv
-      (spec.spec-template-env-shadow-let-binding-names
-        base
-        (owned_view.compiler-owned-shared-view bindings))]
+      (spec.spec-template-env-shadow-let-binding-names base bindings)]
     [param-then-binding : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-let-binding-names param-both bindings)]
     [unrelated : spec.SpecTemplateEnv

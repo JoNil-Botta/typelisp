@@ -145,7 +145,7 @@
       (load.CompilerLoadDependencyCatalogImage.Some
         (owned_view.compiler-owned-shared-view image))
       (load.compiler-load-dependency-surface-copy-spmd-callables
-        (owned_view.compiler-owned-shared-view image.metadata.spmd-callables))
+        image.metadata.spmd-callables)
       status)))
 
 (define (compiler-dependency-tlci-base-key
@@ -391,7 +391,7 @@
                       (compiler-dependency-tlci-admit-parsed!
                         (owned_view.compiler-owned-shared-view state)
                         (load.compiler-load-dependency-catalog-owner-arena
-                          (owned_view.compiler-owned-shared-view state))
+                          state)
                         source-set
                         artifact-path
                         source-digest
@@ -456,7 +456,7 @@
 (define (compiler-dependency-tlci-prepare-deps-from!
   [state : load.CompilerLoadSessionState]
   [manifest-dir : String]
-  [deps : load.CompilerPkgDepList]
+  [deps : (& deps load.CompilerPkgDepList)]
   [index : i64]) : unit
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     unit
@@ -487,7 +487,7 @@
       (compiler-dependency-tlci-prepare-deps-from!
         (owned_view.compiler-owned-shared-view state)
         manifest-dir
-        (owned_view.compiler-owned-shared-view items)
+        items
         0)
       (cfg
         dependency-tlci-verification

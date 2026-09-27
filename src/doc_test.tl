@@ -77,9 +77,7 @@
         (begin
           (while (< index (doc_example_vec.len (& examples)))
             (begin
-              (match (doc-test-example-list-ref
-                (owned_view.compiler-owned-shared-view examples)
-                index)
+              (match (doc-test-example-list-ref examples index)
                 [(DocTestExample.Example ordinal line expectation code)
                   (doc_example_vec.push-ref!
                     (&mut out-examples)
@@ -156,14 +154,15 @@
 (define (doc-test-example-list-empty) : doc_example_vec.Vec
   (doc_example_vec.new))
 
-(define (doc-test-example-list-count [examples : doc_example_vec.Vec]) : i64
-  (doc_example_vec.len (& examples)))
+(define (doc-test-example-list-count
+  [examples : (& examples doc_example_vec.Vec)]) : i64
+  (doc_example_vec.len examples))
 
 (define (doc-test-example-list-ref
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]) : DocTestExample
   (doc_example_vec.get
-    (& examples)
+    examples
     index
     (DocTestExample.Example 0 0 (DocTestExpectation.Pass) "")))
 
@@ -179,8 +178,8 @@
 (define (doc-test-error-list-empty) : doc_error_vec.Vec
   (doc_error_vec.new))
 
-(define (doc-test-error-list-count [errors : doc_error_vec.Vec]) : i64
-  (doc_error_vec.len (& errors)))
+(define (doc-test-error-list-count [errors : (& errors doc_error_vec.Vec)]) : i64
+  (doc_error_vec.len errors))
 
 (define (doc-test-error-list-ref
   [errors : (& errors doc_error_vec.Vec)]
@@ -198,11 +197,9 @@
 
 (define (doc-test-error-list-append-all-from
   [errors : doc_error_vec.Vec]
-  [more : doc_error_vec.Vec]
+  [more : (& more doc_error_vec.Vec)]
   [index : i64]) : doc_error_vec.Vec
-  (if (>=
-    index
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view more)))
+  (if (>= index (doc-test-error-list-count more))
     errors
     (doc-test-error-list-append-all-from
       (doc-test-error-list-append errors (doc-test-error-list-ref more index))
@@ -411,7 +408,7 @@
         (DocTestMaybeOutput.No
           "doctest output metadata must be '-' or 'literal:<escaped text>'")))))
 
-(define (doc-test-string-blank? [text : String]) : bool
+(define (doc-test-string-blank? [text : (& text str)]) : bool
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -427,7 +424,7 @@
           (set! i n)))
       blank)))
 
-(define (doc-test-word-end [text : String] [start : i64]) : i64
+(define (doc-test-word-end [text : (& text str)] [start : i64]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 start]
@@ -466,7 +463,7 @@
 (define (doc-test-item-doc-comment-body [line : String]) : DocTestMaybeString
   (doc-test-doc-comment-body-with-prefix line ";:"))
 
-(define (doc-test-starts-with-form-head? [text : String] [head : String]) : bool
+(define (doc-test-starts-with-form-head? [text : (& text str)] [head : String]) : bool
   (if (source_text.starts-with? text head)
     (let
       [head-len : i64 (string.string-length head)]
@@ -488,15 +485,9 @@
             (doc-test-trim-left
               (string.substring trimmed 1 (- (string.string-length trimmed) 1)))]
           (or
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "define")
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "extern")
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "defenum")
+            (doc-test-starts-with-form-head? rest "define")
+            (doc-test-starts-with-form-head? rest "extern")
+            (doc-test-starts-with-form-head? rest "defenum")
             (doc-test-starts-with-form-head? rest "defstruct")))
         false)
       false)))
@@ -510,8 +501,7 @@
     (if (= (string.string-length trimmed) 0)
       (DocTestFenceInfo.TypeLisp mode)
       (let
-        [end : i64
-          (doc-test-word-end (owned_view.compiler-owned-shared-view trimmed) 0)]
+        [end : i64 (doc-test-word-end trimmed 0)]
         [option : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
@@ -555,8 +545,7 @@
     (if (= (string.string-length trimmed) 0)
       (DocTestFenceInfo.Ignore)
       (let
-        [end : i64
-          (doc-test-word-end (owned_view.compiler-owned-shared-view trimmed) 0)]
+        [end : i64 (doc-test-word-end trimmed 0)]
         [language : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
@@ -844,10 +833,7 @@
               (DocTestError.Error
                 source-line
                 "runnable TypeLisp doctest requires doctest-exit metadata")))]
-        (if (=
-          (doc-test-error-list-count
-            (owned_view.compiler-owned-shared-view all-errors))
-          0)
+        (if (= (doc-test-error-list-count all-errors) 0)
           (DocTestRunMetadataParse.Ok
             (DocTestExpectation.Run
               expected-exit
@@ -866,8 +852,7 @@
       (match state
         [(DocTestScanState.State examples errors next-index)
           (if closed
-            (if (doc-test-string-blank?
-              (owned_view.compiler-owned-shared-view code))
+            (if (doc-test-string-blank? code)
               (doc-test-scan-doc-block-from
                 lines
                 remaining
@@ -998,8 +983,7 @@
                     (&mut module-lines)
                     (DocTestLine.Line line-number body)))]
               [(DocTestMaybeString.No)
-                (if (doc-test-string-blank?
-                  (owned_view.compiler-owned-shared-view line))
+                (if (doc-test-string-blank? line)
                   unit
                   (begin
                     (set! state (doc-test-scan-doc-block module-lines state))
@@ -1121,10 +1105,7 @@
             (DocTestError.Error index (string.int->string index)))
           (set! index (+ index 1))))
       (and
-        (=
-          (doc-test-error-list-count
-            (owned_view.compiler-owned-shared-view errors))
-          5)
+        (= (doc-test-error-list-count errors) 5)
         (= (doc_error_vec.capacity (& errors)) 8)
         (= (doc-test-error-line (doc-test-error-list-ref errors 4)) 5)))))
 
@@ -1172,17 +1153,9 @@
               (string.int->string index)))
           (set! index (+ index 1))))
       (and
-        (=
-          (doc-test-example-list-count
-            (owned_view.compiler-owned-shared-view examples))
-          5)
+        (= (doc-test-example-list-count examples) 5)
         (= (doc_example_vec.capacity (& examples)) 8)
-        (=
-          (doc-test-example-index
-            (doc-test-example-list-ref
-              (owned_view.compiler-owned-shared-view examples)
-              0))
-          1)
+        (= (doc-test-example-index (doc-test-example-list-ref examples 0)) 1)
         (string.eq
           (doc-test-example-code (doc-test-example-list-ref examples 4))
           "5")))))
@@ -1451,7 +1424,7 @@
           code
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs
-          (owned_view.compiler-owned-shared-view pools))
+          pools)
           [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools
               (owned_view.compiler-owned-shared-view virtual-path)
@@ -1743,20 +1716,14 @@
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples)))
+  (if (>= index (doc-test-example-list-count examples))
     failures
     (let
-      [example : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          index)]
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-check-example-with-roots
         (owned_view.compiler-owned-shared-view path)
         example
@@ -1785,21 +1752,15 @@
 
 (define (doc-test-typecheck-examples-with-roots-from
   [path : String]
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples)))
+  (if (>= index (doc-test-example-list-count examples))
     failures
     (let
-      [example : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          index)]
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-typecheck-example-with-roots-and-cfg
         (owned_view.compiler-owned-shared-view path)
         example
@@ -1838,23 +1799,17 @@
 
 (define (doc-test-typecheck-package-examples-with-roots-from
   [path : String]
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples)))
+  (if (>= index (doc-test-example-list-count examples))
     failures
     (let
-      [example : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          index)]
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-typecheck-package-example-with-roots-and-cfg
         (owned_view.compiler-owned-shared-view path)
         example
@@ -1905,12 +1860,10 @@
 ;; example index, so it is recorded with index `-1`.
 (define (doc-test-errors-to-failures-from
   [path : String]
-  [errors : doc_error_vec.Vec]
+  [errors : (& errors doc_error_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view errors)))
+  (if (>= index (doc-test-error-list-count errors))
     failures
     (let
       [err : DocTestError (doc-test-error-list-ref errors index)]
@@ -1945,8 +1898,7 @@
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
-        (doc-test-example-list-count
-          (owned_view.compiler-owned-shared-view examples))
+        (doc-test-example-list-count examples)
         (doc-test-run-examples-with-roots
           (owned_view.compiler-owned-shared-view path)
           examples
@@ -1985,8 +1937,7 @@
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
-        (doc-test-example-list-count
-          (owned_view.compiler-owned-shared-view examples))
+        (doc-test-example-list-count examples)
         (doc-test-typecheck-examples-with-roots-and-cfg
           (owned_view.compiler-owned-shared-view path)
           examples
@@ -2022,8 +1973,7 @@
   (match extraction
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
-        (doc-test-example-list-count
-          (owned_view.compiler-owned-shared-view examples))
+        (doc-test-example-list-count examples)
         (doc-test-typecheck-package-examples-with-roots-and-cfg
           (owned_view.compiler-owned-shared-view path)
           examples
@@ -2046,7 +1996,7 @@
     stdlib-roots
     cfgs))
 
-(define (doc-test-path-under-root? [path : String] [root : String]) : bool
+(define (doc-test-path-under-root? [path : (& path str)] [root : (& root str)]) : bool
   (let
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
@@ -2059,7 +2009,7 @@
           normalized-root)))))
 
 (define (doc-test-dep-list-path?
-  [path : String]
+  [path : (& path str)]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDepList]
   [index : i64]) : bool
@@ -2078,9 +2028,7 @@
               (owned_view.compiler-owned-shared-view dep-path))))]
       (if (and
         (not (compiler_load.compiler-load-github-dependency-path? dep-path))
-        (doc-test-path-under-root?
-          (owned_view.compiler-owned-shared-view path)
-          dep-root))
+        (doc-test-path-under-root? path dep-root))
         true
         (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
 
@@ -2102,9 +2050,7 @@
         [rooted : String
           (if (or
             (compiler_load.compiler-load-absolute-path? path)
-            (doc-test-path-under-root?
-              (owned_view.compiler-owned-shared-view normalized)
-              (owned_view.compiler-owned-shared-view manifest-dir)))
+            (doc-test-path-under-root? normalized manifest-dir))
             normalized
             (compiler_load.compiler-load-normalize-path
               (compiler_load.compiler-load-join-root-path
@@ -2127,23 +2073,16 @@
           (if (string.eq manifest-root ".")
             (and
               (not (compiler_load.compiler-load-absolute-path? rooted))
-              (doc-test-path-under-root?
-                (owned_view.compiler-owned-shared-view rooted)
-                (owned_view.compiler-owned-shared-view manifest-dir)))
-            (doc-test-path-under-root?
-              (owned_view.compiler-owned-shared-view rooted)
-              (owned_view.compiler-owned-shared-view manifest-dir)))]
+              (doc-test-path-under-root? rooted manifest-dir))
+            (doc-test-path-under-root? rooted manifest-dir))]
         [package-local : bool
           (and
             (> (string.string-length path) 0)
             (not (compiler_load.compiler-load-stdlib-import? stdlib-path))
-            (not
-              (doc-test-path-under-root?
-                (owned_view.compiler-owned-shared-view rooted)
-                manifest-stdlib-root))
+            (not (doc-test-path-under-root? rooted manifest-stdlib-root))
             (not
               (doc-test-dep-list-path?
-                (owned_view.compiler-owned-shared-view rooted)
+                rooted
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (compiler_load.compiler-pkg-deps-list
                   (owned_view.compiler-owned-shared-view deps))
@@ -2422,13 +2361,11 @@
       [_ false])))
 
 (define (doc-test-error-list-has-from?
-  [errors : doc_error_vec.Vec]
+  [errors : (& errors doc_error_vec.Vec)]
   [index : i64]
   [line : i64]
   [message-fragment : String]) : bool
-  (if (>=
-    index
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view errors)))
+  (if (>= index (doc-test-error-list-count errors))
     false
     (let
       [err : DocTestError (doc-test-error-list-ref errors index)]
@@ -2445,31 +2382,24 @@
         (doc-test-error-list-has-from? errors (+ index 1) line message-fragment)))))
 
 (define (doc-test-error-list-has?
-  [errors : doc_error_vec.Vec]
+  [errors : (& errors doc_error_vec.Vec)]
   [line : i64]
   [message-fragment : String]) : bool
   (doc-test-error-list-has-from? errors 0 line message-fragment))
 
-(define (doc-test-smoke-examples-ok? [examples : doc_example_vec.Vec]) : bool
-  (if (=
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples))
-    2)
+(define (doc-test-smoke-examples-ok?
+  [examples : (& examples doc_example_vec.Vec)]) : bool
+  (if (= (doc-test-example-list-count examples) 2)
     (let
-      [first : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          0)]
+      [first : DocTestExample (doc-test-example-list-ref examples 0)]
       [second : DocTestExample (doc-test-example-list-ref examples 1)]
       (if (doc-test-example-ok? first 1 2 false "(define (main)")
         (doc-test-example-ok? second 2 9 true "(define (bad)")
         false))
     false))
 
-(define (doc-test-malformed-errors-ok? [errors : doc_error_vec.Vec]) : bool
-  (if (=
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view errors))
-    3)
+(define (doc-test-malformed-errors-ok? [errors : (& errors doc_error_vec.Vec)]) : bool
+  (if (= (doc-test-error-list-count errors) 3)
     (let
       [first : DocTestError (doc-test-error-list-ref errors 0)]
       [second : DocTestError (doc-test-error-list-ref errors 1)]
@@ -2524,12 +2454,7 @@
     [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless (= (doc-test-error-list-count errors) 0) (return false))
-        (unless
-          (=
-            (doc-test-example-list-count
-              (owned_view.compiler-owned-shared-view examples))
-            1)
-          (return false))
+        (unless (= (doc-test-example-list-count examples) 1) (return false))
         (let
           [example : DocTestExample (doc-test-example-list-ref examples 0)]
           (string.contains (doc-test-example-code example) "(define legacy")))]))
@@ -2538,10 +2463,7 @@
   (match (doc-test-extract-source (doc-test-malformed-source))
     [(DocTestExtraction.Extraction malformed-examples malformed-errors)
       (if (= (doc-test-example-list-count malformed-examples) 0)
-        (if (=
-          (doc-test-error-list-count
-            (owned_view.compiler-owned-shared-view malformed-errors))
-          3)
+        (if (= (doc-test-error-list-count malformed-errors) 3)
           (doc-test-malformed-errors-ok? malformed-errors)
           false)
         false)]))
@@ -2551,17 +2473,9 @@
     [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless (= (doc-test-error-list-count errors) 0) (return false))
-        (unless
-          (=
-            (doc-test-example-list-count
-              (owned_view.compiler-owned-shared-view examples))
-            2)
-          (return false))
+        (unless (= (doc-test-example-list-count examples) 2) (return false))
         (let
-          [first : DocTestExample
-            (doc-test-example-list-ref
-              (owned_view.compiler-owned-shared-view examples)
-              0)]
+          [first : DocTestExample (doc-test-example-list-ref examples 0)]
           [second : DocTestExample (doc-test-example-list-ref examples 1)]
           (begin
             (unless
@@ -2588,35 +2502,18 @@
     [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless (= (doc-test-example-list-count examples) 0) (return false))
+        (unless (= (doc-test-error-list-count errors) 5) (return false))
         (unless
-          (=
-            (doc-test-error-list-count
-              (owned_view.compiler-owned-shared-view errors))
-            5)
+          (doc-test-error-list-has? errors 1 "cannot be combined")
           (return false))
         (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            1
-            "cannot be combined")
+          (doc-test-error-list-has? errors 4 "cannot be combined")
           (return false))
         (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            4
-            "cannot be combined")
+          (doc-test-error-list-has? errors 8 "must be an integer")
           (return false))
         (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            8
-            "must be an integer")
-          (return false))
-        (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            12
-            "output metadata")
+          (doc-test-error-list-has? errors 12 "output metadata")
           (return false))
         (doc-test-error-list-has? errors 14 "requires doctest-exit"))]))
 
@@ -2628,10 +2525,7 @@
           (= (doc-test-error-list-count errors) 0)
           (return (io.panic "doc-test: unexpected extraction error")))
         (unless
-          (=
-            (doc-test-example-list-count
-              (owned_view.compiler-owned-shared-view examples))
-            2)
+          (= (doc-test-example-list-count examples) 2)
           (return (io.panic "doc-test: example count mismatch")))
         (unless
           (doc-test-smoke-examples-ok? examples)

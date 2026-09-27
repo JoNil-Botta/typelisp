@@ -49,17 +49,17 @@
     (doc_render.doc-module-list-count modules)))
 
 (define (doc-local-site-search-index
-  [compiler-identity : String]
-  [source-identity : String]
-  [package-identity : String]
+  [compiler-identity : (& compiler-identity str)]
+  [source-identity : (& source-identity str)]
+  [package-identity : (& package-identity str)]
   [modules : doc_module_vec.Vec]) : String
   (str_cat.str-cat
     "globalThis.TYPELISP_DOC_SEARCH=Object.freeze({\"schema\":1,\"compilerIdentity\":"
-    (doc_html.doc-html-json-string (& compiler-identity))
+    (doc_html.doc-html-json-string compiler-identity)
     ",\"sourceIdentity\":"
-    (doc_html.doc-html-json-string (& source-identity))
+    (doc_html.doc-html-json-string source-identity)
     ",\"packageIdentity\":"
-    (doc_html.doc-html-json-string (& package-identity))
+    (doc_html.doc-html-json-string package-identity)
     ",\"records\":Object.freeze(["
     (doc-local-site-search-records modules)
     "])});\n"))

@@ -89,7 +89,7 @@
           "'"))]))
 
 (define (package-cache-find-code-from
-  [text : String]
+  [text : (& text str)]
   [needle : i64]
   [start : i64]) : i64
   (let
@@ -103,25 +103,17 @@
           (set! i (+ i 1))))
       found)))
 
-(define (package-cache-parse-normalized-remote [dep : String]) : ResultPackageCacheRemoteSpec
+(define (package-cache-parse-normalized-remote [dep : (& dep str)]) : ResultPackageCacheRemoteSpec
   (let
     [n : i64 (string.string-length dep)]
-    [hash : i64
-      (package-cache-find-code-from
-        (owned_view.compiler-owned-shared-view dep)
-        35
-        0)]
+    [hash : i64 (package-cache-find-code-from dep 35 0)]
     (if (or (<= hash 0) (>= hash (- n 1)))
       (ResultPackageCacheRemoteSpec.Err
         "package-cache: remote dependency must be URL#rev|tag|branch=value")
       (let
         [url : String (string.substring dep 0 hash)]
         [fragment : String (string.substring dep (+ hash 1) (- n (+ hash 1)))]
-        [eq : i64
-          (package-cache-find-code-from
-            (owned_view.compiler-owned-shared-view fragment)
-            61
-            0)]
+        [eq : i64 (package-cache-find-code-from fragment 61 0)]
         [fragment-len : i64 (string.string-length fragment)]
         (if (or (<= eq 0) (>= eq (- fragment-len 1)))
           (ResultPackageCacheRemoteSpec.Err
@@ -419,8 +411,8 @@
 
 (define (package-cache-finalize-staged
   [staged-path : String]
-  [entry-path : String]) : io.ResultIoUnit
-  (fs.try-rename (& staged-path) (& entry-path)))
+  [entry-path : (& entry-path str)]) : io.ResultIoUnit
+  (fs.try-rename (& staged-path) entry-path))
 
 (define (package-cache-write-complete-marker
   [entry-path : (& entry_path str)]

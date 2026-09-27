@@ -23,7 +23,7 @@
 (import (vector.vector lsp_vector_families.LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector lsp_vector_families.LspDocument core) as lsp_document_vec)
 
-(define (lsp-smoke-write-text [path : String] [contents : String]) : unit
+(define (lsp-smoke-write-text [path : (& path str)] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (lsp-smoke-mkdir [path : String]) : unit
@@ -31,12 +31,12 @@
     [(io.OkIoUnit) unit]
     [(io.ErrIoUnit _) unit]))
 
-(define (lsp-smoke-remove-file [path : String]) : unit
-  (match (fs.try-remove-file-if-exists (& path))
+(define (lsp-smoke-remove-file [path : (& path str)]) : unit
+  (match (fs.try-remove-file-if-exists path)
     [(io.OkIoUnit) unit]
     [(io.ErrIoUnit _) unit]))
 
-(define (lsp-smoke-make-directory-cycle-link [path : String]) : bool
+(define (lsp-smoke-make-directory-cycle-link [path : (& path str)]) : bool
   (cfg
     windows
     true
@@ -936,9 +936,7 @@
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (lsp-smoke-write-text
-        (owned_view.compiler-owned-shared-view path)
-        disk-text)
+      (lsp-smoke-write-text path disk-text)
       (set!
         docs
         (lsp_frame_core.lsp-documents-set
@@ -1192,38 +1190,23 @@
           [top-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                7
-                22))]
+              (lsp_frame_core.lsp-offset-at-position source 7 22))]
           [local-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                6
-                33))]
+              (lsp_frame_core.lsp-offset-at-position source 6 33))]
           [slot-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                1
-                16))]
+              (lsp_frame_core.lsp-offset-at-position source 1 16))]
           [wrap-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                12
-                23))]
+              (lsp_frame_core.lsp-offset-at-position source 12 23))]
           [comment-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                8
-                3))]
+              (lsp_frame_core.lsp-offset-at-position source 8 3))]
           [string-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
@@ -1464,7 +1447,7 @@
                 (owned_view.compiler-owned-shared-view source)
                 1
                 (lsp_frame_core.lsp-diagnostic-uris-empty))
-              (owned_view.compiler-owned-shared-view uri)
+              uri
               1
               index)]
           [doc : lsp_vector_families.LspDocument
@@ -1899,46 +1882,18 @@
       (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (let
         [after-two : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-at-offset
-            (owned_view.compiler-owned-shared-view source)
-            3)]
+          (lsp_frame_core.lsp-line-col-at-offset source 3)]
         [after-three : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset!
-            (&mut cache)
-            (owned_view.compiler-owned-shared-view source)
-            6)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 6)]
         [after-four : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset!
-            (&mut cache)
-            (owned_view.compiler-owned-shared-view source)
-            10)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 10)]
         (set!
           utf16-ok
           (and
-            (=
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                0
-                2)
-              3)
-            (=
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                0
-                3)
-              6)
-            (=
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                0
-                4)
-              10)
-            (=
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                0
-                5)
-              10)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 2) 3)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 3) 6)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 4) 10)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 5) 10)
             (= after-two.col 3)
             (= after-three.col 4)
             (= after-four.col 6))))
@@ -1946,34 +1901,16 @@
       (set! cache (lsp_frame_core.LspLineColCache -1 1 1))
       (let
         [after-two : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-at-offset
-            (owned_view.compiler-owned-shared-view source)
-            3)]
+          (lsp_frame_core.lsp-line-col-at-offset source 3)]
         [after-three : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset!
-            (&mut cache)
-            (owned_view.compiler-owned-shared-view source)
-            6)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 6)]
         [after-four : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset!
-            (&mut cache)
-            (owned_view.compiler-owned-shared-view source)
-            10)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 10)]
         (set!
           utf8-ok
           (and
-            (=
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                0
-                3)
-              3)
-            (=
-              (lsp_frame_core.lsp-offset-at-position
-                (owned_view.compiler-owned-shared-view source)
-                0
-                6)
-              6)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 3) 3)
+            (= (lsp_frame_core.lsp-offset-at-position source 0 6) 6)
             (= (lsp_frame_core.lsp-offset-at-position source 0 10) 10)
             (= after-two.col 4)
             (= after-three.col 7)
@@ -2000,7 +1937,7 @@
           (lsp_frame_core.lsp-range-from-compiler-span
             ""
             (owned_view.compiler-owned-shared-view source)
-            (owned_view.compiler-owned-shared-view span))))
+            span)))
       (lsp_frame_core.lsp-position-encoding-use-utf8!)
       (set!
         utf8-rendered
@@ -2095,7 +2032,7 @@
             (lsp_frame_core.lsp-code-action-workspace-edit
               docs
               (owned_view.compiler-owned-shared-view path-a)
-              (owned_view.compiler-owned-shared-view edits)))]
+              edits))]
         [utf-range : String
           "\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}"]
         [first-version : String "\"version\":7"]
@@ -2528,15 +2465,10 @@
         (lsp-smoke-mkdir root-a-tests)
         (lsp-smoke-mkdir root-a-nested)
         (lsp-smoke-mkdir root-b)
-        (lsp-smoke-remove-file
-          (owned_view.compiler-owned-shared-view root-a-cycle))
-        (lsp-smoke-remove-file
-          (owned_view.compiler-owned-shared-view create-path))
-        (lsp-smoke-remove-file
-          (owned_view.compiler-owned-shared-view refresh-path))
-        (lsp-smoke-write-text
-          (owned_view.compiler-owned-shared-view disk-path)
-          "(define disk-value : i64 1)")
+        (lsp-smoke-remove-file root-a-cycle)
+        (lsp-smoke-remove-file create-path)
+        (lsp-smoke-remove-file refresh-path)
+        (lsp-smoke-write-text disk-path "(define disk-value : i64 1)")
         (lsp-smoke-write-text
           explicit-path
           "(module explicit.mod) (define explicit-value : i64 2)")
@@ -2549,8 +2481,7 @@
           nested-path
           "(define ignored-nested-value : i64 5)")
         (lsp-smoke-write-text b-path "(define b-value : i64 6)")
-        (if (lsp-smoke-make-directory-cycle-link
-          (owned_view.compiler-owned-shared-view root-a-cycle))
+        (if (lsp-smoke-make-directory-cycle-link root-a-cycle)
           unit
           (begin
             (io.print-error "workspace index smoke: cannot create cycle link\n")
@@ -2685,9 +2616,7 @@
         (begin
           (io.print-error "workspace index smoke: open overlay\n")
           (set! ok false)))
-      (lsp-smoke-write-text
-        (owned_view.compiler-owned-shared-view disk-path)
-        "(define watcher-value : i64 9)")
+      (lsp-smoke-write-text disk-path "(define watcher-value : i64 9)")
       (set!
         state
         (lsp-smoke-state-watch
@@ -2702,7 +2631,7 @@
         (begin
           (io.print-error "workspace index smoke: watcher below overlay\n")
           (set! ok false)))
-      (lsp-smoke-remove-file (owned_view.compiler-owned-shared-view disk-path))
+      (lsp-smoke-remove-file disk-path)
       (set!
         state
         (lsp-smoke-state-watch
@@ -2722,9 +2651,7 @@
         (begin
           (io.print-error "workspace index smoke: close missing overlay\n")
           (set! ok false)))
-      (lsp-smoke-write-text
-        (owned_view.compiler-owned-shared-view create-path)
-        "(define created-value : i64 10)")
+      (lsp-smoke-write-text create-path "(define created-value : i64 10)")
       (set!
         state
         (lsp-smoke-state-watch
@@ -2736,9 +2663,7 @@
         (begin
           (io.print-error "workspace index smoke: create event\n")
           (set! ok false)))
-      (lsp-smoke-write-text
-        (owned_view.compiler-owned-shared-view create-path)
-        "(define changed-value : i64 11)")
+      (lsp-smoke-write-text create-path "(define changed-value : i64 11)")
       (set!
         state
         (lsp-smoke-state-watch
@@ -2772,17 +2697,14 @@
         (begin
           (io.print-error "workspace index smoke: close restores disk\n")
           (set! ok false)))
-      (lsp-smoke-remove-file
-        (owned_view.compiler-owned-shared-view create-path))
+      (lsp-smoke-remove-file create-path)
       (set! state (lsp-smoke-state-watch state create-path 3))
       (if (= (lsp-smoke-state-name-count (& state) "changed-value") 0)
         unit
         (begin
           (io.print-error "workspace index smoke: delete event\n")
           (set! ok false)))
-      (lsp-smoke-write-text
-        (owned_view.compiler-owned-shared-view refresh-path)
-        "(define refresh-value-0 : i64 13)")
+      (lsp-smoke-write-text refresh-path "(define refresh-value-0 : i64 13)")
       (set!
         state
         (lsp-smoke-state-watch
@@ -2805,9 +2727,7 @@
                 (owned_view.compiler-owned-shared-view name)
                 " : i64 13")]
             (begin
-              (lsp-smoke-write-text
-                (owned_view.compiler-owned-shared-view refresh-path)
-                source)
+              (lsp-smoke-write-text refresh-path source)
               (set!
                 state
                 (lsp-smoke-state-watch

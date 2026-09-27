@@ -156,7 +156,7 @@
   (match (regalloc.compiler-reg-plan-function-scalar-for-abi
     abi.CompilerRegTargetAbi.Windows
     (win-param-preassign-safe-div-function))
-    [(regalloc.CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+    [(regalloc.CompilerRegPlan.Plan assignments ineligible _ _ _)
       (and
         (not (liveness.compiler-live-set-contains? ineligible 1))
         (match (regalloc.compiler-reg-assignment-lookup assignments 1)

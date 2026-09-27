@@ -36,7 +36,7 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as backend_string_i64_map)
 
-;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
+;; Block labels are interned ids, so their maps are integer-keyed.
 (import (hashmap.hashmap i64 i64) as backend_label_i64_map)
 (import (hashmap.hashmap i64 i64) as backend_i64_i64_map)
 (import stdlib.string)
@@ -263,10 +263,11 @@
   (No)
   (Some compiler_ir_types.CompilerIrValue))
 
-;; BackendPhiSourceTemp carries the location its saved value lives in while the
-;; cycle is being broken: invalid = the reserved frame temp slot, or a canonical
-;; register ID when the outermost cycle break scavenged a free register instead
-;; of staging on the stack. The single Temp consumer reads it back from there.
+;; `CompilerBackendPhiSource.Temp` carries the location its saved value lives in
+;; while the cycle is being broken: invalid = the reserved frame temp slot, or a
+;; canonical register ID when the outermost cycle break scavenged a free
+;; register instead of staging on the stack. The single Temp consumer reads it
+;; back from there.
 (defenum CompilerBackendPhiSource
   (Value compiler_ir_types.CompilerIrValue)
   (Temp i64))
@@ -317,8 +318,6 @@
         (set! (array-ref seq.slots index) phi-copy)
         (set! seq.len (+ index 1))))))
 
-;; The object path stages an edge's copies in REVERSE instruction order (the old
-;; cons scan prepended); this keeps that visit order byte-identical.
 (defmacro (compiler-backend-global-shared-view [place : Expr]) : Expr
   `(owned_view.compiler-owned-shared-view ,place))
 
@@ -349,6 +348,7 @@
     [payload (compiler_ir_types.compiler-ir-box-shared-view ,value)]
     (compiler-backend-global-shared-view (__tl-project-field payload ,field))))
 
+;; The object path stages an edge's copies in REVERSE instruction order.
 (defmacro (compiler-backend-phi-copy-seq-rev-ref
   [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : CompilerBackendPhiCopy
@@ -604,15 +604,12 @@
 
 ;; Append-only function-body assembly text buffer.
 ;;
-;; Block and instruction emission used to materialise a fresh String for every
-;; assembly line (one str-cat of the mnemonic/operand parts) and hang it off a
-;; TextBuf chunk node, so each part was copied into a throwaway line allocation
-;; and then copied again by every render/splice on the way to the function body.
-;; The block/instruction spine now appends emitted text straight into this
-;; growth buffer and finishes ONCE to the body String the rest of the pipeline
-;; already consumes: rsp-rebase-full, the prologue splice and the peephole/group
-;; stage see exactly the same bytes, and the group-chunk invariant (one whole
-;; newline-terminated function text per chunk) is unchanged.
+;; The block/instruction spine appends emitted text straight into this growth
+;; buffer, rather than materialising a String per assembly line, and finishes
+;; ONCE to the body String the rest of the pipeline consumes: rsp-rebase-full,
+;; the prologue splice and the peephole/group stage all see those bytes, and
+;; the group-chunk invariant holds (one whole newline-terminated function text
+;; per chunk).
 ;;
 ;; Only the prefix [0, len) is live. `finish` hands the live prefix out as a
 ;; String that ALIASES this storage, so a finished buffer is never appended to
@@ -1420,7 +1417,7 @@
 ;; Read/write the hottest job-owned scalar without copying the wide opaque
 ;; StateData value.  Function emitters ask for their owner at nearly every
 ;; operand-home query; materialising all cache arrays just to read this address
-;; made explicit ownership substantially more expensive than the old globals.
+;; would make explicit ownership substantially more expensive.
 (define (compiler-backend-state-function-state-address
   [state : CompilerBackendState]) : i64
   (unsafe
@@ -1595,6 +1592,13 @@
       (arena.current)
       (arena.Arena stored))))
 
+;; Whether scalar functions get full register allocation. Register allocation
+;; makes the EMITTED binary faster but its planning + register-aware emission
+;; cost more compile time than it saves on a single self-compile, so it is
+;; reserved for opt level 2, the high-quality path. Lower opt levels stay on
+;; cheap stack-only homing. The option is owned by each CompilerBackendState,
+;; so a given job emits deterministically even when another job is active.
+;; SIMD (Avx2/Avx512) functions always use register allocation regardless.
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
   (__tl-project-field
@@ -1966,14 +1970,6 @@
   (compiler-backend-mode-avx2?
     (compiler-backend-function-state-current-mode function-state)))
 
-;; Whether scalar functions get full register allocation (#perf). Register
-;; allocation makes the EMITTED binary faster but its planning + register-aware
-;; emission cost more compile time than it saves on a single self-compile, so it
-;; is reserved for opt level 2 — the high-quality path whose extra cost the
-;; benchmark's 2x budget accommodates. Lower opt levels stay on cheap
-;; stack-only homing. The option is owned by each CompilerBackendState, so a
-;; given job emits deterministically even when another job is active. SIMD
-;; (Avx2/Avx512) functions always use register allocation regardless.
 (define (compiler-backend-set-current-fn-abi!
   [backend-state : CompilerBackendState]
   [abi : compiler_abi.CompilerRegTargetAbi]) : unit
@@ -2183,7 +2179,7 @@
 ;; such "free branch" uses. This is strictly more permissive than a global
 ;; single-use gate: opt2 loop rotation duplicates a guard into an entry check
 ;; and a latch check that share one var id (two defs, two adjacent-branch uses),
-;; which the single-use gate rejected even though each pair is locally fusable.
+;; which a single-use gate would reject even though each pair is locally fusable.
 ;;
 ;; To stay nearly free at compile time, this reuses the use-count array the
 ;; backend already computes (held by reference, not copied) and only adds a
@@ -2228,16 +2224,15 @@
 
 ;; The emit spine walks a block's contiguous CompilerIrInstrSeq with a
 ;; `(instrs, index)` cursor: `index` is the position of the first instruction
-;; not yet emitted, so what used to be "the remaining list" is now "the rows
-;; from `index` on" and its length is `len - index` instead of a cons-spine
-;; walk. The trampoline carries both halves; the sequence half is invariant for
-;; the lifetime of one emit-instrs-loop (every continue target is a suffix of
-;; the block the loop was entered with), and is carried anyway so the
-;; continuation stays a literal cursor rather than an invariant the reader has
-;; to reconstruct.
-;; The trampoline no longer carries a buffer across a continue step: the whole
-;; block spine appends into ONE body buffer that the loop already holds, so the
-;; only loop-carried emission state left is the mode and the cursor.
+;; not yet emitted, so the remaining instructions are the rows from `index` on
+;; and their count is `len - index`. The trampoline carries both halves; the
+;; sequence half is invariant for the lifetime of one emit-instrs-loop (every
+;; continue target is a suffix of the block the loop was entered with), and is
+;; carried anyway so the continuation stays a literal cursor rather than an
+;; invariant the reader has to reconstruct.
+;; The trampoline carries no buffer across a continue step: the whole block
+;; spine appends into ONE body buffer that the loop already holds, so the only
+;; loop-carried emission state is the mode and the cursor.
 (define (compiler-backend-emit-instrs-set-continue!
   [function-state : CompilerBackendFunctionState]
   [mode : CompilerBackendEmitInstrsMode]
@@ -3638,7 +3633,7 @@
   (BackendSymbolSeq (__tl_make-array i64 0) 0))
 
 ;; Phi targets are block labels, so they are a seq of interned ids rather than
-;; of spellings (refs #5718). `compiler-backend-symbol-list-contains-id?` is an
+;; of spellings. `compiler-backend-symbol-list-contains-id?` is an
 ;; i64 membership test -- `compiler-ir-symbol-id` is the identity -- so it serves
 ;; label ids unchanged.
 ;; CFG-aware cross-block reload-elision (carry-safe label set).
@@ -3648,8 +3643,8 @@
 ;; from its single, layout-adjacent predecessor (see
 ;; compiler-backend-peephole-collect-carry-safe!). Populated per-function during
 ;; emission from the FINAL emitted blocks; reset (epoch bump) at the top of each
-;; program emit. Read by the peephole. An empty set reproduces the old
-;; reset-at-every-label behavior, so any not-proven-safe label stays sound.
+;; program emit. Read by the peephole. A label outside the set resets the
+;; owner map, so any not-proven-safe label stays sound.
 ;;
 ;; The stream owns an open-addressing table of byte offsets/lengths into one
 ;; flat byte arena.  The storage starts small and grows geometrically in the
@@ -3671,11 +3666,11 @@
   (lengths (__tl_dyn-array i64))
   (bytes (__tl_dyn-array u8)))
 
-;; The existing count cell packs both counters so the 35-field stream surface
-;; stays unchanged: byte positions need 25 bits for the inclusive 16 MiB limit,
+;; One count cell packs both counters so the 35-field stream surface needs no
+;; extra field: byte positions need 25 bits for the inclusive 16 MiB limit,
 ;; and the remaining high bits hold the table entry count. The latter drives a
-;; 50% load-factor grow policy; waiting until a table was completely full made
-;; open-addressing probes dominate self-compile execution.
+;; 50% load-factor grow policy; letting a table fill completely makes
+;; open-addressing probes dominate.
 (define compiler-backend-peephole-carry-safe-count-entry-shift : i64
   25)
 (define compiler-backend-peephole-carry-safe-count-bytes-mask : i64
@@ -4089,9 +4084,9 @@
   (uses-f32-neg bool)
   ;; IAG-1 rides this walk. The census is held as a ONE-CELL array, not by
   ;; value: this struct is copied at every operand of every instruction, so an
-  ;; inline census would triple the copy the whole walk pays (measured: +147M
-  ;; on self-compile). Every mutable row it fills is a dyn-array or a two-cell
-  ;; cursor, so the cell is all the identity the hooks need. A census with
+  ;; inline census would triple the copy the whole walk pays. Every mutable
+  ;; row it fills is a dyn-array or a two-cell cursor, so the cell is all the
+  ;; identity the hooks need. A census with
   ;; `count` 0 is the disabled form: every note below is then a single compare.
   (iag CompilerBackendIagCensusCell))
 
@@ -13899,13 +13894,14 @@
 ;; emission (every re-plan stage -- caller-save and slot
 ;; coloring -- is already folded into it, exactly as for the dense operand
 ;; view above). The prologue/epilogue, frame layout, callee-save and FPO paths
-;; ask it tens of times per function, and each ask used to re-walk the whole
-;; table through `compiler-reg-location-uses-register?` (two ownership-id folds
-;; per populated entry). Fold the table ONCE per function into a register bitmask.
+;; ask it tens of times per function, so rather than re-walk the whole table
+;; through `compiler-reg-location-uses-register?` (two ownership-id folds per
+;; populated entry) at each ask, fold the table ONCE per function into a
+;; register bitmask.
 ;;
 ;; The bit index is the register's OWNERSHIP id (`compiler-abi-registers-overlap?`'s
 ;; equivalence class: a vec id folds onto its xmm sibling), so the mask answers
-;; exactly what the walk answered, overlap included. Ownership ids live in
+;; exactly what the walk answers, overlap included. Ownership ids live in
 ;; 0..15 (GP) and 32..63 (XMM family); mask registers (96..) fall outside the
 ;; word, so they are simply not recorded -- sound, because a location whose
 ;; ownership id is outside the word can never equal a query inside it, and a
@@ -13989,12 +13985,10 @@
 ;; `compiler-backend-plan-reg-mask-of` answers "does the PLAN home a value
 ;; here", which is not the same question as "does an instruction of this
 ;; function mention that register". A value can lose every reference after it
-;; was homed -- the loop-split rewrite remaps a whole region's mentions onto a
-;; freshly minted var, remat replaces a use with its recompute, a coalesced
-;; member is folded away -- and the assignment survives in the table, so the
-;; prologue pushes a callee-saved register the body never reads and the
-;; epilogue pops it back. That pair is pure cost: cg-map-probe pays 2.63M Ir
-;; per callgraph_scc run for %r13 on 1,316,260 calls.
+;; was homed -- a coalesced member is folded away, for one -- and the
+;; assignment survives in the table, so the prologue pushes a callee-saved
+;; register the body never reads and the epilogue pops it back. That pair is
+;; pure cost.
 ;;
 ;; The body mask is the union of the homes of every var some instruction of the
 ;; FINAL emitted IR mentions (the liveness walker's own use/def enumeration --
@@ -14923,7 +14917,7 @@
         ;; Register groups and memory-class aggregates do not take one integer
         ;; register each: a SysV memory-class parameter is passed on the stack
         ;; and shifts every later scalar down a register. The guard cannot model
-        ;; either, so decline rather than test the wrong register (#7988).
+        ;; either, so decline rather than test the wrong register.
         (if (or
           (compiler-backend-group-type?
             type-segment-bases
@@ -15363,8 +15357,9 @@
                     "\n")))]
             [(compiler_regalloc.CompilerRegLocation.RegisterPair home _)
               ;; Loading a whole register-group var into one register is not a
-              ;; scalar op; word extraction goes through IrInstrWord. Word0's home is
-              ;; the low register -- used only by the (unreached here) group paths.
+              ;; scalar op; word extraction goes through CompilerIrInstr.Word.
+              ;; Word0's home is the low register -- used only by the (unreached
+              ;; here) group paths.
               (let
                 [home-name : String
                   (compiler_abi.compiler-abi-register-spelling home)]
@@ -15597,7 +15592,7 @@
 ;; there gives the reload-elision owner map a target-dependent frame owner
 ;; (Win64 and SysV have different occupied pools) and leaves a redundant reload
 ;; on Win64.  This flag affects only the emergency tier -- a genuinely free
-;; %r10 remains the preferred, byte-identical choice.
+;; %r10 remains the preferred choice.
 ;; One emergency slot must preserve the widest physical register bank the
 ;; current backend can expose. GP saves use the first 8 bytes; XMM-family saves
 ;; use 16/32/64 bytes in scalar/AVX2/AVX-512 mode respectively.
@@ -15674,11 +15669,10 @@
 ;; preferred scratch (`%r10` for a base, `%r9` for a length, ...). When the
 ;; occupancy at that point leaves NO free, non-excluded, caller-saved register,
 ;; the scavenger borrows an occupied one and `compiler-backend-emergency-wrap`
-;; brackets the instruction with a save/restore. That save used to be
-;; unconditionally a 64-byte FRAME slot -- and naming a frame slot is exactly
-;; what forces a function to have a frame at all: gvn's `facts_remove` is a
-;; call-free leaf that pays `subq $144,%rsp` / `addq $144,%rsp` on every one of
-;; its 1.5M calls for one `movq %r9,(%rsp)` pair.
+;; brackets the instruction with a save/restore. Saving to a 64-byte FRAME slot
+;; names a frame slot, and naming a frame slot is exactly what forces a
+;; function to have a frame at all: a call-free leaf would pay a `subq`/`addq`
+;; of %rsp on every call for one `movq %r9,(%rsp)` pair.
 ;;
 ;; Park the value in a free XMM register instead. `movq %rGP, %xmmN` /
 ;; `movq %xmmN, %rGP` is the same two instructions, touches no memory, needs no
@@ -17580,7 +17574,7 @@
     [(compiler_ast_types.AstType.Tuple _) 8]
     [(compiler_ast_types.AstType.Array _ _) 8]
     [(compiler_ast_types.AstType.DynArray _) 8]
-    ;; A bare slice has no runtime value layout in this foundation packet.
+    ;; A bare slice has no runtime value layout.
     [(compiler_ast_types.AstType.Slice _) 0]
     [(compiler_ast_types.AstType.Box _) 8]
     [(compiler_ast_types.AstType.Ptr _) 8]
@@ -18855,8 +18849,7 @@
 
 ;; String-returning shim for the emitters that still hand their text back to a
 ;; caller instead of appending. One scalar load is one line, so the line buffer
-;; is sized for it and `finish` publishes it with no copy: the same single
-;; allocation the former str-cat performed.
+;; is sized for it and `finish` publishes it with no copy: a single allocation.
 (define (compiler-backend-emit-load-value-with-plan
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -20506,7 +20499,7 @@
         ;; the scratch scavenges -- under full occupancy an EMERGENCY pick of a
         ;; dst register would wrap it in save/restore and the restore would
         ;; clobber the just-packed word. Memory-form dsts contribute "" (no-op),
-        ;; keeping the historical stack-dst behavior byte-identical.
+        ;; leaving the stack-dst exclusions unchanged.
         [dst0-reg : String
           (if (compiler-backend-pack-word-dst-register? dst0)
             dst0
@@ -21120,8 +21113,8 @@
     backend-state))
 
 ;; Copy an internal two-word aggregate without treating it as an ABI return.
-;; Preserve the historical split-register sequence when its second register is
-;; free. A true cross-word alias loads both words before either store; the
+;; Use the split-register sequence when its second register is free. A true
+;; cross-word alias loads both words before either store; the
 ;; sequential case remains correct when scavenging must choose another register.
 (define (compiler-backend-emit-group-copy-with-plan
   [type-segment-bases : i64]
@@ -23572,7 +23565,7 @@
                 vars)]
             ;; At most one site can be published for each final IR
             ;; instruction. Use that function-derived bound for both site and
-            ;; synthetic/injection storage instead of the former 64/16 caps.
+            ;; synthetic/injection storage rather than fixed caps.
             [point-limit : i64 (array-ref points count)]
             [site-cap : i64
               (if (> point-limit 0)
@@ -25324,8 +25317,7 @@
   [ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
   ;; This helper is probed by generic return-binop emission. Reject a
-  ;; non-literal/non-divmod shape before touching any planned registers: eager
-  ;; allocation here used to consume three nonexistent slots for comparisons.
+  ;; non-literal/non-divmod shape before scavenging any registers.
   (if (compiler-backend-literal-divmod-shape?
     op
     (compiler-backend-global-shared-view rhs))
@@ -26697,7 +26689,7 @@
     ;; UCOMIS sets ZF/PF/CF for unordered operands. Above/above-equal
     ;; already reject that case; the other predicates must inspect PF.
     ;; MOV preserves those flags and its 32-bit destination clears the
-    ;; upper half. Only the planned result register is written: no hidden
+    ;; upper half. Only the result register is written: no hidden
     ;; byte scratch, operand reload, or second operand evaluation is needed.
     (if (match (compiler-backend-global-shared-view op)
       [(compiler_ir_types.CompilerIrBinOp.Gt) true]
@@ -27400,9 +27392,8 @@
 ;; `movq g(%rip), %scratch` the remat would otherwise emit in front of the
 ;; instruction. This is LLVM's fold-first step for a rematerialised load
 ;; (InlineSpiller.cpp:753-760, `foldMemoryOperand` / `++NumFoldedLoads`), and
-;; without it widening the remat set turns a folded operand back into two
-;; instructions -- measured as +59,998 on opt_crc32's `andq mask(%rip)` and
-;; +271,250 on gvn_table's `imulq prime(%rip)`.
+;; without it widening the remat set turns a folded operand such as
+;; `andq mask(%rip)` back into two instructions.
 ;;
 ;; Every caller spells the result as a COMPLETE source operand (a binop or cmov
 ;; source, a compare operand, a bounds-check length), never as an addressing
@@ -27635,7 +27626,7 @@
 ;; `shlq` -- both the same instruction count as the imulq they replace and
 ;; cheaper to execute. Factors 3/5/9 use base + scaled index in one LEA.
 ;; Every other constant keeps the imulq (a
-;; mov+shl pair would trade latency for count, which the Ir gate weighs).
+;; mov+shl pair would trade latency for instruction count).
 ;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
 ;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
 ;; `disp(,%rbp,1)` idiom mem-base-address already relies on.
@@ -27690,7 +27681,7 @@
 ;; a displacement that still encodes as imm32 qualifies (i64 MIN has no
 ;; negation, so it falls out here).
 ;;
-;; #6288: centralize the FPO `%rbp` value-home invariant here rather than in
+;; The FPO `%rbp` value-home invariant is centralized here rather than in
 ;; selected callers. `K(%rbp)` is textually indistinguishable from a frame
 ;; address to the final rsp rebase. The no-base SIB form `K(,%rbp,1)` computes
 ;; the same value but cannot be classified as a frame reference. Any current or
@@ -28094,13 +28085,13 @@
 ;; fact than "this VALUE is dead after here": it needs "this REGISTER carries
 ;; nothing after here".
 ;;
-;; Those two facts come apart exactly where #5982 bit. A loop-carried value and
-;; the header phi that reads it back are separate vars sharing one coalesced
-;; home: the body's definition has its own interval, which ends at its last use
-;; INSIDE the body, while the phi's interval spans the loop. When that last use
-;; is the `%` itself, value-live-after-here? correctly reports the definition
-;; dead -- and the expansion then subtracted into the register the next
-;; iteration still reads, silently corrupting the induction state.
+;; Those two facts come apart for a loop-carried value. It and the header phi
+;; that reads it back are separate vars sharing one coalesced home: the body's
+;; definition has its own interval, which ends at its last use INSIDE the body,
+;; while the phi's interval spans the loop. When that last use is the `%`
+;; itself, value-live-after-here? correctly reports the definition dead -- and
+;; an expansion that subtracted into that register would silently corrupt the
+;; induction state the next iteration still reads.
 ;;
 ;; The register-level fact is the one the scavenger already keys on, so ask the
 ;; same interval/assignment index it does rather than introduce a new analysis.
@@ -28117,7 +28108,7 @@
 ;; obstacles. Anything else still live at `point + 1` is a value the register is
 ;; required to be holding, and the register-level index is the allocator's own
 ;; word on that -- the same interval/assignment data the scavenger consults, so
-;; own-SRC selection now agrees with what a scavenge at this point would allow.
+;; own-SRC selection agrees with what a scavenge at this point would allow.
 (define (compiler-backend-divmod-home-carried-after?
   [function-state : CompilerBackendFunctionState]
   [home : String]
@@ -31514,7 +31505,7 @@
                   (compiler-backend-global-shared-view elem-ty)))]
             ;; Address-base scratch: base is loaded here and
             ;; immediately dereferenced by the compare (dead after), so a single
-            ;; scavenged base suffices. In the NoImmediate sub-branch scav-rhs must
+            ;; scavenged base suffices. In the MaybeImmediate.No arm scav-rhs must
             ;; exclude this base (both live across the cmp) -- see below.
             ;; M-C2: a register-homed base needs neither the scavenge nor the
             ;; staging copy -- the compare only READS the addressing base, so the
@@ -31586,7 +31577,7 @@
                     ;; The compare only READS rhs, and base-asm loads base into
                     ;; scav-base FIRST; rhs is live across that load, so the base
                     ;; scavenge already avoids rhs-home (exactly the invariant the
-                    ;; staged path below relied on: scav-base != rhs-home, or the
+                    ;; staged path below relies on: scav-base != rhs-home, or the
                     ;; staged rhs load would read a clobbered home). A SPILLED rhs
                     ;; must still stage into a scratch -- `cmp mem, mem` is illegal
                     ;; (addr is already the memory operand).
@@ -32132,8 +32123,6 @@
                   addr-reg
                   backend-state)))])))))
 
-;; Fold the scaled index into base-reg in place for non-SIB scales (1 or odd),
-;; so a scavenged base register works the same way the old fixed scratch did.
 ;; The shift count for a power-of-two scale > 1, or None. Scales are small
 ;; positive type sizes, so the scan is bounded.
 (define (compiler-backend-power-of-two-shift [scale : i64]) : option_i64.Option
@@ -32149,6 +32138,7 @@
         (option_i64.Some count)
         (option_i64.None)))))
 
+;; Fold the scaled index into base-reg in place for non-SIB scales (1 or odd).
 (define (compiler-backend-gep-index-base-asm
   [base-reg : (& base-reg str)]
   [scale : i64]
@@ -32197,7 +32187,7 @@
   (or (= scale 1) (= scale 2) (= scale 4) (= scale 8)))
 
 ;; GAP9 disp-aware SIB operand: `D(base,index,scale)`. The displacement is a
-;; folded gep constant (compiler-backend-gep-fold-disp); 0 keeps the plain
+;; folded gep constant (compiler-backend-gep-fold-next!); 0 keeps the plain
 ;; spelling, and the non-SIB "" contract is unchanged.
 (define (compiler-backend-gep-index-address-disp
   [disp : i64]
@@ -32301,8 +32291,7 @@
     home
     (compiler-backend-address-base-filter home)))
 
-;; Fold a constant displacement into base-reg in place, so a scavenged base works
-;; like the old fixed scratch did.
+;; Fold a constant displacement into base-reg in place.
 (define (compiler-backend-gep-immediate-base-asm
   [base-reg : (& base-reg str)]
   [disp : i64]) : CompilerBackendMaybeAsm
@@ -32660,7 +32649,7 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   ;; vreg-model: when the source pointer (e.g. a register-homed GEP result) is
   ;; already in a register, dereference it straight from that home rather than
-  ;; staging it through a scratch register (the old reload-into-%r10 per deref).
+  ;; staging it through a scratch register.
   ;; compiler-backend-emit-address-base returns the register home directly when
   ;; available, falling back to loading the pointer into the scavenged base. This
   ;; mirrors the store path (compiler-backend-emit-store-ptr).
@@ -33273,10 +33262,10 @@
         [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
         (if (< chunk 4)
           ;; XMM `movd` is a four-byte transfer even when the logical tail is
-          ;; one or two bytes.  Use the low GP sub-register of the already
-          ;; planned source-stage register for an exact tail transfer.  When a
-          ;; further chunk follows, preserve and restore that stage pointer in
-          ;; the planned XMM scratch so no additional GP scratch is needed.
+          ;; one or two bytes.  Use the low GP sub-register of the source-stage
+          ;; register (`src-reg`) for an exact tail transfer.  When a further
+          ;; chunk follows, preserve and restore that stage pointer in
+          ;; `xmm-scratch` so no additional GP scratch is needed.
           (let
             [chunk-ty : compiler_ast_types.AstType
               (compiler-backend-copy-chunk-type chunk)]
@@ -33660,12 +33649,10 @@
 
 ;; GAP2a (M-C2/B2 for the aggregate/group copy path): fused Gep+CopyBytes.
 ;; CopyBytes writes only MEMORY (it defines no register), so reading the
-;; base/src/index HOMES directly is unconditionally safe -- the pre-GAP2a
-;; emitter staged every operand through scavenged scratches
-;; (`movq %rHOME, %rSCAV; movups (%rSCAV), ...`), the dominant remaining
-;; staging-pair population (~5.5k pairs self-host). #rbp-base homes are
-;; filtered to the staged path (frame-spelling invariant, GAP7 later);
-;; spilled/remat/non-var operands load into scavenged scratches as before.
+;; base/src/index HOMES directly is unconditionally safe, with no staging pair
+;; through a scavenged scratch (`movq %rHOME, %rSCAV; movups (%rSCAV), ...`).
+;; #rbp-base homes are filtered to the staged path (frame-spelling invariant);
+;; spilled/remat/non-var operands load into scavenged scratches.
 (define (compiler-backend-emit-copy-bytes-from-gep-avoid
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -33998,13 +33985,13 @@
             (ResultCompilerBackend.Err message)])))))
 
 ;; --- gep element addressing folded into the copy chunks --------------------
-;; A fused Gep+CopyBytes used to COMPOSE the element address into a register
+;; A fused Gep+CopyBytes need not COMPOSE the element address into a register
 ;; (`leaq (base,index,scale), %r`) and then address every chunk off `(%r)`. A
 ;; register-homed base and index under a SIB scale make that register
 ;; unnecessary: each chunk spells `disp(base,index,scale)` itself and the leaq
 ;; disappears. The two emitters below apply that on each side --
 ;; `-gep-src` where the element is the copy SOURCE (`(array-ref xs i)` on a
-;; multi-word struct, which had no fusion at all before) and `-gep-dst` where it
+;; multi-word struct) and `-gep-dst` where it
 ;; is the DESTINATION (the staged half of
 ;; `compiler-backend-emit-copy-bytes-from-gep-dyn`).
 ;;
@@ -34041,7 +34028,7 @@
 ;; `compiler-backend-gep-fold-k-bound`, against the range instead. `n` is
 ;; range-checked before the multiply and `scale` is a type size, so the product
 ;; and the sum below are computed without overflow. A declined shape emits
-;; exactly once, as before.
+;; exactly once.
 (define (compiler-backend-copy-gep-const-disp-ok?
   [n : i64]
   [scale : i64]
@@ -34770,8 +34757,8 @@
               ;; load's register home -- already DEFINED at this point but saved by the
               ;; head's emergency-wrap PROLOGUE (before the def), so an emergency pick
               ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
-              ;; 1st word (Win64 next.length -> false OOB abort). Exclude it too; "" (a
-              ;; register-homed sibling absent, or itself spilled) keeps the old set.
+              ;; 1st word. Exclude it too; "" (a register-homed sibling absent, or
+              ;; itself spilled) keeps the base-only set.
               (compiler-backend-emit-load-scalar-address-to-var
                 type-segment-bases
                 assignments
@@ -34814,8 +34801,7 @@
     (compiler-backend-state-function-state backend-state)
     (let
       ;; Scavenge ONE base register and share it across both loads: the 1st load
-      ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
-      ;; to the old %r10 path while %r10 is reserved).
+      ;; materializes the base into it, the 2nd reuses it (no reload).
       ;;
       ;; M-D clobber fix: EXPLICITLY exclude the SIBLING load's register home.
       ;; scavenge-reg's dst-var only excludes load-dst0's home, and the sibling is
@@ -34823,10 +34809,9 @@
       ;; which the EMERGENCY path deliberately ignores (everything is occupied when
       ;; it fires). Under full occupancy the emergency scratch could land on
       ;; load-dst1's home; the emergency-wrap restore then overwrites the second
-      ;; load's just-defined result (lex-parse-based-int: string len loaded into
-      ;; %r9, restored over before the bounds cmp -> false OOB abort). The free
-      ;; path never picked the sibling home (occupied in the window), so this
-      ;; exclusion only changes emergency picks, i.e. only the buggy case.
+      ;; load's just-defined result. The free path never picks the sibling home
+      ;; (occupied in the window), so this exclusion only changes emergency
+      ;; picks.
       [dst1-home : String
         (compiler-backend-var-register-home backend-state assignments load-dst1)]
       ;; M-C2: when the shared base is register-homed, address both loads off the
@@ -35268,13 +35253,11 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     ;; SCR-1 (B1): an index that already has a register home and a SIB-encodable
-    ;; scale is read straight from that home. Staging it through a scratch cost
+    ;; scale is read straight from that home. Staging it through a scratch costs
     ;; a copy per store and, under full occupancy, a second borrowed register
-    ;; with its save/restore wrap around every store of a hoisted loop (the
-    ;; zero-fill loop of regalloc_greedy's rg-load-function: seven instructions
-    ;; per store for a resident index and a spilled base). The store reads the
-    ;; index and writes only memory, so the home is safe to read in place --
-    ;; the direct (base AND index resident) path above proved that shape.
+    ;; with its save/restore wrap around every store of a hoisted loop. The
+    ;; store reads the index and writes only memory, so the home is safe to
+    ;; read in place, as on the direct (base AND index resident) path above.
     [direct-index? : bool
       (and
         (not (string.eq offset-home ""))
@@ -40443,11 +40426,11 @@
           (set! i (+ i 1))))
       mask)))
 
-;; Scavenge a GP register for the arg parallel-move cycle-break Temp instead of
-;; hardcoding %r11: free in the occupancy mask at the call-setup point and not a
-;; dest/source of any pending arg move (mirrors phi-temp-pick-reg). Invalid if none,
-;; in which case the caller breaks the cycle through a reserved frame temp -- a
-;; sound register-free swap, NOT the old raw %r11 fallback (SCAV1). In practice
+;; Scavenge a GP register for the arg parallel-move cycle-break Temp rather than
+;; hardcoding one that could hold a live value: free in the occupancy mask at
+;; the call-setup point and not a dest/source of any pending arg move (mirrors
+;; phi-temp-pick-reg). Invalid if none, in which case the caller breaks the
+;; cycle through a reserved frame temp -- a sound register-free swap. In practice
 ;; the pool always has a free scratch here (%r10/%r11 are caller-saved and never
 ;; participate in a gp-parallel arg cycle nor hold a call-survivor), so invalid is
 ;; a saturation guard.
@@ -40468,8 +40451,8 @@
     ;; destination of the ORIGINAL move list. An already-emitted move has placed a
     ;; final arg value into its dest register (live until the call), but that dest
     ;; is no longer in `moves`, so excluding only `moves` could pick it as the Temp
-    ;; and clobber a placed argument (the sret/rcx<->r9 tail-call cycle bug). The
-    ;; occupancy mask reflects the allocation, not these marshalling transients.
+    ;; and clobber a placed argument. The occupancy mask reflects the
+    ;; allocation, not these marshalling transients.
     [exclude-mask : i64
       (bit-or
         (compiler-backend-arg-move-list-exclude-mask
@@ -40586,10 +40569,7 @@
                       ;; through the reserved frame temp. This saves `srcreg`
                       ;; before any move overwrites it, and its single consumer
                       ;; (each cycle register is read exactly once) reloads it from
-                      ;; the temp slot. This replaces the old raw `movq srcreg,
-                      ;; %r11` fallback, which was neither occupancy-checked nor
-                      ;; save/restore-wrapped and could clobber a value homed in
-                      ;; %r11 (SCAV1).
+                      ;; the temp slot.
                       (match (compiler-backend-emit-arg-move-list-with-all
                         assignments
                         (compiler-backend-arg-move-list-redirect-to-stack
@@ -40785,8 +40765,8 @@
 ;; GP arg-reg threshold SysV 6 / Win64 4 -- mirrors compiler-reg-arg-reg-limit-for-abi
 ;; (regalloc); keep the two in sync (the rev6 integration test guards 6-arg SysV).
 ;; The argument marshalling loop appends straight into the caller's sequence
-;; buffer. It used to build one String per argument and fold them with
-;; `append`, which re-copied the whole accumulated prefix at every step.
+;; buffer rather than building one String per argument and folding them with
+;; `append`, which would re-copy the whole accumulated prefix at every step.
 (define (compiler-backend-emit-call-args-with-assignments-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -41154,9 +41134,8 @@
 ;; the ABI's argument registers; everything past the register prefix is stored
 ;; into the outgoing stack area. The naive ascending emitter is sound only while
 ;; no argument SOURCE can be overwritten before it is read, which memory-homed
-;; arg vars guarantee -- and that is the only reason regalloc used to force a
-;; frame home on every arg var of an over-arity call. Once such a call's args
-;; may stay register-homed, two orders go wrong: a cycle inside the register
+;; arg vars guarantee. Once such a call's args may stay register-homed, two
+;; orders go wrong: a cycle inside the register
 ;; prefix, and a STACK argument read out of a register the prefix has already
 ;; overwritten.
 ;;
@@ -42485,21 +42464,18 @@
 ;;       to see it, and the header entry point is where it is guaranteed
 ;;       occupied.
 ;;
-;;       This obligation used to be discharged by the target-entry query only
-;;       when `target <= point`, reading that EMISSION-POINT comparison as "this
-;;       is a back edge" -- true only while lowering's source order is what the
+;;       The target-entry query is asked on EVERY edge. Asking it only when
+;;       `target <= point`, reading that EMISSION-POINT comparison as "this is
+;;       a back edge", holds only while lowering's source order is what the
 ;;       backend emits. A block layout pass that rotates a loop puts the latch
 ;;       ABOVE the header, so the genuine back edge runs FORWARD in emission
 ;;       order (`target > point`) and would take the cheap path, dropping the
-;;       bracket on a register holding a loop-carried value. The comparison is
-;;       therefore gone: the target-entry query is asked on EVERY edge, which is
-;;       the layout-independent phrasing of the same obligation and is strictly
-;;       more conservative than the split it replaces. Measured neutral at the
-;;       current layout -- whole-compiler assembly byte-identical at opt1 and
-;;       opt2, all 22 benchmark rows unchanged -- because a forward edge's target
-;;       entry is covered by the interval of every value live into it (the def
-;;       dominates the edge and the use is ahead), so the query it now also runs
-;;       answers the same as the point-local one.
+;;       bracket on a register holding a loop-carried value. Asking on every
+;;       edge is the layout-independent phrasing of the same obligation, and it
+;;       loses nothing on a genuine forward edge: that edge's target entry is
+;;       covered by the interval of every value live into it (the def dominates
+;;       the edge and the use is ahead), so the query answers the same as the
+;;       point-local one.
 ;;   (3) `reg` is not the home of ANY raw Phi destination on this edge, so no
 ;;       drained copy or filtered same-home Phi has placed its final value there.
 ;; With all three the value in `reg` at this point is dead, so the bracket saves
@@ -42867,8 +42843,8 @@
               backend-state)))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-;; Restore reverses the word order (word1 then word0), preserving the historical
-;; group-temp order while using fixed frame slots instead of %rsp pushes.
+;; Restore reverses the word order (word1 then word0), using fixed frame slots
+;; rather than %rsp pushes.
 (define (compiler-backend-emit-phi-temp-restore
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -43107,9 +43083,9 @@
     ;; ORIGINAL copy list. An already-emitted (drained) copy has placed a final
     ;; phi value into its dst register (live to the merge block entry), but that
     ;; dst is no longer in `copies`, so excluding only `copies` could pick it as
-    ;; the Temp and clobber a placed phi value -- the same unsound-cycle-break
-    ;; class as the arg-move sret/rcx<->r9 bug. The occupancy mask reflects
-    ;; the allocation, not these transient marshalling values.
+    ;; the Temp and clobber a placed phi value -- the same hazard as in the
+    ;; arg-move cycle break. The occupancy mask reflects the allocation, not
+    ;; these transient marshalling values.
     [exclude-mask : i64
       (bit-or
         (compiler-backend-phi-copy-list-dst-home-mask
@@ -43260,13 +43236,12 @@
     ;; un-bracket this: the allocator homes short-lived temporaries in %r8 (the
     ;; preferred staging fallback) in essentially every function that also has a
     ;; spilled phi dst, so the mask is set even though nothing is live in %r8
-    ;; across the edge. Measured: 0 of 2044 sites in the benchmark corpus plus
-    ;; stage2.s un-bracket that way. #phi-staged-copy discharges the real
-    ;; obligations instead -- per-EDGE occupancy (point-local, unioned with the
-    ;; TARGET block entry, which is asked on every edge because no
-    ;; emission-order comparison survives a block layout pass) plus the edge's
-    ;; dst-home mask -- and drops the bracket when they hold, leaving the
-    ;; 2-instruction register-staged copy. See
+    ;; across the edge, and practically no site un-brackets that way.
+    ;; #phi-staged-copy discharges the real obligations instead -- per-EDGE
+    ;; occupancy (point-local, unioned with the TARGET block entry, which is
+    ;; asked on every edge because no emission-order comparison survives a
+    ;; block layout pass) plus the edge's dst-home mask -- and drops the bracket
+    ;; when they hold, leaving the 2-instruction register-staged copy. See
     ;; compiler-backend-phi-staged-copy-proven?.
     (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
       type-segment-bases
@@ -44549,9 +44524,8 @@
       fallthrough)))
 
 ;; `edge-next` is what physically follows this edge block: the other edge block
-;; when one is still to come, else the next IR block. An edge block's trailing
-;; jump was previously unconditional, which is where a `jmp` to the very next
-;; address came from.
+;; when one is still to come, else the next IR block. It lets an edge block
+;; drop a trailing `jmp` to the very next address.
 (define (compiler-backend-emit-branch-edge-block
   [backend-state : CompilerBackendState]
   [function : String]
@@ -45681,7 +45655,7 @@
                           ;; The real program-index must reach emit-return here:
                           ;; an empty index makes the register-group return check
                           ;; always false, so a 16-byte group return would load
-                          ;; only word0 (word1-drop miscompile).
+                          ;; only word0.
                           (compiler-backend-emit-return-with-return-count
                             type-segment-bases
                             source-function
@@ -46943,8 +46917,6 @@
           ;; An extern alias with a pointer result uses the same register ABI.
           ;; Its resolved symbol and the runtime plan below must still prove
           ;; that this is our allocator, including its shared-arena slow path.
-          ;; Scratch planning already reserves both GP roles for every direct
-          ;; one-literal call of this size, independently of the callee name.
           (or
             (cbi.compiler-builtin-backend-tl-alloc-id? name)
             (match (compiler-backend-global-shared-view ty)
@@ -48280,10 +48252,10 @@
   ;; The two operand registers are allocator-pooled, so the leaf can be homed in
   ;; %rcx (every non-inlined Win64 wrapper: it is the first argument register)
   ;; or the subleaf in %rax. Two independent loads would overwrite one of them
-  ;; before it is read -- `movq %rdx, %rcx; movq %rcx, %rax` ran every such
-  ;; cpuid with the subleaf as its leaf (#7927). The call path's parallel-move
-  ;; solver orders the moves and breaks a true cycle through a temp; the
-  ;; subleaf-first list keeps every conflict-free site byte-identical.
+  ;; before it is read -- `movq %rdx, %rcx; movq %rcx, %rax` runs cpuid with
+  ;; the subleaf as its leaf. The call path's parallel-move solver orders the
+  ;; moves and breaks a true cycle through a temp; a conflict-free site emits
+  ;; the subleaf-first list as given.
   (match (compiler-backend-emit-arg-move-list
     assignments
     (compiler-backend-cpuid-operand-moves leaf subleaf)
@@ -48358,10 +48330,9 @@
 ;; that a DIFFERENT operand must be moved into. Reuse the call path's BackendArgMove
 ;; representation so the same sound parallel-move solver
 ;; (compiler-backend-emit-arg-move-list) resolves any source/dest conflict. The arg
-;; positions (1..n) come FIRST and the number (position 0 -> %rax) LAST, matching
-;; the prior "number-last" order: with no register source/dest conflict the solver
-;; emits the moves in this list order through the same emit-load-value-with-plan the
-;; old naive path used, so every conflict-free site stays byte-identical.
+;; positions (1..n) come FIRST and the number (position 0 -> %rax) LAST: with no
+;; register source/dest conflict the solver emits the moves in this list order
+;; through emit-load-value-with-plan.
 (define (compiler-backend-syscall-arg-moves-build-from
   [args : compiler_ir_types.CompilerIrCallArgs]
   [index : i64]
@@ -48940,9 +48911,7 @@
 ;; restore it AFTER -- but the borrowed register is consumed by the indirect
 ;; `jmp *`, a control transfer, so a trailing restore lands on UNREACHABLE code
 ;; (dead on every taken arm AND on the `ja default` edge). The occupant would
-;; then arrive in the successor blocks holding the jump-table / arm address (the
-;; GAP2b vm_run miscompile: an arm's bounds check compared against a code
-;; pointer).
+;; then arrive in the successor blocks holding the jump-table / arm address.
 ;; Fix: compute the FINAL target block address (an arm's, or the default block's
 ;; when out of range) into table-reg, STASH it into a dedicated frame slot,
 ;; restore every borrowed occupant INLINE (emergency-restore-before-jumps, which
@@ -50476,7 +50445,7 @@
                             ;; before the transfer instead (and suppress the
                             ;; wrap's trailing pair), exactly as the
                             ;; conditional-branch jumps
-                            ;; (compiler-backend-branch-jumps-asm) and the
+                            ;; (compiler-backend-emit-branch-jumps) and the
                             ;; switch dispatch already do. `movq` sets no
                             ;; flags and the copies are complete at this
                             ;; point, so the placement is sound; the
@@ -50764,10 +50733,9 @@
 ;; var falls back to a materialising load (a second scratch register, a store to
 ;; its home, and -- once the pool is saturated -- an emergency save/restore pair
 ;; around each scratch) whose result the consumer then re-reads from that home.
-;; Measured in liveness_scan's change-detection loop, where slot coloring merged
-;; the two compare operands of the two `!=` tests onto ONE representative id:
-;; the merged id's recomputed use count was 2, every M6 probe declined, and each
-;; word compare cost nine instructions where three suffice.
+;; When slot coloring merges the compare operands of two `!=` tests onto ONE
+;; representative id, the merged id's use count is 2, every M6 probe declines,
+;; and each word compare costs nine instructions where three suffice.
 ;;
 ;; Slot coloring, however, merges non-interfering SPILLED variables onto one
 ;; representative id, and the emitter's use counts are computed on the remapped
@@ -50797,8 +50765,8 @@
 ;; gep-load pair and divmod bundles, and the load emitters' own direct paths all
 ;; ask the same question, and all of them fall back to a materialising load and
 ;; a home store when it answers false. Restricting the pin to compares and casts
-;; was measured on an opt2 self-compile and cost more than the frame slots it
-;; saved (+57M at opt2, +25M at opt1), because the ALU shapes lost their folds.
+;; costs more than the frame slots it saves, because the ALU shapes lose their
+;; folds.
 (define (compiler-backend-gep-fusion-pin-seq!
   [counts : (__tl_dyn-array i64)]
   [adjacent : (&mut adjacent (__tl_dyn-array bool))]
@@ -50955,7 +50923,7 @@
 ;; Dead result-store elision: true when `var` is read by NO instruction in the
 ;; final emitted IR (use count 0 over emit-blocks-list, the post-rewrite
 ;; post-coloring blocks the emitter walks). Every operand read counts as a use,
-;; including IrInstrAddrOf's raw var id (compiler-backend-count-instr-uses), so
+;; including AddrOf's raw var id (compiler-backend-count-instr-uses), so
 ;; a never-used var's frame slot is unobservable: no reload, no address-taken
 ;; alias, no Pack/Word read. The runtime has no GC/stack-root walk and the
 ;; backend emits no per-slot unwind metadata, so skipping the slot store of such
@@ -52492,7 +52460,7 @@
                 [continuation : i64 after-div]
                 [emitted : ResultCompilerBackend
                   (begin
-                    ;; The planned dividend register was selected speculatively
+                    ;; The dividend register was selected speculatively
                     ;; while probing this fusion. Admission has now committed,
                     ;; so arm its live-through preservation around the complete
                     ;; Gep/load/ALU/divmod bundle before the producer writes it.
@@ -53365,11 +53333,11 @@
 ;;     movq EM0, %occupant        ; emergency-restore
 ;;     cmpq SLOT, %r              ; compare against the slot just written
 ;;
-;; measured verbatim in liveness_scan's change-detection loop. Folded, the same
-;; shape is one staging `movq` and one `cmpq` reading `(%t,%i,8)` directly: the
-;; loaded var is never materialised, so it needs no scratch, no home store and
-;; no second emergency wrap. The staging `movq` is the one the unfolded path
-;; was already paying, so the fold never adds an instruction.
+;; Folded, the same shape is one staging `movq` and one `cmpq` reading
+;; `(%t,%i,8)` directly: the loaded var is never materialised, so it needs no
+;; scratch, no home store and no second emergency wrap. The staging `movq` is
+;; the one the unfolded path was already paying, so the fold never adds an
+;; instruction.
 ;;
 ;; WHY A SCAVENGED STAGING REGISTER IS SOUND HERE. The M6-D argument that the
 ;; destination's home is safe has three parts -- nothing reads the loaded var
@@ -54450,10 +54418,8 @@
 ;; already builds for the unfolded compare: each edge's copies become their own
 ;; block, the branch jumps to the edge labels instead of the real successors,
 ;; and the edge blocks are appended behind the branch. Reusing it costs nothing
-;; -- those edge blocks are the very ones the unfolded path emitted -- and lets
-;; the fold keep shapes it used to hand back whole. `branch-plan-ahead` names
-;; the branch's real offset in the uncontracted stream: 3 for Gep/Load/Cmp and
-;; 4 when M6-C also consumes a widening Cast.
+;; -- those edge blocks are the very ones the unfolded path emits -- and lets
+;; the fold keep shapes with successor phis instead of handing them back whole.
 (define (compiler-backend-gep-load-cmp-branch-emit
   [ctx : CompilerBackendEmissionContext]
   [cmp-asm : String]
@@ -54534,9 +54500,9 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-;; M6-D emission: put the base in its planned staging register FIRST, then build
+;; M6-D emission: put the base in its staging register FIRST, then build
 ;; the folded compare and its branch on top -- the same order the unfolded path
-;; used, so the phi-edge copies M6-E may emit still see the identical machine
+;; uses, so the phi-edge copies M6-E may emit still see the identical machine
 ;; state. `staged-base` is "" whenever the fold spelled a direct address, and
 ;; then this is just the branch emission. Nothing here runs until the fold has
 ;; COMMITTED, so the M-D rule holds: no probe that can still decline reaches an
@@ -54639,27 +54605,26 @@
     ;; through a descriptor HANDLE the allocator keeps out of a register --
     ;; `%l = load (gep @g, 1) ; bounds_check %i, %l`, the shape of every checked
     ;; global array read inside a loop that also calls -- has no register-homed
-    ;; base, so the direct address is "" and the fold declined: `movq g(%rip),
-    ;; %r10 ; movq 8(%r10), %rax ; cmpq %rax, %r15`. The staged address puts the
-    ;; handle in the length's own (single-use, never otherwise written) home and
-    ;; reads the word from there: `movq g(%rip), %rax ; cmpq 8(%rax), %r15 ; jb
-    ;; ok`. The abort tail's discipline holds as it did: the staging register
-    ;; is a general register (M6-D's staged base excludes %rbp, and %rsp is
-    ;; never a home), the tail's first act is the `pushq 8(%rax)` re-read of
-    ;; the length while %rax is still the staged handle, and the index it reads
-    ;; after that is a register by the probe's own rule.
+    ;; base, so the direct address is "" and the direct fold declines: `movq
+    ;; g(%rip), %r10 ; movq 8(%r10), %rax ; cmpq %rax, %r15`. The staged address
+    ;; puts the handle in the length's own (single-use, never otherwise
+    ;; written) home and reads the word from there: `movq g(%rip), %rax ; cmpq
+    ;; 8(%rax), %r15 ; jb ok`. The abort tail's discipline holds: the staging
+    ;; register is a general register (M6-D's staged base excludes %rbp, and
+    ;; %rsp is never a home), the tail's first act is the `pushq 8(%rax)`
+    ;; re-read of the length while %rax is still the staged handle, and the
+    ;; index it reads after that is a register by the probe's own rule.
     ;;
     ;; The SIBLING word. The check is followed, in every such read, by the data
     ;; word of the same handle -- `gep @g, 0 ; load` -- which the ordinary path
     ;; had read off the register it staged the handle into for the length
     ;; (`movq (%r10), %rax`). With the length folded that staging is gone, and
     ;; the sibling would re-materialise the handle (`movq g(%rip), %r10`) and
-    ;; give the fold's instruction straight back: measured as exactly zero
-    ;; change on callgraph_scc. So the fold reads the sibling word through its
-    ;; own staged register when it stands right behind the check -- a
-    ;; single-use gep of the same base at a literal offset feeding a full-word
-    ;; scalar load into a register home -- and resumes past both. The gep's
-    ;; fold ordinal is consumed as the walker would have consumed it.
+    ;; give the fold's instruction straight back. So the fold reads the sibling
+    ;; word through its own staged register when it stands right behind the
+    ;; check -- a single-use gep of the same base at a literal offset feeding a
+    ;; full-word scalar load into a register home -- and resumes past both. The
+    ;; gep's fold ordinal is consumed as the walker would have consumed it.
     (match (compiler-backend-gep-load-bounds-probe
       (compiler-backend-global-shared-view ctx)
       (if (string.eq addr "")
@@ -54906,16 +54871,13 @@
 ;; GAP10: memory-destination read-modify-write folding.
 ;;
 ;; x86 ALU ops take a MEMORY destination -- `orq %rsi, (%rax,%rcx,8)` reads,
-;; combines and writes back in ONE instruction. This backend had never emitted
-;; that form, so `dst[i] = dst[i] op x` always lowered to the three-instruction
-;; register round trip
+;; combines and writes back in ONE instruction. Without that form
+;; `dst[i] = dst[i] op x` lowers to the three-instruction register round trip
 ;;
 ;;   movq (%rax,%rcx,8), %r9 / orq (%rdi,%rcx,8), %r9 / movq %r9, (%rax,%rcx,8)
 ;;
 ;; where clang emits two (`movq (%rdi,%rcx,8), %rsi; orq %rsi, (%rax,%rcx,8)`),
-;; or ONE when the other operand is already a register or an immediate. That is
-;; the whole of liveness_scan's live-out union bucket L2(a): 3 instructions per
-;; word against clang's 2.
+;; or ONE when the other operand is already a register or an immediate.
 ;;
 ;; ADMISSION. The window starts at the gep+load pair this emitter already owns
 ;; (g0/`a`) and must continue with EXACTLY one of
@@ -54936,9 +54898,7 @@
 ;;     folded access. Checks that PRECEDE the load are untouched and still
 ;;     precede it, so the fold fires on checked and check-free bodies alike and
 ;;     neither gains nor loses a trap: the abort still runs before any memory
-;;     operation, exactly where it ran before. (Contrast the unroll class below,
-;;     whose admission really does require a check-free clone -- there the cost
-;;     is duplicated CHECKS, which this fold never duplicates.)
+;;     operation, exactly where it ran before.
 ;;   * FLAGS. The memory-destination form sets EFLAGS exactly as the register
 ;;     form did, on the same result, and the store it replaces wrote none. The
 ;;     ALU moves at most two instruction slots later and nothing in between
@@ -54954,10 +54914,7 @@
 ;; ORDINALS. g0's ordinal was consumed by the dispatch site. This fold consumes
 ;; g1's and g2's itself, in walk order, and decides admission from
 ;; `compiler-backend-gep-fold-peek` (PURE) so a decline leaves every remaining
-;; ordinal for the ordinary emission to consume exactly once. (Rebase note: main
-;; carries the store-pair double-consume fix for this same obligation; this
-;; branch predates it, and the peek-then-consume discipline here is written to
-;; be independent of that fix rather than to depend on it.)
+;; ordinal for the ordinary emission to consume exactly once.
 ;;
 ;; NARROWER THAN THE SHAPE ALLOWS, deliberately: 64-bit integer operands only
 ;; (no narrow widths, where the load's extension and the store's truncation stop
@@ -55131,9 +55088,8 @@
 ;; PROBE COST. Every fused gep+load in the program reaches this rule, and only a
 ;; handful are read-modify-writes, so the tests are ordered cheapest-and-most-
 ;; selective first and NOTHING that allocates runs until the shape has already
-;; matched. Building the destination operand up front instead cost +0.14% on an
-;; opt1 self-compile all by itself: `str-cat` over five pieces, per gep+load,
-;; almost always thrown away.
+;; matched. Building the destination operand up front instead would pay a
+;; `str-cat` over five pieces per gep+load, almost always thrown away.
 (define (compiler-backend-emit-gep-rmw-direct-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -56403,8 +56359,8 @@
       (compiler-backend-global-shared-view instr-diag)
       program-index
       ;; vars must be the real frame var count: group-word1 slots live at
-      ;; -(8*(vars+var+1))(%rbp), so 0 here made a stack-homed group arg read
-      ;; its word0 slot for BOTH words (closure-arg miscompile).
+      ;; -(8*(vars+var+1))(%rbp), so 0 here would make a stack-homed group arg
+      ;; read its word0 slot for BOTH words.
       vars
       backend-state)
       [(ResultCompilerBackend.Ok args-asm)
@@ -57143,8 +57099,8 @@
       (compiler-backend-global-shared-view rhs))
       [(CompilerBackendMaybeImmediate.Some imm)
         (match op
-          ;; `K(%rbp)` would read as a frame address to the final rsp rebase
-          ;; (#7978); the no-base SIB form computes the same sum.
+          ;; `K(%rbp)` would read as a frame address to the final rsp rebase;
+          ;; the no-base SIB form computes the same sum.
           [(compiler_ir_types.CompilerIrBinOp.Add)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -57249,7 +57205,7 @@
 
 ;; The existing Gep+StorePtr fusion accepts the stored scalar in any GP
 ;; register when its address is already directly encodable.  Requiring that
-;; direct address shape keeps SRC out of all later planned address scratches.
+;; direct address shape keeps SRC out of all later address scratches.
 (define (compiler-backend-divmod-direct-gep-store?
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
@@ -57420,8 +57376,8 @@
             backend-state))))))
 
 ;; Select the same SRC class as the ordinary divmod emitter.  At a divmod site
-;; a dead non-fixed dividend home wins; otherwise a suitable result home wins,
-;; then the planned SRC.  The producer fold calls with allow-own=false because
+;; a dead non-fixed dividend home wins; otherwise a suitable result home wins.
+;; The producer fold calls with allow-own=false because
 ;; its dividend is still being defined at the current point.  The final
 ;; scavenger fallback queries a forward occupancy window, so an emergency pick
 ;; is preserved around the complete fused bundle below.
@@ -58827,8 +58783,8 @@
 ;; so the fold needs no target split. The streaming peephole reads the emitted
 ;; `cmpq g(%rip), %rax` through `compiler-backend-peephole-cmp-or-test-token?`,
 ;; which classifies compares as flag-only and leaves the reload-elision owner
-;; map untouched; the `movq` that used to publish a global owner for the
-;; destination register is simply gone, which can only make that map more
+;; map untouched; the folded-away `movq` would have published a global owner
+;; for the destination register, so dropping it can only make that map more
 ;; conservative.
 (define (compiler-backend-mov-global-cmp-address
   [ctx : CompilerBackendEmissionContext]
@@ -59009,8 +58965,8 @@
                       (compiler-backend-global-shared-view src)
                       bin-ty))
                     ;; The Mov and Cast are elided, but the BinOp still owns
-                    ;; its scratch requirements at lookahead point 2. Passing
-                    ;; the legacy plan-less wrapper made pressured div/mod
+                    ;; its scratch requirements at lookahead point 2. The
+                    ;; plan-less wrapper would make pressured div/mod
                     ;; destinations query the Mov's empty scratch site.
                     (match (compiler-backend-emit-binop-with-plan
                       ctx.type-segment-bases
@@ -59364,11 +59320,11 @@
           after-gep
           out)))))
 
-;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`, extracted
-;; unchanged (refs #5177). It is the peephole family that folds a single-use
-;; address computation into the instruction that consumes it -- load, store,
-;; copy, binop and the branch forms behind them -- so it is one cluster and
-;; moves as one, matching the `mov`/`call`/`store-ptr` steps already split out.
+;; The `Gep` fusion cluster of `compiler-backend-emit-instrs-step`. It is the
+;; peephole family that folds a single-use address computation into the
+;; instruction that consumes it -- load, store, copy, binop and the branch
+;; forms behind them -- so it is one step, like the `mov`/`call`/`store-ptr`
+;; steps.
 (define (compiler-backend-emit-gep-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -59944,7 +59900,7 @@
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
 ;; The remaining `BinOp` fusion cluster of
-;; `compiler-backend-emit-instrs-step`, extracted unchanged (refs #5177).
+;; `compiler-backend-emit-instrs-step`.
 ;; It owns the shared lookahead for RAX forwarding and compare consumers
 ;; (return, direct/total-enum branches, and comparison-plus-not branches).
 ;; `((mask >>u d) & 1) != 0` over a literal mask, feeding a branch, is `bt` plus
@@ -59991,12 +59947,11 @@
 ;; the operand size. The mask goes in the shift result's own home when that is a
 ;; register the count does not also live in -- the allocator coalesces the two
 ;; whenever the count dies here, which is the common case -- and otherwise in a
-;; planned scratch register, which the constrained allocation proves free at
-;; this emission point. Neither is available: keep the general lowering.
+;; scavenged register free at this emission point.
 ;; A literal mask is materialized into the shift result's own home when the
 ;; allocator did not coalesce that with the count -- it does whenever the count
-;; dies here, which is the common case -- and otherwise into a planned scratch
-;; register or, failing that, a scavenged one. Scavenging is a mutating query
+;; dies here, which is the common case -- and otherwise into a scavenged
+;; register. Scavenging is a mutating query
 ;; (it books the emergency save/restore), so it stays out of the match test.
 (define (compiler-backend-bit-test-mask-reg
   [ctx : CompilerBackendEmissionContext]
@@ -60128,8 +60083,8 @@
             (compiler-backend-var-single-use? ctx.use-counts test-dst)
             (compiler-backend-branch-uses-var? cond test-dst)
             ;; The mask needs no availability test of its own: a known mask can
-            ;; always be placed. A literal materializes into the planned scratch
-            ;; (falling back to a scavenged register), and every allocator home a
+            ;; always be placed. A literal materializes into the result's home or
+            ;; a scavenged register, and every allocator home a
             ;; var can have -- register, spill slot, remat, plain slot -- is
             ;; loadable by the same scalar loader the general lowering would have
             ;; used on it (compiler-backend-bit-test-load-mask).
@@ -60610,9 +60565,7 @@
             (+ index 1))]))))
 
 ;; Emit the jumps of a branch whose condition is already live in EFLAGS, then
-;; the rest of the block. `ahead` is how many instructions past the comparison
-;; the branch sits, so the phi-copy scratch comes from that instruction's own
-;; planned allocation, exactly as the ordinary branch emission would take it.
+;; the rest of the block, exactly as the ordinary branch emission would.
 (define (compiler-backend-emit-flags-reuse-branch-rest
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -60649,7 +60602,7 @@
 ;; Flags reuse for a comparison that MUST materialize. The fused paths above
 ;; fire only when the boolean is never needed as a value; with a stored bool or
 ;; a phi input among its readers the setcc/movzb stay, and the adjacent branch
-;; used to re-derive the very flags they were computed from:
+;; would re-derive the very flags they were computed from:
 ;;
 ;;     cmpq %rcx, %rax / setl %al / movzbq %al, %rax / testq %rax, %rax / jne L
 ;;
@@ -61554,11 +61507,11 @@
           (compiler-backend-state-function-state program-index.backend-state)
           compiler-backend-function-i64-current-block-label
           label)
-        ;; The block header goes in FIRST now that instructions append straight
+        ;; The block header goes in FIRST because instructions append straight
         ;; into the body buffer. Both injection lookups and the label text are
         ;; pure reads of state frozen before emission (const-hoist-build! runs
-        ;; per function, ahead of emit-blocks), so the bytes are identical to
-        ;; the former "emit body, then concatenate the header in front" order.
+        ;; per function, ahead of emit-blocks), so emitting them before the
+        ;; body reads the same state.
         ;;
         ;; M-F: loop-hoisted constant loads registered for this block.
         ;; Before-label entries (header-is-entry-block loops) land at prologue
@@ -63329,9 +63282,10 @@
 ;; SEGMENT-PRECISE SCAVENGE OCCUPANCY.
 ;;
 ;; The occupancy table below answers "which registers carry a live value at
-;; instruction i" for every scratch pick the emitter makes. It used to be built
-;; from each var's COARSE HULL [starts[v], ends[v]] -- one contiguous range per
-;; var -- because that is all `compiler-reg-interval-index-build` produces.
+;; instruction i" for every scratch pick the emitter makes. It is built from
+;; each var's live SEGMENTS, not from its COARSE HULL [starts[v], ends[v]] --
+;; one contiguous range per var, which is all
+;; `compiler-reg-interval-index-build` produces.
 ;;
 ;; A hull is not liveness. The allocator itself decides interference on the
 ;; SEGMENTED intervals (compiler-reg-vars-interfere-segmented-index?), so it
@@ -63345,13 +63299,6 @@
 ;; array base's reload, which needs a register and cannot be a memory operand --
 ;; falls to the emergency tier, which saves an occupant, reloads, and restores
 ;; it: four instructions where two would do.
-;;
-;; Measured on the widened-inline harness (target/wsl/patches/widen-inline-
-;; experiment.py, cfg_domloops): every one of the 67 emergency picks in that
-;; binary -- 61 of them inside the merged `cfg-function` -- reported the same
-;; occupied mask 0x387FF, i.e. all eleven pooled GP registers plus rax/rsi/rdi,
-;; and the hot loop paid a save/restore pair around each of its four base
-;; reloads. With the segments those 61 sites all find a free register.
 ;;
 ;; Using the segments makes the answer exact rather than merely cheap, and it
 ;; can only REMOVE bits: a segment set covers a subset of its own hull. Every
@@ -63834,10 +63781,10 @@
 ;; their interval points in the REVERSE order, so a register-homed sibling field
 ;; is emitted into its home one step BEFORE a spilled field's staging load yet
 ;; carries the HIGHER interval point (point+2). A single-point query at the emit
-;; position read that register "free" and the scratch clobbered the just-loaded
-;; sibling. ORing [point, point+2] keeps the emit-position endpoint (so a gep
-;; operand live only at the instruction start is still protected) and adds the
-;; next-step endpoint (so the reordered fused sibling is too).
+;; position would read that register "free" and the scratch would clobber the
+;; just-loaded sibling. ORing [point, point+2] keeps the emit-position endpoint
+;; (so a gep operand live only at the instruction start is still protected) and
+;; adds the next-step endpoint (so the reordered fused sibling is too).
 (define (compiler-backend-scavenge-occupied-mask-over-range
   [function-state : CompilerBackendFunctionState]
   [lo : i64]
@@ -63870,24 +63817,20 @@
 ;; Shrink-wrapping is assembled with three textual splices.  A missing needle
 ;; must fail closed: the caller re-emits the original function with the
 ;; early-exit rewrite disabled, restoring the ordinary always-framed path.
-;; Each admitted replacement changes the byte length (the incoming guard,
-;; saving prologue, and selected prologue all differ from their needles), so
-;; length equality is a cheap, allocation-free proof that a splice did not
-;; fire.
 ;; Fail-closed proof that each of the three shrink-wrap text splices had a
-;; needle to act on.  The original form compared lengths before/after each
-;; `string.replace`, which is a proxy that reports drift whenever the
-;; replacement happens to be the same size as the needle.  That is the COMMON
-;; case, not a rare one: the planned guard and the incoming guard are
+;; needle to act on.  Comparing lengths before/after each `string.replace` is
+;; a proxy that reports drift whenever the replacement happens to be the same
+;; size as the needle.  That is the COMMON case, not a rare one: the planned
+;; guard and the incoming guard are
 ;; byte-identical whenever every operand the guard reads is already pinned to
 ;; its own ABI register (a first-parameter `test %rdi,%rdi` guard), and they
 ;; are the same length whenever the two homes merely spell the same width
 ;; (`%rdi` vs `%r13`).  Both are correct splices -- rendering the prefix from
-;; incoming ABI homes is exactly what the replacement is for -- so the length
-;; test refused the whole shrink-wrap for functions that were perfectly
-;; admissible.  Check containment of each needle instead: that is what
-;; "the splice had something to replace" actually means, and it is strictly
-;; stronger (a same-length substitution of a MISSING needle used to pass).
+;; incoming ABI homes is exactly what the replacement is for -- so a length
+;; test would refuse the whole shrink-wrap for perfectly admissible functions.
+;; Check containment of each needle instead: that is what "the splice had
+;; something to replace" actually means, and it is strictly stronger (a
+;; same-length substitution of a MISSING needle would pass a length test).
 (define (compiler-backend-shrinkwrap-splice-fallback-required?
   [active? : bool]
   [body : (& body str)]
@@ -64165,8 +64108,8 @@
       ""
       r2)))
 
-;; Scavenge candidate pool. The first 11 entries are the legacy pool; ABI-special
-;; %rsi/%rdi/%rax come last so they are only used when the older pool is occupied
+;; Scavenge candidate pool. The first 11 entries are the general pool; ABI-special
+;; %rsi/%rdi/%rax come last so they are only used when that pool is occupied
 ;; and the point-local occupancy/exclude masks prove them free.
 (define (compiler-backend-scavenge-candidates) : (__tl_dyn-array i64)
   (__tl_make-array
@@ -64282,11 +64225,11 @@
 ;; at the emission dispatcher; consulted in candidate-ok? AND the emergency tier.
 ;; The same per-instruction visit records R4-B's narrow-staging admission
 ;; (compiler-backend-instr-staging-narrow-ok?), which the staging pick reads.
-;; Fold instruction uses/def straight into their assigned register-home bits.
-;; Building generic liveness bitsets here used to allocate and zero two arrays
-;; per emitted instruction, only to scan them immediately into this small mask.
-;; The dense assignment index is already installed for the function before
-;; scratch planning or emission, so operand visits are constant-time lookups.
+;; Fold instruction uses/def straight into their assigned register-home bits
+;; rather than building generic liveness bitsets per emitted instruction only
+;; to scan them into this small mask. The dense assignment index is already
+;; installed for the function before emission, so operand visits are
+;; constant-time lookups.
 (define (compiler-backend-instr-reserved-home-mask
   [function-state : CompilerBackendFunctionState]
   [instr : compiler_ir_types.CompilerIrInstr]) : i64
@@ -64370,10 +64313,8 @@
 ;; wrap preserves the value ACROSS but not DURING, so an operand-home reg would be
 ;; read as the scratch mid-instruction. Prefer the fallback (the site's reserved
 ;; scratch) when it is FREE at this point: free => no var homes it => not an
-;; operand home, so it is sound AND nothing needs preserving. This is byte-
-;; identical to the legacy behaviour while the fallback regs are unpooled (they
-;; are always free then) and it keeps the optimisation open (a free reg needs
-;; no save/restore). If the fallback is OCCUPIED (a pooled reg now homing a value,
+;; operand home, so it is sound AND nothing needs preserving. If the fallback is
+;; OCCUPIED (a pooled reg now homing a value,
 ;; possibly an operand), use the first NON-EXCLUDED candidate: non-excluded =>
 ;; not an operand home AND not a template-fixed superset reg, so emergency-
 ;; wrapping it is sound (even a callee-saved or non-operand-occupied reg -- the
@@ -64579,10 +64520,8 @@
         (+ i 1)
         n))))
 
-;; Pick a register free at `point`: prefer `fallback` (keeps it byte-identical
-;; while the fallback is a reserved scratch), else the first usable pool
-;; candidate, else `fallback` (degraded -- the freeness self-check flags this as
-;; a no-free-register case).
+;; Pick a register free at `point`: prefer `fallback`, else the first usable
+;; pool candidate, else `fallback` (degraded -- a no-free-register case).
 (define (compiler-backend-scavenge-pick-with-mask
   [function-state : CompilerBackendFunctionState]
   [commit : bool]
@@ -64897,7 +64836,7 @@
             (compiler_optimize.opt-label-tail labels))))]))
 
 ;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
-;; (explicit IrInstrJump / IrInstrBranch / IrInstrSwitch targets PLUS the
+;; (explicit Jump / Branch / Switch targets PLUS the
 ;; implicit fall-through to the layout-next block), reusing the optimizer's own
 ;; successor enumeration so jump-table (switch) case + default targets are all
 ;; included. Under-counting an edge is the only way carry could go wrong, and
@@ -64948,12 +64887,11 @@
 ;; fall-through path and reaches the layout-next arm via an explicit jcc. So the
 ;; layout-next block is a JUMP target with foreign code (the other edge's copies)
 ;; textually preceding it -- its running owner map is NOT this block's exit map,
-;; and carrying across it miscompiles (observed: a wrong reload reuse in the
-;; dominator fixpoint -> non-termination). A branch that needs NO phi copies
-;; lowers to `jcc <other-arm>` + clean fall-through (emit-compare-branch-jumps),
-;; which IS safe. Jump terminators keep copies on their single edge. Switches
-;; with phi targets now also split through synthetic edge blocks, so they must
-;; reset the carry state before any layout-next block.
+;; and carrying across it miscompiles (a wrong reload reuse). A branch that
+;; needs NO phi copies lowers to `jcc <other-arm>` + clean fall-through
+;; (emit-compare-branch-jumps), which IS safe. Jump terminators keep copies on
+;; their single edge. Switches with phi targets also split through synthetic
+;; edge blocks, so they must reset the carry state before any layout-next block.
 (define (compiler-backend-peephole-prev-splits-edge?
   [function-state : CompilerBackendFunctionState]
   [block : compiler_ir_types.CompilerIrBlock]) : bool
@@ -65188,7 +65126,7 @@
 ;;     fallback emitters. All such windows are straight-line and balanced within
 ;;     one instruction emission; a label inside a nonzero-delta window, or a
 ;;     net-negative delta, fails the audit. C-ABI outgoing args and arg/phi
-;;     cycle temps are pre-reserved frame uses and no longer create such dips.
+;;     cycle temps are pre-reserved frame uses and create no such dips.
 ;;   * `pushq MEM` computes its address BEFORE %rsp moves; `popq MEM` AFTER --
 ;;     the delta updates are ordered accordingly.
 ;;   * `leave` and any other %rsp write (`leaq slot,%rsp` pop-restore
@@ -65221,7 +65159,7 @@
   (csr-ref-mask i64))
 
 ;; Packed control-mnemonic classification shared by the RSP rebase audit and
-;; the dead-frame-store sweep. Both passes used to ask the generic byte-range
+;; the dead-frame-store sweep, so neither asks the generic byte-range
 ;; comparator about the same small fixed set repeatedly for every assembly
 ;; line. Values are deliberately scalar so callers can derive all predicates
 ;; from one classification without allocating a token object.
@@ -65397,7 +65335,8 @@
 ;;   * rewrites a bare `leave` (mov-restore epilogues, whose restore movs were
 ;;     deleted) to `addq $(S+delta), %rsp` + the full popq run.
 ;; Frame model: total displacement D = 8*n + S with S = frame + (n odd ? 0 : 8)
-;; so D % 16 == 8 exactly like the old subq $(frame+8) -- call alignment holds.
+;; so D % 16 == 8 exactly like the no-push subq $(frame+8) -- call alignment
+;; holds.
 ;; The pushes occupy [entry_rsp-8n, entry_rsp-8), so local slots shift down 8n:
 ;;   negative K:  -K(%rbp) -> (S + delta - K)(%rsp)      (bias_neg = S)
 ;;   positive X:  +X(%rbp) -> (S + 8n - 8 + delta + X)(%rsp)  (bias_pos; the
@@ -65955,9 +65894,7 @@
 ;; its use folds into a memory operand, a rewrite remaps the region that
 ;; mentioned it. The register is then pushed in the prologue and popped in the
 ;; epilogue with nothing in between: two instructions per CALL of the function,
-;; paid on the hot path for nothing. cg-map-probe pays 2.63M Ir per
-;; callgraph_scc run this way (%r13, 1,316,260 calls); cg-census-blocks,
-;; cg-census-bump-map and cg-map-get-value-or each pay for %rbp.
+;; paid on the hot path for nothing.
 ;;
 ;; The question "does an instruction of this function name %r13" can only be
 ;; answered on the final text, and the rsp-rebase pass is where that text is
@@ -65988,8 +65925,7 @@
 ;; `%ebx` for an i32 compare, `%bpl` for a bool store, `%r12d` for a widened
 ;; load -- is used exactly as much as one named through `%rbx`, and reading
 ;; only the 64-bit spellings makes the body look empty and trims a save the
-;; function needs. (Measured: it clobbers the caller's %rbx and segfaults the
-;; self-compile in compiler-reg-loop-nest-header-members!.)
+;; function needs, clobbering the caller's register.
 (define (compiler-backend-csr-spelling-reg
   [data : (Ptr u8)]
   [pos : i64]
@@ -66357,8 +66293,8 @@
 ;; no-base SIB spelling `(,%rbp,1)` where possible and otherwise stage through
 ;; a scratch (see address-base-filter); bare `%rbp` register operands also
 ;; contain no "(%rbp".
-;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites --
-;; byte-identical to the pre-GAP1 pass (no push mode).
+;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites (no
+;; push mode).
 (define (compiler-backend-rsp-rebase
   [text : String]
   [frame : i64]
@@ -66541,15 +66477,13 @@
                   ;; spawn) hands the CHILD a fresh stack, and rt_sigreturn loads
                   ;; a saved rsp. After such a syscall rsp is no longer provably
                   ;; rbp-frame, so every post-syscall frame ref rebased to
-                  ;; N(%rsp) would read the wrong stack in the child (observed
-                  ;; SEGV: thread-linux-spawn marshalled entry/arg/result-addr to
-                  ;; child-main via N(%rsp) after clone). Most syscalls (write /
-                  ;; read / futex / exit) leave rsp untouched, but the number is
-                  ;; not reliably knowable at this text seam, so ANY syscall makes
-                  ;; the WHOLE function keep rbp (frame refs via %rbp survive
-                  ;; clone in both parent and child -- CLONE_VM shares the address
-                  ;; space and rbp is never in clone's register set; byte-
-                  ;; identical to pre-FPO for that function -- the sound choice).
+                  ;; N(%rsp) would read the wrong stack in the child. Most
+                  ;; syscalls (write / read / futex / exit) leave rsp untouched,
+                  ;; but the number is not reliably knowable at this text seam,
+                  ;; so ANY syscall makes the WHOLE function keep rbp (frame refs
+                  ;; via %rbp survive clone in both parent and child -- CLONE_VM
+                  ;; shares the address space and rbp is never in clone's
+                  ;; register set).
                   [syscall? : bool
                     (= mnemonic-kind compiler-backend-control-mnemonic-syscall)]
                   [rsp-dst? : bool
@@ -67221,14 +67155,13 @@
 ;; An indexed / truncated `(%rsp` reference: disables the whole function
 ;; unconditionally (the sweep cannot bound what such a line touches).
 ;;
-;; A `popq` whose operand addresses the frame used to be fatal here too. It is
-;; not: a pop's frame operand is a perfectly ordinary bounded reference, it just
-;; sits at a %rsp that has ALREADY been incremented, so the replay canonicalizes
-;; it at delta-8 (matching the FPO rebase pass, which lowers delta before
-;; rewriting a pop's refs). Production emission contains no `popq MEM` today, so
-;; the fatal arms were unreachable -- but a single such line would have silently
-;; disqualified its whole function from the dead-frame-store sweep (+7,292 dead
-;; stores measured when one was emitted experimentally).
+;; A `popq` whose operand addresses the frame is NOT fatal: a pop's frame
+;; operand is a perfectly ordinary bounded reference, it just sits at a %rsp
+;; that has ALREADY been incremented, so the replay canonicalizes it at delta-8
+;; (matching the FPO rebase pass, which lowers delta before rewriting a pop's
+;; refs). Production emission contains no `popq MEM` today, but treating one as
+;; fatal would silently disqualify its whole function from the dead-frame-store
+;; sweep.
 (define compiler-backend-sweep-line-flag-fatal-mem : i64
   1024)
 
@@ -68564,15 +68497,8 @@
 ;; a gep it folded into its own operand still owns that gep's ordinal). A path
 ;; that absorbs without consuming does not fail where it sits -- it shifts
 ;; every later gep in the function onto the previous entry, which is silent
-;; whenever the shapes happen to agree. That was a real backend defect, not a
-;; theoretical one: the `StorePtr;Gep;StorePtr` store-ptr pair peephole
-;; absorbed its gep without consuming, so any function with a folded gep after
-;; a store pair addressed with a stale displacement. It is the defect behind
-;; #6307 ("call-carrying multiblock clones miscompile"), whose re-triage as
-;; false against regalloc #6288 was INCOMPLETE -- the regalloc report was a
-;; separate bug; this ordinal-accounting one was real and is fixed here, and
-;; the audit below now checks the ordinal COUNT as well as the shapes so an
-;; absorbing path can never again go silent.
+;; whenever the shapes happen to agree. The audit below therefore checks the
+;; ordinal COUNT as well as the shapes, so an absorbing path cannot go silent.
 (define (compiler-backend-gep-fold-disable!
   [function-state : CompilerBackendFunctionState]) : unit
   (begin
@@ -69529,21 +69455,16 @@
 ;; block, and the function is declined rather than emitted against a shifted
 ;; table.
 ;;
-;; MEASURED AND SHELVED: greedy CHAIN BUILDING, LLVM's `buildChain` /
-;; `selectBestSuccessor` with a static HotProb, was implemented over this same
-;; state (patch: target/wsl/patches/W2-layout-chain-building-shelved.patch) and
-;; LOSES.  Appending the successor the Ball & Larus set predicts taken moves a
-;; loop's latch to wherever the predicted path reaches it, which destroys the
-;; "latch last" property the front end's structured lowering already gives every
-;; loop -- and that property is the one rotation needs.  Measured against this
-;; branch base, chain building on top of rotation cost peephole_lines +8.78M,
-;; gvn_table +4.22M, cfg_domloops +3.86M and intern_table +63k.  The cold-arm
-;; out-lining it would have bought is what the post-emission text pass
-;; `#block-layout` (mode bit 2) already does, from the same predictor, without
-;; disturbing the loops.
+;; Greedy CHAIN BUILDING, LLVM's `buildChain` / `selectBestSuccessor` with a
+;; static HotProb, over this same state is a loss.  Appending the successor the
+;; Ball & Larus set predicts taken moves a loop's latch to wherever the
+;; predicted path reaches it, which destroys the "latch last" property the front
+;; end's structured lowering already gives every loop -- and that property is
+;; the one rotation needs.  The cold-arm out-lining it would have bought is what
+;; the post-emission text pass `#block-layout` (mode bit 2) already does, from
+;; the same predictor, without disturbing the loops.
 ;;
-;; 0 disables the pass, 1 enables it: the A/B switch the rows above were
-;; measured on.
+;; 0 disables the pass, 1 enables it.
 (define compiler-backend-placement-mode : i64
   1)
 
@@ -69955,10 +69876,9 @@
 ;; edge becomes a fall-through.  Writing K for header executions per entry, the
 ;; emitted-instruction delta is `2 - K`: a loop whose body runs more than about
 ;; twice per entry wins, and one that usually falls straight back out loses
-;; exactly once per call.  Measured on this corpus: peephole_lines' character
-;; scans run 21 trips and pay -10.6M, while gvn_table's hash probe (660,240
-;; header executions over 655,872 entries, K = 1.007) and its `n = next[n]`
-;; bucket walk (K = 1.71) pay +1.25M between them.
+;; exactly once per call.  A character scan runs many trips and wins; a hash
+;; probe or a `n = next[n]` bucket walk usually exits within a trip or two and
+;; loses.
 ;;
 ;; With no profile the trip count has to be read off the loop's SHAPE, and the
 ;; shape that separates the two groups is the classic one.  A COUNTING loop --
@@ -70003,11 +69923,11 @@
     [_ (compiler_ir_types.compiler-ir-instr-dst instr)]))
 
 ;; Assign every destination this pass can name a function-local dense slot.
-;; Raw variables used to index the stamp arrays directly, which made an
-;; IR-owned symbol in the fixed high namespace reserve tens of GiB despite a
-;; function containing only a handful of variables. A value absent here is a
-;; parameter (or otherwise has no defining instruction), preserving the old
-;; invariant classification without depending on the numeric identity range.
+;; Indexing the stamp arrays by raw variable would make an IR-owned symbol in
+;; the fixed high namespace reserve a vast array for a function containing only
+;; a handful of variables. A value absent here is a parameter (or otherwise has
+;; no defining instruction), so it classifies as invariant without depending on
+;; the numeric identity range.
 (define (compiler-backend-placement-vars
   [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]) : CompilerBackendPlacementVars
   (let
@@ -70266,7 +70186,7 @@
 
 ;; Seed the induction set from the header's phis, then close it under
 ;; `add`/`sub` against an invariant. Two rounds reach a bound expression built
-;; from a phi the header defines, which is as deep as the measured shapes go.
+;; from a phi the header defines.
 (define (compiler-backend-placement-mark-induction!
   [st : CompilerBackendPlacement]
   [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
@@ -71874,7 +71794,7 @@
 ;; label when the block is SHARED.
 ;;
 ;; Every clause below is a refusal.  A shape that does not match to the byte
-;; keeps the old entry placement, and SW-1's drift check still runs on top.
+;; keeps the entry placement, and SW-1's drift check still runs on top.
 ;; The duplicated tail's label is the original's plus `__swb_tail`; no emitted
 ;; label ends that way, so the clone cannot collide with a block or with form
 ;; (a)'s `__shrinkwrap_*` names.  The suffix is written literally at both sites
@@ -72971,8 +72891,8 @@
             program-index.backend-state
             fn-abi)]
         ;; The scalar-opt2 plan and the caller-save rewrite below both need the
-        ;; var-type view of `walk-func`, and each used to walk the function for
-        ;; its own copy. Compute it once here, on exactly the path that takes
+        ;; var-type view of `walk-func`. Compute it once here, on exactly the
+        ;; path that takes
         ;; both (the stack-only and SIMD plans do not need it, and the
         ;; rewrites are off when scalar registers are).
         [scalar-plan? : bool
@@ -73019,7 +72939,7 @@
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))))]
-        ;; Did cycle 20's cold-call rewrite fire? That is the claim that this
+        ;; Did the cold-call rewrite fire? That is the claim that this
         ;; function's ONLY kind-0 clobber was carried away, which is what lets a
         ;; replan below tell the param ABI-pin gate to ignore the clobber set.
         ;; The call-hole round below also mints forced-to-memory carriers, but it
@@ -73101,9 +73021,8 @@
               hole-types
               hole-temp-start))]
         ;; Everything downstream of the initial plan consumes the SPLIT view:
-        ;; the caller-save rewrite, the carrier self-check, storage coloring and
-        ;; emission. When every round declines, these are the pre-split values
-        ;; unchanged.
+        ;; the caller-save rewrite, storage coloring and emission. When every
+        ;; round declines, these are the pre-split values unchanged.
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
             (compiler-backend-global-shared-view loop-park-split))]
@@ -73160,13 +73079,8 @@
                 _
                 _)
               out-vars])]
-        ;; Scratch pseudos are no longer published as ordinary assignments.
-        ;; Keep storage coloring on the ordinary plan, then build the scratch
-        ;; plan below from the FINAL remapped IR and assignment table. Planning
-        ;; here used to attach point/ordinal requirements to pre-color var ids;
-        ;; after coloring reused those ids for different storage shapes, an
-        ;; apparent register result could become a spilled emitted result with
-        ;; no modeled slot (#5808).
+        ;; Scratch pseudos are not published as ordinary assignments; storage
+        ;; coloring stays on the ordinary plan.
         [scratch-vars : i64
           (compiler_regalloc.compiler-reg-plan-var-count
             (compiler-backend-global-shared-view rewritten-reg-plan)
@@ -73228,8 +73142,8 @@
           : compiler_regalloc.CompilerRegColoring
           ;; Stack-homed register groups keep word0 in their remapped formula
           ;; slot; word1 indexes the second var-region by the same remapped id.
-          ;; That keeps both words inside the `slot-vars`-sized frame instead of
-          ;; preserving the old high raw ids that drove frame growth.
+          ;; That keeps both words inside the `slot-vars`-sized frame rather
+          ;; than at high raw ids that would grow it.
           ;; Debug records deliberately keep the original SSA identities.
           ;; Compacting a debug frame is less important than keeping every
           ;; instruction and variable provenance key exact.
@@ -73310,7 +73224,7 @@
             (compiler-backend-emit-home-overrides-disable! function-state))]
         [scavenge-assignments
           : compiler_regalloc.CompilerRegAssignmentTable
-          ;; Start ordinary scavenging from real IR homes. Planned scratch
+          ;; Start ordinary scavenging from real IR homes. Const-hoist
           ;; homes are appended below with exact intervals; retaining them as
           ;; interval-less pseudo-vars here would reserve each register for the
           ;; entire function and force unrelated sites into emergency saves.
@@ -73359,15 +73273,15 @@
           (match (compiler-backend-global-shared-view coloring)
             ;; Synthetic scratch ids are register-only and are not referenced
             ;; by the emitted IR. When stack coloring is unavailable, retain
-            ;; the real rewritten var count so scratch planning cannot grow
-            ;; the frame merely by numbering temporary register intervals.
+            ;; the real rewritten var count so scratch ids cannot grow the
+            ;; frame merely by numbering temporary register intervals.
             [(compiler_regalloc.CompilerRegColoring.None) rewritten-vars]
             [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
         [scavenge-selection
           : compiler_regalloc.CompilerRegIntervalSelection
           ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
           ;; instruction precision. The allocator plan intervals predate
-          ;; call-save/remat rewrites and frame slot compaction, and the cheap
+          ;; the call-save rewrite and frame slot compaction, and the cheap
           ;; block interval builder can miss within-block live-through scratch
           ;; hazards. The full live-after intervals are the source of truth for
           ;; register-owned values that must not be scavenged.
@@ -73578,7 +73492,7 @@
         ;; the synthetic entries below keep every scavenge away from it.
         ;; Scalar-opt2 text path. The candidate list filters Win64 callee-saved
         ;; %rsi/%rdi while retaining ABI-safe %r8/%r9 and %rbx (frame-homed for
-        ;; divmod). Empty plan = byte-identical.
+        ;; divmod). An empty plan changes nothing.
         [const-hoist-synth : CompilerBackendConstHoistSynth
           (if (and
             call-save-enabled
@@ -74068,9 +73982,9 @@
                                 program-index.backend-state)
                               0)]
                           ;; RG-1: the callee-saved summary line, emitted where
-                          ;; the save set is final (the const-hoist and planned
-                          ;; scratch reservations that also force a save are
-                          ;; settled by body emission, which has run).
+                          ;; the save set is final (the const-hoist and
+                          ;; emergency scratch reservations that also force a
+                          ;; save are settled by body emission, which has run).
                           [_trace-csr : unit
                             (if (compiler_regalloc.compiler-reg-debug-trace-homes?)
                               (compiler-backend-trace-csr-line!
@@ -74125,7 +74039,7 @@
                           ;; A function whose ONLY frame references were those
                           ;; slots therefore names nothing in the frame at all,
                           ;; and its slot region is as dead as a frameless
-                          ;; leaf's. The alignment the region used to supply is
+                          ;; leaf's. The alignment the region would supply is
                           ;; not lost: `S = frame + (n odd ? 0 : 8)` still holds
                           ;; the total displacement at `D % 16 == 8` for any
                           ;; frame, so every call in the body stays aligned.
@@ -77081,15 +76995,11 @@
               (set! w (+ w 1))))
           (set! f (+ f 1)))))))
 
-;; Transitive closure over the direct call edges. Monotone in a finite lattice,
-;; so the round loop terminates; the edge list is walked forwards and then
-;; backwards each round so both call directions collapse in one pass pair.
 ;; Transitive closure over the direct call edges, as a reverse-CSR worklist
 ;; rather than repeated sweeps of the edge list. A sweep-to-fixpoint costs
 ;; rounds x edges; here a function is re-examined only when its own row GREW,
 ;; so the total work is bounded by the number of (function, candidate) bits
-;; that ever turn on times that function's in-degree. On a self-compile that is
-;; the difference between ~85M and ~5M instructions.
+;; that ever turn on times that function's in-degree.
 (define (compiler-backend-iag-fixpoint!
   [census : CompilerBackendIagCensus]
   [edge-count : i64]) : unit
@@ -77490,9 +77400,9 @@
 
 ;; The whole of a `(set! g v)` rebind for an inline aggregate global: `v` is a
 ;; pointer to the new aggregate, so the cell takes a byte copy rather than a
-;; pointer store. `planned-src` is the Store instruction's own modeled memory
-;; value scratch (the register the pointer store used to land in); the single
-;; extra shuttle register is scavenged at this point, excluding it.
+;; pointer store. The pointer is read from its register home when it has one,
+;; else loaded into a scavenged register; the single extra shuttle register is
+;; scavenged at this point, excluding it.
 (define (compiler-backend-emit-inline-aggregate-store
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [symbol : String]
@@ -78959,8 +78869,8 @@
   "    .size _tl_start, . - _tl_start\n")
 
 ;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
-;; recurses far deeper than the default 8 MiB stack rlimit allows ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â type-directed
-;; `clone` of large IR values during arena escapes is the worst case ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so
+;; recurses far deeper than the default 8 MiB stack rlimit allows -- type-directed
+;; `clone` of large IR values during arena escapes is the worst case -- so
 ;; a self-hosted compiler segfaults compiling a large program on the default
 ;; stack. argc/argv/envp are already captured into globals before this runs, so
 ;; switching %rsp is safe (main reads them from globals, not the stack). Do not
@@ -79459,8 +79369,8 @@
         ;; switch tables, runtime data, externs, debug prefix and the rendered
         ;; prefix string) is pure output text. Once the streaming emitter has
         ;; copied those bytes into the home-owned output stream, nothing reads
-        ;; them again, but they used to stay resident in the backend emit arena
-        ;; for the whole per-function loop -- underneath the compile-wide peak.
+        ;; them again, so they are rewound rather than left resident in the
+        ;; backend emit arena for the whole per-function loop.
         ;; Prefix helpers share a few ABI/rendering utilities with function
         ;; emission. Give them an entry-owned function carrier explicitly;
         ;; otherwise the compatibility getter installs one in the backend
@@ -79537,9 +79447,8 @@
               program-index.backend-state
               prefix-previous-function-state-address))]
         (begin
-          ;; This window previously started at the "collect" finish and was
-          ;; overwritten by the next start without ever being reported,
-          ;; hiding the prefix composition from the phase breakdown.
+          ;; Report the prefix-composition window before the next start
+          ;; overwrites it, so it shows in the phase breakdown.
           (cfg
             compile-profile
             (compiler-backend-profile-finish
@@ -79734,9 +79643,9 @@
                   externs)
                 ;; Build the program index ONCE over the entry function list
                 ;; and share it with the globals emission: each build walks
-                ;; every function body for the register-group counts, so the
-                ;; former second build doubled both that walk and its ~120MB
-                ;; of transient allocation. The entry list is a superset of
+                ;; every function body for the register-group counts, so a
+                ;; second build would double both that walk and its transient
+                ;; allocation. The entry list is a superset of
                 ;; `functions` (at most the synthesized implicit main, which
                 ;; no global initializer can reference), so globals resolve
                 ;; identically against the shared index.
@@ -81270,15 +81179,15 @@
 ;;
 ;; The object emitter assigns every IR var its own rbp slot, so a phi whose
 ;; destination differs from an input needs a real copy on each incoming edge;
-;; materializing the inputs and dropping the destination (the historical Phi
-;; case) silently reads an uninitialized slot at the merge. Jump and Branch
+;; materializing the inputs and dropping the destination would silently read
+;; an uninitialized slot at the merge. Jump and Branch
 ;; terminators targeting a block with leading phis emit these copies before
 ;; transferring control; conditional edges are split into tiny edge blocks so
 ;; each edge's copies run only when that edge is taken. Copies are staged
 ;; through the stack (sources first, destinations after) so parallel-copy
 ;; cycles like a<-b, b<-a cannot clobber a pending source. Aggregate
-;; (copy-group) phis keep the previous materialize-only behavior; the tlci
-;; image path never lowers those.
+;; (copy-group) phis only materialize their inputs; the tlci image path never
+;; lowers those.
 (define (compiler-backend-object-phi-copy-list-count
   [copies : (& copies CompilerBackendPhiCopySeq)]) : i64
   copies.len)
@@ -81288,7 +81197,7 @@
   (= copies.len 0))
 
 ;; Collected in instruction order; the stage/store walkers read it back to front
-;; (compiler-backend-phi-copy-seq-rev-ref) to keep the old prepend order.
+;; (compiler-backend-phi-copy-seq-rev-ref).
 (define (compiler-backend-object-edge-phi-copies-scan
   [type-segment-bases : i64]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -82887,7 +82796,7 @@
             program-index
             (+ seq-index 1)))])))
 
-;; Emitted in this order (the old cons chain was built back-to-front).
+;; Emitted in this order.
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
     [symbols : BackendStringSeq
@@ -84162,17 +84071,13 @@
 ;; First index of `target` in [start, end), or `end` when the byte is absent.
 ;;
 ;; Every pass over emitted assembly asks this question of the same bytes: where
-;; is the next line end, token end, `%` or `(`? All of them used to ask
-;; `tl_memchr`, whose loop compares ONE byte per iteration -- five instructions
-;; per byte of assembly text, paid again by the line walk, the token split, the
-;; sweep's memory-operand probe and the rsp-rebase frame-reference probe. This
-;; reads the text a 64-bit word at a time instead, so a whole word of text costs
-;; about what a single byte used to.
+;; is the next line end, token end, `%` or `(`? `tl_memchr` compares ONE byte
+;; per iteration; this reads the text a 64-bit word at a time instead, so a
+;; whole word of text costs about what a single byte costs there.
 ;;
 ;; `end` is the not-found answer (not -1) because that is what the line walk
 ;; wants -- an unterminated last line ends at the text end -- and every other
-;; caller already carries the same bound it passed in, so it tests `>= stop`
-;; exactly where it used to test `< 0`.
+;; caller already carries the same bound it passed in, so it tests `>= stop`.
 ;;
 ;; `(x - ones) & ~x & highs` is non-zero exactly when some byte of `x` is zero,
 ;; so xoring the word with the broadcast target turns "byte equals target" into
@@ -84382,9 +84287,9 @@
 ;; The offsets table is generation-stamped instead of cleared: an entry packs
 ;; the generation that wrote it above the byte offset it holds, so a reset is a
 ;; counter bump rather than a 16384-slot store loop. A slot is EMPTY for the
-;; current generation exactly when its stamp differs, which is the predicate the
-;; `off < 0` test used to answer, so probe order, insertion order and the
-;; returned keys are bit-for-bit what the clearing table produced.
+;; current generation exactly when its stamp differs, so probe order, insertion
+;; order and the returned keys are bit-for-bit what a table cleared on every
+;; reset would produce.
 ;;
 ;; The offset field is 20 bits wide because the byte pool is 2^20 bytes and a
 ;; stored symbol is at least one byte long, so a stored start is at most
@@ -84888,9 +84793,9 @@
 ;; them by their bytes in a single pass instead of up to 14 sequential
 ;; `eq-mnemonic` calls: this is the hot dispatch behind the peephole owner map and
 ;; the byte scan short-circuits the overwhelmingly common non-register operand on
-;; the first one or two bytes. The mapping is exact (same accept set, same
-;; ordering as the string-compare chains it replaces), so owner-map decisions --
-;; and therefore emitted assembly -- stay byte-identical.
+;; the first one or two bytes. The mapping is exact (the same accept set and
+;; ordering as a string-compare chain), so owner-map decisions do not depend on
+;; which classifier answers.
 (define (compiler-backend-peephole-reg-index-range
   [data : (Ptr u8)]
   [start : i64]
@@ -85564,7 +85469,7 @@
           (and
             (< start end)
             (= (compiler-backend-peephole-byte-at data start) 45))]
-        ;; This is the former general stack probe plus the rbp-base arm's
+        ;; This is the general stack probe plus the rbp-base arm's
         ;; additional "(%rsp)" check. Earlier arms proved there is no packed
         ;; key and no end-anchored rsp base.
         [parens : i64
@@ -86356,7 +86261,7 @@
                 -1)]
             ;; A pure register token cannot produce a memory owner key. Keep a
             ;; trailing-')' spelling on the general path so even unusual input
-            ;; that begins with '%' retains the old memory-suffix behavior.
+            ;; that begins with '%' keeps the memory-suffix behavior.
             [src-register? : bool
               (and
                 is-movq
@@ -86668,20 +86573,14 @@
 ;; bytes, so peephole-synthesized lines are summarized from their own rewritten
 ;; text and lines the pair rules drop or the lookahead parses cost nothing.
 ;;
-;; The extraction is FUSED into the record build. It used to be a separate pass
-;; that allocated an eight-field summary struct for every line -- plus a second
-;; one for the "skip" answer, built eagerly whether or not the line was one --
-;; handed the result back field by field, and walked the line's `%` bytes TWICE:
-;; once for the `%rsp` references and again for the vector access width. The
-;; classification now writes straight into the record's packed words, and ONE
-;; word-at-a-time `%` walk answers both questions. Both former walks visited
-;; exactly the `%` positions that have a byte after them, in ascending order,
-;; and each looked only at that one following byte, so the width, reference
-;; count, first displacement and walk flags are bit-for-bit what they produced;
-;; the `%rsp` rule additionally needs four bytes of room, which it tests per
-;; position exactly where the reference walk's own bound tested it. `rsp` holds
-;; no `%`, so visiting every `%` finds the same references the old walk found by
-;; stepping four bytes past each hit.
+;; The extraction is FUSED into the record build: the classification writes
+;; straight into the record's packed words, with no per-line summary struct,
+;; and ONE word-at-a-time `%` walk answers both the `%rsp` reference question
+;; and the vector access width. The walk visits exactly the `%` positions that
+;; have a byte after them, in ascending order, and each rule looks only at that
+;; one following byte; the `%rsp` rule additionally needs four bytes of room,
+;; which it tests per position. `rsp` holds no `%`, so visiting every `%` finds
+;; every `%rsp` reference.
 (define (compiler-backend-peephole-line-record
   [line : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineRecord
   (let
@@ -87011,7 +86910,7 @@
             [vec-width : i64 0]
             (begin
               ;; A verified pure store has no other rsp effect, so the byte
-              ;; walk is skipped for it -- as in the pass it replaces.
+              ;; walk is skipped for it.
               (when
                 (= cand none)
                 (let
@@ -87262,15 +87161,13 @@
 (define (compiler-backend-peephole-line-vec-capacity-for [n : i64]) : i64
   (+ (/ n 20) 16))
 
-;; The streaming walk's record sink. The dense arrays and their fill level used
-;; to travel through the walk as a three-field struct that was REBUILT for every
-;; emitted line -- and wrapped again in a two-field emit result -- even though
-;; only the fill level ever changed and the arrays were reallocated at most once
-;; per group. They live here instead: the walk opens the sink once per group,
-;; appends in place, and closes it into the LineVec its consumers already take,
-;; so the dense-array idiom now covers the cursor as well as the records.
+;; The streaming walk's record sink. The dense arrays and their fill level live
+;; here rather than in a struct rebuilt for every emitted line, since only the
+;; fill level changes per line and the arrays are reallocated at most once per
+;; group: the walk opens the sink once per group, appends in place, and closes
+;; it into the LineVec its consumers take.
 ;;
-;; The arrays are ordinary group-arena storage, exactly as the LineVec's were.
+;; The arrays are ordinary group-arena storage.
 ;; Publish them to the owning stream at open/close, but keep the hot fill cursor
 ;; in a small borrowed view while walking lines. Copying and writing the entire
 ;; 35-field stream aggregate for every line is prohibitively expensive in the
@@ -87396,17 +87293,13 @@
 ;;
 ;; The fold itself lives below (`compiler-backend-peephole-rmw-fold-candidates!`);
 ;; what happens here is only that the MIDDLE line of a window gets its record
-;; index written down. The op is by far the rarest of the three shapes -- a
-;; self-compile emits 2.77M assembly lines, 1.35M of them `movq` and 48k a
-;; foldable ALU op with a register destination -- and its two neighbours are
-;; already in the record array by the time the pass below runs, so naming the op
-;; names the whole window. Recognition therefore costs ONE mask test on the
-;; descriptor's flag word for every emitted line: the parser has already decided
-;; whether a line's only written register is its last operand, and no line
-;; without that flag can be the middle of a window.
-;;
-;; The standalone form of this pass re-walked all ~2.7M emitted lines to find
-;; the same triples and paid self_compile +0.579% for it.
+;; index written down. The op is by far the rarest of the three shapes, and its
+;; two neighbours are already in the record array by the time the pass below
+;; runs, so naming the op names the whole window. Recognition therefore costs
+;; ONE mask test on the descriptor's flag word for every emitted line: the
+;; parser has already decided whether a line's only written register is its
+;; last operand, and no line without that flag can be the middle of a window. A
+;; standalone pass would re-walk every emitted line to find the same triples.
 ;; 1 for a two-operand foldable ALU mnemonic, 2 for a one-operand one, 0 for
 ;; anything else. Classified from the token's bytes rather than through the
 ;; literal comparator: recognition asks this of every emitted line whose
@@ -87543,7 +87436,7 @@
 ;; add or sub OF may be set. `and`/`or`/`xor` clear OF and CF exactly like
 ;; `test`, but the branch set is kept to the flag-exact four for every writer.
 ;; IV-AFF's counted-down loops end in exactly this triple (`sub $1; test;
-;; jge`), 5.7M instructions of ssa_construct; clang emits `dec; jns`.
+;; jge`); clang emits `dec; jns`.
 ;;
 ;; Adjacency is what makes "nothing wrote flags in between" true: the writer
 ;; is the line pushed immediately before the `test` (records-push! notes its
@@ -87932,7 +87825,7 @@
       found)))
 
 ;; Scan forward from chunk `chunk` offset `start`, across chunk boundaries
-;; exactly as the former contiguous group render did.
+;; exactly as over one contiguous group text.
 (define (compiler-backend-peephole-r10-dead-after-desc?
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
@@ -88316,7 +88209,7 @@
 ;; noreturn abort call. Threaded as `prev-abort?` so the guard-ok label emitted
 ;; immediately after it carries the owner map (line-clobber-owners label arm).
 ;; User-function chunks begin with `.globl`; processing either side separately
-;; preserves the legacy pass because that directive/function-entry boundary
+;; matches a whole-text pass because that directive/function-entry boundary
 ;; clears pending pair and owner state.  Chunks that split a function remain in
 ;; the same group and are rendered together.
 (define (compiler-backend-peephole-chunk-starts-global? [chunk : (& chunk str)]) : bool
@@ -88466,8 +88359,8 @@
 
 ;; Copy the surviving records into `dst`. Adjacent survivors that are contiguous
 ;; in the same source string are copied as one run, so a group the sweep did not
-;; touch still renders as a single copy of its range -- the coalescing the
-;; borrowed-chunk builder used to do, without building the chunk list.
+;; touch still renders as a single copy of its range, without building a chunk
+;; list.
 (define (compiler-backend-peephole-records-blit!
   [v : CompilerBackendPeepholeLineVec]
   [dst : (MutPtr u8)]) : unit
@@ -88614,7 +88507,7 @@
 ;; The rewrite runs at render time, after every peephole, sweep and fold has
 ;; finished with the record stream, so no textual analysis ever sees the new
 ;; order. It preserves semantics by construction: the inverted jump reaches the
-;; stub under exactly the condition that used to fall into it, the stub runs
+;; stub under exactly the condition that falls into it inline, the stub runs
 ;; with the same registers and stack, and the `jmp` appended to it keeps the
 ;; original (never taken) fall-through edge back to the continuation.
 ;;
@@ -89812,7 +89705,7 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) pos)))))
 
 ;; The single render of the group, with COLD-1's out-of-line abort stubs. A
-;; group without an abort call renders as before; otherwise the plan and its
+;; group without an abort call renders in record order; otherwise the plan and its
 ;; synthesized lines are scratch and only the rendered string lands in the
 ;; caller's arena.
 (define (compiler-backend-peephole-records-render
@@ -89862,10 +89755,10 @@
 ;;     is not writable; `%rsp`/`%rbp` are outside the allocator's tracked set, so
 ;;     the folded triple's %rX is never one of them);
 ;;   * the op is in {add,sub,and,or,xor,neg,not}. LLVM's list also names inc/dec;
-;;     our emitter never spells those (an increment is `addq $1`) and the report's
-;;     rule is to keep spelling it that way, which is why no carry-flag analysis
-;;     is needed here: `incq m` differs from `addq $1, m` only in CF, and we emit
-;;     the `addq` form on both sides of the fold.
+;;     our emitter never spells those (an increment is `addq $1`), which is why
+;;     no carry-flag analysis is needed here: `incq m` differs from
+;;     `addq $1, m` only in CF, and we emit the `addq` form on both sides of
+;;     the fold.
 ;;   * `%rY` != `%rX`: `addq %rax, %rax` doubles the LOADED value, which the
 ;;     folded `addq %rax, M` would not reproduce.
 ;;
@@ -89873,9 +89766,8 @@
 ;;   * `movq` writes no flags, so the flags after the original triple are exactly
 ;;     the flags the ALU op wrote, and the flags after the folded instruction are
 ;;     the flags the same ALU op writes on the same operand values. A following
-;;     `jcc` reading the op's flags therefore reads an IDENTICAL EFLAGS word --
-;;     this is the case the packet asks to verify, and it is FINE, so no
-;;     flags-consumer refusal is needed or wanted.
+;;     `jcc` reading the op's flags therefore reads an IDENTICAL EFLAGS word,
+;;     so no flags-consumer refusal is needed.
 ;;   * a `jcc` reading the LOAD's flags is impossible: `movq` sets none, so any
 ;;     flags live INTO the triple are killed by the op in both forms alike.
 ;;   * nothing can sit between the op and the store to observe an intermediate
@@ -89919,11 +89811,10 @@
 ;; COST bounds, not correctness bounds: exceeding any of them refuses the fold.
 ;; Without them the scan is quadratic -- one unresolved branch walks the whole
 ;; group, a group is up to 64 emitted functions, and the walk over a
-;; self-compile's 2.7M lines then costs more than the fold saves. Emitted
+;; self-compile's output then costs more than the fold saves. Emitted
 ;; branch targets are function-local and overwhelmingly within a few dozen
 ;; lines, and a register that is not dead within a few dozen records is not
-;; going to be: at these values every fold the unbounded scan finds in
-;; gvn_table and intern_table survives, and a self-compile keeps 124 of 129.
+;; going to be, so these values keep nearly every fold the unbounded scan finds.
 (define compiler-backend-peephole-rmw-label-window : i64
   64)
 (define compiler-backend-peephole-rmw-label-lookup-cap : i64
@@ -89935,7 +89826,7 @@
 ;; target is within `label-window` of a pc the scan reached, and the scan
 ;; reaches at most `scan-cap` records from the store. A pc outside the window is
 ;; refused like any other unclassifiable step, so the bound is sound as well as
-;; cheap -- and a group with candidates no longer pays an allocation and a clear
+;; cheap -- and a group with candidates pays no allocation or clear
 ;; proportional to its own length.
 (define compiler-backend-peephole-rmw-visit-back : i64
   128)
@@ -90568,12 +90459,11 @@
                   (+ lstart (compiler-backend-peephole-movq-prefix-len))]
                 [sops : i64
                   (+ sstart (compiler-backend-peephole-movq-prefix-len))]
-                ;; The two ends of the window, cheapest test first. A
-                ;; self-compile emits 141k foldable ops and only 44k of them sit
-                ;; between two moves; of those, the load's source has to be
-                ;; something other than a bare register and the store's source
-                ;; has to be one, which is two bytes and retires nearly half the
-                ;; rest before an operand is scanned.
+                ;; The two ends of the window, cheapest test first. Most
+                ;; foldable ops do not sit between two moves; of those that do,
+                ;; the load's source has to be something other than a bare
+                ;; register and the store's source has to be one, which is two
+                ;; bytes and retires many more before an operand is scanned.
                 [moves? : bool
                   (and
                     (compiler-backend-peephole-movq-prefix-at-range?
@@ -90968,7 +90858,7 @@
                 (arena.set! source-arena)))))))))
 
 ;; Append one function/adapter emission. A batch boundary is also a `.globl`
-;; boundary, so flushing it preserves the legacy whole-stream peephole output.
+;; boundary, so flushing it matches a whole-stream peephole's output.
 (define (compiler-backend-assembly-stream-process-string!
   [raw-asm : String]
   [backend-state : CompilerBackendState]
@@ -91081,8 +90971,8 @@
 ;; Is [start, end) `name:` with nothing but name bytes before the colon? The
 ;; name is checked eight bytes at a time, for the same reason the line splitter
 ;; is: emitted local names run to thirty-odd bytes, this is asked of every
-;; unindented line of every function, and the byte loop it replaced was the
-;; single most expensive piece of the layout index. One word rejects a space, a
+;; unindented line of every function, and a byte loop here would be the single
+;; most expensive piece of the layout index. One word rejects a space, a
 ;; tab and a second colon at once -- three `x - ones & ~x & highs` probes ORed
 ;; together -- and the sub-word tail is covered by one final word that OVERLAPS
 ;; the last full one, so no byte loop remains for a name of eight bytes or more.
@@ -91165,9 +91055,8 @@
 
 ;; Does the line begin with the emitted direct-jump prefix `"    jmp "`?
 ;; Tested byte-wise, `j` first: this runs on every line of the body, and the `j`
-;; alone rejects all but a handful of them for one load and compare. Comparing a
-;; string literal here instead cost enough per line to move the self_compile
-;; instruction-count row.
+;; alone rejects all but a handful of them for one load and compare. A string
+;; literal compare here costs too much for a per-line test.
 (define (compiler-backend-asm-jmp-prefix-at? [data : (Ptr u8)] [start : i64]) : bool
   (and
     (= (compiler-backend-peephole-byte-at data (+ start 4)) 106)
@@ -91294,7 +91183,7 @@
 
 ;; Emitted instructions copied at one duplication site. Three is LLVM's
 ;; post-allocation tail-duplication budget; four admits the two-block
-;; `cmp/jcc` + `mov/jmp` join the measured shapes need.
+;; `cmp/jcc` + `mov/jmp` join.
 (define compiler-backend-layout-dup-run-cap : i64
   4)
 
@@ -91312,11 +91201,8 @@
 ;; two to one (Ball & Larus measured the opcode heuristics at roughly 60-70%),
 ;; and paying a jump on the arm that keeps executing costs exactly what the
 ;; other arm saves. Two clauses bailing to the SAME arm is the guard shape --
-;; the `and`-lowered clauses of a bounds or range check -- which is the case
-;; this packet is about. Measured: at one entry the rule loses (gvn_table's
-;; `facts_insert` / `facts_remove` / `table_invalidate_var`, whose lone
-;; `x < 0` / `x == c` tests are true on every trip); at two it wins on every
-;; row.
+;; the `and`-lowered clauses of a bounds or range check. At one entry the rule
+;; loses on lone `x < 0` / `x == c` tests that are true on every trip.
 (define compiler-backend-layout-guard-chain-entries : i64
   2)
 
@@ -91415,7 +91301,7 @@
 ;;
 ;; The second byte selects the arm: no two of these names share it except the
 ;; three `s` spellings, so a directive pays one byte compare and at most three
-;; name compares instead of the eight it used to walk through -- and the token
+;; name compares -- and the token
 ;; end, which is a walk of its own, is only measured once that byte has already
 ;; said a barrier is possible. Every emitted `.quad`, `.byte` and `.zero` leaves
 ;; here on the byte compare alone.
@@ -91715,13 +91601,11 @@
 ;; What a mnemonic's first byte can make of a line, as a byte per possible head:
 ;; `0` nothing, `1` walk the token (`.` 46 for a directive, `j` 106 for a
 ;; branch), `2` `ret` (114), `3` `call` (99), `4` `pushq`/`popq` (112), `5`
-;; `leave` (108). Seventy per cent of emitted lines are `0`, and for them this
-;; is one indexed byte load where six compare-and-branch pairs used to stand;
-;; the four one-shape kinds are then settled by three byte compares in a leaf
-;; instead of a call into the token dispatch and its spill frame, which is two
-;; thirds of the calls that dispatch used to take. A shift over a bit set would
-;; filter as well but costs the shift-amount guards the language inserts around
-;; a variable shift, and would not carry the kind.
+;; `leave` (108). Most emitted lines are `0`, and for them this is one indexed
+;; byte load; the four one-shape kinds are then settled by three byte compares
+;; in a leaf instead of a call into the token dispatch and its spill frame. A
+;; shift over a bit set would filter as well but costs the shift-amount guards
+;; the language inserts around a variable shift, and would not carry the kind.
 (define compiler-backend-layout-head-table : String
   "0000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000003000000105000402000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
 
@@ -91887,12 +91771,10 @@
 ;; share a long per-function prefix AND, once inlining has run, a long common
 ;; tail (`.Lf7_inl.entry.4.if_then` beside `.Lf7_inl.entry.9.if_then`), so both
 ;; ends alone leave the distinguishing bytes unread -- the middle word is what
-;; separates them. Measured over this compiler's own emitted labels, grouped per
-;; function as production sees them: 1.36 probes per insert against 1.65 for the
-;; byte-at-a-time fold this replaced, at a fraction of its cost. The multiply is
-;; the standard Fibonacci-constant scramble and wraps deliberately; the ranked
-;; bits are the high ones, which every input bit reaches. The hash is private to
-;; one analysis and only ever orders probes, so its spelling is free to change.
+;; separates them. The multiply is the standard Fibonacci-constant scramble and
+;; wraps deliberately; the ranked bits are the high ones, which every input bit
+;; reaches. The hash is private to one analysis and only ever orders probes, so
+;; its spelling is free to change.
 (define (compiler-backend-layout-hash [data : (Ptr u8)] [s : i64] [e : i64]) : i64
   (let
     [len : i64 (- e s)]
@@ -93408,31 +93290,28 @@
                       (__tl_array-data plan)))]
                 (CompilerBackendLayoutPlan starts plan lines len)))))))))
 
-;; Streaming peephole over line RECORDS: identical rule set, pair state and
-;; owner-map handling to the text pass it replaces, except that each surviving
-;; emit step pushes its record into a dense arena-backed array instead of
-;; appending bytes. The array is the pipeline: the dead-store sweep consumes it
-;; and the group is rendered exactly once, afterwards.
+;; Streaming peephole over line RECORDS: each surviving emit step pushes its
+;; record into a dense arena-backed array instead of appending bytes. The array
+;; is the pipeline: the dead-store sweep consumes it and the group is rendered
+;; exactly once, afterwards.
 ;;
 ;; The walk runs over the group's physical chunks, parsing each in place; a
 ;; record's `src` is the chunk its line came from. Chunk boundaries are NOT
 ;; pass boundaries: `pending`, the owner map and `prev-abort?` all carry across
 ;; them, so a pair whose two lines sit in different chunks still forms exactly
-;; as it did when the group was flattened first.
+;; as it would in one flattened text.
 ;;
-;; With `drop-fallthrough?` the fallthrough-`jmp` deletion of the former
-;; standalone text pass folds into this same walk, over exactly the bytes that
-;; pass saw (one .globl unit per group). At most one candidate direct `jmp`
+;; With `drop-fallthrough?` the fallthrough-`jmp` deletion runs in this same
+;; walk (one .globl unit per group). At most one candidate direct `jmp`
 ;; is deferred at a time: its descriptor and target operand range are held,
 ;; and the label-definition lines seen since are buffered unprocessed. A
 ;; buffered label matching the held target deletes the `jmp` -- it never
 ;; reaches emit-line-desc-record, so the owner map and prev-abort? evolve
 ;; exactly as if the line were absent -- and the buffered labels are replayed
 ;; through the ordinary rule set. Any other line keeps the `jmp`: it is
-;; emitted before the buffered labels, in the same record position the
-;; deleted-before-parse world produced. A candidate still held at group end
-;; is emitted like ordinary pending, matching the old pass's end-of-text
-;; keep. Intervening label definitions never pair (not movq/zext), and a held
+;; emitted before the buffered labels, in its original record position. A
+;; candidate still held at group end is kept and emitted like ordinary
+;; pending. Intervening label definitions never pair (not movq/zext), and a held
 ;; `jmp` is neither a guard-ok branch (desc-guard-ok-branch? excludes jmp)
 ;; nor a guard-ok label, so the held emit and the replay need no guard-owner
 ;; snapshot handling.
@@ -93836,8 +93715,8 @@
                   (set! step (+ step 1)))))
             (set! c (+ c 1)))))
       (if held-jmp?
-        ;; Group end with a candidate still deferred: the old pass kept it,
-        ;; so emit it before any buffered labels, like ordinary pending.
+        ;; Group end with a candidate still deferred: keep it, emitting it
+        ;; before any buffered labels, like ordinary pending.
         (begin
           (set!
             owners
@@ -93965,10 +93844,10 @@
   [asm : String]
   [drop-fallthrough? : bool]) : text_buf.TextBuf
   ;; The streaming pass runs the complete rule set while each line pair and its
-  ;; owner state are hot. Re-running it used to parse and copy the whole ~40MB
-  ;; self-compile assembly again to remove only ~1% as many bytes as the first
-  ;; pass (~10KB after ~910KB). Keep that marginal reapplication out of the
-  ;; compile path; the missed cascades are optional code-size rewrites.
+  ;; owner state are hot. Re-running it would parse and copy the whole assembly
+  ;; again to remove only a small fraction of what the first pass removes. Keep
+  ;; that marginal reapplication out of the compile path; the missed cascades
+  ;; are optional code-size rewrites.
   ;; GAP5 then sweeps never-read local frame stores recorded during emission --
   ;; over the same records, so the text is rendered exactly once.
   ;; #block-layout: the whole-text mirror of the streaming pipeline. The

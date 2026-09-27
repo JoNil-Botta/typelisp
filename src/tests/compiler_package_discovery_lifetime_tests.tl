@@ -15,8 +15,10 @@
 (import compiler_driver_core as driver)
 (import compiler_intern as ci)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import compiler_owned_view as owned_view)
 (import doc_test)
+(import doc_test_tests as doc_tests)
 (import sym_i64_env)
 (import tlci_core as tlci)
 (import tlci_loader)
@@ -78,16 +80,16 @@
     (load.compiler-load-test-mkdir "target/exp")
     (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime")
     (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime/src")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/helper.tl"
       "(module helper)\n(define value : i64 42)")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/main.tl"
       (str_cat.str-cat
         "(import helper as helper)\n"
-        (doc_test.doc-test-smoke-source)
+        (doc_tests.doc-test-smoke-source)
         "\n(define (main) : i64 helper.value)"))
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/bad.tl"
       "(define broken : i64")))
 
@@ -198,17 +200,17 @@
   package-discovery-extraction-owns-code-output-and-errors
   (begin
     (discovery-test-write-fixture!)
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/extract.tl"
-      (doc_test.doc-test-runnable-source))
+      (doc_tests.doc-test-runnable-source))
     (let
       [runnable : doc_test.DocTestExtraction
         (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/extract.tl")]
       [_replace : unit
-        (load.compiler-load-write-file-text
+        (load_tests.compiler-load-write-file-text
           "target/exp/package-discovery-lifetime/src/extract.tl"
-          (doc_test.doc-test-malformed-source))]
+          (doc_tests.doc-test-malformed-source))]
       [malformed : doc_test.DocTestExtraction
         (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/extract.tl")]
@@ -220,7 +222,7 @@
               (and
                 (= (doc_test.doc-test-example-list-count examples) 2)
                 (= (doc_test.doc-test-error-list-count errors) 0)
-                (doc_test.doc-test-runnable-example-ok?
+                (doc_tests.doc-test-runnable-example-ok?
                   (doc_test.doc-test-example-list-ref examples 0)
                   1
                   2
@@ -228,7 +230,7 @@
                   "hello\n"
                   "error\tline\r"
                   "(define (main)")
-                (doc_test.doc-test-runnable-example-ok?
+                (doc_tests.doc-test-runnable-example-ok?
                   (doc_test.doc-test-example-list-ref examples 1)
                   2
                   14
@@ -244,7 +246,7 @@
               (and
                 (= (doc_test.doc-test-example-list-count examples) 0)
                 (= (doc_test.doc-test-error-list-count errors) 3)
-                (doc_test.doc-test-malformed-errors-ok? errors))
+                (doc_tests.doc-test-malformed-errors-ok? errors))
               (io.panic "malformed fence ordering or messages escaped scratch"))])
         (match (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/not-present.tl")

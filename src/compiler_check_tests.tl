@@ -4,6 +4,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
+(import compiler_load_tests as load_tests)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_semantic_index as semantic_index)
@@ -1153,7 +1154,7 @@
 (define (compiler-check-self-test) : i64
   (begin
     (unless
-      (= (compiler_load.compiler-load-self-test) 42)
+      (= (load_tests.compiler-load-self-test) 42)
       (return (io.panic "compiler-check: loader smoke mismatch")))
     (unless
       (compiler-check-virtual-import-ok?)

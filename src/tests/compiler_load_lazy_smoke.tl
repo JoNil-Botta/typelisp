@@ -6,6 +6,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
+(import compiler_load_tests as load_tests)
 (import compiler_cfg_core as cfg)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
@@ -41,16 +42,15 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
-          (= (compiler_load.compiler-load-decl-list-count decls) 3)
-          (compiler_load.compiler-load-decl-list-has-import-alias?
+          (= (load_tests.compiler-load-decl-list-count decls) 3)
+          (load_tests.compiler-load-decl-list-has-import-alias?
             decls
             "nested.dep"
             "dep")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.dotted.entry")
-          (not
-            (compiler_load.compiler-load-test-seen-contains? seen "nested.dep")))]
+          (not (load_tests.compiler-load-test-seen-contains? seen "nested.dep")))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-used-dotted-import-ok?) : bool
@@ -72,10 +72,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.dotted.used.entry")
-          (compiler_load.compiler-load-test-seen-contains? seen "nested.dep"))]
+          (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-removed-array-module-rejected?) : bool
@@ -115,14 +115,14 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-decl-list-has-import-alias?
+          (load_tests.compiler-load-decl-list-has-import-alias?
             decls
             "stdlib.result"
             "result")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.stdlib.result.entry")
-          (compiler_load.compiler-load-test-seen-contains? seen "stdlib.result"))]
+          (load_tests.compiler-load-test-seen-contains? seen "stdlib.result"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-direct-module-macro-demand-ok?) : bool
@@ -140,10 +140,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.module.macro.entry")
-          (compiler_load.compiler-load-test-seen-contains? seen "stdlib.option"))]
+          (load_tests.compiler-load-test-seen-contains? seen "stdlib.option"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-unused-module-macro-import-ok?) : bool
@@ -161,13 +161,11 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.unused.module.macro.entry")
           (not
-            (compiler_load.compiler-load-test-seen-contains?
-              seen
-              "stdlib.option")))]
+            (load_tests.compiler-load-test-seen-contains? seen "stdlib.option")))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-aliased-module-macro-demand-ok?) : bool
@@ -194,10 +192,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.aliased.module.macro.entry")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.macro.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
@@ -226,10 +224,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "lazy.qualified.module.macro.entry")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.macro.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
@@ -254,12 +252,10 @@
         [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-            (compiler_load.compiler-load-test-seen-contains?
+            (load_tests.compiler-load-test-seen-contains?
               seen
               "lazy.stdlib.vector.module.macro.entry")
-            (compiler_load.compiler-load-test-seen-contains?
-              seen
-              "stdlib.vector"))]
+            (load_tests.compiler-load-test-seen-contains? seen "stdlib.vector"))]
         [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (package-lazy-unused-dotted-import-ok?) : bool
@@ -275,7 +271,7 @@
       "(module pkg.lazy.dotted.entry)
 (import nested.dep as dep)
 (define (main) : i64 42)")
-    (match (compiler_load.compiler-load-package-file-with-paths-and-roots
+    (match (load_tests.compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_lazy_dotted/entry.tl"
       (sym_i64_env.sym-i64-empty)
       (svec.new)
@@ -284,16 +280,15 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
-          (= (compiler_load.compiler-load-decl-list-count decls) 3)
-          (compiler_load.compiler-load-decl-list-has-import-alias?
+          (= (load_tests.compiler-load-decl-list-count decls) 3)
+          (load_tests.compiler-load-decl-list-has-import-alias?
             decls
             "nested.dep"
             "dep")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "pkg.lazy.dotted.entry")
-          (not
-            (compiler_load.compiler-load-test-seen-contains? seen "nested.dep")))]
+          (not (load_tests.compiler-load-test-seen-contains? seen "nested.dep")))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (package-lazy-used-dotted-import-ok?) : bool
@@ -310,7 +305,7 @@
       "(module pkg.lazy.dotted.used.entry)
 (import nested.dep as dep)
 (define (main) : i64 (dep.get))")
-    (match (compiler_load.compiler-load-package-file-with-paths-and-roots
+    (match (load_tests.compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_lazy_dotted_used/entry.tl"
       (sym_i64_env.sym-i64-empty)
       (svec.new)
@@ -319,10 +314,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "pkg.lazy.dotted.used.entry")
-          (compiler_load.compiler-load-test-seen-contains? seen "nested.dep"))]
+          (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-local-alias-does-not-demand-ok?) : bool
@@ -350,11 +345,11 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 1)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.local.entry")
           (not
-            (compiler_load.compiler-load-test-seen-contains?
+            (load_tests.compiler-load-test-seen-contains?
               seen
               "generic.local.dep")))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
@@ -387,10 +382,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.surface.entry")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.surface.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
@@ -417,10 +412,10 @@
       [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.direct.entry")
-          (compiler_load.compiler-load-test-seen-contains?
+          (load_tests.compiler-load-test-seen-contains?
             seen
             "generic.direct.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
@@ -452,21 +447,21 @@
         [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-            (compiler_load.compiler-load-test-seen-contains?
+            (load_tests.compiler-load-test-seen-contains?
               seen
               "generic.cfg.entry")
-            (compiler_load.compiler-load-test-seen-contains?
+            (load_tests.compiler-load-test-seen-contains?
               seen
               "generic.cfg.dep"))]
         [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))))
 
-(define (structural-member-demand-source [source : String] [alias : i64]) : compiler_load.CompilerLoadStructuralMemberDemand
+(define (structural-member-demand-source [source : String] [alias : i64]) : load_tests.CompilerLoadStructuralMemberDemand
   (match (compiler_load.compiler-load-parse-source-diagnostic-escaping
     "src/structural_member_demand.tl"
     source
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
-      (compiler_load.compiler-load-structural-member-demand (deref decls) alias)]
+      (load_tests.compiler-load-structural-member-demand (deref decls) alias)]
     [(ResultAstProgramDiagnostic.Err _) (CompilerLoadStructuralFullDemand)]))
 
 (define (structural-member-demand-no-use-ok?) : bool
@@ -479,20 +474,20 @@
 
 (define (structural-member-demand-one-ok?) : bool
   (let
-    [demand : compiler_load.CompilerLoadStructuralMemberDemand
+    [demand : load_tests.CompilerLoadStructuralMemberDemand
       (structural-member-demand-source
         "(module demand.one)
 (define (main) : i64 (subject.value))"
         cbi.compiler-builtin-id-fix-subject)]
     (and
-      (= (compiler_load.compiler-load-structural-member-demand-count demand) 1)
-      (compiler_load.compiler-load-structural-member-demand-contains?
+      (= (load_tests.compiler-load-structural-member-demand-count demand) 1)
+      (load_tests.compiler-load-structural-member-demand-contains?
         demand
         cbi.compiler-builtin-id-fix-value))))
 
 (define (structural-member-demand-union-ok?) : bool
   (let
-    [demand : compiler_load.CompilerLoadStructuralMemberDemand
+    [demand : load_tests.CompilerLoadStructuralMemberDemand
       (structural-member-demand-source
         "(module demand.union)
 (define (main) : i64
@@ -502,11 +497,11 @@
     (subject.left)))"
         cbi.compiler-builtin-id-fix-subject)]
     (and
-      (= (compiler_load.compiler-load-structural-member-demand-count demand) 2)
-      (compiler_load.compiler-load-structural-member-demand-contains?
+      (= (load_tests.compiler-load-structural-member-demand-count demand) 2)
+      (load_tests.compiler-load-structural-member-demand-contains?
         demand
         cbi.compiler-builtin-id-fix-left)
-      (compiler_load.compiler-load-structural-member-demand-contains?
+      (load_tests.compiler-load-structural-member-demand-contains?
         demand
         cbi.compiler-builtin-id-fix-right))))
 
@@ -533,7 +528,7 @@
 
 (define (structural-member-demand-nested-scope-ok?) : bool
   (let
-    [demand : compiler_load.CompilerLoadStructuralMemberDemand
+    [demand : load_tests.CompilerLoadStructuralMemberDemand
       (structural-member-demand-source
         "(module demand.nested)
 (module local.scope
@@ -544,8 +539,8 @@
     (subject.same)))"
         cbi.compiler-builtin-id-fix-subject)]
     (and
-      (= (compiler_load.compiler-load-structural-member-demand-count demand) 1)
-      (compiler_load.compiler-load-structural-member-demand-contains?
+      (= (load_tests.compiler-load-structural-member-demand-count demand) 1)
+      (load_tests.compiler-load-structural-member-demand-contains?
         demand
         cbi.compiler-builtin-id-fix-same))))
 
@@ -556,7 +551,7 @@
 (defstruct Aggregate (value i64))"
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls))
-      (match (compiler_load.compiler-load-structural-member-demand
+      (match (load_tests.compiler-load-structural-member-demand
         (deref decls)
         cbi.compiler-builtin-id-fix-subject)
         [(CompilerLoadStructuralFullDemand) true]
@@ -585,12 +580,12 @@
           (compiler_load.compiler-load-session-state-use!
             (compiler_load.compiler-load-session-state-shared-view (& state-b)))]
         [_begin-a : unit
-          (compiler_load.compiler-load-session-state-lazy-qualified-observer-begin-pair!
+          (load_tests.compiler-load-session-state-lazy-qualified-observer-begin-pair!
             (& state-a)
             alias
             cbi.compiler-builtin-id-fix-empty)]
         [_begin-b : unit
-          (compiler_load.compiler-load-session-state-lazy-qualified-observer-begin-pair!
+          (load_tests.compiler-load-session-state-lazy-qualified-observer-begin-pair!
             (& state-b)
             alias
             cbi.compiler-builtin-id-fix-empty)]
@@ -601,14 +596,14 @@
             (ast.AstMaybeImportAlias.Some alias)
             (deref decls)
             pools)]
-        [observed-a : compiler_load.CompilerLoadLazyQualifiedObserverResult
-          (compiler_load.compiler-load-session-state-lazy-qualified-observer-end-pair!
+        [observed-a : load_tests.CompilerLoadLazyQualifiedObserverResult
+          (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!
             (& state-a))]
         [b-still-active : bool
           (compiler_load.compiler-load-session-state-lazy-qualified-observer-active?
             (& state-b))]
-        [observed-b : compiler_load.CompilerLoadLazyQualifiedObserverResult
-          (compiler_load.compiler-load-session-state-lazy-qualified-observer-end-pair!
+        [observed-b : load_tests.CompilerLoadLazyQualifiedObserverResult
+          (load_tests.compiler-load-session-state-lazy-qualified-observer-end-pair!
             (& state-b))]
         [ok : bool
           (and
@@ -780,6 +775,6 @@
       (lazy-semantic-origin-import-flatten-ok?)
       (return (io.panic "lazy semantic origin import flatten smoke mismatch")))
     (unless
-      (compiler_load.compiler-load-lazy-qualified-observer-dense-stack-ok?)
+      (load_tests.compiler-load-lazy-qualified-observer-dense-stack-ok?)
       (return (io.panic "lazy observer dense stack smoke mismatch")))
     42))

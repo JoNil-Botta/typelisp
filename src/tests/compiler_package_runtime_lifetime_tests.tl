@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import compiler_intern as ci)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import stdlib.string)
 (import compiler_driver_core as driver)
 (import compiler_ast_types as ast)
@@ -263,13 +264,13 @@
   (begin
     (load.compiler-load-test-mkdir "target/exp")
     (load.compiler-load-test-mkdir "target/exp/package-runtime-lifetime")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-runtime-lifetime/helper.tl"
       "(module helper) (define value : i64 42)")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-runtime-lifetime/good.tl"
       "(import helper as helper) (define (main) : i64 helper.value)")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-runtime-lifetime/bad.tl"
       "(import helper as helper) (import absent_runtime as absent) (define (main) : i64 helper.value)")
     (let

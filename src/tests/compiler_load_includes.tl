@@ -1,4 +1,5 @@
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -119,7 +120,7 @@
             "tests/integration/include-entry.tl"
             "include_bin_payload.bin"
             cbi.compiler-builtin-id-fix-x
-            (load.compiler-load-string-vec-one "stdlib")
+            (load_tests.compiler-load-string-vec-one "stdlib")
             pools)]
         (begin
           (test.assert-true
@@ -136,7 +137,7 @@
                 "tests/integration/include-entry.tl"
                 "__missing_include__.bin"
                 cbi.compiler-builtin-id-fix-x
-                (load.compiler-load-string-vec-one "stdlib")
+                (load_tests.compiler-load-string-vec-one "stdlib")
                 pools)
               (cat.str-cat
                 "compiler-load: cannot read "
@@ -152,7 +153,7 @@
                 "tests/integration/include-entry.tl"
                 "pkg:__missing_include__/payload.bin"
                 cbi.compiler-builtin-id-fix-x
-                (load.compiler-load-string-vec-one "stdlib")
+                (load_tests.compiler-load-string-vec-one "stdlib")
                 pools)
               "compiler-load: unknown package alias '__missing_include__': pkg:__missing_include__/payload.bin")
             "ordinary resolver errors survive include dispatch")
@@ -163,7 +164,7 @@
                 "tests/integration/include-entry.tl"
                 "pkg:assets/include_bin_payload.bin"
                 cbi.compiler-builtin-id-fix-x
-                (load.compiler-load-string-vec-one "stdlib")
+                (load_tests.compiler-load-string-vec-one "stdlib")
                 "tests"
                 (load.compiler-pkg-deps-cons
                   "assets"

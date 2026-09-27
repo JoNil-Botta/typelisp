@@ -15,7 +15,7 @@
 (import compiler_intern as ci)
 (import compiler_diagnostic as cdiag)
 (import compiler_embedded_stdlib as embedded_stdlib)
-(import doc_test)
+(import doc_test_tests as doc_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
 
@@ -605,7 +605,7 @@
         (if (tc_tests.compiler-typecheck-reflection-tests-ok?)
           42
           1))]
-    [(string.eq name "doc-test") (doc_test.doc-test-smoke-all)]
+    [(string.eq name "doc-test") (doc_tests.doc-test-smoke-all)]
     [else 1]))
 
 (define (main) : i64

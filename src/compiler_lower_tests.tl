@@ -4799,9 +4799,12 @@
           (lower-test-global-seq-has-name-at? globals name (+ index 1)))])))
 
 (define (lower-test-global-list-has-name?
-  [globals : ir.CompilerIrGlobalSeq]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
   [name : String]) : bool
-  (lower-test-global-seq-has-name-at? globals name 0))
+  (let
+    [globals : ir.CompilerIrGlobalSeq
+      (owned_view.compiler-owned-reference-shared-view globals)]
+    (lower-test-global-seq-has-name-at? globals name 0)))
 
 (define (lower-test-global-function-initializer-at?
   [globals : ir.CompilerIrGlobalSeq]
@@ -5137,9 +5140,7 @@
       (match lowered
         [(ir.CompilerIrProgram.Program globals functions _)
           (and
-            (lower-test-global-list-has-name?
-              (owned_view.compiler-owned-shared-view globals)
-              "left/same")
+            (lower-test-global-list-has-name? globals "left/same")
             (lower-test-global-list-has-name? globals "right/same")
             (> (lower-test-functions-call-count functions "left/get") 0)
             (> (lower-test-functions-call-count functions "right/get") 0)
@@ -5832,12 +5833,8 @@
           (and
             (= globals.len 3)
             (= externs.len 1)
-            (lower-test-global-list-has-name?
-              (owned_view.compiler-owned-shared-view globals)
-              "answer")
-            (lower-test-global-list-has-name?
-              (owned_view.compiler-owned-shared-view globals)
-              "flag")
+            (lower-test-global-list-has-name? globals "answer")
+            (lower-test-global-list-has-name? globals "flag")
             (lower-test-global-list-has-name? globals "widened")
             (= (ir.compiler-ir-extern-seq-count externs) 1)
             (>
@@ -6858,9 +6855,12 @@
             (+ index 1)))])))
 
 (define (lower-test-global-initializer-kind
-  [globals : ir.CompilerIrGlobalSeq]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
   [global-name : String]) : String
-  (lower-test-global-initializer-kind-at globals global-name 0))
+  (let
+    [globals : ir.CompilerIrGlobalSeq
+      (owned_view.compiler-owned-reference-shared-view globals)]
+    (lower-test-global-initializer-kind-at globals global-name 0)))
 
 (define (compiler-lower-global-reference-initializer-mode-shape-ok?
   [mode : lower.CompilerLowerMode]) : bool
@@ -6872,29 +6872,19 @@
         [(ir.CompilerIrProgram.Program globals _ _)
           (and
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "base")
+              (lower-test-global-initializer-kind globals "base")
               "i64")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "copy")
+              (lower-test-global-initializer-kind globals "copy")
               "runtime")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "widened")
+              (lower-test-global-initializer-kind globals "widened")
               "runtime")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "color")
+              (lower-test-global-initializer-kind globals "color")
               "runtime")
             (string.eq
-              (lower-test-global-initializer-kind
-                (ir.compiler-ir-global-shared-view globals)
-                "callback")
+              (lower-test-global-initializer-kind globals "callback")
               "function:inc")
             (string.eq
               (lower-test-global-initializer-kind globals "callback-copy")
@@ -10865,7 +10855,7 @@
     (compiler-lower-cpu-builtin-shape-ok?)
     (compiler-lower-fs-status-shape-ok?)))
 
-(define (lower-test-decl-list-count [decls : ast.AstDeclList]) : i64
+(define (lower-test-decl-list-count [decls : (& decls ast.AstDeclList)]) : i64
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) 0]
     [(ast.AstDeclListStep.Cons _ rest)
@@ -11088,10 +11078,7 @@
               (ast.ast-decl-list-new)))))]
     [kept : ast.AstDeclList (lower-skip-runtime-until-next-module decls)]
     (and
-      (=
-        (lower-test-decl-list-count
-          (owned_view.compiler-owned-shared-view kept))
-        3)
+      (= (lower-test-decl-list-count kept) 3)
       (lower-test-decl-list-defines? kept "ExprClauseList")
       (lower-test-decl-list-defines? kept "main")
       (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper")))))
@@ -11579,10 +11566,7 @@
                         [no-main-kept : ast.AstDeclList
                           (ast.ast-decl-list-box-shared-view no-main-kept-box)]
                         (and
-                          (=
-                            (lower-test-decl-list-count
-                              (owned_view.compiler-owned-shared-view kept))
-                            4)
+                          (= (lower-test-decl-list-count kept) 4)
                           (lower-test-decl-list-defines? kept "main")
                           (lower-test-decl-list-defines? kept "helper")
                           (lower-test-decl-list-defines? kept "callback-target")
@@ -11614,10 +11598,7 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  3)
+                (= (lower-test-decl-list-count kept) 3)
                 (lower-test-decl-list-defines? kept "main")
                 (lower-test-decl-list-defines? kept "UsedBox")
                 (lower-test-decl-list-defines? kept "UsedEnum")
@@ -11651,10 +11632,7 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  2)
+                (= (lower-test-decl-list-count kept) 2)
                 (lower-test-decl-list-defines? kept "main")
                 (lower-test-decl-list-defines? kept "io.ResultIoString")
                 (not (lower-test-decl-list-defines? kept "io.DeadResult"))))])])))
@@ -11717,10 +11695,7 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  3)
+                (= (lower-test-decl-list-count kept) 3)
                 (lower-test-decl-list-defines? kept "main")
                 (lower-test-decl-list-defines? kept "ImportedMark")
                 (not (lower-test-decl-list-defines? kept "DeadMark"))))])])))
@@ -11784,10 +11759,7 @@
               [kept : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view kept-box)]
               (and
-                (=
-                  (lower-test-decl-list-count
-                    (owned_view.compiler-owned-shared-view kept))
-                  2)
+                (= (lower-test-decl-list-count kept) 2)
                 (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
 
@@ -11807,9 +11779,7 @@
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : ast.AstDeclList]) : bool
   (and
-    (=
-      (lower-test-decl-list-count (owned_view.compiler-owned-shared-view kept))
-      3)
+    (= (lower-test-decl-list-count kept) 3)
     (lower-test-decl-list-defines? kept "main")
     (lower-test-decl-list-defines? kept "unsafe-helper")
     (lower-test-decl-list-defines? kept "unsafe-entry")

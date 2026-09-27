@@ -247,24 +247,29 @@
 (define (compiler-backend-test-emit-program-with-state
   [backend-state : backend.CompilerBackendState]
   [target : backend.CompilerBackendTarget]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
+  [program : (& program ir.CompilerIrProgram)]
+  [spans : (& spans ir.CompilerSourceSpans)]
   [emit-entry : bool]) : backend.ResultCompilerBackend
-  (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    backend-state
-    (ast.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    (backend.CompilerBackendMode.Scalar)
-    spans
-    emit-entry
-    false
-    false
-    (profile_state.compiler-profile-state-new))
-    [(backend.ResultCompilerBackendBuffer.Ok buf)
-      (backend.ResultCompilerBackend.Ok (text_buf.render buf))]
-    [(backend.ResultCompilerBackendBuffer.Err message)
-      (backend.ResultCompilerBackend.Err message)]))
+  (let
+    [program : ir.CompilerIrProgram
+      (owned_view.compiler-owned-reference-shared-view program)]
+    [spans : ir.CompilerSourceSpans
+      (owned_view.compiler-owned-reference-shared-view spans)]
+    (match (backend.compiler-backend-emit-program-target-with-mode-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+      backend-state
+      (ast.ast-node-pool-reader-type-segment-bases)
+      program
+      target
+      (backend.CompilerBackendMode.Scalar)
+      spans
+      emit-entry
+      false
+      false
+      (profile_state.compiler-profile-state-new))
+      [(backend.ResultCompilerBackendBuffer.Ok buf)
+        (backend.ResultCompilerBackend.Ok (text_buf.render buf))]
+      [(backend.ResultCompilerBackendBuffer.Err message)
+        (backend.ResultCompilerBackend.Err message)])))
 
 ;; String-returning shim for the outgoing stack-argument emitter, for the same
 ;; reason: its Ok payload is the planned stage register, not the emitted text.
@@ -5128,22 +5133,22 @@
       (compiler-backend-test-emit-program-with-state
         state-a
         (backend.CompilerBackendTarget.Linux)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         true)]
     [b1-result : backend.ResultCompilerBackend
       (compiler-backend-test-emit-program-with-state
         state-b
         (backend.CompilerBackendTarget.Linux)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         true)]
     [a2-result : backend.ResultCompilerBackend
       (compiler-backend-test-emit-program-with-state
         state-a
         (backend.CompilerBackendTarget.Linux)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
+        program
+        spans
         true)]
     [b2-result : backend.ResultCompilerBackend
       (compiler-backend-test-emit-program-with-state
@@ -15175,10 +15180,13 @@ g:
     [(backend.ResultCompilerBackendBuffer.Err _) false]))
 
 (define (compiler-backend-explicit-state-buffer-result-text
-  [result : backend.ResultCompilerBackendBuffer]) : String
-  (match result
-    [(backend.ResultCompilerBackendBuffer.Ok buf) (text_buf.render buf)]
-    [(backend.ResultCompilerBackendBuffer.Err _) ""]))
+  [result : (& result backend.ResultCompilerBackendBuffer)]) : String
+  (let
+    [result : backend.ResultCompilerBackendBuffer
+      (owned_view.compiler-owned-reference-shared-view result)]
+    (match result
+      [(backend.ResultCompilerBackendBuffer.Ok buf) (text_buf.render buf)]
+      [(backend.ResultCompilerBackendBuffer.Err _) ""])))
 
 (define (compiler-backend-explicit-state-object-result-text
   [result : backend.ResultCompilerBackendObject]) : String
@@ -15190,13 +15198,16 @@ g:
     [(backend.ResultCompilerBackendObject.Err _) ""]))
 
 (define (compiler-backend-explicit-state-object-result-ok?
-  [result : backend.ResultCompilerBackendObject]) : bool
-  (match result
-    [(backend.ResultCompilerBackendObject.Ok image)
-      (match (elf.compiler-object-elf-render image)
-        [(elf.ResultCompilerObjectElf.Ok _) true]
-        [(elf.ResultCompilerObjectElf.Err _) false])]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+  [result : (& result backend.ResultCompilerBackendObject)]) : bool
+  (let
+    [result : backend.ResultCompilerBackendObject
+      (owned_view.compiler-owned-reference-shared-view result)]
+    (match result
+      [(backend.ResultCompilerBackendObject.Ok image)
+        (match (elf.compiler-object-elf-render image)
+          [(elf.ResultCompilerObjectElf.Ok _) true]
+          [(elf.ResultCompilerObjectElf.Err _) false])]
+      [(backend.ResultCompilerBackendObject.Err _) false])))
 
 (define (compiler-backend-explicit-state-pic-result-ok?
   [result : (& result backend.ResultCompilerBackendPic)]) : bool
@@ -15482,13 +15493,11 @@ g:
         (compiler-backend-explicit-state-buffer-result-ok? normal-a2)
         (compiler-backend-explicit-state-buffer-result-ok? normal-b2)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view normal-a1))
+          (compiler-backend-explicit-state-buffer-result-text normal-a1)
           symbol-a
           symbol-b)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view normal-b1))
+          (compiler-backend-explicit-state-buffer-result-text normal-b1)
           symbol-b
           symbol-a)
         (string.eq
@@ -15502,13 +15511,11 @@ g:
         (compiler-backend-explicit-state-buffer-result-ok? final-a2)
         (compiler-backend-explicit-state-buffer-result-ok? final-b2)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view final-a1))
+          (compiler-backend-explicit-state-buffer-result-text final-a1)
           symbol-a
           symbol-b)
         (compiler-backend-explicit-state-own-symbols-ok?
-          (compiler-backend-explicit-state-buffer-result-text
-            (owned_view.compiler-owned-shared-view final-b1))
+          (compiler-backend-explicit-state-buffer-result-text final-b1)
           symbol-b
           symbol-a)
         (string.eq
@@ -15517,14 +15524,10 @@ g:
         (string.eq
           (compiler-backend-explicit-state-buffer-result-text final-b1)
           (compiler-backend-explicit-state-buffer-result-text final-b2))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-a1))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-b1))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-a2))
-        (compiler-backend-explicit-state-object-result-ok?
-          (owned_view.compiler-owned-shared-view object-b2))
+        (compiler-backend-explicit-state-object-result-ok? object-a1)
+        (compiler-backend-explicit-state-object-result-ok? object-b1)
+        (compiler-backend-explicit-state-object-result-ok? object-a2)
+        (compiler-backend-explicit-state-object-result-ok? object-b2)
         (compiler-backend-explicit-state-own-symbols-ok?
           (compiler-backend-explicit-state-object-result-text
             (owned_view.compiler-owned-shared-view object-a1))

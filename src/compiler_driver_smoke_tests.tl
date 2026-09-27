@@ -1044,34 +1044,37 @@
 ;; source cfg selects names that exist only in the matching generated branch,
 ;; so successful compilation proves selection rather than just parsing syntax.
 (define (compiler-driver-generated-cfg-job-ok?
-  [state : driver.CompilerDriverState]
+  [state : (& state driver.CompilerDriverState)]
   [target : compiler_backend.CompilerBackendTarget]
   [enabled : bool]) : bool
-  (begin
-    (compiler-driver-reader-context-smoke-prepare-state!
-      (owned_view.compiler-owned-shared-view state))
-    (let
-      [cfgs : sym_i64_env.SymI64Env
-        (if enabled
-          (compiler_cfg_core.compiler-cfg-enable-with-intern-state
-            (compiler_cfg_core.compiler-cfg-empty)
-            "generated-cfg-feature"
-            (driver.compiler-driver-state-owned-interns-mut
-              (owned_view.compiler-owned-shared-view state)))
-          (compiler_cfg_core.compiler-cfg-empty))]
-      (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
-        state
-        "tests/integration/generated_cfg.tl"
-        target
-        true
-        (compiler-driver-pic-smoke-roots)
-        0
-        compiler_backend.CompilerBackendMode.Scalar
-        cfgs)
-        [(driver.ResultCompilerDriverBuffer.Ok _ _) true]
-        [(driver.ResultCompilerDriverBuffer.Err diagnostic _)
-          (compiler-driver-reader-context-smoke-fail
-            (cdiag.compiler-diagnostic-render (deref diagnostic)))]))))
+  (let
+    [state : driver.CompilerDriverState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (begin
+      (compiler-driver-reader-context-smoke-prepare-state!
+        (owned_view.compiler-owned-shared-view state))
+      (let
+        [cfgs : sym_i64_env.SymI64Env
+          (if enabled
+            (compiler_cfg_core.compiler-cfg-enable-with-intern-state
+              (compiler_cfg_core.compiler-cfg-empty)
+              "generated-cfg-feature"
+              (driver.compiler-driver-state-owned-interns-mut
+                (owned_view.compiler-owned-shared-view state)))
+            (compiler_cfg_core.compiler-cfg-empty))]
+        (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+          state
+          "tests/integration/generated_cfg.tl"
+          target
+          true
+          (compiler-driver-pic-smoke-roots)
+          0
+          compiler_backend.CompilerBackendMode.Scalar
+          cfgs)
+          [(driver.ResultCompilerDriverBuffer.Ok _ _) true]
+          [(driver.ResultCompilerDriverBuffer.Err diagnostic _)
+            (compiler-driver-reader-context-smoke-fail
+              (cdiag.compiler-diagnostic-render (deref diagnostic)))])))))
 
 (define (compiler-driver-generated-cfg-isolation-ok?) : bool
   (let
@@ -1081,7 +1084,7 @@
       (driver.compiler-driver-state-new-for-compile)]
     [a-enabled : bool
       (compiler-driver-generated-cfg-job-ok?
-        (owned_view.compiler-owned-shared-view state-a)
+        state-a
         compiler_backend.CompilerBackendTarget.Linux
         true)]
     [a-intern : ci.InternCompatState
@@ -1094,7 +1097,7 @@
     [a-types : i64 (ast.ast-node-pool-context-type-len a-pools)]
     [b-disabled : bool
       (compiler-driver-generated-cfg-job-ok?
-        (owned_view.compiler-owned-shared-view state-b)
+        state-b
         compiler_backend.CompilerBackendTarget.Windows
         false)]
     [a-unchanged : bool
@@ -1110,7 +1113,7 @@
           (= (ast.ast-node-pool-context-type-len pools) a-types)))]
     [a-reused : bool
       (compiler-driver-generated-cfg-job-ok?
-        (owned_view.compiler-owned-shared-view state-a)
+        state-a
         compiler_backend.CompilerBackendTarget.Linux
         true)]
     [a-disabled : bool

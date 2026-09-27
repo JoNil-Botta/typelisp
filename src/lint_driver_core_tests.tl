@@ -782,7 +782,7 @@ end
       (selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
         (owned_view.compiler-owned-shared-view source-a)
-        (owned_view.compiler-owned-shared-view bin-decls))]
+        bin-decls)]
     [bin-count-b : i64
       (selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
@@ -792,7 +792,7 @@ end
       (selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
         source-a
-        (owned_view.compiler-owned-shared-view lib-decls))]
+        lib-decls)]
     [lib-count-b : i64
       (selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
@@ -832,7 +832,7 @@ end
       (selfhost-lint-package-dead-count-for-source
         "pkg/cfg.tl"
         cfg-source
-        (owned_view.compiler-owned-shared-view cfg-bin-decls))]
+        cfg-bin-decls)]
     [ordinary-mode-index : i64
       (lint_driver.selfhost-lint-dead-decls-index-of
         (owned_view.compiler-owned-shared-view cfg-bin-decls)
@@ -854,7 +854,7 @@ end
       (selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         platform-cfg-source
-        (owned_view.compiler-owned-shared-view platform-windows-decls))]
+        platform-windows-decls)]
     [platform-windows-storage-index : i64
       (lint_driver.selfhost-lint-dead-decls-index-of
         (owned_view.compiler-owned-shared-view platform-windows-decls)
@@ -865,7 +865,7 @@ end
       (selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-qualified-left-source)
-        (owned_view.compiler-owned-shared-view qualified-import-decls))]
+        qualified-import-decls)]
     [qualified-right-count : i64
       (selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
@@ -877,7 +877,7 @@ end
       (selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-moduleless-left-source)
-        (owned_view.compiler-owned-shared-view moduleless-import-decls))]
+        moduleless-import-decls)]
     [moduleless-right-count : i64
       (selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
@@ -1935,5 +1935,8 @@ end
 (define (selfhost-lint-package-dead-count-for-source
   [path : String]
   [source : String]
-  [items : lint_driver.SelfhostLintDeadDecls]) : i64
-  (selfhost-lint-package-dead-count-for-source-from path source items 0 0))
+  [items : (& items lint_driver.SelfhostLintDeadDecls)]) : i64
+  (let
+    [items : lint_driver.SelfhostLintDeadDecls
+      (owned_view.compiler-owned-reference-shared-view items)]
+    (selfhost-lint-package-dead-count-for-source-from path source items 0 0)))

@@ -36,12 +36,8 @@
         [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
-            [tail1 : ast.AstDeclList
-              (ast_tests.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view decls))]
-            [tail2 : ast.AstDeclList
-              (ast_tests.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view tail1))]
+            [tail1 : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
+            [tail2 : ast.AstDeclList (ast_tests.ast-decl-list-tail tail1)]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
@@ -646,9 +642,7 @@
         [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
             [decls : ast.AstDeclList (deref decls-box)]
-            [tail : ast.AstDeclList
-              (ast_tests.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view decls))]
+            [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
             [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
             [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
             (begin

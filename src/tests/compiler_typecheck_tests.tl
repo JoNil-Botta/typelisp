@@ -21,6 +21,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_tests as intern_tests)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
@@ -933,48 +934,61 @@
     v.x))")
 
 (define (compiler-typecheck-fixture-nominal-id
-  [program : ast.AstProgram]
+  [program : (& program ast.AstProgram)]
   [name : String]) : i64
-  (match program
-    [(ast.AstProgram.Program decls-box)
-      (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [index : i64 0]
-        [name-id : i64 -1]
-        (begin
-          (while (and (< name-id 0) (< index decls.len))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              (begin
-                (match decl
-                  [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(ast.AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(ast.AstDecl.DefEnum decl-meta candidate _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [_ unit])
-                (set! index (+ index 1)))))
-          name-id))]))
+  (let
+    [program : ast.AstProgram
+      (owned_view.compiler-owned-reference-shared-view program)]
+    (match program
+      [(ast.AstProgram.Program decls-box)
+        (let
+          [decls : ast.AstDeclList
+            (ast.ast-decl-list-box-shared-view decls-box)]
+          [index : i64 0]
+          [name-id : i64 -1]
+          (begin
+            (while (and (< name-id 0) (< index decls.len))
+              (let
+                [decl : ast.AstDecl
+                  (ast.ast-decl-list-get
+                    (& decls)
+                    index
+                    (ast.ast-decl-fallback))]
+                (begin
+                  (match decl
+                    [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [(ast.AstDecl.DefStructLifetimes
+                        decl-meta
+                        candidate
+                        _
+                        _
+                        _
+                        _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [(ast.AstDecl.DefEnum decl-meta candidate _ _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
+                      (if (string.eq
+                        (tc_core.tc-env-key-name-text candidate)
+                        name)
+                        (set! name-id candidate)
+                        unit)]
+                    [_ unit])
+                  (set! index (+ index 1)))))
+            name-id))])))
 
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (begin
@@ -997,16 +1011,12 @@
                   (match (tc_core.tc-repr-c-struct-layout-id
                     ctx
                     "Packet"
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "Packet"))
+                    (compiler-typecheck-fixture-nominal-id program "Packet"))
                     [(tc_core.ResultTcReprCLayout.Ok packet)
                       (match (tc_core.tc-repr-c-struct-layout-id
                         ctx
                         "Outer"
-                        (compiler-typecheck-fixture-nominal-id
-                          (ast.ast-global-shared-view program)
-                          "Outer"))
+                        (compiler-typecheck-fixture-nominal-id program "Outer"))
                         [(tc_core.ResultTcReprCLayout.Ok outer)
                           (match (tc_core.tc-repr-c-struct-layout-id
                             ctx
@@ -1670,7 +1680,7 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
+                      program
                       "InlinePacket"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (let
@@ -1725,7 +1735,7 @@
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
                     (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
+                      program
                       "InlineChoice"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (let
@@ -1772,21 +1782,21 @@
                             (set! ok false))
                           (if (=
                             (core_tests.tc-inline-aggregate-layout-variant-size-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               empty-id)
                             8)
                             unit
                             (set! ok false))
                           (if (=
                             (core_tests.tc-inline-aggregate-layout-variant-size-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               byte-id)
                             16)
                             unit
                             (set! ok false))
                           (if (=
                             (core_tests.tc-inline-aggregate-layout-variant-size-id
-                              (tc_core.tc-global-shared-view layout)
+                              layout
                               wide-id)
                             24)
                             unit
@@ -1819,9 +1829,7 @@
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "WidePacket"))
+                    (compiler-typecheck-fixture-nominal-id program "WidePacket"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (match (tc_core.tc-global-shared-view layout)
                         [(tc_core.TcInlineAggregateLayout.Struct
@@ -1871,9 +1879,7 @@
                       (set! ok false)])
                   (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    (compiler-typecheck-fixture-nominal-id
-                      (ast.ast-global-shared-view program)
-                      "WideChoice"))
+                    (compiler-typecheck-fixture-nominal-id program "WideChoice"))
                     [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (match layout
                         [(tc_core.TcInlineAggregateLayout.Enum
@@ -3027,21 +3033,13 @@
   (let
     [program : ast.AstProgram (tc_api.compiler-typecheck-context-program ctx)]
     [input-result-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "InputResult")]
+      (compiler-typecheck-fixture-nominal-id program "InputResult")]
     [outer-result-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "OuterResult")]
+      (compiler-typecheck-fixture-nominal-id program "OuterResult")]
     [other-result-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "OtherResult")]
+      (compiler-typecheck-fixture-nominal-id program "OtherResult")]
     [input-option-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        (ast.ast-global-shared-view program)
-        "InputOption")]
+      (compiler-typecheck-fixture-nominal-id program "InputOption")]
     [outer-option-id : i64
       (compiler-typecheck-fixture-nominal-id program "OuterOption")]
     (begin

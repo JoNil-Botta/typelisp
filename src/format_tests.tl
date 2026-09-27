@@ -265,11 +265,7 @@
   (let
     [stream : tokens.FormatTokenStream (format-lex "(0x2a -0b101010)")]
     (and
-      (=
-        (format-token-tag-count
-          (owned_view.compiler-owned-shared-view stream)
-          (tokens.fmt-tag-int))
-        2)
+      (= (format-token-tag-count stream (tokens.fmt-tag-int)) 2)
       (=
         (tokens.format-token-tag (tokens.format-token-at stream 1))
         (tokens.fmt-tag-int))
@@ -290,11 +286,7 @@
   (let
     [stream : tokens.FormatTokenStream (format-lex "'a' '\"' '('")]
     (and
-      (=
-        (format-token-tag-count
-          (owned_view.compiler-owned-shared-view stream)
-          (tokens.fmt-tag-char))
-        3)
+      (= (format-token-tag-count stream (tokens.fmt-tag-char)) 3)
       (=
         (tokens.format-token-tag (tokens.format-token-at stream 3))
         (tokens.fmt-tag-end)))))
@@ -582,7 +574,7 @@
     (= span.end-col end-col)))
 
 (define (format-token-tag-count
-  [stream : tokens.FormatTokenStream]
+  [stream : (& stream tokens.FormatTokenStream)]
   [wanted : i64]) : i64
   (let
     [i : i64 0]

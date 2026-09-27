@@ -1206,16 +1206,21 @@
   (type-mask i64)
   (modifier-mask i64))
 
-(define (lsp-semantic-token-json-i64 [items : json.JsonSeq] [index : i64]) : i64
-  (match (json.list-get-index items index)
-    [(json.JsonMissing) -1]
-    [(json.JsonFound value)
-      (match value
-        [(json.JsonNumber text)
-          (match (json.number->i64 (& text))
-            [(json.OkJsonNumberI64 number) number]
-            [(json.ErrJsonNumberI64 _) -1])]
-        [_ -1])]))
+(define (lsp-semantic-token-json-i64
+  [items : (& items json.JsonSeq)]
+  [index : i64]) : i64
+  (let
+    [items : json.JsonSeq
+      (owned_view.compiler-owned-reference-shared-view items)]
+    (match (json.list-get-index items index)
+      [(json.JsonMissing) -1]
+      [(json.JsonFound value)
+        (match value
+          [(json.JsonNumber text)
+            (match (json.number->i64 (& text))
+              [(json.OkJsonNumberI64 number) number]
+              [(json.ErrJsonNumberI64 _) -1])]
+          [_ -1])])))
 
 ;; Decode the relative stream and validate the protocol invariants against the
 ;; negotiated source positions, instead of accepting a substring-shaped array.
@@ -1245,26 +1250,15 @@
               (begin
                 (while (<= (+ index 4) (- length 1))
                   (let
-                    [delta-line : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        index)]
+                    [delta-line : i64 (lsp-semantic-token-json-i64 items index)]
                     [delta-start : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 1))]
+                      (lsp-semantic-token-json-i64 items (+ index 1))]
                     [token-length : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 2))]
+                      (lsp-semantic-token-json-i64 items (+ index 2))]
                     [token-type : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 3))]
+                      (lsp-semantic-token-json-i64 items (+ index 3))]
                     [modifiers : i64
-                      (lsp-semantic-token-json-i64
-                        (owned_view.compiler-owned-shared-view items)
-                        (+ index 4))]
+                      (lsp-semantic-token-json-i64 items (+ index 4))]
                     (begin
                       (if (or
                         (< delta-line 0)

@@ -121,7 +121,7 @@
       "_"
       (spec-lifetime-list-key-at lifetimes (+ index 1)))))
 
-(define (spec-lifetime-list-key [lifetimes : ast.AstLifetimeList]) : String
+(define (spec-lifetime-list-key [lifetimes : (& lifetimes ast.AstLifetimeList)]) : String
   (spec-lifetime-list-key-at (& lifetimes) 0))
 
 (define (spec-type-key [ty : ast.AstType]) : String
@@ -202,8 +202,7 @@
         "enumargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (spec-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+        (spec-lifetime-list-key (deref lifetimes)))]
     [(ast.AstType.Struct name)
       (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.StructArgs name lifetimes)
@@ -211,16 +210,14 @@
         "structargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (spec-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+        (spec-lifetime-list-key (deref lifetimes)))]
     [(ast.AstType.Var name) (str_cat.str-cat "var_" (spec_ci.intern-str name))]
     [(ast.AstType.VarArgs name lifetimes)
       (str_cat.str-cat
         "varargs_"
         (spec_ci.intern-str name)
         "_"
-        (spec-lifetime-list-key
-          (ast.ast-lifetime-list-box-shared-view lifetimes)))]))
+        (spec-lifetime-list-key (deref lifetimes)))]))
 
 (define (spec-value-key [value : ctfe.CompilerCtfeValue]) : String
   (match value

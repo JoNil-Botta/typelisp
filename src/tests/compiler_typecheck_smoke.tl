@@ -2584,7 +2584,7 @@
       (tc_api.typecheck-compiler-source-language-cfgs)]
     [empty-seen : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     (match (core_tests.macro-materialize-generated-import
-      (tc_core.tc-global-shared-view state)
+      state
       (tc_core.tc-global-shared-view generated-import)
       (tc_core.tc-global-shared-view entry)
       owner-id
@@ -2599,7 +2599,7 @@
         ;; program/surface caches. The selected compatibility session is
         ;; intentionally irrelevant to both traversals.
         (match (core_tests.macro-materialize-generated-import
-          (tc_core.tc-global-shared-view state)
+          state
           (tc_core.tc-global-shared-view generated-import)
           (tc_core.tc-global-shared-view entry)
           owner-id
@@ -2611,7 +2611,7 @@
           pools)
           [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
             (match (core_tests.macro-materialize-generated-import
-              (tc_core.tc-global-shared-view state)
+              state
               generated-import
               (tc_core.tc-global-shared-view entry)
               owner-id
@@ -2623,7 +2623,7 @@
               pools)
               [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
                 (match (core_tests.macro-materialize-generated-import
-                  (tc_core.tc-global-shared-view state)
+                  state
                   missing-import
                   entry
                   owner-id
@@ -2683,11 +2683,9 @@
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     [_enable-baseline : unit
-      (load_tests.compiler-load-session-state-cache-enable!
-        (tc_core.tc-global-shared-view baseline-state))]
+      (load_tests.compiler-load-session-state-cache-enable! baseline-state)]
     [_enable-a : unit
-      (load_tests.compiler-load-session-state-cache-enable!
-        (tc_core.tc-global-shared-view state-a))]
+      (load_tests.compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit (set! (array-ref state-b.program-cache-hit-count 0) 17)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [_fixtures : unit
@@ -2798,8 +2796,7 @@
       (tc_core.tc-prefix-snapshot-cache-state-new)]
     [job-state-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
     [_enable-a : unit
-      (load_tests.compiler-load-session-state-cache-enable!
-        (tc_core.tc-global-shared-view state-a))]
+      (load_tests.compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit
       (begin
         (set! (array-ref state-b.program-cache-hit-count 0) 23)

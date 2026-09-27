@@ -23,6 +23,7 @@
 (cfg test (import stdlib.test))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
+(import compiler_owned_view as owned_view)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
@@ -1056,9 +1057,11 @@
           (- index 1))))))
 
 (define (tc-type-env-scoped-stack-marker-lookup
-  [stack : tc_core.TcTypeEnvScopedStack]
+  [stack : (& stack tc_core.TcTypeEnvScopedStack)]
   [marker-kind : tc_core.TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedMarkerLookup
   (let
+    [stack : tc_core.TcTypeEnvScopedStack
+      (owned_view.compiler-owned-reference-shared-view stack)]
     [index : i64 (- stack.slot-count 1)]
     (tc-type-env-scoped-stack-marker-lookup-from stack marker-kind index)))
 
@@ -1198,9 +1201,11 @@
     (tc-type-env-scoped-sidecar-bind-unsafe-id carrier.sidecar name-id ty)))
 
 (define (tc-type-env-scoped-carrier-lookup-id
-  [carrier : tc_core.TcTypeEnvScopedCarrier]
+  [carrier : (& carrier tc_core.TcTypeEnvScopedCarrier)]
   [name-id : i64]) : tc_core.ResultTcType
   (let
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (owned_view.compiler-owned-reference-shared-view carrier)]
     [sidecar : tc_core.TcTypeEnvScopedSidecar carrier.sidecar]
     [stack : tc_core.TcTypeEnvScopedStack
       (tc_core.tc-global-shared-view sidecar.stack)]
@@ -3278,7 +3283,7 @@
                     (and unsafe (= depth 1) (= generation generation-before))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view sidecar.stack)
+                  sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.UnsafeDecl)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3560,7 +3565,7 @@
                     (and unsafe)]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view deep-sidecar.stack)
+                  deep-sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.DefaultBoundary)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3570,7 +3575,7 @@
                     (= marker-id (tc_core.tc-default-boundary-id))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view deep-sidecar.stack)
+                  deep-sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.CleanupOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3582,7 +3587,7 @@
                       (string.eq (ci.intern-str owner) "resource"))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
-                  (tc_core.tc-global-shared-view deep-sidecar.stack)
+                  deep-sidecar.stack
                   tc_core.TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner)
                   [(TcTypeEnvScopedMarkerLookup.Found
                       marker-id
@@ -3911,19 +3916,13 @@
         [mirrored-snapshot : tc_core.TcTypeEnv
           (tc_core.tc-type-env-scoped-carrier-env mirrored-carrier)]
         (and
-          (match (tc-type-env-scoped-carrier-lookup-id
-            (tc_core.tc-global-shared-view carrier)
-            tail-only-id)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier tail-only-id)
             [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
             [_ false])
-          (match (tc-type-env-scoped-carrier-lookup-id
-            (tc_core.tc-global-shared-view carrier)
-            shadow-id)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier shadow-id)
             [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
             [_ false])
-          (match (tc-type-env-scoped-carrier-lookup-id
-            (tc_core.tc-global-shared-view carrier)
-            alias-id)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier alias-id)
             [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
             [_ false])
           (tc-type-env-scoped-carrier-binding-unsafe-id? carrier fn-id)
@@ -5887,19 +5886,22 @@
             (+ index 1)))))))
 
 (define (tc-inline-aggregate-layout-variant-size-id
-  [layout : tc_core.TcInlineAggregateLayout]
+  [layout : (& layout tc_core.TcInlineAggregateLayout)]
   [name-id : i64]) : i64
-  (match layout
-    [(tc_core.TcInlineAggregateLayout.Struct _ _ _) -1]
-    [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
-      (let
-        [exact : i64
-          (tc-inline-variant-layout-list-size-exact-id
-            (tc_core.tc-global-shared-view variants)
-            name-id)]
-        (if (>= exact 0)
-          exact
-          (tc-inline-variant-layout-list-size-fallback-id variants name-id)))]))
+  (let
+    [layout : tc_core.TcInlineAggregateLayout
+      (owned_view.compiler-owned-reference-shared-view layout)]
+    (match layout
+      [(tc_core.TcInlineAggregateLayout.Struct _ _ _) -1]
+      [(tc_core.TcInlineAggregateLayout.Enum _ _ variants)
+        (let
+          [exact : i64
+            (tc-inline-variant-layout-list-size-exact-id
+              (tc_core.tc-global-shared-view variants)
+              name-id)]
+          (if (>= exact 0)
+            exact
+            (tc-inline-variant-layout-list-size-fallback-id variants name-id)))])))
 
 ;; Serial/test compatibility adapter. Production batch prewarming supplies the
 ;; CompilerDriverState-owned job explicitly.
@@ -9265,7 +9267,7 @@
 ;; Compatibility entry point for focused callers that construct generated
 ;; declarations without a distinct physical provenance lane.
 (define (macro-materialize-generated-import
-  [load-state : cload.CompilerLoadSessionState]
+  [load-state : (& load-state cload.CompilerLoadSessionState)]
   [decl : ast.AstDecl]
   [decl-path : String]
   [decl-owner-id : i64]
@@ -9275,18 +9277,21 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : tc_core.ResultMacroMaterializeImport
-  (tc_core.macro-materialize-generated-import-with-provenance
-    load-state
-    decl
-    decl-path
-    decl-owner-id
-    decl-owner-id
-    module
-    module-id
-    seen
-    stdlib-roots
-    cfgs
-    pools))
+  (let
+    [load-state : cload.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view load-state)]
+    (tc_core.macro-materialize-generated-import-with-provenance
+      load-state
+      decl
+      decl-path
+      decl-owner-id
+      decl-owner-id
+      module
+      module-id
+      seen
+      stdlib-roots
+      cfgs
+      pools)))
 
 (define (tc-scratch-arena-state-isolation-self-test) : bool
   (let

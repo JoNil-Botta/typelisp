@@ -3,6 +3,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-ir-types-smoke-instr-seq-prepend
   [instr : compiler_ir_types.CompilerIrInstr]
@@ -154,7 +155,7 @@
         (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-function-seq-name-at?
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]
   [index : i64]
   [want : String]) : bool
   (if (or (< index 0) (>= index functions.len))
@@ -164,17 +165,20 @@
         (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-block-list-label-at?
-  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
   [index : i64]
   [want : i64]) : bool
-  (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (if (= index 0)
-        (match block
-          [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
-        (compiler-ir-smoke-block-list-label-at? (deref rest) (- index 1) want))]
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (owned_view.compiler-owned-reference-shared-view blocks)]
+    (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
+      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+        (if (= index 0)
+          (match block
+            [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
+          (compiler-ir-smoke-block-list-label-at? (deref rest) (- index 1) want))]
+      [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+      [(compiler_ir_types.CompilerIrBlockList.Array _) false])))
 
 (define (compiler-ir-smoke-param-seq-entry-i64?
   [seq : compiler_ir_types.CompilerIrParamSeq]
@@ -517,11 +521,11 @@
     (and
       (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 3)
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compact-blocks
         0
         (compiler_ir_types.compiler-ir-label "first"))
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compact-blocks
         1
         (compiler_ir_types.compiler-ir-label "second"))
       (compiler-ir-smoke-block-list-label-at?
@@ -529,7 +533,7 @@
         2
         (compiler_ir_types.compiler-ir-label "third"))
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view array-reversed-blocks)
+        array-reversed-blocks
         0
         (compiler_ir_types.compiler-ir-label "third"))
       (compiler-ir-smoke-block-list-label-at?
@@ -537,18 +541,14 @@
         2
         (compiler_ir_types.compiler-ir-label "first"))
       (= (compiler_ir_types.compiler-ir-function-seq-count compact-functions) 3)
+      (compiler-ir-smoke-function-seq-name-at? compact-functions 0 "first-func")
       (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-functions)
-        0
-        "first-func")
-      (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-functions)
+        compact-functions
         1
         "second-func")
       (compiler-ir-smoke-function-seq-name-at? compact-functions 2 "third-func")
       (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view
-          array-reversed-functions)
+        array-reversed-functions
         0
         "third-func")
       (compiler-ir-smoke-function-seq-name-at?
@@ -578,15 +578,18 @@
     value))
 
 (define (compiler-ir-smoke-value-code
-  [value : compiler_ir_types.CompilerIrValue]) : i64
-  (match value
-    [(compiler_ir_types.CompilerIrValue.Var id) id]
-    [(compiler_ir_types.CompilerIrValue.I64 n) (+ 1000 n)]
-    [(compiler_ir_types.CompilerIrValue.Bool b)
-      (if b
-        2001
-        2000)]
-    [_ (- 0 1)]))
+  [value : (& value compiler_ir_types.CompilerIrValue)]) : i64
+  (let
+    [value : compiler_ir_types.CompilerIrValue
+      (owned_view.compiler-owned-reference-shared-view value)]
+    (match value
+      [(compiler_ir_types.CompilerIrValue.Var id) id]
+      [(compiler_ir_types.CompilerIrValue.I64 n) (+ 1000 n)]
+      [(compiler_ir_types.CompilerIrValue.Bool b)
+        (if b
+          2001
+          2000)]
+      [_ (- 0 1)])))
 
 (define (compiler-ir-smoke-record-value!
   [seen : (__tl_dyn-array i64)]
@@ -714,44 +717,20 @@
         [(compiler_ir_types.CompilerIrCallArgs.Array values)
           (and
             (= (array-length values) 4)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 0))
-              13)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 1))
-              1009)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 2))
-              14)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 3))
-              2001))]
+            (= (compiler-ir-smoke-value-code (array-ref values 0)) 13)
+            (= (compiler-ir-smoke-value-code (array-ref values 1)) 1009)
+            (= (compiler-ir-smoke-value-code (array-ref values 2)) 14)
+            (= (compiler-ir-smoke-value-code (array-ref values 3)) 2001))]
         [_ false])
       (match sret-mapped
         [(compiler_ir_types.CompilerIrCallArgs.Sret values index)
           (and
             (= index 2)
             (= (array-length values) 4)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 0))
-              13)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 1))
-              1009)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 2))
-              14)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 3))
-              2001))]
+            (= (compiler-ir-smoke-value-code (array-ref values 0)) 13)
+            (= (compiler-ir-smoke-value-code (array-ref values 1)) 1009)
+            (= (compiler-ir-smoke-value-code (array-ref values 2)) 14)
+            (= (compiler-ir-smoke-value-code (array-ref values 3)) 2001))]
         [_ false])
       (= (array-ref seen 0) 11)
       (= (array-ref seen 1) 1)
@@ -792,14 +771,8 @@
     (and
       (= mapped.len 2)
       (= (array-length mapped.slots) 2)
-      (=
-        (compiler-ir-smoke-value-code
-          (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 0))
-        15)
-      (=
-        (compiler-ir-smoke-value-code
-          (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 1))
-        1011)
+      (= (compiler-ir-smoke-value-code (array-ref mapped.slots 0)) 15)
+      (= (compiler-ir-smoke-value-code (array-ref mapped.slots 1)) 1011)
       (= (array-ref seen 0) 2)
       (= (array-ref seen 1) 5)
       (= (array-ref seen 2) 1011))))
@@ -3004,9 +2977,11 @@
       [_ "?"])))
 
 (define (compiler-ir-smoke-uses-text
-  [instr : compiler_ir_types.CompilerIrInstr]
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]
   [delta : i64]) : String
   (let
+    [instr : compiler_ir_types.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
     [empty : String ""]
     (compiler_ir_types.compiler-ir-instr-fold-uses
       instr
@@ -3065,29 +3040,28 @@
       (string.int->string (+ label delta)))))
 
 (define (compiler-ir-smoke-successor-text
-  [instr : compiler_ir_types.CompilerIrInstr]
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]
   [delta : i64]) : String
-  (begin
-    (set! compiler-ir-smoke-operand-labels "")
-    (compiler_ir_types.compiler-ir-instr-visit-successors
-      instr
-      compiler-ir-smoke-note-label
-      delta)
-    (compiler_ir_types.compiler-ir-global-shared-view
-      compiler-ir-smoke-operand-labels)))
+  (let
+    [instr : compiler_ir_types.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
+    (begin
+      (set! compiler-ir-smoke-operand-labels "")
+      (compiler_ir_types.compiler-ir-instr-visit-successors
+        instr
+        compiler-ir-smoke-note-label
+        delta)
+      (compiler_ir_types.compiler-ir-global-shared-view
+        compiler-ir-smoke-operand-labels))))
 
 (define (compiler-ir-smoke-operand-summary
   [instr : compiler_ir_types.CompilerIrInstr]) : String
   (str_cat.str-cat
-    (compiler-ir-smoke-uses-text
-      (compiler_ir_types.compiler-ir-global-shared-view instr)
-      0)
+    (compiler-ir-smoke-uses-text instr 0)
     " | dst "
     (string.int->string (compiler_ir_types.compiler-ir-instr-dst instr))
     " | succ"
-    (compiler-ir-smoke-successor-text
-      (compiler_ir_types.compiler-ir-global-shared-view instr)
-      0)
+    (compiler-ir-smoke-successor-text instr 0)
     (match (compiler_ir_types.compiler-ir-instr-dst-type instr)
       [(ast.AstMaybeType.Some _) " | typed"]
       [(ast.AstMaybeType.No) ""])))
@@ -3112,12 +3086,15 @@
 
 (define (compiler-ir-smoke-zip-eq?
   [a : compiler_ir_types.CompilerIrInstr]
-  [b : compiler_ir_types.CompilerIrInstr]) : bool
-  (compiler_ir_types.compiler-ir-instr-zip-eq
-    a
-    b
-    compiler-ir-smoke-value-eq
-    compiler-ir-smoke-type-eq))
+  [b : (& b compiler_ir_types.CompilerIrInstr)]) : bool
+  (let
+    [b : compiler_ir_types.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view b)]
+    (compiler_ir_types.compiler-ir-instr-zip-eq
+      a
+      b
+      compiler-ir-smoke-value-eq
+      compiler-ir-smoke-type-eq)))
 
 ;; 0, or the number of the failed check.
 (define (compiler-ir-smoke-operand-failure
@@ -3154,12 +3131,8 @@
         2]
       [(not
           (string.eq
-            (compiler-ir-smoke-uses-text
-              (compiler_ir_types.compiler-ir-global-shared-view mapped)
-              0)
-            (compiler-ir-smoke-uses-text
-              (compiler_ir_types.compiler-ir-global-shared-view instr)
-              100)))
+            (compiler-ir-smoke-uses-text mapped 0)
+            (compiler-ir-smoke-uses-text instr 100)))
         3]
       [(not
           (=
@@ -3170,30 +3143,21 @@
         4]
       [(not
           (string.eq
-            (compiler-ir-smoke-successor-text
-              (compiler_ir_types.compiler-ir-global-shared-view renamed)
-              0)
-            (compiler-ir-smoke-successor-text
-              (compiler_ir_types.compiler-ir-global-shared-view instr)
-              7)))
+            (compiler-ir-smoke-successor-text renamed 0)
+            (compiler-ir-smoke-successor-text instr 7)))
         5]
       [(not
           (=
             (compiler-ir-smoke-zip-eq?
               (compiler_ir_types.compiler-ir-global-shared-view instr)
-              (compiler_ir_types.compiler-ir-global-shared-view instr))
+              instr)
             (not spmd?)))
         6]
       [(and
-          (not
-            (string.eq
-              (compiler-ir-smoke-uses-text
-                (compiler_ir_types.compiler-ir-global-shared-view instr)
-                0)
-              ""))
+          (not (string.eq (compiler-ir-smoke-uses-text instr 0) ""))
           (compiler-ir-smoke-zip-eq?
             (compiler_ir_types.compiler-ir-global-shared-view instr)
-            (compiler_ir_types.compiler-ir-global-shared-view mapped)))
+            mapped))
         7]
       [(and
           (not spmd?)
@@ -3202,7 +3166,7 @@
               (compiler_ir_types.compiler-ir-clone-instr
                 (ast.ast-node-pool-reader-context-current)
                 (compiler_ir_types.compiler-ir-global-shared-view instr))
-              (compiler_ir_types.compiler-ir-global-shared-view instr))))
+              instr)))
         8]
       [(not
           (=
@@ -4528,7 +4492,7 @@
           [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])))))
 
 (define (compiler-ir-instr-seq-mov-dst?
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
   [index : i64]
   [want : i64]) : bool
   (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
@@ -4584,14 +4548,8 @@
         compiler-ir-instr-seq-test-rewrite)
       (and
         (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
-        (compiler-ir-instr-seq-mov-dst?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          0
-          11)
-        (compiler-ir-instr-seq-mov-dst?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          1
-          12)
+        (compiler-ir-instr-seq-mov-dst? seq 0 11)
+        (compiler-ir-instr-seq-mov-dst? seq 1 12)
         (compiler-ir-instr-seq-return-var? seq 2 2)))))
 
 (define (compiler-ir-instr-seq-mutable-compact-ok?) : bool
@@ -4616,14 +4574,8 @@
         compiler-ir-instr-seq-test-keep-non-alloc?)
       (and
         (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
-        (compiler-ir-instr-seq-mov-dst?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          0
-          1)
-        (compiler-ir-instr-seq-mov-dst?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          1
-          2)
+        (compiler-ir-instr-seq-mov-dst? seq 0 1)
+        (compiler-ir-instr-seq-mov-dst? seq 1 2)
         (compiler-ir-instr-seq-return-var? seq 2 2)))))
 
 (define (compiler-ir-block-list-first-label?
@@ -4746,14 +4698,8 @@
         (compiler_ir_types.compiler-ir-function-builder-to-seq function-builder))
       (and
         (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 3)
-        (compiler-ir-instr-seq-mov-dst?
-          (compiler_ir_types.compiler-ir-global-shared-view instrs)
-          0
-          1)
-        (compiler-ir-instr-seq-mov-dst?
-          (compiler_ir_types.compiler-ir-global-shared-view instrs)
-          1
-          2)
+        (compiler-ir-instr-seq-mov-dst? instrs 0 1)
+        (compiler-ir-instr-seq-mov-dst? instrs 1 2)
         (compiler-ir-instr-seq-return-var? instrs 2 2)
         (= (compiler_ir_types.compiler-ir-block-list-count blocks) 3)
         (compiler-ir-block-list-label-at?
@@ -4771,7 +4717,7 @@
         (compiler-ir-function-seq-name-at? functions 2 "third")))))
 
 (define (compiler-ir-param-seq-entry-i64?
-  [seq : compiler_ir_types.CompilerIrParamSeq]
+  [seq : (& seq compiler_ir_types.CompilerIrParamSeq)]
   [index : i64]
   [want-name : String]
   [want-var : i64]) : bool
@@ -4854,18 +4800,10 @@
         (= (compiler_ir_types.compiler-ir-param-seq-count snapshot) 1)
         (compiler-ir-param-seq-entry-i64? snapshot 0 "value" 3)
         (= (compiler_ir_types.compiler-ir-param-seq-count params) 2)
-        (compiler-ir-param-seq-entry-i64?
-          (compiler_ir_types.compiler-ir-global-shared-view params)
-          0
-          "value"
-          3)
+        (compiler-ir-param-seq-entry-i64? params 0 "value" 3)
         (compiler-ir-param-seq-entry-bool? params 1 "flag" 7)
         (= (compiler_ir_types.compiler-ir-param-seq-count cloned) 2)
-        (compiler-ir-param-seq-entry-i64?
-          (compiler_ir_types.compiler-ir-global-shared-view cloned)
-          0
-          "value"
-          3)
+        (compiler-ir-param-seq-entry-i64? cloned 0 "value" 3)
         (compiler-ir-param-seq-entry-bool? cloned 1 "flag" 7)
         (match cloned-func
           [(compiler_ir_types.CompilerIrFunction.Function
@@ -4879,11 +4817,7 @@
               (=
                 (compiler_ir_types.compiler-ir-param-seq-count cloned-params)
                 2)
-              (compiler-ir-param-seq-entry-i64?
-                (compiler_ir_types.compiler-ir-global-shared-view cloned-params)
-                0
-                "value"
-                3)
+              (compiler-ir-param-seq-entry-i64? cloned-params 0 "value" 3)
               (compiler-ir-param-seq-entry-bool? cloned-params 1 "flag" 7))])))))
 
 (define (compiler-ir-c-abi-return-slot-seq-entry-i64-offset?

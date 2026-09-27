@@ -7178,10 +7178,7 @@
               true
               (owned_view.compiler-owned-shared-view metrics))]
           (and
-            (=
-              (compiler-reg-liveness-census-baseline-count
-                (owned_view.compiler-owned-shared-view metrics))
-              1)
+            (= (compiler-reg-liveness-census-baseline-count metrics) 1)
             ;; The linear fixture is phi-free, so the edge-precise analysis is
             ;; the baseline itself and no second fixpoint is computed.
             (= (compiler-reg-liveness-census-edge-precise-count metrics) 0)))))))
@@ -7217,10 +7214,7 @@
               true
               (owned_view.compiler-owned-shared-view metrics))]
           (and
-            (=
-              (compiler-reg-liveness-census-baseline-count
-                (owned_view.compiler-owned-shared-view metrics))
-              1)
+            (= (compiler-reg-liveness-census-baseline-count metrics) 1)
             ;; Phi present: the second, edge-precise fixpoint is computed.
             (= (compiler-reg-liveness-census-edge-precise-count metrics) 1)))))))
 
@@ -7255,13 +7249,11 @@
               (owned_view.compiler-owned-shared-view right))]
           (begin
             (test.assert-i64-eq
-              (compiler-reg-liveness-census-edge-precise-count
-                (owned_view.compiler-owned-shared-view left))
+              (compiler-reg-liveness-census-edge-precise-count left)
               1
               "left owner records edge-precise liveness")
             (test.assert-i64-eq
-              (compiler-reg-liveness-census-edge-precise-count
-                (owned_view.compiler-owned-shared-view right))
+              (compiler-reg-liveness-census-edge-precise-count right)
               0
               "right owner retains its serial result")
             (reg.compiler-reg-liveness-census-reset!
@@ -14548,13 +14540,11 @@
           (reg.compiler-reg-assignment-table-make 0))]
       (begin
         (test.assert-i64-eq
-          (compiler-reg-liveness-census-baseline-count
-            (owned_view.compiler-owned-shared-view metrics))
+          (compiler-reg-liveness-census-baseline-count metrics)
           1
           "planning records baseline liveness in the caller's owner")
         (test.assert-i64-eq
-          (compiler-reg-liveness-census-edge-precise-count
-            (owned_view.compiler-owned-shared-view metrics))
+          (compiler-reg-liveness-census-edge-precise-count metrics)
           1
           "planning records edge-precise liveness in the caller's owner")
         (match plan
@@ -14562,8 +14552,7 @@
             (reg.compiler-reg-liveness-census-reset!
               (reg.compiler-reg-var-types-metrics returned-types))])
         (test.assert-i64-eq
-          (compiler-reg-liveness-census-baseline-count
-            (owned_view.compiler-owned-shared-view metrics))
+          (compiler-reg-liveness-census-baseline-count metrics)
           0
           "reset through the returned plan reaches the original owner")
         (test.assert-i64-eq
@@ -14750,22 +14739,28 @@
         "Windows homes survive both ownership paths and later planning"))))
 
 (define (compiler-reg-liveness-census-baseline-count
-  [_metrics : profile_state.CompilerProfileMetrics]) : i64
-  (cfg
-    test
-    (profile_state.compiler-profile-metrics-value
-      _metrics
-      reg.compiler-reg-liveness-census-baseline-metric)
-    0))
+  [_metrics : (& _metrics profile_state.CompilerProfileMetrics)]) : i64
+  (let
+    [_metrics : profile_state.CompilerProfileMetrics
+      (owned_view.compiler-owned-reference-shared-view _metrics)]
+    (cfg
+      test
+      (profile_state.compiler-profile-metrics-value
+        _metrics
+        reg.compiler-reg-liveness-census-baseline-metric)
+      0)))
 
 (define (compiler-reg-liveness-census-edge-precise-count
-  [_metrics : profile_state.CompilerProfileMetrics]) : i64
-  (cfg
-    test
-    (profile_state.compiler-profile-metrics-value
-      _metrics
-      reg.compiler-reg-liveness-census-edge-precise-metric)
-    0))
+  [_metrics : (& _metrics profile_state.CompilerProfileMetrics)]) : i64
+  (let
+    [_metrics : profile_state.CompilerProfileMetrics
+      (owned_view.compiler-owned-reference-shared-view _metrics)]
+    (cfg
+      test
+      (profile_state.compiler-profile-metrics-value
+        _metrics
+        reg.compiler-reg-liveness-census-edge-precise-metric)
+      0)))
 
 ;; Conservative caller-saved extension for the scalar opt2 pass. These registers
 ;; are caller-saved on both SysV and Win64, are not callee-saved registers that

@@ -37,15 +37,19 @@
     [(package_source.ResultPackageSourceSet.Err message) (io.panic message)]))
 
 (define (package-dependency-transition-capability
-  [state : load.CompilerLoadSessionState]
+  [state : (& state load.CompilerLoadSessionState)]
   [slot : i64]
   [identity : String]) : load.CompilerLoadDependencyCatalogCapability
-  (match (load.compiler-load-dependency-catalog-lookup-macro
-    state
-    slot
-    identity)
-    [(load.CompilerLoadDependencyCatalogLookup.Resolved capability) capability]
-    [_ (io.panic "package tlci transition: macro was not a native result")]))
+  (let
+    [state : load.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (match (load.compiler-load-dependency-catalog-lookup-macro
+      state
+      slot
+      identity)
+      [(load.CompilerLoadDependencyCatalogLookup.Resolved capability)
+        capability]
+      [_ (io.panic "package tlci transition: macro was not a native result")])))
 
 (define (package-dependency-transition-stale
   [state : load.CompilerLoadSessionState]
@@ -124,7 +128,7 @@
       (load.compiler-load-dependency-catalog-observe state)]
     [old-capability : load.CompilerLoadDependencyCatalogCapability
       (package-dependency-transition-capability
-        (owned_view.compiler-owned-shared-view state)
+        state
         old-slot
         (string.copy identity))]
     (begin
@@ -170,7 +174,7 @@
               (load.compiler-load-dependency-catalog-observe state)]
             [rebuilt-capability : load.CompilerLoadDependencyCatalogCapability
               (package-dependency-transition-capability
-                (owned_view.compiler-owned-shared-view state)
+                state
                 rebuilt-slot
                 (string.copy identity))]
             (begin
@@ -202,7 +206,7 @@
                   (load.compiler-load-dependency-catalog-observe state)]
                 [restored-capability : load.CompilerLoadDependencyCatalogCapability
                   (package-dependency-transition-capability
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     restored-slot
                     (string.copy identity))]
                 [reused-slot : i64

@@ -10,6 +10,7 @@
 (import compiler_ir_text as irt)
 (import compiler_ast_types as ast)
 (import stdlib.io)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : live.CompilerLiveI64Set
   (let
@@ -531,7 +532,7 @@
       [(live.CompilerLiveMaybeBlock.Some block)
         (and
           (live.compiler-live-set-eq?
-            (compiler-live-block-uses (live.compiler-live-shared-view block))
+            (compiler-live-block-uses block)
             (live.compiler-live-set1 2))
           (live.compiler-live-set-eq?
             (live.compiler-live-block-defs
@@ -572,16 +573,13 @@
         (and
           (=
             (live.compiler-live-label-set-count
-              (compiler-live-block-successor-labels
-                (live.compiler-live-shared-view block)))
+              (compiler-live-block-successor-labels block))
             2)
           (live.compiler-live-label-set-contains?
-            (compiler-live-block-successor-labels
-              (live.compiler-live-shared-view block))
+            (compiler-live-block-successor-labels block)
             (ir.compiler-ir-label "then"))
           (live.compiler-live-label-set-contains?
-            (compiler-live-block-successor-labels
-              (live.compiler-live-shared-view block))
+            (compiler-live-block-successor-labels block)
             (ir.compiler-ir-label "else"))
           (live.compiler-live-set-eq?
             (live.compiler-live-block-live-in block)
@@ -598,7 +596,7 @@
       [(live.CompilerLiveMaybeBlock.Some block)
         (and
           (live.compiler-live-set-eq?
-            (compiler-live-block-uses (live.compiler-live-shared-view block))
+            (compiler-live-block-uses block)
             (compiler-live-set2 1 2))
           (live.compiler-live-set-eq?
             (live.compiler-live-block-defs
@@ -655,8 +653,7 @@
                             (compiler-live-block-uses baseline-join)
                             (compiler-live-set2 1 2))
                           (live.compiler-live-set-eq?
-                            (compiler-live-block-uses
-                              (live.compiler-live-shared-view edge-precise-join))
+                            (compiler-live-block-uses edge-precise-join)
                             (live.compiler-live-set-empty))
                           (live.compiler-live-set-eq?
                             (live.compiler-live-block-live-in edge-precise-join)
@@ -871,8 +868,15 @@
     (live.compiler-live-set-empty)
     (live.compiler-live-set-empty)))
 
-(define (compiler-live-block-uses [block : live.CompilerLiveBlock]) : live.CompilerLiveI64Set
-  block.uses)
+(define (compiler-live-block-uses [block : (& block live.CompilerLiveBlock)]) : live.CompilerLiveI64Set
+  (let
+    [block : live.CompilerLiveBlock
+      (owned_view.compiler-owned-reference-shared-view block)]
+    block.uses))
 
-(define (compiler-live-block-successor-labels [block : live.CompilerLiveBlock]) : live.CompilerLiveLabelSet
-  block.successors)
+(define (compiler-live-block-successor-labels
+  [block : (& block live.CompilerLiveBlock)]) : live.CompilerLiveLabelSet
+  (let
+    [block : live.CompilerLiveBlock
+      (owned_view.compiler-owned-reference-shared-view block)]
+    block.successors))

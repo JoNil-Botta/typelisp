@@ -278,11 +278,7 @@
     (begin
       (fe-assert
         (and
-          (=
-            (format_tests.format-token-tag-count
-              (lx.global-shared-view stream)
-              (ft.fmt-tag-int))
-            5)
+          (= (format_tests.format-token-tag-count stream (ft.fmt-tag-int)) 5)
           (string.eq
             (ft.format-token-text (ft.format-token-at stream 1))
             "1.5e-9")

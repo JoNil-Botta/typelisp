@@ -4123,18 +4123,18 @@
             (= id-a id-b)
             (= id-b id-decoy)
             (compiler-load-session-state-embedded-stdlib-module-id?
-              (owned_view.compiler-owned-shared-view state-a)
+              state-a
               (string.copy module-a))
             (not
               (compiler-load-session-state-embedded-stdlib-module-id?
-                (owned_view.compiler-owned-shared-view state-a)
+                state-a
                 (string.copy module-b)))
             (compiler-load-session-state-embedded-stdlib-module-id?
-              (owned_view.compiler-owned-shared-view state-b)
+              state-b
               (string.copy module-b))
             (not
               (compiler-load-session-state-embedded-stdlib-module-id?
-                (owned_view.compiler-owned-shared-view state-b)
+                state-b
                 (string.copy module-a)))
             (load.compiler-load-session-state-embedded-provenance-noted?
               (owned_view.compiler-owned-shared-view state-a))
@@ -4154,13 +4154,13 @@
               (and
                 before
                 (compiler-load-session-state-embedded-stdlib-module-id?
-                  (owned_view.compiler-owned-shared-view state-a)
+                  state-a
                   (string.copy module-a))
                 (load.compiler-load-session-state-embedded-provenance-noted?
                   (owned_view.compiler-owned-shared-view state-a))
                 (not
                   (compiler-load-session-state-embedded-stdlib-module-id?
-                    (owned_view.compiler-owned-shared-view state-b)
+                    state-b
                     (string.copy module-b)))
                 (not
                   (load.compiler-load-session-state-embedded-provenance-noted?
@@ -4206,9 +4206,7 @@
       (load.compiler-load-session-state-new)]
     [state-b : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
-    [_enable-a : unit
-      (compiler-load-session-state-cache-enable!
-        (owned_view.compiler-owned-shared-view state-a))]
+    [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
     [_select-b : unit (load.compiler-load-session-state-use! state-b)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
@@ -5761,8 +5759,11 @@
   (load.compiler-load-session-state-bool-cell-set! state.cache-enabled enabled))
 
 (define (compiler-load-session-state-cache-enable!
-  [state : load.CompilerLoadSessionState]) : unit
-  (compiler-load-session-state-cache-set-enabled! state true))
+  [state : (& state load.CompilerLoadSessionState)]) : unit
+  (let
+    [state : load.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (compiler-load-session-state-cache-set-enabled! state true)))
 
 (define (compiler-load-lazy-import-skip-count) : i64
   (let
@@ -5775,9 +5776,11 @@
   (load.compiler-load-file-with-paths-and-roots path seen (svec.new)))
 
 (define (compiler-load-session-state-embedded-stdlib-module-id?
-  [state : load.CompilerLoadSessionState]
+  [state : (& state load.CompilerLoadSessionState)]
   [module : String]) : bool
   (let
+    [state : load.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
     [ids : sym_i64_env.SymI64Env
       (load.compiler-load-session-state-embedded-module-ids-shared-view
         (owned_view.compiler-owned-shared-view state))]

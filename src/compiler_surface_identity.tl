@@ -26,18 +26,10 @@
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_le))
 
 (defstruct SurfaceIdentityKey
@@ -91,7 +83,7 @@
   1048576)
 
 (cfg
-  (any compiler-surface-producer compiler-surface-selftest)
+  compiler-surface-producer
   (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
     (__tl_make-array u8 0)))
 
@@ -192,11 +184,7 @@
     (surface-identity-string-eq? left.configuration right.configuration)))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
     (cond
       [(and (>= id 0) (< id source-count)) id]
@@ -232,11 +220,7 @@
   8796093022208)
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-portable-module-ref
     [stored-module-id : i64]
     [source-count : i64]
@@ -253,11 +237,7 @@
 ;; one-word AST name fields in the frontend section. At the maximum 2^17 intern
 ;; count the complete portable layout ends below 3.5e18, within signed i64.
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-portable-id
     [session : cis.InternStructuralSessionHandle]
     [id : i64]
@@ -812,21 +792,13 @@
       (surface-identity-hydrate-payload payload expected-key)]))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defenum ResultSurfaceIdentityBytes
     (Ok (__tl_dyn-array u8))
     (Err String)))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
@@ -911,11 +883,7 @@
         (SurfaceIdentityPayload key source-names generated)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
     (if (not (surface-identity-payload-valid? (& payload)))
       (ResultSurfaceIdentityBytes.Err

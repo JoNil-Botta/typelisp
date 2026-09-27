@@ -352,11 +352,11 @@ The package follows the standard layout: `typelisp build` resolves the default
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
 modules with dedicated smokes, #2651/#2671/#2657), plus the main-less
 `src/*_tests.tl` test helpers such as `compiler_backend_tests.tl`,
-`compiler_load_tests.tl`, `compiler_parse_core_tests.tl`,
-`lsp_frame_core_tests.tl`, `tlci_core_tests.tl` and `compiler_surface_tests.tl`
-(the last runs only through `tools/compiler-surface-ast-smoke.tl` with
-`--cfg compiler-surface-selftest`), and the shared `format_tests.tl`,
-`cli_core_tests.tl` and `reader_tests.tl`.
+`compiler_ctfe_tests.tl`, `compiler_load_tests.tl`,
+`compiler_parse_core_tests.tl`, `lsp_frame_core_tests.tl`, `tlci_core_tests.tl`
+and `compiler_surface_tests.tl` (the last runs only through
+`tools/compiler-surface-ast-smoke.tl` with `--cfg compiler-surface-selftest`),
+and the shared `format_tests.tl`, `cli_core_tests.tl` and `reader_tests.tl`.
 
 ### Inline tests
 

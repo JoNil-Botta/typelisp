@@ -535,9 +535,7 @@
       (while (and ok (< index count))
         (let
           [value : ctfe_support.CompilerCtfeValue
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-stack
-              (- compiler-comptime-host-stack-len (- count index)))]
+            (compiler-comptime-host-stack-value (- count index))]
           (match value
             [(ctfe_support.CompilerCtfeValue.Pattern pattern)
               (begin
@@ -546,9 +544,7 @@
             [_ (set! ok false)])))
       (if ok
         (begin
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len count))
+          (compiler-comptime-host-drop! count)
           (CompilerCtfeMaybePatternList.Some out))
         (CompilerCtfeMaybePatternList.None)))))
 
@@ -664,9 +660,7 @@
 ;; must still resolve in its original session.
 (define (compiler-comptime-host-ctfe-env) : ctfe_support.CtfeEnv
   (ctfe_support.ctfe-env-empty-with-pools-and-source-names
-    (compiler-comptime-host-array-element-shared-view
-      compiler-comptime-host-pools
-      0)
+    (compiler-comptime-host-session-pools)
     (compiler-comptime-host-array-element-shared-view
       compiler-comptime-host-session-source-names
       0)))
@@ -736,6 +730,57 @@
       compiler-comptime-host-stack-len
       (+ compiler-comptime-host-stack-len 1))
     tlci.tlci-host-callback-status-ok))
+
+(define (compiler-comptime-host-push-expr! [node : i64]) : i64
+  (compiler-comptime-host-push!
+    (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr))))
+
+;; A callback consumes its operands from the top of the value stack. Values are
+;; read in place (`depth` 1 is the top) after the caller has checked the stack
+;; length, and replaced by the result once every operand has been read.
+(define (compiler-comptime-host-stack-value [depth : i64]) : ctfe_support.CompilerCtfeValue
+  (compiler-comptime-host-array-element-shared-view
+    compiler-comptime-host-stack
+    (- compiler-comptime-host-stack-len depth)))
+
+(define (compiler-comptime-host-stack-node [depth : i64]) : i64
+  (let
+    [value : ctfe_support.CompilerCtfeValue
+      (compiler-comptime-host-stack-value depth)]
+    (compiler-comptime-host-value-node value)))
+
+(define (compiler-comptime-host-drop! [count : i64]) : unit
+  (set!
+    compiler-comptime-host-stack-len
+    (- compiler-comptime-host-stack-len count)))
+
+(define (compiler-comptime-host-replace!
+  [count : i64]
+  [value : ctfe_support.CompilerCtfeValue]) : i64
+  (begin
+    (compiler-comptime-host-drop! count)
+    (compiler-comptime-host-push! value)))
+
+(define (compiler-comptime-host-replace-expr! [count : i64] [node : i64]) : i64
+  (compiler-comptime-host-replace!
+    count
+    (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr))))
+
+(define (compiler-comptime-host-session-pools) : ast.AstNodePoolContext
+  (compiler-comptime-host-array-element-shared-view
+    compiler-comptime-host-pools
+    0))
+
+(define (compiler-comptime-host-session-reflections) : ctfe_support.CtfeReflectInfoList
+  (compiler-comptime-host-array-element-shared-view
+    compiler-comptime-host-reflections
+    0))
+
+;; Record an authored diagnostic for the dispatch and answer its status.
+(define (compiler-comptime-host-diagnostic! [message : String]) : i64
+  (begin
+    (set! (array-ref compiler-comptime-host-diagnostic 0) message)
+    tlci.tlci-host-callback-status-diagnostic))
 
 ;; Expression list of a variadic operand or stack value. Captured lists carry
 ;; the caller's pools; the session's pools are the caller's, so they project
@@ -901,10 +946,7 @@
       (owned_view.compiler-owned-reference-shared-view pools)]
     [(ctfe_support.CompilerCtfeValue.CapturedExprClauseList _ pools)
       (owned_view.compiler-owned-reference-shared-view pools)]
-    [_
-      (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-pools
-        0)]))
+    [_ (compiler-comptime-host-session-pools)]))
 
 (define (compiler-comptime-host-expr-value-for-owner
   [owner : ctfe_support.CompilerCtfeValue]
@@ -950,11 +992,8 @@
           (ctfe_support.CompilerCtfeValue.Type
             (ast.ast-node-pool-context-type-get pools ty-id)))]
       [_
-        (begin
-          (set!
-            (array-ref compiler-comptime-host-diagnostic 0)
-            "expr-list-type-nth expects a captured type literal")
-          tlci.tlci-host-callback-status-diagnostic)])))
+        (compiler-comptime-host-diagnostic!
+          "expr-list-type-nth expects a captured type literal")])))
 
 ;; The unspanned expression of operand `index`, or a unit literal when the
 ;; operand is out of range or carries no expression node. Callers probe the
@@ -1000,23 +1039,13 @@
   (if (< compiler-comptime-host-stack-len 2)
     tlci.tlci-host-callback-status-bad-request
     (let
-      [operand : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))]
-      [target : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 2))]
-      [operand-node : i64 (compiler-comptime-host-value-node operand)]
-      [target-node : i64 (compiler-comptime-host-value-node target)]
+      [operand-node : i64 (compiler-comptime-host-stack-node 1)]
+      [target-node : i64 (compiler-comptime-host-stack-node 2)]
       (if (or (< operand-node 0) (< target-node 0))
         tlci.tlci-host-callback-status-bad-request
         (let
           [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)]
+            (compiler-comptime-host-session-pools)]
           [node : i64
             (if (= kind 0)
               (ast.ast-expr-array-ref-with-pools pools target-node operand-node)
@@ -1026,12 +1055,7 @@
                   target-node
                   operand-node)
                 (ast.ast-expr-replace-with-pools pools target-node operand-node)))]
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 2))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr! 2 node))))))
 
 ;; Build a computed struct projection from an already-resolved opaque syntax
 ;; identity. Source-name identities are not sign-constrained, so callers must
@@ -1040,19 +1064,12 @@
 (define (compiler-comptime-host-build-struct-get-from-id!
   [target-node : i64]
   [name-id : i64]) : i64
-  (begin
-    (set!
-      compiler-comptime-host-stack-len
-      (- compiler-comptime-host-stack-len 2))
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-expr-struct-get-id-with-pools
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          target-node
-          name-id)
-        (ast.AstType.Expr)))))
+  (compiler-comptime-host-replace-expr!
+    2
+    (ast.ast-expr-struct-get-id-with-pools
+      (compiler-comptime-host-session-pools)
+      target-node
+      name-id)))
 
 ;; Build a computed struct assignment from an already-resolved opaque syntax
 ;; identity. Its CTFE result is unit-typed, matching the interpreted
@@ -1061,20 +1078,15 @@
   [target-node : i64]
   [name-id : i64]
   [value-node : i64]) : i64
-  (begin
-    (set!
-      compiler-comptime-host-stack-len
-      (- compiler-comptime-host-stack-len 3))
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-expr-struct-set-id-with-pools
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          target-node
-          name-id
-          value-node)
-        (ast.AstType.Unit)))))
+  (compiler-comptime-host-replace!
+    3
+    (ctfe_support.CompilerCtfeValue.Expr
+      (ast.ast-expr-struct-set-id-with-pools
+        (compiler-comptime-host-session-pools)
+        target-node
+        name-id
+        value-node)
+      (ast.AstType.Unit))))
 
 ;; Resolve a computed String/Name identity the same way the interpreted
 ;; pattern-variant builder does, then consume its payload list.
@@ -1086,18 +1098,15 @@
     [(ctfe_support.CompilerCtfeValue.PatternList payloads)
       (let
         [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (begin
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len 2))
-          (compiler-comptime-host-push!
-            (ctfe_support.CompilerCtfeValue.Pattern
-              (ast.ast-pat-variant-id
-                (ctfe_support.ctfe-string-syntax-name-id
-                  (ctfe_support.ctfe-env-source-names env)
-                  text
-                  name-id)
-                payloads)))))]
+        (compiler-comptime-host-replace!
+          2
+          (ctfe_support.CompilerCtfeValue.Pattern
+            (ast.ast-pat-variant-id
+              (ctfe_support.ctfe-string-syntax-name-id
+                (ctfe_support.ctfe-env-source-names env)
+                text
+                name-id)
+              payloads))))]
     [_ tlci.tlci-host-callback-status-bad-request]))
 
 ;; Decode the scalar AstType ordinal a native image passes for type-scalar.
@@ -1169,42 +1178,25 @@
   (if (< compiler-comptime-host-stack-len 1)
     tlci.tlci-host-callback-status-bad-request
     (let
-      [inner-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))]
-      [inner-node : i64 (compiler-comptime-host-value-node inner-value)]
+      [inner-node : i64 (compiler-comptime-host-stack-node 1)]
       (if (< inner-node 0)
         tlci.tlci-host-callback-status-bad-request
         (let
           [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)]
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (cond
-                  [(= kind 0) (ast.ast-expr-return-with-pools pools inner-node)]
-                  [(= kind 1) (ast.ast-expr-box-with-pools pools inner-node)]
-                  [(= kind 2)
-                    (ast.ast-expr-box-get-with-pools pools inner-node)]
-                  [(= kind 3)
-                    (ast.ast-expr-ptr-read-with-pools pools inner-node)]
-                  [(= kind 4)
-                    (ast.ast-expr-ptr-to-int-with-pools pools inner-node)]
-                  [(= kind 5)
-                    (ast.ast-expr-string-data-with-pools pools inner-node)]
-                  [(= kind 6)
-                    (ast.ast-expr-array-data-with-pools pools inner-node)]
-                  [(= kind 7)
-                    (ast.ast-expr-box-take-with-pools pools inner-node)]
-                  [else
-                    (ast.ast-expr-ptr-addr-of-id-with-pools pools inner-node)])
-                (ast.AstType.Expr)))))))))
+            (compiler-comptime-host-session-pools)]
+          (compiler-comptime-host-replace-expr!
+            1
+            (cond
+              [(= kind 0) (ast.ast-expr-return-with-pools pools inner-node)]
+              [(= kind 1) (ast.ast-expr-box-with-pools pools inner-node)]
+              [(= kind 2) (ast.ast-expr-box-get-with-pools pools inner-node)]
+              [(= kind 3) (ast.ast-expr-ptr-read-with-pools pools inner-node)]
+              [(= kind 4) (ast.ast-expr-ptr-to-int-with-pools pools inner-node)]
+              [(= kind 5)
+                (ast.ast-expr-string-data-with-pools pools inner-node)]
+              [(= kind 6) (ast.ast-expr-array-data-with-pools pools inner-node)]
+              [(= kind 7) (ast.ast-expr-box-take-with-pools pools inner-node)]
+              [else (ast.ast-expr-ptr-addr-of-id-with-pools pools inner-node)])))))))
 
 ;; Pop a type and one expression, normalize direct types and captured type
 ;; syntax through the same conversion as interpreted quasiquote, and push the
@@ -1214,14 +1206,8 @@
     tlci.tlci-host-callback-status-bad-request
     (let
       [type-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))]
-      [value-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 2))]
-      [value-node : i64 (compiler-comptime-host-value-node value-value)]
+        (compiler-comptime-host-stack-value 1)]
+      [value-node : i64 (compiler-comptime-host-stack-node 2)]
       (if (< value-node 0)
         tlci.tlci-host-callback-status-bad-request
         (match (ctfe_support.ctfe-pattern-binding-type-value
@@ -1232,20 +1218,14 @@
           [(ctfe_support.ResultCtfeQuoteType.Ok ty next-fuel)
             (let
               [pools : ast.AstNodePoolContext
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)]
+                (compiler-comptime-host-session-pools)]
               (begin
                 (set! compiler-comptime-host-session-fuel next-fuel)
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    (if (= kind 0)
-                      (ast.ast-expr-ptr-cast-with-pools pools value-node ty)
-                      (ast.ast-expr-int-to-ptr-with-pools pools value-node ty))
-                    (ast.AstType.Expr)))))]
+                (compiler-comptime-host-replace-expr!
+                  2
+                  (if (= kind 0)
+                    (ast.ast-expr-ptr-cast-with-pools pools value-node ty)
+                    (ast.ast-expr-int-to-ptr-with-pools pools value-node ty)))))]
           [(ctfe_support.ResultCtfeQuoteType.Err diag)
             (begin
               (set!
@@ -1266,46 +1246,28 @@
   (if (< compiler-comptime-host-stack-len 2)
     tlci.tlci-host-callback-status-bad-request
     (let
-      [second-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))]
-      [first-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 2))]
-      [second-node : i64 (compiler-comptime-host-value-node second-value)]
-      [first-node : i64 (compiler-comptime-host-value-node first-value)]
+      [second-node : i64 (compiler-comptime-host-stack-node 1)]
+      [first-node : i64 (compiler-comptime-host-stack-node 2)]
       (if (or (< second-node 0) (< first-node 0))
         tlci.tlci-host-callback-status-bad-request
         (let
           [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)]
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 2))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (cond
-                  [(= kind 0)
-                    (ast.ast-expr-ptr-write-with-pools
-                      pools
-                      first-node
-                      second-node)]
-                  [(= kind 1)
-                    (ast.ast-expr-ptr-offset-with-pools
-                      pools
-                      first-node
-                      second-node)]
-                  [else
-                    (ast.ast-expr-string-from-bytes-with-pools
-                      pools
-                      first-node
-                      second-node)])
-                (ast.AstType.Expr)))))))))
+            (compiler-comptime-host-session-pools)]
+          (compiler-comptime-host-replace-expr!
+            2
+            (cond
+              [(= kind 0)
+                (ast.ast-expr-ptr-write-with-pools pools first-node second-node)]
+              [(= kind 1)
+                (ast.ast-expr-ptr-offset-with-pools
+                  pools
+                  first-node
+                  second-node)]
+              [else
+                (ast.ast-expr-string-from-bytes-with-pools
+                  pools
+                  first-node
+                  second-node)])))))))
 
 ;; Pop a type value and push the composite that wraps it: kind 0 is
 ;; `(Ptr T)`/`(MutPtr T)` selected by `flag`, 1 is `(Box T)`, 2 is the private
@@ -1328,9 +1290,7 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         (match (ctfe_support.ctfe-pattern-binding-type-value
           type-value
           (ast.AstExpr.Literal (ast.AstLiteral.Unit))
@@ -1339,9 +1299,7 @@
           [(ctfe_support.ResultCtfeQuoteType.Ok inner next-fuel)
             (let
               [pools : ast.AstNodePoolContext
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)]
+                (compiler-comptime-host-session-pools)]
               [region : i64
                 (if (= kind 4)
                   (let
@@ -1354,10 +1312,8 @@
                   0)]
               (begin
                 (set! compiler-comptime-host-session-fuel next-fuel)
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
+                (compiler-comptime-host-replace!
+                  1
                   (ctfe_support.CompilerCtfeValue.Type
                     (cond
                       [(= kind 0)
@@ -1391,19 +1347,13 @@
   [index : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     tlci.tlci-host-callback-status-bad-request
-    (match (compiler-comptime-host-array-element-shared-view
-      compiler-comptime-host-stack
-      (- compiler-comptime-host-stack-len 1))
+    (match (compiler-comptime-host-stack-value 1)
       [(ctfe_support.CompilerCtfeValue.Type ty)
         (match (let
           [host-pools : ast.AstNodePoolContext
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)]
+            (compiler-comptime-host-session-pools)]
           [host-reflections : ctfe_support.CtfeReflectInfoList
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-reflections
-              0)]
+            (compiler-comptime-host-session-reflections)]
           (ctfe_support.ctfe-reflect-info-for-type-with-pools
             host-pools
             host-reflections
@@ -1414,14 +1364,11 @@
                 (if (= kind 0)
                   (match (ctfe_support.ctfe-reflect-field-name-at fields index)
                     [(ctfe_support.ResultCtfeNameLookup.Ok name)
-                      (begin
-                        (set!
-                          compiler-comptime-host-stack-len
-                          (- compiler-comptime-host-stack-len 1))
-                        (compiler-comptime-host-push!
-                          (ctfe_support.ctfe-name-value-for-source-names
-                            (compiler-comptime-host-session-source-names-value)
-                            name)))]
+                      (compiler-comptime-host-replace!
+                        1
+                        (ctfe_support.ctfe-name-value-for-source-names
+                          (compiler-comptime-host-session-source-names-value)
+                          name))]
                     [(ctfe_support.ResultCtfeNameLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])
                   tlci.tlci-host-callback-status-bad-request)]
@@ -1431,14 +1378,11 @@
                     variants
                     index)
                     [(ctfe_support.ResultCtfeNameLookup.Ok name)
-                      (begin
-                        (set!
-                          compiler-comptime-host-stack-len
-                          (- compiler-comptime-host-stack-len 1))
-                        (compiler-comptime-host-push!
-                          (ctfe_support.ctfe-name-value-for-source-names
-                            (compiler-comptime-host-session-source-names-value)
-                            name)))]
+                      (compiler-comptime-host-replace!
+                        1
+                        (ctfe_support.ctfe-name-value-for-source-names
+                          (compiler-comptime-host-session-source-names-value)
+                          name))]
                     [(ctfe_support.ResultCtfeNameLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])
                   tlci.tlci-host-callback-status-bad-request)])]
@@ -1455,19 +1399,13 @@
   [index : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     -3
-    (match (compiler-comptime-host-array-element-shared-view
-      compiler-comptime-host-stack
-      (- compiler-comptime-host-stack-len 1))
+    (match (compiler-comptime-host-stack-value 1)
       [(ctfe_support.CompilerCtfeValue.Type ty)
         (let
           [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)]
+            (compiler-comptime-host-session-pools)]
           [infos : ctfe_support.CtfeReflectInfoList
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-reflections
-              0)]
+            (compiler-comptime-host-session-reflections)]
           [count : i64
             (cond
               [(= kind 0)
@@ -1513,9 +1451,7 @@
           (if (< count 0)
             -3
             (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-drop! 1)
               count)))]
       [_ -3])))
 
@@ -1527,19 +1463,13 @@
   [second-index : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     tlci.tlci-host-callback-status-bad-request
-    (match (compiler-comptime-host-array-element-shared-view
-      compiler-comptime-host-stack
-      (- compiler-comptime-host-stack-len 1))
+    (match (compiler-comptime-host-stack-value 1)
       [(ctfe_support.CompilerCtfeValue.Type ty)
         (let
           [pools : ast.AstNodePoolContext
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)]
+            (compiler-comptime-host-session-pools)]
           [infos : ctfe_support.CtfeReflectInfoList
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-reflections
-              0)]
+            (compiler-comptime-host-session-reflections)]
           (cond
             [(= kind 0)
               (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
@@ -1554,12 +1484,9 @@
                     infos
                     first-index)
                     [(ctfe_support.ResultCtfeTypeLookup.Ok field-ty)
-                      (begin
-                        (set!
-                          compiler-comptime-host-stack-len
-                          (- compiler-comptime-host-stack-len 1))
-                        (compiler-comptime-host-push!
-                          (ctfe_support.CompilerCtfeValue.Type field-ty)))]
+                      (compiler-comptime-host-replace!
+                        1
+                        (ctfe_support.CompilerCtfeValue.Type field-ty))]
                     [(ctfe_support.ResultCtfeTypeLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])]
                 [_ tlci.tlci-host-callback-status-bad-request])]
@@ -1580,12 +1507,9 @@
                         infos
                         second-index)
                         [(ctfe_support.ResultCtfeTypeLookup.Ok payload-ty)
-                          (begin
-                            (set!
-                              compiler-comptime-host-stack-len
-                              (- compiler-comptime-host-stack-len 1))
-                            (compiler-comptime-host-push!
-                              (ctfe_support.CompilerCtfeValue.Type payload-ty)))]
+                          (compiler-comptime-host-replace!
+                            1
+                            (ctfe_support.CompilerCtfeValue.Type payload-ty))]
                         [(ctfe_support.ResultCtfeTypeLookup.Err _)
                           tlci.tlci-host-callback-status-bad-request])]
                     [(ctfe_support.ResultCtfeTypeListLookup.Err _)
@@ -1603,12 +1527,9 @@
                     infos
                     first-index)
                     [(ctfe_support.ResultCtfeTypeLookup.Ok element-ty)
-                      (begin
-                        (set!
-                          compiler-comptime-host-stack-len
-                          (- compiler-comptime-host-stack-len 1))
-                        (compiler-comptime-host-push!
-                          (ctfe_support.CompilerCtfeValue.Type element-ty)))]
+                      (compiler-comptime-host-replace!
+                        1
+                        (ctfe_support.CompilerCtfeValue.Type element-ty))]
                     [(ctfe_support.ResultCtfeTypeLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])]
                 [_ tlci.tlci-host-callback-status-bad-request])]))]
@@ -1625,26 +1546,18 @@
       (compiler-comptime-host-session-macro-state-value)
       module-id
       name-id))
-    (begin
-      (set!
-        compiler-comptime-host-stack-len
-        (- compiler-comptime-host-stack-len 2))
-      (compiler-comptime-host-push!
-        (ctfe_support.CompilerCtfeValue.Expr
-          (ast.ast-node-pool-context-expr-push
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)
-            (ast.AstExpr.Var
-              (if (string.eq module "")
-                name-id
-                (ci.intern-composite-pair-id module-id name-id))))
-          (ctfe_support.ctfe-untyped-expr-type))))
-    (begin
-      (set!
-        (array-ref compiler-comptime-host-diagnostic 0)
-        (ctfe_support.ctfe-module-hook-missing-message module name))
-      tlci.tlci-host-callback-status-diagnostic)))
+    (compiler-comptime-host-replace!
+      2
+      (ctfe_support.CompilerCtfeValue.Expr
+        (ast.ast-node-pool-context-expr-push
+          (compiler-comptime-host-session-pools)
+          (ast.AstExpr.Var
+            (if (string.eq module "")
+              name-id
+              (ci.intern-composite-pair-id module-id name-id))))
+        (ctfe_support.ctfe-untyped-expr-type)))
+    (compiler-comptime-host-diagnostic!
+      (ctfe_support.ctfe-module-hook-missing-message module name))))
 
 ;; Every named host callback takes the session cookie plus three raw i64
 ;; arguments (immediates or a caller byte range) and returns an i64. Its body
@@ -1787,14 +1700,11 @@
         ;; interpreted expansion.
         [node : i64
           (ast.ast-node-pool-context-expr-push
-            (compiler-comptime-host-array-element-shared-view
-              compiler-comptime-host-pools
-              0)
+            (compiler-comptime-host-session-pools)
             (ast.AstExpr.Var
               (compiler-comptime-host-template-source-id
                 (ci.intern-source-slice name 0 (string.string-length name)))))]
-        (compiler-comptime-host-push!
-          (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr)))))))
+        (compiler-comptime-host-push-expr! node)))))
 
 ;; Module values cross the callback boundary as their canonical identity
 ;; String. module-name preserves that exact value and identity for a
@@ -1810,25 +1720,16 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         (match (owned_view.compiler-owned-shared-view value)
           [(ctfe_support.CompilerCtfeValue.String _ _)
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push! value))]
+            (compiler-comptime-host-replace! 1 value)]
           ;; Interpreted string arguments also accept inspected syntax names.
           ;; Normalize one to the public String result before returning.
           [(ctfe_support.CompilerCtfeValue.Name text name-id)
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.String text name-id)))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.String text name-id))]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
 ;; Resolve a named macro hook exactly like interpreted CTFE: the module and
@@ -1846,13 +1747,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [module-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match module-value
           [(ctfe_support.CompilerCtfeValue.String module module-id)
             (match name-value
@@ -1904,9 +1801,7 @@
       name-id)
       [(ctfe_support.CtfeMaybeModuleValueType.Some ty)
         (begin
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len 2))
+          (compiler-comptime-host-drop! 2)
           (if (= query-kind 1)
             (compiler-comptime-host-push!
               (ctfe_support.CompilerCtfeValue.Type ty))
@@ -1914,9 +1809,7 @@
               (compiler-comptime-host-push!
                 (ctfe_support.CompilerCtfeValue.Expr
                   (ast.ast-node-pool-context-expr-push
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)
+                    (compiler-comptime-host-session-pools)
                     (ast.AstExpr.Var
                       (if (string.eq module "")
                         name-id
@@ -1933,21 +1826,16 @@
       [(ctfe_support.CtfeMaybeModuleValueType.None)
         (if (= query-kind 0)
           (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 2))
+            (compiler-comptime-host-drop! 2)
             0)
-          (begin
-            (set!
-              (array-ref compiler-comptime-host-diagnostic 0)
-              (if (= query-kind 1)
-                (ctfe_support.ctfe-module-value-missing-message module name)
-                (str_cat.str-cat
-                  "module-value-expr: module "
-                  module
-                  " does not define value "
-                  name)))
-            tlci.tlci-host-callback-status-diagnostic))])))
+          (compiler-comptime-host-diagnostic!
+            (if (= query-kind 1)
+              (ctfe_support.ctfe-module-value-missing-message module name)
+              (str_cat.str-cat
+                "module-value-expr: module "
+                module
+                " does not define value "
+                name))))])))
 
 ;; `module-value?` is a data callback: 1/0 are the query result, while a
 ;; negative return is a malformed stack request.
@@ -1962,13 +1850,9 @@
       -3
       (let
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [module-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match (compiler-comptime-host-value-module-index module-value)
           [(CompilerCtfeMaybeStringIdentity.Some module module-id)
             (match (compiler-comptime-host-value-module-index name-value)
@@ -1987,13 +1871,9 @@
     tlci.tlci-host-callback-status-bad-request
     (let
       [name-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))]
+        (compiler-comptime-host-stack-value 1)]
       [module-value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 2))]
+        (compiler-comptime-host-stack-value 2)]
       (match (compiler-comptime-host-value-module-index module-value)
         [(CompilerCtfeMaybeStringIdentity.Some module module-id)
           (match (compiler-comptime-host-value-module-index name-value)
@@ -2041,21 +1921,15 @@
       -3
       (let
         [value-type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [signature-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match signature-value
           [(ctfe_support.CompilerCtfeValue.Type signature)
             (match value-type-value
               [(ctfe_support.CompilerCtfeValue.Type value-type)
                 (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
+                  (compiler-comptime-host-drop! 2)
                   (if (ctfe_support.ctfe-function-shared-borrow-returns-string?
                     (compiler-comptime-host-ctfe-env)
                     signature
@@ -2088,14 +1962,8 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [rest-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [head-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [head-node : i64 (compiler-comptime-host-value-node head-value)]
+          (compiler-comptime-host-stack-value 1)]
+        [head-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< head-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match rest-value
@@ -2106,10 +1974,8 @@
                 (begin
                   (ast.ast-expr-list-push (&mut next) head-node)
                   (ast.ast-expr-list-append-from (&mut next) (& rest) 0)
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
+                  (compiler-comptime-host-replace!
+                    2
                     (ctfe_support.CompilerCtfeValue.ExprList next))))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
@@ -2123,15 +1989,9 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [elem : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
         [list-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [node : i64 (compiler-comptime-host-value-node elem)]
+          (compiler-comptime-host-stack-value 2)]
+        [node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< node 0)
           tlci.tlci-host-callback-status-bad-request
           (match list-value
@@ -2140,10 +2000,8 @@
                 [next : ast.AstExprList items]
                 (begin
                   (ast.ast-expr-list-push (&mut next) node)
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
+                  (compiler-comptime-host-replace!
+                    2
                     (ctfe_support.CompilerCtfeValue.ExprList next))))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
@@ -2172,23 +2030,15 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [args-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [callee : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [callee-node : i64 (compiler-comptime-host-value-node callee)]
+          (compiler-comptime-host-stack-value 1)]
+        [callee-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< callee-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match args-value
             [(ctfe_support.CompilerCtfeValue.ExprList items)
               (let
                 [pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)]
+                  (compiler-comptime-host-session-pools)]
                 ;; The callee arrives spanned or unspanned exactly as the
                 ;; template built it: expr-span re-wraps a template head
                 ;; before this op runs, and the provenance note reads
@@ -2199,14 +2049,7 @@
                     pools
                     callee-node
                     items)]
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
-                    (ctfe_support.CompilerCtfeValue.Expr
-                      node
-                      (ast.AstType.Expr)))))]
+                (compiler-comptime-host-replace-expr! 2 node))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 (define (compiler-comptime-host-callback-expr-shared-call1
@@ -2219,35 +2062,20 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [callee : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [value-node : i64 (compiler-comptime-host-value-node value)]
-        [callee-node : i64 (compiler-comptime-host-value-node callee)]
+        [value-node : i64 (compiler-comptime-host-stack-node 1)]
+        [callee-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (or (< value-node 0) (< callee-node 0))
           tlci.tlci-host-callback-status-bad-request
           (let
             [pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
+              (compiler-comptime-host-session-pools)]
             [node : i64
               (ctfe_support.ctfe-expr-shared-call1-node-with-pools
                 (compiler-comptime-host-session-macro-state-value)
                 pools
                 callee-node
                 value-node)]
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 2))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Expr node (ast.AstType.Expr))))))))))
+            (compiler-comptime-host-replace-expr! 2 node)))))))
 
 ;; Does `node` already carry a parser or template source-span wrapper?
 ;; `ctfe-quote-preserve-unquoted-source-span?` asks exactly this question of a
@@ -2274,9 +2102,7 @@
     tlci.tlci-host-callback-status-bad-request
     (let
       [value : ctfe_support.CompilerCtfeValue
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))]
+        (compiler-comptime-host-stack-value 1)]
       [span : ast.AstSourceSpan
         (ast.ast-source-span
           arg-a
@@ -2287,33 +2113,25 @@
         [(ctfe_support.CompilerCtfeValue.Expr node ty)
           (let
             [pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
+              (compiler-comptime-host-session-pools)]
             (if (and
               unquoted?
               (compiler-comptime-host-node-spanned? pools node))
               tlci.tlci-host-callback-status-ok
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    (ast.ast-expr-source-view-with-pools pools node span)
-                    ty)))))]
+              (compiler-comptime-host-replace!
+                1
+                (ctfe_support.CompilerCtfeValue.Expr
+                  (ast.ast-expr-source-view-with-pools pools node span)
+                  ty))))]
         [(ctfe_support.CompilerCtfeValue.CapturedExpr node ty pools)
           (if (and unquoted? (compiler-comptime-host-node-spanned? pools node))
             tlci.tlci-host-callback-status-ok
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.CapturedExpr
-                  (ast.ast-expr-source-view-with-pools pools node span)
-                  ty
-                  pools))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.CapturedExpr
+                (ast.ast-expr-source-view-with-pools pools node span)
+                ty
+                pools)))]
         [_ tlci.tlci-host-callback-status-ok]))))
 
 (define (compiler-comptime-host-callback-expr-span
@@ -2346,22 +2164,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.ExprList items)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-node-pool-context-expr-push
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (ast.AstExpr.Tuple items))
-                (ast.AstType.Expr))))]
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-node-pool-context-expr-push
+              (compiler-comptime-host-session-pools)
+              (ast.AstExpr.Tuple items)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 (define (compiler-comptime-host-callback-expr-array
@@ -2373,22 +2182,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.ExprList items)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-node-pool-context-expr-push
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (ast.AstExpr.Array items))
-                (ast.AstType.Expr))))]
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-node-pool-context-expr-push
+              (compiler-comptime-host-session-pools)
+              (ast.AstExpr.Array items)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Intrinsic two-operand place/array nodes: pop the second operand then the
@@ -2416,37 +2216,18 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [index-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [live-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [index-node : i64 (compiler-comptime-host-value-node index-value)]
-        [live-node : i64 (compiler-comptime-host-value-node live-value)]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+        [index-node : i64 (compiler-comptime-host-stack-node 1)]
+        [live-node : i64 (compiler-comptime-host-stack-node 2)]
+        [target-node : i64 (compiler-comptime-host-stack-node 3)]
         (if (or (< index-node 0) (< live-node 0) (< target-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 3))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-array-take-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  target-node
-                  live-node
-                  index-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            3
+            (ast.ast-expr-array-take-with-pools
+              (compiler-comptime-host-session-pools)
+              target-node
+              live-node
+              index-node)))))))
 
 (define (compiler-comptime-host-callback-expr-replace
   [session : i64]
@@ -2479,15 +2260,9 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [size-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [size-node : i64 (compiler-comptime-host-value-node size-value)]
+          (compiler-comptime-host-stack-value 2)]
+        [size-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< size-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match type-value
@@ -2499,14 +2274,7 @@
                     (compiler-comptime-host-pool-cell-address 1)
                     ty
                     size-node)]
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
-                    (ctfe_support.CompilerCtfeValue.Expr
-                      node
-                      (ast.AstType.Expr)))))]
+                (compiler-comptime-host-replace-expr! 2 node))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; Reflection: 1/0 as data when the type operand's kind string matches
@@ -2532,13 +2300,9 @@
           (if (string.eq
             (let
               [host-pools : ast.AstNodePoolContext
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)]
+                (compiler-comptime-host-session-pools)]
               [host-reflections : ctfe_support.CtfeReflectInfoList
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-reflections
-                  0)]
+                (compiler-comptime-host-session-reflections)]
               (ctfe_support.ctfe-type-kind-with-reflections-and-pools
                 host-pools
                 host-reflections
@@ -2573,9 +2337,7 @@
         [(ctfe_support.CompilerCtfeValue.Expr _ ty)
           (let
             [pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
+              (compiler-comptime-host-session-pools)]
             [actual-ty : ast.AstType
               (ctfe_support.ctfe-captured-expr-type-inner-with-pools pools ty)]
             (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
@@ -2583,9 +2345,7 @@
               (if (string.eq
                 (let
                   [host-reflections : ctfe_support.CtfeReflectInfoList
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-reflections
-                      0)]
+                    (compiler-comptime-host-session-reflections)]
                   (ctfe_support.ctfe-type-kind-with-reflections-and-pools
                     pools
                     host-reflections
@@ -2621,13 +2381,9 @@
           (if (string.eq
             (let
               [host-pools : ast.AstNodePoolContext
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)]
+                (compiler-comptime-host-session-pools)]
               [host-reflections : ctfe_support.CtfeReflectInfoList
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-reflections
-                  0)]
+                (compiler-comptime-host-session-reflections)]
               (ctfe_support.ctfe-type-key-with-reflections-and-pools
                 host-pools
                 host-reflections
@@ -2650,38 +2406,26 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Expr _ ty)
           (let
             [pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
+              (compiler-comptime-host-session-pools)]
             [actual-ty : ast.AstType
               (ctfe_support.ctfe-captured-expr-type-inner-with-pools pools ty)]
             (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
-              (begin
-                (set!
-                  (array-ref compiler-comptime-host-diagnostic 0)
-                  "expr-type requires a typechecked Expr")
-                tlci.tlci-host-callback-status-diagnostic)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Type
-                    (let
-                      [host-reflections : ctfe_support.CtfeReflectInfoList
-                        (compiler-comptime-host-array-element-shared-view
-                          compiler-comptime-host-reflections
-                          0)]
-                      (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                        pools
-                        host-reflections
-                        actual-ty)))))))]
+              (compiler-comptime-host-diagnostic!
+                "expr-type requires a typechecked Expr")
+              (compiler-comptime-host-replace!
+                1
+                (ctfe_support.CompilerCtfeValue.Type
+                  (let
+                    [host-reflections : ctfe_support.CtfeReflectInfoList
+                      (compiler-comptime-host-session-reflections)]
+                    (ctfe_support.ctfe-reflect-resolve-type-with-pools
+                      pools
+                      host-reflections
+                      actual-ty))))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; type-expr: pop one reflected Type value and push one opaque TypeLiteral Expr
@@ -2696,23 +2440,14 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type ty)
           (let
             [pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Expr
-                  (ast.ast-expr-type-literal-with-pools pools ty)
-                  (ast.AstType.Expr)))))]
+              (compiler-comptime-host-session-pools)]
+            (compiler-comptime-host-replace-expr!
+              1
+              (ast.ast-expr-type-literal-with-pools pools ty)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; expr-cast: pop the type value then the operand expression and push the
@@ -2729,31 +2464,18 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [value-node : i64 (compiler-comptime-host-value-node value-value)]
+          (compiler-comptime-host-stack-value 1)]
+        [value-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< value-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match type-value
             [(ctfe_support.CompilerCtfeValue.Type ty)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    (ast.ast-expr-cast-with-pools
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-pools
-                        0)
-                      value-node
-                      ty)
-                    (ast.AstType.Expr))))]
+              (compiler-comptime-host-replace-expr!
+                2
+                (ast.ast-expr-cast-with-pools
+                  (compiler-comptime-host-session-pools)
+                  value-node
+                  ty))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; expr-ann: pop the type value then the operand expression and preserve the
@@ -2769,31 +2491,18 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [value-node : i64 (compiler-comptime-host-value-node value-value)]
+          (compiler-comptime-host-stack-value 1)]
+        [value-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< value-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match type-value
             [(ctfe_support.CompilerCtfeValue.Type ty)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    (ast.ast-expr-ann-with-pools
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-pools
-                        0)
-                      value-node
-                      ty)
-                    (ast.AstType.Expr))))]
+              (compiler-comptime-host-replace-expr!
+                2
+                (ast.ast-expr-ann-with-pools
+                  (compiler-comptime-host-session-pools)
+                  value-node
+                  ty))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; expr-init: pop a type value and push the typed `(init : T)` node produced by
@@ -2807,22 +2516,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type ty)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-init-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  ty)
-                (ast.AstType.Expr))))]
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-init-with-pools
+              (compiler-comptime-host-session-pools)
+              ty))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 (define (compiler-comptime-host-callback-expr-bool-literal
@@ -2832,14 +2532,10 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-node-pool-context-expr-push
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          (ast.AstExpr.Literal (ast.AstLiteral.Bool (not (= arg-a 0)))))
-        (ast.AstType.Expr)))))
+    (compiler-comptime-host-push-expr!
+      (ast.ast-node-pool-context-expr-push
+        (compiler-comptime-host-session-pools)
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool (not (= arg-a 0))))))))
 
 (define (compiler-comptime-host-callback-expr-int-literal
   [session : i64]
@@ -2848,14 +2544,10 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-node-pool-context-expr-push
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          (ast.AstExpr.Literal (ast.ast-lit-int arg-a)))
-        (ast.AstType.Expr)))))
+    (compiler-comptime-host-push-expr!
+      (ast.ast-node-pool-context-expr-push
+        (compiler-comptime-host-session-pools)
+        (ast.AstExpr.Literal (ast.ast-lit-int arg-a))))))
 
 ;; Template string literal: the lexer interns literal text through the
 ;; source-name session, so the same spelling maps to the same id here.
@@ -2872,16 +2564,12 @@
         [text : String
           (unsafe
             (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))]
-        (compiler-comptime-host-push!
-          (ctfe_support.CompilerCtfeValue.Expr
-            (ast.ast-node-pool-context-expr-push
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)
-              (ast.AstExpr.Literal
-                (ast.AstLiteral.String
-                  (ci.intern-source-slice text 0 (string.string-length text)))))
-            (ast.AstType.Expr)))))))
+        (compiler-comptime-host-push-expr!
+          (ast.ast-node-pool-context-expr-push
+            (compiler-comptime-host-session-pools)
+            (ast.AstExpr.Literal
+              (ast.AstLiteral.String
+                (ci.intern-source-slice text 0 (string.string-length text))))))))))
 
 ;; Pop a splice ExprList then the list under construction and push the
 ;; concatenation, matching the interpreted quote's unquote-splicing step.
@@ -2896,13 +2584,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [splice-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [list-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match list-value
           [(ctfe_support.CompilerCtfeValue.ExprList items)
             (match (compiler-comptime-host-value-expr-list splice-value)
@@ -2910,12 +2594,9 @@
                 (let
                   [next : ast.AstExprList
                     (ctfe_support.ctfe-expr-list-append items splice-items)]
-                  (begin
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 2))
-                    (compiler-comptime-host-push!
-                      (ctfe_support.CompilerCtfeValue.ExprList next))))]
+                  (compiler-comptime-host-replace!
+                    2
+                    (ctfe_support.CompilerCtfeValue.ExprList next)))]
               [(CompilerCtfeMaybeExprList.None)
                 tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
@@ -2932,37 +2613,18 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [else-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [then-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [cond-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [else-node : i64 (compiler-comptime-host-value-node else-value)]
-        [then-node : i64 (compiler-comptime-host-value-node then-value)]
-        [cond-node : i64 (compiler-comptime-host-value-node cond-value)]
+        [else-node : i64 (compiler-comptime-host-stack-node 1)]
+        [then-node : i64 (compiler-comptime-host-stack-node 2)]
+        [cond-node : i64 (compiler-comptime-host-stack-node 3)]
         (if (or (< else-node 0) (< then-node 0) (< cond-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 3))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-if-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  cond-node
-                  then-node
-                  else-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            3
+            (ast.ast-expr-if-with-pools
+              (compiler-comptime-host-session-pools)
+              cond-node
+              then-node
+              else-node)))))))
 
 ;; Item count of a variadic ExprList operand as data; negative reports a
 ;; bad request without touching session state (the generated entry
@@ -3014,27 +2676,19 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.String text _)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Name
-                (owned_view.compiler-owned-shared-view text)
-                (ctfe_support.ctfe-materialize-generated-name-id text))))]
+          (compiler-comptime-host-replace!
+            1
+            (ctfe_support.CompilerCtfeValue.Name
+              (owned_view.compiler-owned-shared-view text)
+              (ctfe_support.ctfe-materialize-generated-name-id text)))]
         [(ctfe_support.CompilerCtfeValue.Name text _)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Name
-                (owned_view.compiler-owned-shared-view text)
-                (ctfe_support.ctfe-materialize-generated-name-id text))))]
+          (compiler-comptime-host-replace!
+            1
+            (ctfe_support.CompilerCtfeValue.Name
+              (owned_view.compiler-owned-shared-view text)
+              (ctfe_support.ctfe-materialize-generated-name-id text)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; expr-begin-unit: replace an expression-list value with a begin node whose
@@ -3050,23 +2704,16 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         (match (compiler-comptime-host-value-expr-list value)
           [(CompilerCtfeMaybeExprList.Some items)
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Expr
-                  (ctfe_support.ctfe-expr-begin-unit-node
-                    items
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0))
-                  (ast.AstType.Unit))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Expr
+                (ctfe_support.ctfe-expr-begin-unit-node
+                  items
+                  (compiler-comptime-host-session-pools))
+                (ast.AstType.Unit)))]
           [(CompilerCtfeMaybeExprList.None)
             tlci.tlci-host-callback-status-bad-request])))))
 
@@ -3133,20 +2780,14 @@
             (if (or
               (< arg-b 0)
               (>= arg-b (ctfe_support.ctfe-expr-list-length items)))
-              (begin
-                (set!
-                  (array-ref compiler-comptime-host-diagnostic 0)
-                  "array-ref index out of range")
-                tlci.tlci-host-callback-status-diagnostic)
+              (compiler-comptime-host-diagnostic!
+                "array-ref index out of range")
               (compiler-comptime-host-push-type-literal!
                 operand
                 (ctfe_support.ctfe-expr-list-nth items arg-b)))]
           [(CompilerCtfeMaybeExprList.None)
-            (begin
-              (set!
-                (array-ref compiler-comptime-host-diagnostic 0)
-                "expr-list-type-nth expects an ExprList")
-              tlci.tlci-host-callback-status-diagnostic)])))))
+            (compiler-comptime-host-diagnostic!
+              "expr-list-type-nth expects an ExprList")])))))
 
 ;; Index a variadic ExprBindingClauseList operand and push the selected clause.
 (define (compiler-comptime-host-callback-expr-binding-clause-list-nth
@@ -3178,9 +2819,7 @@
 (define (compiler-comptime-host-expr-binding-clause-project! [selector : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     tlci.tlci-host-callback-status-bad-request
-    (match (compiler-comptime-host-array-element-shared-view
-      compiler-comptime-host-stack
-      (- compiler-comptime-host-stack-len 1))
+    (match (compiler-comptime-host-stack-value 1)
       [(ctfe_support.CompilerCtfeValue.ExprBindingClause clause)
         (let
           [value : ctfe_support.CompilerCtfeValue
@@ -3199,9 +2838,7 @@
                     (owned_view.compiler-owned-place-shared-view
                       clause.init-produced)]
                   [pools : ast.AstNodePoolContext
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)]
+                    (compiler-comptime-host-session-pools)]
                   (ctfe_support.CompilerCtfeValue.Expr
                     (ctfe_support.ctfe-caller-origin-expr-node-with-pools
                       pools
@@ -3210,11 +2847,7 @@
                     (ctfe_support.ctfe-caller-origin-expr-type-inner-with-pools
                       pools
                       produced)))])]
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push! value)))]
+          (compiler-comptime-host-replace! 1 value))]
       [_ tlci.tlci-host-callback-status-bad-request])))
 
 (define (compiler-comptime-host-callback-expr-binding-clause-name
@@ -3279,22 +2912,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.ExprList items)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-node-pool-context-expr-push
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (ast.AstExpr.Begin items))
-                (ast.AstType.Expr))))]
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-node-pool-context-expr-push
+              (compiler-comptime-host-session-pools)
+              (ast.AstExpr.Begin items)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Pop the right then the left operand expression and push a binary node
@@ -3309,32 +2933,17 @@
     (if (or (< compiler-comptime-host-stack-len 2) (< arg-a 0) (> arg-a 17))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [right-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [left-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [right-node : i64 (compiler-comptime-host-value-node right-value)]
-        [left-node : i64 (compiler-comptime-host-value-node left-value)]
+        [right-node : i64 (compiler-comptime-host-stack-node 1)]
+        [left-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (or (< right-node 0) (< left-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 2))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-binary-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (compiler-comptime-host-binop-for-ordinal arg-a)
-                  left-node
-                  right-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            2
+            (ast.ast-expr-binary-with-pools
+              (compiler-comptime-host-session-pools)
+              (compiler-comptime-host-binop-for-ordinal arg-a)
+              left-node
+              right-node)))))))
 
 ;; Pop the operand expression and push a unary node for the AstUnOp
 ;; ordinal in `a`.
@@ -3348,26 +2957,15 @@
     (if (or (< compiler-comptime-host-stack-len 1) (< arg-a 0) (> arg-a 2))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [inner-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [inner-node : i64 (compiler-comptime-host-value-node inner-value)]
+        [inner-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< inner-node 0)
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-unary-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (compiler-comptime-host-unop-for-ordinal arg-a)
-                  inner-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-unary-with-pools
+              (compiler-comptime-host-session-pools)
+              (compiler-comptime-host-unop-for-ordinal arg-a)
+              inner-node)))))))
 
 (define (compiler-comptime-host-callback-expr-char-literal
   [session : i64]
@@ -3376,14 +2974,10 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-node-pool-context-expr-push
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          (ast.AstExpr.Literal (ast.AstLiteral.Char (cast arg-a : char))))
-        (ast.AstType.Expr)))))
+    (compiler-comptime-host-push-expr!
+      (ast.ast-node-pool-context-expr-push
+        (compiler-comptime-host-session-pools)
+        (ast.AstExpr.Literal (ast.AstLiteral.Char (cast arg-a : char)))))))
 
 (define (compiler-comptime-host-callback-expr-unit-literal
   [session : i64]
@@ -3392,14 +2986,10 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-node-pool-context-expr-push
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
-        (ast.AstType.Expr)))))
+    (compiler-comptime-host-push-expr!
+      (ast.ast-node-pool-context-expr-push
+        (compiler-comptime-host-session-pools)
+        (ast.AstExpr.Literal (ast.AstLiteral.Unit))))))
 
 ;; Computed-body locals: local-set pops one value into the named session
 ;; slot; local-get pushes the slot's value.
@@ -3418,13 +3008,9 @@
       (begin
         (set!
           (array-ref compiler-comptime-host-locals arg-a)
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1)))
+          (compiler-comptime-host-stack-value 1))
         (set! (array-ref compiler-comptime-host-locals-live arg-a) true)
-        (set!
-          compiler-comptime-host-stack-len
-          (- compiler-comptime-host-stack-len 1))
+        (compiler-comptime-host-drop! 1)
         tlci.tlci-host-callback-status-ok))))
 
 (define (compiler-comptime-host-callback-local-get
@@ -3458,37 +3044,29 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.String text string-id)
           (let
             [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.ctfe-syntax-expr-push
-                  env
-                  (ast.AstExpr.Var
-                    (ctfe_support.ctfe-string-syntax-name-id
-                      (ctfe_support.ctfe-env-source-names env)
-                      text
-                      string-id))
-                  (ctfe_support.ctfe-untyped-expr-type)))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.ctfe-syntax-expr-push
+                env
+                (ast.AstExpr.Var
+                  (ctfe_support.ctfe-string-syntax-name-id
+                    (ctfe_support.ctfe-env-source-names env)
+                    text
+                    string-id))
+                (ctfe_support.ctfe-untyped-expr-type))))]
         [(ctfe_support.CompilerCtfeValue.Name _ name-id)
           (let
             [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.ctfe-syntax-expr-push
-                  env
-                  (ast.AstExpr.Var name-id)
-                  (ctfe_support.ctfe-untyped-expr-type)))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.ctfe-syntax-expr-push
+                env
+                (ast.AstExpr.Var name-id)
+                (ctfe_support.ctfe-untyped-expr-type))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Pop an expression list and push the bracket-clause node.
@@ -3501,22 +3079,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.ExprList items)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-bracket-clause-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  items)
-                (ast.AstType.Expr))))]
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-bracket-clause-with-pools
+              (compiler-comptime-host-session-pools)
+              items))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Pop the place expression and push a borrow node; immediate `a` is 1
@@ -3532,34 +3101,23 @@
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [place-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [place-node : i64 (compiler-comptime-host-value-node place-value)]
+        [place-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< place-node 0)
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-borrow-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (not (= arg-a 0))
-                  (if (> arg-b 0)
-                    (ast.AstBorrowLifetime.Named
-                      (ci.intern-source-slice
-                        (unsafe
-                          (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c))
-                        0
-                        _arg-c))
-                    (ast.AstBorrowLifetime.Inferred))
-                  place-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-borrow-with-pools
+              (compiler-comptime-host-session-pools)
+              (not (= arg-a 0))
+              (if (> arg-b 0)
+                (ast.AstBorrowLifetime.Named
+                  (ci.intern-source-slice
+                    (unsafe
+                      (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c))
+                    0
+                    _arg-c))
+                (ast.AstBorrowLifetime.Inferred))
+              place-node)))))))
 
 ;; Type identity reflection shares one registered callback: selector 0 is the
 ;; canonical type key, selector 1 is the nominal declaration module, and
@@ -3574,64 +3132,44 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type ty)
           (cond
             [(= arg-a 0)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.ctfe-generated-string-value
-                    (let
-                      [host-pools : ast.AstNodePoolContext
-                        (compiler-comptime-host-array-element-shared-view
-                          compiler-comptime-host-pools
-                          0)]
-                      [host-reflections : ctfe_support.CtfeReflectInfoList
-                        (compiler-comptime-host-array-element-shared-view
-                          compiler-comptime-host-reflections
-                          0)]
-                      (ctfe_support.ctfe-type-key-with-reflections-and-pools
-                        host-pools
-                        host-reflections
-                        ty)))))]
+              (compiler-comptime-host-replace!
+                1
+                (ctfe_support.ctfe-generated-string-value
+                  (let
+                    [host-pools : ast.AstNodePoolContext
+                      (compiler-comptime-host-session-pools)]
+                    [host-reflections : ctfe_support.CtfeReflectInfoList
+                      (compiler-comptime-host-session-reflections)]
+                    (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                      host-pools
+                      host-reflections
+                      ty))))]
             [(or (= arg-a 1) (= arg-a 2))
               (match (let
                 [host-pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)]
+                  (compiler-comptime-host-session-pools)]
                 [host-reflections : ctfe_support.CtfeReflectInfoList
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-reflections
-                    0)]
+                  (compiler-comptime-host-session-reflections)]
                 (ctfe_support.ctfe-reflect-info-for-type-with-pools
                   host-pools
                   host-reflections
                   ty))
                 [(ctfe_support.CtfeMaybeReflectInfo.Some info)
-                  (begin
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 1))
-                    (compiler-comptime-host-push!
-                      (ctfe_support.ctfe-name-value
-                        (if (= arg-a 1)
-                          (ctfe_support.ctfe-reflect-info-nominal-module-id
-                            info)
-                          (ctfe_support.ctfe-reflect-info-nominal-name-id info)))))]
-                [(ctfe_support.CtfeMaybeReflectInfo.None)
-                  (begin
-                    (set!
-                      (array-ref compiler-comptime-host-diagnostic 0)
+                  (compiler-comptime-host-replace!
+                    1
+                    (ctfe_support.ctfe-name-value
                       (if (= arg-a 1)
-                        "type-nominal-module requires struct or enum type"
-                        "type-nominal-name requires struct or enum type"))
-                    tlci.tlci-host-callback-status-diagnostic)])]
+                        (ctfe_support.ctfe-reflect-info-nominal-module-id info)
+                        (ctfe_support.ctfe-reflect-info-nominal-name-id info))))]
+                [(ctfe_support.CtfeMaybeReflectInfo.None)
+                  (compiler-comptime-host-diagnostic!
+                    (if (= arg-a 1)
+                      "type-nominal-module requires struct or enum type"
+                      "type-nominal-name requires struct or enum type"))])]
             [else tlci.tlci-host-callback-status-bad-request])]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
@@ -3733,27 +3271,20 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [right-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [left-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match (compiler-comptime-host-value-string-identity left-value)
           [(CompilerCtfeMaybeStringIdentity.Some left-text left-id)
             (match (compiler-comptime-host-value-string-identity right-value)
               [(CompilerCtfeMaybeStringIdentity.Some right-text right-id)
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
-                    (ctfe_support.ctfe-generated-string-append-value
-                      left-text
-                      left-id
-                      right-text
-                      right-id)))]
+                (compiler-comptime-host-replace!
+                  2
+                  (ctfe_support.ctfe-generated-string-append-value
+                    left-text
+                    left-id
+                    right-text
+                    right-id))]
               [(CompilerCtfeMaybeStringIdentity.None)
                 tlci.tlci-host-callback-status-bad-request])]
           [(CompilerCtfeMaybeStringIdentity.None)
@@ -3791,31 +3322,23 @@
                 (ci.intern-source-slice name 0 (string.string-length name)))))))
       (if (< compiler-comptime-host-stack-len 1)
         tlci.tlci-host-callback-status-bad-request
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))
+        (match (compiler-comptime-host-stack-value 1)
           [(ctfe_support.CompilerCtfeValue.String text string-id)
             (let
               [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Pattern
-                    (ctfe_support.ctfe-pat-binding-id
-                      (ctfe_support.ctfe-string-syntax-name-id
-                        (ctfe_support.ctfe-env-source-names env)
-                        text
-                        string-id))))))]
-          [(ctfe_support.CompilerCtfeValue.Name _ name-id)
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
+              (compiler-comptime-host-replace!
+                1
                 (ctfe_support.CompilerCtfeValue.Pattern
-                  (ctfe_support.ctfe-pat-binding-id name-id))))]
+                  (ctfe_support.ctfe-pat-binding-id
+                    (ctfe_support.ctfe-string-syntax-name-id
+                      (ctfe_support.ctfe-env-source-names env)
+                      text
+                      string-id)))))]
+          [(ctfe_support.CompilerCtfeValue.Name _ name-id)
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Pattern
+                (ctfe_support.ctfe-pat-binding-id name-id)))]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
 (define (compiler-comptime-host-build-pattern-binding-typed!
@@ -3831,10 +3354,8 @@
       [(ctfe_support.ResultCtfeQuoteType.Ok ty next-fuel)
         (begin
           (set! compiler-comptime-host-session-fuel next-fuel)
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len 2))
-          (compiler-comptime-host-push!
+          (compiler-comptime-host-replace!
+            2
             (ctfe_support.CompilerCtfeValue.Pattern
               (ast.AstPattern.Var name-id (ast.AstMaybeType.Some ty)))))]
       [(ctfe_support.ResultCtfeQuoteType.Err diag)
@@ -3855,13 +3376,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match name-value
           [(ctfe_support.CompilerCtfeValue.String text string-id)
             (let
@@ -3926,13 +3443,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [pattern-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [list-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match list-value
           [(ctfe_support.CompilerCtfeValue.PatternList items)
             (match pattern-value
@@ -3941,10 +3454,8 @@
                   [next : ast.AstPatternList items]
                   (begin
                     (ast.ast-pattern-list-push (&mut next) pattern)
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 2))
-                    (compiler-comptime-host-push!
+                    (compiler-comptime-host-replace!
+                      2
                       (ctfe_support.CompilerCtfeValue.PatternList next))))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
@@ -3960,24 +3471,17 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [rest-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [head-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match head-value
           [(ctfe_support.CompilerCtfeValue.Pattern head)
             (match rest-value
               [(ctfe_support.CompilerCtfeValue.PatternList rest)
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
-                    (ctfe_support.CompilerCtfeValue.PatternList
-                      (ast.ast-pattern-cons head rest))))]
+                (compiler-comptime-host-replace!
+                  2
+                  (ctfe_support.CompilerCtfeValue.PatternList
+                    (ast.ast-pattern-cons head rest)))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
@@ -3994,9 +3498,7 @@
       [(> arg-a compiler-comptime-host-session-fuel)
         tlci.tlci-host-callback-status-fuel-exhausted]
       [else
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))
+        (match (compiler-comptime-host-stack-value 1)
           [(ctfe_support.CompilerCtfeValue.String prefix _)
             (let
               [patterns : ast.AstPatternList
@@ -4018,10 +3520,8 @@
                 (set!
                   compiler-comptime-host-session-fuel
                   (- compiler-comptime-host-session-fuel arg-a))
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
+                (compiler-comptime-host-replace!
+                  1
                   (ctfe_support.CompilerCtfeValue.PatternList patterns))))]
           [_ tlci.tlci-host-callback-status-bad-request])])))
 
@@ -4036,13 +3536,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [payloads-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match name-value
           [(ctfe_support.CompilerCtfeValue.Name text name-id)
             (compiler-comptime-host-build-pattern-variant-from-name!
@@ -4067,24 +3563,17 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [rest-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [head-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match head-value
           [(ctfe_support.CompilerCtfeValue.MatchArm head)
             (match rest-value
               [(ctfe_support.CompilerCtfeValue.MatchArmList rest)
-                (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
-                    (ctfe_support.CompilerCtfeValue.MatchArmList
-                      (ast.ast-match-arm-cons head rest))))]
+                (compiler-comptime-host-replace!
+                  2
+                  (ctfe_support.CompilerCtfeValue.MatchArmList
+                    (ast.ast-match-arm-cons head rest)))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
@@ -4098,26 +3587,17 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
         [pattern-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [body-node : i64 (compiler-comptime-host-value-node body-value)]
+          (compiler-comptime-host-stack-value 2)]
+        [body-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< body-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match pattern-value
             [(ctfe_support.CompilerCtfeValue.Pattern pattern)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.MatchArm
-                    (ast.ast-match-arm pattern body-node))))]
+              (compiler-comptime-host-replace!
+                2
+                (ctfe_support.CompilerCtfeValue.MatchArm
+                  (ast.ast-match-arm pattern body-node)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 (define (compiler-comptime-host-callback-match-arm-list-empty
@@ -4141,13 +3621,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [arm-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [list-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match list-value
           [(ctfe_support.CompilerCtfeValue.MatchArmList items)
             (match arm-value
@@ -4156,10 +3632,8 @@
                   [next : ast.AstMatchArmList items]
                   (begin
                     (ast.ast-match-arm-list-push (&mut next) arm)
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 2))
-                    (compiler-comptime-host-push!
+                    (compiler-comptime-host-replace!
+                      2
                       (ctfe_support.CompilerCtfeValue.MatchArmList next))))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
@@ -4175,32 +3649,18 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [arms-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [scrutinee-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [scrutinee-node : i64
-          (compiler-comptime-host-value-node scrutinee-value)]
+          (compiler-comptime-host-stack-value 1)]
+        [scrutinee-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< scrutinee-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match arms-value
             [(ctfe_support.CompilerCtfeValue.MatchArmList arms)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    (ast.ast-expr-match-with-pools
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-pools
-                        0)
-                      scrutinee-node
-                      arms)
-                    (ast.AstType.Expr))))]
+              (compiler-comptime-host-replace-expr!
+                2
+                (ast.ast-expr-match-with-pools
+                  (compiler-comptime-host-session-pools)
+                  scrutinee-node
+                  arms))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; string-value: push the comptime String value for caller bytes, keeping
@@ -4236,15 +3696,11 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.String text _)
           (begin
             (set! (array-ref compiler-comptime-host-diagnostic 0) text)
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
+            (compiler-comptime-host-drop! 1)
             tlci.tlci-host-callback-status-diagnostic)]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
@@ -4286,21 +3742,15 @@
       -3
       (let
         [right-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [left-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match (compiler-comptime-host-value-string left-value)
           [(CompilerCtfeMaybeString.Some left-text)
             (match (compiler-comptime-host-value-string right-value)
               [(CompilerCtfeMaybeString.Some right-text)
                 (begin
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
+                  (compiler-comptime-host-drop! 2)
                   (if (string.eq left-text right-text)
                     1
                     0))]
@@ -4318,26 +3768,15 @@
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+        [target-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (or (< target-node 0) (< arg-a 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-tuple-ref-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  target-node
-                  arg-a)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-tuple-ref-with-pools
+              (compiler-comptime-host-session-pools)
+              target-node
+              arg-a)))))))
 
 ;; struct-get: pop the target expression and push the field access node
 ;; for the field name in `a`/`b`.
@@ -4351,30 +3790,19 @@
     (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 1))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+        [target-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< target-node 0)
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-struct-get-id-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  target-node
-                  (ci.intern-source-slice
-                    (unsafe
-                      (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
-                    0
-                    arg-b))
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-struct-get-id-with-pools
+              (compiler-comptime-host-session-pools)
+              target-node
+              (ci.intern-source-slice
+                (unsafe
+                  (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
+                0
+                arg-b))))))))
 
 ;; Dynamic struct-get: pop the computed name after the target expression.
 (define (compiler-comptime-host-callback-expr-struct-get-from-value
@@ -4388,14 +3816,8 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+          (compiler-comptime-host-stack-value 1)]
+        [target-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< target-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match name-value
@@ -4427,20 +3849,10 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [value-node : i64 (compiler-comptime-host-value-node value-value)]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+          (compiler-comptime-host-stack-value 2)]
+        [value-node : i64 (compiler-comptime-host-stack-node 1)]
+        [target-node : i64 (compiler-comptime-host-stack-node 3)]
         (if (or (< value-node 0) (< target-node 0))
           tlci.tlci-host-callback-status-bad-request
           (match name-value
@@ -4475,23 +3887,13 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [place-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [value-node : i64 (compiler-comptime-host-value-node value-value)]
-        [place-node : i64 (compiler-comptime-host-value-node place-value)]
+        [value-node : i64 (compiler-comptime-host-stack-node 1)]
+        [place-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (or (< value-node 0) (< place-node 0))
           tlci.tlci-host-callback-status-bad-request
           (let
             [pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
+              (compiler-comptime-host-session-pools)]
             [place : ast.AstExpr
               (compiler-comptime-host-unspanned-expr
                 pools
@@ -4510,19 +3912,13 @@
                   (ast.ast-expr-box-set-with-pools pools receiver value-node)]
                 [_ -1])]
             (if (< result-node 0)
-              (begin
-                (set!
-                  (array-ref compiler-comptime-host-diagnostic 0)
-                  "quasiquote set! target must evaluate to a name, struct field place, or box place")
-                tlci.tlci-host-callback-status-diagnostic)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    result-node
-                    (ast.AstType.Unit)))))))))))
+              (compiler-comptime-host-diagnostic!
+                "quasiquote set! target must evaluate to a name, struct field place, or box place")
+              (compiler-comptime-host-replace!
+                2
+                (ctfe_support.CompilerCtfeValue.Expr
+                  result-node
+                  (ast.AstType.Unit))))))))))
 
 ;; array-set!: pop the value, index, and target expressions and push the
 ;; node the parser produces.
@@ -4536,37 +3932,18 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [index-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [value-node : i64 (compiler-comptime-host-value-node value-value)]
-        [index-node : i64 (compiler-comptime-host-value-node index-value)]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+        [value-node : i64 (compiler-comptime-host-stack-node 1)]
+        [index-node : i64 (compiler-comptime-host-stack-node 2)]
+        [target-node : i64 (compiler-comptime-host-stack-node 3)]
         (if (or (< value-node 0) (< index-node 0) (< target-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 3))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-array-set-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  target-node
-                  index-node
-                  value-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            3
+            (ast.ast-expr-array-set-with-pools
+              (compiler-comptime-host-session-pools)
+              target-node
+              index-node
+              value-node)))))))
 
 ;; expr-struct-set: pop the value then the target expression and push the
 ;; internal StructSet node for the field name in
@@ -4581,36 +3958,21 @@
     (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 2))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [target-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [value-node : i64 (compiler-comptime-host-value-node value-value)]
-        [target-node : i64 (compiler-comptime-host-value-node target-value)]
+        [value-node : i64 (compiler-comptime-host-stack-node 1)]
+        [target-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (or (< value-node 0) (< target-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 2))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-struct-set-id-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  target-node
-                  (ci.intern-source-slice
-                    (unsafe
-                      (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
-                    0
-                    arg-b)
-                  value-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            2
+            (ast.ast-expr-struct-set-id-with-pools
+              (compiler-comptime-host-session-pools)
+              target-node
+              (ci.intern-source-slice
+                (unsafe
+                  (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
+                0
+                arg-b)
+              value-node)))))))
 
 ;; expr-return / expr-box / expr-box-get: pop one expression and push the
 ;; node the parser produces, matching the interpreted quote's unary
@@ -4744,22 +4106,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.ExprList items)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-node-pool-context-expr-push
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (ast.AstExpr.Unsafe items))
-                (ast.AstType.Expr))))]
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-node-pool-context-expr-push
+              (compiler-comptime-host-session-pools)
+              (ast.AstExpr.Unsafe items)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; expr-float-literal: push a float literal node carrying the caller bytes
@@ -4777,17 +4130,13 @@
         [text : String
           (unsafe
             (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))]
-        (compiler-comptime-host-push!
-          (ctfe_support.CompilerCtfeValue.Expr
-            (ast.ast-node-pool-context-expr-push
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)
-              (ast.AstExpr.Literal
-                (ast.AstLiteral.Float
-                  (ci.intern-str
-                    (ci.intern-source-slice text 0 (string.string-length text))))))
-            (ast.AstType.Expr)))))))
+        (compiler-comptime-host-push-expr!
+          (ast.ast-node-pool-context-expr-push
+            (compiler-comptime-host-session-pools)
+            (ast.AstExpr.Literal
+              (ast.AstLiteral.Float
+                (ci.intern-str
+                  (ci.intern-source-slice text 0 (string.string-length text)))))))))))
 
 ;; let-binding: pop the init expression and push a binding for the name in
 ;; `a`/`b` with the template-source mark and no type annotation.
@@ -4801,28 +4150,21 @@
     (if (or (<= arg-a 0) (< arg-b 0) (< compiler-comptime-host-stack-len 1))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [init-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [init-node : i64 (compiler-comptime-host-value-node init-value)]
+        [init-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< init-node 0)
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.LetBinding
-                (ast.ast-let-binding-id
-                  (compiler-comptime-host-template-source-id
-                    (ci.intern-source-slice
-                      (unsafe
-                        (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
-                      0
-                      arg-b))
-                  (ast.AstMaybeType.No)
-                  init-node)))))))))
+          (compiler-comptime-host-replace!
+            1
+            (ctfe_support.CompilerCtfeValue.LetBinding
+              (ast.ast-let-binding-id
+                (compiler-comptime-host-template-source-id
+                  (ci.intern-source-slice
+                    (unsafe
+                      (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
+                    0
+                    arg-b))
+                (ast.AstMaybeType.No)
+                init-node))))))))
 
 (define (compiler-comptime-host-callback-let-binding-list-empty
   [session : i64]
@@ -4846,13 +4188,9 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [binding-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [list-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         (match list-value
           [(ctfe_support.CompilerCtfeValue.LetBindingList items)
             (match binding-value
@@ -4861,10 +4199,8 @@
                   [next : ast.AstLetBindingList items]
                   (begin
                     (ast.ast-let-binding-list-push (&mut next) binding)
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 2))
-                    (compiler-comptime-host-push!
+                    (compiler-comptime-host-replace!
+                      2
                       (ctfe_support.CompilerCtfeValue.LetBindingList next))))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
@@ -4880,32 +4216,19 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
         [list-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [body-node : i64 (compiler-comptime-host-value-node body-value)]
+          (compiler-comptime-host-stack-value 2)]
+        [body-node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< body-node 0)
           tlci.tlci-host-callback-status-bad-request
           (match list-value
             [(ctfe_support.CompilerCtfeValue.LetBindingList items)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 2))
-                (compiler-comptime-host-push!
-                  (ctfe_support.CompilerCtfeValue.Expr
-                    (ast.ast-expr-let-with-pools
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-pools
-                        0)
-                      items
-                      body-node)
-                    (ast.AstType.Expr))))]
+              (compiler-comptime-host-replace-expr!
+                2
+                (ast.ast-expr-let-with-pools
+                  (compiler-comptime-host-session-pools)
+                  items
+                  body-node))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; Reconstruct a quasiquoted lambda. `arg-c` encodes parameter-count * 2 plus
@@ -4998,16 +4321,12 @@
             tlci.tlci-host-callback-status-bad-request
             (begin
               (set! compiler-comptime-host-stack-len base)
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Expr
-                  (ast.ast-expr-lambda-with-pools
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)
-                    params
-                    maybe-ret
-                    body-node)
-                  (ast.AstType.Expr))))))))))
+              (compiler-comptime-host-push-expr!
+                (ast.ast-expr-lambda-with-pools
+                  (compiler-comptime-host-session-pools)
+                  params
+                  maybe-ret
+                  body-node)))))))))
 
 (define (compiler-comptime-host-callback-expr-lambda
   [session : i64]
@@ -5039,19 +4358,11 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [body-node : i64 (compiler-comptime-host-value-node body-value)]
+          (compiler-comptime-host-stack-value 3)]
+        [body-node : i64 (compiler-comptime-host-stack-node 1)]
         (match (compiler-comptime-host-value-name-id name-value)
           [(CompilerCtfeMaybeNameId.Some name-id)
             (match type-value
@@ -5065,15 +4376,11 @@
                       (ast.ast-param-list-push
                         (&mut params)
                         (ast.AstParam.Param name-id parameter-type false))
-                      (set!
-                        compiler-comptime-host-stack-len
-                        (- compiler-comptime-host-stack-len 3))
-                      (compiler-comptime-host-push!
+                      (compiler-comptime-host-replace!
+                        3
                         (ctfe_support.CompilerCtfeValue.Expr
                           (ast.ast-expr-lambda-with-pools
-                            (compiler-comptime-host-array-element-shared-view
-                              compiler-comptime-host-pools
-                              0)
+                            (compiler-comptime-host-session-pools)
                             params
                             (ast.AstMaybeType.No)
                             body-node)
@@ -5200,33 +4507,22 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))
+        (match (compiler-comptime-host-stack-value 1)
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Array elem _))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env elem))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env elem)))]
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.DynArray elem))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env elem))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env elem)))]
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Slice elem))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env elem))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env elem)))]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
 (define (compiler-comptime-host-callback-reference-element-type
@@ -5240,25 +4536,17 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))
+        (match (compiler-comptime-host-stack-value 1)
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Ref _ elem))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env elem))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env elem)))]
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.MutRef _ elem))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env elem))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env elem)))]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
 ;; box-element-type: pop a box type and push its element type, preserving the
@@ -5274,23 +4562,15 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))
+        (match (compiler-comptime-host-stack-value 1)
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Box elem))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env elem))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env elem)))]
           [_
-            (begin
-              (set!
-                (array-ref compiler-comptime-host-diagnostic 0)
-                "box-element-type requires box type")
-              tlci.tlci-host-callback-status-diagnostic)])))))
+            (compiler-comptime-host-diagnostic!
+              "box-element-type requires box type")])))))
 
 ;; Function reflection used by the `for` protocol validator. Count is returned
 ;; as data; return-type replaces the function value on the session stack.
@@ -5303,14 +4583,10 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Func params _))
           (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
+            (compiler-comptime-host-drop! 1)
             (ctfe_support.ctfe-type-list-count (deref params)))]
         [_ -3]))))
 
@@ -5325,17 +4601,12 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
-        (match (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))
+        (match (compiler-comptime-host-stack-value 1)
           [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Func _ ret))
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Type
-                  (ctfe_support.ctfe-ty-get env ret))))]
+            (compiler-comptime-host-replace!
+              1
+              (ctfe_support.CompilerCtfeValue.Type
+                (ctfe_support.ctfe-ty-get env ret)))]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
 ;; Cleanup ownership is a total boolean reflection query. The paired function
@@ -5350,21 +4621,15 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type ty)
           (let
             [owning : bool
               (match (let
                 [host-pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)]
+                  (compiler-comptime-host-session-pools)]
                 [host-reflections : ctfe_support.CtfeReflectInfoList
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-reflections
-                    0)]
+                  (compiler-comptime-host-session-reflections)]
                 (ctfe_support.ctfe-reflect-info-for-type-with-pools
                   host-pools
                   host-reflections
@@ -5381,9 +4646,7 @@
                         [(ctfe_support.CtfeReflectCleanup.Fn _ _) true])])]
                 [(ctfe_support.CtfeMaybeReflectInfo.None) false])]
             (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-drop! 1)
               (if owning
                 1
                 0)))]
@@ -5398,19 +4661,13 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type ty)
           (match (let
             [host-pools : ast.AstNodePoolContext
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)]
+              (compiler-comptime-host-session-pools)]
             [host-reflections : ctfe_support.CtfeReflectInfoList
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-reflections
-                0)]
+              (compiler-comptime-host-session-reflections)]
             (ctfe_support.ctfe-reflect-info-for-type-with-pools
               host-pools
               host-reflections
@@ -5427,26 +4684,17 @@
                   [(ctfe_support.CtfeReflectCleanup.Fn
                       cleanup-name
                       cleanup-name-id)
-                    (begin
-                      (set!
-                        compiler-comptime-host-stack-len
-                        (- compiler-comptime-host-stack-len 1))
-                      (compiler-comptime-host-push!
-                        (ctfe_support.CompilerCtfeValue.String
-                          cleanup-name
-                          cleanup-name-id)))]
+                    (compiler-comptime-host-replace!
+                      1
+                      (ctfe_support.CompilerCtfeValue.String
+                        cleanup-name
+                        cleanup-name-id))]
                   [(ctfe_support.CtfeReflectCleanup.No)
-                    (begin
-                      (set!
-                        (array-ref compiler-comptime-host-diagnostic 0)
-                        "type-cleanup-function requires cleanup-owning type")
-                      tlci.tlci-host-callback-status-diagnostic)]))]
+                    (compiler-comptime-host-diagnostic!
+                      "type-cleanup-function requires cleanup-owning type")]))]
             [(ctfe_support.CtfeMaybeReflectInfo.None)
-              (begin
-                (set!
-                  (array-ref compiler-comptime-host-diagnostic 0)
-                  "type-cleanup-function requires cleanup-owning type")
-                tlci.tlci-host-callback-status-diagnostic)])]
+              (compiler-comptime-host-diagnostic!
+                "type-cleanup-function requires cleanup-owning type")])]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; array-length: the fixed element count of an array type as data; a
@@ -5460,14 +4708,10 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Array _ count))
           (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
+            (compiler-comptime-host-drop! 1)
             count)]
         [_ -3]))))
 
@@ -5482,20 +4726,14 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       -3
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.Array _ _))
           (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
+            (compiler-comptime-host-drop! 1)
             0)]
         [(ctfe_support.CompilerCtfeValue.Type (ast.AstType.DynArray _))
           (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
+            (compiler-comptime-host-drop! 1)
             1)]
         [_ -3]))))
 
@@ -5649,9 +4887,7 @@
               tlci.tlci-host-callback-status-bad-request
               (let
                 [pools : ast.AstNodePoolContext
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)]
+                  (compiler-comptime-host-session-pools)]
                 [items : ast.AstTypeList
                   (ast.ast-type-list-with-capacity arg-a)]
                 [item-index : i64 0]
@@ -5705,29 +4941,20 @@
     [node : i64 (compiler-comptime-host-value-node value)]
     [pools : ast.AstNodePoolContext (compiler-comptime-host-value-pools value)]
     (if (< node 0)
-      (begin
-        (set!
-          (array-ref compiler-comptime-host-diagnostic 0)
-          "expr-string-value expects a string literal Expr")
-        tlci.tlci-host-callback-status-diagnostic)
+      (compiler-comptime-host-diagnostic!
+        "expr-string-value expects a string literal Expr")
       (match (compiler-comptime-host-unspanned-expr
         pools
         (ast.ast-node-pool-context-expr-get pools node))
         [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.ctfe-source-string-value-for-source-names
-                (compiler-comptime-host-session-source-names-value)
-                string-id)))]
+          (compiler-comptime-host-replace!
+            1
+            (ctfe_support.ctfe-source-string-value-for-source-names
+              (compiler-comptime-host-session-source-names-value)
+              string-id))]
         [_
-          (begin
-            (set!
-              (array-ref compiler-comptime-host-diagnostic 0)
-              "expr-string-value expects a string literal Expr")
-            tlci.tlci-host-callback-status-diagnostic)]))))
+          (compiler-comptime-host-diagnostic!
+            "expr-string-value expects a string literal Expr")]))))
 
 (define (compiler-comptime-host-callback-expr-string-value
   [session : i64]
@@ -5739,9 +4966,7 @@
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
       (compiler-comptime-host-expr-string-value-step!
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-stack
-          (- compiler-comptime-host-stack-len 1))))))
+        (compiler-comptime-host-stack-value 1)))))
 
 ;; The `comptime.expr-string?` guard, answering the same 1/0-as-data the
 ;; interpreted inspector answers for an Expr operand. Refs #5701.
@@ -6070,11 +5295,7 @@
             (if (= arg-a 0)
               (- compiler-comptime-host-stack-len 1)
               (- compiler-comptime-host-stack-len 2)))]
-        (begin
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len 2))
-          (compiler-comptime-host-push! selected))))))
+        (compiler-comptime-host-replace! 2 selected)))))
 
 ;; int->string: pop a comptime i64 and push its decimal spelling as a
 ;; comptime String, mirroring the interpreted `comptime.int->string`
@@ -6088,17 +5309,12 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.I64 value)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.ctfe-generated-string-value
-                (string.int->string value))))]
+          (compiler-comptime-host-replace!
+            1
+            (ctfe_support.ctfe-generated-string-value
+              (string.int->string value)))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; `comptime.Expr.Var` destructuring (refs #5700, #5771). The probe answers as
@@ -6204,29 +5420,21 @@
       [result : i64
         (if (< compiler-comptime-host-stack-len 1)
           tlci.tlci-host-callback-status-bad-request
-          (match (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))
+          (match (compiler-comptime-host-stack-value 1)
             [(ctfe_support.CompilerCtfeValue.String _ string-id)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.ctfe-syntax-expr-push
-                    env
-                    (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
-                    (ast.AstType.String))))]
+              (compiler-comptime-host-replace!
+                1
+                (ctfe_support.ctfe-syntax-expr-push
+                  env
+                  (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
+                  (ast.AstType.String)))]
             [(ctfe_support.CompilerCtfeValue.Name _ name-id)
-              (begin
-                (set!
-                  compiler-comptime-host-stack-len
-                  (- compiler-comptime-host-stack-len 1))
-                (compiler-comptime-host-push!
-                  (ctfe_support.ctfe-syntax-expr-push
-                    env
-                    (ast.AstExpr.Literal (ast.AstLiteral.String name-id))
-                    (ast.AstType.String))))]
+              (compiler-comptime-host-replace!
+                1
+                (ctfe_support.ctfe-syntax-expr-push
+                  env
+                  (ast.AstExpr.Literal (ast.AstLiteral.String name-id))
+                  (ast.AstType.String)))]
             [_ tlci.tlci-host-callback-status-bad-request]))]
       (begin
         (when
@@ -6241,14 +5449,10 @@
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (compiler-comptime-host-push!
-      (ctfe_support.CompilerCtfeValue.Expr
-        (ast.ast-node-pool-context-expr-push
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          (ast.AstExpr.Literal (ast.ast-lit-int arg-a)))
-        (ast.AstType.Expr)))))
+    (compiler-comptime-host-push-expr!
+      (ast.ast-node-pool-context-expr-push
+        (compiler-comptime-host-session-pools)
+        (ast.AstExpr.Literal (ast.ast-lit-int arg-a))))))
 
 ;; Dense public builders used by `for`: consume computed syntax values and
 ;; reconstruct the same single-scope AST nodes as interpreted CTFE.
@@ -6277,18 +5481,12 @@
               cleanup-node
               move-aware?))
           (ast.ast-expr-list-push (&mut body) body-node)
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len 4))
-          (compiler-comptime-host-push!
-            (ctfe_support.CompilerCtfeValue.Expr
-              (ast.ast-node-pool-context-expr-push
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)
-                (ast.AstExpr.WithResource
-                  (box (ast.AstWithResource.WithResource bindings body))))
-              (ast.AstType.Expr))))))))
+          (compiler-comptime-host-replace-expr!
+            4
+            (ast.ast-node-pool-context-expr-push
+              (compiler-comptime-host-session-pools)
+              (ast.AstExpr.WithResource
+                (box (ast.AstWithResource.WithResource bindings body))))))))))
 
 (define (compiler-comptime-host-callback-expr-resource-scope
   [session : i64]
@@ -6301,21 +5499,13 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         [cleanup-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
+          (compiler-comptime-host-stack-value 2)]
         [init-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
+          (compiler-comptime-host-stack-value 3)]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 4))]
+          (compiler-comptime-host-stack-value 4)]
         (match (compiler-comptime-host-value-name-id name-value)
           [(CompilerCtfeMaybeNameId.Some name-id)
             (compiler-comptime-host-build-expr-resource-scope!
@@ -6337,20 +5527,10 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [init-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [body-node : i64 (compiler-comptime-host-value-node body-value)]
-        [init-node : i64 (compiler-comptime-host-value-node init-value)]
+          (compiler-comptime-host-stack-value 3)]
+        [body-node : i64 (compiler-comptime-host-stack-node 1)]
+        [init-node : i64 (compiler-comptime-host-stack-node 2)]
         (match (compiler-comptime-host-value-name-id name-value)
           [(CompilerCtfeMaybeNameId.Some name-id)
             (if (or (< init-node 0) (< body-node 0))
@@ -6365,18 +5545,12 @@
                       name-id
                       ast.AstMaybeType.No
                       init-node))
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 3))
-                  (compiler-comptime-host-push!
-                    (ctfe_support.CompilerCtfeValue.Expr
-                      (ast.ast-expr-let-with-pools
-                        (compiler-comptime-host-array-element-shared-view
-                          compiler-comptime-host-pools
-                          0)
-                        bindings
-                        body-node)
-                      (ast.AstType.Expr))))))]
+                  (compiler-comptime-host-replace-expr!
+                    3
+                    (ast.ast-expr-let-with-pools
+                      (compiler-comptime-host-session-pools)
+                      bindings
+                      body-node)))))]
           [(CompilerCtfeMaybeNameId.None)
             tlci.tlci-host-callback-status-bad-request])))))
 
@@ -6385,10 +5559,7 @@
   [init-node : i64]
   [body-node : i64]) : i64
   (let
-    [pools : ast.AstNodePoolContext
-      (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-pools
-        0)]
+    [pools : ast.AstNodePoolContext (compiler-comptime-host-session-pools)]
     [direct? : bool
       (ctfe_support.ctfe-expr-borrowable-place-node-with-pools?
         (& pools)
@@ -6436,12 +5607,7 @@
                   (ast.ast-node-pool-context-shared-view (& pools))
                   owner-bindings
                   borrow-body))))]
-        (begin
-          (set!
-            compiler-comptime-host-stack-len
-            (- compiler-comptime-host-stack-len 3))
-          (compiler-comptime-host-push!
-            (ctfe_support.CompilerCtfeValue.Expr result-node (ast.AstType.Expr))))))))
+        (compiler-comptime-host-replace-expr! 3 result-node)))))
 
 (define (compiler-comptime-host-callback-expr-shared-let-scope
   [session : i64]
@@ -6453,20 +5619,10 @@
     (if (< compiler-comptime-host-stack-len 3)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [init-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
         [name-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 3))]
-        [body-node : i64 (compiler-comptime-host-value-node body-value)]
-        [init-node : i64 (compiler-comptime-host-value-node init-value)]
+          (compiler-comptime-host-stack-value 3)]
+        [body-node : i64 (compiler-comptime-host-stack-node 1)]
+        [init-node : i64 (compiler-comptime-host-stack-node 2)]
         (match (compiler-comptime-host-value-name-id name-value)
           [(CompilerCtfeMaybeNameId.Some name-id)
             (if (or (< init-node 0) (< body-node 0))
@@ -6538,18 +5694,14 @@
               (match mode
                 [0
                   (ast.ast-expr-for-owned-state-with-pools
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)
+                    (compiler-comptime-host-session-pools)
                     node0
                     node1
                     node2
                     node3)]
                 [1
                   (ast.ast-expr-for-owned-step-with-pools
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)
+                    (compiler-comptime-host-session-pools)
                     node0
                     node1
                     node2
@@ -6558,9 +5710,7 @@
                     node4)]
                 [2
                   (ast.ast-expr-for-owned-step-with-pools
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)
+                    (compiler-comptime-host-session-pools)
                     node0
                     node1
                     node2
@@ -6568,12 +5718,7 @@
                     node4
                     node5)]
                 [_ -1])]
-            (begin
-              (set!
-                compiler-comptime-host-stack-len
-                (- compiler-comptime-host-stack-len count))
-              (compiler-comptime-host-push!
-                (ctfe_support.CompilerCtfeValue.Expr built (ast.AstType.Expr))))))))))
+            (compiler-comptime-host-replace-expr! count built)))))))
 
 (define (compiler-comptime-host-callback-expr-for-owned
   [session : i64]
@@ -6594,26 +5739,15 @@
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [node : i64 (compiler-comptime-host-value-node value)]
+        [node : i64 (compiler-comptime-host-stack-node 1)]
         (if (< node 0)
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-unary-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (ast.AstUnOp.Not)
-                  node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-unary-with-pools
+              (compiler-comptime-host-session-pools)
+              (ast.AstUnOp.Not)
+              node)))))))
 
 (define (compiler-comptime-host-build-expr-set-var!
   [name-id : i64]
@@ -6623,19 +5757,12 @@
     [value-node : i64 (compiler-comptime-host-value-node value-value)]
     (if (< value-node 0)
       tlci.tlci-host-callback-status-bad-request
-      (begin
-        (set!
-          compiler-comptime-host-stack-len
-          (- compiler-comptime-host-stack-len pop-count))
-        (compiler-comptime-host-push!
-          (ctfe_support.CompilerCtfeValue.Expr
-            (ast.ast-expr-set-id-with-pools
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-pools
-                0)
-              name-id
-              value-node)
-            (ast.AstType.Expr)))))))
+      (compiler-comptime-host-replace-expr!
+        pop-count
+        (ast.ast-expr-set-id-with-pools
+          (compiler-comptime-host-session-pools)
+          name-id
+          value-node)))))
 
 ;; Immediate names serve quasiquote construction; zero immediates select the
 ;; public builder form with a computed String/Name below the value expression.
@@ -6650,9 +5777,7 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [value-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
+          (compiler-comptime-host-stack-value 1)]
         (if (and (> arg-a 0) (>= arg-b 0))
           (compiler-comptime-host-build-expr-set-var!
             (compiler-comptime-host-template-source-id
@@ -6666,9 +5791,7 @@
           (if (< compiler-comptime-host-stack-len 2)
             tlci.tlci-host-callback-status-bad-request
             (match (compiler-comptime-host-value-name-id
-              (compiler-comptime-host-array-element-shared-view
-                compiler-comptime-host-stack
-                (- compiler-comptime-host-stack-len 2)))
+              (compiler-comptime-host-stack-value 2))
               [(CompilerCtfeMaybeNameId.Some name-id)
                 (compiler-comptime-host-build-expr-set-var!
                   name-id
@@ -6689,31 +5812,16 @@
     (if (< compiler-comptime-host-stack-len 2)
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [cond-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [body-node : i64 (compiler-comptime-host-value-node body-value)]
-        [cond-node : i64 (compiler-comptime-host-value-node cond-value)]
+        [body-node : i64 (compiler-comptime-host-stack-node 1)]
+        [cond-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (or (< body-node 0) (< cond-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 2))
-            (compiler-comptime-host-push!
-              (ctfe_support.CompilerCtfeValue.Expr
-                (ast.ast-expr-while-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  cond-node
-                  body-node)
-                (ast.AstType.Expr)))))))))
+          (compiler-comptime-host-replace-expr!
+            2
+            (ast.ast-expr-while-with-pools
+              (compiler-comptime-host-session-pools)
+              cond-node
+              body-node)))))))
 
 ;; let-binding-typed: pop the type value/syntax then the init expression and
 ;; push a binding for the name in `a`/`b` (template-source marked) with
@@ -6732,22 +5840,14 @@
       tlci.tlci-host-callback-status-bad-request
       (let
         [type-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [init-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [init-node : i64 (compiler-comptime-host-value-node init-value)]
+          (compiler-comptime-host-stack-value 1)]
+        [init-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< init-node 0)
           tlci.tlci-host-callback-status-bad-request
           (let
             [env : ctfe_support.CtfeEnv
               (ctfe_support.ctfe-env-empty-with-pools
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0))]
+                (compiler-comptime-host-session-pools))]
             (match (ctfe_support.ctfe-pattern-binding-type-value
               type-value
               (ast.AstExpr.Literal (ast.AstLiteral.Unit))
@@ -6756,10 +5856,8 @@
               [(ctfe_support.ResultCtfeQuoteType.Ok ty next-fuel)
                 (begin
                   (set! compiler-comptime-host-session-fuel next-fuel)
-                  (set!
-                    compiler-comptime-host-stack-len
-                    (- compiler-comptime-host-stack-len 2))
-                  (compiler-comptime-host-push!
+                  (compiler-comptime-host-replace!
+                    2
                     (ctfe_support.CompilerCtfeValue.LetBinding
                       (ast.ast-let-binding-id
                         (compiler-comptime-host-template-source-id
@@ -6790,29 +5888,20 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-stack
-        (- compiler-comptime-host-stack-len 1))
+      (match (compiler-comptime-host-stack-value 1)
         [(ctfe_support.CompilerCtfeValue.Type ty)
-          (begin
-            (set!
-              compiler-comptime-host-stack-len
-              (- compiler-comptime-host-stack-len 1))
-            (compiler-comptime-host-push!
-              (ctfe_support.ctfe-generated-string-value
-                (let
-                  [host-pools : ast.AstNodePoolContext
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-pools
-                      0)]
-                  [host-reflections : ctfe_support.CtfeReflectInfoList
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-reflections
-                      0)]
-                  (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                    host-pools
-                    host-reflections
-                    ty)))))]
+          (compiler-comptime-host-replace!
+            1
+            (ctfe_support.ctfe-generated-string-value
+              (let
+                [host-pools : ast.AstNodePoolContext
+                  (compiler-comptime-host-session-pools)]
+                [host-reflections : ctfe_support.CtfeReflectInfoList
+                  (compiler-comptime-host-session-reflections)]
+                (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                  host-pools
+                  host-reflections
+                  ty))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 (define (compiler-comptime-host-callback-expr-list-fold-if
@@ -6828,18 +5917,8 @@
       (>= arg-a compiler-comptime-host-operand-count))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [when-false-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [when-true-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [when-false-node : i64
-          (compiler-comptime-host-value-node when-false-value)]
-        [when-true-node : i64
-          (compiler-comptime-host-value-node when-true-value)]
+        [when-false-node : i64 (compiler-comptime-host-stack-node 1)]
+        [when-true-node : i64 (compiler-comptime-host-stack-node 2)]
         [continue-on-true : bool (not (= arg-b 0))]
         (if (or (< when-false-node 0) (< when-true-node 0))
           tlci.tlci-host-callback-status-bad-request
@@ -6878,9 +5957,7 @@
                                 when-false-node
                                 out-node)))
                           (set! index (- index 1)))))
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-drop! 2)
                     (if (and
                       (ctfe_support.ctfe-hygiene-inert-literal-node?
                         pools
@@ -6912,17 +5989,8 @@
       (>= arg-a compiler-comptime-host-operand-count))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [else-not-final-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1))]
-        [missing-value : ctfe_support.CompilerCtfeValue
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 2))]
-        [else-not-final-node : i64
-          (compiler-comptime-host-value-node else-not-final-value)]
-        [missing-node : i64 (compiler-comptime-host-value-node missing-value)]
+        [else-not-final-node : i64 (compiler-comptime-host-stack-node 1)]
+        [missing-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (or (< else-not-final-node 0) (< missing-node 0))
           tlci.tlci-host-callback-status-bad-request
           (let
@@ -6975,9 +6043,7 @@
                                 (ctfe_support.ctfe-expr-clause-second clause)
                                 out-node)))
                           (set! index (- index 1)))))
-                    (set!
-                      compiler-comptime-host-stack-len
-                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-drop! 2)
                     (if (and
                       (ctfe_support.ctfe-hygiene-inert-literal-node?
                         pools
@@ -7010,12 +6076,8 @@
       (begin
         (set!
           (array-ref compiler-comptime-host-result 0)
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-stack
-            (- compiler-comptime-host-stack-len 1)))
-        (set!
-          compiler-comptime-host-stack-len
-          (- compiler-comptime-host-stack-len 1))
+          (compiler-comptime-host-stack-value 1))
+        (compiler-comptime-host-drop! 1)
         (set! compiler-comptime-host-result-ready true)
         tlci.tlci-host-callback-status-ok))))
 

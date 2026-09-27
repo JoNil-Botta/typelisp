@@ -13424,8 +13424,9 @@
     (not (string.eq reg guard-b))))
 
 ;; The fused select's register choice in its two forms. `peek?` is the PURE
-;; twin used by the admission test (compiler-backend-scavenge-reg-peek is
-;; documented as side-effect-free and returns what the committing call will);
+;; twin used by the admission test (a non-committing
+;; compiler-backend-scavenge-reg-pick is side-effect-free and returns what the
+;; committing call will);
 ;; the committing form books the emergency save/restore and the planned
 ;; preservation exactly as compiler-backend-planned-or-scavenge-reg does.
 (define (compiler-backend-flags-select-reg
@@ -13435,14 +13436,13 @@
   [exclude-n : i64]
   [fallback : String]
   [backend-state : CompilerBackendState]) : String
-  (if peek?
-    (compiler-backend-scavenge-reg-peek
-      dst
-      exclude
-      exclude-n
-      fallback
-      backend-state)
-    (compiler-backend-scavenge-reg dst exclude exclude-n fallback backend-state)))
+  (compiler-backend-scavenge-reg-pick
+    dst
+    exclude
+    exclude-n
+    fallback
+    (not peek?)
+    backend-state))
 
 ;; SS-P5(b) / VG-P-B: a scalar Select whose mask is the comparison IMMEDIATELY
 ;; in front of it and is wanted nowhere else. The mask never becomes a value:
@@ -21175,8 +21175,8 @@
             "%xmm2"
             compiler-backend-scavenge-xmm-candidate-pool)
           (compiler-backend-scavenge-pick-with-mask
-            backend-state
             (compiler-backend-state-function-state backend-state)
+            true
             0
             0
             exclude
@@ -55889,8 +55889,8 @@
 ;; TWO-SIDED PINNING. The probe must stay pure (the M-D lesson: a probe that can
 ;; still decline must never scavenge, or a rejected fold leaks an
 ;; emergency-pending register), so admission PEEKS through
-;; compiler-backend-scavenge-reg-peek -- the documented side-effect-free twin
-;; that predicts the ordinary picker's answer including its emergency tier --
+;; a non-committing compiler-backend-scavenge-reg-pick -- side-effect-free,
+;; it predicts the ordinary picker's answer including its emergency tier --
 ;; and the committed emitter re-runs the identical pick for real through
 ;; compiler-backend-scavenge-reg. The two agree because this one helper is the
 ;; only caller of either on this path and it supplies the same arguments to
@@ -56005,19 +56005,13 @@
           compiler-backend-gep-load-cmp-staging-lookahead
           saved-reserved))]
     [reg : String
-      (if commit?
-        (compiler-backend-scavenge-reg
-          -1
-          (compiler-backend-one-exclude "")
-          1
-          "%r10"
-          ctx.backend-state)
-        (compiler-backend-scavenge-reg-peek
-          -1
-          (compiler-backend-one-exclude "")
-          1
-          "%r10"
-          ctx.backend-state))]
+      (compiler-backend-scavenge-reg-pick
+        -1
+        (compiler-backend-one-exclude "")
+        1
+        "%r10"
+        commit?
+        ctx.backend-state)]
     [_restore : unit
       (compiler-backend-set-current-instr-reserved-mask!
         ctx.function-state
@@ -60142,7 +60136,7 @@
       ty
       (compiler-backend-binop-wants-remainder? op)
       hoist)
-      (compiler-backend-scavenge-reg-peek
+      (compiler-backend-scavenge-reg-pick
         dst
         (if (string.eq hoist-reg "")
           (compiler-backend-binop-scavenge-exclude-for-op op)
@@ -60154,6 +60148,7 @@
           5
           6)
         "%r8"
+        false
         _ctx.backend-state)
       "")))
 
@@ -65402,8 +65397,8 @@
             assignments)]
         [scratch : String
           (compiler-backend-scavenge-pick-with-mask
-            backend-state
             (compiler-backend-state-function-state backend-state)
+            true
             0
             0
             exclude
@@ -65733,9 +65728,9 @@
                               (compiler-backend-global-shared-view exclude)
                               exclude-n
                               (compiler-backend-scavenge-pick-with-mask
-                                backend-state
                                 (compiler-backend-state-function-state
                                   backend-state)
+                                true
                                 0
                                 0
                                 exclude
@@ -67197,8 +67192,9 @@
       n)))
 
 (define (compiler-backend-scavenge-pick-iter
-  [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
+  ;; false for a peek: the same pick, without booking an emergency save.
+  [commit : bool]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
@@ -67236,19 +67232,23 @@
         (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
         (if (< emidx 0)
           (begin
-            (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
-              (compiler-backend-emergency-add!
-                function-state
-                (string.copy fallback))
-              (io.panic
-                (str_cat.str-cat
-                  "backend: unsupported scavenge emergency fallback register "
-                  fallback)))
+            (when
+              commit
+              (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
+                (compiler-backend-emergency-add!
+                  function-state
+                  (string.copy fallback))
+                (io.panic
+                  (str_cat.str-cat
+                    "backend: unsupported scavenge emergency fallback register "
+                    fallback))))
             fallback)
           (begin
-            (compiler-backend-emergency-add-id!
-              function-state
-              (array-ref cands emidx))
+            (when
+              commit
+              (compiler-backend-emergency-add-id!
+                function-state
+                (array-ref cands emidx)))
             (compiler_abi.compiler-abi-register-spelling
               (array-ref cands emidx))))))
     (if (compiler-backend-scavenge-candidate-ok?
@@ -67263,8 +67263,8 @@
       ;; post-body save vs inline partial-set restores).
       (compiler_abi.compiler-abi-register-spelling (array-ref cands i))
       (compiler-backend-scavenge-pick-iter
-        backend-state
         function-state
+        commit
         exclude
         exclude-n
         exclude-mask
@@ -67281,8 +67281,8 @@
 ;; candidate, else `fallback` (degraded -- the freeness self-check flags this as
 ;; a no-free-register case).
 (define (compiler-backend-scavenge-pick-with-mask
-  [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
+  [commit : bool]
   [occupied-mask : i64]
   [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
@@ -67301,8 +67301,8 @@
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
       fallback
       (compiler-backend-scavenge-pick-iter
-        backend-state
         function-state
+        commit
         exclude
         exclude-n
         exclude-mask
@@ -67334,8 +67334,8 @@
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
       fallback
       (compiler-backend-scavenge-pick-iter
-        backend-state
         function-state
+        true
         exclude
         exclude-n
         exclude-mask
@@ -67405,102 +67405,6 @@
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the
 ;; exact register the ordinary scavenger will return, including its emergency
 ;; tier, without adding a pending save that would leak when the fusion rejects.
-(define (compiler-backend-scavenge-pick-iter-peek
-  [function-state : CompilerBackendFunctionState]
-  [occupied-mask : i64]
-  [narrow-mask : i64]
-  [exclude : (__tl_dyn-array String)]
-  [exclude-n : i64]
-  [exclude-mask : i64]
-  [plan-mask : i64]
-  [fallback : String]
-  [cands : (& cands (__tl_dyn-array i64))]
-  [i : i64]
-  [n : i64]) : String
-  (if (>= i n)
-    (let
-      ;; R4-B: mirror the committing walk's narrow last-resort tier, so the peek
-      ;; keeps returning exactly what the committing call will.
-      [nidx : i64
-        (compiler-backend-scavenge-narrow-index
-          function-state
-          occupied-mask
-          narrow-mask
-          exclude-mask
-          plan-mask
-          cands
-          n)]
-      [emidx : i64
-        (if (>= nidx 0)
-          -2
-          (compiler-backend-scavenge-emergency-cand-index
-            function-state
-            exclude
-            exclude-n
-            exclude-mask
-            occupied-mask
-            (compiler-backend-global-shared-view fallback)
-            cands
-            n))]
-      (if (>= nidx 0)
-        (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
-        (if (< emidx 0)
-          fallback
-          (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))
-    (if (compiler-backend-scavenge-candidate-ok?
-      function-state
-      occupied-mask
-      exclude-mask
-      plan-mask
-      (array-ref cands i))
-      (compiler_abi.compiler-abi-register-spelling (array-ref cands i))
-      (compiler-backend-scavenge-pick-iter-peek
-        function-state
-        occupied-mask
-        narrow-mask
-        exclude
-        exclude-n
-        exclude-mask
-        plan-mask
-        fallback
-        cands
-        (+ i 1)
-        n))))
-
-(define (compiler-backend-scavenge-pick-with-mask-peek
-  [function-state : CompilerBackendFunctionState]
-  [occupied-mask : i64]
-  [narrow-mask : i64]
-  [exclude : (__tl_dyn-array String)]
-  [exclude-n : i64]
-  [fallback : String]) : String
-  (let
-    [exclude-mask : i64
-      (compiler-backend-scavenge-exclude-mask
-        (compiler-backend-global-shared-view exclude)
-        exclude-n)]
-    [cands : (__tl_dyn-array i64)
-      (compiler-backend-i64-array-shared-view
-        (& compiler-backend-scavenge-candidate-pool))]
-    (if (and
-      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
-      fallback
-      (compiler-backend-scavenge-pick-iter-peek
-        function-state
-        occupied-mask
-        narrow-mask
-        exclude
-        exclude-n
-        exclude-mask
-        (compiler-backend-function-scratch-i64
-          function-state
-          compiler-backend-scratch-i64-scavenge-plan-reg-mask)
-        fallback
-        cands
-        0
-        (array-length cands)))))
-
 ;; R4-C: may this staging pick retry against the [point, point+2] window
 ;; before the emergency tier? Yes for the scalar compute family (R4-B's
 ;; admission, set per instruction by compiler-backend-instr-reserved-home-mask)
@@ -67519,66 +67423,16 @@
         function-state
         compiler-backend-scratch-bool-pair-emission))))
 
-(define (compiler-backend-scavenge-reg-peek
-  [dst-var : i64]
-  [exclude : (__tl_dyn-array String)]
-  [exclude-n : i64]
-  [fallback : String]
-  [backend-state : CompilerBackendState]) : String
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [point : i64
-      (compiler-backend-function-state-emission-point function-state)]
-    [hi-point : i64 (+ point compiler-backend-scavenge-staging-window)]
-    [vars : i64
-      (compiler-backend-function-scratch-i64
-        function-state
-        compiler-backend-scratch-i64-scavenge-vars)]
-    [assignment-index : compiler_regalloc.CompilerRegAssignmentTable
-      (compiler-backend-function-scratch-assignment-index function-state)]
-    [dst-home : String
-      (if (and (>= dst-var 0) (< dst-var vars))
-        (compiler-backend-var-register-home-index assignment-index dst-var)
-        "")]
-    [ex : (__tl_dyn-array String)
-      (if (string.eq dst-home "")
-        exclude
-        (compiler-backend-scavenge-exclude-append
-          exclude
-          exclude-n
-          (compiler-backend-global-shared-view dst-home)))]
-    [ex-n : i64
-      (if (string.eq dst-home "")
-        exclude-n
-        (+ exclude-n 1))]
-    (compiler-backend-scavenge-pick-with-mask-peek
-      function-state
-      (compiler-backend-scavenge-occupied-mask-over-range
-        function-state
-        point
-        hi-point)
-      (if (compiler-backend-scavenge-narrow-window? function-state)
-        (compiler-backend-scavenge-occupied-mask-over-range
-          function-state
-          point
-          (+ point 2))
-        (compiler-backend-scavenge-occupied-mask-over-range
-          function-state
-          point
-          hi-point))
-      ex
-      ex-n
-      fallback)))
-
 ;; Return a register free at dst-var's def point (via the proven query),
 ;; excluding `exclude`, preferring `fallback`. If the preferred register is
 ;; occupied, pick another free pooled candidate or use the emergency wrapper.
-(define (compiler-backend-scavenge-reg
+(define (compiler-backend-scavenge-reg-pick
   [dst-var : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
+  ;; false for a peek: the same pick, without booking an emergency save.
+  [commit : bool]
   [backend-state : CompilerBackendState]) : String
   (let
     [function-state : CompilerBackendFunctionState
@@ -67646,8 +67500,8 @@
           hi-point))]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        commit
         (compiler-backend-scavenge-occupied-mask-over-range
           function-state
           point
@@ -67657,6 +67511,20 @@
         ex-n
         fallback)]
     reg))
+
+(define (compiler-backend-scavenge-reg
+  [dst-var : i64]
+  [exclude : (__tl_dyn-array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [backend-state : CompilerBackendState]) : String
+  (compiler-backend-scavenge-reg-pick
+    dst-var
+    exclude
+    exclude-n
+    fallback
+    true
+    backend-state))
 
 ;; No-dst scavenge: same as scavenge-reg but the point comes from the drift-proof
 ;; per-instruction position (post-base - length(current-instrs)) instead of a dst
@@ -67674,8 +67542,8 @@
       (compiler-backend-function-state-emission-point function-state)]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
-        backend-state
         function-state
+        true
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         exclude

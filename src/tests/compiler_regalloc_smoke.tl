@@ -80,13 +80,13 @@
     [liveness : live.CompilerFunctionLiveness
       (live.compiler-live-analyze-function (clone func))]
     [call-live : live.CompilerLiveI64Set
-      (reg.compiler-reg-call-live-blocks
+      (reg_tests.compiler-reg-call-live-blocks
         blocks
         liveness
         (live.compiler-live-set-empty))]
     [direct-calls : live.CompilerLiveI64Set
-      (reg.compiler-reg-direct-call-points (clone func))]
-    (match (reg.compiler-reg-plan-function func)
+      (reg_tests.compiler-reg-direct-call-points (clone func))]
+    (match (reg_tests.compiler-reg-plan-function func)
       [(reg.CompilerRegPlan.Plan _ ineligible _ _ _ _)
         (and
           (live.compiler-live-set-eq? call-args (live.compiler-live-set3 0 1 2))

@@ -7384,7 +7384,7 @@
           (owned_view.compiler-owned-shared-view source-memory))
         0)
       (not
-        (regalloc.compiler-reg-private-memory-type?
+        (reg_tests.compiler-reg-private-memory-type?
           bases
           (owned_view.compiler-owned-shared-view source-memory)))
       (string.eq
@@ -7529,7 +7529,7 @@
           index
           (owned_view.compiler-owned-shared-view group2))
         2)
-      (regalloc.compiler-reg-private-memory-type? bases memory24)
+      (reg_tests.compiler-reg-private-memory-type? bases memory24)
       (match (ast.ast-aggregate-type-key bases group0)
         [(ast.AstMaybeNominalKey.Some key) (= key group0-id)]
         [(ast.AstMaybeNominalKey.None) false])
@@ -8014,13 +8014,13 @@
           (backend.compiler-backend-program-index-representations index)
           (owned_view.compiler-owned-shared-view ref)))
       (not
-        (regalloc.compiler-reg-type-register-group-word-sse?
+        (reg_tests.compiler-reg-type-register-group-word-sse?
           bases
           (backend.compiler-backend-program-index-representations index)
           (owned_view.compiler-owned-shared-view ref)
           0))
       (not
-        (regalloc.compiler-reg-type-register-group-word-sse?
+        (reg_tests.compiler-reg-type-register-group-word-sse?
           bases
           (backend.compiler-backend-program-index-representations index)
           ref
@@ -8816,13 +8816,13 @@
     (compiler-backend-reg-part-seq-ok?
       (regalloc.compiler-reg-sysv-integer-registers-with-rbp))
     (compiler-backend-reg-part-seq-ok?
-      (regalloc.compiler-reg-zero-call-caller-saved-integer-registers))
+      (reg_tests.compiler-reg-zero-call-caller-saved-integer-registers))
     (compiler-backend-reg-part-seq-ok?
-      (regalloc.compiler-reg-sysv-caller-saved-integer-registers))
+      (reg_tests.compiler-reg-sysv-caller-saved-integer-registers))
     (compiler-backend-reg-part-seq-ok?
-      (regalloc.compiler-reg-sysv-callee-saved-integer-registers))
+      (reg_tests.compiler-reg-sysv-callee-saved-integer-registers))
     (compiler-backend-reg-part-seq-ok?
-      (regalloc.compiler-reg-win64-caller-saved-integer-registers))
+      (reg_tests.compiler-reg-win64-caller-saved-integer-registers))
     (compiler-backend-reg-part-seq-ok?
       (regalloc.compiler-reg-win64-callee-saved-integer-registers))
     (compiler-backend-reg-part-seq-ok?
@@ -9418,35 +9418,35 @@
           bases
           (backend.compiler-backend-program-index-representations index)
           (owned_view.compiler-owned-shared-view opaque-struct)))
-      (regalloc.compiler-reg-type-register-group-word-sse?
+      (reg_tests.compiler-reg-type-register-group-word-sse?
         bases
         (backend.compiler-backend-program-index-representations index)
         struct-plain
         1)
-      (regalloc.compiler-reg-type-register-group-word-sse?
+      (reg_tests.compiler-reg-type-register-group-word-sse?
         bases
         (backend.compiler-backend-program-index-representations index)
         struct-args-root
         1)
-      (regalloc.compiler-reg-type-register-group-word-sse?
+      (reg_tests.compiler-reg-type-register-group-word-sse?
         bases
         (backend.compiler-backend-program-index-representations index)
         (owned_view.compiler-owned-shared-view enum-qualified)
         1)
       (not
-        (regalloc.compiler-reg-type-register-group-word-sse?
+        (reg_tests.compiler-reg-type-register-group-word-sse?
           bases
           (backend.compiler-backend-program-index-representations index)
           enum-qualified
           0))
       (not
-        (regalloc.compiler-reg-type-register-group-word-sse?
+        (reg_tests.compiler-reg-type-register-group-word-sse?
           bases
           (backend.compiler-backend-program-index-representations index)
           (owned_view.compiler-owned-shared-view opaque-struct)
           0))
       (not
-        (regalloc.compiler-reg-type-register-group-word-sse?
+        (reg_tests.compiler-reg-type-register-group-word-sse?
           bases
           (backend.compiler-backend-program-index-representations index)
           opaque-struct
@@ -19581,7 +19581,7 @@ g:
       (compiler-backend-avx512-mask-spill-assignment? assignments (+ var 1)))))
 
 (define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
-  (match (regalloc.compiler-reg-plan-function
+  (match (reg_tests.compiler-reg-plan-function
     (compiler-backend-avx512-mask-spill-function))
     [(regalloc.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (compiler-backend-avx512-mask-spill-assignment? assignments 0)]))

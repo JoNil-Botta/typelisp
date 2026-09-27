@@ -47816,927 +47816,101 @@
     (lower-masked-vector-empty-lane-locals)
     expr))
 
-(define (lower-masked-vector-body-has-varying-if-with-locals?
+;; The control forms that need the masked SPMD strategy when their condition or
+;; scrutinee varies across lanes.
+(defenum LowerMaskedVaryingForm
+  (If)
+  (While)
+  (Match))
+
+;; Whether `expr` holds a FORM whose condition (if, while) or scrutinee (match)
+;; has lanes. One walk serves all three questions: every form descends through
+;; the same scalar, let, begin and array/struct store shapes with the same
+;; lane-local scoping, and they differ only where the walk meets an if, while
+;; or match. An if condition that varies answers If without looking further,
+;; and only the While and Match questions descend into loops and matches.
+(define (lower-masked-vector-body-has-varying-with-locals?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [form : LowerMaskedVaryingForm]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [expr : ast.AstExpr]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-        [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-        (if (>
-          (lower-masked-vector-expr-lanes-with-locals
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            cond)
-          0)
-          true
-          (or
-            (lower-masked-vector-body-has-varying-if-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              then-branch)
-            (lower-masked-vector-body-has-varying-if-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              index
-              lane-locals
-              else-branch))))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : lower_i64_i64_map.Map
-              (lower-masked-vector-let-bindings-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-global-shared-view lane-locals)
-                bindings)]
-            (or
-              (lower-masked-vector-let-bindings-have-varying-if-with-locals?
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                lane-locals
-                bindings)
-              (lower-masked-vector-body-has-varying-if-with-locals?
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                index
-                body-locals
-                body)))])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-has-varying-if-with-locals?
+      (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
         mode
         env
         type-env
-        index
-        lane-locals
-        exprs)]
-    [(ast.AstExpr.Unary _ inner-box)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-masked-vector-body-has-varying-if-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (or
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            left)
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            right)))]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        (or
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            arr)
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            idx)))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [idx : ast.AstExpr (lower-context-expr-get ctx idx-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            arr)
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            idx)
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            value)))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (or
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            receiver)
-          (lower-masked-vector-body-has-varying-if-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            value)))]
-    [_ false]))
-
-(define (lower-masked-vector-expr-list-has-varying-if-with-locals?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [exprs : ast.AstExprList]) : bool
-  (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    (& exprs)
-    0))
-
-(define (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
-      (lower-masked-vector-body-has-varying-if-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        (lower-global-shared-view index)
-        (lower-global-shared-view lane-locals)
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        exprs
-        (+ expr-index 1)))))
-
-(define (lower-masked-vector-let-bindings-have-varying-if-with-locals?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    (& bindings)
-    0))
-
-(define (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding name _ init-box)
-        (let
-          [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          [init-lanes : i64
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              (lower-global-shared-view init))]
-          [init-has-varying-if : bool
-            (lower-masked-vector-body-has-varying-if-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              init)]
-          [next-locals : lower_i64_i64_map.Map
-            (lower-masked-vector-lane-locals-bind-if-varying
-              lane-locals
-              name
-              init-lanes)]
-          (or
-            init-has-varying-if
-            (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              index
-              next-locals
-              bindings
-              (+ binding-index 1))))])))
-
-(define (lower-masked-vector-body-has-varying-if?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [expr : ast.AstExpr]) : bool
-  (lower-masked-vector-body-has-varying-if-with-locals?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    expr))
-
-(define (lower-masked-vector-body-has-varying-while-with-locals?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-while-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
+        form
         index
         lane-locals
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-while-with-locals?
+      (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
         mode
         env
         type-env
+        form
         index
         lane-locals
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-while-with-locals?
+      (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
         mode
         env
         type-env
+        form
         index
         lane-locals
         (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.While cond-box body-box)
-      (let
-        [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-        (or
-          (>
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              (lower-global-shared-view cond))
-            0)
-          (lower-masked-vector-body-has-varying-while-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view lane-locals)
-            cond)
-          (lower-masked-vector-body-has-varying-while-with-locals?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            body)))]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (or
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx then-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (lower-context-expr-get ctx else-box)))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : lower_i64_i64_map.Map
-              (lower-masked-vector-let-bindings-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-global-shared-view lane-locals)
-                bindings)]
-            (or
-              (lower-masked-vector-let-bindings-have-varying-while-with-locals?
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                (lower-global-shared-view index)
-                lane-locals
-                bindings)
-              (lower-masked-vector-body-has-varying-while-with-locals?
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                index
-                body-locals
-                body)))])]
-    [(ast.AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-has-varying-while-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        exprs)]
     [(ast.AstExpr.Unary _ inner-box)
-      (lower-masked-vector-body-has-varying-while-with-locals?
+      (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
         mode
         env
         type-env
+        form
         index
         lane-locals
         (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (or
-        (lower-masked-vector-body-has-varying-while-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           (lower-global-shared-view index)
           (lower-global-shared-view lane-locals)
           (lower-context-expr-get ctx left-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           index
           lane-locals
           (lower-context-expr-get ctx right-box)))]
-    [(ast.AstExpr.ArrayRef arr-box idx-box)
-      (or
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (lower-context-expr-get ctx idx-box)))]
-    [(ast.AstExpr.ArraySet arr-box idx-box value-box)
-      (or
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx idx-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (lower-context-expr-get ctx value-box)))]
-    [(ast.AstExpr.StructSet receiver-box _ value-box)
-      (or
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx receiver-box))
-        (lower-masked-vector-body-has-varying-while-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (lower-context-expr-get ctx value-box)))]
-    [_ false]))
-
-(define (lower-masked-vector-expr-list-has-varying-while-with-locals?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [exprs : ast.AstExprList]) : bool
-  (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    (& exprs)
-    0))
-
-(define (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
-      (lower-masked-vector-body-has-varying-while-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        (lower-global-shared-view index)
-        (lower-global-shared-view lane-locals)
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        exprs
-        (+ expr-index 1)))))
-
-(define (lower-masked-vector-let-bindings-have-varying-while-with-locals?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    (& bindings)
-    0))
-
-(define (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (match (ast.ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding name _ init-box)
-        (let
-          [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          [init-lanes : i64
-            (lower-masked-vector-expr-lanes-with-locals
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              (lower-global-shared-view init))]
-          [init-has-varying-while : bool
-            (lower-masked-vector-body-has-varying-while-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              init)]
-          [next-locals : lower_i64_i64_map.Map
-            (lower-masked-vector-lane-locals-bind-if-varying
-              lane-locals
-              name
-              init-lanes)]
-          (or
-            init-has-varying-while
-            (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              index
-              next-locals
-              bindings
-              (+ binding-index 1))))])))
-
-(define (lower-masked-vector-body-has-varying-while?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [expr : ast.AstExpr]) : bool
-  (lower-masked-vector-body-has-varying-while-with-locals?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    expr))
-
-(define (lower-masked-vector-body-has-varying-match-with-locals?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Ann inner-box _)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Cast inner-box _)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Unary _ inner-box)
-      (lower-masked-vector-body-has-varying-match-with-locals?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        index
-        lane-locals
-        (lower-context-expr-get ctx inner-box))]
-    [(ast.AstExpr.Binary _ left-box right-box)
-      (or
-        (lower-masked-vector-body-has-varying-match-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx left-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (lower-context-expr-get ctx right-box)))]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (or
-            (lower-masked-vector-let-bindings-have-varying-match-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-global-shared-view lane-locals)
-              bindings)
-            (lower-masked-vector-body-has-varying-match-with-locals?
-              ctx
-              function-state
-              mode
-              env
-              type-env
-              (lower-global-shared-view index)
-              (lower-masked-vector-let-bindings-locals
-                ctx
-                function-state
-                mode
-                env
-                type-env
-                index
-                lane-locals
-                bindings)
-              (lower-context-expr-get ctx body-box)))])]
     [(ast.AstExpr.If cond-box then-box else-box)
       (or
-        (lower-masked-vector-body-has-varying-match-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          (lower-global-shared-view index)
-          (lower-global-shared-view lane-locals)
-          (lower-context-expr-get ctx then-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          (lower-context-expr-get ctx else-box)))]
-    [(ast.AstExpr.Match match-box)
-      (match (__tl-box-place match-box)
-        [(ast.AstMatch.Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-box)]
-            [scrut-lanes : i64
+        (match form
+          [(LowerMaskedVaryingForm.If)
+            (>
               (lower-masked-vector-expr-lanes-with-locals
                 ctx
                 function-state
@@ -48745,126 +47919,277 @@
                 type-env
                 (lower-global-shared-view index)
                 (lower-global-shared-view lane-locals)
-                scrutinee)]
+                (lower-context-expr-get ctx cond-box))
+              0)]
+          [_
+            (lower-masked-vector-body-has-varying-with-locals?
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              form
+              (lower-global-shared-view index)
+              (lower-global-shared-view lane-locals)
+              (lower-context-expr-get ctx cond-box))])
+        (lower-masked-vector-body-has-varying-with-locals?
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          form
+          (lower-global-shared-view index)
+          (lower-global-shared-view lane-locals)
+          (lower-context-expr-get ctx then-box))
+        (lower-masked-vector-body-has-varying-with-locals?
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          form
+          index
+          lane-locals
+          (lower-context-expr-get ctx else-box)))]
+    [(ast.AstExpr.While cond-box body-box)
+      (match form
+        [(LowerMaskedVaryingForm.While)
+          (let
+            [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
             (or
-              (> scrut-lanes 0)
-              (lower-masked-vector-match-arms-have-varying-match-with-locals?
+              (>
+                (lower-masked-vector-expr-lanes-with-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  (lower-global-shared-view index)
+                  (lower-global-shared-view lane-locals)
+                  (lower-global-shared-view cond))
+                0)
+              (lower-masked-vector-body-has-varying-with-locals?
                 ctx
                 function-state
                 mode
                 env
                 type-env
+                form
+                (lower-global-shared-view index)
+                (lower-global-shared-view lane-locals)
+                cond)
+              (lower-masked-vector-body-has-varying-with-locals?
+                ctx
+                function-state
+                mode
+                env
+                type-env
+                form
                 index
                 lane-locals
-                scrut-lanes
-                arms)))])]
+                (lower-context-expr-get ctx body-box))))]
+        [_ false])]
+    [(ast.AstExpr.Match match-box)
+      (match form
+        [(LowerMaskedVaryingForm.Match)
+          (match (__tl-box-place match-box)
+            [(ast.AstMatch.Match scrutinee-box arms)
+              (let
+                [scrut-lanes : i64
+                  (lower-masked-vector-expr-lanes-with-locals
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    (lower-global-shared-view index)
+                    (lower-global-shared-view lane-locals)
+                    (lower-context-expr-get ctx scrutinee-box))]
+                (or
+                  (> scrut-lanes 0)
+                  (lower-masked-vector-match-arms-have-varying-with-locals-at?
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    form
+                    index
+                    lane-locals
+                    scrut-lanes
+                    (& arms)
+                    0)))])]
+        [_ false])]
+    [(ast.AstExpr.Let let-box)
+      ;; The body's lane locals extend views of `lane-locals` in place, so the
+      ;; binding scan can see them when they are computed first. If and While
+      ;; compute them first and Match last; each keeps its order.
+      (match (__tl-box-place let-box)
+        [(ast.AstLet.Let bindings body-box)
+          (match form
+            [(LowerMaskedVaryingForm.Match)
+              (or
+                (lower-masked-vector-let-bindings-have-varying-with-locals-at?
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  form
+                  (lower-global-shared-view index)
+                  (lower-global-shared-view lane-locals)
+                  (& bindings)
+                  0)
+                (lower-masked-vector-body-has-varying-with-locals?
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  form
+                  (lower-global-shared-view index)
+                  (lower-masked-vector-let-bindings-locals
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    index
+                    lane-locals
+                    bindings)
+                  (lower-context-expr-get ctx body-box)))]
+            [_
+              (let
+                [body-locals : lower_i64_i64_map.Map
+                  (lower-masked-vector-let-bindings-locals
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    (lower-global-shared-view index)
+                    (lower-global-shared-view lane-locals)
+                    bindings)]
+                (or
+                  (lower-masked-vector-let-bindings-have-varying-with-locals-at?
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    form
+                    (lower-global-shared-view index)
+                    lane-locals
+                    (& bindings)
+                    0)
+                  (lower-masked-vector-body-has-varying-with-locals?
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    form
+                    index
+                    body-locals
+                    (lower-context-expr-get ctx body-box))))])])]
     [(ast.AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-has-varying-match-with-locals?
+      (lower-masked-vector-expr-list-has-varying-with-locals-at?
         ctx
         function-state
         mode
         env
         type-env
+        form
         index
         lane-locals
-        exprs)]
+        (& exprs)
+        0)]
     [(ast.AstExpr.ArrayRef arr-box idx-box)
       (or
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           (lower-global-shared-view index)
           (lower-global-shared-view lane-locals)
           (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           index
           lane-locals
           (lower-context-expr-get ctx idx-box)))]
     [(ast.AstExpr.ArraySet arr-box idx-box value-box)
       (or
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           (lower-global-shared-view index)
           (lower-global-shared-view lane-locals)
           (lower-context-expr-get ctx arr-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           (lower-global-shared-view index)
           (lower-global-shared-view lane-locals)
           (lower-context-expr-get ctx idx-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           index
           lane-locals
           (lower-context-expr-get ctx value-box)))]
     [(ast.AstExpr.StructSet receiver-box _ value-box)
       (or
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           (lower-global-shared-view index)
           (lower-global-shared-view lane-locals)
           (lower-context-expr-get ctx receiver-box))
-        (lower-masked-vector-body-has-varying-match-with-locals?
+        (lower-masked-vector-body-has-varying-with-locals?
           ctx
           function-state
           mode
           env
           type-env
+          form
           index
           lane-locals
           (lower-context-expr-get ctx value-box)))]
     [_ false]))
 
-(define (lower-masked-vector-expr-list-has-varying-match-with-locals?
+(define (lower-masked-vector-expr-list-has-varying-with-locals-at?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [exprs : ast.AstExprList]) : bool
-  (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    (& exprs)
-    0))
-
-(define (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
+  [form : LowerMaskedVaryingForm]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [exprs : (& exprs ast.AstExprList)]
@@ -48872,52 +48197,35 @@
   (if (>= expr-index exprs.len)
     false
     (or
-      (lower-masked-vector-body-has-varying-match-with-locals?
+      (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
         mode
         env
         type-env
+        form
         (lower-global-shared-view index)
         (lower-global-shared-view lane-locals)
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
+      (lower-masked-vector-expr-list-has-varying-with-locals-at?
         ctx
         function-state
         mode
         env
         type-env
+        form
         index
         lane-locals
         exprs
         (+ expr-index 1)))))
 
-(define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+(define (lower-masked-vector-let-bindings-have-varying-with-locals-at?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [bindings : (& bindings ast.AstLetBindingList)]) : bool
-  (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    (& bindings)
-    0))
-
-(define (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
+  [form : LowerMaskedVaryingForm]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -48941,13 +48249,14 @@
               (lower-global-shared-view index)
               (lower-global-shared-view lane-locals)
               (lower-global-shared-view init))]
-          [init-has-varying-match : bool
-            (lower-masked-vector-body-has-varying-match-with-locals?
+          [init-has-varying : bool
+            (lower-masked-vector-body-has-varying-with-locals?
               ctx
               function-state
               mode
               env
               type-env
+              form
               (lower-global-shared-view index)
               (lower-global-shared-view lane-locals)
               init)]
@@ -48957,46 +48266,26 @@
               name
               init-lanes)]
           (or
-            init-has-varying-match
-            (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
+            init-has-varying
+            (lower-masked-vector-let-bindings-have-varying-with-locals-at?
               ctx
               function-state
               mode
               env
               type-env
+              form
               index
               next-locals
               bindings
               (+ binding-index 1))))])))
 
-(define (lower-masked-vector-match-arms-have-varying-match-with-locals?
+(define (lower-masked-vector-match-arms-have-varying-with-locals-at?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [lane-locals : lower_i64_i64_map.Map]
-  [scrut-lanes : i64]
-  [arms : ast.AstMatchArmList]) : bool
-  (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
-    ctx
-    function-state
-    mode
-    env
-    type-env
-    index
-    lane-locals
-    scrut-lanes
-    (& arms)
-    0))
-
-(define (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
+  [form : LowerMaskedVaryingForm]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
@@ -49010,44 +48299,48 @@
       (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
         (or
-          (lower-masked-vector-body-has-varying-match-with-locals?
+          (lower-masked-vector-body-has-varying-with-locals?
             ctx
             function-state
             mode
             env
             type-env
+            form
             (lower-global-shared-view index)
             (lower-masked-vector-pattern-locals
               pattern
               scrut-lanes
               (lower-global-shared-view lane-locals))
             (lower-context-expr-get ctx body-box))
-          (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
+          (lower-masked-vector-match-arms-have-varying-with-locals-at?
             ctx
             function-state
             mode
             env
             type-env
+            form
             index
             lane-locals
             scrut-lanes
             arms
             (+ arm-index 1)))])))
 
-(define (lower-masked-vector-body-has-varying-match?
+(define (lower-masked-vector-body-has-varying?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [form : LowerMaskedVaryingForm]
   [index : String]
   [expr : ast.AstExpr]) : bool
-  (lower-masked-vector-body-has-varying-match-with-locals?
+  (lower-masked-vector-body-has-varying-with-locals?
     ctx
     function-state
     mode
     env
     type-env
+    form
     index
     (lower-masked-vector-empty-lane-locals)
     expr))
@@ -50015,40 +49308,54 @@
           (lower-context-expr-get ctx value-box)))]
     [_ false]))
 
-(define (lower-masked-vector-map
+;; What a foreach body holds that only the masked SPMD strategy lowers, computed
+;; once per body: the masked strategy is chosen on these facts, and when it
+;; cannot lower the body the fallback diagnostic names the first that holds.
+(defstruct LowerMaskedVectorFacts
+  (varying-if bool)
+  (varying-while bool)
+  (varying-match bool)
+  (varying-enum-match bool)
+  (bool-array-lane bool)
+  (out-of-line-call bool))
+
+(define (lower-masked-vector-facts
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
-  [body : ast.AstExpr]) : LowerMaybeMaskedVectorMap
+  [body : ast.AstExpr]) : LowerMaskedVectorFacts
   (let
     [varying-if : bool
-      (lower-masked-vector-body-has-varying-if?
+      (lower-masked-vector-body-has-varying?
         ctx
         function-state
         mode
         env
         type-env
+        (LowerMaskedVaryingForm.If)
         (lower-global-shared-view index)
         (lower-global-shared-view body))]
     [varying-while : bool
-      (lower-masked-vector-body-has-varying-while?
+      (lower-masked-vector-body-has-varying?
         ctx
         function-state
         mode
         env
         type-env
+        (LowerMaskedVaryingForm.While)
         (lower-global-shared-view index)
         (lower-global-shared-view body))]
     [varying-match : bool
-      (lower-masked-vector-body-has-varying-match?
+      (lower-masked-vector-body-has-varying?
         ctx
         function-state
         mode
         env
         type-env
+        (LowerMaskedVaryingForm.Match)
         (lower-global-shared-view index)
         (lower-global-shared-view body))]
     [varying-enum-match : bool
@@ -50065,36 +49372,51 @@
         type-env
         index
         (lower-global-shared-view body))]
-    [out-of-line-call : bool
+    (LowerMaskedVectorFacts
+      varying-if
+      varying-while
+      varying-match
+      varying-enum-match
+      bool-array-lane
       (lower-spmd-expr-has-out-of-line-call?
         ctx
         function-state
         env
         type-env
-        (lower-global-shared-view body))]
-    (if (and
-      (lower-mode-simd? mode)
-      (or
-        varying-if
-        varying-while
-        varying-match
-        varying-enum-match
-        bool-array-lane
-        out-of-line-call))
-      (let
-        [lanes : i64
-          (lower-masked-vector-expr-lanes
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            index
-            body)]
-        (if (> lanes 0)
-          (LowerMaybeMaskedVectorMap.Some lanes)
-          (LowerMaybeMaskedVectorMap.No)))
-      (LowerMaybeMaskedVectorMap.No))))
+        body))))
+
+(define (lower-masked-vector-map
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index : String]
+  [body : ast.AstExpr]
+  [facts : LowerMaskedVectorFacts]) : LowerMaybeMaskedVectorMap
+  (if (and
+    (lower-mode-simd? mode)
+    (or
+      facts.varying-if
+      facts.varying-while
+      facts.varying-match
+      facts.varying-enum-match
+      facts.bool-array-lane
+      facts.out-of-line-call))
+    (let
+      [lanes : i64
+        (lower-masked-vector-expr-lanes
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          index
+          body)]
+      (if (> lanes 0)
+        (LowerMaybeMaskedVectorMap.Some lanes)
+        (LowerMaybeMaskedVectorMap.No)))
+    (LowerMaybeMaskedVectorMap.No)))
 
 (define (lower-masked-vector-array-vars
   [ctx : tc_core.TcContext]
@@ -64483,178 +63805,163 @@
             start-value
             end-value
             body)
-          (match (lower-masked-vector-map
-            ctx
-            (lower-state-function-state state)
-            (lower-state-mode state)
-            env
-            type-env
-            (lower-global-shared-view index)
-            (lower-global-shared-view body))
-            [(LowerMaybeMaskedVectorMap.Some lanes)
-              (lower-avx512-masked-foreach-lowered
-                ctx
-                state
-                env
-                type-env
-                index-id
-                index
-                index-ty
-                start-value
-                end-value
-                body
-                (LowerMaybeMaskedVectorMap.Some lanes))]
-            [(LowerMaybeMaskedVectorMap.No)
-              (match (lower-spmd-numeric-failure
+          (let
+            [facts : LowerMaskedVectorFacts
+              (lower-masked-vector-facts
                 ctx
                 (lower-state-function-state state)
                 (lower-state-mode state)
                 env
-                (tc_core.tc-bind-id
+                type-env
+                (lower-global-shared-view index)
+                (lower-global-shared-view body))]
+            (match (lower-masked-vector-map
+              ctx
+              (lower-state-function-state state)
+              (lower-state-mode state)
+              env
+              type-env
+              (lower-global-shared-view index)
+              (lower-global-shared-view body)
+              facts)
+              [(LowerMaybeMaskedVectorMap.Some lanes)
+                (lower-avx512-masked-foreach-lowered
+                  ctx
+                  state
+                  env
                   type-env
                   index-id
-                  (lower-global-shared-view index-ty))
-                (spmd_numeric.CompilerSpmdNumericContext.DirectMap)
-                diagnostic-body)
-                [(LowerMaybeSpmdNumericFailure.Some origin decision)
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        ctx
-                        origin
-                        (lower-spmd-numeric-failure-message decision))))]
-                [(LowerMaybeSpmdNumericFailure.No)
-                  (cond
-                    [(lower-masked-vector-body-has-varying-while?
-                        ctx
-                        (lower-state-function-state state)
-                        (lower-state-mode state)
-                        env
-                        type-env
-                        (lower-global-shared-view index)
-                        (lower-global-shared-view body))
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            body
-                            (if (lower-mode-avx2? (lower-state-mode state))
-                              (lower-avx2-varying-while-diagnostic)
-                              "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
-                    [(lower-masked-vector-body-has-varying-if?
-                        ctx
-                        (lower-state-function-state state)
-                        (lower-state-mode state)
-                        env
-                        type-env
-                        (lower-global-shared-view index)
-                        (lower-global-shared-view body))
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            body
-                            (if (lower-mode-avx2? (lower-state-mode state))
-                              (lower-avx2-masked-if-diagnostic)
-                              "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
-                    [(lower-masked-vector-body-has-varying-enum-match?
-                        ctx
-                        env
-                        type-env
-                        index
-                        (lower-global-shared-view body))
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            body
-                            (if (lower-mode-avx2? (lower-state-mode state))
-                              "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
-                              "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
-                    [(lower-masked-vector-body-has-varying-match?
-                        ctx
-                        (lower-state-function-state state)
-                        (lower-state-mode state)
-                        env
-                        type-env
-                        (lower-global-shared-view index)
-                        (lower-global-shared-view body))
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            body
-                            (if (lower-mode-avx2? (lower-state-mode state))
-                              "lower: SPMD varying match AVX2 lowering is not available for this match shape"
-                              "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
-                    [(lower-vector-body-has-spmd-shuffle?
-                        ctx
-                        (lower-global-shared-view body))
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            body
-                            (lower-spmd-shuffle-diagnostic))))]
-                    [(lower-vector-body-has-array-read?
-                        ctx
-                        (lower-global-shared-view body))
-                      (match (lower-simple-vector-map-unsupported-shift-lane
-                        ctx
-                        (lower-state-mode state)
-                        env
-                        type-env
-                        index
-                        true
-                        (lower-global-shared-view body))
-                        [(LowerMaybeAstType.Some lane-ty)
-                          (ResultLowerExpr.Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (lower-spmd-map-shift-diagnostic
-                                  "shl"
-                                  lane-ty
-                                  (lower-state-mode state)))))]
-                        [(LowerMaybeAstType.No)
-                          (match (lower-simple-vector-map-unsupported-shift-lane
-                            ctx
-                            (lower-state-mode state)
-                            env
-                            type-env
-                            index
-                            false
-                            (lower-global-shared-view body))
-                            [(LowerMaybeAstType.Some lane-ty)
-                              (ResultLowerExpr.Err
-                                (box
-                                  (lower-diagnostic-at-expr
-                                    ctx
-                                    body
-                                    (lower-spmd-map-shift-diagnostic
-                                      "shr"
-                                      lane-ty
-                                      (lower-state-mode state)))))]
-                            [(LowerMaybeAstType.No)
-                              (ResultLowerExpr.Err
-                                (box
-                                  (lower-diagnostic-at-expr
-                                    ctx
-                                    body
-                                    (lower-simd-foreach-fallback-diagnostic))))])])]
-                    [else
-                      (lower-scalar-foreach-lowered
-                        ctx
-                        state
-                        env
-                        type-env
-                        index-id
-                        index
-                        index-ty
-                        start-value
-                        end-value
-                        body)])])]))])
+                  index
+                  index-ty
+                  start-value
+                  end-value
+                  body
+                  (LowerMaybeMaskedVectorMap.Some lanes))]
+              [(LowerMaybeMaskedVectorMap.No)
+                (match (lower-spmd-numeric-failure
+                  ctx
+                  (lower-state-function-state state)
+                  (lower-state-mode state)
+                  env
+                  (tc_core.tc-bind-id
+                    type-env
+                    index-id
+                    (lower-global-shared-view index-ty))
+                  (spmd_numeric.CompilerSpmdNumericContext.DirectMap)
+                  diagnostic-body)
+                  [(LowerMaybeSpmdNumericFailure.Some origin decision)
+                    (ResultLowerExpr.Err
+                      (box
+                        (lower-diagnostic-at-expr
+                          ctx
+                          origin
+                          (lower-spmd-numeric-failure-message decision))))]
+                  [(LowerMaybeSpmdNumericFailure.No)
+                    (cond
+                      [facts.varying-while
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              ctx
+                              body
+                              (if (lower-mode-avx2? (lower-state-mode state))
+                                (lower-avx2-varying-while-diagnostic)
+                                "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
+                      [facts.varying-if
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              ctx
+                              body
+                              (if (lower-mode-avx2? (lower-state-mode state))
+                                (lower-avx2-masked-if-diagnostic)
+                                "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
+                      [facts.varying-enum-match
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              ctx
+                              body
+                              (if (lower-mode-avx2? (lower-state-mode state))
+                                "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
+                                "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
+                      [facts.varying-match
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              ctx
+                              body
+                              (if (lower-mode-avx2? (lower-state-mode state))
+                                "lower: SPMD varying match AVX2 lowering is not available for this match shape"
+                                "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
+                      [(lower-vector-body-has-spmd-shuffle?
+                          ctx
+                          (lower-global-shared-view body))
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              ctx
+                              body
+                              (lower-spmd-shuffle-diagnostic))))]
+                      [(lower-vector-body-has-array-read?
+                          ctx
+                          (lower-global-shared-view body))
+                        (match (lower-simple-vector-map-unsupported-shift-lane
+                          ctx
+                          (lower-state-mode state)
+                          env
+                          type-env
+                          index
+                          true
+                          (lower-global-shared-view body))
+                          [(LowerMaybeAstType.Some lane-ty)
+                            (ResultLowerExpr.Err
+                              (box
+                                (lower-diagnostic-at-expr
+                                  ctx
+                                  body
+                                  (lower-spmd-map-shift-diagnostic
+                                    "shl"
+                                    lane-ty
+                                    (lower-state-mode state)))))]
+                          [(LowerMaybeAstType.No)
+                            (match (lower-simple-vector-map-unsupported-shift-lane
+                              ctx
+                              (lower-state-mode state)
+                              env
+                              type-env
+                              index
+                              false
+                              (lower-global-shared-view body))
+                              [(LowerMaybeAstType.Some lane-ty)
+                                (ResultLowerExpr.Err
+                                  (box
+                                    (lower-diagnostic-at-expr
+                                      ctx
+                                      body
+                                      (lower-spmd-map-shift-diagnostic
+                                        "shr"
+                                        lane-ty
+                                        (lower-state-mode state)))))]
+                              [(LowerMaybeAstType.No)
+                                (ResultLowerExpr.Err
+                                  (box
+                                    (lower-diagnostic-at-expr
+                                      ctx
+                                      body
+                                      (lower-simd-foreach-fallback-diagnostic))))])])]
+                      [else
+                        (lower-scalar-foreach-lowered
+                          ctx
+                          state
+                          env
+                          type-env
+                          index-id
+                          index
+                          index-ty
+                          start-value
+                          end-value
+                          body)])])])))])
     (lower-scalar-foreach-lowered
       ctx
       state

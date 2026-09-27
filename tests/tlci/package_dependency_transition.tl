@@ -228,8 +228,7 @@
                         reused-observed
                         4)
                       (load.compiler-load-dependency-catalog-key-eq?
-                        (owned_view.compiler-owned-shared-view
-                          old-capability.key)
+                        (& old-capability.key)
                         (owned_view.compiler-owned-shared-view
                           restored-capability.key)))
                     "package tlci transition: exact restored key was not reused")

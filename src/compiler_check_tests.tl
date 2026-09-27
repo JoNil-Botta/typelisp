@@ -844,7 +844,7 @@
           (deref diagnostics)
           (match program
             [(ast.AstProgram.Program decls-box)
-              (check_core.compiler-check-program-with-paths-cache
+              (check_core.compiler-check-program
                 path
                 (ast.ast-decl-list-box-shared-view decls-box)
                 (ast.ast-decl-path-list-new)
@@ -853,7 +853,8 @@
                 (tc_api.compiler-typecheck-prefix-cache-scope
                   "typecheck-prefix-check"
                   (svec.new)
-                  (check_core.compiler-check-language-cfgs)))]))]
+                  (check_core.compiler-check-language-cfgs))
+                (tc_core.tc-serial-job-state))]))]
       [(parser.ResultAstProgramRecovery.Fatal diagnostics)
         (check_core.ResultCompilerCheck.Err
           diagnostics

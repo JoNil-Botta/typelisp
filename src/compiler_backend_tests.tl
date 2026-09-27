@@ -26571,8 +26571,7 @@ g:
             (compiler_backend.compiler-backend-plan-provides-id?
               plan
               cbi.compiler-builtin-id-tl-alloc-aligned)
-            (runtime_common.compiler-backend-runtime-features-alloc?
-              (& features))))]
+            features.alloc))]
       [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))
 
 (define (compiler-backend-region-extern-runtime-plan-ok?) : bool
@@ -26623,8 +26622,7 @@ g:
           (and
             (compiler_backend.compiler-backend-runtime-tail-startup-profile?
               (compiler_backend.compiler-backend-runtime-plan-tail plan))
-            (runtime_common.compiler-backend-runtime-features-startup-profile?
-              (& features))
+            features.startup-profile
             (match (compiler_backend.compiler-backend-runtime-plan-for
               (compiler_ir_types.compiler-ir-function-seq-empty)
               (compiler_ir_types.compiler-ir-extern-seq-empty))
@@ -26689,8 +26687,7 @@ g:
           (and
             (compiler_backend.compiler-backend-runtime-tail-arena-debug?
               (compiler_backend.compiler-backend-runtime-plan-tail plan))
-            (runtime_common.compiler-backend-runtime-features-arena-debug?
-              (& features))
+            features.arena-debug
             (compiler_backend.compiler-backend-plan-provides-id? plan debug-id)
             (compiler_backend.compiler-backend-plan-provides-id?
               plan

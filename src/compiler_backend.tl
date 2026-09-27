@@ -82695,38 +82695,16 @@
           region-mark
           region-reset
           tail-plan)
-        (let
-          [write-exit : bool
-            (or
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-alloc)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-oob-abort)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-abort-label)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-div-abort)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-shift-abort)
-              (compiler-backend-plan-provides-id?
-                plan
-                cbi.compiler-builtin-id-tl-region-reset))]
-          (runtime_common.CompilerBackendRuntimeFeatures
-            alloc
-            region-mark
-            region-reset
-            (compiler-backend-runtime-tail-arena-debug? tail-plan)
-            (compiler-backend-runtime-tail-profile? tail-plan)
-            (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
-            write-exit
-            (compiler-backend-runtime-tail-startup-profile? tail-plan)
-            (compiler_ir_types.compiler-debug-info-enabled?)
-            31))])))
+        (runtime_common.CompilerBackendRuntimeFeatures
+          alloc
+          region-mark
+          region-reset
+          (compiler-backend-runtime-tail-arena-debug? tail-plan)
+          (compiler-backend-runtime-tail-profile? tail-plan)
+          (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
+          (compiler-backend-runtime-tail-startup-profile? tail-plan)
+          (compiler_ir_types.compiler-debug-info-enabled?)
+          31)])))
 
 ;; These leaves have no incoming edges from the always-emitted runtime. Keep
 ;; them for direct calls, address-taken symbols, and any referenced extern alias.

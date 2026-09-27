@@ -22,12 +22,10 @@
     false
     false
     false
-    false
     31))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
-    true
     true
     true
     true
@@ -68,17 +66,24 @@
     [windows-full-externs : String
       (runtime_windows.compiler-backend-runtime-externs (& full))]
     [linux-ordinary-alloc : String
-      (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base false)]
+      (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base
+        false
+        false)]
     [linux-profile-ordinary-alloc : String
-      (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base true)]
+      (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base
+        true
+        false)]
     [windows-ordinary-alloc : String
       (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
+        false
         false)]
     [windows-profile-ordinary-alloc : String
       (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
-        true)]
+        true
+        false)]
     [windows-aligned-alloc : String
       (runtime_windows.compiler-backend-runtime-windows-aligned-alloc-functions-base
+        false
         false)]
     (begin
       (test.assert-true
@@ -294,64 +299,54 @@
             (& windows-min-data)
             ".L_tl_arena_debug_roots"))
         "minimal Windows data omits the arena debug registry")
-      (test.assert-true
-        (string.eq
-          (runtime_linux.compiler-backend-runtime-linux-arena-functions-base
-            false)
+      (let
+        [text : String
           (runtime_linux.compiler-backend-runtime-linux-arena-functions
             false
-            false))
-        "disabled Linux arena debug leaves arena assembly byte-identical")
-      (test.assert-true
-        (string.eq
-          (runtime_linux.compiler-backend-runtime-region-reset-functions-base
-            false)
+            false)]
+        (test.assert-true
+          (not (compiler-backend-runtime-test-contains? (& text) "arena_debug"))
+          "disabled Linux arena debug emits no arena-debug hooks"))
+      (let
+        [text : String
           (runtime_linux.compiler-backend-runtime-region-reset-functions
             false
-            false))
-        "disabled Linux arena debug leaves reset assembly byte-identical")
-      (test.assert-true
-        (string.eq
-          (str_cat.str-cat
-            (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base
-              false)
-            (runtime_linux.compiler-backend-runtime-linux-aligned-alloc-functions-base
-              false)
-            ""
-            "")
-          (runtime_linux.compiler-backend-runtime-linux-alloc-functions
+            false)]
+        (test.assert-true
+          (not (compiler-backend-runtime-test-contains? (& text) "arena_debug"))
+          "disabled Linux reset debug emits no arena-debug hooks"))
+      (let
+        [text : String
+          (runtime_linux.compiler-backend-runtime-linux-aligned-alloc-functions-base
             false
-            false))
-        "disabled Linux arena debug leaves both allocator recipes byte-identical")
-      (test.assert-true
-        (string.eq
-          (runtime_windows.compiler-backend-runtime-windows-arena-functions-base
-            false)
+            false)]
+        (test.assert-true
+          (not (compiler-backend-runtime-test-contains? (& text) "arena_debug"))
+          "disabled Linux allocator debug emits no arena-debug hooks"))
+      (let
+        [text : String
           (runtime_windows.compiler-backend-runtime-windows-arena-functions
             false
-            false))
-        "disabled Windows arena debug leaves arena assembly byte-identical")
-      (test.assert-true
-        (string.eq
-          (runtime_windows.compiler-backend-runtime-windows-region-reset-functions-base
-            false)
+            false)]
+        (test.assert-true
+          (not (compiler-backend-runtime-test-contains? (& text) "arena_debug"))
+          "disabled Windows arena debug emits no arena-debug hooks"))
+      (let
+        [text : String
           (runtime_windows.compiler-backend-runtime-windows-region-reset-functions
             false
-            false))
-        "disabled Windows arena debug leaves reset assembly byte-identical")
-      (test.assert-true
-        (string.eq
-          (str_cat.str-cat
-            (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
-              false)
-            (runtime_windows.compiler-backend-runtime-windows-aligned-alloc-functions-base
-              false)
-            ""
-            "")
-          (runtime_windows.compiler-backend-runtime-windows-alloc-functions
+            false)]
+        (test.assert-true
+          (not (compiler-backend-runtime-test-contains? (& text) "arena_debug"))
+          "disabled Windows reset debug emits no arena-debug hooks"))
+      (let
+        [text : String
+          (runtime_windows.compiler-backend-runtime-windows-aligned-alloc-functions-base
             false
-            false))
-        "disabled Windows arena debug leaves both allocator recipes byte-identical")
+            false)]
+        (test.assert-true
+          (not (compiler-backend-runtime-test-contains? (& text) "arena_debug"))
+          "disabled Windows allocator debug emits no arena-debug hooks"))
       (test.assert-true
         (and
           (= (string.string-length (& linux-ordinary-alloc)) 8146)

@@ -1,4 +1,5 @@
 ;; compiler_backend_runtime_common.tl - Target-neutral backend runtime recipes.
+(import compiler_owned_view as owned_view)
 (import stdlib.string)
 (import compiler_str_cat as str_cat)
 
@@ -9,7 +10,6 @@
   (arena-debug bool)
   (profile bool)
   (tlci-macro-entry bool)
-  (write-exit bool)
   (startup-profile bool)
   (backtrace bool)
   (leaf-mask i64))
@@ -19,44 +19,185 @@
   [bit : i64]) : bool
   (!= (bit-and features.leaf-mask bit) 0))
 
-(define (compiler-backend-runtime-features-alloc?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.alloc)
-
-(define (compiler-backend-runtime-features-region-mark?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.region-mark)
-
-(define (compiler-backend-runtime-features-region-reset?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.region-reset)
-
-(define (compiler-backend-runtime-features-arena-debug?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.arena-debug)
-
-(define (compiler-backend-runtime-features-profile?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.profile)
-
-(define (compiler-backend-runtime-features-tlci-macro-entry?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.tlci-macro-entry)
-
-(define (compiler-backend-runtime-features-write-exit?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.write-exit)
-
-(define (compiler-backend-runtime-features-startup-profile?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.startup-profile)
-
-(define (compiler-backend-runtime-features-backtrace?
-  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
-  features.backtrace)
-
 (define (compiler-backend-runtime-fast-alloc-label [size : i64]) : String
   (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))
+
+;; Arena-debug instrumentation exists only in compiler-arena-debug (and test)
+;; builds; elsewhere the runtime text is the plain one whatever the program
+;; asked for.
+(define (compiler-backend-runtime-arena-debug-text? [_arena-debug : bool]) : bool
+  (cfg (any compiler-arena-debug test) _arena-debug false))
+
+(define (compiler-backend-runtime-arena-poison-data [arena-debug : bool]) : String
+  (str_cat.str-cat
+    "    .section .bss
+    .balign 8
+.L_tl_arena_poison_enabled:
+    .zero 8
+
+"
+    (if arena-debug
+      "    .balign 8
+.L_tl_arena_debug_roots:
+    .zero 32768
+
+"
+      "")))
+
+;; Replace every OLD in TEXT; NEW must not contain OLD.
+(define (compiler-backend-runtime-replace-all
+  [text : String]
+  [old : String]
+  [new : String]) : String
+  (let
+    [out : String text]
+    (begin
+      (while (string.contains (& out) (& old))
+        (set!
+          out
+          (string.replace
+            out
+            (owned_view.compiler-owned-shared-view old)
+            (owned_view.compiler-owned-shared-view new))))
+      out)))
+
+;; The arena-debug root registry and its checked entry points for one target:
+;; ARG is the first argument register, IDX the slot index, and SUFFIX tells the
+;; target's local labels apart. The ELF leaf closes each symbol's extent and
+;; jumps to the aborts; Win64 calls them from a shadow-space frame.
+(define (compiler-backend-runtime-arena-debug-functions
+  [arg : String]
+  [idx : String]
+  [suffix : String]
+  [elf : bool]) : String
+  (compiler-backend-runtime-replace-all
+    (compiler-backend-runtime-replace-all
+      (compiler-backend-runtime-replace-all
+        (str_cat.str-cat
+          ".L_tl_arena_debug_register_root:
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %idx, %idx
+.L_tl_arena_debug_register_root_SFX_loop:
+    cmpq $4096, %idx
+    jae .L_tl_arena_debug_protect_SFX_invalid
+    xorq %rax, %rax
+    lock cmpxchgq %arg, (%r8,%idx,8)
+    je .L_tl_arena_debug_register_root_SFX_done
+    cmpq %arg, %rax
+    je .L_tl_arena_debug_register_root_SFX_done
+    incq %idx
+    jmp .L_tl_arena_debug_register_root_SFX_loop
+.L_tl_arena_debug_register_root_SFX_done:
+    movq %arg, %rax
+    ret
+
+.L_tl_arena_debug_unregister_root:
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %idx, %idx
+.L_tl_arena_debug_unregister_root_SFX_loop:
+    cmpq $4096, %idx
+    jae .L_tl_arena_debug_unregister_root_SFX_done
+    movq (%r8,%idx,8), %rax
+    cmpq %arg, %rax
+    jne .L_tl_arena_debug_unregister_root_SFX_next
+    xorq %r9, %r9
+    lock cmpxchgq %r9, (%r8,%idx,8)
+    jne .L_tl_arena_debug_unregister_root_SFX_loop
+    ret
+.L_tl_arena_debug_unregister_root_SFX_next:
+    incq %idx
+    jmp .L_tl_arena_debug_unregister_root_SFX_loop
+.L_tl_arena_debug_unregister_root_SFX_done:
+    ret
+
+    .globl tl_arena_debug_protect_never_reset
+"
+          (if elf
+            "    .type tl_arena_debug_protect_never_reset,@function\n"
+            "")
+          "tl_arena_debug_protect_never_reset:
+    testq %arg, %arg
+    jz .L_tl_arena_debug_protect_SFX_invalid
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %idx, %idx
+.L_tl_arena_debug_protect_SFX_find:
+    cmpq $4096, %idx
+    jae .L_tl_arena_debug_protect_SFX_invalid
+    cmpq %arg, (%r8,%idx,8)
+    je .L_tl_arena_debug_protect_SFX_found
+    incq %idx
+    jmp .L_tl_arena_debug_protect_SFX_find
+.L_tl_arena_debug_protect_SFX_found:
+    cmpq %arg, 40(%arg)
+    jne .L_tl_arena_debug_protect_SFX_invalid
+    testq $1, 48(%arg)
+    jnz .L_tl_arena_debug_protect_SFX_invalid
+    orq $8, 48(%arg)
+    ret
+.L_tl_arena_debug_protect_SFX_invalid:
+"
+          (if elf
+            "    jmp tl_arena_debug_protect_abort
+    .size tl_arena_debug_protect_never_reset, . - tl_arena_debug_protect_never_reset
+"
+            "    subq $40, %rsp
+    call tl_arena_debug_protect_abort
+")
+          "
+    .globl tl_arena_debug_retire_protected
+tl_arena_debug_retire_protected:
+    testq %arg, %arg
+    jz .L_tl_arena_debug_protect_SFX_invalid
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %idx, %idx
+.L_tl_arena_debug_retire_SFX_find:
+    cmpq $4096, %idx
+    jae .L_tl_arena_debug_protect_SFX_invalid
+    cmpq %arg, (%r8,%idx,8)
+    je .L_tl_arena_debug_retire_SFX_found
+    incq %idx
+    jmp .L_tl_arena_debug_retire_SFX_find
+.L_tl_arena_debug_retire_SFX_found:
+    cmpq %arg, 40(%arg)
+    jne .L_tl_arena_debug_protect_SFX_invalid
+    testq $8, 48(%arg)
+    jz .L_tl_arena_debug_protect_SFX_invalid
+    andq $-9, 48(%arg)
+    jmp tl_arena_destroy
+
+    .globl tl_arena_debug_assert_pool_install
+"
+          (if elf
+            "    .type tl_arena_debug_assert_pool_install,@function\n"
+            "")
+          "tl_arena_debug_assert_pool_install:
+    testq %arg, %arg
+    jz .L_tl_arena_debug_pool_install_SFX_done
+    movq 40(%arg), %rax
+    testq %rax, %rax
+    jz .L_tl_arena_debug_pool_install_SFX_done
+    testq $8, 48(%rax)
+"
+          (if elf
+            "    jnz tl_arena_debug_pool_install_abort\n"
+            "    jnz .L_tl_arena_debug_pool_install_SFX_abort\n")
+          ".L_tl_arena_debug_pool_install_SFX_done:
+    ret
+"
+          (if elf
+            "    .size tl_arena_debug_assert_pool_install, . - tl_arena_debug_assert_pool_install
+"
+            ".L_tl_arena_debug_pool_install_SFX_abort:
+    subq $40, %rsp
+    call tl_arena_debug_pool_install_abort
+")
+          "\n")
+        "%arg"
+        arg)
+      "%idx"
+      idx)
+    "_SFX"
+    suffix))
 
 (define (compiler-backend-runtime-profile-data [profile : bool]) : String
   (if profile
@@ -115,11 +256,9 @@ tl_profile_alloc_peak_bytes:
   [arena-data : String]) : String
   (str_cat.str-cat
     arena-data
-    (compiler-backend-runtime-startup-profile-data
-      (compiler-backend-runtime-features-startup-profile? features))
-    (compiler-backend-runtime-profile-data
-      (compiler-backend-runtime-features-profile? features))
-    (if (compiler-backend-runtime-features-region-reset? features)
+    (compiler-backend-runtime-startup-profile-data features.startup-profile)
+    (compiler-backend-runtime-profile-data features.profile)
+    (if features.region-reset
       (compiler-backend-runtime-region-reset-data)
       "")
     (compiler-backend-runtime-argv-data)
@@ -361,69 +500,34 @@ tl_startup_profile_process_entry_tick:
       atomic-profile
       slow-body)))
 
+;; One bump stub per size class 8, 16, ..., 64.
 (define (compiler-backend-runtime-fast-alloc-functions
   [current-arena-load : String]
   [usable-end-offset : String]
   [size-reg : String]
   [next-reg : String]
   [profile : bool]) : String
-  (str_cat.str-cat
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      8
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      16
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      24
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      32
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      40
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      48
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      56
-      size-reg
-      next-reg
-      profile)
-    (compiler-backend-runtime-fast-alloc-function
-      current-arena-load
-      usable-end-offset
-      64
-      size-reg
-      next-reg
-      profile)))
+  (let
+    [out : String ""]
+    [size : i64 8]
+    (begin
+      (while (<= size 64)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (compiler-backend-runtime-fast-alloc-function
+                current-arena-load
+                usable-end-offset
+                size
+                size-reg
+                next-reg
+                profile)
+              ""
+              ""))
+          (set! size (+ size 8))))
+      out)))
 
 (define (compiler-backend-runtime-region-mark-functions
   [current-arena-load : String]) : String

@@ -77,14 +77,7 @@
 
 (define (compiler-object-coff-section-number
   [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match kind
-    [(cobj.CompilerObjectSectionKind.Text) 1]
-    [(cobj.CompilerObjectSectionKind.Data) 2]
-    [(cobj.CompilerObjectSectionKind.Rodata) 3]
-    [(cobj.CompilerObjectSectionKind.Bss) 4]
-    [(cobj.CompilerObjectSectionKind.Pdata) 5]
-    [(cobj.CompilerObjectSectionKind.Xdata) 6]
-    [(cobj.CompilerObjectSectionKind.Rsrc) 7]))
+  (+ 1 (layout.compiler-object-layout-section-index kind)))
 
 (define (compiler-object-coff-section-flags
   [kind : cobj.CompilerObjectSectionKind]) : i64
@@ -289,220 +282,75 @@
       compiler-object-coff-section-lnk-nreloc-ovfl)
     (compiler-object-coff-section-flags kind)))
 
-(define (compiler-object-coff-total-relocation-physical-count
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (+
-    (compiler-object-coff-section-relocation-physical-count
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (+
-      (compiler-object-coff-section-relocation-physical-count
-        image
-        (cobj.CompilerObjectSectionKind.Data))
-      (+
-        (compiler-object-coff-section-relocation-physical-count
-          image
-          (cobj.CompilerObjectSectionKind.Rodata))
-        (+
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Bss))
-          (+
-            (compiler-object-coff-section-relocation-physical-count
-              image
-              (cobj.CompilerObjectSectionKind.Pdata))
-            (+
-              (compiler-object-coff-section-relocation-physical-count
-                image
-                (cobj.CompilerObjectSectionKind.Xdata))
-              (compiler-object-coff-section-relocation-physical-count
-                image
-                (cobj.CompilerObjectSectionKind.Rsrc)))))))))
-
-(define (compiler-object-coff-raw-base-after-section
+(define (compiler-object-coff-raw-size-before
   [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match kind
-    [(cobj.CompilerObjectSectionKind.Text) (compiler-object-coff-header-size)]
-    [(cobj.CompilerObjectSectionKind.Data)
-      (+
-        (compiler-object-coff-header-size)
-        (layout.compiler-object-layout-section-raw-size
-          image
-          (cobj.CompilerObjectSectionKind.Text)))]
-    [(cobj.CompilerObjectSectionKind.Rodata)
-      (+
-        (compiler-object-coff-header-size)
-        (+
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (cobj.CompilerObjectSectionKind.Text))
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (cobj.CompilerObjectSectionKind.Data))))]
-    [(cobj.CompilerObjectSectionKind.Bss) 0]
-    [(cobj.CompilerObjectSectionKind.Pdata)
-      (+
-        (compiler-object-coff-header-size)
-        (+
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (cobj.CompilerObjectSectionKind.Text))
-          (+
-            (layout.compiler-object-layout-section-raw-size
-              image
-              (cobj.CompilerObjectSectionKind.Data))
-            (layout.compiler-object-layout-section-raw-size
-              image
-              (cobj.CompilerObjectSectionKind.Rodata)))))]
-    [(cobj.CompilerObjectSectionKind.Xdata)
-      (+
-        (compiler-object-coff-header-size)
-        (+
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (cobj.CompilerObjectSectionKind.Text))
-          (+
-            (layout.compiler-object-layout-section-raw-size
-              image
-              (cobj.CompilerObjectSectionKind.Data))
+  [end : i64]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            total
             (+
+              total
               (layout.compiler-object-layout-section-raw-size
                 image
-                (cobj.CompilerObjectSectionKind.Rodata))
-              (layout.compiler-object-layout-section-raw-size
-                image
-                (cobj.CompilerObjectSectionKind.Pdata))))))]
-    [(cobj.CompilerObjectSectionKind.Rsrc)
-      (+
-        (compiler-object-coff-header-size)
-        (+
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (cobj.CompilerObjectSectionKind.Text))
-          (+
-            (layout.compiler-object-layout-section-raw-size
-              image
-              (cobj.CompilerObjectSectionKind.Data))
+                (layout.compiler-object-layout-section-at index))))
+          (set! index (+ index 1))))
+      total)))
+
+(define (compiler-object-coff-relocation-physical-count-before
+  [image : (& image cobj.CompilerObjectImage)]
+  [end : i64]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            total
             (+
-              (layout.compiler-object-layout-section-raw-size
+              total
+              (compiler-object-coff-section-relocation-physical-count
                 image
-                (cobj.CompilerObjectSectionKind.Rodata))
-              (+
-                (layout.compiler-object-layout-section-raw-size
-                  image
-                  (cobj.CompilerObjectSectionKind.Pdata))
-                (layout.compiler-object-layout-section-raw-size
-                  image
-                  (cobj.CompilerObjectSectionKind.Xdata)))))))]))
+                (layout.compiler-object-layout-section-at index))))
+          (set! index (+ index 1))))
+      total)))
 
 (define (compiler-object-coff-section-raw-pointer
   [image : (& image cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]) : i64
   (if (> (layout.compiler-object-layout-section-raw-size image kind) 0)
-    (compiler-object-coff-raw-base-after-section image kind)
+    (+
+      (compiler-object-coff-header-size)
+      (compiler-object-coff-raw-size-before
+        image
+        (layout.compiler-object-layout-section-index kind)))
     0))
 
 (define (compiler-object-coff-relocation-base
   [image : (& image cobj.CompilerObjectImage)]) : i64
   (+
     (compiler-object-coff-header-size)
-    (+
-      (layout.compiler-object-layout-section-raw-size
-        image
-        (cobj.CompilerObjectSectionKind.Text))
-      (+
-        (layout.compiler-object-layout-section-raw-size
-          image
-          (cobj.CompilerObjectSectionKind.Data))
-        (+
-          (layout.compiler-object-layout-section-raw-size
-            image
-            (cobj.CompilerObjectSectionKind.Rodata))
-          (+
-            (layout.compiler-object-layout-section-raw-size
-              image
-              (cobj.CompilerObjectSectionKind.Pdata))
-            (+
-              (layout.compiler-object-layout-section-raw-size
-                image
-                (cobj.CompilerObjectSectionKind.Xdata))
-              (layout.compiler-object-layout-section-raw-size
-                image
-                (cobj.CompilerObjectSectionKind.Rsrc)))))))))
+    (compiler-object-coff-raw-size-before
+      image
+      layout.compiler-object-layout-section-count)))
 
 (define (compiler-object-coff-relocation-pointer
   [image : (& image cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]) : i64
-  (let
-    [count : i64
-      (layout.compiler-object-layout-section-relocation-count image kind)]
-    (if (= count 0)
-      0
-      (let
-        [text-count : i64
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Text))]
-        [data-count : i64
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Data))]
-        [rodata-count : i64
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Rodata))]
-        [bss-count : i64
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Bss))]
-        [pdata-count : i64
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Pdata))]
-        [xdata-count : i64
-          (compiler-object-coff-section-relocation-physical-count
-            image
-            (cobj.CompilerObjectSectionKind.Xdata))]
-        [base : i64 (compiler-object-coff-relocation-base image)]
-        (match kind
-          [(cobj.CompilerObjectSectionKind.Text) base]
-          [(cobj.CompilerObjectSectionKind.Data)
-            (+ base (* compiler-object-coff-relocation-size text-count))]
-          [(cobj.CompilerObjectSectionKind.Rodata)
-            (+
-              base
-              (* compiler-object-coff-relocation-size (+ text-count data-count)))]
-          [(cobj.CompilerObjectSectionKind.Bss)
-            (+
-              base
-              (*
-                compiler-object-coff-relocation-size
-                (+ text-count (+ data-count rodata-count))))]
-          [(cobj.CompilerObjectSectionKind.Pdata)
-            (+
-              base
-              (*
-                compiler-object-coff-relocation-size
-                (+ text-count (+ data-count (+ rodata-count bss-count)))))]
-          [(cobj.CompilerObjectSectionKind.Xdata)
-            (+
-              base
-              (*
-                compiler-object-coff-relocation-size
-                (+
-                  text-count
-                  (+ data-count (+ rodata-count (+ bss-count pdata-count))))))]
-          [(cobj.CompilerObjectSectionKind.Rsrc)
-            (+
-              base
-              (*
-                compiler-object-coff-relocation-size
-                (+
-                  text-count
-                  (+
-                    data-count
-                    (+ rodata-count (+ bss-count (+ pdata-count xdata-count)))))))])))))
+  (if (= (layout.compiler-object-layout-section-relocation-count image kind) 0)
+    0
+    (+
+      (compiler-object-coff-relocation-base image)
+      (*
+        compiler-object-coff-relocation-size
+        (compiler-object-coff-relocation-physical-count-before
+          image
+          (layout.compiler-object-layout-section-index kind))))))
 
 (define (compiler-object-coff-symbol-table-pointer
   [image : (& image cobj.CompilerObjectImage)]) : i64
@@ -510,7 +358,9 @@
     (compiler-object-coff-relocation-base image)
     (*
       compiler-object-coff-relocation-size
-      (compiler-object-coff-total-relocation-physical-count image))))
+      (compiler-object-coff-relocation-physical-count-before
+        image
+        layout.compiler-object-layout-section-count))))
 
 (define (compiler-object-coff-push-file-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -565,64 +415,30 @@
 (define (compiler-object-coff-push-section-headers!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (begin
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Data))
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rodata))
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Bss))
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Pdata))
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Xdata))
-    (compiler-object-coff-push-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rsrc))))
+  (let
+    [index : i64 0]
+    (while (< index layout.compiler-object-layout-section-count)
+      (begin
+        (compiler-object-coff-push-section-header!
+          out
+          image
+          (layout.compiler-object-layout-section-at index))
+        (set! index (+ index 1))))))
 
 (define (compiler-object-coff-render-sections!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (begin
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Data))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rodata))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Pdata))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Xdata))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rsrc))))
+  (let
+    [index : i64 0]
+    (while (< index layout.compiler-object-layout-section-count)
+      (begin
+        (let
+          [kind : cobj.CompilerObjectSectionKind
+            (layout.compiler-object-layout-section-at index)]
+          (match kind
+            [(cobj.CompilerObjectSectionKind.Bss) unit]
+            [_ (layout.compiler-object-layout-render-section! out image kind)]))
+        (set! index (+ index 1))))))
 
 (define (compiler-object-coff-relocation-type
   [kind : cobj.CompilerObjectRelocationKind]) : i64
@@ -750,7 +566,6 @@
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     (begin
-      (compiler-object-coff-render-relocation-overflow-sentinel! out image kind)
       (while (< index count)
         (let
           [reloc : cobj.CompilerObjectRelocation
@@ -767,42 +582,27 @@
 (define (compiler-object-coff-render-relocations!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (begin
-    (compiler-object-coff-render-relocation-overflow-sentinel!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (compiler-object-coff-render-text-relocations! out image)
-    (compiler-object-coff-render-relocations-for-section!
-      out
-      image
-      image.relocations
-      (cobj.CompilerObjectSectionKind.Data))
-    (compiler-object-coff-render-relocations-for-section!
-      out
-      image
-      image.relocations
-      (cobj.CompilerObjectSectionKind.Rodata))
-    (compiler-object-coff-render-relocations-for-section!
-      out
-      image
-      image.relocations
-      (cobj.CompilerObjectSectionKind.Bss))
-    (compiler-object-coff-render-relocations-for-section!
-      out
-      image
-      image.relocations
-      (cobj.CompilerObjectSectionKind.Pdata))
-    (compiler-object-coff-render-relocations-for-section!
-      out
-      image
-      image.relocations
-      (cobj.CompilerObjectSectionKind.Xdata))
-    (compiler-object-coff-render-relocations-for-section!
-      out
-      image
-      image.relocations
-      (cobj.CompilerObjectSectionKind.Rsrc))))
+  (let
+    [index : i64 0]
+    (while (< index layout.compiler-object-layout-section-count)
+      (let
+        [kind : cobj.CompilerObjectSectionKind
+          (layout.compiler-object-layout-section-at index)]
+        (begin
+          (compiler-object-coff-render-relocation-overflow-sentinel!
+            out
+            image
+            kind)
+          (match kind
+            [(cobj.CompilerObjectSectionKind.Text)
+              (compiler-object-coff-render-text-relocations! out image)]
+            [_
+              (compiler-object-coff-render-relocations-for-section!
+                out
+                image
+                image.relocations
+                kind)])
+          (set! index (+ index 1)))))))
 
 (define (compiler-object-coff-symbol-name-long? [name : (& name str)]) : bool
   (> (layout.compiler-object-layout-string-length name) 8))
@@ -1147,107 +947,48 @@
         (string.int->string max-output-size)
         " is invalid"))
     (let
-      [data0 : CompilerObjectCoffLayoutAccumulator
+      [acc : CompilerObjectCoffLayoutAccumulator
         (CompilerObjectCoffLayoutAccumulator
           (compiler-object-coff-header-size)
           "")]
-      [data1 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data0
-          image
-          (cobj.CompilerObjectSectionKind.Text)
-          max-output-size)]
-      [data2 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data1
-          image
-          (cobj.CompilerObjectSectionKind.Data)
-          max-output-size)]
-      [data3 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data2
-          image
-          (cobj.CompilerObjectSectionKind.Rodata)
-          max-output-size)]
-      [data4 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data3
-          image
-          (cobj.CompilerObjectSectionKind.Bss)
-          max-output-size)]
-      [data5 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data4
-          image
-          (cobj.CompilerObjectSectionKind.Pdata)
-          max-output-size)]
-      [data6 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data5
-          image
-          (cobj.CompilerObjectSectionKind.Xdata)
-          max-output-size)]
-      [data7 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-data-layout
-          data6
-          image
-          (cobj.CompilerObjectSectionKind.Rsrc)
-          max-output-size)]
-      [reloc1 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          data7
-          image
-          (cobj.CompilerObjectSectionKind.Text)
-          max-output-size)]
-      [reloc2 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          reloc1
-          image
-          (cobj.CompilerObjectSectionKind.Data)
-          max-output-size)]
-      [reloc3 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          reloc2
-          image
-          (cobj.CompilerObjectSectionKind.Rodata)
-          max-output-size)]
-      [reloc4 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          reloc3
-          image
-          (cobj.CompilerObjectSectionKind.Bss)
-          max-output-size)]
-      [reloc5 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          reloc4
-          image
-          (cobj.CompilerObjectSectionKind.Pdata)
-          max-output-size)]
-      [reloc6 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          reloc5
-          image
-          (cobj.CompilerObjectSectionKind.Xdata)
-          max-output-size)]
-      [reloc7 : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-section-relocation-layout
-          reloc6
-          image
-          (cobj.CompilerObjectSectionKind.Rsrc)
-          max-output-size)]
-      [symbols : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-symbol-table-layout
-          reloc7
-          image.symbols
-          max-output-size)]
-      [strings : CompilerObjectCoffLayoutAccumulator
-        (compiler-object-coff-check-string-table-layout
-          symbols
-          image.symbols
-          max-output-size)]
-      (if (compiler-object-coff-layout-accumulator-ok? strings)
-        (ResultCompilerObjectCoffLayout.Ok strings.offset)
-        (ResultCompilerObjectCoffLayout.Err strings.error)))))
+      [index : i64 0]
+      (begin
+        (while (< index layout.compiler-object-layout-section-count)
+          (begin
+            (set!
+              acc
+              (compiler-object-coff-check-section-data-layout
+                acc
+                image
+                (layout.compiler-object-layout-section-at index)
+                max-output-size))
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index layout.compiler-object-layout-section-count)
+          (begin
+            (set!
+              acc
+              (compiler-object-coff-check-section-relocation-layout
+                acc
+                image
+                (layout.compiler-object-layout-section-at index)
+                max-output-size))
+            (set! index (+ index 1))))
+        (set!
+          acc
+          (compiler-object-coff-check-symbol-table-layout
+            acc
+            image.symbols
+            max-output-size))
+        (set!
+          acc
+          (compiler-object-coff-check-string-table-layout
+            acc
+            image.symbols
+            max-output-size))
+        (if (compiler-object-coff-layout-accumulator-ok? acc)
+          (ResultCompilerObjectCoffLayout.Ok acc.offset)
+          (ResultCompilerObjectCoffLayout.Err acc.error))))))
 
 (define (compiler-object-coff-render-string-table-symbols!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]

@@ -86,6 +86,31 @@
   [out : (& out byte_buf_core.ByteBufBuilder)]) : String
   (byte_buf_core.byte-buf-builder-finish-string out))
 
+;; Both writers lay out and number their sections in this order.
+(define compiler-object-layout-section-count : i64
+  7)
+
+(define (compiler-object-layout-section-at [index : i64]) : cobj.CompilerObjectSectionKind
+  (cond
+    [(= index 0) (cobj.CompilerObjectSectionKind.Text)]
+    [(= index 1) (cobj.CompilerObjectSectionKind.Data)]
+    [(= index 2) (cobj.CompilerObjectSectionKind.Rodata)]
+    [(= index 3) (cobj.CompilerObjectSectionKind.Bss)]
+    [(= index 4) (cobj.CompilerObjectSectionKind.Pdata)]
+    [(= index 5) (cobj.CompilerObjectSectionKind.Xdata)]
+    [else (cobj.CompilerObjectSectionKind.Rsrc)]))
+
+(define (compiler-object-layout-section-index
+  [kind : cobj.CompilerObjectSectionKind]) : i64
+  (match kind
+    [(cobj.CompilerObjectSectionKind.Text) 0]
+    [(cobj.CompilerObjectSectionKind.Data) 1]
+    [(cobj.CompilerObjectSectionKind.Rodata) 2]
+    [(cobj.CompilerObjectSectionKind.Bss) 3]
+    [(cobj.CompilerObjectSectionKind.Pdata) 4]
+    [(cobj.CompilerObjectSectionKind.Xdata) 5]
+    [(cobj.CompilerObjectSectionKind.Rsrc) 6]))
+
 (define (compiler-object-layout-data-records-size-from
   [records : cobj.CompilerObjectDataRecordList]
   [offset : i64]) : i64

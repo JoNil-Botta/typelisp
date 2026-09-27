@@ -289,87 +289,63 @@
     (compiler-object-elf-push-shstrtab-name! out ".shstrtab")
     (compiler-object-elf-push-shstrtab-name! out ".note.GNU-stack")))
 
-(define (compiler-object-elf-text-offset
-  [_image : (& _image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    compiler-object-elf-header-size
-    16))
+;; ELF keeps the loadable sections, the first four of the shared order.
+(define compiler-object-elf-loadable-count : i64
+  4)
 
-(define (compiler-object-elf-data-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-text-offset image)
-      (layout.compiler-object-layout-section-raw-size
-        image
-        (cobj.CompilerObjectSectionKind.Text)))
-    8))
+;; File offset of loadable section END (at 4, past .bss, where the .rela
+;; sections start): .text 16-byte aligned after the header, the rest 8-byte
+;; aligned.
+(define (compiler-object-elf-load-offset
+  [image : (& image cobj.CompilerObjectImage)]
+  [end : i64]) : i64
+  (let
+    [offset : i64
+      (layout.compiler-object-layout-align-offset
+        compiler-object-elf-header-size
+        16)]
+    [index : i64 0]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            offset
+            (layout.compiler-object-layout-align-offset
+              (+
+                offset
+                (layout.compiler-object-layout-section-raw-size
+                  image
+                  (layout.compiler-object-layout-section-at index)))
+              8))
+          (set! index (+ index 1))))
+      offset)))
 
-(define (compiler-object-elf-rodata-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-data-offset image)
-      (layout.compiler-object-layout-section-raw-size
-        image
-        (cobj.CompilerObjectSectionKind.Data)))
-    8))
-
-(define (compiler-object-elf-bss-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-rodata-offset image)
-      (layout.compiler-object-layout-section-raw-size
-        image
-        (cobj.CompilerObjectSectionKind.Rodata)))
-    8))
-
-(define (compiler-object-elf-rela-text-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (compiler-object-elf-bss-offset image)
-    8))
-
-(define (compiler-object-elf-rela-data-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-rela-text-offset image)
-      (compiler-object-elf-relocation-section-size
-        image
-        (cobj.CompilerObjectSectionKind.Text)))
-    8))
-
-(define (compiler-object-elf-rela-rodata-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-rela-data-offset image)
-      (compiler-object-elf-relocation-section-size
-        image
-        (cobj.CompilerObjectSectionKind.Data)))
-    8))
-
-(define (compiler-object-elf-rela-bss-offset
-  [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-rela-rodata-offset image)
-      (compiler-object-elf-relocation-section-size
-        image
-        (cobj.CompilerObjectSectionKind.Rodata)))
-    8))
+;; File offset of the .rela section of loadable section END (at 4, of .symtab).
+(define (compiler-object-elf-rela-offset
+  [image : (& image cobj.CompilerObjectImage)]
+  [end : i64]) : i64
+  (let
+    [offset : i64
+      (compiler-object-elf-load-offset image compiler-object-elf-loadable-count)]
+    [index : i64 0]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            offset
+            (layout.compiler-object-layout-align-offset
+              (+
+                offset
+                (compiler-object-elf-relocation-section-size
+                  image
+                  (layout.compiler-object-layout-section-at index)))
+              8))
+          (set! index (+ index 1))))
+      offset)))
 
 (define (compiler-object-elf-symtab-offset
   [image : (& image cobj.CompilerObjectImage)]) : i64
-  (layout.compiler-object-layout-align-offset
-    (+
-      (compiler-object-elf-rela-bss-offset image)
-      (compiler-object-elf-relocation-section-size
-        image
-        (cobj.CompilerObjectSectionKind.Bss)))
-    8))
+  (compiler-object-elf-rela-offset image compiler-object-elf-loadable-count))
 
 (define (compiler-object-elf-strtab-offset
   [image : (& image cobj.CompilerObjectImage)]) : i64
@@ -393,52 +369,11 @@
 
 (define (compiler-object-elf-section-index
   [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match kind
-    [(cobj.CompilerObjectSectionKind.Text)
-      compiler-object-elf-section-text-index]
-    [(cobj.CompilerObjectSectionKind.Data)
-      compiler-object-elf-section-data-index]
-    [(cobj.CompilerObjectSectionKind.Rodata)
-      compiler-object-elf-section-rodata-index]
-    [(cobj.CompilerObjectSectionKind.Bss) compiler-object-elf-section-bss-index]
-    [(cobj.CompilerObjectSectionKind.Pdata)
-      compiler-object-elf-section-null-index]
-    [(cobj.CompilerObjectSectionKind.Xdata)
-      compiler-object-elf-section-null-index]
-    [(cobj.CompilerObjectSectionKind.Rsrc)
-      compiler-object-elf-section-null-index]))
-
-(define (compiler-object-elf-section-file-offset
-  [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match kind
-    [(cobj.CompilerObjectSectionKind.Text)
-      (compiler-object-elf-text-offset image)]
-    [(cobj.CompilerObjectSectionKind.Data)
-      (compiler-object-elf-data-offset image)]
-    [(cobj.CompilerObjectSectionKind.Rodata)
-      (compiler-object-elf-rodata-offset image)]
-    [(cobj.CompilerObjectSectionKind.Bss)
-      (compiler-object-elf-bss-offset image)]
-    [(cobj.CompilerObjectSectionKind.Pdata) 0]
-    [(cobj.CompilerObjectSectionKind.Xdata) 0]
-    [(cobj.CompilerObjectSectionKind.Rsrc) 0]))
-
-(define (compiler-object-elf-relocation-section-offset
-  [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match kind
-    [(cobj.CompilerObjectSectionKind.Text)
-      (compiler-object-elf-rela-text-offset image)]
-    [(cobj.CompilerObjectSectionKind.Data)
-      (compiler-object-elf-rela-data-offset image)]
-    [(cobj.CompilerObjectSectionKind.Rodata)
-      (compiler-object-elf-rela-rodata-offset image)]
-    [(cobj.CompilerObjectSectionKind.Bss)
-      (compiler-object-elf-rela-bss-offset image)]
-    [(cobj.CompilerObjectSectionKind.Pdata) 0]
-    [(cobj.CompilerObjectSectionKind.Xdata) 0]
-    [(cobj.CompilerObjectSectionKind.Rsrc) 0]))
+  (let
+    [index : i64 (layout.compiler-object-layout-section-index kind)]
+    (if (< index compiler-object-elf-loadable-count)
+      (+ compiler-object-elf-section-text-index index)
+      compiler-object-elf-section-null-index)))
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
   (cond
@@ -497,28 +432,22 @@
 (define (compiler-object-elf-render-loadable-sections!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]) : unit
-  (begin
-    (layout.compiler-object-layout-render-padding-to!
-      out
-      (compiler-object-elf-text-offset image))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (layout.compiler-object-layout-render-padding-to!
-      out
-      (compiler-object-elf-data-offset image))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Data))
-    (layout.compiler-object-layout-render-padding-to!
-      out
-      (compiler-object-elf-rodata-offset image))
-    (layout.compiler-object-layout-render-section!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rodata))))
+  (let
+    [index : i64 0]
+    (while (< index compiler-object-elf-loadable-count)
+      (begin
+        (match (layout.compiler-object-layout-section-at index)
+          [(cobj.CompilerObjectSectionKind.Bss) unit]
+          [_
+            (begin
+              (layout.compiler-object-layout-render-padding-to!
+                out
+                (compiler-object-elf-load-offset image index))
+              (layout.compiler-object-layout-render-section!
+                out
+                image
+                (layout.compiler-object-layout-section-at index)))])
+        (set! index (+ index 1))))))
 
 (define (compiler-object-elf-relocation-type
   [kind : cobj.CompilerObjectRelocationKind]) : i64
@@ -649,23 +578,29 @@
             (set! index (+ index 1)))))
       unit)))
 
-(define (compiler-object-elf-render-relocation-section!
+(define (compiler-object-elf-render-relocation-sections!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : unit
-  (begin
-    (layout.compiler-object-layout-render-padding-to!
-      out
-      (compiler-object-elf-relocation-section-offset image kind))
-    (match kind
-      [(cobj.CompilerObjectSectionKind.Text)
-        (compiler-object-elf-render-text-relocations! out image)]
-      [_
-        (compiler-object-elf-render-relocations-for-section!
+  [image : (& image cobj.CompilerObjectImage)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index compiler-object-elf-loadable-count)
+      (begin
+        (layout.compiler-object-layout-render-padding-to!
           out
-          image
-          image.relocations
-          kind)])))
+          (compiler-object-elf-rela-offset image index))
+        (let
+          [kind : cobj.CompilerObjectSectionKind
+            (layout.compiler-object-layout-section-at index)]
+          (match kind
+            [(cobj.CompilerObjectSectionKind.Text)
+              (compiler-object-elf-render-text-relocations! out image)]
+            [_
+              (compiler-object-elf-render-relocations-for-section!
+                out
+                image
+                image.relocations
+                kind)]))
+        (set! index (+ index 1))))))
 
 (define (compiler-object-elf-symbol-string-offset-from
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
@@ -869,18 +804,20 @@
 (define (compiler-object-elf-push-load-section-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : unit
+  [index : i64]) : unit
   (let
-    [index : i64 (compiler-object-elf-section-index kind)]
+    [kind : cobj.CompilerObjectSectionKind
+      (layout.compiler-object-layout-section-at index)]
     (compiler-object-elf-push-section-header!
       out
-      (compiler-object-elf-section-name-offset index)
+      (compiler-object-elf-section-name-offset
+        (+ compiler-object-elf-section-text-index index))
       (match kind
         [(cobj.CompilerObjectSectionKind.Bss) compiler-object-elf-sht-nobits]
         [_ compiler-object-elf-sht-progbits])
       (compiler-object-elf-section-flags kind)
       0
-      (compiler-object-elf-section-file-offset image kind)
+      (compiler-object-elf-load-offset image index)
       (layout.compiler-object-layout-section-virtual-size image kind)
       0
       0
@@ -889,42 +826,25 @@
         [_ 8])
       0)))
 
-(define (compiler-object-elf-rela-section-index
-  [kind : cobj.CompilerObjectSectionKind]) : i64
-  (match kind
-    [(cobj.CompilerObjectSectionKind.Text)
-      compiler-object-elf-section-rela-text-index]
-    [(cobj.CompilerObjectSectionKind.Data)
-      compiler-object-elf-section-rela-data-index]
-    [(cobj.CompilerObjectSectionKind.Rodata)
-      compiler-object-elf-section-rela-rodata-index]
-    [(cobj.CompilerObjectSectionKind.Bss)
-      compiler-object-elf-section-rela-bss-index]
-    [(cobj.CompilerObjectSectionKind.Pdata)
-      compiler-object-elf-section-null-index]
-    [(cobj.CompilerObjectSectionKind.Xdata)
-      compiler-object-elf-section-null-index]
-    [(cobj.CompilerObjectSectionKind.Rsrc)
-      compiler-object-elf-section-null-index]))
-
 (define (compiler-object-elf-push-rela-section-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : (& image cobj.CompilerObjectImage)]
-  [kind : cobj.CompilerObjectSectionKind]) : unit
-  (let
-    [index : i64 (compiler-object-elf-rela-section-index kind)]
-    (compiler-object-elf-push-section-header!
-      out
-      (compiler-object-elf-section-name-offset index)
-      compiler-object-elf-sht-rela
-      0
-      0
-      (compiler-object-elf-relocation-section-offset image kind)
-      (compiler-object-elf-relocation-section-size image kind)
-      compiler-object-elf-section-symtab-index
-      (compiler-object-elf-section-index kind)
-      8
-      compiler-object-elf-relocation-size)))
+  [index : i64]) : unit
+  (compiler-object-elf-push-section-header!
+    out
+    (compiler-object-elf-section-name-offset
+      (+ compiler-object-elf-section-rela-text-index index))
+    compiler-object-elf-sht-rela
+    0
+    0
+    (compiler-object-elf-rela-offset image index)
+    (compiler-object-elf-relocation-section-size
+      image
+      (layout.compiler-object-layout-section-at index))
+    compiler-object-elf-section-symtab-index
+    (+ compiler-object-elf-section-text-index index)
+    8
+    compiler-object-elf-relocation-size))
 
 (define (compiler-object-elf-push-section-headers!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -945,38 +865,18 @@
       0
       0
       0)
-    (compiler-object-elf-push-load-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (compiler-object-elf-push-load-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Data))
-    (compiler-object-elf-push-load-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rodata))
-    (compiler-object-elf-push-load-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Bss))
-    (compiler-object-elf-push-rela-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Text))
-    (compiler-object-elf-push-rela-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Data))
-    (compiler-object-elf-push-rela-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Rodata))
-    (compiler-object-elf-push-rela-section-header!
-      out
-      image
-      (cobj.CompilerObjectSectionKind.Bss))
+    (let
+      [index : i64 0]
+      (while (< index compiler-object-elf-loadable-count)
+        (begin
+          (compiler-object-elf-push-load-section-header! out image index)
+          (set! index (+ index 1)))))
+    (let
+      [index : i64 0]
+      (while (< index compiler-object-elf-loadable-count)
+        (begin
+          (compiler-object-elf-push-rela-section-header! out image index)
+          (set! index (+ index 1)))))
     (compiler-object-elf-push-section-header!
       out
       (compiler-object-elf-section-name-offset
@@ -1038,22 +938,7 @@
       (begin
         (compiler-object-elf-push-header! (&mut out) image)
         (compiler-object-elf-render-loadable-sections! (&mut out) image)
-        (compiler-object-elf-render-relocation-section!
-          (&mut out)
-          image
-          (cobj.CompilerObjectSectionKind.Text))
-        (compiler-object-elf-render-relocation-section!
-          (&mut out)
-          image
-          (cobj.CompilerObjectSectionKind.Data))
-        (compiler-object-elf-render-relocation-section!
-          (&mut out)
-          image
-          (cobj.CompilerObjectSectionKind.Rodata))
-        (compiler-object-elf-render-relocation-section!
-          (&mut out)
-          image
-          (cobj.CompilerObjectSectionKind.Bss))
+        (compiler-object-elf-render-relocation-sections! (&mut out) image)
         (compiler-object-elf-render-symbol-table! (&mut out) image)
         (compiler-object-elf-render-string-tables! (&mut out) image)
         (compiler-object-elf-push-section-headers! (&mut out) image)
@@ -1642,8 +1527,8 @@
       (match (compiler-object-elf-render image)
         [(ResultCompilerObjectElf.Ok obj)
           (let
-            [text-offset : i64 (compiler-object-elf-text-offset image)]
-            [rela-offset : i64 (compiler-object-elf-rela-text-offset image)]
+            [text-offset : i64 (compiler-object-elf-load-offset image 0)]
+            [rela-offset : i64 (compiler-object-elf-rela-offset image 0)]
             (and
               (=
                 (compiler-object-elf-section-header-size-at

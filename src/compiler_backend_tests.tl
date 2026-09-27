@@ -278,7 +278,7 @@
   (let
     [body : backend.CompilerBackendAsmBuf
       (backend.compiler-backend-asm-buf-with-capacity
-        (compiler-backend-test-get-compiler-backend-asm-seq-capacity))]
+        backend.compiler-backend-asm-seq-capacity)]
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
@@ -329,7 +329,7 @@
   (let
     [body : backend.CompilerBackendAsmBuf
       (backend.compiler-backend-asm-buf-with-capacity
-        (compiler-backend-test-get-compiler-backend-asm-seq-capacity))]
+        backend.compiler-backend-asm-seq-capacity)]
     (match (backend.compiler-backend-emit-instrs
       ctx
       fallthrough
@@ -355,7 +355,7 @@
   (let
     [line : backend.CompilerBackendAsmBuf
       (backend.compiler-backend-asm-buf-with-capacity
-        (compiler-backend-test-get-compiler-backend-asm-line-capacity))]
+        backend.compiler-backend-asm-line-capacity)]
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
@@ -11638,22 +11638,22 @@
     (= (compiler-backend-test-peephole-reg-index "%r16") -1)
     (=
       (compiler-backend-test-peephole-memory-base "-8(%rbp)")
-      (compiler-backend-test-get-compiler-backend-peephole-memory-base-rbp))
+      backend.compiler-backend-peephole-memory-base-rbp)
     (=
       (compiler-backend-test-peephole-memory-base "(%rsp)")
-      (compiler-backend-test-get-compiler-backend-peephole-memory-base-rsp))
+      backend.compiler-backend-peephole-memory-base-rsp)
     (=
       (compiler-backend-test-peephole-memory-base "symbol(%rip)")
-      (compiler-backend-test-get-compiler-backend-peephole-memory-base-rip))
+      backend.compiler-backend-peephole-memory-base-rip)
     (=
       (compiler-backend-test-peephole-memory-base "24(%r10)")
-      (compiler-backend-test-get-compiler-backend-peephole-memory-base-r10))
+      backend.compiler-backend-peephole-memory-base-r10)
     (=
       (compiler-backend-test-peephole-memory-base "24(%r11)")
-      (compiler-backend-test-get-compiler-backend-peephole-memory-base-none))
+      backend.compiler-backend-peephole-memory-base-none)
     (=
       (compiler-backend-test-peephole-memory-base "%rax")
-      (compiler-backend-test-get-compiler-backend-peephole-memory-base-none))))
+      backend.compiler-backend-peephole-memory-base-none)))
 
 (define (compiler-backend-test-control-mnemonic-kind [name : String]) : i64
   (backend.compiler-backend-control-mnemonic-kind
@@ -11666,55 +11666,55 @@
   (and
     (=
       (compiler-backend-test-control-mnemonic-kind "movq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-movq))
+      backend.compiler-backend-control-mnemonic-movq)
     (=
       (compiler-backend-test-control-mnemonic-kind "leaq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-leaq))
+      backend.compiler-backend-control-mnemonic-leaq)
     (=
       (compiler-backend-test-control-mnemonic-kind "push")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-push))
+      backend.compiler-backend-control-mnemonic-push)
     (=
       (compiler-backend-test-control-mnemonic-kind "pushq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-push))
+      backend.compiler-backend-control-mnemonic-push)
     (=
       (compiler-backend-test-control-mnemonic-kind "pop")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-pop))
+      backend.compiler-backend-control-mnemonic-pop)
     (=
       (compiler-backend-test-control-mnemonic-kind "popq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-pop))
+      backend.compiler-backend-control-mnemonic-pop)
     (=
       (compiler-backend-test-control-mnemonic-kind "leave")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-leave))
+      backend.compiler-backend-control-mnemonic-leave)
     (=
       (compiler-backend-test-control-mnemonic-kind "ret")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-ret))
+      backend.compiler-backend-control-mnemonic-ret)
     (=
       (compiler-backend-test-control-mnemonic-kind "jmp")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-jmp))
+      backend.compiler-backend-control-mnemonic-jmp)
     (=
       (compiler-backend-test-control-mnemonic-kind "subq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-subq))
+      backend.compiler-backend-control-mnemonic-subq)
     (=
       (compiler-backend-test-control-mnemonic-kind "addq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-addq))
+      backend.compiler-backend-control-mnemonic-addq)
     (=
       (compiler-backend-test-control-mnemonic-kind "syscall")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-syscall))
+      backend.compiler-backend-control-mnemonic-syscall)
     (=
       (compiler-backend-test-control-mnemonic-kind "")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-none))
+      backend.compiler-backend-control-mnemonic-none)
     (=
       (compiler-backend-test-control-mnemonic-kind "movl")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-none))
+      backend.compiler-backend-control-mnemonic-none)
     (=
       (compiler-backend-test-control-mnemonic-kind "retq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-none))
+      backend.compiler-backend-control-mnemonic-none)
     (=
       (compiler-backend-test-control-mnemonic-kind "pushqq")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-none))
+      backend.compiler-backend-control-mnemonic-none)
     (=
       (compiler-backend-test-control-mnemonic-kind "syscalx")
-      (compiler-backend-test-get-compiler-backend-control-mnemonic-none))))
+      backend.compiler-backend-control-mnemonic-none)))
 
 (define (compiler-backend-peephole-single-dest-classifier-ok?) : bool
   (and
@@ -40694,24 +40694,6 @@ b_keep:
     function-state
     backend.compiler-backend-scratch-i64-scavenge-plan-reg-mask))
 
-(define (compiler-backend-test-get-compiler-backend-peephole-memory-base-none) : i64
-  backend.compiler-backend-peephole-memory-base-none)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-syscall) : i64
-  backend.compiler-backend-control-mnemonic-syscall)
-
-(define (compiler-backend-test-get-compiler-backend-peephole-memory-base-rbp) : i64
-  backend.compiler-backend-peephole-memory-base-rbp)
-
-(define (compiler-backend-test-get-compiler-backend-peephole-memory-base-rsp) : i64
-  backend.compiler-backend-peephole-memory-base-rsp)
-
-(define (compiler-backend-test-get-compiler-backend-peephole-memory-base-rip) : i64
-  backend.compiler-backend-peephole-memory-base-rip)
-
-(define (compiler-backend-test-get-compiler-backend-peephole-memory-base-r10) : i64
-  backend.compiler-backend-peephole-memory-base-r10)
-
 (define (compiler-backend-test-get-compiler-backend-emit-instrs-loop-active
   [backend-state : backend.CompilerBackendState]) : bool
   (backend.compiler-backend-function-state-bool?
@@ -40760,9 +40742,6 @@ b_keep:
     function-state
     backend.compiler-backend-scratch-i64-cycle-temp-base-offset))
 
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-leave) : i64
-  backend.compiler-backend-control-mnemonic-leave)
-
 (define (compiler-backend-function-scratch-fixture-get-emergency-slot-offset
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
@@ -40775,24 +40754,6 @@ b_keep:
     function-state
     backend.compiler-backend-scratch-i64-cycle-temp-used-count))
 
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-none) : i64
-  backend.compiler-backend-control-mnemonic-none)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-movq) : i64
-  backend.compiler-backend-control-mnemonic-movq)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-leaq) : i64
-  backend.compiler-backend-control-mnemonic-leaq)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-push) : i64
-  backend.compiler-backend-control-mnemonic-push)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-subq) : i64
-  backend.compiler-backend-control-mnemonic-subq)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-addq) : i64
-  backend.compiler-backend-control-mnemonic-addq)
-
 (define (compiler-backend-function-scratch-fixture-get-emergency-used-count
   [function-state : backend.CompilerBackendFunctionState]) : i64
   (backend.compiler-backend-function-scratch-i64
@@ -40803,15 +40764,6 @@ b_keep:
   [backend-state : backend.CompilerBackendState]) : i64
   (backend.compiler-backend-function-state-emit-instr-post-base
     (backend.compiler-backend-state-function-state backend-state)))
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-pop) : i64
-  backend.compiler-backend-control-mnemonic-pop)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-ret) : i64
-  backend.compiler-backend-control-mnemonic-ret)
-
-(define (compiler-backend-test-get-compiler-backend-control-mnemonic-jmp) : i64
-  backend.compiler-backend-control-mnemonic-jmp)
 
 (define (compiler-backend-test-get-compiler-backend-gep-fold-scale-table
   [backend-state : backend.CompilerBackendState]) : (__tl_dyn-array i64)
@@ -40857,9 +40809,6 @@ b_keep:
         backend-state
         backend.compiler-backend-rsp-rebase-last-ok-metric)
       1)))
-
-(define (compiler-backend-test-get-compiler-backend-asm-line-capacity) : i64
-  backend.compiler-backend-asm-line-capacity)
 
 (define (compiler-backend-test-get-compiler-backend-current-slot-vars
   [backend-state : backend.CompilerBackendState]) : i64
@@ -41245,9 +41194,6 @@ b_keep:
   (backend.compiler-backend-function-scratch-i64
     function-state
     backend.compiler-backend-scratch-i64-scavenge-vars))
-
-(define (compiler-backend-test-get-compiler-backend-asm-seq-capacity) : i64
-  backend.compiler-backend-asm-seq-capacity)
 
 (define (compiler-backend-test-get-compiler-backend-current-fn-win64
   [backend-state : backend.CompilerBackendState]) : bool

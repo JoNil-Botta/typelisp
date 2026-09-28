@@ -130,6 +130,10 @@ macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_sh
 macro_module_local_shadow|all|-|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl|-
 macro_template_variant_provider|all|-|tests/integration/macro_template_variant_provider.tl|42|-|-|-|-
 macro_template_variant|all|-|tests/integration/macro_template_variant.tl|42|-|-|macro_template_variant_provider.tl|-
+# A macro's qualified call of another module's helper- or builtin-spelled
+# function calls that function, with and without stdlib.string (#8129).
+macro_qualified_helpers|all|-,0,2|tests/integration/macro_qualified_helpers.tl|42|-|-|macro_qualified_helper_defs.tl macro_qualified_helper_int_defs.tl macro_qualified_helper_macros.tl|-
+macro_qualified_helpers_no_string_import|all|-|tests/integration/macro_qualified_helpers_no_string_import.tl|42|-|-|macro_qualified_helper_defs.tl macro_qualified_helper_int_defs.tl macro_qualified_helper_macros.tl|-
 macro_template_pattern|all|-|tests/integration/macro_template_pattern.tl|42|-|-|macro_template_pattern_user.tl macro_template_variant_provider.tl|-
 compile_profile_macro_detach_unchanged|all|-|tests/integration/compile_profile_macro_detach_unchanged.tl|42|-|-|compile_profile_macro_detach_unchanged_dep.tl|-
 compile_profile_macro_detail|all|-|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl|-

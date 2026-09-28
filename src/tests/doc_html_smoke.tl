@@ -7,22 +7,6 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_owned_view as owned_view)
 
-(define (doc-html-smoke-source) : String
-  ";# Module docs with `code`, [links], <tag>, & amp.
-;# Quote docs say \"hello\".
-
-;; ignored ordinary comment
-;: Global docs for answer mention <answer>, & value, and \"quote\".
-(define answer : i64 42)
-
-;: Function docs with `tick` and [arg].
-(define (add-one [x : i64]) : i64 (+ x 1))")
-
-(define (doc-html-second-smoke-source) : String
-  ";# Second module docs.
-
-(define hidden : i64 1)")
-
 (define (doc-html-smoke-modules
   [docs : doc_extract.DocExtraction]
   [second-docs : doc_extract.DocExtraction]) : doc_module_vec.Vec
@@ -40,9 +24,21 @@
 (define (doc-html-smoke) : i64
   (let
     [docs : doc_extract.DocExtraction
-      (doc_extract.doc-extract-source (doc-html-smoke-source))]
+      (doc_extract.doc-extract-source
+        ";# Module docs with `code`, [links], <tag>, & amp.
+;# Quote docs say \"hello\".
+
+;; ignored ordinary comment
+;: Global docs for answer mention <answer>, & value, and \"quote\".
+(define answer : i64 42)
+
+;: Function docs with `tick` and [arg].
+(define (add-one [x : i64]) : i64 (+ x 1))")]
     [second-docs : doc_extract.DocExtraction
-      (doc_extract.doc-extract-source (doc-html-second-smoke-source))]
+      (doc_extract.doc-extract-source
+        ";# Second module docs.
+
+(define hidden : i64 1)")]
     [page : String
       (doc_html.doc-html-render-module-page
         "smoke<&>.tl"
@@ -55,9 +51,7 @@
     [search-records : String
       (doc_html.doc-html-search-records-for-module
         "smoke.html"
-        (doc_render.DocModule.Module
-          "smoke<&>.tl"
-          (owned_view.compiler-owned-shared-view docs)))]
+        (doc_render.DocModule.Module "smoke<&>.tl" docs))]
     (if (and
       (doc_html.doc-html-require-contains
         page
@@ -126,31 +120,29 @@
       42
       0)))
 
-(define (doc-html-syntax-smoke-source) : String
-  (str_cat.str-cat
-    ";# docs <tag> &\n"
-    "; ordinary comment\n"
-    "(define (add-one [x : i64]) : i64\n"
-    "  (let [flag : bool true]\n"
-    "        [ch : char '\\n']\n"
-    "        [plain-ch : char 'a']\n"
-    "        [text : String \"a\\n<>&\"]\n"
-    "        [hex : u64 0x2a]\n"
-    "        [bin : i64 0b1010]\n"
-    "        [flt : f64 -1.25e+3]\n"
-    "        [n : i64 -42]\n"
-    "        [ptr : (Ptr Point) (ptr-null)]\n"
-    "    (when false (return (+ n 1)))\n"
-    "    (if (not flag) (deref (box n)) (custom-call Point text))
-"
-    "    (unsafe (ptr-read (& ptr)))))\n"
-    "(defstruct Point (x i64))\n"
-    "(defenum Shape (Circle i64))\n"))
-
 (define (doc-html-syntax-smoke) : bool
   (let
     [html : String
-      (doc_html.doc-html-code-block (doc-html-syntax-smoke-source))]
+      (doc_html.doc-html-code-block
+        (str_cat.str-cat
+          ";# docs <tag> &\n"
+          "; ordinary comment\n"
+          "(define (add-one [x : i64]) : i64\n"
+          "  (let [flag : bool true]\n"
+          "        [ch : char '\\n']\n"
+          "        [plain-ch : char 'a']\n"
+          "        [text : String \"a\\n<>&\"]\n"
+          "        [hex : u64 0x2a]\n"
+          "        [bin : i64 0b1010]\n"
+          "        [flt : f64 -1.25e+3]\n"
+          "        [n : i64 -42]\n"
+          "        [ptr : (Ptr Point) (ptr-null)]\n"
+          "    (when false (return (+ n 1)))\n"
+          "    (if (not flag) (deref (box n)) (custom-call Point text))
+"
+          "    (unsafe (ptr-read (& ptr)))))\n"
+          "(defstruct Point (x i64))\n"
+          "(defenum Shape (Circle i64))\n"))]
     [tl-html : String
       (doc_html.doc-html-code-block-with-info "tl" "" "(if true 1 0)\n")]
     [plain-html : String

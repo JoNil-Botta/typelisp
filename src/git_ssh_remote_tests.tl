@@ -474,22 +474,6 @@
             (& message)
             "git ssh remote: password-bearing userinfo is forbidden"))])))
 
-(define (git-ssh-remote-self-test-ok?) : bool
-  (and
-    (git-ssh-test-valid-remotes?)
-    (git-ssh-test-invalid-authorities?)
-    (git-ssh-test-invalid-paths-and-syntax?)
-    (git-ssh-test-all-non-control-bytes?)
-    (git-ssh-test-control-bytes-rejected?)
-    (git-ssh-test-injection-corpus?)
-    (git-ssh-test-structured-rejections?)
-    (git-ssh-test-request-and-diagnostics?)))
-
-(define (git-ssh-remote-self-test) : i64
-  (if (git-ssh-remote-self-test-ok?)
-    42
-    (io.panic "git ssh remote: self-test mismatch")))
-
 (define (git-ssh-test-require [ok : bool] [message : String]) : unit
   (if ok
     unit

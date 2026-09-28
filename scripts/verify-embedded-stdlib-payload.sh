@@ -10,12 +10,8 @@ if [ "$#" -ne 0 ]; then
     exit 2
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
 
 WORKDIR=target/embedded-stdlib-payload-verify
 NORMALIZED_MANIFEST="$WORKDIR/modules.txt"
@@ -49,8 +45,8 @@ if [ ! -s "$NORMALIZED_MANIFEST" ]; then
     echo "embedded stdlib payload has no build inputs" >&2
     exit 1
 fi
-if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 60 ]; then
-    echo "embedded stdlib payload must declare exactly 60 build inputs" >&2
+if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 62 ]; then
+    echo "embedded stdlib payload must declare exactly 62 build inputs" >&2
     exit 1
 fi
 if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_/]*\.tl$' "$NORMALIZED_MANIFEST" \

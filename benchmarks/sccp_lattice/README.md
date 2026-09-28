@@ -142,7 +142,7 @@ successor-label pool, the `pred kind value` phi-input pool, the
 `label succ-base succ-count instr-base instr-count` block rows, and the
 fixed-width `op dst ty ty2 a a-kind b b-kind` instruction rows. `#` starts a
 comment to end of line. The opcode table, the operand kinds and the meaning of
-every field are documented at the top of `tools/export_sccp_tape.py`.
+every field are documented in the exporter's header (see Regeneration).
 
 Provenance: the `--dump-ir after-bounds_dom` text of ten compiler modules,
 compiled at `--opt-level 2` by the snapshot compiler. `after-bounds_dom` is the
@@ -163,7 +163,7 @@ repeats a suffix. The result is the near-contiguous, distinct label set
 `opt-cfg-index-id-slot`'s hash is designed for.
 
 **Self-check.** The exporter runs its own SCCP over the encoded tape (`analyse`
-in `tools/export_sccp_tape.py`, an independent transcription of
+in the exporter, an independent transcription of
 `opt-sccp-analyze-fixed` in Python) and writes its result into the corpus header
 as data. Both kernels recompute all five totals and `main` returns 1 if any
 disagrees. For the shipped corpus, per round:
@@ -181,53 +181,20 @@ functions (2.15 on average, 5 at most).
 
 ### Regeneration
 
-```sh
-# 1. the snapshot compiler and its own sources (see
-#    target/bench6-dumps/aug25/README.txt for the provenance model)
-S=<extracted 98bdc6f5 sources>; TL=target/dev/tl-aug25s2
-
-# 2. dump the ten modules (16G is enough for each of these; the per-pass dump
-#    path is quadratic in the function count, which is why the two largest
-#    compiler modules are not in the list)
-for m in lex read format_rules format_tokens token compiler_object_elf \
-         package_lock_core tlci_loader compiler_clone compiler_diagnostic; do
-  systemd-run --user --scope -q -p MemoryMax=16G -p MemorySwapMax=0 \
-      $TL compile $S/src/$m.tl --dump-ir after-bounds_dom \
-      -o /tmp/$m.bounds_dom.opt2.ir \
-      --stdlib-root $S/stdlib --stdlib-root $S/src --opt-level 2
-done
-
-# 3. export (byte budget and source order are part of the corpus identity)
-python3 benchmarks/sccp_lattice/tools/export_sccp_tape.py \
-    benchmarks/sccp_lattice/data/sccp-tape.txt 3000000 \
-    /tmp/lex.bounds_dom.opt2.ir /tmp/read.bounds_dom.opt2.ir \
-    /tmp/format_rules.bounds_dom.opt2.ir /tmp/format_tokens.bounds_dom.opt2.ir \
-    /tmp/token.bounds_dom.opt2.ir /tmp/compiler_object_elf.bounds_dom.opt2.ir \
-    /tmp/package_lock_core.bounds_dom.opt2.ir /tmp/tlci_loader.bounds_dom.opt2.ir \
-    /tmp/compiler_clone.bounds_dom.opt2.ir \
-    /tmp/compiler_diagnostic.bounds_dom.opt2.ir
-```
-
-The shipped corpus was produced from the pre-made dumps in
-`target/bench6-dumps/aug25/`, so its `# sources:` line names those paths; the
-byte order of the file list is part of the corpus identity because
-deduplication keeps the first occurrence. `--dump-ir` on any compiler module
-crashes in current-main compilers, which is why the dumps come from the
-2026-08-25 snapshot compiler compiling its own sources; the crash is tracked by
-the orchestrator.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `16` in `optimization.tsv` | tunes TypeLisp Ir to 0.86 G and C to 0.42 G |
 | round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | lattice sizing | `max(frame, 1)` slots, where `frame` is the function's `vars N` | `opt-sccp-env-make` called from `opt-sccp-initial-state-with-frame` with the pipeline's `bd-frame` |
 | lattice allocation | one array at the corpus maximum (3,737 slots), capacity re-stamped and slots `[0, frame)` refilled with `Unknown` per function | `opt-sccp-env-make` allocates and fills per function; only the allocation is hoisted |
 | executable flags | one `bool` array at the corpus maximum (257), cleared over `[0, nblocks)` per function | `__tl_make-array bool (opt-cfg-index-block-count index)` |
 | label index capacity | next power of two ≥ `2 * nblocks`, minimum 2 | `opt-cfg-index-id-map-capacity` |
 | sweep bound | `nblocks + 8 + 2 * ninstr` | `opt-sccp-analyze` / `-analyze-with-frame` |
-| checksum | 64-bit FNV-1a, no division on loop-carried values | identical bits in TypeLisp `i64` and C `uint64_t` |
 | folded per function | every `Const` slot's `(index, kind, value, type)`, every executable flag, the const count, the dead-block count, the sweep count, and the running substitution / folded-branch / dropped-bounds-check totals | ties the checksum to the fold results, not just to their count |
 | self-check | the five totals above, compared against the exporter's independent Python SCCP carried in the corpus header | a mismatch makes both binaries exit 1 |

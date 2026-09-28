@@ -15,7 +15,8 @@ fields are also passed as uniform scalars: this isolates the f32 zip kernel and
 does not turn the case into an unrelated C struct-ABI comparison. No libm work
 occurs in the correctness or measured region.
 
-The ISPC and TypeLisp sources keep both stores fused in one `foreach`.
+The ISPC and TypeLisp sources keep both stores fused in one `foreach`, and the
+TypeLisp source spells the upstream `x * cos - y * sin` expression directly.
 TypeLisp's multi-destination contiguous-map lowering emits one SIMD loop and
 shares the repeated scaled-input subexpressions before the two ordered stores.
 Kernel-only metrics compare the complete exported output contract on the same
@@ -30,47 +31,16 @@ values and allow at most two ULPs relative to the scalar binary32 operation
 sequence, accounting only for legal ISPC FMA contraction. Both output arrays
 retain an out-of-range sentinel.
 
-Run required TypeLisp and scalar-C correctness, optional real ISPC comparisons,
-and kernel-only assembly metrics with:
+Run required TypeLisp and scalar-C correctness (including at most four
+bounds-abort sites in the TypeLisp kernel) and optional real ISPC comparisons
+with:
 
 ```sh
-scripts/verify-ispc-point-transform.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-point-transform.sh
+scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 ISPC_POINT_TRANSFORM_AVX512=1 ISPC_BIN=/path/to/ispc \
-  scripts/verify-ispc-point-transform.sh
+  scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 ```
 
-Raw assembly and compiler logs plus `static.tsv` are written under
-`target/ispc-point-transform-verify/`. The report records assembly hashes and
-bytes, instruction/branch/call counts, packed-f32 and FMA shape, distinct
-register classes, and conservative stack/spill candidates. It is report-only;
-shared ratios, tool fingerprints, and optional retired-instruction summaries
-remain owned by #4968.
-
-The initial pre-fusion Linux x86-64 run with the official v1.31.0 binary
-recorded 442 TypeLisp versus 63 ISPC AVX2 kernel instructions, 15 versus 12
-packed-f32 ops, zero versus four FMAs, and 141 versus zero conservative spill
-candidates. AVX-512 recorded 465 versus 61 instructions, 30 versus 12
-packed-f32 ops, zero versus four FMAs, and 135 versus zero conservative spill
-candidates. Those values remain the checked before baseline for #5072; current
-reports show the fused lowering's direct after measurements. With the same
-official v1.31.0 tool and compiler settings, fusion changes AVX2 from 442
-instructions / 11,585 bytes / 15 packed-f32 ops / 141 spill candidates
-(`3b3838dff14abbf57c6f7b04b28c1b5cff85e21ff74b884aa730d59b760a4151`)
-to 288 / 7,576 / 13 / 85
-(`98ef7ca139ac75acc0819725cd63f8f8a0d445a43256e8df3a0caa502c56fa39`).
-AVX-512 changes from 465 instructions / 12,460 bytes / 30 packed-f32 ops /
-135 spill candidates
-(`3240fb693e4818787df627c8fec7c1ce56dee783b9514c4b987a0f256ba0e7a2`)
-to 309 / 8,234 / 26 / 89
-(`b65cde583f0c1c2dc0e6aaa4082466fabe8487d54bb36a7689d19790a0d9779d`).
-TypeLisp FMA count remains zero before and after; ISPC retains four FMAs, an
-independent follow-up rather than part of loop/store fusion.
-
-With direct contiguous-map subtraction enabled by #5679, the TypeLisp source
-now spells the upstream `x * cos - y * sin` expression without multiplying the
-second term by `-1.0`. On the same opt-level-2 Linux assembly metric, that
-source change moves scalar/AVX2/AVX-512 kernel instruction counts from
-104/295/327 to 102/290/319. Scalar multiply sites move from 20 to 18 while
-subtraction sites move from 0 to 2; SIMD multiply sites move from 29 to 26
-while packed subtraction sites move from 0 to 3.
+Kernel-only assembly metrics come from `scripts/measure-ispc-spmd.sh` (see
+[`../README.md`](../README.md)).

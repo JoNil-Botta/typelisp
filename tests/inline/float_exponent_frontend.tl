@@ -4,11 +4,13 @@
 ;; production self-tests so the compiler profile does not carry test-only
 ;; declarations or generated symbols.
 (import lex as lx)
+(import reader_tests)
 (import token as tk)
 (import compiler_float as cf)
 (import format_tokens as ft)
 (import format_cst as fcst)
 (import format_rules as fr)
+(import format_tests)
 (import format_cli_core as fcli)
 (import stdlib.format)
 (import stdlib.io)
@@ -71,11 +73,11 @@
 
 (define (fe-lex-malformed-exponents-ok?) : bool
   (and
-    (lx.error-ok? "1e" 1 1 "lexer: malformed number literal")
-    (lx.error-ok? "1e+" 1 1 "lexer: malformed number literal")
-    (lx.error-ok? "1.5e" 1 1 "lexer: malformed number literal")
-    (lx.error-ok? "\n  1.5e-" 2 3 "lexer: malformed number literal")
-    (lx.error-ok? "1e2foo" 1 1 "lexer: malformed number literal")))
+    (reader_tests.error-ok? "1e" 1 1 "lexer: malformed number literal")
+    (reader_tests.error-ok? "1e+" 1 1 "lexer: malformed number literal")
+    (reader_tests.error-ok? "1.5e" 1 1 "lexer: malformed number literal")
+    (reader_tests.error-ok? "\n  1.5e-" 2 3 "lexer: malformed number literal")
+    (reader_tests.error-ok? "1e2foo" 1 1 "lexer: malformed number literal")))
 
 (define (fe-lex-printer-roundtrip-ok?) : bool
   (let
@@ -169,7 +171,7 @@
   [src : String]
   [line : i64]
   [col : i64]
-  [expected : String]) : bool
+  [expected : (& expected str)]) : bool
   (match (fcst.parse-format-source-result src)
     [(fcst.ResultFormatCst.Ok _) false]
     [(fcst.ResultFormatCst.Err err)
@@ -177,7 +179,7 @@
         (string.eq
           (ft.format-source-error-message (lx.global-shared-view err))
           expected)
-        (ft.format-source-span-eq?
+        (format_tests.format-source-span-eq?
           (ft.format-source-error-span err)
           line
           col
@@ -188,46 +190,14 @@
   (let
     [message : String "format lexer: malformed number literal"]
     (and
-      (fe-format-cst-malformed-number-at?
-        "1e"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e+"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1.5e"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2foo"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1.e2"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1_0e2"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2.3"
-        1
-        1
-        (lx.global-shared-view message))
-      (fe-format-cst-malformed-number-at?
-        "1e2_3"
-        1
-        1
-        (lx.global-shared-view message))
+      (fe-format-cst-malformed-number-at? "1e" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e+" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1.5e" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2foo" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1.e2" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1_0e2" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2.3" 1 1 message)
+      (fe-format-cst-malformed-number-at? "1e2_3" 1 1 message)
       (fe-format-cst-malformed-number-at? "\n  1.5e-" 2 3 message))))
 
 (define (fe-format-rules-source) : String
@@ -258,7 +228,7 @@
           "format lexer: malformed number literal")
         (let
           [span : ft.FormatSourceSpan (ft.format-source-error-span err)]
-          (ft.format-source-span-eq? span line col line col)))]))
+          (format_tests.format-source-span-eq? span line col line col)))]))
 
 (test
   float-exponent-lexer-token-spellings
@@ -304,38 +274,28 @@
   float-exponent-format-cst
   (let
     [stream : ft.FormatTokenStream
-      (ft.format-lex "(1.5e-9 1e10 2.5E+3 -1e-5 0x1e5)")]
+      (format_tests.format-lex "(1.5e-9 1e10 2.5E+3 -1e-5 0x1e5)")]
     (begin
       (fe-assert
         (and
-          (=
-            (ft.format-token-tag-count
-              (lx.global-shared-view stream)
-              (ft.fmt-tag-int))
-            5)
+          (= (format_tests.format-token-tag-count stream (ft.fmt-tag-int)) 5)
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 1))
+            (ft.format-token-text (ft.format-token-at stream 1))
             "1.5e-9")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 2))
+            (ft.format-token-text (ft.format-token-at stream 2))
             "1e10")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 3))
+            (ft.format-token-text (ft.format-token-at stream 3))
             "2.5E+3")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 4))
+            (ft.format-token-text (ft.format-token-at stream 4))
             "-1e-5")
           (string.eq
-            (ft.format-token-text
-              (ft.format-token-at (lx.global-shared-view stream) 5))
+            (ft.format-token-text (ft.format-token-at stream 5))
             "0x1e5")
           (=
-            (ft.format-token-tag
-              (ft.format-token-at (lx.global-shared-view stream) 7))
+            (ft.format-token-tag (ft.format-token-at stream 7))
             (ft.fmt-tag-end)))
         "formatter exponent atoms changed")
       (fe-assert
@@ -347,9 +307,12 @@
   (let
     [source : String (fe-format-rules-source)]
     [expected : String (fe-format-rules-expected)]
-    [formatted : String (fr.format-rules-render-source-width source 80)]
+    [formatted : String
+      (format_tests.format-rules-render-source-width source 80)]
     [fixpoint : String
-      (fr.format-rules-render-source-width (lx.global-shared-view formatted) 80)]
+      (format_tests.format-rules-render-source-width
+        (lx.global-shared-view formatted)
+        80)]
     (begin
       (fe-assert
         (string.eq formatted expected)

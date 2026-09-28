@@ -45,24 +45,8 @@ String-literal interning (`Token.Str`, which also calls `intern-source-slice`)
 is excluded so the corpus stays line oriented; symbol lexemes never contain
 whitespace.
 
-## Arguments
-
-```
-bench <idents-path> <rounds>
-```
-
-`optimization.tsv` ships `benchmarks/intern_table/data/idents.txt 6`, which is
-about 1.1G retired instructions for the TypeLisp build.
-
 ## Regenerating the corpus
 
-From the repository root:
-
-```sh
-python3 benchmarks/intern_table/tools/export_idents.py
-```
-
-The tool runs the same classifier `src/lex.tl` runs (ported, and reported
-alongside the stream statistics). The module list lives in
-`tools/export_idents.py` (`SOURCES`) and matches
-`benchmarks/lex_source/tools/export_corpus.py`.
+Exported at `5fce734af` (#5989) from the checked-in compiler sources, and since
+edited in place by language migrations; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).

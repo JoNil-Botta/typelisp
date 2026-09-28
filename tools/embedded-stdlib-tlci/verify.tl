@@ -19,11 +19,8 @@
 ;; The raw verifier image is immutable process-global storage. Equality needs
 ;; a shallow view of its bytes, not ownership of the global array.
 (defmacro (embedded-verify-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 ;; Compare expansion with the builder's ordinary, directly mappable format-v2
 ;; artifact. This is intentionally a verifier-only second embedding; shipped
@@ -204,7 +201,7 @@
         1)]
     [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
         count)
-      (if (= count 162)
+      (if (= count 158)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)
           (embedded-verify-native-array-length-ok?)
@@ -224,6 +221,6 @@
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 162, got "
+              "embedded stdlib tlci macro count mismatch: expected 158, got "
               (string.int->string count)))
           2))]))

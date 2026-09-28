@@ -90,7 +90,8 @@ Layout: type count, then per type `byte-width is-integer-or-char-or-bool`; then
 function count, then per function `nvars nheaders nblocks`, the header var ids,
 then per block the instruction count followed by fixed 6-integer rows
 `op dst a b c d`. `#` starts a comment to end of line. The opcode table and the
-meaning of every field are documented at the top of `tools/export_gvn_tape.py`.
+meaning of every field are documented in the exporter's header (see
+Regeneration).
 
 Provenance: the `--dump-ir after-ssa` text of `src/compiler_load.tl` and
 `src/compiler_regalloc.tl`, compiled by the snapshot compiler at
@@ -103,35 +104,19 @@ instead of truncating to its stdlib-heavy prefix.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. dump the two modules
-/tmp/tlsnap compile src/compiler_load.tl --dump-ir after-ssa \
-    -o /tmp/compiler_load.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-/tmp/tlsnap compile src/compiler_regalloc.tl --dump-ir after-ssa \
-    -o /tmp/compiler_regalloc.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. export (byte budget and source order are part of the corpus identity)
-python3 benchmarks/gvn_table/tools/export_gvn_tape.py \
-    benchmarks/gvn_table/data/gvn-tape.txt 3000000 \
-    /tmp/compiler_load.ssa.ir /tmp/compiler_regalloc.ssa.ir
-```
+Exported at `5fce734af` (#5989) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `14` in `optimization.tsv` | tunes TypeLisp Ir to 1.62 G and C to 0.62 G |
 | round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | table cap | `clamp(max(128, ninstr / 2), 2048)` per block | `opt-load-cse-table-cap-for-size` |
 | kinds cap | `clamp(max(96, ninstr / 2), 2048)` per block | `opt-load-cse-kinds-cap-for-size` |
 | kinds generation | `2 * block-index + 1`, stamps zeroed per function | `optimize-block-seq-hs-dense` |
 | facts map | fresh `with-capacity 17` (rounds to 32) per block | `opt-alias-empty` |
 | node pool | `4 * max-table-cap + 128`, free list | peak live is bounded by `2 * cap + 2` (a rebuild's old and new spines) |
-| checksum | 64-bit FNV-1a, no division | identical bits in TypeLisp i64 and C `uint64_t` |
 | folded per block | hits, misses, invalidations, final table size | the four required quantities |

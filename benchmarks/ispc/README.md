@@ -37,9 +37,9 @@ zero for a missing or unsupported implementation.
 
 `tools.tsv` fingerprints the compiler binaries and exact flags. Reports are
 informational: there is no checked performance baseline or tolerance. The
-host-keyed retired-instruction tools currently accept the checked TypeLisp/C
-SPMD corpus rather than arbitrary ISPC binaries, so this harness does not
-mislabel those counters as ISPC comparisons.
+cachegrind instruction-count runners accept only the checked TypeLisp/C SPMD
+corpus rather than arbitrary ISPC binaries, so this harness reports no dynamic
+instruction counts.
 
 ISPC v1.31.0 has no width-1 CPU target (`generic-i32x4` is the smallest
 generic target). A TypeLisp scalar row therefore uses the checked C scalar
@@ -49,13 +49,16 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 
 ## Cases
 
-| Case | Lane type | Upstream kernel | Current TypeLisp status |
-| --- | --- | --- | --- |
-| [`perfbench_gathers`](perfbench_gathers/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::gathers` | Scalar, AVX2, and AVX-512 supported |
-| [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
-| [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` | Supported |
-| [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` | Scalar and AVX-512 supported; AVX2 staged by #4971 |
-| [`point_transform`](point_transform/) | `f32` | `examples/cpu/point_transform_ctypes/point_transform.ispc::transform_points` | Scalar, AVX2, and AVX-512 supported |
+Every case supports all three TypeLisp backend modes (scalar, AVX2 and
+AVX-512); each `case.tsv` records the per-mode status.
+
+| Case | Lane type | Upstream kernel |
+| --- | --- | --- |
+| [`perfbench_gathers`](perfbench_gathers/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::gathers` |
+| [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` |
+| [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` |
+| [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` |
+| [`point_transform`](point_transform/) | `f32` | `examples/cpu/point_transform_ctypes/point_transform.ispc::transform_points` |
 
 `perfbench_loads` uses only integer-valued binary32 inputs and keeps every
 partial sum within the exactly representable integer range. Its scalar oracle,
@@ -89,16 +92,10 @@ Validate the required metadata/diagnostic contract, and optionally the real
 ISPC generic/AVX2 driver when v1.31.0 is installed, with:
 
 ```sh
-scripts/verify-ispc-perfbench-gathers.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-gathers.sh
-scripts/verify-ispc-perfbench-loads.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-loads.sh
-scripts/verify-ispc-perfbench-stores.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-stores.sh
-scripts/verify-ispc-mandelbrot.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-mandelbrot.sh
-scripts/verify-ispc-point-transform.sh
-ISPC_BIN=/path/to/ispc scripts/verify-ispc-point-transform.sh
+scripts/verify-codegen-cases.sh tests/codegen/ispc.cases
+ISPC_BIN=/path/to/ispc scripts/verify-codegen-cases.sh tests/codegen/ispc.cases
+# one case: its CASE-* rows
+scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
 ```
 
 ## Case contract
@@ -112,7 +109,7 @@ symbols, lane/argument/repetition data, expected exit status, and pinned
 upstream provenance. The f32 width mapping is fixed: scalar/1 has no ISPC
 target, AVX2/8 uses `avx2-i32x8`, and AVX-512/16 uses `avx512skx-x16`.
 
-A corresponding `scripts/verify-ispc-<case-with-hyphens>.sh` remains the
-semantic authority. The shared harness runs it before measurement, so exit,
+The case's `CASE-*` rows in `tests/codegen/ispc.cases` remain the semantic
+authority. The shared harness runs them before measurement, so exit,
 stdout, stderr, case-specific bytes, and tolerance checks must pass before any
 static comparison is emitted.

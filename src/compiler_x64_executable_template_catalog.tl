@@ -1,6 +1,5 @@
 ;; compiler_x64_executable_template_catalog.tl - Reviewed x86-64 template rows.
 (import compiler_x64_executable_template as x64)
-(import compiler_owned_view as owned_view)
 (import stdlib.hash)
 (import stdlib.io)
 (import stdlib.string)
@@ -15,11 +14,8 @@
 (include-str compiler-x64-template-catalog-data "compiler_x64_executable_template_catalog.tsv")
 
 (define (compiler-x64-template-catalog-data-shared-view) : String
-  (cfg
-    stage0-seed-bootstrap
-    compiler-x64-template-catalog-data
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-x64-template-catalog-data)))))
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-x64-template-catalog-data))))
 
 ;; SPEC 3.5.1 assigns each nullary enum its 0-based declaration-order tag.
 ;; Keep the checked-in data in that order and bounds-check the representation.
@@ -236,7 +232,7 @@
       (compiler-x64-template-registry-gate id)]
     (begin
       (compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view row)
+        row
         target
         (x64.CompilerX64TemplateRenderKind.Assembly))
       (compiler-x64-template-require-rendered-payload! row (& rendered))
@@ -251,7 +247,7 @@
       (compiler-x64-template-registry-gate id)]
     (begin
       (compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view row)
+        row
         target
         (x64.CompilerX64TemplateRenderKind.OpaqueBytes))
       (compiler-x64-template-require-rendered-payload! row (& rendered))

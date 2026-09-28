@@ -1,9 +1,9 @@
 ;; End-to-end host-image coverage for package-owned macro captures (#2754).
-;; Native template shapes beyond the original splice-only subset (nested
-;; calls, literals, splices, if/begin/binary/unary forms, plain symbols,
-;; computed list-length ifs, and identity bodies) are covered here too
-;; (#5596), along with the `str-cat` shape -- an operand-count integer match
-;; with indexed operand access and a count-binding default arm (#5617).
+;; Native template shapes (nested calls, literals, splices,
+;; if/begin/binary/unary forms, plain symbols, computed list-length ifs, and
+;; identity bodies) are covered here too (#5596), along with the `str-cat`
+;; shape -- an operand-count integer match with indexed operand access and a
+;; count-binding default arm (#5617).
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
 (import stdlib.str_cat_runtime as str_cat)
@@ -132,7 +132,7 @@
   [names : (&mut names producer_test_svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.DefMacro _ name params ret body)
       (let
         [identity : String
@@ -152,14 +152,10 @@
                 ret)
               body))))]
     [(ast.AstDecl.Unsafe inner)
-      (producer-test-collect-decl!
-        (owned_view.compiler-owned-box-shared-view inner)
-        module
-        names
-        captures)]
+      (producer-test-collect-decl! (deref inner) module names captures)]
     [(ast.AstDecl.ModuleBody nested body)
       (producer-test-collect-decls!
-        (owned_view.compiler-owned-box-shared-view body)
+        (deref body)
         (ci.intern-str nested)
         names
         captures)]
@@ -208,11 +204,7 @@
     [(parse_core.ResultAstProgram.Ok program)
       (match program
         [(ast.AstProgram.Program decls)
-          (producer-test-collect-decls!
-            (owned_view.compiler-owned-box-shared-view decls)
-            ""
-            names
-            captures)])]))
+          (producer-test-collect-decls! (deref decls) "" names captures)])]))
 
 (define (producer-test-template-result-ok?
   [pools : ast.AstNodePoolContext]
@@ -366,8 +358,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         count
         64
         producer-test-cookie
@@ -409,8 +401,8 @@
         (begin
           (set! (array-ref operands 0) operand)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            (owned_view.compiler-owned-shared-view pools)
-            (owned_view.compiler-owned-shared-view operands)
+            pools
+            operands
             1
             64
             producer-test-cookie
@@ -489,8 +481,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr string-node (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -651,7 +643,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (producer-test-expr-get (& pools) node)
         [(ast.AstExpr.Match match-box)
-          (match (owned_view.compiler-owned-box-shared-view match-box)
+          (match (deref match-box)
             [(ast.AstMatch.Match _ arms)
               (and
                 (= arms.len 2)
@@ -814,11 +806,10 @@
       (when (>= count 3) (ast.ast-expr-list-push (&mut items) third))
       (set!
         (array-ref operands 0)
-        (compiler_ctfe.CompilerCtfeValue.ExprList
-          (owned_view.compiler-owned-shared-view items)))
+        (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -958,8 +949,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -986,9 +977,9 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
-;; The `format-push` / `format-finish` shape: a computed match that
-;; destructures an `Expr` operand with `(comptime.Expr.Call callee args)`,
-;; binding the callee and the argument list into session locals. Check 0
+;; A computed match that destructures an `Expr` carrier operand with
+;; `(comptime.Expr.Call callee args)`, binding the callee and the argument
+;; list into session locals. Check 0
 ;; rebuilds `(,callee ,@pieces ,piece)` from a two-argument call operand,
 ;; check 1 takes the non-call default arm, and check 2 rebuilds
 ;; `(joined ,@pieces)` with a wildcard callee pattern. Refs #5602.
@@ -1068,8 +1059,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr piece (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         (if (= check 2)
           1
           2)
@@ -1228,8 +1219,8 @@
         (array-ref operands 2)
         (compiler_ctfe.CompilerCtfeValue.Expr idx (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         3
         64
         producer-test-cookie
@@ -1264,8 +1255,7 @@
 ;; exercises the `Expr.Var` shape probe and name accessor, `int->string` over a
 ;; compile-time data local (which stages the index as a comptime value first),
 ;; and the existing `string-append` chain -- none of which any other fixture
-;; reaches, and none of which the embedded image exercises yet, because every
-;; consuming stdlib body is still blocked on its own reflection family.
+;; reaches.
 ;;
 ;; `var-operand` false passes a non-identifier first operand instead, so the
 ;; shape probe's negative answer and the wildcard arm stay covered too.
@@ -1314,8 +1304,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr idx (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -1350,7 +1340,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (producer-test-expr-get (& pools) node)
         [(ast.AstExpr.Match match-box)
-          (match (owned_view.compiler-owned-box-shared-view match-box)
+          (match (deref match-box)
             [(ast.AstMatch.Match _ arms)
               (and
                 (= arms.len 2)
@@ -1417,8 +1407,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr literal (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1471,7 +1461,7 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (owned_view.compiler-owned-shared-view operands)
         1
         64
@@ -1506,8 +1496,8 @@
             false
             (begin
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-                (owned_view.compiler-owned-shared-view pools)
-                (owned_view.compiler-owned-shared-view operands)
+                pools
+                operands
                 1
                 64
                 producer-test-cookie
@@ -1555,8 +1545,8 @@
           (owned_view.compiler-owned-shared-view module)
           module-id))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1603,8 +1593,8 @@
       (compiler_ctfe.ctfe-module-macro-export-reset!)
       (compiler_ctfe.ctfe-module-macro-export-add-id! module-id hook-id)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1653,8 +1643,8 @@
           (ci.intern (owned_view.compiler-owned-shared-view module))))
       (compiler_ctfe.ctfe-module-macro-export-reset!)
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1700,8 +1690,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.I64)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1740,10 +1730,7 @@
   [identity : String]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType
-      (ast.ast-ty-box-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        (ast.AstType.I64))]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -1752,8 +1739,8 @@
         (compiler_ctfe.CompilerCtfeValue.Type
           (owned_view.compiler-owned-shared-view box-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1829,17 +1816,14 @@
     [lambda-ty : ast.AstType
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           (ast.ast-ty-ref-with-pools
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             owner-region
             (ast.AstType.Var (ci.intern "package.model/Owner")))
           (ast.ast-type-cons-with-pools
-            (owned_view.compiler-owned-shared-view pools)
-            (ast.ast-ty-ref-with-pools
-              (owned_view.compiler-owned-shared-view pools)
-              text-region
-              (ast.AstType.Str))
+            pools
+            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
             (ast.ast-type-list-new))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
@@ -1849,8 +1833,8 @@
         (compiler_ctfe.CompilerCtfeValue.Type
           (owned_view.compiler-owned-shared-view lambda-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -1881,7 +1865,7 @@
   (match actual
     [(ast.AstType.Tuple elems-box)
       (let
-        [elems : ast.AstTypeList (ast.ast-type-list-box-shared-view elems-box)]
+        [elems : ast.AstTypeList (deref elems-box)]
         (and
           (= (ast.ast-type-list-len (& elems)) 2)
           (match (ast.ast-node-pool-context-type-get
@@ -1963,17 +1947,14 @@
     [lambda-ty : ast.AstType
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
-          (owned_view.compiler-owned-shared-view pools)
+          pools
           (ast.ast-ty-ref-with-pools
-            (owned_view.compiler-owned-shared-view pools)
+            pools
             owner-region
             (ast.AstType.Var (ci.intern "package.model/Owner")))
           (ast.ast-type-cons-with-pools
-            (owned_view.compiler-owned-shared-view pools)
-            (ast.ast-ty-ref-with-pools
-              (owned_view.compiler-owned-shared-view pools)
-              text-region
-              (ast.AstType.Str))
+            pools
+            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
             (ast.ast-type-list-new))))]
     [operand : i64
       (producer-test-push-spanned
@@ -1986,12 +1967,10 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr
           operand
-          (compiler_ctfe.ctfe-captured-expr-type-with-pools
-            (owned_view.compiler-owned-shared-view pools)
-            lambda-ty)))
+          (compiler_ctfe.ctfe-captured-expr-type-with-pools pools lambda-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2022,10 +2001,7 @@
   [identity : String]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType
-      (ast.ast-ty-box-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        (ast.AstType.I64))]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -2034,8 +2010,8 @@
         (compiler_ctfe.CompilerCtfeValue.Type
           (owned_view.compiler-owned-shared-view box-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2070,10 +2046,10 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
-;; The comptime string scanner: `comptime.expr-string?` (256) guards a String
-;; session local that `expr-string-value` (246) binds, `string-length` (252)
-;; measures, `string-ref` (253) indexes through a `char` cast, `string-slice`
-;; (254) cuts and `expr-string-from-value` (255) turns back into a literal.
+;; The comptime string scanner: `comptime.expr-string?` guards a String
+;; session local that `expr-string-value` binds, `string-length` measures,
+;; `string-ref` indexes through a `char` cast, `string-slice` cuts and
+;; `expr-string-from-value` turns back into a literal.
 ;; The two arms differ only in which byte the operand starts with, so an
 ;; off-by-one in any of those reads still commits a result -- the assertions
 ;; compare the exact literal each arm must produce. Refs #5701.
@@ -2097,8 +2073,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2162,8 +2138,8 @@
     (begin
       (set! (array-ref operands 0) (producer-test-expr-operand argument))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2205,8 +2181,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2259,8 +2235,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -2321,8 +2297,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -2356,8 +2332,8 @@
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         0
         64
         producer-test-cookie
@@ -2428,8 +2404,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -2550,8 +2526,7 @@
       (match ty
         [(ast.AstType.VarArgs name lifetimes-box)
           (let
-            [lifetimes : ast.AstLifetimeList
-              (owned_view.compiler-owned-box-shared-view lifetimes-box)]
+            [lifetimes : ast.AstLifetimeList (deref lifetimes-box)]
             (and
               (= name (ci.intern expected-name))
               (= (ast.ast-lifetime-list-len (& lifetimes)) expected-count)
@@ -2577,7 +2552,7 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (producer-test-expr-get (& pools) node)
         [(ast.AstExpr.Let let-box)
-          (match (owned_view.compiler-owned-box-shared-view let-box)
+          (match (deref let-box)
             [(ast.AstLet.Let bindings _)
               (and
                 (= (ast.ast-let-binding-list-len (& bindings)) 8)
@@ -2649,8 +2624,8 @@
     (begin
       (set! (array-ref operands 0) (producer-test-expr-operand "value"))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2723,8 +2698,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.F64)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -2766,8 +2741,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -2869,8 +2844,8 @@
             [(= mode 1) (ast.AstType.Enum canonical-id)]
             [else (ast.AstType.I64)])))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         (if (= mode 3)
           0
           1)
@@ -2933,8 +2908,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Type (ast.AstType.Struct canonical-id)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3006,8 +2981,8 @@
               suffix-id)]
           (begin
             (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-              (owned_view.compiler-owned-shared-view pools)
-              (owned_view.compiler-owned-shared-view operands)
+              pools
+              operands
               0
               64
               producer-test-cookie
@@ -3084,8 +3059,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3145,8 +3120,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.ExprList items))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -3230,8 +3205,8 @@
         (compiler_ctfe.CompilerCtfeValue.ExprList
           (owned_view.compiler-owned-shared-view items)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3281,8 +3256,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr second (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -3321,8 +3296,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3383,8 +3358,7 @@
     [string-value : compiler_ctfe.CompilerCtfeValue
       (compiler_ctfe.ctfe-generated-string-value "string-field")]
     [expected-env : compiler_ctfe.CtfeEnv
-      (compiler_ctfe.ctfe-env-empty-with-pools
-        (owned_view.compiler-owned-shared-view pools))]
+      (compiler_ctfe.ctfe-env-empty-with-pools pools)]
     [expected-string-id : i64
       (match (owned_view.compiler-owned-shared-view string-value)
         [(compiler_ctfe.CompilerCtfeValue.String text string-id)
@@ -3416,8 +3390,8 @@
           (compiler_ctfe.CompilerCtfeValue.Bool false)
           (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr))))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         3
         64
         producer-test-cookie
@@ -3500,8 +3474,8 @@
         (array-ref operands 1)
         (compiler_ctfe.CompilerCtfeValue.Expr value (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         2
         64
         producer-test-cookie
@@ -3621,7 +3595,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 "stdlib.str_cat_runtime"
                 (&mut names)
                 (&mut captures))
@@ -3643,7 +3617,7 @@
                   "producer-test"
                   (cfg windows true false)
                   (tlci.tlci-empty-bytes)
-                  (owned_view.compiler-owned-shared-view name-array)
+                  name-array
                   (& captures))
                   [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
                     false]
@@ -3713,7 +3687,7 @@
           (set! equal false)))
       equal)))
 
-(define (producer-test-string-count [text : String] [needle : String]) : i64
+(define (producer-test-string-count [text : (& text str)] [needle : String]) : i64
   (let
     [needle-len : i64 (string.string-length needle)]
     [limit : i64 (string.string-length text)]
@@ -3773,17 +3747,17 @@
               "package.multi/multi\ttemplate-node:in-arena\n")
             (=
               (producer-test-string-count
-                (owned_view.compiler-owned-shared-view full-report)
+                full-report
                 "package.multi/multi\tblocked\ttemplate-node:in-arena\n")
               1)
             (=
               (producer-test-string-count
-                (owned_view.compiler-owned-shared-view full-report)
+                full-report
                 "package.multi/multi\tblocked\ttemplate-node:with-arena\n")
               1)
             (=
               (producer-test-string-count
-                (owned_view.compiler-owned-shared-view full-report)
+                full-report
                 "package.multi/multi\twalked\ttemplate-node:begin\n")
               1)
             (producer-test-bytes-eq? default-bytes (& full-bytes))
@@ -3851,7 +3825,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 ""
                 (&mut names)
                 (&mut captures))
@@ -3874,18 +3848,16 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [inner-id : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
-        (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
     [outer-id : i64
       (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (if (= mode 2)
           (ast.AstType.I64)
           (ast.AstType.Box inner-id)))]
     [node : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (if (= mode 1)
           (ast.AstExpr.Var (ci.intern "not-a-type"))
           (ast.AstExpr.TypeLiteral outer-id)))]
@@ -3897,12 +3869,10 @@
         (array-ref operands 0)
         (if (= mode 4)
           (compiler_ctfe.CompilerCtfeValue.Bool false)
-          (compiler_ctfe.CompilerCtfeValue.CapturedExprList
-            items
-            (owned_view.compiler-owned-shared-view pools))))
+          (compiler_ctfe.CompilerCtfeValue.CapturedExprList items pools)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -3973,10 +3943,7 @@
 (define (producer-test-type-expr-callback-ok? [valid : bool]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType
-      (ast.ast-ty-box-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        (ast.AstType.I64))]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -3987,8 +3954,8 @@
             (owned_view.compiler-owned-shared-view box-ty))
           (compiler_ctfe.CompilerCtfeValue.Bool false)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -4043,7 +4010,7 @@
     [string-id : i64 (ci.intern "clone.module")]
     [node : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (if literal
           (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
           (ast.AstExpr.Var (ci.intern "not-a-string"))))]
@@ -4055,10 +4022,10 @@
         (compiler_ctfe.CompilerCtfeValue.CapturedExpr
           node
           (ast.AstType.Expr)
-          (owned_view.compiler-owned-shared-view pools)))
+          pools))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -4121,7 +4088,7 @@
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (& operands)
         0
         64
@@ -4172,8 +4139,7 @@
     [state : ci.InternCompatState (ci.intern-compat-state-new)]
     [source-id : i64
       (ci.intern-compat-state-intern (&mut state) "structural.clone.module")]
-    [_install : unit
-      (ci.intern-compat-state-install! (ci.intern-global-shared-view state))]
+    [_install : unit (ci.intern-compat-state-install! state)]
     [source-names : ci.InternSourceNameSessionHandle
       (ci.intern-source-name-session-handle-from-state (& state))]
     [session : cis.InternStructuralSessionHandle
@@ -4188,7 +4154,7 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [node : i64
       (ast.ast-node-pool-context-expr-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
@@ -4198,9 +4164,9 @@
         (compiler_ctfe.CompilerCtfeValue.CapturedExpr
           node
           (ast.AstType.Expr)
-          (owned_view.compiler-owned-shared-view pools)))
+          pools))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (& operands)
         1
         64
@@ -4312,13 +4278,9 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [inner-id : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
-        (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
     [box-id : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
-        (ast.AstType.Box inner-id))]
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.Box inner-id))]
     [type-node : i64
       (producer-test-push-spanned (& pools) (ast.AstExpr.TypeLiteral box-id))]
     [module-node : i64
@@ -4334,12 +4296,10 @@
     (begin
       (set!
         (array-ref operands 0)
-        (compiler_ctfe.CompilerCtfeValue.CapturedExprList
-          items
-          (owned_view.compiler-owned-shared-view pools)))
+        (compiler_ctfe.CompilerCtfeValue.CapturedExprList items pools))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         256
         producer-test-cookie
@@ -4408,8 +4368,8 @@
               [(= mode 1) (ast.AstType.F64)]
               [else (ast.AstType.String)]))))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         128
         producer-test-cookie
@@ -4448,10 +4408,10 @@
 ;; site that hands the scrutinee back to the interpreter. Two entries here do:
 ;; `kindwild`, whose wildcard body is outside the supported subset, and
 ;; `kindfull`, which has no wildcard at all and so falls off the end of its arm
-;; chain for any type that is neither `i64` nor `f64`. The second was
-;; previously uncounted -- the chain terminator emitted the ok-with-no-result
-;; form without the marker -- which made a non-exhaustive dispatch look fully
-;; native. Refs #5596, #5604.
+;; chain for any type that is neither `i64` nor `f64`. The second pins that
+;; the chain terminator emits the ok-with-no-result form with the marker;
+;; without it a non-exhaustive dispatch would look fully native.
+;; Refs #5596, #5604.
 (define (producer-test-package-native-image-ok?) : bool
   (let
     [source-base : String
@@ -4508,7 +4468,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 ""
                 (&mut names)
                 (&mut captures))
@@ -4868,9 +4828,7 @@
 ;; the whole of what a native expansion has to reproduce for lowering to place
 ;; the same located runtime-abort sites as an interpreted one: a compiler built
 ;; with `--cfg embedded-stdlib-tlci` and a compiler built without it must emit
-;; the same assembly, and before the producer walked these wrappers they
-;; disagreed on exactly the bounds checks whose spans were dropped here.
-;; Refs #5212.
+;; the same assembly, bounds checks included. Refs #5212.
 (define (producer-test-span-result-ok?
   [pools : ast.AstNodePoolContext]
   [operand : i64]) : bool
@@ -4928,8 +4886,8 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr operand (ast.AstType.Expr)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        (owned_view.compiler-owned-shared-view pools)
-        (owned_view.compiler-owned-shared-view operands)
+        pools
+        operands
         1
         64
         producer-test-cookie
@@ -4972,7 +4930,7 @@
           [(ast.AstProgram.Program decls)
             (begin
               (producer-test-collect-decls!
-                (owned_view.compiler-owned-box-shared-view decls)
+                (deref decls)
                 ""
                 (&mut names)
                 (&mut captures))
@@ -4994,7 +4952,7 @@
                   "producer-test"
                   (cfg windows true false)
                   (tlci.tlci-empty-bytes)
-                  (owned_view.compiler-owned-shared-view name-array)
+                  name-array
                   (& captures))
                   [(compiler_tlci_native_producer.ResultProducerBytes.Err _)
                     false]

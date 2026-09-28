@@ -7,7 +7,7 @@
  * benchmarks/intern_table/data/idents.txt (every `Token.Sym` lexeme src/lex.tl
  * produces for src/lex.tl, src/compiler_liveness.tl, src/compiler_symbols.tl
  * and src/compiler_lower.tl, one per line, in encounter order, exported by
- * benchmarks/intern_table/tools/export_idents.py).
+ * a since-deleted Python tool; see README.md).
  *
  * Mirrored: `intern-hash-words` (seed 5381 + len, 64-bit little-endian words
  * folded with 0x9E3779B97F4A7C15, a `tail = tail * 256 + byte` remainder, and

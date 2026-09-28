@@ -5,7 +5,6 @@
 ;; as trivia tokens so later layout rules can place them deliberately.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.io)
 (import stdlib.string)
 (import stdlib.result)
 
@@ -144,13 +143,16 @@
     [(FormatToken.Comment text) text]
     [(FormatToken.End) ""]))
 
-(define (format-token-at [stream : FormatTokenStream] [idx : i64]) : FormatToken
-  (array-ref stream.tokens idx))
+(define (format-token-at [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatToken
+  (let
+    [stream : FormatTokenStream
+      (owned_view.compiler-owned-reference-shared-view stream)]
+    (array-ref stream.tokens idx)))
 
-(define (format-token-start [stream : FormatTokenStream] [idx : i64]) : i64
+(define (format-token-start [stream : (& stream FormatTokenStream)] [idx : i64]) : i64
   (array-ref stream.starts idx))
 
-(define (format-token-count [stream : FormatTokenStream]) : i64
+(define (format-token-count [stream : (& stream FormatTokenStream)]) : i64
   stream.count)
 
 (define (fmt-position-line [pos : FormatPosition]) : i64
@@ -171,19 +173,7 @@
 (define (format-source-span-start-col [span : FormatSourceSpan]) : i64
   span.start-col)
 
-(define (format-source-span-eq?
-  [span : FormatSourceSpan]
-  [start-line : i64]
-  [start-col : i64]
-  [end-line : i64]
-  [end-col : i64]) : bool
-  (and
-    (= span.start-line start-line)
-    (= span.start-col start-col)
-    (= span.end-line end-line)
-    (= span.end-col end-col)))
-
-(define (fmt-source-position-at [src : String] [target : i64]) : FormatPosition
+(define (fmt-source-position-at [src : (& src str)] [target : i64]) : FormatPosition
   (let
     [n : i64 (string.string-length src)]
     [i : i64 0]
@@ -202,7 +192,7 @@
             (set! i (+ i 1)))))
       (FormatPosition line col))))
 
-(define (fmt-source-error-at [src : String] [idx : i64] [message : String]) : FormatSourceError
+(define (fmt-source-error-at [src : (& src str)] [idx : i64] [message : String]) : FormatSourceError
   (let
     [pos : FormatPosition (fmt-source-position-at src idx)]
     (FormatSourceError
@@ -213,33 +203,15 @@
         (fmt-position-line pos)
         (fmt-position-col pos)))))
 
-(define (format-token-span [stream : FormatTokenStream] [idx : i64]) : FormatSourceSpan
+(define (format-token-span [stream : (& stream FormatTokenStream)] [idx : i64]) : FormatSourceSpan
   (let
     [pos : FormatPosition
-      (fmt-source-position-at
-        stream.source
-        (format-token-start (owned_view.compiler-owned-shared-view stream) idx))]
+      (fmt-source-position-at stream.source (format-token-start stream idx))]
     (FormatSourceSpan
       (fmt-position-line pos)
       (fmt-position-col pos)
       (fmt-position-line pos)
       (fmt-position-col pos))))
-
-(define (format-token-tag-count [stream : FormatTokenStream] [wanted : i64]) : i64
-  (let
-    [i : i64 0]
-    [hits : i64 0]
-    (begin
-      (while (< i stream.count)
-        (begin
-          (if (=
-            (format-token-tag
-              (format-token-at (owned_view.compiler-owned-shared-view stream) i))
-            wanted)
-            (set! hits (+ hits 1))
-            (set! hits hits))
-          (set! i (+ i 1))))
-      hits)))
 
 (define (fmt-is-digit [c : char]) : bool
   (and (>= c '0') (<= c '9')))
@@ -282,10 +254,9 @@
 
 ;; --- char classification lookup table (lexer hot path) ----------------------
 ;; The per-character scan loops (symbol and number scans, whitespace skipping,
-;; the main dispatch) tested character classes with `fmt-is-*`, which stay real
-;; function calls at every opt level. Lexing ~9 MB of source therefore paid
-;; millions of call prologues just to classify bytes. Precompute a 256-entry
-;; class table once per process and test membership with an inline array lookup.
+;; the main dispatch) would pay a real call per byte through `fmt-is-*`, which
+;; stay real function calls at every opt level. Precompute a 256-entry class
+;; table once per process and test membership with an inline array lookup.
 ;; Bit 0 = whitespace, bit 1 = digit, bit 2 = symbol char, bit 3 = hex digit.
 (define fmt-char-class-table : (__tl_dyn-array i64)
   (__tl_make-array i64 256))
@@ -393,7 +364,7 @@
       j)))
 
 (define (fmt-scan-prefixed-number-end-result
-  [src : String]
+  [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
   [n : i64]) : result_fmt_i64.Result
@@ -490,7 +461,7 @@
       j)))
 
 (define (fmt-scan-number-end-result
-  [src : String]
+  [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
   [n : i64]) : result_fmt_i64.Result
@@ -540,7 +511,7 @@
       j)))
 
 (define (fmt-scan-string-end-result
-  [src : String]
+  [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
   [n : i64]) : result_fmt_i64.Result
@@ -579,7 +550,7 @@
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
 
 (define (fmt-char-close-error
-  [src : String]
+  [src : (& src str)]
   [data : (Ptr u8)]
   [idx : i64]
   [n : i64]) : ResultFmtMaybeCharEnd
@@ -595,7 +566,7 @@
         "format lexer: unterminated character literal"))))
 
 (define (fmt-scan-apostrophe-char-end-result
-  [src : String]
+  [src : (& src str)]
   [data : (Ptr u8)]
   [start : i64]
   [n : i64]) : ResultFmtMaybeCharEnd
@@ -643,8 +614,8 @@
 ;; Copy `count` token slots into a freshly sized array. The lexer sizes its
 ;; token buffers to an estimate of the token count and grows them by doubling
 ;; rather than pre-allocating one slot per source byte (most bytes are inside
-;; multi-character tokens or whitespace, so the byte-sized arrays were ~3x
-;; larger than needed and paid that cost in zero-init on every file).
+;; multi-character tokens or whitespace, so byte-sized arrays would be several
+;; times larger than needed and pay that cost in zero-init on every file).
 (define (fmt-grow-token-array
   [old : (__tl_dyn-array FormatToken)]
   [count : i64]
@@ -674,7 +645,7 @@
       bigger)))
 
 ;; Token-buffer capacity estimate for a `n`-byte source: roughly one token per
-;; three bytes, with slack for short inputs and the trailing `FmtEnd`.
+;; three bytes, with slack for short inputs and the trailing `FormatToken.End`.
 (define (fmt-token-capacity-estimate [n : i64]) : i64
   (+ (/ n 3) 16))
 
@@ -728,12 +699,7 @@
             (let
               [newcap : i64 (* cap 2)]
               (begin
-                (set!
-                  tokens
-                  (fmt-grow-token-array
-                    (owned_view.compiler-owned-shared-view tokens)
-                    count
-                    newcap))
+                (set! tokens (fmt-grow-token-array tokens count newcap))
                 (set! starts (fmt-grow-i64-array starts count newcap))
                 (set! cap newcap)))
             unit)
@@ -804,11 +770,7 @@
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c '\'')
-                (match (fmt-scan-apostrophe-char-end-result
-                  (owned_view.compiler-owned-shared-view src)
-                  data
-                  i
-                  n)
+                (match (fmt-scan-apostrophe-char-end-result src data i n)
                   [(ResultFmtMaybeCharEnd.Ok end)
                     (begin
                       (fmt-store-token
@@ -902,11 +864,7 @@
                     (set! count (+ count 1))
                     (set! i (+ i 1))))]
               [(= c '"')
-                (match (fmt-scan-string-end-result
-                  (owned_view.compiler-owned-shared-view src)
-                  data
-                  (+ i 1)
-                  n)
+                (match (fmt-scan-string-end-result src data (+ i 1) n)
                   [(result_fmt_i64.Ok end)
                     (begin
                       (fmt-store-token
@@ -930,11 +888,7 @@
                         (set! i n))
                       (return (ResultFormatTokenStream.Err err)))])]
               [(fmt-starts-number data i n)
-                (match (fmt-scan-number-end-result
-                  (owned_view.compiler-owned-shared-view src)
-                  data
-                  i
-                  n)
+                (match (fmt-scan-number-end-result src data i n)
                   [(result_fmt_i64.Ok end)
                     (begin
                       (fmt-store-token
@@ -942,11 +896,7 @@
                         (owned_view.compiler-owned-shared-view starts)
                         count
                         i
-                        (FormatToken.Int
-                          (string.substring
-                            (owned_view.compiler-owned-shared-view src)
-                            i
-                            (- end i))))
+                        (FormatToken.Int (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(result_fmt_i64.Err err)
@@ -972,11 +922,7 @@
                       (owned_view.compiler-owned-shared-view starts)
                       count
                       i
-                      (FormatToken.Symbol
-                        (string.substring
-                          (owned_view.compiler-owned-shared-view src)
-                          i
-                          (- end i))))
+                      (FormatToken.Symbol (string.substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [else
@@ -985,25 +931,15 @@
                   (return
                     (ResultFormatTokenStream.Err
                       (fmt-source-error-at
-                        (owned_view.compiler-owned-shared-view src)
+                        src
                         i
                         "format lexer: unexpected character"))))]))))
       (if (>= count cap)
         (let
           [newcap : i64 (* cap 2)]
           (begin
-            (set!
-              tokens
-              (fmt-grow-token-array
-                (owned_view.compiler-owned-shared-view tokens)
-                count
-                newcap))
-            (set!
-              starts
-              (fmt-grow-i64-array
-                (owned_view.compiler-owned-shared-view starts)
-                count
-                newcap))
+            (set! tokens (fmt-grow-token-array tokens count newcap))
+            (set! starts (fmt-grow-i64-array starts count newcap))
             (set! cap newcap)))
         unit)
       (fmt-store-token
@@ -1013,11 +949,7 @@
         n
         (FormatToken.End))
       (ResultFormatTokenStream.Ok
-        (FormatTokenStream
-          src
-          (owned_view.compiler-owned-shared-view tokens)
-          starts
-          (+ count 1))))))
+        (FormatTokenStream src tokens starts (+ count 1))))))
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (format-lex-mode-result src false))
@@ -1035,9 +967,3 @@
         (__tl_make-array FormatToken 0)
         (__tl_make-array i64 0)
         0)]))
-
-(define (format-lex [src : String]) : FormatTokenStream
-  (match (format-lex-result src)
-    [(ResultFormatTokenStream.Ok stream) stream]
-    [(ResultFormatTokenStream.Err err)
-      (io.panic (format-source-error-message err))]))

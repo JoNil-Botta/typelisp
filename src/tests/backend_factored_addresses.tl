@@ -19,7 +19,7 @@
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [p
-      (backend.compiler-backend-program-index-build
+      (fixtures.compiler-backend-program-index-build
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
@@ -107,7 +107,7 @@
               (if (= mode 4)
                 0
                 2))
-            (view.compiler-owned-shared-view elem))))
+            elem)))
       (set!
         (array-ref slots 2)
         (ir.CompilerIrInstr.Mov 4 (ir.CompilerIrValue.Var 3) (ast.AstType.I64)))
@@ -134,32 +134,20 @@
           8
           1))
       (set! (array-ref scales 1) 1)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-ready!
-        b
-        true)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-disp-table!
-        b
-        disps)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-kind-table!
-        b
-        kinds)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-scale-table!
-        b
-        scales)
-      (backend.compiler-backend-test-set-compiler-backend-gep-fold-cursor! b 0)
+      (fixtures.set-state-gep-fold-ready! b true)
+      (fixtures.set-state-gep-fold-disp-table! b disps)
+      (fixtures.set-state-gep-fold-kind-table! b kinds)
+      (fixtures.set-state-gep-fold-scale-table! b scales)
+      (fixtures.set-state-gep-fold-cursor! b 0)
       (when
         (= mode 15)
         (begin
           (set! (array-ref fuse 3) 2)
-          (backend.compiler-backend-test-set-compiler-backend-fuse-need-ready!
-            b
-            true)
-          (backend.compiler-backend-test-set-compiler-backend-fuse-use-counts!
+          (fixtures.set-state-fuse-need-ready! b true)
+          (fixtures.set-state-fuse-use-counts!
             b
             (view.compiler-owned-shared-view fuse))
-          (backend.compiler-backend-test-set-compiler-backend-fuse-free-counts!
-            b
-            fuse)))
+          (fixtures.set-state-fuse-free-counts! b fuse)))
       (let
         [instrs (ir.CompilerIrInstrSeq slots 4)]
         [blocks
@@ -202,7 +190,7 @@
             (ir.compiler-ir-extern-seq-empty)
             p
             (ir.compiler-source-spans-empty)
-            (backend.compiler-backend-source-span-index-build
+            (fixtures.compiler-backend-source-span-index-build
               (ir.compiler-source-spans-empty))
             (diagnostic.compiler-diagnostic-at-start "" "")
             uses
@@ -245,9 +233,7 @@
             (match result
               [(backend.CompilerBackendMaybeAsm.Some text)
                 (and
-                  (backend.compiler-backend-string-contains?
-                    (view.compiler-owned-shared-view text)
-                    "    leaq (")
+                  (backend.compiler-backend-string-contains? text "    leaq (")
                   (not (backend.compiler-backend-string-contains? text "imul")))]
               [(backend.CompilerBackendMaybeAsm.No) false])
             "factoring admission")
@@ -255,29 +241,33 @@
             (if accepted
               1
               0)
-            (backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor
-              b)
+            (fixtures.state-gep-fold-cursor b)
             "probe cursor")
           (test.assert-bool-eq
             false
-            (backend.compiler-backend-test-get-compiler-backend-gep-fold-drift
-              b)
+            (fixtures.state-gep-fold-drift b)
             "probe drift")
           (when
             accepted
             (begin
               (test.assert-i64-eq
                 32
-                (backend.compiler-backend-gep-fold-next!
-                  (backend.compiler-backend-state-function-state b)
-                  (ast.ast-node-pool-reader-type-segment-bases)
-                  (ir.CompilerIrValue.Var 0)
-                  (ast.AstType.U8))
+                (let
+                  [function-state
+                    (backend.compiler-backend-state-function-state b)]
+                  [type-segment-bases
+                    (ast.ast-node-pool-reader-type-segment-bases)]
+                  [offset (ir.CompilerIrValue.Var 0)]
+                  [elem-ty (ast.AstType.U8)]
+                  (backend.compiler-backend-gep-fold-next!
+                    function-state
+                    type-segment-bases
+                    offset
+                    elem-ty))
                 "following displacement")
               (test.assert-i64-eq
                 2
-                (backend.compiler-backend-test-get-compiler-backend-gep-fold-cursor
-                  b)
+                (fixtures.state-gep-fold-cursor b)
                 "following cursor"))))))))
 
 (test

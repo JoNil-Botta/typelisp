@@ -6,10 +6,10 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
-(import compiler_driver_core)
+(import compiler_driver_core as driver)
 (import compiler_backend as backend)
-(import compiler_lower_tests)
-(import compiler_lower)
+(import compiler_lower_tests as lower_tests)
+(import compiler_lower as lower)
 (import compiler_diagnostic as diagnostic)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -53,80 +53,87 @@
       (set! (array-ref out-y i) (+ (array-ref b i) 2)))))")
 
 (define (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
-  [mode : compiler_lower.CompilerLowerMode]
+  [mode : lower.CompilerLowerMode]
   [predicated? : bool]) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
+  (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-foreach-multi-output-source)
     mode)
-    [(compiler_lower.ResultCompilerLower.Ok program _)
+    [(lower.ResultCompilerLower.Ok program _)
       (match program
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (compiler_lower_tests.lower-test-function-vector-load-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.VectorLoad))
               2)
             (=
-              (compiler_lower_tests.lower-test-function-vector-binop-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.VectorBinop))
               (if predicated?
                 6
                 3))
             (=
-              (compiler_lower_tests.lower-test-function-vector-store-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.VectorStore))
               2)
             (=
-              (compiler_lower_tests.lower-test-function-predicated-load-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedLoad))
               (if predicated?
                 2
                 0))
             (=
-              (compiler_lower_tests.lower-test-function-predicated-store-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedStore))
               (if predicated?
                 2
                 0))
             (=
-              (compiler_lower_tests.lower-test-function-tail-mask-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.TailMask))
               (if predicated?
                 1
                 0))
             (>
-              (compiler_lower_tests.lower-test-function-store-ptr-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.StorePtr))
               0))])]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-foreach-multi-output-shape-ok?) : bool
   (and
     (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
-      (compiler_lower.CompilerLowerMode.Avx2)
+      (lower.CompilerLowerMode.Avx2)
       true)
     (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
-      (compiler_lower.CompilerLowerMode.Avx512)
+      (lower.CompilerLowerMode.Avx512)
       true)
-    (compiler_lower_tests.compiler-lower-mode-error-ok?
+    (lower_tests.compiler-lower-mode-error-ok?
       (compiler-lower-smoke-foreach-multi-output-same-destination-source)
-      (compiler_lower.CompilerLowerMode.Avx2)
-      (compiler_lower.lower-simd-foreach-fallback-diagnostic))
-    (compiler_lower_tests.compiler-lower-mode-error-ok?
+      (lower.CompilerLowerMode.Avx2)
+      (lower.lower-simd-foreach-fallback-diagnostic))
+    (lower_tests.compiler-lower-mode-error-ok?
       (compiler-lower-smoke-foreach-multi-output-alias-source)
-      (compiler_lower.CompilerLowerMode.Avx2)
-      (compiler_lower.lower-simd-foreach-fallback-diagnostic))
-    (compiler_lower_tests.compiler-lower-mode-error-ok?
+      (lower.CompilerLowerMode.Avx2)
+      (lower.lower-simd-foreach-fallback-diagnostic))
+    (lower_tests.compiler-lower-mode-error-ok?
       (compiler-lower-smoke-foreach-multi-output-mixed-source)
-      (compiler_lower.CompilerLowerMode.Avx2)
-      (compiler_lower.lower-simd-foreach-fallback-diagnostic))))
+      (lower.CompilerLowerMode.Avx2)
+      (lower.lower-simd-foreach-fallback-diagnostic))))
 
 (define (compiler-lower-smoke-masked-full-gang-source) : String
   "(define (fill [xs : (__tl_dyn-array i64)] [copy : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
@@ -141,49 +148,54 @@
           (set! (array-ref out i) 0))))))")
 
 (define (compiler-lower-smoke-masked-full-gang-mode-ok?
-  [mode : compiler_lower.CompilerLowerMode]) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-masked-full-gang-source)
     mode)
-    [(compiler_lower.ResultCompilerLower.Ok program _)
+    [(lower.ResultCompilerLower.Ok program _)
       (match program
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (compiler_lower_tests.lower-test-function-tail-mask-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.TailMask))
               1)
             (=
-              (compiler_lower_tests.lower-test-function-vector-load-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.VectorLoad))
               1)
             (=
-              (compiler_lower_tests.lower-test-function-vector-store-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.VectorStore))
               1)
             (=
-              (compiler_lower_tests.lower-test-function-predicated-load-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedLoad))
               1)
             ;; One parent tail store plus two divergent stores in each of the
             ;; full and tail bodies. Child masks must remain predicated.
             (=
-              (compiler_lower_tests.lower-test-function-predicated-store-count
-                (ir.compiler-ir-global-shared-view functions)
-                "fill")
+              (lower_tests.lower-test-count
+                functions
+                "fill"
+                (lower_tests.LowerTestInstr.PredicatedStore))
               5))])]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-masked-full-gang-ok?) : bool
   (and
     (compiler-lower-smoke-masked-full-gang-mode-ok?
-      (compiler_lower.CompilerLowerMode.Avx2))
+      (lower.CompilerLowerMode.Avx2))
     (compiler-lower-smoke-masked-full-gang-mode-ok?
-      (compiler_lower.CompilerLowerMode.Avx512))))
+      (lower.CompilerLowerMode.Avx512))))
 
 ;; Scalar `spmd-reduce` addend split: a `sum` over `(+ X U)` with
 ;; reduction-invariant `U` lowers to a loop that accumulates only `X` plus one
@@ -202,44 +214,44 @@
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ (let [r : i64 9] (+ (array-ref a i) r)) r)))")
 
 (define (compiler-lower-smoke-spmd-reduce-split-ok?) : bool
-  (match (compiler_lower.lower-compiler-source-with-mode
+  (match (lower.lower-compiler-source-with-mode
     (compiler-lower-smoke-spmd-reduce-split-source)
-    (compiler_lower.CompilerLowerMode.Scalar))
-    [(compiler_lower.ResultCompilerLower.Ok program _)
+    (lower.CompilerLowerMode.Scalar))
+    [(lower.ResultCompilerLower.Ok program _)
       (match program
         [(ir.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (compiler_lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+              (lower_tests.lower-test-function-binop-op-count
+                functions
                 "reduce_split_pos"
                 ir.CompilerIrBinOp.Mul)
               1)
             (=
-              (compiler_lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+              (lower_tests.lower-test-function-binop-op-count
+                functions
                 "reduce_split_pos_swapped"
                 ir.CompilerIrBinOp.Mul)
               1)
             (=
-              (compiler_lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+              (lower_tests.lower-test-function-binop-op-count
+                functions
                 "reduce_split_neg_i32"
                 ir.CompilerIrBinOp.Mul)
               0)
             (=
-              (compiler_lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+              (lower_tests.lower-test-function-binop-op-count
+                functions
                 "reduce_split_neg_index"
                 ir.CompilerIrBinOp.Mul)
               0)
             (=
-              (compiler_lower_tests.lower-test-function-binop-op-count
-                (ir.compiler-ir-global-shared-view functions)
+              (lower_tests.lower-test-function-binop-op-count
+                functions
                 "reduce_split_neg_rebind"
                 ir.CompilerIrBinOp.Mul)
               0))])]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
@@ -250,10 +262,10 @@
   (__tl_string_length (vector.local-vector-string)))")
 
 (define (compiler-lower-smoke-imported-local-vector-ok?) : bool
-  (match (compiler_lower.lower-compiler-source
+  (match (lower.lower-compiler-source
     (compiler-lower-smoke-imported-local-vector-source))
-    [(compiler_lower.ResultCompilerLower.Ok _ _) true]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Ok _ _) true]
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
   (let
@@ -287,12 +299,12 @@
         (sym_i64_env.sym-i64-empty)
         roots)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-          (match (compiler_lower_tests.lower-compiler-program-with-decl-paths
+          (match (lower_tests.lower-compiler-program-with-decl-paths
             entry
             (ast.ast-program decls)
             paths)
-            [(compiler_lower.ResultCompilerLower.Ok _ _) true]
-            [(compiler_lower.ResultCompilerLower.Err diag)
+            [(lower.ResultCompilerLower.Ok _ _) true]
+            [(lower.ResultCompilerLower.Err diag)
               (io.panic
                 (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
         [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -308,17 +320,17 @@
           (svec.push-ref! (&mut items) "stdlib")
           items))]
     (begin
-      (compiler_driver_core.compiler-driver-reset-file-state!)
-      (match (compiler_driver_core.compiler-driver-load-and-lower-escaping
+      (driver.compiler-driver-reset-file-state!)
+      (match (driver.compiler-driver-load-and-lower-escaping
         "stdlib/args.tl"
         (backend.CompilerBackendTarget.Linux)
         roots
         (backend.CompilerBackendMode.Scalar)
-        (compiler_driver_core.compiler-driver-target-cfgs
+        (driver.compiler-driver-target-cfgs
           (backend.CompilerBackendTarget.Linux)
           (parser.compiler-cfg-empty)))
-        [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) true]
-        [(compiler_driver_core.ResultCompilerDriverLowered.Err _ _) false]))))
+        [(driver.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) true]
+        [(driver.ResultCompilerDriverLowered.Err _ _) false]))))
 
 (define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
   (let
@@ -347,28 +359,25 @@
         "(import issue6339_leaf as leaf)
 (define (main) : i64
   (__tl_string_length leaf.bad-path))")
-      (compiler_driver_core.compiler-driver-reset-file-state!)
+      (driver.compiler-driver-reset-file-state!)
       (let
         [ok : bool
-          (match (compiler_driver_core.compiler-driver-load-and-lower-escaping
+          (match (driver.compiler-driver-load-and-lower-escaping
             (string.copy entry)
             (backend.CompilerBackendTarget.Linux)
             roots
             (backend.CompilerBackendMode.Scalar)
-            (compiler_driver_core.compiler-driver-target-cfgs
+            (driver.compiler-driver-target-cfgs
               (backend.CompilerBackendTarget.Linux)
               (parser.compiler-cfg-empty)))
-            [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _ _)
-              false]
-            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag-box _)
+            [(driver.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) false]
+            [(driver.ResultCompilerDriverLowered.Err diag-box _)
               (let
                 [diag : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-box-shared-view diag-box)]
                 [labels : diagnostic.CompilerDiagnosticLabelList
                   (diagnostic.compiler-diagnostic-secondary-spans diag)]
-                [rendered : String
-                  (diagnostic.compiler-diagnostic-render
-                    (diagnostic.compiler-diagnostic-place-shared-view diag))]
+                [rendered : String (diagnostic.compiler-diagnostic-render diag)]
                 (and
                   (string.eq (diagnostic.compiler-diagnostic-path diag) leaf)
                   (= (diagnostic.compiler-diagnostic-line diag) 5)
@@ -386,7 +395,7 @@
                   (string.contains rendered leaf)
                   (not (string.contains rendered entry))))])]
         (begin
-          (compiler_driver_core.compiler-driver-reset-file-state!)
+          (driver.compiler-driver-reset-file-state!)
           ok)))))
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String
@@ -413,10 +422,10 @@
 (import (vector-user) as user)")
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?) : bool
-  (match (compiler_lower.lower-compiler-source
+  (match (lower.lower-compiler-source
     (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
-    [(compiler_lower.ResultCompilerLower.Ok _ _) true]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Ok _ _) true]
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
   (let
@@ -431,15 +440,15 @@
       (compiler-lower-smoke-write-text
         (string.copy path)
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
-      (match (compiler_driver_core.compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+      (match (driver.compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         path
         (backend.CompilerBackendTarget.Linux)
         roots
         0
         (backend.CompilerBackendMode.Scalar)
         (parser.compiler-cfg-empty))
-        [(compiler_driver_core.ResultCompilerDriver.Ok _ _) true]
-        [(compiler_driver_core.ResultCompilerDriver.Err diag _)
+        [(driver.ResultCompilerDriver.Ok _ _) true]
+        [(driver.ResultCompilerDriver.Err diag _)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
@@ -456,8 +465,8 @@
       (compiler-lower-smoke-write-text
         (string.copy path)
         "(define (no-main-direct-helper) : i64 7)")
-      (compiler_driver_core.compiler-driver-reset-file-state!)
-      (match (compiler_driver_core.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
+      (driver.compiler-driver-reset-file-state!)
+      (match (driver.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
         path
         (backend.CompilerBackendTarget.Linux)
         true
@@ -465,13 +474,13 @@
         0
         (backend.CompilerBackendMode.Scalar)
         (parser.compiler-cfg-empty))
-        [(compiler_driver_core.ResultCompilerDriverBuffer.Ok buf _)
+        [(driver.ResultCompilerDriverBuffer.Ok buf _)
           (let
             [asm : String (text_buf.render buf)]
             [needle : String
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
             (string.contains (& asm) (& needle)))]
-        [(compiler_driver_core.ResultCompilerDriverBuffer.Err diag _)
+        [(driver.ResultCompilerDriverBuffer.Err diag _)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
@@ -479,8 +488,8 @@
 ;;
 ;; A generated module is materialized in FULL and typechecked in full,
 ;; independent of which of its methods a consumer references, because the
-;; reachability gate now runs AFTER typecheck (see
-;; lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools).
+;; reachability gate runs AFTER typecheck (see
+;; `lower-prune-unreachable-functions-with-clone-roots-and-plan`).
 ;; Referencing `push` only vs. `push` + `map` therefore adds zero new typecheck
 ;; work on the (vector C43Point) module and cannot surface a new type error from
 ;; its body. Both variants must lower cleanly.
@@ -527,22 +536,22 @@
 (define (c43-dead [s : String]) : i64 (+ s 1))")
 
 (define (compiler-lower-smoke-c43-vector-push-only-ok?) : bool
-  (match (compiler_lower.lower-compiler-source
+  (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-vector-push-only-source))
-    [(compiler_lower.ResultCompilerLower.Ok _ _) true]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Ok _ _) true]
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-c43-vector-push-map-ok?) : bool
-  (match (compiler_lower.lower-compiler-source
+  (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-vector-push-map-source))
-    [(compiler_lower.ResultCompilerLower.Ok _ _) true]
-    [(compiler_lower.ResultCompilerLower.Err _) false]))
+    [(lower.ResultCompilerLower.Ok _ _) true]
+    [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-smoke-c43-unreachable-error-rejected?) : bool
-  (match (compiler_lower.lower-compiler-source
+  (match (lower.lower-compiler-source
     (compiler-lower-smoke-c43-unreachable-error-source))
-    [(compiler_lower.ResultCompilerLower.Ok _ _) false]
-    [(compiler_lower.ResultCompilerLower.Err _) true]))
+    [(lower.ResultCompilerLower.Ok _ _) false]
+    [(lower.ResultCompilerLower.Err _) true]))
 
 (define (compiler-lower-smoke-c43-typecheck-completeness-ok?) : bool
   (begin
@@ -584,40 +593,38 @@
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
   (match (parser.parse-ast-source
-    (compiler_lower_tests.compiler-lower-module-entry-main-source))
+    (lower_tests.compiler-lower-module-entry-main-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (compiler_lower_tests.lower-compiler-program-with-decl-paths
+      (match (lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
         (ast.ast-decl-path-list-new))
-        [(compiler_lower.ResultCompilerLower.Ok lowered _)
+        [(lower.ResultCompilerLower.Ok lowered _)
           (match lowered
             [(ir.CompilerIrProgram.Program _ functions _)
               (begin
                 (unless
-                  (compiler_lower_tests.lower-test-function-defined?
-                    (ir.compiler-ir-global-shared-view functions)
-                    "main")
+                  (lower_tests.lower-test-function-defined? functions "main")
                   (io.panic "lower: module entry main function missing"))
                 (unless
-                  (compiler_lower_tests.lower-test-function-defined?
-                    (ir.compiler-ir-global-shared-view functions)
+                  (lower_tests.lower-test-function-defined?
+                    functions
                     "arena.tl::stdlib.arena/helper")
                   (io.panic "lower: module entry helper function missing"))
                 (let
                   [path-count : i64
-                    (compiler_lower_tests.lower-test-function-direct-call-count
-                      (ir.compiler-ir-global-shared-view functions)
+                    (lower_tests.lower-test-function-direct-call-count
+                      functions
                       "main"
                       "arena.tl::stdlib.arena/helper")]
                   [module-count : i64
-                    (compiler_lower_tests.lower-test-function-direct-call-count
-                      (ir.compiler-ir-global-shared-view functions)
+                    (lower_tests.lower-test-function-direct-call-count
+                      functions
                       "main"
                       "stdlib.arena/helper")]
                   [bare-count : i64
-                    (compiler_lower_tests.lower-test-function-direct-call-count
-                      (ir.compiler-ir-global-shared-view functions)
+                    (lower_tests.lower-test-function-direct-call-count
+                      functions
                       "main"
                       "helper")]
                   (unless
@@ -628,7 +635,7 @@
                         (io.panic "lower: module entry main uses bare helper")
                         (io.panic
                           "lower: module entry main helper call missing"))))))])]
-        [(compiler_lower.ResultCompilerLower.Err diag)
+        [(lower.ResultCompilerLower.Err diag)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))])]
     [(parser.ResultAstProgram.Err _)
@@ -660,41 +667,39 @@
 (define (compiler-lower-smoke-stdlib-runtime-substring-defined?
   [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+    (lower_tests.lower-test-function-defined?
+      functions
       "stdlib/runtime.tl::substring")
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
-      "runtime.tl::substring")
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+    (lower_tests.lower-test-function-defined? functions "runtime.tl::substring")
+    (lower_tests.lower-test-function-defined?
+      functions
       "stdlib/runtime.tl::stdlib.runtime/substring")
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+    (lower_tests.lower-test-function-defined?
+      functions
       "runtime.tl::stdlib.runtime/substring")
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+    (lower_tests.lower-test-function-defined?
+      functions
       "stdlib.runtime/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-defined?
   [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+    (lower_tests.lower-test-function-defined?
+      functions
       "stdlib/string.tl::stdlib.string/substring")
-    (compiler_lower_tests.lower-test-function-defined?
-      (ir.compiler-ir-global-shared-view functions)
+    (lower_tests.lower-test-function-defined?
+      functions
       "string.tl::stdlib.string/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?) : bool
   (match (parser.parse-ast-source
     (compiler-lower-smoke-stdlib-string-public-substring-source))
     [(parser.ResultAstProgram.Ok program)
-      (match (compiler_lower_tests.lower-compiler-program-with-decl-paths
+      (match (lower_tests.lower-compiler-program-with-decl-paths
         "stdlib/string.tl"
         program
         (compiler-lower-smoke-stdlib-string-public-substring-paths))
-        [(compiler_lower.ResultCompilerLower.Ok lowered _)
+        [(lower.ResultCompilerLower.Ok lowered _)
           (match lowered
             [(ir.CompilerIrProgram.Program _ functions _)
               (and
@@ -702,386 +707,384 @@
                   (compiler-lower-smoke-stdlib-runtime-substring-defined?
                     (ir.compiler-ir-global-shared-view functions)))
                 (compiler-lower-smoke-stdlib-string-public-substring-defined?
-                  (ir.compiler-ir-global-shared-view functions)))])]
-        [(compiler_lower.ResultCompilerLower.Err _) false])]
+                  functions))])]
+        [(lower.ResultCompilerLower.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-smoke-self-test) : unit
   (begin
     (unless
-      (compiler_lower_tests.compiler-lower-and-or-short-circuit-shape-ok?)
+      (lower_tests.compiler-lower-and-or-short-circuit-shape-ok?)
       (io.panic "lower: and/or short-circuit smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-entry-moduled-main-ok?)
+      (lower_tests.compiler-lower-entry-moduled-main-ok?)
       (io.panic "lower: entry moduled main smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok-summary?
-        (compiler_lower_tests.compiler-lower-smoke-source))
+      (lower_tests.compiler-lower-ok-summary?
+        (lower_tests.compiler-lower-smoke-source))
       (io.panic "lower: basic summary smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-macro-expand-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-macro-expand-source))
       (io.panic "lower: macro expand smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-macro-expr-clause-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-macro-expr-clause-source))
       (io.panic "lower: macro expr clause smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-macro-expr-clause-variadic-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-macro-expr-clause-variadic-source))
       (io.panic "lower: macro variadic clause smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-macro-hygiene-definition-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-macro-hygiene-definition-source))
       (io.panic "lower: macro hygiene definition smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-macro-arity-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-macro-arity-source)
         "macro call has too few arguments")
       (io.panic "lower: macro arity diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-comptime-error-runtime-diagnostics-ok?)
+      (lower_tests.compiler-lower-comptime-error-runtime-diagnostics-ok?)
       (io.panic "lower: comptime-error runtime diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-macro-expr-clause-to-expr-error-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-macro-expr-clause-to-expr-error-source)
         "typecheck: macro operand type mismatch: expected Expr, got bracket clause")
       (io.panic "lower: macro clause-to-expr diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-macro-expr-to-clause-error-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-macro-expr-to-clause-error-source)
         "typecheck: ExprClause macro operand expects bracket syntax")
       (io.panic "lower: macro expr-to-clause diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-macro-expr-clause-shape-error-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-macro-expr-clause-shape-error-source)
         "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
       (io.panic "lower: macro clause shape diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-bracket-ordinary-call-error-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-bracket-ordinary-call-error-source)
         "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")
       (io.panic "lower: bracket ordinary-call diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-spans-ok?
-        (compiler_lower_tests.compiler-lower-smoke-source))
+      (lower_tests.compiler-lower-spans-ok?
+        (lower_tests.compiler-lower-smoke-source))
       (io.panic "lower: source span smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-nested-expression-diagnostic-span-ok?)
+      (lower_tests.compiler-lower-nested-expression-diagnostic-span-ok?)
       (io.panic "lower: nested diagnostic span smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-compound-expression-diagnostic-span-ok?)
+      (lower_tests.compiler-lower-compound-expression-diagnostic-span-ok?)
       (io.panic "lower: compound diagnostic span smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-match-source))
+      (lower_tests.compiler-lower-ok? (lower_tests.compiler-lower-match-source))
       (io.panic "lower: match smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-match-tail-shape-ok?
-        (compiler_lower_tests.compiler-lower-match-source))
+      (lower_tests.compiler-lower-match-tail-shape-ok?
+        (lower_tests.compiler-lower-match-source))
       (io.panic "lower: match tail smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-enum-match-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-enum-match-source))
       (io.panic "lower: enum match smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-enum-literal-payload-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-enum-literal-payload-source))
       (io.panic "lower: enum literal payload smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-enum-nested-payload-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-enum-nested-payload-source))
       (io.panic "lower: enum nested payload smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-enum-string-literal-payload-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-enum-string-literal-payload-source))
       (io.panic "lower: enum string payload smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-enum-string-literal-payload-shape-ok?)
+      (lower_tests.compiler-lower-enum-string-literal-payload-shape-ok?)
       (io.panic "lower: enum string payload shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-borrowed-enum-match-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-borrowed-enum-match-source))
       (io.panic "lower: borrowed enum match smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-borrowed-enum-match-ref-struct-array-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-borrowed-enum-match-ref-struct-array-source))
       (io.panic "lower: borrowed enum ref struct array smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-borrowed-enum-match-str-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-borrowed-enum-match-str-source))
       (io.panic "lower: borrowed enum str smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-borrowed-enum-match-nested-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-borrowed-enum-match-nested-source))
       (io.panic "lower: borrowed enum nested smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-export-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-export-source))
       (io.panic "lower: export smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-defdispatch-thunk-shape-ok?)
+      (lower_tests.compiler-lower-defdispatch-thunk-shape-ok?)
       (io.panic "lower: defdispatch thunk smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-defdispatch-shared-helper-ok?)
+      (lower_tests.compiler-lower-defdispatch-shared-helper-ok?)
       (io.panic "lower: defdispatch shared helper smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-result-try-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-result-try-source))
       (io.panic "lower: result try smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-option-try-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-option-try-source))
       (io.panic "lower: option try smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-enum-match-shape-ok?
-        (compiler_lower_tests.compiler-lower-enum-match-source))
+      (lower_tests.compiler-lower-enum-match-shape-ok?
+        (lower_tests.compiler-lower-enum-match-source))
       (io.panic "lower: enum match shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-two-variant-fallthrough-shape-ok?)
+      (lower_tests.compiler-lower-two-variant-fallthrough-shape-ok?)
       (io.panic "lower: two-variant final fallthrough smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-total-enum-provenance-shape-ok?)
+      (lower_tests.compiler-lower-total-enum-provenance-shape-ok?)
       (io.panic "lower: total-enum provenance smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-borrowed-enum-match-shape-ok?)
+      (lower_tests.compiler-lower-borrowed-enum-match-shape-ok?)
       (io.panic "lower: borrowed enum match shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-result-try-shape-ok?
-        (compiler_lower_tests.compiler-lower-result-try-source))
+      (lower_tests.compiler-lower-result-try-shape-ok?
+        (lower_tests.compiler-lower-result-try-source))
       (io.panic "lower: result try shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-option-try-shape-ok?)
+      (lower_tests.compiler-lower-option-try-shape-ok?)
       (io.panic "lower: option try shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-return-shape-ok?)
+      (lower_tests.compiler-lower-return-shape-ok?)
       (io.panic "lower: return smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-return-with-arena-shape-ok?)
+      (lower_tests.compiler-lower-return-with-arena-shape-ok?)
       (io.panic "lower: return with arena smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-resource-with-shape-ok?)
+      (lower_tests.compiler-lower-resource-with-shape-ok?)
       (io.panic "lower: resource-with smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-resource-with-nested-shape-ok?)
+      (lower_tests.compiler-lower-resource-with-nested-shape-ok?)
       (io.panic "lower: nested resource-with smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-cleanup-struct-shape-ok?)
+      (lower_tests.compiler-lower-cleanup-struct-shape-ok?)
       (io.panic "lower: cleanup struct smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-cleanup-struct-nested-shape-ok?)
+      (lower_tests.compiler-lower-cleanup-struct-nested-shape-ok?)
       (io.panic "lower: nested cleanup struct smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-array-length-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-array-length-source))
       (io.panic "lower: array length smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-fixed-array-length-shape-ok?)
+      (lower_tests.compiler-lower-fixed-array-length-shape-ok?)
       (io.panic "lower: fixed array length shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-array-access-shape-ok?
-        (compiler_lower_tests.compiler-lower-array-access-source))
+      (lower_tests.compiler-lower-array-access-shape-ok?
+        (lower_tests.compiler-lower-array-access-source))
       (io.panic "lower: array access smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-array-take-shape-ok?)
+      (lower_tests.compiler-lower-array-take-shape-ok?)
       (io.panic "lower: array take smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-fixed-array-access-shape-ok?
-        (compiler_lower_tests.compiler-lower-fixed-array-access-source))
+      (lower_tests.compiler-lower-fixed-array-access-shape-ok?
+        (lower_tests.compiler-lower-fixed-array-access-source))
       (io.panic "lower: fixed array access smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-fixed-array-literal-stack-shape-ok?)
+      (lower_tests.compiler-lower-fixed-array-literal-stack-shape-ok?)
       (io.panic "lower: fixed array stack literal smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-fixed-array-aggregate-layout-shape-ok?)
+      (lower_tests.compiler-lower-fixed-array-aggregate-layout-shape-ok?)
       (io.panic "lower: fixed array aggregate layout smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-array-access-shape-ok?
-        (compiler_lower_tests.compiler-lower-mut-ref-array-access-source))
+      (lower_tests.compiler-lower-array-access-shape-ok?
+        (lower_tests.compiler-lower-mut-ref-array-access-source))
       (io.panic "lower: mutable ref array access smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-mut-ref-by-value-writeback-shape-ok?)
+      (lower_tests.compiler-lower-mut-ref-by-value-writeback-shape-ok?)
       (io.panic "lower: mutable ref writeback smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-mut-ref-array-field-access-shape-ok?)
+      (lower_tests.compiler-lower-mut-ref-array-field-access-shape-ok?)
       (io.panic "lower: mutable ref array field smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-array-push-shape-ok?
-        (compiler_lower_tests.compiler-lower-array-push-source))
+      (lower_tests.compiler-lower-array-push-shape-ok?
+        (lower_tests.compiler-lower-array-push-source))
       (io.panic "lower: array push smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-array-push-shape-ok?
-        (compiler_lower_tests.compiler-lower-mut-ref-array-access-source))
+      (lower_tests.compiler-lower-array-push-shape-ok?
+        (lower_tests.compiler-lower-mut-ref-array-access-source))
       (io.panic "lower: mutable ref array push smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-fixed-array-push-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-fixed-array-push-source)
         "typecheck: __tl_array-push! requires dynamic array type")
       (io.panic "lower: fixed array push diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-make-array-shape-ok?
-        (compiler_lower_tests.compiler-lower-make-array-source))
+      (lower_tests.compiler-lower-make-array-shape-ok?
+        (lower_tests.compiler-lower-make-array-source))
       (io.panic "lower: __tl_make-array smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-make-array-init-shape-ok?
-        (compiler_lower_tests.compiler-lower-make-array-init-source))
+      (lower_tests.compiler-lower-make-array-init-shape-ok?
+        (lower_tests.compiler-lower-make-array-init-source))
       (io.panic "lower: __tl_make-array init smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-dyn-array-literal-shape-ok?)
+      (lower_tests.compiler-lower-dyn-array-literal-shape-ok?)
       (io.panic "lower: dynamic array literal smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-make-array-register-resident-zero-fill-shape-ok?)
+      (lower_tests.compiler-lower-make-array-register-resident-zero-fill-shape-ok?)
       (io.panic "lower: __tl_make-array fill8 smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-runtime-helper-tests-ok?)
+      (lower_tests.compiler-lower-runtime-helper-tests-ok?)
       (io.panic "lower: runtime helper smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-function-value-shape-ok?)
+      (lower_tests.compiler-lower-function-value-shape-ok?)
       (io.panic "lower: function value smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-mutable-global-function-value-shape-ok?)
+      (lower_tests.compiler-lower-mutable-global-function-value-shape-ok?)
       (io.panic "lower: mutable global function value smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-optimize-wide-power-product-shape-ok?)
+      (lower_tests.compiler-optimize-wide-power-product-shape-ok?)
       (io.panic "optimize: wide power-of-two product shape mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-global-reference-initializer-shape-ok?)
+      (lower_tests.compiler-lower-global-reference-initializer-shape-ok?)
       (io.panic "lower: global reference initializer smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-function-value-contextual-init-ok?)
+      (lower_tests.compiler-lower-function-value-contextual-init-ok?)
       (io.panic "lower: contextual function value smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-noncapturing-lambda-tests-ok?)
+      (lower_tests.compiler-lower-noncapturing-lambda-tests-ok?)
       (io.panic "lower: noncapturing lambda smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-capturing-lambda-tests-ok?)
+      (lower_tests.compiler-lower-capturing-lambda-tests-ok?)
       (io.panic "lower: capturing lambda smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-aggregate-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-aggregate-source))
       (io.panic "lower: aggregate smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-init-source))
+      (lower_tests.compiler-lower-ok? (lower_tests.compiler-lower-init-source))
       (io.panic "lower: init smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-tuple-shape-ok?)
+      (lower_tests.compiler-lower-tuple-shape-ok?)
       (io.panic "lower: tuple smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-tuple-return-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-tuple-return-source))
       (io.panic "lower: tuple return smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-clone-shape-ok?)
+      (lower_tests.compiler-lower-clone-shape-ok?)
       (io.panic "lower: clone smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-clone-dynarray-bulk-copy-ok?)
+      (lower_tests.compiler-lower-clone-dynarray-bulk-copy-ok?)
       (io.panic "lower: clone dynarray bulk smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-clone-reachable-helpers-ok?)
+      (lower_tests.compiler-lower-clone-reachable-helpers-ok?)
       (io.panic "lower: clone reachable helpers smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-clone-chunk-boundary-ok?)
+      (lower_tests.compiler-lower-clone-chunk-boundary-ok?)
       (io.panic "lower: clone chunk boundary smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-error-ok?
-        (compiler_lower_tests.compiler-lower-clone-unsupported-source)
+      (lower_tests.compiler-lower-error-ok?
+        (lower_tests.compiler-lower-clone-unsupported-source)
         "typecheck: clone unsupported type (-> i64 i64)")
       (io.panic "lower: clone unsupported diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-inline-aggregate-tests-ok?)
+      (lower_tests.compiler-lower-inline-aggregate-tests-ok?)
       (io.panic "lower: inline aggregate smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-ok?
-        (compiler_lower_tests.compiler-lower-generated-decl-source))
+      (lower_tests.compiler-lower-ok?
+        (lower_tests.compiler-lower-generated-decl-source))
       (io.panic "lower: comptime decl smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-generated-paths-preserved-ok?)
+      (lower_tests.compiler-lower-generated-paths-preserved-ok?)
       (io.panic "lower: generated paths smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-module-symbols-ok?)
+      (lower_tests.compiler-lower-module-symbols-ok?)
       (io.panic "lower: module symbols smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-package-owned-symbols-ok?)
+      (lower_tests.compiler-lower-package-owned-symbols-ok?)
       (io.panic "lower: package-owned symbols smoke mismatch"))
     (compiler-lower-smoke-module-entry-main-check)
     (unless
-      (compiler_lower_tests.compiler-lower-module-qualified-ok?)
+      (lower_tests.compiler-lower-module-qualified-ok?)
       (io.panic "lower: module qualified smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-import-alias-ok?)
+      (lower_tests.compiler-lower-import-alias-ok?)
       (io.panic "lower: import alias smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-dotted-import-default-alias-ok?)
+      (lower_tests.compiler-lower-dotted-import-default-alias-ok?)
       (io.panic "lower: dotted import default alias smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-dotted-import-string-call-ok?)
+      (lower_tests.compiler-lower-dotted-import-string-call-ok?)
       (io.panic "lower: dotted import string call smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-module-function-returning-struct-ok?)
+      (lower_tests.compiler-lower-module-function-returning-struct-ok?)
       (io.panic "lower: module struct return smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-module-function-returning-enum-ok?)
+      (lower_tests.compiler-lower-module-function-returning-enum-ok?)
       (io.panic "lower: module enum return smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-imported-enum-aggregate-payload-ok?)
+      (lower_tests.compiler-lower-imported-enum-aggregate-payload-ok?)
       (io.panic "lower: imported enum aggregate payload smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-module-macro-codegen-ok?)
+      (lower_tests.compiler-lower-module-macro-codegen-ok?)
       (io.panic "lower: module macro codegen smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-module-macro-global-init-ok?)
+      (lower_tests.compiler-lower-module-macro-global-init-ok?)
       (io.panic "lower: module macro global init smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-module-macro-stdlib-vector-import-ok?)
+      (lower_tests.compiler-lower-module-macro-stdlib-vector-import-ok?)
       (io.panic "lower: module macro stdlib vector import smoke mismatch"))
     (unless
       (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?)
       (io.panic
         "lower: no-main module macro stdlib vector import smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-function-decl-count-wrapped-ok?)
+      (lower_tests.compiler-lower-function-decl-count-wrapped-ok?)
       (io.panic "lower: function decl count smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-extern-link-metadata-ok?)
+      (lower_tests.compiler-lower-extern-link-metadata-ok?)
       (io.panic "lower: extern link metadata smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-extern-value-fnptr-shape-ok?)
+      (lower_tests.compiler-lower-extern-value-fnptr-shape-ok?)
       (io.panic "lower: extern fnptr value smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-linux-tag-only-enum-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-linux-tag-only-enum-shape-ok?)
       (io.panic "lower: linux tag-only enum C ABI smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
       (io.panic "lower: windows enum aggregate C ABI smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-linux-payload-enum-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-linux-payload-enum-shape-ok?)
       (io.panic "lower: linux payload enum C ABI smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
       (io.panic "lower: windows byref aggregate C ABI smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-windows-byref-aggregate-temps-shape-ok?)
       (io.panic "lower: windows byref aggregate temporaries smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
       (io.panic "lower: windows small float aggregate C ABI smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?)
+      (lower_tests.compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?)
       (io.panic "lower: windows nested small aggregate C ABI smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-windows-error-ok?
-        (compiler_lower_tests.compiler-lower-c-abi-windows-unsupported-aggregate-source)
+      (lower_tests.compiler-lower-windows-error-ok?
+        (lower_tests.compiler-lower-c-abi-windows-unsupported-aggregate-source)
         "lower: unsupported windows-x86_64 C aggregate ABI for OuterText; this slice supports scalar structs of size 1, 2, 4, or 8 bytes, including nested scalar struct fields")
       (io.panic "lower: windows unsupported C ABI diagnostic smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-global-shape-ok?)
+      (lower_tests.compiler-lower-global-shape-ok?)
       (io.panic "lower: global shape smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-raw-pointer-ops-ok?)
+      (lower_tests.compiler-lower-raw-pointer-ops-ok?)
       (io.panic "lower: raw pointer ops smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-raw-pointer-call-value-shape-ok?)
+      (lower_tests.compiler-lower-raw-pointer-call-value-shape-ok?)
       (io.panic "lower: raw pointer call value smoke mismatch"))
     (unless
       (compiler-lower-smoke-foreach-multi-output-shape-ok?)
@@ -1093,7 +1096,7 @@
       (compiler-lower-smoke-spmd-reduce-split-ok?)
       (io.panic "lower: spmd reduce addend split smoke mismatch"))
     (unless
-      (compiler_lower_tests.compiler-lower-back-half-tests-ok?)
+      (lower_tests.compiler-lower-back-half-tests-ok?)
       (io.panic "lower: back-half smoke mismatch"))
     (unless
       (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?)

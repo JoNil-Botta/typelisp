@@ -40,54 +40,8 @@
             (ptr-read (int->ptr address : (Ptr ,value-ty)))))])))
 
 (defmacro (compiler-owned-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-borrowed-inline-bootstrap
-    (let
-      [value-ty : comptime.Expr (comptime.expr-type place)]
-      [region? : bool (string.eq (type-kind value-ty) "region")]
-      (match (comptime.type-info value-ty)
-        [(comptime.TypeInfo.DynArray _)
-          (if region?
-            `(let
-              [shared-ref (& ,place)]
-              (compiler-owned-reference-shared-view shared-ref))
-            `(let
-              [shared-ref (& ,place)]
-              (unsafe
-                (ptr-read
-                  (ptr-cast
-                    (__tl_array-data (array shared-ref))
-                    : (Ptr ,value-ty))))))]
-        [(comptime.TypeInfo.Builtin kind)
-          (if region?
-            `(let
-              [shared-ref (& ,place)]
-              (compiler-owned-reference-shared-view shared-ref))
-            (if (string.eq kind "string")
-              `(let
-                [shared-ref (& ,place)]
-                (unsafe
-                  (ptr-read
-                    (ptr-cast
-                      (__tl_array-data (array shared-ref))
-                      : (Ptr ,value-ty)))))
-              place))]
-        [(comptime.TypeInfo.Opaque _)
-          (if region?
-            `(let
-              [shared-ref (& ,place)]
-              (compiler-owned-reference-shared-view shared-ref))
-            `(unsafe
-              (ptr-read (ptr-addr-of ,place))))]
-        [_
-          (if region?
-            `(let
-              [shared-ref (& ,place)]
-              (compiler-owned-reference-shared-view shared-ref))
-            `(unsafe
-              (ptr-read (ptr-addr-of ,place))))]))
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (compiler-owned-string-place-shared-view [place : Expr]) : Expr
   `(let

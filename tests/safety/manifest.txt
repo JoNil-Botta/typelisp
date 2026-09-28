@@ -149,7 +149,7 @@ compiler_ast_raw_extern_symbol_reject|check-fail|tests/safety/compiler_ast_raw_e
 compiler_ast_raw_field_name_reject|check-fail|tests/safety/compiler_ast_raw_field_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
 compiler_ir_raw_source_span_function_reject|check-fail|tests/safety/compiler_ir_raw_source_span_function_reject.tl|-|expected compiler_ir_types/CompilerIrSymbolId, found i64
 reader_view_raw_symbol_reject|check-fail|tests/safety/reader_view_raw_symbol_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
-unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
+unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|typecheck: cast requires scalar numeric (integer/char/float) source and target
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
 stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
@@ -197,7 +197,7 @@ global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutabl
 global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
-auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place
+auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 comptime_mut_borrow_rvalue_reject|check-fail|tests/safety/comptime_mut_borrow_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 comptime_mut_call_rvalue_reject|check-fail|tests/safety/comptime_mut_call_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
@@ -252,12 +252,12 @@ auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_li
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
-two_phase_mutable_call_second_mut_reject|check-fail|tests/safety/two_phase_mutable_call_second_mut_reject.tl|-|cannot mutably borrow borrowed place `items`
-two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_call_escape_reject.tl|-|cannot mutably borrow borrowed place `items`
-two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|cannot assign to borrowed place `items`
+two_phase_mutable_call_second_mut_reject|check-fail|tests/safety/two_phase_mutable_call_second_mut_reject.tl|-|typecheck: cannot mutably borrow borrowed place `items`
+two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_call_escape_reject.tl|-|typecheck: cannot mutably borrow borrowed place `items`
+two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|typecheck: cannot assign to borrowed place `items`
 lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_iterator_escape_reject.tl|-|reference value would escape lexical scope
 lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
-signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64)
+signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`
 signature_lifetime_alias_local_return_reject|check-fail|tests/safety/signature_lifetime_alias_local_return_reject.tl|-|typecheck: borrow lifetime mismatch
 lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
@@ -303,7 +303,7 @@ byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_r
 byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`
 byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot read mutably borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
-safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
+safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|typecheck: ptr-read requires unsafe context
 fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
 fs_raw_directory_alias_safe_reject|check-fail|tests/safety/fs_raw_directory_alias_safe_reject.tl|-|disk/c-string-byte requires unsafe context
 fs_raw_resource_integer_safe_reject|check-fail|tests/safety/fs_raw_resource_integer_safe_reject.tl|-|fs/file-lock-close-status requires unsafe context
@@ -369,7 +369,7 @@ format_pointer_slice_reject|check-fail|tests/safety/format_pointer_slice_reject.
 format_pointer_string_reject|check-fail|tests/safety/format_pointer_string_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_arguments_lifetime_escape_reject|check-fail|tests/safety/format_arguments_lifetime_escape_reject.tl|-|reference value would escape lexical scope
 format_direct_hook_wrong_signature_reject|check-fail|tests/safety/format_direct_hook_wrong_signature_reject.tl|-|call `format-write` argument 1
-safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall requires unsafe context
+safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|typecheck: syscall requires unsafe context
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
 with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch result type is not clone-supported
 while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
@@ -399,7 +399,7 @@ in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_as
 in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
 in_arena_ordinary_lambda_capture_reject|check-fail|tests/safety/in_arena_ordinary_lambda_capture_reject.tl|-|lambda cannot capture region-tagged value
 arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: call `arena.rewind` argument 1 type mismatch: expected stdlib.arena/ArenaMark, found stdlib.arena/Arena
-spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
+spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|typecheck: foreach cannot set binding declared outside foreach
 spmd_compact_body_type_reject|check-fail|tests/safety/spmd_compact_body_type_reject.tl|-|spmd-compact body must be unit
 spmd_compact_duplicate_binding_reject|check-fail|tests/safety/spmd_compact_duplicate_binding_reject.tl|-|spmd-compact index and slot bindings must have distinct names
 spmd_compact_index_type_reject|check-fail|tests/safety/spmd_compact_index_type_reject.tl|-|spmd-compact index type must be i64
@@ -421,7 +421,7 @@ spmd_scan_nested_foreach_reject|check-fail|tests/safety/spmd_scan_nested_foreach
 spmd_scan_outer_mutation_reject|check-fail|tests/safety/spmd_scan_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_scan_reduce_value_reject|check-fail|tests/safety/spmd_scan_reduce_value_reject.tl|-|nested spmd-scan is not allowed inside a spmd-reduce value expression
 spmd_scan_broadcast_value_reject|check-fail|tests/safety/spmd_scan_broadcast_value_reject.tl|-|spmd-scan body
-spmd_broadcast_outside_reject|check-fail|tests/safety/spmd_broadcast_outside_reject.tl|-|spmd-scan body
+spmd_broadcast_outside_reject|check-fail|tests/safety/spmd_broadcast_outside_reject.tl|-|typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body
 spmd_program_index_outside_reject|check-fail|tests/safety/spmd_program_index_outside_reject.tl|-|program-index is only
 spmd_program_count_foreach_bound_reject|check-fail|tests/safety/spmd_program_count_foreach_bound_reject.tl|-|program-count is only
 spmd_program_index_reduce_init_reject|check-fail|tests/safety/spmd_program_index_reduce_init_reject.tl|-|program-index is only
@@ -429,7 +429,7 @@ spmd_program_index_scan_body_reject|check-fail|tests/safety/spmd_program_index_s
 spmd_broadcast_varying_lane_reject|check-fail|tests/safety/spmd_broadcast_varying_lane_reject.tl|-|spmd-broadcast lane must be uniform
 spmd_broadcast_bool_reject|check-fail|tests/safety/spmd_broadcast_bool_reject.tl|-|spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred
 spmd_broadcast_masked_if_reject|check-fail|tests/safety/spmd_broadcast_masked_if_reject.tl|-|SPMD masked if does not support spmd-broadcast inside masked branches
-spmd_shuffle_outside_reject|check-fail|tests/safety/spmd_shuffle_outside_reject.tl|-|spmd-shuffle is only
+spmd_shuffle_outside_reject|check-fail|tests/safety/spmd_shuffle_outside_reject.tl|-|typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body
 spmd_shuffle_scan_value_reject|check-fail|tests/safety/spmd_shuffle_scan_value_reject.tl|-|spmd-scan body
 spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_reject.tl|-|spmd-shuffle lane must have type i64
 spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
@@ -445,8 +445,8 @@ spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_rejec
 spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
 spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array element destination indexes
 spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: call `atomic.atomic-i64-add!` argument 1 type mismatch: expected (& source stdlib.atomic/AtomicI64Buffer), found (& out stdlib.atomic/AtomicI32Buffer)
-spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
-spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
+spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|typecheck: return inside foreach is not supported
+spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|typecheck: try inside foreach is not supported
 spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
 spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
@@ -466,10 +466,8 @@ spmd_masked_if_side_effect_reject|check-fail|tests/safety/spmd_masked_if_side_ef
 spmd_masked_if_lane_type_reject|check-fail|tests/safety/spmd_masked_if_lane_type_reject.tl|-|SPMD masked if lane type is not supported: String
 spmd_masked_if_allocation_reject|check-fail|tests/safety/spmd_masked_if_allocation_reject.tl|-|SPMD masked if does not support allocations that can escape masked branches
 invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
-dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|cannot use numeric field segments; use tuple-ref or array-ref
+dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|typecheck: dotted field access p.0 cannot use numeric field segments; use tuple-ref or array-ref
 dotted_field_mut_borrow_dotted_dotted_reject|check-fail|tests/safety/dotted_field_mut_borrow_dotted_dotted_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
-dotted_field_mut_borrow_dotted_spelled_reject|check-fail|tests/safety/dotted_field_mut_borrow_dotted_spelled_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
-dotted_field_mut_borrow_spelled_dotted_reject|check-fail|tests/safety/dotted_field_mut_borrow_spelled_dotted_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_borrow_bound_reject.tl|-|cannot read mutably borrowed place `pair.left`
 dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
 dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
@@ -501,8 +499,8 @@ move_diverging_never_call_ok|run-exit|tests/safety/move_diverging_never_call_ok.
 move_diverging_nested_join_ok|run-exit|tests/safety/move_diverging_nested_join_ok.tl|42|-
 move_diverging_reinit_other_arm_ok|run-exit|tests/safety/move_diverging_reinit_other_arm_ok.tl|42|-
 move_diverging_loop_break_continue_ok|run-exit|tests/safety/move_diverging_loop_break_continue_ok.tl|42|-
-move_normal_arm_after_join_reject|check-fail|tests/safety/move_normal_arm_after_join_reject.tl|-|use of moved value `t`
-move_diverging_and_normal_arm_reject|check-fail|tests/safety/move_diverging_and_normal_arm_reject.tl|-|use of moved value `t`
+move_normal_arm_after_join_reject|check-fail|tests/safety/move_normal_arm_after_join_reject.tl|-|typecheck: use of moved value `t`
+move_diverging_and_normal_arm_reject|check-fail|tests/safety/move_diverging_and_normal_arm_reject.tl|-|typecheck: use of moved value `t`
 move_diverging_arm_reuse_reject|check-fail|tests/safety/move_diverging_arm_reuse_reject.tl|-|use of moved value `t`
 move_before_diverging_branch_reject|check-fail|tests/safety/move_before_diverging_branch_reject.tl|-|use of moved value `t`
 move_try_arm_after_join_reject|check-fail|tests/safety/move_try_arm_after_join_reject.tl|-|use of moved value `t`
@@ -528,7 +526,28 @@ serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_o
 serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
 serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
 serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
-module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch
+module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch: expected i64, found bool
+
+# Every declaration of every generated-module identity gets the normal
+# post-expansion typecheck, including declarations nothing references.
+generated_module_unused_invalid_reject|check-fail|tests/safety/generated_module_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_literal_narrowing_reject|check-fail|tests/safety/generated_module_literal_narrowing_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_bool_arithmetic_reject|check-fail|tests/safety/generated_module_bool_arithmetic_reject.tl|-|typecheck: integer operator expects matching integer operands
+generated_module_uncloneable_clone_reject|check-fail|tests/safety/generated_module_uncloneable_clone_reject.tl|-|typecheck: clone unsupported type (-> i64 i64)
+generated_module_equality_ok|check-ok|tests/safety/generated_module_equality_ok.tl|-|-
+generated_module_cleanup_ownership_reject|check-fail|tests/safety/generated_module_cleanup_ownership_reject.tl|-|field value stores cleanup-owning type FileHandle without :owned
+generated_module_reflection_fixed_shape_reject|check-fail|tests/safety/generated_module_reflection_fixed_shape_reject.tl|-|typecheck: array elements must have same type: expected i64, found bool
+generated_module_nested_unused_invalid_reject|check-fail|tests/safety/generated_module_nested_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_fixed_callee_reject|check-fail|tests/safety/generated_module_fixed_callee_reject.tl|-|typecheck: call `fixed-callee-only-i64` argument 1 (parameter `x`) type mismatch: expected i64, found u8
+generated_module_fixed_value_reject|check-fail|tests/safety/generated_module_fixed_value_reject.tl|-|typecheck: return type mismatch: expected u8, found i64
+generated_module_fixed_local_annotation_reject|check-fail|tests/safety/generated_module_fixed_local_annotation_reject.tl|-|typecheck: let binding `y` type mismatch: expected i64, found u8
+generated_module_fixed_return_reject|check-fail|tests/safety/generated_module_fixed_return_reject.tl|-|typecheck: return type mismatch: expected i64, found u8
+generated_module_fixed_field_access_reject|check-fail|tests/safety/generated_module_fixed_field_access_reject.tl|-|typecheck: return type mismatch: expected u8, found i64
+generated_module_substituted_condition_reject|check-fail|tests/safety/generated_module_substituted_condition_reject.tl|-|typecheck: if condition must be bool: expected bool, found u8
+generated_module_fixed_constructor_argument_reject|check-fail|tests/safety/generated_module_fixed_constructor_argument_reject.tl|-|typecheck: call `Box` argument 1 (parameter `fixed`) type mismatch: expected i64, found u8
+generated_module_partial_catalog_ok|check-ok|tests/safety/generated_module_partial_catalog_ok.tl|-|-
+generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|typecheck: integer operator expects matching integer operands
+
 serialize_unsupported_char_root_reject|check-fail|tests/safety/serialize_unsupported_char_root_reject.tl|-|serialize: unsupported root type
 serialize_unsupported_tuple_element_reject|check-fail|tests/safety/serialize_unsupported_tuple_element_reject.tl|-|serialize: unsupported type char
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool
@@ -612,11 +631,11 @@ comptime_lambda_reference_escape_reject|check-fail|tests/safety/comptime_lambda_
 lambda_mut_capture_moved_reference_reject|check-fail|tests/safety/lambda_mut_capture_moved_reference_reject.tl|-|use of moved value `exclusive`
 lambda_mut_capture_owner_read_live_reject|check-fail|tests/safety/lambda_mut_capture_owner_read_live_reject.tl|-|cannot read mutably borrowed place
 lambda_capture_source_reuse_reject|check-fail|tests/safety/lambda_capture_source_reuse_reject.tl|-|use of moved value `owned`
-lambda_noncopy_capture_alias_reuse_reject|check-fail|tests/safety/lambda_noncopy_capture_alias_reuse_reject.tl|-|use of moved value `f`
+lambda_noncopy_capture_alias_reuse_reject|check-fail|tests/safety/lambda_noncopy_capture_alias_reuse_reject.tl|-|typecheck: use of moved value `f`
 lambda_noncopy_capture_pass_reject|check-fail|tests/safety/lambda_noncopy_capture_pass_reject.tl|-|non-Copy closure ownership would be erased
 lambda_noncopy_capture_return_reject|check-fail|tests/safety/lambda_noncopy_capture_return_reject.tl|-|non-Copy closure ownership would be erased
-lambda_fnonce_second_call_reject|check-fail|tests/safety/lambda_fnonce_second_call_reject.tl|-|use of moved value `take`
-lambda_fnonce_escape_reject|check-fail|tests/safety/lambda_fnonce_escape_reject.tl|-|closure capability would be erased
+lambda_fnonce_second_call_reject|check-fail|tests/safety/lambda_fnonce_second_call_reject.tl|-|typecheck: use of moved value `take`
+lambda_fnonce_escape_reject|check-fail|tests/safety/lambda_fnonce_escape_reject.tl|-|typecheck: closure capability would be erased by escaping the direct local binding
 lambda_fnonce_argument_escape_reject|check-fail|tests/safety/lambda_fnonce_argument_escape_reject.tl|-|closure capability would be erased
 lambda_fnonce_aggregate_escape_reject|check-fail|tests/safety/lambda_fnonce_aggregate_escape_reject.tl|-|closure capability would be erased
 lambda_fnonce_direct_return_reject|check-fail|tests/safety/lambda_fnonce_direct_return_reject.tl|-|closure capability would be erased
@@ -733,7 +752,7 @@ replace_reference_lifetime_ok|check-ok|tests/safety/replace_reference_lifetime_o
 replace_shared_ref_reject|check-fail|tests/safety/replace_shared_ref_reject.tl|-|set! array element requires mutable array access
 replace_fixed_array_shared_ref_reject|check-fail|tests/safety/replace_fixed_array_shared_ref_reject.tl|-|set! array element requires mutable array access
 replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|replace! target must be a storage place
-replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|replace! target must be a mutable place
+replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|parse: replace! target must be a mutable place
 replace_fixed_array_temporary_reject|check-fail|tests/safety/replace_fixed_array_temporary_reject.tl|-|replace! target must be a storage place
 replace_moved_reject|check-fail|tests/safety/replace_moved_reject.tl|-|use of moved value `text`
 replace_partial_root_reject|check-fail|tests/safety/replace_partial_root_reject.tl|-|use of moved value `owners`
@@ -827,8 +846,8 @@ generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_
 # (#7921) resolve through their own declaration, never a later one's members:
 # each probe is the ordinary type error for its own i64 member, at widths
 # 1001-2500 with and without a later declaration. wide_aggregates.tl generates
-# the wide declarations; wide_struct_literal_decls.tl writes the issue's
-# reproducer out by hand. The well-typed twins run as the wide_struct_members,
+# the wide declarations; wide_struct_literal_decls.awk writes the issue's
+# reproducer out in full. The well-typed twins run as the wide_struct_members,
 # wide_enum_variants and wide_struct_literal native rows.
 wide_struct_1001_next_reject|check-fail|tests/safety/wide_struct_1001_next_reject.tl|-|if condition must be bool: expected bool, found i64
 wide_struct_1002_next_reject|check-fail|tests/safety/wide_struct_1002_next_reject.tl|-|if condition must be bool: expected bool, found i64

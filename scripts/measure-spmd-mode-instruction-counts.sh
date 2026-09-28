@@ -120,10 +120,9 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-fail() {
-    echo "[spmd-mode-ir] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[spmd-mode-ir] '
+. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
 
 csv_contains() {
     case ",$1," in
@@ -261,10 +260,6 @@ write_selected_support() {
     IFS=$_old_ifs
 }
 
-safe_name() {
-    printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
-}
-
 run_with_stable_argv0() {
     _stable_source=$1
     shift
@@ -279,70 +274,14 @@ run_with_stable_argv0() {
     )
 }
 
-show_logs() {
-    _stdout=$1
-    _stderr=$2
-    if [ -s "$_stdout" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$_stdout" >&2 || true
-    fi
-    if [ -s "$_stderr" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$_stderr" >&2 || true
-    fi
-}
-
-cachegrind_ir() {
-    awk '
-        /^events:/ {
-            ir_col = 0
-            for (i = 2; i <= NF; i++) {
-                if ($i == "Ir") ir_col = i - 1
-            }
-        }
-        /^summary:/ && ir_col > 0 {
-            value = $(ir_col + 1)
-            gsub(/,/, "", value)
-            print value
-            found = 1
-            exit
-        }
-        END { if (!found) exit 1 }
-    ' "$1"
-}
-
 run_cachegrind() {
-    _benchmark=$1
-    _mode=$2
-    _implementation=$3
-    _run=$4
-    _binary=$5
-    _safe=$(safe_name "$_benchmark-$_mode-$_implementation-$_run")
-    _cgout="$WORKDIR/logs/$_safe.cachegrind.out"
-    _stdout="$WORKDIR/logs/$_safe.stdout"
-    _stderr="$WORKDIR/logs/$_safe.stderr"
-
-    set +e
-    run_with_stable_argv0 "$_binary" \
+    _safe="$WORKDIR/logs/$(bench_safe_name "$1-$2-$3-$4")"
+    bench_cachegrind "$1/$2/$3 run $4" "$_safe.cachegrind.out" "$_safe.stdout" "$_safe.stderr" \
+        run_with_stable_argv0 "$5" \
         env -i PATH="$PATH" LC_ALL=C "$VALGRIND" \
-        --quiet --tool=cachegrind --cachegrind-out-file="$_cgout" \
-        >"$_stdout" 2>"$_stderr"
-    _status=$?
-    set -e
-
-    [ -s "$_cgout" ] || {
-        show_logs "$_stdout" "$_stderr"
-        fail "cachegrind did not write output for $_benchmark/$_mode/$_implementation run $_run"
-    }
-    _ir=$(cachegrind_ir "$_cgout") || {
-        show_logs "$_stdout" "$_stderr"
-        fail "could not parse Ir for $_benchmark/$_mode/$_implementation run $_run"
-    }
-    case "$_ir" in
-        "" | *[!0-9]*) fail "non-numeric Ir for $_benchmark/$_mode/$_implementation: $_ir" ;;
-    esac
+        --quiet --tool=cachegrind --cachegrind-out-file="$_safe.cachegrind.out"
     printf '%s\t%s\t%s\t%s\tmeasured\t%s\t%s\n' \
-        "$_benchmark" "$_mode" "$_implementation" "$_run" "$_ir" "$_status" \
+        "$1" "$2" "$3" "$4" "$BENCH_IR" "$BENCH_STATUS" \
         >> "$RUNS_TSV"
 }
 
@@ -360,26 +299,18 @@ measure_binary() {
 }
 
 build_typelisp_supported() {
-    _benchmark=$1
-    _mode=$2
-    _source="benchmarks/$_benchmark/bench.tl"
-    _binary="$WORKDIR/bin/$_benchmark.$_mode.typelisp"
-    _safe=$(safe_name "$_benchmark-$_mode-typelisp-build")
-    _stdout="$WORKDIR/logs/$_safe.stdout"
-    _stderr="$WORKDIR/logs/$_safe.stderr"
-    echo "[spmd-mode-ir] build $_benchmark/$_mode/typelisp"
-    if ! "$COMPILER" build "$_source" -o "$_binary" \
+    _binary="$WORKDIR/bin/$1.$2.typelisp"
+    _safe="$WORKDIR/logs/$(bench_safe_name "$1-$2-typelisp-build")"
+    echo "[spmd-mode-ir] build $1/$2/typelisp"
+    bench_build "$_binary" "$_safe.stdout" "$_safe.stderr" \
+        "failed to build supported TypeLisp row $1/$2" \
+        "$COMPILER" build "benchmarks/$1/bench.tl" -o "$_binary" \
         --target linux-x86_64 \
         --opt-level 2 \
-        --backend-mode "$_mode" \
+        --backend-mode "$2" \
         --stdlib-root stdlib \
-        --stdlib-root src \
-        >"$_stdout" 2>"$_stderr"; then
-        show_logs "$_stdout" "$_stderr"
-        fail "failed to build supported TypeLisp row $_benchmark/$_mode"
-    fi
-    [ -x "$_binary" ] || fail "TypeLisp build did not write executable: $_binary"
-    measure_binary "$_benchmark" "$_mode" typelisp "$_binary"
+        --stdlib-root src
+    measure_binary "$1" "$2" typelisp "$_binary"
 }
 
 verify_typelisp_unsupported() {
@@ -388,7 +319,7 @@ verify_typelisp_unsupported() {
     _expected=$3
     _source="benchmarks/$_benchmark/bench.tl"
     _binary="$WORKDIR/bin/$_benchmark.$_mode.unsupported.typelisp"
-    _safe=$(safe_name "$_benchmark-$_mode-typelisp-unsupported")
+    _safe=$(bench_safe_name "$_benchmark-$_mode-typelisp-unsupported")
     _stdout="$WORKDIR/logs/$_safe.stdout"
     _stderr="$WORKDIR/logs/$_safe.stderr"
     echo "[spmd-mode-ir] verify unsupported $_benchmark/$_mode/typelisp"
@@ -405,7 +336,7 @@ verify_typelisp_unsupported() {
     [ "$_status" -ne 0 ] || fail "unsupported row unexpectedly compiled: $_benchmark/$_mode"
     _actual=$(sed -n 's/^.*: lower: /lower: /p' "$_stderr")
     [ "$_actual" = "$_expected" ] || {
-        show_logs "$_stdout" "$_stderr"
+        bench_show_logs "$_stdout" "$_stderr"
         fail "unsupported diagnostic mismatch for $_benchmark/$_mode: expected '$_expected', got '$_actual'"
     }
     printf '%s\t%s\ttypelisp\t0\tunsupported\t-\t-\n' \
@@ -413,23 +344,16 @@ verify_typelisp_unsupported() {
 }
 
 build_c_baseline() {
-    _benchmark=$1
-    _mode=$2
-    _source="benchmarks/$_benchmark/baseline.c"
-    _binary="$WORKDIR/bin/$_benchmark.$_mode.clang"
-    _safe=$(safe_name "$_benchmark-$_mode-clang-build")
-    _stdout="$WORKDIR/logs/$_safe.stdout"
-    _stderr="$WORKDIR/logs/$_safe.stderr"
-    c_flags_for_mode "$_mode"
-    echo "[spmd-mode-ir] build $_benchmark/$_mode/clang ($C_FLAGS)"
+    _binary="$WORKDIR/bin/$1.$2.clang"
+    _safe="$WORKDIR/logs/$(bench_safe_name "$1-$2-clang-build")"
+    c_flags_for_mode "$2"
+    echo "[spmd-mode-ir] build $1/$2/clang ($C_FLAGS)"
     # C_FLAGS is a checked, script-owned flag string rather than user input.
     # shellcheck disable=SC2086
-    if ! clang $C_FLAGS "$_source" -o "$_binary" >"$_stdout" 2>"$_stderr"; then
-        show_logs "$_stdout" "$_stderr"
-        fail "failed to build clang row $_benchmark/$_mode"
-    fi
-    [ -x "$_binary" ] || fail "clang build did not write executable: $_binary"
-    measure_binary "$_benchmark" "$_mode" clang "$_binary"
+    bench_build "$_binary" "$_safe.stdout" "$_safe.stderr" \
+        "failed to build clang row $1/$2" \
+        clang $C_FLAGS "benchmarks/$1/baseline.c" -o "$_binary"
+    measure_binary "$1" "$2" clang "$_binary"
 }
 
 summarize_runs() {
@@ -773,19 +697,7 @@ for _tool in valgrind clang awk sed tr grep; do
 done
 VALGRIND=$(command -v valgrind)
 
-if [ -n "$COMPILER_ARG" ]; then
-    COMPILER=$COMPILER_ARG
-elif [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-case "$COMPILER" in
-    /*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-[ -x "$COMPILER" ] || fail "typelisp compiler is not executable: $COMPILER"
+bench_compiler "$COMPILER_ARG"
 
 validate_support_table
 if [ "$UPDATE_BASELINE" -eq 1 ] && \

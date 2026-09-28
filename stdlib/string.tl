@@ -759,117 +759,93 @@
 (test
   string-borrowed-str-gate
   (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
     [input : String "borrowed"]
     [view : (& input str) (& input)]
-    (if (= (__tl_string_length view) (__tl_string_length input))
-      unit
-      (fail))))
+    (test.assert-true
+      (= (__tl_string_length view) (__tl_string_length input))
+      "string-borrowed-str-gate: (= (__tl_string_length view) (__tl_string_length input))")))
 
 (test
   string-scoped-arena-allocation-policy
-  (let
-    [fail : (-> unit)
-      (lambda () : unit
-        (begin
-          (/ 1 0)
-          unit))]
-    (with-arena
-      outer
-      (let
-        [s : String "  outer  "]
-        [outer-trimmed : String (stdlib.string.trim (& s))]
-        [outer-slice : String (stdlib.string.substring (& s) 2 5)]
-        [outer-suffix : String "-append"]
-        [outer-appended : String
-          (stdlib.string.append (& outer-trimmed) (& outer-suffix))]
-        [outer-number : String (stdlib.string.int->string 12345)]
-        [outer-expected : String "outer"]
-        [outer-appended-expected : String "outer-append"]
-        [outer-number-expected : String "12345"]
-        (begin
-          (if (stdlib.string.eq (& outer-trimmed) (& outer-expected))
-            unit
-            (fail))
-          (if (stdlib.string.eq (& outer-slice) (& outer-expected))
-            unit
-            (fail))
-          (if (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
-            unit
-            (fail))
-          (if (stdlib.string.eq (& outer-number) (& outer-number-expected))
-            unit
-            (fail))
-          (with-arena
-            inner
-            (let
-              [inner-replaced : String
-                (stdlib.string.replace "alpha" "ph" "ren")]
-              [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
-              [inner-appended : String (stdlib.string.append "inner" "-append")]
-              [inner-concat : String (stdlib.string.concat "inner" "-concat")]
-              [inner-number : String (stdlib.string.int->string -6789)]
-              [inner-borrowed : String
-                (stdlib.string.append (& inner-slice) (& inner-replaced))]
-              [inner-replaced-expected : String "alrena"]
-              [inner-slice-expected : String "pha"]
-              [inner-appended-expected : String "inner-append"]
-              [inner-concat-expected : String "inner-concat"]
-              [inner-number-expected : String "-6789"]
-              [inner-borrowed-expected : String "phaalrena"]
-              (begin
-                (if (stdlib.string.eq
+  (with-arena
+    outer
+    (let
+      [s : String "  outer  "]
+      [outer-trimmed : String (stdlib.string.trim (& s))]
+      [outer-slice : String (stdlib.string.substring (& s) 2 5)]
+      [outer-suffix : String "-append"]
+      [outer-appended : String
+        (stdlib.string.append (& outer-trimmed) (& outer-suffix))]
+      [outer-number : String (stdlib.string.int->string 12345)]
+      [outer-expected : String "outer"]
+      [outer-appended-expected : String "outer-append"]
+      [outer-number-expected : String "12345"]
+      (begin
+        (test.assert-true
+          (stdlib.string.eq (& outer-trimmed) (& outer-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-trimmed) (& outer-expected))")
+        (test.assert-true
+          (stdlib.string.eq (& outer-slice) (& outer-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-slice) (& outer-expected))")
+        (test.assert-true
+          (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-appended) (& outer-appended-expected))")
+        (test.assert-true
+          (stdlib.string.eq (& outer-number) (& outer-number-expected))
+          "string-scoped-arena-allocation-policy: (eq (& outer-number) (& outer-number-expected))")
+        (with-arena
+          inner
+          (let
+            [inner-replaced : String (stdlib.string.replace "alpha" "ph" "ren")]
+            [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
+            [inner-appended : String (stdlib.string.append "inner" "-append")]
+            [inner-concat : String (stdlib.string.concat "inner" "-concat")]
+            [inner-number : String (stdlib.string.int->string -6789)]
+            [inner-borrowed : String
+              (stdlib.string.append (& inner-slice) (& inner-replaced))]
+            [inner-replaced-expected : String "alrena"]
+            [inner-slice-expected : String "pha"]
+            [inner-appended-expected : String "inner-append"]
+            [inner-concat-expected : String "inner-concat"]
+            [inner-number-expected : String "-6789"]
+            [inner-borrowed-expected : String "phaalrena"]
+            (begin
+              (test.assert-true
+                (stdlib.string.eq
                   (& inner-replaced)
                   (& inner-replaced-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
+                "string-scoped-arena-allocation-policy: (eq (& inner-replaced) (& inner-replaced-expected))")
+              (test.assert-true
+                (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
+                "string-scoped-arena-allocation-policy: (eq (& inner-slice) (& inner-slice-expected))")
+              (test.assert-true
+                (stdlib.string.eq
                   (& inner-appended)
                   (& inner-appended-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
-                  (& inner-concat)
-                  (& inner-concat-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
-                  (& inner-number)
-                  (& inner-number-expected))
-                  unit
-                  (fail))
-                (if (stdlib.string.eq
+                "string-scoped-arena-allocation-policy: (eq (& inner-appended) (& inner-appended-expected))")
+              (test.assert-true
+                (stdlib.string.eq (& inner-concat) (& inner-concat-expected))
+                "string-scoped-arena-allocation-policy: (eq (& inner-concat) (& inner-concat-expected))")
+              (test.assert-true
+                (stdlib.string.eq (& inner-number) (& inner-number-expected))
+                "string-scoped-arena-allocation-policy: (eq (& inner-number) (& inner-number-expected))")
+              (test.assert-true
+                (stdlib.string.eq
                   (& inner-borrowed)
                   (& inner-borrowed-expected))
-                  unit
-                  (fail))
-                (if (= (__tl_string_length outer-trimmed) 5)
-                  unit
-                  (fail))
-                (if (= (__tl_string_length outer-appended) 12)
-                  unit
-                  (fail))
-                (if (= (__tl_string_length outer-number) 5)
-                  unit
-                  (fail))))))))))
+                "string-scoped-arena-allocation-policy: (eq (& inner-borrowed) (& inner-borrowed-expected))")
+              (test.assert-true
+                (= (__tl_string_length outer-trimmed) 5)
+                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-trimmed) 5)")
+              (test.assert-true
+                (= (__tl_string_length outer-appended) 12)
+                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-appended) 12)")
+              (test.assert-true
+                (= (__tl_string_length outer-number) 5)
+                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-number) 5)"))))))))
 
 ;; Inline test coverage.
 (cfg test (import stdlib.test))
-
-(cfg
-  test
-  (define (string-test-assert-owned-string-eq
-    [actual : String]
-    [expected : String]
-    [message : String]) : unit
-    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -1025,300 +1001,282 @@
 
 (cfg
   test
-  (define (string-test-main) : i64
-    (begin
-      (test.assert-true (is-char-whitespace ' ') "space is whitespace")
-      (test.assert-true (is-char-whitespace '\t') "tab is whitespace")
-      (test.assert-true (is-char-whitespace '\n') "newline is whitespace")
-      (test.assert-true (is-char-whitespace '\r') "return is whitespace")
-      (test.assert-false (is-char-whitespace 'A') "letter is not whitespace")
-      (test.assert-true (char-eq 'A' 'A') "same chars compare equal")
-      (test.assert-false
-        (char-eq 'A' 'B')
-        "different chars do not compare equal")
-      (test.assert-true (eq "" "") "empty strings compare equal")
-      (test.assert-true (eq "hello" "hello") "same strings compare equal")
-      (test.assert-true
-        (string=? "alias" (append "ali" "as"))
-        "string=? aliases eq")
-      (string-test-assert-owned-string-eq
-        (append "" "")
-        ""
-        "append handles two empty strings")
-      (string-test-assert-owned-string-eq
-        (append "" "right")
-        "right"
-        "append handles empty left")
-      (string-test-assert-owned-string-eq
-        (append "left" "")
-        "left"
-        "append handles empty right")
-      (string-test-assert-owned-string-eq
-        (append "foo" "bar")
-        "foobar"
-        "append concatenates short strings")
-      (string-test-assert-owned-string-eq
-        (append
-          "abcdefghijklmnopqrstuvwxyz"
-          "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "append concatenates long strings")
-      (string-test-assert-owned-string-eq
-        (concat "con" "cat")
-        "concat"
-        "concat aliases append")
-      (string-test-assert-owned-string-eq
-        (string-test-concat-all-empty)
-        ""
-        "concat-all handles an empty parts array")
-      (string-test-assert-owned-string-eq
-        (string-test-concat-all-many)
-        "abcdefgh"
-        "concat-all concatenates many parts")
-      (string-test-assert-owned-string-eq
-        (concat3 "a" "b" "c")
-        "abc"
-        "concat3 concatenates three strings")
-      (string-test-assert-owned-string-eq
-        (concat4 "a" "b" "c" "d")
-        "abcd"
-        "concat4 concatenates four strings")
-      (string-test-assert-owned-string-eq
-        (concat5 "a" "b" "c" "d" "e")
-        "abcde"
-        "concat5 concatenates five strings")
-      (string-test-assert-owned-string-eq
-        (string-test-copy-explicit-borrow "borrow-copy")
-        "borrow-copy"
-        "copy copies explicitly borrowed text")
-      (string-test-assert-owned-string-eq
-        (string-test-append-explicit-borrow "bor" "row")
-        "borrow"
-        "append concatenates explicitly borrowed inputs")
-      (string-test-assert-owned-string-eq
-        (string-test-concat-explicit-borrow "" "borrowed")
-        "borrowed"
-        "concat handles empty explicitly borrowed input")
-      (let
-        [left : String "owned"]
-        [right : String "-place"]
-        [joined : String (append left right)]
-        (begin
-          (string-test-assert-owned-string-eq
-            joined
-            "owned-place"
-            "append auto-borrows owned places")
-          (string-test-assert-owned-string-eq
-            left
-            "owned"
-            "append leaves the left owned place usable")
-          (string-test-assert-owned-string-eq
-            right
-            "-place"
-            "append leaves the right owned place usable")))
-      (test.assert-true
-        (string-test-append-auto-borrow-param "owned" "-param")
-        "append auto-borrows owned parameters")
-      (test.assert-false (eq "hello" "world") "different strings differ")
-      (test.assert-false (eq "hi" "high") "length mismatch differs")
-      (test.assert-true
-        (string-test-eq-explicit-borrow "borrow" (concat3 "bor" "row" ""))
-        "explicitly borrowed string equality compares contents")
-      (test.assert-false
-        (string-test-eq-explicit-borrow "borrow" "borrows")
-        "explicitly borrowed string equality rejects length mismatch")
-      (test.assert-i64-eq (>int "") 0 "empty string parses as zero")
-      (test.assert-i64-eq (>int "-") 0 "minus-only string parses as zero")
-      (test.assert-i64-eq (>int "123") 123 "positive integer parses")
-      (test.assert-i64-eq (>int "-42") -42 "negative integer parses")
-      (test.assert-i64-eq
-        (string-test-to-int-explicit-borrow "12a")
-        169
-        "explicitly borrowed parser keeps legacy non-digit arithmetic")
-      (string-test-assert-owned-string-eq
-        (int->string 0)
-        "0"
-        "int->string renders zero")
-      (string-test-assert-owned-string-eq
-        (int->string 123456789)
-        "123456789"
-        "int->string renders positive values")
-      (string-test-assert-owned-string-eq
-        (int->string -42)
-        "-42"
-        "int->string renders negative values")
-      (string-test-assert-owned-string-eq
-        (int->string 9223372036854775807)
-        "9223372036854775807"
-        "int->string renders i64 max")
-      (string-test-assert-owned-string-eq
-        (int->string (- (- 0 9223372036854775807) 1))
-        "-9223372036854775808"
-        "int->string renders i64 min")
-      (string-test-assert-owned-string-eq
-        (substring "abcdef" 2 3)
-        "cde"
-        "public substring copies middle slice")
-      (string-test-assert-owned-string-eq
-        (slice "abcdef" 6 0)
-        ""
-        "public slice copies empty boundary slice")
-      (string-test-assert-owned-string-eq
-        (string-test-substring "abcdef" 0 6)
-        "abcdef"
-        "borrowed substring copies full slice")
-      (string-test-assert-owned-string-eq
-        (string-test-slice-explicit-borrow "abcdef" 5 1)
-        "f"
-        "explicitly borrowed slice copies final byte")
-      (string-test-assert-owned-string-eq
-        (string-test-substring
-          "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-          10
-          40)
-        "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
-        "borrowed substring copies long slice")
-      (begin
-        (test.assert-true
-          (string-test-substring-view-eq "abcdef" 2 3 "cde")
-          "substring-view borrows middle slice")
-        (test.assert-i64-eq
-          (string-test-substring-view-len "abcdef" 6 0)
-          0
-          "substring-view borrows empty boundary slice")
-        (test.assert-true
-          (string-test-slice-view-eq "abcdef" 5 1 "f")
-          "string-slice-view aliases borrowed substring view"))
-      (string-test-assert-owned-string-eq
-        (string-test-trim-left "  hello")
-        "hello"
-        "trim-left removes leading spaces")
-      (string-test-assert-owned-string-eq
-        (string-test-trim-left "")
-        ""
-        "trim-left handles empty strings")
-      (string-test-assert-owned-string-eq
-        (string-test-trim-right "hello  ")
-        "hello"
-        "trim-right removes trailing spaces")
-      (string-test-assert-owned-string-eq
-        (string-test-trim-right "   ")
-        ""
-        "trim-right handles all-space strings")
-      (string-test-assert-owned-string-eq
-        (string-test-trim "  hello  ")
-        "hello"
-        "trim removes both sides")
-      (string-test-assert-owned-string-eq
-        (string-test-trim "")
-        ""
-        "trim handles empty strings")
-      (begin
-        (test.assert-true
-          (string-test-trim-left-view-eq "  hello" "hello")
-          "trim-left-view removes leading spaces")
-        (test.assert-true
-          (string-test-trim-right-view-eq "hello  " "hello")
-          "trim-right-view removes trailing spaces")
-        (test.assert-true
-          (string-test-trim-view-eq "  hello  " "hello")
-          "trim-view removes both sides")
-        (test.assert-true
-          (string-test-trim-view-eq "   " "")
-          "trim-view handles all-space strings"))
-      (test.assert-true
-        (string-test-contains "hello" "ell")
-        "contains finds middle needle")
-      (test.assert-true
-        (string-test-contains "hello" "")
-        "contains accepts empty needle")
-      (test.assert-false
-        (string-test-contains "hello" "world")
-        "contains reports miss")
-      (test.assert-false
-        (string-test-contains "hi" "hello")
-        "contains rejects too-long needle")
-      (test.assert-true
-        (string-test-contains-char "hello" 'e')
-        "contains-char finds char")
-      (test.assert-false
-        (string-test-contains-char "hello" 'z')
-        "contains-char reports miss")
-      (test.assert-false
-        (string-test-contains-char "" 'z')
-        "contains-char handles empty string")
-      (test.assert-i64-eq
-        (index-of-byte "hello" 0 (cast 'h' : u8))
-        0
-        "index-of-byte finds first byte")
-      (test.assert-i64-eq
-        (index-of-byte "hello" 3 (cast 'l' : u8))
-        3
-        "index-of-byte honors nonzero start")
-      (test.assert-i64-eq
-        (index-of-byte "hello" 0 (cast 'z' : u8))
-        -1
-        "index-of-byte reports miss")
-      (test.assert-i64-eq
-        (index-of-byte "hello" 5 (cast 'o' : u8))
-        -1
-        "index-of-byte rejects start at length")
-      (test.assert-i64-eq
-        (index-of-byte "hello" -1 (cast 'h' : u8))
-        -1
-        "index-of-byte rejects negative start")
-      (test.assert-i64-eq
-        (index-of-byte "" 0 (cast 'h' : u8))
-        -1
-        "index-of-byte handles empty string")
-      (let
-        [with-nul : String (string-test-with-nul)]
-        (test.assert-i64-eq
-          (index-of-byte (& with-nul) 0 (cast 0 : u8))
-          1
-          "index-of-byte finds embedded nul"))
-      (string-test-assert-owned-string-eq
-        (replace "hello" "ell" "ipp")
-        "hippo"
-        "replace middle")
-      (string-test-assert-owned-string-eq
-        (replace "hello" "he" "ye")
-        "yello"
-        "replace prefix")
-      (string-test-assert-owned-string-eq
-        (replace "hello" "lo" "p")
-        "help"
-        "replace suffix")
-      (string-test-assert-owned-string-eq
-        (replace "hello" "zz" "yy")
-        "hello"
-        "replace miss returns input")
-      (string-test-assert-owned-string-eq
-        (replace "abc" "" "x")
-        "xabc"
-        "replace empty needle prefixes")
-      (test.assert-true
-        (string-test-prefix-at "hello" "he" 0)
-        "prefix at start")
-      (test.assert-true
-        (string-test-prefix-at "hello" "ll" 2)
-        "prefix in middle")
-      (test.assert-true
-        (string-test-prefix-at "hello" "" 5)
-        "empty prefix at end")
-      (test.assert-false
-        (string-test-prefix-at "hello" "he" -1)
-        "negative prefix position")
-      (test.assert-false
-        (string-test-prefix-at "hello" "hello!" 0)
-        "too-long prefix")
-      (test.assert-false
-        (string-test-prefix-at "hello" "lo" 4)
-        "prefix past end")
-      42)))
-
-(cfg
-  test
   (test
     string-api-edges
-    (test.assert-i64-eq (string-test-main) 42 "string-api-edges fixture result")))
+    (test.assert-true (is-char-whitespace ' ') "space is whitespace")
+    (test.assert-true (is-char-whitespace '\t') "tab is whitespace")
+    (test.assert-true (is-char-whitespace '\n') "newline is whitespace")
+    (test.assert-true (is-char-whitespace '\r') "return is whitespace")
+    (test.assert-false (is-char-whitespace 'A') "letter is not whitespace")
+    (test.assert-true (char-eq 'A' 'A') "same chars compare equal")
+    (test.assert-false (char-eq 'A' 'B') "different chars do not compare equal")
+    (test.assert-true (eq "" "") "empty strings compare equal")
+    (test.assert-true (eq "hello" "hello") "same strings compare equal")
+    (test.assert-true
+      (string=? "alias" (append "ali" "as"))
+      "string=? aliases eq")
+    (test.assert-owned-string-eq
+      (append "" "")
+      ""
+      "append handles two empty strings")
+    (test.assert-owned-string-eq
+      (append "" "right")
+      "right"
+      "append handles empty left")
+    (test.assert-owned-string-eq
+      (append "left" "")
+      "left"
+      "append handles empty right")
+    (test.assert-owned-string-eq
+      (append "foo" "bar")
+      "foobar"
+      "append concatenates short strings")
+    (test.assert-owned-string-eq
+      (append
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+      "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      "append concatenates long strings")
+    (test.assert-owned-string-eq
+      (concat "con" "cat")
+      "concat"
+      "concat aliases append")
+    (test.assert-owned-string-eq
+      (string-test-concat-all-empty)
+      ""
+      "concat-all handles an empty parts array")
+    (test.assert-owned-string-eq
+      (string-test-concat-all-many)
+      "abcdefgh"
+      "concat-all concatenates many parts")
+    (test.assert-owned-string-eq
+      (concat3 "a" "b" "c")
+      "abc"
+      "concat3 concatenates three strings")
+    (test.assert-owned-string-eq
+      (concat4 "a" "b" "c" "d")
+      "abcd"
+      "concat4 concatenates four strings")
+    (test.assert-owned-string-eq
+      (concat5 "a" "b" "c" "d" "e")
+      "abcde"
+      "concat5 concatenates five strings")
+    (test.assert-owned-string-eq
+      (string-test-copy-explicit-borrow "borrow-copy")
+      "borrow-copy"
+      "copy copies explicitly borrowed text")
+    (test.assert-owned-string-eq
+      (string-test-append-explicit-borrow "bor" "row")
+      "borrow"
+      "append concatenates explicitly borrowed inputs")
+    (test.assert-owned-string-eq
+      (string-test-concat-explicit-borrow "" "borrowed")
+      "borrowed"
+      "concat handles empty explicitly borrowed input")
+    (let
+      [left : String "owned"]
+      [right : String "-place"]
+      [joined : String (append left right)]
+      (begin
+        (test.assert-owned-string-eq
+          joined
+          "owned-place"
+          "append auto-borrows owned places")
+        (test.assert-owned-string-eq
+          left
+          "owned"
+          "append leaves the left owned place usable")
+        (test.assert-owned-string-eq
+          right
+          "-place"
+          "append leaves the right owned place usable")))
+    (test.assert-true
+      (string-test-append-auto-borrow-param "owned" "-param")
+      "append auto-borrows owned parameters")
+    (test.assert-false (eq "hello" "world") "different strings differ")
+    (test.assert-false (eq "hi" "high") "length mismatch differs")
+    (test.assert-true
+      (string-test-eq-explicit-borrow "borrow" (concat3 "bor" "row" ""))
+      "explicitly borrowed string equality compares contents")
+    (test.assert-false
+      (string-test-eq-explicit-borrow "borrow" "borrows")
+      "explicitly borrowed string equality rejects length mismatch")
+    (test.assert-i64-eq (>int "") 0 "empty string parses as zero")
+    (test.assert-i64-eq (>int "-") 0 "minus-only string parses as zero")
+    (test.assert-i64-eq (>int "123") 123 "positive integer parses")
+    (test.assert-i64-eq (>int "-42") -42 "negative integer parses")
+    (test.assert-i64-eq
+      (string-test-to-int-explicit-borrow "12a")
+      169
+      "explicitly borrowed parser keeps legacy non-digit arithmetic")
+    (test.assert-owned-string-eq (int->string 0) "0" "int->string renders zero")
+    (test.assert-owned-string-eq
+      (int->string 123456789)
+      "123456789"
+      "int->string renders positive values")
+    (test.assert-owned-string-eq
+      (int->string -42)
+      "-42"
+      "int->string renders negative values")
+    (test.assert-owned-string-eq
+      (int->string 9223372036854775807)
+      "9223372036854775807"
+      "int->string renders i64 max")
+    (test.assert-owned-string-eq
+      (int->string (- (- 0 9223372036854775807) 1))
+      "-9223372036854775808"
+      "int->string renders i64 min")
+    (test.assert-owned-string-eq
+      (substring "abcdef" 2 3)
+      "cde"
+      "public substring copies middle slice")
+    (test.assert-owned-string-eq
+      (slice "abcdef" 6 0)
+      ""
+      "public slice copies empty boundary slice")
+    (test.assert-owned-string-eq
+      (string-test-substring "abcdef" 0 6)
+      "abcdef"
+      "borrowed substring copies full slice")
+    (test.assert-owned-string-eq
+      (string-test-slice-explicit-borrow "abcdef" 5 1)
+      "f"
+      "explicitly borrowed slice copies final byte")
+    (test.assert-owned-string-eq
+      (string-test-substring
+        "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        10
+        40)
+      "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
+      "borrowed substring copies long slice")
+    (begin
+      (test.assert-true
+        (string-test-substring-view-eq "abcdef" 2 3 "cde")
+        "substring-view borrows middle slice")
+      (test.assert-i64-eq
+        (string-test-substring-view-len "abcdef" 6 0)
+        0
+        "substring-view borrows empty boundary slice")
+      (test.assert-true
+        (string-test-slice-view-eq "abcdef" 5 1 "f")
+        "string-slice-view aliases borrowed substring view"))
+    (test.assert-owned-string-eq
+      (string-test-trim-left "  hello")
+      "hello"
+      "trim-left removes leading spaces")
+    (test.assert-owned-string-eq
+      (string-test-trim-left "")
+      ""
+      "trim-left handles empty strings")
+    (test.assert-owned-string-eq
+      (string-test-trim-right "hello  ")
+      "hello"
+      "trim-right removes trailing spaces")
+    (test.assert-owned-string-eq
+      (string-test-trim-right "   ")
+      ""
+      "trim-right handles all-space strings")
+    (test.assert-owned-string-eq
+      (string-test-trim "  hello  ")
+      "hello"
+      "trim removes both sides")
+    (test.assert-owned-string-eq
+      (string-test-trim "")
+      ""
+      "trim handles empty strings")
+    (begin
+      (test.assert-true
+        (string-test-trim-left-view-eq "  hello" "hello")
+        "trim-left-view removes leading spaces")
+      (test.assert-true
+        (string-test-trim-right-view-eq "hello  " "hello")
+        "trim-right-view removes trailing spaces")
+      (test.assert-true
+        (string-test-trim-view-eq "  hello  " "hello")
+        "trim-view removes both sides")
+      (test.assert-true
+        (string-test-trim-view-eq "   " "")
+        "trim-view handles all-space strings"))
+    (test.assert-true
+      (string-test-contains "hello" "ell")
+      "contains finds middle needle")
+    (test.assert-true
+      (string-test-contains "hello" "")
+      "contains accepts empty needle")
+    (test.assert-false
+      (string-test-contains "hello" "world")
+      "contains reports miss")
+    (test.assert-false
+      (string-test-contains "hi" "hello")
+      "contains rejects too-long needle")
+    (test.assert-true
+      (string-test-contains-char "hello" 'e')
+      "contains-char finds char")
+    (test.assert-false
+      (string-test-contains-char "hello" 'z')
+      "contains-char reports miss")
+    (test.assert-false
+      (string-test-contains-char "" 'z')
+      "contains-char handles empty string")
+    (test.assert-i64-eq
+      (index-of-byte "hello" 0 (cast 'h' : u8))
+      0
+      "index-of-byte finds first byte")
+    (test.assert-i64-eq
+      (index-of-byte "hello" 3 (cast 'l' : u8))
+      3
+      "index-of-byte honors nonzero start")
+    (test.assert-i64-eq
+      (index-of-byte "hello" 0 (cast 'z' : u8))
+      -1
+      "index-of-byte reports miss")
+    (test.assert-i64-eq
+      (index-of-byte "hello" 5 (cast 'o' : u8))
+      -1
+      "index-of-byte rejects start at length")
+    (test.assert-i64-eq
+      (index-of-byte "hello" -1 (cast 'h' : u8))
+      -1
+      "index-of-byte rejects negative start")
+    (test.assert-i64-eq
+      (index-of-byte "" 0 (cast 'h' : u8))
+      -1
+      "index-of-byte handles empty string")
+    (let
+      [with-nul : String (string-test-with-nul)]
+      (test.assert-i64-eq
+        (index-of-byte (& with-nul) 0 (cast 0 : u8))
+        1
+        "index-of-byte finds embedded nul"))
+    (test.assert-owned-string-eq
+      (replace "hello" "ell" "ipp")
+      "hippo"
+      "replace middle")
+    (test.assert-owned-string-eq
+      (replace "hello" "he" "ye")
+      "yello"
+      "replace prefix")
+    (test.assert-owned-string-eq
+      (replace "hello" "lo" "p")
+      "help"
+      "replace suffix")
+    (test.assert-owned-string-eq
+      (replace "hello" "zz" "yy")
+      "hello"
+      "replace miss returns input")
+    (test.assert-owned-string-eq
+      (replace "abc" "" "x")
+      "xabc"
+      "replace empty needle prefixes")
+    (test.assert-true (string-test-prefix-at "hello" "he" 0) "prefix at start")
+    (test.assert-true (string-test-prefix-at "hello" "ll" 2) "prefix in middle")
+    (test.assert-true
+      (string-test-prefix-at "hello" "" 5)
+      "empty prefix at end")
+    (test.assert-false
+      (string-test-prefix-at "hello" "he" -1)
+      "negative prefix position")
+    (test.assert-false
+      (string-test-prefix-at "hello" "hello!" 0)
+      "too-long prefix")
+    (test.assert-false (string-test-prefix-at "hello" "lo" 4) "prefix past end")))

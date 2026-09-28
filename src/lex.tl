@@ -1,37 +1,12 @@
-;; lex.tl - The TypeLisp-syntax (s-expression) lexer factored out as a
-;; `main`-less, importable module.
+;; lex.tl - The TypeLisp-syntax (s-expression) lexer as a `main`-less,
+;; importable module.
 ;;
-;; --------------------------------------------------------------------------
-;; Why this module exists (the module signal for the reader).
-;; --------------------------------------------------------------------------
-;; `lexer.tl` is the *demo* program for the s-expression lexer: it carries a
-;; `main` that lexes a sample and tallies its symbols. But the next front-end
-;; component - the s-expression *reader* in `reader.tl` - wants to REUSE the
-;; lexer's `lex : (-> String (__tl_dyn-array token.Token))` rather than
-;; re-derive it, and it carries its own `main` (read tokens into a recursive
-;; `Sexpr` tree, fold it).
-;;
-;; The module loader is whole-program: it concatenates every imported
-;; module's declarations into a single program, then runs the unchanged
-;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
-;; `main` and are loaded together produce a duplicate `main` symbol - the known
-;; module limitation. Importing `lexer.tl` (which HAS a `main`) into the
-;; reader (which also needs a `main`) would clash.
-;;
-;; The fix is this `main`-less module: it holds the lexer's scanners, the
-;; recoverable `result` entry, the legacy `lex` wrapper, `(import)`s the
-;; shared `main`-less `token` module, and declares NO `main`. The reader
-;; imports this module for `lex` and imports `token` directly for token types,
-;; so the concatenated program has exactly one
-;; `main` (the reader's). `lexer.tl`
-;; stays as the lexer's standalone demo. This mirrors how `calc.tl` imports the
-;; `main`-less `token.tl`: a `main`-less module is the unit of reuse, a
-;; `main`-bearing file is a runnable demo.
-;; The shared token model: the `token.Token` enum and the `token.tag` / `token.int` /
-;; `token.sym` / `token.str` / `token.char` / `token.float` accessors and tag
-;; constants.
-;; Imported by module name so token declarations stay behind the `token.`
-;; qualifier instead of flattening through `lex.tl`.
+;; `spanned-result` scans source text into `token.SpannedToken` records, each
+;; with the line and column of its first character; the reader (`read.tl`)
+;; consumes them. `result` and `lex` copy the same token stream without
+;; positions for the token-level tests; no compiler path reads it. The token
+;; model (`token.Token`, its accessors and tag constants) stays behind the
+;; `token.` qualifier.
 (import stdlib.str_cat_runtime as str_cat)
 
 (module lex)
@@ -47,11 +22,8 @@
 (import (result.result i64 String) as result_lex_i64)
 
 (defmacro (global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defmacro (array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
@@ -63,10 +35,6 @@
 
 (defenum ResultSpannedTokens
   (Ok (__tl_dyn-array token.SpannedToken))
-  (Err token.SourceError))
-
-(defenum ResultLexCheck
-  (Ok i64)
   (Err token.SourceError))
 
 (defenum ResultLexIntoSpanned
@@ -90,11 +58,6 @@
 
 (define (ok? [message : (& message str)]) : bool
   (string.eq message ""))
-
-;; Numeric code point of a char, used only when a code value is intentionally
-;; observed (for example in the lexer demo's character-code checksum).
-(define (code [c : char]) : i64
-  (cast c : i64))
 
 ;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
@@ -437,7 +400,7 @@
 ;; while ASCII case-folding and range tests need no second safety check.
 ;;
 ;; `:` is itself a symbol char, so testing membership first and the `:` rule
-;; second is equivalent to the original order: a non-`:` byte was decided by
+;; second is equivalent to testing `:` first: a non-`:` byte is decided by
 ;; `is-symbol-char` either way, and a `:` byte reaches the `pkg` rule either way.
 (define (scan-symbol-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
@@ -633,244 +596,6 @@
               (ResultMaybeLexCharLiteral.No))
             (ResultMaybeLexCharLiteral.No))]))
     (ResultMaybeLexCharLiteral.No)))
-
-(define (check-step [src : (& src str)] [i : i64] [n : i64]) : result_lex_i64.Result
-  (let
-    [c : char (__tl_string_ref src i)]
-    (cond
-      [(is-space c) (result_lex_i64.Ok (+ i 1))]
-      [(or (= c '(') (= c '[')) (result_lex_i64.Ok (+ i 1))]
-      [(or (= c ')') (= c ']')) (result_lex_i64.Ok (+ i 1))]
-      [(= c '\'')
-        (match (apostrophe-char-literal-result src i n)
-          [(ResultMaybeLexCharLiteral.Ok _ end) (result_lex_i64.Ok end)]
-          [(ResultMaybeLexCharLiteral.Err message) (result_lex_i64.Err message)]
-          [(ResultMaybeLexCharLiteral.No) (result_lex_i64.Ok (+ i 1))])]
-      [(= c '`') (result_lex_i64.Ok (+ i 1))]
-      [(= c ',')
-        (if (< (+ i 1) n)
-          (if (= (__tl_string_ref src (+ i 1)) '@')
-            (result_lex_i64.Ok (+ i 2))
-            (result_lex_i64.Ok (+ i 1)))
-          (result_lex_i64.Ok (+ i 1)))]
-      [(= c '"')
-        (let
-          [start : i64 (+ i 1)]
-          (match (scan-str-end-result src start n)
-            [(result_lex_i64.Ok end) (result_lex_i64.Ok (+ end 1))]
-            [(result_lex_i64.Err message) (result_lex_i64.Err message)]))]
-      [(= c ';') (result_lex_i64.Ok (scan-comment-end src (+ i 1) n))]
-      [(or (is-digit c) (negative-number-start? src i n))
-        (scan-number-end-result src i n)]
-      [(is-symbol-char c) (result_lex_i64.Ok (scan-symbol-end src i n))]
-      [else (result_lex_i64.Err "lexer: unexpected character")])))
-
-(define (check-spanned [src : (& src str)]) : ResultLexCheck
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length src)]
-    [message : String ""]
-    [err-pos : i64 0]
-    (begin
-      (while (and (< i n) (ok? message))
-        (match (check-step src i n)
-          [(result_lex_i64.Ok next) (set! i next)]
-          [(result_lex_i64.Err err)
-            (begin
-              (set! message err)
-              (set! err-pos i)
-              (set! i n))]))
-      (if (ok? message)
-        (ResultLexCheck.Ok i)
-        (ResultLexCheck.Err (source-error-at src err-pos message))))))
-
-(define (check [src : String]) : result_lex_i64.Result
-  (match (check-spanned src)
-    [(ResultLexCheck.Ok end) (result_lex_i64.Ok end)]
-    [(ResultLexCheck.Err err)
-      (result_lex_i64.Err (token.source-error-message err))]))
-
-;; Core scanner. Fills `toks` with the token stream and, in parallel, records
-;; each token's starting byte index into `starts[count]`. The plain token
-;; path uses this through `result`; `spanned-result` uses a direct
-;; scanner that records line/column positions while tokenizing. Returns the
-;; token count (excluding the trailing `token.Token.End`).
-(define (into-spanned-result
-  [src : (& src str)]
-  [toks : (&mut toks (__tl_dyn-array token.Token))]
-  [starts : (&mut starts (__tl_dyn-array i64))]
-  [owner : (LexerInternOwner intern-state)]) : ResultLexIntoSpanned
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length src)]
-    [count : i64 0]
-    [ok : bool true]
-    [message : String ""]
-    [err-pos : i64 0]
-    (begin
-      (cfg compile-profile (lexer-intern-profile-note-source-bytes owner n))
-      (while (and (< i n) ok)
-        (let
-          [c : char (__tl_string_ref src i)]
-          (cond
-            [(is-space c) (set! i (+ i 1))]
-            [(= c '(')
-              (begin
-                (set! (array-ref starts count) i)
-                (set! (array-ref toks count) token.Token.LParen)
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c '[')
-              (begin
-                (set! (array-ref starts count) i)
-                (set! (array-ref toks count) token.Token.LBracket)
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c ')')
-              (begin
-                (set! (array-ref starts count) i)
-                (set! (array-ref toks count) token.Token.RParen)
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c ']')
-              (begin
-                (set! (array-ref starts count) i)
-                (set! (array-ref toks count) token.Token.RBracket)
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c '\'')
-              (match (apostrophe-char-literal-result src i n)
-                [(ResultMaybeLexCharLiteral.Ok value end)
-                  (begin
-                    (set! (array-ref starts count) i)
-                    (set! (array-ref toks count) (token.Token.Char value))
-                    (set! count (+ count 1))
-                    (set! i end))]
-                [(ResultMaybeLexCharLiteral.Err err)
-                  (begin
-                    (set! ok false)
-                    (set! message err)
-                    (set! err-pos i))]
-                [(ResultMaybeLexCharLiteral.No)
-                  (begin
-                    (set! (array-ref starts count) i)
-                    (set! (array-ref toks count) token.Token.Quote)
-                    (set! count (+ count 1))
-                    (set! i (+ i 1)))])]
-            [(= c '`')
-              (begin
-                (set! (array-ref starts count) i)
-                (set! (array-ref toks count) token.Token.Backtick)
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
-            [(= c ',')
-              (begin
-                (set! (array-ref starts count) i)
-                (if (< (+ i 1) n)
-                  (if (= (__tl_string_ref src (+ i 1)) '@')
-                    (begin
-                      (set! (array-ref toks count) token.Token.CommaAt)
-                      (set! i (+ i 2)))
-                    (begin
-                      (set! (array-ref toks count) token.Token.Comma)
-                      (set! i (+ i 1))))
-                  (begin
-                    (set! (array-ref toks count) token.Token.Comma)
-                    (set! i (+ i 1))))
-                (set! count (+ count 1)))]
-            [(= c '"')
-              (let
-                [start : i64 (+ i 1)]
-                (match (scan-str-end-result src start n)
-                  [(result_lex_i64.Ok end)
-                    (let
-                      [text : String (unescape-string-literal src start end)]
-                      [string-id : ci.InternId
-                        (lexer-intern-source-slice-id
-                          owner
-                          text
-                          0
-                          (string.string-length text))]
-                      (begin
-                        (set! (array-ref starts count) i)
-                        (set!
-                          (array-ref toks count)
-                          (token.Token.Str
-                            (token.token-intern-payload string-id)))
-                        (set! count (+ count 1))
-                        (set! i (+ end 1))))]
-                  [(result_lex_i64.Err err)
-                    (begin
-                      (set! ok false)
-                      (set! message err)
-                      (set! err-pos i))]))]
-            [(= c ';') (set! i (scan-comment-end src (+ i 1) n))]
-            [(or (is-digit c) (negative-number-start? src i n))
-              (match (scan-number-end-result src i n)
-                [(result_lex_i64.Ok end)
-                  (begin
-                    (set! (array-ref starts count) i)
-                    (if (number-float? src i end n)
-                      (set!
-                        (array-ref toks count)
-                        (token.Token.Float (string.substring src i (- end i))))
-                      (set!
-                        (array-ref toks count)
-                        (token.Token.Int
-                          (number-int-value src i end n)
-                          (number-int-source-text src i end n))))
-                    (set! count (+ count 1))
-                    (set! i end))]
-                [(result_lex_i64.Err err)
-                  (begin
-                    (set! ok false)
-                    (set! message err)
-                    (set! err-pos i))])]
-            [(= c ':')
-              (let
-                [end : i64 (colon-token-end src i n)]
-                (if (> end (+ i 1))
-                  (begin
-                    (set! (array-ref starts count) i)
-                    (set!
-                      (array-ref toks count)
-                      (token.Token.Sym
-                        (token.token-intern-payload
-                          (lexer-intern-source-slice-id owner src i (- end i)))))
-                    (set! count (+ count 1))
-                    (set! i end))
-                  (begin
-                    (set! (array-ref starts count) i)
-                    (set!
-                      (array-ref toks count)
-                      (token.Token.Sym
-                        (token.token-intern-payload
-                          (colon-intern-id owner src i))))
-                    (set! count (+ count 1))
-                    (set! i (+ i 1)))))]
-            [(is-symbol-char c)
-              (let
-                [end : i64 (scan-symbol-end src i n)]
-                (begin
-                  (set! (array-ref starts count) i)
-                  (set!
-                    (array-ref toks count)
-                    (token.Token.Sym
-                      (token.token-intern-payload
-                        (lexer-intern-source-slice-id owner src i (- end i)))))
-                  (set! count (+ count 1))
-                  (set! i end)))]
-            [else
-              (begin
-                (set! ok false)
-                (set! message "lexer: unexpected character")
-                (set! err-pos i))])))
-      (if ok
-        (begin
-          (set! (array-ref starts count) n)
-          (set! (array-ref toks count) token.Token.End)
-          (ResultLexIntoSpanned.Ok count))
-        (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
 (defenum LexPosition
   (Position i64 i64))
@@ -1163,45 +888,9 @@
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
-;; `lex : (-> String (__tl_dyn-array token.Token))` - the public entry point.
-;; Size the token array by an upper bound (every char yields at most one token,
-;; plus the `token.Token.End` sentinel), lex into it, then return that exact
-;; array. The trailing `token.Token.End` marks
-;; the logical end even though the backing array may be larger.
-(define (result-with-intern-owner
-  [src : String]
-  [owner : (LexerInternOwner intern-state)]) : ResultTokens
-  (let
-    [cap : i64 (+ (string.string-length src) 1)]
-    [toks : (__tl_dyn-array token.Token) (__tl_make-array token.Token cap)]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
-    (match (into-spanned-result (& src) (&mut toks) (&mut starts) owner)
-      [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
-      [(ResultLexIntoSpanned.Err err)
-        (ResultTokens.Err (token.source-error-message err))])))
-
-;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
-(define (result [src : String]) : ResultTokens
-  (result-with-intern-owner src LexerInternOwner.Active))
-
-(define (result-with-intern-state
-  [src : String]
-  [intern-state : (&mut intern-state ci.InternCompatState)]) : ResultTokens
-  (begin
-    (ci.intern-compat-state-ensure-ready! intern-state)
-    (result-with-intern-owner src (LexerInternOwner.State (& intern-state)))))
-
-(define (lex [src : String]) : (__tl_dyn-array token.Token)
-  (match (result src)
-    [(ResultTokens.Ok toks) toks]
-    [(ResultTokens.Err message) (io.panic message)]))
-
 ;; ---- Spanned token stream ----------------------------------------------------
-;; A position-bearing token stream parallel to `lex`/`result`. Each token is
-;; paired with the 1-based line/column of its starting byte; the trailing
-;; `token.Token.End`
-;; carries the position one past the last character. The plain `token.Token` path
-;; above is untouched, so existing callers keep working.
+;; Each token is paired with the 1-based line/column of its starting byte; the
+;; trailing `token.Token.End` carries the position one past the last character.
 ;; 1-based line of byte index `idx` in `src`: 1 + the number of newlines before
 ;; `idx`.
 (define (index-line [src : (& src str)] [idx : i64]) : i64
@@ -1240,14 +929,10 @@
 
 ;; Reusable spanned-token buffer, sized by TOKEN COUNT.
 ;;
-;; This buffer used to be reserved from the SOURCE BYTE COUNT (`srclen + 1`, a
-;; safe upper bound since a token spans >= 1 byte). Measured density in this
-;; repository is one token per 8.84 source bytes, so that reservation was 8.8x
-;; oversized - and `make-array` zero-writes every slot it reserves. Sources
-;; above the old hard cap fell out of the reuse path entirely and allocated a
-;; fresh `(srclen+1) x sizeof(SpannedToken)` array per file: 523 MB of zero-fill
-;; per self-compile, 8.13M D1 write misses and 7.72M LL misses, all of it into
-;; slots that no consumer ever reads (packet E1, target/e1-notes.md).
+;; Reserving from the SOURCE BYTE COUNT (`srclen + 1`, a safe upper bound since
+;; a token spans >= 1 byte) oversizes it many times over, because a typical
+;; token spans several bytes, and `make-array` zero-writes every slot it
+;; reserves, all of it into slots that no consumer ever reads.
 ;;
 ;; So: no source-derived reservation and no cap. The lexer grows this buffer
 ;; on demand while it scans (geometric, contents preserved), which makes the
@@ -1331,13 +1016,18 @@
     (spanned-token-buffer-grow-to! required used)
     unit))
 
+;; Store one record. Only this module may write the buffer, so the ownership
+;; test parks its witness through this.
+(define (spanned-token-buffer-set! [index : i64] [record : token.SpannedToken]) : unit
+  (set! (array-ref lex-spanned-token-buffer index) record))
+
 ;; Unmap the dedicated growth arena and reinstall the zero-length buffer.
 ;;
 ;; No-dangling argument (the buffer array is aliased, so this needs one):
 ;;
 ;;   - `spanned-result` is the ONLY entry point that hands out this global; the
-;;     plain `result`/`lex` entries allocate a fresh `token.Token` array per
-;;     call (see `result` above) and never observe this storage.
+;;     plain `result`/`lex` entries copy the tokens into a fresh `token.Token`
+;;     array per call (see `result-with-intern-owner` below).
 ;;   - No `(__tl_dyn-array token.SpannedToken)` is ever a struct field anywhere
 ;;     in the tree: every occurrence outside this module is a parameter or a
 ;;     `let` local of the reader/parser (`read.tl` `form-spanned-result` and
@@ -1381,90 +1071,6 @@
             (arena.tl_arena_destroy retire-arena)
             (arena.tl_arena_set retained-arena)))))))
 
-(define (spanned-token-buffer-release-regrow-ok?) : bool
-  (begin
-    (spanned-token-buffer-release!)
-    (if (and
-      (= (array-length lex-spanned-token-buffer) 0)
-      (= lex-spanned-token-buffer-arena 0))
-      (match (spanned-result "(release-regrow)")
-        [(ResultSpannedTokens.Ok tokens)
-          (let
-            [regrown-ok : bool
-              (and
-                (> (array-length tokens) 0)
-                (!= lex-spanned-token-buffer-arena 0)
-                (=
-                  (token.tag
-                    (token.spanned-token-tok (array-shared-view tokens 0)))
-                  (token.tag-lparen)))]
-            (begin
-              (spanned-token-buffer-release!)
-              (let
-                [released-again-ok : bool
-                  (and
-                    (= (array-length lex-spanned-token-buffer) 0)
-                    (= lex-spanned-token-buffer-arena 0))]
-                (begin
-                  ;; A release without a backing arena is idempotent.
-                  (spanned-token-buffer-release!)
-                  (and
-                    regrown-ok
-                    released-again-ok
-                    (= (array-length lex-spanned-token-buffer) 0)
-                    (= lex-spanned-token-buffer-arena 0))))))]
-        [(ResultSpannedTokens.Err _) false])
-      false)))
-
-(define (spanned-token-buffer-arena-ownership-ok?) : bool
-  (let
-    [scratch : arena.Arena (arena.make)]
-    [required : i64 (+ (array-length lex-spanned-token-buffer) 1)]
-    [witness : token.SpannedToken
-      (token.spanned-token-new token.Token.LBracket 7 11)]
-    (begin
-      ;; Earlier checks may intentionally release the shared storage. Keep
-      ;; this ownership check independent of test order before parking slot 0.
-      (spanned-token-buffer-ensure! 1 0)
-      (in-arena
-        scratch
-        (begin
-          (set! (array-ref lex-spanned-token-buffer 0) witness)
-          (spanned-token-buffer-grow-to! required 1)))
-      (arena.destroy-safe! scratch)
-      (and
-        (>= (array-length lex-spanned-token-buffer) required)
-        (spanned-token-buffer-grow-preserves-records?)
-        (match (spanned-result "(arena-ok)")
-          [(ResultSpannedTokens.Ok tokens)
-            (and
-              (=
-                (token.tag
-                  (token.spanned-token-tok
-                    (unsafe
-                      (ptr-read (ptr-offset (__tl_array-data tokens) 0)))))
-                (token.tag-lparen))
-              (=
-                (token.tag
-                  (token.spanned-token-tok
-                    (unsafe
-                      (ptr-read (ptr-offset (__tl_array-data tokens) 3)))))
-                (token.tag-end)))]
-          [(ResultSpannedTokens.Err _) false])))))
-
-;; The record the ownership check parked at slot 0 must survive the grow above:
-;; mid-scan growth relies on it.
-(define (spanned-token-buffer-grow-preserves-records?) : bool
-  (and
-    (=
-      (token.tag
-        (token.spanned-token-tok
-          (unsafe
-            (ptr-read (__tl_array-data lex-spanned-token-buffer)))))
-      (token.tag-lbracket))
-    (= (token.spanned-token-line (array-ref lex-spanned-token-buffer 0)) 7)
-    (= (token.spanned-token-col (array-ref lex-spanned-token-buffer 0)) 11)))
-
 ;; `spanned-result : (-> String ResultSpannedTokens)` - lex into the shared
 ;; spanned-token buffer and hand back that buffer; slot `count` holds the
 ;; trailing `token.Token.End`. The buffer identity can change during the scan
@@ -1490,601 +1096,35 @@
       src
       (LexerInternOwner.State (& intern-state)))))
 
-(define (percent-symbol-ok?) : bool
-  (match (result "(% n 16)")
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-shared-view toks 1)) (token.tag-sym))
-        (string.eq (token.sym (array-shared-view toks 1)) "%"))]
-    [(ResultTokens.Err _) false]))
-
-(define (ampersand-symbol-ok?) : bool
-  (match (result "(& r String) (&mut r String)")
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-shared-view toks 1)) (token.tag-sym))
-        (string.eq (token.sym (array-shared-view toks 1)) "&")
-        (= (token.tag (array-shared-view toks 6)) (token.tag-sym))
-        (string.eq (token.sym (array-shared-view toks 6)) "&mut"))]
-    [(ResultTokens.Err _) false]))
-
-(define (float-token-ok?) : bool
-  (match (result "(3.14)")
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-shared-view toks 1)) (token.tag-float))
-        (string.eq (token.float (& (array-ref toks 1))) "3.14"))]
-    [(ResultTokens.Err _) false]))
-
-(define (negative-int-token-ok?) : bool
-  (match (result "(-1 - x)")
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-shared-view toks 1)) (token.tag-int))
-        (= (token.int (& (array-ref toks 1))) -1)
-        (= (token.tag (array-shared-view toks 2)) (token.tag-sym))
-        (string.eq (token.sym (array-shared-view toks 2)) "-"))]
-    [(ResultTokens.Err _) false]))
-
-(define (token-int-eq?
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [idx : i64]
-  [value : i64]) : bool
-  (let
-    [tok : (& toks token.Token) (& (array-ref toks idx))]
-    (and (= (token.tag-ref tok) (token.tag-int)) (= (token.int tok) value))))
-
-(define (token-sym-eq?
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [idx : i64]
-  [value : String]) : bool
-  (let
-    [tok : (& toks token.Token) (& (array-ref toks idx))]
-    (and
-      (= (token.tag-ref tok) (token.tag-sym))
-      (string.eq (ci.intern-id-str (token.sym-id tok)) value))))
-
-(define (prefixed-int-token-ok?) : bool
-  (match (result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
-    [(ResultTokens.Ok toks)
-      (and
-        (token-int-eq? (& toks) 1 42)
-        (token-int-eq? (& toks) 2 42)
-        (token-int-eq? (& toks) 3 -42)
-        (token-int-eq? (& toks) 4 42)
-        (token-int-eq? (& toks) 5 -42)
-        (= (token.tag (array-shared-view toks 7)) (token.tag-end)))]
-    [(ResultTokens.Err _) false]))
-
-;; Returns 42 when the spanned lexer records correct 1-based line/column
-;; positions, including a token inside a nested list and the trailing EOF.
-;; Source `"(a\n  (b c))"` lexes to:
-;;   0:'(' 1:1   1:'a' 1:2   2:'(' 2:3   3:'b' 2:4   4:'c' 2:6
-;;   5:')' 2:7   6:')' 2:8   7:token.Token.End 2:9
-(define (quote-text) : String
-  "\"")
-
-(define (backslash-text) : String
-  "\\")
-
-(define (basic-token-sequence-ok?) : bool
-  (match (result "(define [x : i64] -42 \"ok\" '\\n')")
-    [(ResultTokens.Ok toks)
-      (let
-        [ok : bool true]
-        (begin
-          (if (= (token.tag (array-shared-view toks 0)) (token.tag-lparen))
-            unit
-            (set! ok false))
-          (if (= (token.tag (array-shared-view toks 1)) (token.tag-sym))
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (array-shared-view toks 1)) "define")
-            unit
-            (set! ok false))
-          (if (= (token.tag (array-shared-view toks 2)) (token.tag-lbracket))
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (array-shared-view toks 3)) "x")
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (array-shared-view toks 4)) ":")
-            unit
-            (set! ok false))
-          (if (string.eq (token.sym (array-shared-view toks 5)) "i64")
-            unit
-            (set! ok false))
-          (if (= (token.tag (array-shared-view toks 6)) (token.tag-rbracket))
-            unit
-            (set! ok false))
-          (if (= (token.int (& (array-ref toks 7))) -42)
-            unit
-            (set! ok false))
-          (if (string.eq (token.str (array-shared-view toks 8)) "ok")
-            unit
-            (set! ok false))
-          (if (= (token.char (& (array-ref toks 9))) '\n')
-            unit
-            (set! ok false))
-          (if (= (token.tag (array-shared-view toks 10)) (token.tag-rparen))
-            unit
-            (set! ok false))
-          (if (= (token.tag (array-shared-view toks 11)) (token.tag-end))
-            unit
-            (set! ok false))
-          ok))]
-    [(ResultTokens.Err _) false]))
-
-(define (colon-annotation-tokens-ok?) : bool
-  (match (result
-    "[x:i64] [y :i32] (:link \"m\") ( :unknown 1) (import pkg:math.core :as math)")
-    [(ResultTokens.Ok toks)
-      (and
-        (token-sym-eq? (& toks) 1 "x")
-        (token-sym-eq? (& toks) 2 ":")
-        (token-sym-eq? (& toks) 3 "i64")
-        (token-sym-eq? (& toks) 6 "y")
-        (token-sym-eq? (& toks) 7 ":")
-        (token-sym-eq? (& toks) 8 "i32")
-        (token-sym-eq? (& toks) 11 ":link")
-        (token-sym-eq? (& toks) 15 ":unknown")
-        (token-sym-eq? (& toks) 20 "pkg:math.core")
-        (token-sym-eq? (& toks) 21 ":as")
-        (= (token.tag (array-shared-view toks 24)) (token.tag-end)))]
-    [(ResultTokens.Err _) false]))
-
-(define (spanned-token-sym-eq?
-  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
-  [idx : i64]
-  [value : String]) : bool
-  (let
-    [tok : (& toks token.Token)
-      (token.spanned-token-token-ref (& (array-ref toks idx)))]
-    (and
-      (= (token.tag-ref tok) (token.tag-sym))
-      (string.eq (ci.intern-id-str (token.sym-id tok)) value))))
-
-(define (spanned-colon-annotation-tokens-ok?) : bool
-  (match (spanned-result "[x:i64] (:link \"m\")")
-    [(ResultSpannedTokens.Ok toks)
-      (and
-        (spanned-token-sym-eq? (& toks) 1 "x")
-        (spanned-token-sym-eq? (& toks) 2 ":")
-        (spanned-token-sym-eq? (& toks) 3 "i64")
-        (spanned-token-sym-eq? (& toks) 6 ":link")
-        (=
-          (token.tag (token.spanned-token-tok (array-shared-view toks 9)))
-          (token.tag-end)))]
-    [(ResultSpannedTokens.Err _) false]))
-
-(define (apostrophe-char-source [body : String]) : String
-  (str_cat.str-cat "'" body "'"))
-
-(define (quote-vs-apostrophe-char-ok?) : bool
-  (and
-    (match (result "'form")
-      [(ResultTokens.Ok toks)
-        (and
-          (= (token.tag (array-shared-view toks 0)) (token.tag-quote))
-          (= (token.tag (array-shared-view toks 1)) (token.tag-sym))
-          (string.eq (token.sym (array-shared-view toks 1)) "form")
-          (= (token.tag (array-shared-view toks 2)) (token.tag-end)))]
-      [(ResultTokens.Err _) false])
-    (match (result "'ab'")
-      [(ResultTokens.Ok toks)
-        (and
-          (= (token.tag (array-shared-view toks 0)) (token.tag-quote))
-          (= (token.tag (array-shared-view toks 1)) (token.tag-sym))
-          (string.eq (token.sym (array-shared-view toks 1)) "ab")
-          (= (token.tag (array-shared-view toks 2)) (token.tag-quote))
-          (= (token.tag (array-shared-view toks 3)) (token.tag-end)))]
-      [(ResultTokens.Err _) false])
-    (match (result "'a'")
-      [(ResultTokens.Ok toks)
-        (and
-          (= (token.tag (array-shared-view toks 0)) (token.tag-char))
-          (= (token.char (& (array-ref toks 0))) 'a')
-          (= (token.tag (array-shared-view toks 1)) (token.tag-end)))]
-      [(ResultTokens.Err _) false])))
-
-(define (one-apostrophe-char-ok? [body : String] [want : char]) : bool
-  (match (result (apostrophe-char-source body))
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-shared-view toks 0)) (token.tag-char))
-        (= (token.char (& (array-ref toks 0))) want)
-        (= (token.tag (array-shared-view toks 1)) (token.tag-end)))]
-    [(ResultTokens.Err _) false]))
-
-(define (legacy-char-rejected? [src : String]) : bool
-  (match (result src)
-    [(ResultTokens.Ok _) false]
-    [(ResultTokens.Err message)
-      (string.eq message "lexer: unexpected character")]))
-
-(define (char-literals-ok?) : bool
-  (let
-    [slash : String (backslash-text)]
-    (and
-      (one-apostrophe-char-ok? "a" 'a')
-      (one-apostrophe-char-ok? "Z" 'Z')
-      (one-apostrophe-char-ok? "0" '0')
-      (one-apostrophe-char-ok? "+" '+')
-      (one-apostrophe-char-ok? " " ' ')
-      (one-apostrophe-char-ok?
-        (str_cat.str-cat (string.copy (& slash)) "n")
-        '\n')
-      (one-apostrophe-char-ok?
-        (str_cat.str-cat (string.copy (& slash)) "t")
-        '\t')
-      (one-apostrophe-char-ok?
-        (str_cat.str-cat (string.copy (& slash)) "r")
-        '\r')
-      (one-apostrophe-char-ok?
-        (str_cat.str-cat (string.copy (& slash)) "0")
-        '\0')
-      (one-apostrophe-char-ok?
-        (str_cat.str-cat (string.copy (& slash)) (string.copy (& slash)))
-        '\\')
-      (one-apostrophe-char-ok? (str_cat.str-cat slash "'") '\'')
-      (legacy-char-rejected? "#x'")
-      (legacy-char-rejected? "#\\n'")
-      (legacy-char-rejected? "#\\space'"))))
-
-(define (error-ok?
+;; The spanned token stream without positions, copied into a fresh array that
+;; ends in `token.Token.End`, for callers that compare token streams.
+(define (result-with-intern-owner
   [src : String]
-  [want-line : i64]
-  [want-col : i64]
-  [want-message : String]) : bool
-  (match (spanned-result src)
-    [(ResultSpannedTokens.Ok _) false]
+  [owner : (LexerInternOwner intern-state)]) : ResultTokens
+  (match (spanned-result-with-intern-owner src owner)
     [(ResultSpannedTokens.Err err)
-      (and
-        (string.eq
-          (token.source-error-message (global-shared-view err))
-          want-message)
-        (token.span-eq?
-          (token.source-error-span err)
-          want-line
-          want-col
-          want-line
-          want-col))]))
+      (ResultTokens.Err (token.source-error-message err))]
+    [(ResultSpannedTokens.Ok spanned)
+      (let
+        [toks : (__tl_dyn-array token.Token)
+          (__tl_make-array token.Token (array-length spanned))]
+        [index : i64 0]
+        [more : bool true]
+        (begin
+          (while more
+            (let
+              [tok : token.Token
+                (token.spanned-token-tok (array-shared-view spanned index))]
+              (begin
+                (set! more (!= (token.tag-ref (& tok)) (token.tag-end)))
+                (set! (array-ref toks index) tok)
+                (set! index (+ index 1)))))
+          (ResultTokens.Ok toks)))]))
 
-(define (error-spans-ok?) : bool
-  (let
-    [slash : String (backslash-text)]
-    (and
-      (error-ok? "\n#\\bogus'" 2 1 "lexer: unexpected character")
-      (error-ok?
-        (apostrophe-char-source (str_cat.str-cat (string.copy (& slash)) "x"))
-        1
-        1
-        "lexer: unknown character escape")
-      (error-ok?
-        (str_cat.str-cat "'" slash "n")
-        1
-        1
-        "lexer: unterminated character literal")
-      (error-ok? "ok\n@" 2 1 "lexer: unexpected character"))))
+(define (result [src : String]) : ResultTokens
+  (result-with-intern-owner src LexerInternOwner.Active))
 
-(define (prefixed-int-errors-ok?) : bool
-  (and
-    (error-ok? "0x" 1 1 "lexer: malformed integer literal")
-    (error-ok? "0xg" 1 1 "lexer: malformed integer literal")
-    (error-ok? "0b102" 1 1 "lexer: malformed integer literal")))
-
-(define (check-prefixed-int-ok?) : bool
-  (match (check "(0x2a -0b101010)")
-    [(result_lex_i64.Ok _) true]
-    [(result_lex_i64.Err _) false]))
-
-(define (check-prefixed-int-error-ok?) : bool
-  (match (check "0b102")
-    [(result_lex_i64.Ok _) false]
-    [(result_lex_i64.Err message)
-      (string.eq message "lexer: malformed integer literal")]))
-
-(define (string-source [inner : String]) : String
-  (str_cat.str-cat (quote-text) inner (quote-text)))
-
-(define (string-token-ok? [src : String] [expected : String]) : bool
-  (let
-    [toks : (__tl_dyn-array token.Token) (lex src)]
-    (and
-      (= (token.tag (array-shared-view toks 0)) (token.tag-str))
-      (string.eq (token.str (array-shared-view toks 0)) expected)
-      (= (token.tag (array-shared-view toks 1)) (token.tag-end)))))
-
-(define (string-token-retains-id?) : bool
-  (let
-    [toks : (__tl_dyn-array token.Token) (lex (string-source "literal-id"))]
-    [literal : token.Token (array-shared-view toks 0)]
-    [literal-id : ci.InternId (token.str-id (& literal))]
-    (and
-      (>= (ci.intern-id-value literal-id) 0)
-      (string.eq (ci.intern-id-str literal-id) "literal-id")
-      (ci.intern-id-eq? (token.str-id (& literal)) literal-id))))
-
-(define (escaped-quote-source-inner) : String
-  (str_cat.str-cat
-    "say "
-    (backslash-text)
-    (quote-text)
-    "hi"
-    (backslash-text)
-    (quote-text)))
-
-(define (backslash-quote-source-inner) : String
-  (str_cat.str-cat
-    (backslash-text)
-    (backslash-text)
-    (backslash-text)
-    (quote-text)))
-
-(define (string-escapes-ok?) : bool
-  (let
-    [slash : String (backslash-text)]
-    [quote : String (quote-text)]
-    (and
-      (string-token-ok? (string-source "hello\\nworld") "hello\nworld")
-      (string-token-ok?
-        (string-source (escaped-quote-source-inner))
-        (str_cat.str-cat
-          "say "
-          (string.copy (& quote))
-          "hi"
-          (string.copy (& quote))))
-      (string-token-ok?
-        (string-source
-          (str_cat.str-cat (string.copy (& slash)) (string.copy (& slash))))
-        (string.copy (& slash)))
-      (string-token-ok?
-        (string-source (backslash-quote-source-inner))
-        (str_cat.str-cat (string.copy (& slash)) (string.copy (& quote)))))))
-
-(define (quote-prefix-tokens-ok?) : bool
-  (match (result "`(if ,x ,@xs)")
-    [(ResultTokens.Ok toks)
-      (and
-        (= (token.tag (array-shared-view toks 0)) (token.tag-backtick))
-        (= (token.tag (array-shared-view toks 3)) (token.tag-comma))
-        (= (token.tag (array-shared-view toks 5)) (token.tag-comma-at))
-        (= (token.tag (array-shared-view toks 7)) (token.tag-rparen))
-        (= (token.tag (array-shared-view toks 8)) (token.tag-end)))]
-    [(ResultTokens.Err _) false]))
-
-(define (span-positions-ok? [s : (& s (__tl_dyn-array token.SpannedToken))]) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (= (token.spanned-token-line (array-ref s 0)) 1)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 0)) 1)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 1)) 2)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-line (array-ref s 2)) 2)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 2)) 3)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 3)) 4)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 4)) 6)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-line (array-ref s 7)) 2)
-        unit
-        (set! ok false))
-      (if (= (token.spanned-token-col (array-ref s 7)) 9)
-        unit
-        (set! ok false))
-      (if (=
-        (token.tag-ref (token.spanned-token-token-ref (& (array-ref s 7))))
-        (token.tag-end))
-        unit
-        (set! ok false))
-      ok)))
-
-(define (lexer-intern-owner-isolation-ok?) : bool
-  (let
-    [active-decoy-id : i64 (ci.intern-source-slice "lexer-active-decoy" 0 18)]
-    [active-table-before : i64 (ci.intern-active-table-id)]
-    [active-generation-before : i64 (ci.intern-generation)]
-    [active-len-before : i64 (ci.intern-pool-len)]
-    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
-    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [source : String "(alpha : pkg/module.name \"payload\")"]
-    [ids-a : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [ids-b : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [len-a : i64 0]
-    [len-b : i64 0]
-    [len-b-after-spanned : i64 0]
-    (begin
-      (match (result-with-intern-state
-        (global-shared-view source)
-        (&mut state-a))
-        [(ResultTokens.Err _) (return false)]
-        [(ResultTokens.Ok tokens)
-          (begin
-            (unless
-              (and
-                (= (token.tag (array-shared-view tokens 0)) (token.tag-lparen))
-                (= (token.tag (array-shared-view tokens 5)) (token.tag-rparen))
-                (= (token.tag (array-shared-view tokens 6)) (token.tag-end)))
-              (return false))
-            (set!
-              (array-ref ids-a 0)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
-            (set!
-              (array-ref ids-a 1)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
-            (set!
-              (array-ref ids-a 2)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
-            (set!
-              (array-ref ids-a 3)
-              (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
-            (set! len-a (ci.intern-compat-state-pool-len state-a)))])
-      (match (result-with-intern-state source (&mut state-b))
-        [(ResultTokens.Err _) (return false)]
-        [(ResultTokens.Ok tokens)
-          (begin
-            (set!
-              (array-ref ids-b 0)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
-            (set!
-              (array-ref ids-b 1)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
-            (set!
-              (array-ref ids-b 2)
-              (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
-            (set!
-              (array-ref ids-b 3)
-              (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
-            (set! len-b (ci.intern-compat-state-pool-len state-b)))])
-      (unless
-        (and
-          (= (array-ref ids-a 0) (array-ref ids-b 0))
-          (= (array-ref ids-a 1) (array-ref ids-b 1))
-          (= (array-ref ids-a 2) (array-ref ids-b 2))
-          (= (array-ref ids-a 3) (array-ref ids-b 3))
-          (= len-a len-b)
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 0))
-            "alpha")
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 1))
-            ":")
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 2))
-            "pkg/module.name")
-          (string.eq
-            (ci.intern-compat-state-str state-a (array-ref ids-a 3))
-            "payload")
-          (ci.intern-compat-state-qualified? state-a (array-ref ids-a 2))
-          (ci.intern-compat-state-dotted? state-a (array-ref ids-a 2))
-          (string.eq
-            (ci.intern-compat-state-str
-              state-a
-              (ci.intern-compat-state-dotted-final-id
-                state-a
-                (array-ref ids-a 2)))
-            "name"))
-        (return false))
-      (match (spanned-result-with-intern-state "spanned" (&mut state-b))
-        [(ResultSpannedTokens.Err _) (return false)]
-        [(ResultSpannedTokens.Ok spanned)
-          (let
-            [spanned-token : token.Token
-              (token.spanned-token-tok (array-shared-view spanned 0))]
-            [spanned-id : i64
-              (ci.intern-id-value (token.sym-id (& spanned-token)))]
-            (begin
-              (unless
-                (and
-                  (= (token.tag spanned-token) (token.tag-sym))
-                  (string.eq
-                    (ci.intern-compat-state-str state-b spanned-id)
-                    "spanned")
-                  (=
-                    (token.tag
-                      (token.spanned-token-tok (array-shared-view spanned 1)))
-                    (token.tag-end)))
-                (return false))
-              (set!
-                len-b-after-spanned
-                (ci.intern-compat-state-pool-len state-b))))])
-      (match (result-with-intern-state "failure @" (&mut state-a))
-        [(ResultTokens.Ok _) (return false)]
-        [(ResultTokens.Err message)
-          (unless
-            (string.eq message "lexer: unexpected character")
-            (return false))])
-      (and
-        (= (ci.intern-compat-state-pool-len state-b) len-b-after-spanned)
-        (= (ci.intern-active-table-id) active-table-before)
-        (= (ci.intern-generation) active-generation-before)
-        (= (ci.intern-pool-len) active-len-before)
-        (string.eq (ci.intern-str active-decoy-id) "lexer-active-decoy")))))
-
-(define (span-positions-self-ok?) : bool
-  (match (spanned-result "(a\n  (b c))")
-    [(ResultSpannedTokens.Ok s) (span-positions-ok? (& s))]
-    [(ResultSpannedTokens.Err _) false]))
-
-(define (span-self-test) : i64
-  (let
-    [ok : bool true]
-    (begin
-      (if (span-positions-self-ok?)
-        unit
-        (set! ok false))
-      (if (string-escapes-ok?)
-        unit
-        (set! ok false))
-      (if (string-token-retains-id?)
-        unit
-        (set! ok false))
-      (if (basic-token-sequence-ok?)
-        unit
-        (set! ok false))
-      (if (colon-annotation-tokens-ok?)
-        unit
-        (set! ok false))
-      (if (spanned-colon-annotation-tokens-ok?)
-        unit
-        (set! ok false))
-      (if (char-literals-ok?)
-        unit
-        (set! ok false))
-      (if (quote-vs-apostrophe-char-ok?)
-        unit
-        (set! ok false))
-      (if (error-spans-ok?)
-        unit
-        (set! ok false))
-      (if (percent-symbol-ok?)
-        unit
-        (set! ok false))
-      (if (ampersand-symbol-ok?)
-        unit
-        (set! ok false))
-      (if (float-token-ok?)
-        unit
-        (set! ok false))
-      (if (negative-int-token-ok?)
-        unit
-        (set! ok false))
-      (if (prefixed-int-token-ok?)
-        unit
-        (set! ok false))
-      (if (prefixed-int-errors-ok?)
-        unit
-        (set! ok false))
-      (if (check-prefixed-int-ok?)
-        unit
-        (set! ok false))
-      (if (check-prefixed-int-error-ok?)
-        unit
-        (set! ok false))
-      (if (quote-prefix-tokens-ok?)
-        unit
-        (set! ok false))
-      (if (lexer-intern-owner-isolation-ok?)
-        unit
-        (set! ok false))
-      (if (spanned-token-buffer-arena-ownership-ok?)
-        unit
-        (set! ok false))
-      (if (spanned-token-buffer-release-regrow-ok?)
-        unit
-        (set! ok false))
-      (if ok
-        42
-        1))))
+(define (lex [src : String]) : (__tl_dyn-array token.Token)
+  (match (result src)
+    [(ResultTokens.Ok toks) toks]
+    [(ResultTokens.Err message) (io.panic message)]))

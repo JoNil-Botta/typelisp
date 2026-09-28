@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Gate for the .gitignore contract (#5161).
+# Gate for the .gitignore contract.
 #
 # `typelisp build foo.tl` writes its executable next to the source: `foo.exe` on
 # Windows and an extensionless `foo` on Linux. Git cannot glob "name without an
@@ -87,7 +87,6 @@ benchmarks/arith_loop/baseline.c
 scripts/check-gitignore.sh
 scripts/fetch-stage0.ps1
 perf/insn-exec-baseline.tsv
-tests/golden/selfhost_compiler_driver_import.s
 tests/tlci/corpus/SHA256SUMS
 tests/tlci/corpus/malformed-bad-magic.tlci
 tests/integration/include_bin_payload.bin
@@ -141,8 +140,7 @@ if [ -n "$SHADOWED" ]; then
     failed=1
 fi
 
-# The Cargo template this file replaced kept Rust-only rules alive long after
-# the Rust stage0 was removed in #795.
+# The repository has no Rust code, so Rust/Cargo rules are leftovers.
 if grep -Eni 'cargo|rustc|rustfmt|rustrover|target_ra|mutants\.out|\.rs\.bk' .gitignore >&2; then
     fail "Rust/Cargo leftovers in .gitignore (lines above)"
 fi

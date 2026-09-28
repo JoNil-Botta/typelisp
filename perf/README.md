@@ -1,15 +1,34 @@
-# Instruction-count baseline
+# Performance baselines
 
-The opt-in pinned TypeLisp/ISPC corpus uses
-`scripts/measure-ispc-spmd.sh`. Its static kernel-symbol reports and geomeans
-are report-only and fingerprint both binaries and flags. They are intentionally
-not mixed into the checked cachegrind or host-keyed AVX-512 tables below; the
-current retired-instruction runners do not accept arbitrary ISPC binaries.
+The checked tables in this directory, and the gates and scripts that own them:
+
+| File | Owner |
+| --- | --- |
+| `insn-exec-baseline.tsv` | `linux-instruction-count-baseline` (`scripts/check-instruction-counts.sh`) |
+| `insn-exec-heavy-baseline.tsv` | `linux-heavy-instruction-count-baseline` (the same script) |
+| `benchmark-ci-cases.tsv` | suite membership for the benchmark, optimizer-corpus and instruction-count gates |
+| `compiler-scaling-budgets.tsv` | `linux-compiler-scaling-budgets` (`scripts/check-compiler-scaling.sh`) |
+| `spmd-mode-insn-baseline.tsv`, `spmd-mode-support.tsv` | opt-in `scripts/measure-spmd-mode-instruction-counts.sh` |
+
+Measured deltas belong in the PR that changes a row, not in this file.
+
+## Instruction-count baselines
 
 `perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
 committed cachegrind `Ir` baselines for the required Linux per-PR performance
-gates. The first covers the default compiler and benchmark subset; the second
-covers the five heavier benchmark cases without rebuilding the branch compiler.
+gates. The first covers `self_compile` and the `instruction-main` cases of
+`perf/benchmark-ci-cases.tsv` (the twelve compiler-derived kernels plus
+`pure_call_join` and `loop_call_literal`); the second covers the
+`instruction-heavy` cases, benchmark rows only. Explicit `--benchmarks` subsets
+are scoped against the selected cases even when a baseline carries additional
+rows.
+
+Benchmark metrics are exact: `current != baseline` fails in either direction,
+and an intentional change is accepted by committing the refreshed rows in the
+same PR. Both improvements and regressions therefore block the PR that
+introduces them.
+
+### Refreshing
 
 Absolute `self_compile` counts are owned by GitHub-hosted Linux CI. A local
 Linux or WSL refresh may update benchmark rows only:
@@ -24,7 +43,7 @@ host offset cannot silently enter the baseline. Ratchet an intentional compiler
 change from the exact `current` value printed by the Linux CI gate and commit it
 in the same PR.
 
-Refresh the required heavy benchmark baseline with:
+Refresh the heavy baseline with the gate's own selection:
 
 ```sh
 scripts/check-instruction-counts.sh \
@@ -35,6 +54,8 @@ scripts/check-instruction-counts.sh \
   --runs 1 \
   --output target/instruction-count-heavy
 ```
+
+### `self_compile`
 
 TypeLisp benchmark rows reproduce exactly across the supported WSL/Linux and
 GitHub-hosted Linux environments for a fixed compiler and command.
@@ -58,31 +79,67 @@ scripts/measure-instruction-counts.sh \
 Compare the `self_compile/compile_cli_opt1` rows in the two `summary.tsv`
 files. `check-instruction-counts.sh` renders a local absolute self-compile row
 as `local-absolute-unverified` and does not gate it; benchmark rows remain exact.
-The script prints this distinction before doing a local self-compile
-measurement.
+In GitHub Actions the checker applies a 0.5% self-compile tolerance
+(`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`) against the CI-owned baseline.
+Intentional exact changes should still be reported and ratcheted rather than
+treated as runner noise.
+
+`--self-compile-only` measures no benchmark rows, so it neither requests
+scalar-fair measurement nor checks for it, and its `--update-baseline`
+preserves every benchmark row untouched. The `self_compile` optimizer level is
+selected by `--opt-level` (default 1) and recorded in the row name.
+
+### What the checker measures
+
+Unless `TYPELISP_IR_CHECK_COMPILER` names a prebuilt compiler (CI passes its
+bootstrap stage2), the checker builds a fresh full CLI stage1 and stage2 under
+`target/instruction-count-check` and measures that fixed stage2 compiler.
+Benchmark binaries are built at **opt-level 2**, so the TypeLisp-vs-C rows are
+a release-vs-release comparison (TypeLisp opt2 against `clang -O2`); override
+with `TYPELISP_IR_BENCH_OPT_LEVEL`. A selected benchmark case must contain both
+`bench.tl` and `baseline.c`.
+
+TypeLisp deliberately does not auto-vectorize ordinary loops. Explicit SPMD
+(`foreach`, `spmd-reduce`, and `spmd-scan`) is the data-parallel model.
+Accordingly, every TypeLisp row (`benchmark/typelisp/<name>`) must carry its
+scalar-fair counterpart `benchmark/c-scalar/<name>`, built with
+`clang -O2 -fno-vectorize -fno-slp-vectorize`, and `check-instruction-counts.sh`
+enforces that pairing. The measurement also runs `benchmark/c/<name>` with
+ordinary `clang -O2` auto-vectorization, making the auto-vectorizer gap visible;
+`ratios.tsv` reports both `typelisp_over_clang_scalar_x` and
+`typelisp_over_clang_auto_x`. A baseline opts into gating the auto-vectorized
+row by carrying `benchmark/c/<name>` rows: the default baseline gates only the
+TypeLisp and scalar-fair rows, while the heavy baseline keeps them. Every
+measured run must also reproduce exact stdout, stderr, and exit status across
+TypeLisp, auto-vectorized C, and scalar-fair C.
 
 C baselines are compiled with `benchmarks/cachegrind-region.c` and run with
 Cachegrind instrumentation off until the C `main` boundary. This excludes
 dynamic-loader and PIE startup while retaining the benchmark, libc work reached
 by the benchmark, and process-exit path. The C harness requires a Cachegrind
 version and development header that provide
-`CACHEGRIND_START_INSTRUMENTATION`; its self-test fails with an explicit
-unsupported-environment diagnostic if the request is unavailable. Run it with:
+`CACHEGRIND_START_INSTRUMENTATION`. Its self-test compiles binaries with
+different constructor workloads and requires identical nonzero measured-region
+counts across both workloads and a repeated invocation; it fails with an
+explicit unsupported-environment diagnostic if the request is unavailable:
 
 ```sh
 scripts/measure-instruction-counts.sh --self-test
 ```
 
-The self-test compiles binaries with different constructor workloads and
-requires identical nonzero measured-region counts across both workloads and a
-repeated invocation. Benchmark metrics remain exact: `current != baseline`
-fails and the baseline must ratchet in the same PR. A clang, libc, or Valgrind
-change that alters instructions executed from `main` onward is still a real,
-reviewable C comparison change; only pre-`main` loader startup is excluded. In
-GitHub Actions, the checker applies a 0.5% self-compile tolerance
-(`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`) against the CI-owned baseline.
-Intentional exact changes should still be reported and ratcheted rather than
-treated as runner noise.
+A clang, libc, or Valgrind change that alters instructions executed from `main`
+onward is still a real, reviewable C comparison change; only pre-`main` loader
+startup is excluded.
+
+### Suite membership
+
+`perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
+`benchmark` suite, the `optimization-opt2` optimizer-corpus suite, and the
+`instruction-main` and `instruction-heavy` suites. `scripts/lib-benchmark.sh`
+enforces that no `instruction-main` case is also in `benchmark` or
+`optimization-opt2`, and no `instruction-heavy` case is also in `benchmark`:
+their measured execution already supplies output parity. Local `--cases` and
+`--filter` selections are independent of CI membership.
 
 ## Compiler scaling budgets
 
@@ -116,14 +173,10 @@ start-up cost cancels:
   1.0 for a linear cost and, with sizes in ratio 1:2:4, 2.0 for a quadratic one.
 
 Because both are differences of counts on one binary, the host's environment
-and paths (which move an absolute count by a few hundred instructions) do not
-reach them, so a local run reproduces the CI values. The rows move only when
-the compiler does: the published stage0 from two merges earlier (`2381c505`)
-measured every row within 0.4% marginal cost and 0.003 growth of the values
-checked in from `70958577`. A row fails when the
-marginal cost moves more than 10% or the growth more than 0.10 from its checked
-value, **in either direction**, matching the instruction-count baselines: an
-improvement is accepted by committing the refreshed row.
+and paths do not reach them, so a local run reproduces the CI values. A row
+fails when the marginal cost moves more than 10% or the growth more than 0.10
+from its checked value, **in either direction**, matching the instruction-count
+baselines: an improvement is accepted by committing the refreshed row.
 
 ```sh
 scripts/check-compiler-scaling.sh target/bootstrap-fixpoint/stage3
@@ -136,255 +189,12 @@ justifies a regression. A row whose growth is not linear names the issue that
 owns the defect in its `owner` column; the PR that fixes the defect refreshes
 the row, which turns the fix into a permanent regression check. New dimensions
 and phases are new rows; do not widen the tolerances to admit a slower
-compiler. The complete gate (generator build, 12 validated programs and 27
-Cachegrind runs) takes about one minute.
+compiler. The complete gate builds the generator, validates 12 programs and
+runs 27 Cachegrind measurements.
 
 This is the compiler-scaling half of #7773. It does not replace the
-self-compile row, the wall-clock budgets below or the memory checks: it bounds
-how cost grows, not how large it is on the compiler's own sources.
-
-## CI wall-clock compile budgets
-
-Linux pull-request CI also gates the four selfhost compile rows already
-recorded by `scripts/check-build-invariance.sh` in
-`target/ci-timing/linux.tsv`. The gate adds no compiler invocations. It applies
-generous absolute caps to catch uniform slowdowns and a scale-independent ratio
-to catch disproportionate opt2 work:
-
-| build-invariance row | cap |
-| --- | ---: |
-| `opt2-built:selfhost_main_opt1` | 25,000 ms |
-| `opt1-built:selfhost_main_opt1` | 45,000 ms |
-| `opt2-built:selfhost_main_opt2` | 70,000 ms |
-| `opt1-built:selfhost_main_opt2` | 130,000 ms |
-
-The opt2 workload caps retain about 17% headroom above the level expected of
-the current GitHub-hosted runner class (about 57,000 ms and 111,000 ms for the
-two rows: five main-like runs measured 53,820-55,280 ms and 105,300-107,530 ms
-there, plus the 3% same-host residue of #7696). A same-host main/branch
-comparison and the deterministic instruction-count ratchet distinguish accepted
-runner throughput from compiler work before these caps move; #7696's own
-compiler work was measured that way, attributed to one builder, and fixed
-before its residue was accepted.
-
-The `opt2-built:selfhost_main_opt2` /
-`opt1-built:selfhost_main_opt1` ratio must be at most 2.5. The checker fails
-closed on missing, duplicate, malformed, or unsuccessful rows:
-
-```sh
-scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv
-scripts/check-ci-timing-budgets.sh --self-test
-```
-
-Use `scripts/benchmark-compile-cli.sh` for phase-level local investigation when
-the wall-clock gate fails. There is intentionally no retry path; the headroom,
-absolute caps, and ratio provide flake resistance without masking regressions.
-
-## Scheduled CI timing trends
-
-The daily and manually dispatched `CI Timing Trends` workflow consumes the
-existing `ci-timing-Linux` and `ci-timing-Windows` artifacts from successful
-pull-request CI runs. It does not invoke the compiler or add work to PR CI.
-Runs are considered newest-first, deduplicated by head SHA, and accepted only
-as complete Linux/Windows artifact pairs. Stable gate-total rows
-(`case_or_chunk=all`, `phase=gate`, `exit=0`) are analyzed separately for each
-host and gate.
-
-By default, the median of the newest 3 unique heads is compared with the
-median of the preceding 20. A sustained regression is reported only when the
-recent median is greater than 1.5 times the baseline median. The
-hard-budgeted `stage2 opt1/opt2 build-invariance` gate is explicitly excluded
-to avoid duplicate alerts. Windows, gate names, run links, medians, ratios,
-and the newest-first series are retained in deterministic Markdown. Missing
-per-gate history is reported without fabricating a baseline.
-
-One marked issue titled `CI timing sustained regression alert` is created,
-updated, or reopened while regressions exist. A recovered series receives a
-recovery comment and the issue is closed. Regression detection itself exits
-successfully; collection, API, artifact, or schema failures fail the scheduled
-job visibly but cannot block pull requests.
-
-Recent window, baseline window, factor, scan limit, and the newline-separated
-gate denylist are configurable through `CI_TIMING_TREND_RECENT`,
-`CI_TIMING_TREND_BASELINE`, `CI_TIMING_TREND_FACTOR`,
-`CI_TIMING_TREND_RUN_LIMIT`, and `CI_TIMING_TREND_DENYLIST`. Analyze a
-normalized history offline or run the synthetic suite with:
-
-```sh
-scripts/analyze-ci-timing-trends.sh --offline history.tsv report.md
-scripts/analyze-ci-timing-trends.sh --self-test
-```
-
-TypeLisp deliberately does not auto-vectorize ordinary loops. Explicit SPMD
-(`foreach`, `spmd-reduce`, and `spmd-scan`) is the data-parallel model.
-Accordingly, the per-PR scalar gate compares every TypeLisp row with scalar-fair
-clang:
-
-- `benchmark/c-scalar/<name>` uses
-  `clang -O2 -fno-vectorize -fno-slp-vectorize` and is the scalar-fair codegen
-  comparison.
-
-The measurement also runs `benchmark/c/<name>` with ordinary `clang -O2`
-auto-vectorization enabled, making the auto-vectorizer gap visible while SPMD
-backends close it. The measurement report writes `ratios.tsv` with both
-`typelisp_over_clang_scalar_x` and `typelisp_over_clang_auto_x`, but the default
-`perf/insn-exec-baseline.tsv` deliberately gates only the TypeLisp and
-scalar-fair rows. Every measured benchmark run must also reproduce exact
-stdout, stderr, and exit status across TypeLisp, auto-vectorized C, and
-scalar-fair C; repeated runs must reproduce the same observable output.
-
-TypeLisp-generated executables use `benchmark/typelisp/<name>`.
-A selected benchmark case must contain both `bench.tl` and `baseline.c`;
-unpaired benchmark directories are skipped only when no explicit benchmark
-filter or case list selected them.
-
-Every TypeLisp baseline row must carry its `benchmark/c-scalar/<name>`
-counterpart, and `check-instruction-counts.sh` enforces that contract. A
-baseline opts into gating the diagnostic auto-vectorized row by carrying
-`benchmark/c/<name>` rows; the scheduled heavy baseline retains those rows.
-
-`--self-compile-only` is the one leg that measures no benchmark rows, so it
-neither requests scalar-fair measurement nor checks for it, and its
-`--update-baseline` preserves every benchmark row untouched.
-
-Benchmark binaries are built at **opt-level 2** so the TypeLisp-vs-C rows are a
-release-vs-release comparison (TypeLisp opt2 against `clang -O2`). Override with
-`TYPELISP_IR_BENCH_OPT_LEVEL`. This is independent of the `self_compile` metric,
-whose optimizer level is selected separately by `--opt-level` (default 1) and
-recorded in its row name (`self_compile/compile_cli_opt1`).
-
-The checker builds a fresh full CLI stage1 and stage2 under
-`target/instruction-count-check` and measures that fixed stage2 compiler. The
-default per-PR subset is `self_compile` plus TypeLisp and scalar-clang rows for
-the twelve kernels derived from compiler self-compilation: `cfg_domloops`,
-`gvn_table`, `intern_table`, `lex_source`, `liveness_scan`, `peephole_lines`,
-`read_sexpr`, `callgraph_scc`, `ssa_construct`, `sccp_lattice`,
-`regalloc_greedy`, and `asm_render`, each with one cachegrind run. Explicit benchmark subsets are
-scoped against those selected cases even when the baseline carries additional
-rows. Alternate baseline files such as the scheduled heavy corpus retain their
-own checked row policy.
-
-`perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
-benchmark, opt2 optimizer-corpus, and instruction-count suites. The seventeen
-instruction-count workloads are absent from the generic benchmark suite, and
-the twelve main workloads are absent from the separate opt2 suite. Their measured
-execution supplies both output parity and instruction-count coverage; local
-case and filter selections remain independent of CI membership.
-
-The same required Linux PR leg reuses its already bootstrapped stage2 compiler
-for a benchmark-only pass over `spmd_map`, `spmd_mask`, `spmd_zip`,
-`spmd_short_tail`, and `string_scan`, checked exactly against
-`perf/insn-exec-heavy-baseline.tsv`. This adds one `Linux heavy
-instruction-count baseline` gate row to the `ci-timing-Linux` artifact without
-repeating the compiler bootstrap.
-
-## Host-keyed AVX-512 retired instructions
-
-Cachegrind 3.22 cannot execute this AVX-512 corpus: it SIGILLs and records only
-startup work. Use the opt-in Linux/WSL hardware harness instead:
-
-```sh
-TYPELISP_BIN=target/stage0/typelisp \
-  scripts/measure-spmd-avx512-instructions.sh --focused --cpu 4
-TYPELISP_BIN=target/stage0/typelisp \
-  scripts/measure-spmd-avx512-instructions.sh \
-  --runs 11 --check-baseline --cpu 4
-```
-
-The harness requires runnable AVX-512F+BW+DQ and OS ZMM/opmask state. It builds
-TypeLisp with explicit `--backend-mode avx512 --opt-level 2` and the static C
-comparison with `clang -O2 -march=x86-64 -mavx512f -mavx512bw -mavx512dq
--mno-avx512vl -static`; it never uses `-march=native`. Before measuring, each
-pair must match exit status, stdout, and stderr.
-
-`tools/spmd-avx512-perf/counter.tl` calls `perf_event_open` directly, pins the
-child to one logical CPU, starts the inherited user-space-only event on
-`execve`, waits, and rejects unavailable, zero, multiplexed, or signal/SIGILL
-results. There is no dependency on a distro-matched `perf`, Intel SDE, QEMU,
-llvm-mca, or a C helper.
-
-One warmup precedes 11 recorded runs. `metadata.tsv` records the complete
-host/tool/flags/PMU contract; `runs.tsv`, `summary.tsv`, and `comparison.tsv`
-record the raw counts, median/statistics/CV, TypeLisp-to-clang ratios, and
-geomean. Rebuilt assembly must hash identically, and static vector/AVX-512
-operand counts remain diagnostic columns—zero is visible and valid rather than
-substituted for dynamic performance.
-
-The committed `perf/spmd-avx512-retired-baseline.tsv` is keyed by a SHA-256 of
-the counter source, OS/kernel, CPU identity and logical CPU, ISA tokens,
-clang/as/ld versions, flags, and counter configuration. The 1000 ppm tolerance
-is enforced only for an exact fingerprint; other hosts are report-only.
-The baseline includes every supported benchmark, including measured
-`spmd_mask/avx512` and `spmd_shuffle/avx512` rows.
-Only a full 11-run measurement may update the baseline. The heavy hardware
-measurement is never part of required correctness CI; only fast mutation
-self-tests run there:
-
-```sh
-scripts/measure-spmd-avx512-instructions.sh --self-test
-```
-
-## Compile-profile optimizer escape capture
-
-Use the compile-profile verifier to build a profile-enabled CLI, then capture an
-optimized self-compile stderr log:
-
-```sh
-scripts/verify-compile-profile.sh
-target/compile-profile-verify/<host>/typelisp-profile compile src/main.tl \
-  -o target/compile-profile-verify/<host>/self-profile.s \
-  --target <target> \
-  --cfg <host-cfg> \
-  --stdlib-root stdlib \
-  --stdlib-root src \
-  --opt-level 1 \
-  2> target/compile-profile-verify/<host>/self-profile.stderr
-grep -E 'compile-profile\|optimize\.functions\||compile-profile-detail\|optimize\.escape\.(body|compact|clone|restore)\|' \
-  target/compile-profile-verify/<host>/self-profile.stderr
-```
-
-Use the same target and cfgs that match the host being measured. The escape rows
-are `compile-profile-detail|optimize.escape.<phase>|elapsed_ms|opt_level|function`
-with phases for `body`, `compact`, `clone`, and `restore`.
-
-## Heavy compile RSS checks
-
-Use `scripts/measure-compile-rss.sh` from Linux or WSL before reopening checked
-program compaction work from #3863. The harness wraps real compiler invocations
-with GNU `/usr/bin/time -v`, writes a stable TSV summary, and keeps command,
-stdout, stderr, and time transcripts under `target/compile-rss/`. It fails
-clearly when GNU time is not available.
-
-Run the same workloads once with current `main` and once with the candidate
-branch compiler, then compare `elapsed_ms`, `exit_code`, and `max_rss_kb` in
-`target/compile-rss/measurements.tsv`:
-
-```sh
-TYPELISP_COMPILE_RSS_OUT=target/compile-rss-main \
-  TYPELISP_BIN=target/main/typelisp \
-  scripts/measure-compile-rss.sh --mode all
-TYPELISP_COMPILE_RSS_OUT=target/compile-rss-candidate \
-  TYPELISP_BIN=target/candidate/typelisp \
-  scripts/measure-compile-rss.sh --mode all
-```
-
-The default `all` mode runs both required #3863 workloads:
-
-```sh
-scripts/measure-compile-rss.sh --mode single --input src/doc_test.tl <typelisp-bin>
-scripts/measure-compile-rss.sh --mode manifest-chunk --chunk-id 0002 <typelisp-bin>
-```
-
-Manifest chunk ids are zero-based file ids. The required heavy chunk is
-`0002`, which is human chunk 3. Keep the default manifest batch size at 16;
-reducing the batch size hides the memory behavior being measured. If a different
-output directory is useful for side-by-side runs, set `TYPELISP_COMPILE_RSS_OUT`.
-
-The required Linux PR gate measures `spmd_map`, `spmd_mask`, `spmd_zip`,
-`spmd_short_tail`, and `string_scan` as benchmark-only cases with one
-cachegrind run. Heavy improvements and regressions therefore block the PR that
-introduces them; accept intentional changes by committing an explicit
-`perf/insn-exec-heavy-baseline.tsv` refresh.
+self-compile row or the memory checks: it bounds how cost grows, not how large
+it is on the compiler's own sources.
 
 ## SPMD scalar/AVX2 mode matrix
 
@@ -422,5 +232,53 @@ scripts/measure-spmd-mode-instruction-counts.sh --self-test
 ```
 
 AVX-512 is never run under cachegrind because Valgrind 3.22 raises SIGILL and
-records only startup instructions. Its separate measurement methodology is
-tracked in [#4933](https://github.com/JoNil-Botta/typelisp/issues/4933).
+records only startup instructions, so AVX-512 has no instruction-count
+baseline.
+
+The opt-in ISPC comparison corpus (`scripts/measure-ispc-spmd.sh`) is
+report-only and is not mixed into these tables; see
+[`benchmarks/ispc/README.md`](../benchmarks/ispc/README.md).
+
+## Optimizer pass-firing census
+
+`scripts/measure-pass-firing.sh <compiler>` compiles the benchmarks, examples,
+integration and inline tests, the `tools/` programs and `src/main.tl` at
+`--opt-level 2` and counts, per optimizer pass slot and program, the functions
+the slot changed (`firing.tsv`); `summary.tsv` marks slots that change code only
+in benchmark programs. The script header describes its exact (IR dump diff) and
+counts (trace-only) methods and their limits.
+
+## Compile-profile optimizer escape capture
+
+Use the compile-profile verifier to build a profile-enabled CLI, then capture an
+optimized self-compile stderr log:
+
+```sh
+scripts/verify-compile-profile.sh
+target/compile-profile-verify/<host>/typelisp-profile compile src/main.tl \
+  -o target/compile-profile-verify/<host>/self-profile.s \
+  --target <target> \
+  --cfg <host-cfg> \
+  --stdlib-root stdlib \
+  --stdlib-root src \
+  --opt-level 1 \
+  2> target/compile-profile-verify/<host>/self-profile.stderr
+grep -E 'compile-profile\|optimize\.functions\||compile-profile-detail\|optimize\.escape\.' \
+  target/compile-profile-verify/<host>/self-profile.stderr
+```
+
+Use the same target and cfgs that match the host being measured. The escape rows
+are `compile-profile-detail|optimize.escape.<phase>|elapsed_ms|opt_level|function`
+with phases `body`, `dce_escape`, `compact`, `clone`, and `restore`.
+
+## CI timing artifacts
+
+Pull-request CI uploads one `ci-timing-Linux` and one `ci-timing-Windows`
+artifact per run (`target/ci-timing/<host>.tsv`, written by `ci-verify.sh` when
+`TYPELISP_CI_TIMING=1`). They record every gate's wall time and finer rows such
+as the four build-invariance selfhost compiles
+(`opt1-built:selfhost_main_opt1`, `opt2-built:selfhost_main_opt2`, ...). They
+are evidence for performance work; CI applies no wall-clock budget to them.
+Exact instruction counts guard performance instead. Use
+`scripts/benchmark-compile-cli.sh` for phase-level local investigation of a
+compile-time change.

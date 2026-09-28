@@ -12,10 +12,8 @@ CAP_MIB=8192
 CAP_BYTES=8589934592
 TIMEOUT_SECONDS=1200
 
-fail() {
-    echo "[embedded-tlci-resources] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[embedded-tlci-resources] '
+. "$ROOT/scripts/lib-gate.sh"
 
 file_bytes() {
     wc -c < "$1" | tr -d ' '
@@ -80,7 +78,7 @@ read_bounded_report() {
     done
     [ "$BOUND_SCHEMA" = 1 ] || return 1
     case "$BOUND_HOST:$BOUND_BACKEND" in
-        linux:systemd-user-cgroup | linux:rss-watchdog | linux:unavailable | windows:job-object) ;;
+        linux:systemd-user-cgroup | linux:unavailable | windows:job-object) ;;
         *)
             echo "bounded report has unsupported host/backend: $BOUND_HOST/$BOUND_BACKEND" >&2
             return 1

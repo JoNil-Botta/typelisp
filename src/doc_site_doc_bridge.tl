@@ -3,26 +3,24 @@
 (import doc_extract)
 (import doc_render)
 (import doc_html)
+(import stdlib.string)
 
 (define (bridge-doc-string-prefix-at?
   [text : (& text str)]
   [prefix : (& prefix str)]
   [offset : i64]) : bool
-  (doc_extract.doc-string-prefix-at? text prefix offset))
+  (string.is-string-prefix-at text prefix offset))
 
 (define (bridge-doc-string-contains?
   [text : (& text str)]
   [needle : (& needle str)]) : bool
-  (doc_extract.doc-string-contains? text needle))
+  (string.contains text needle))
 
 (define (bridge-doc-render-anchor [text : (& text str)]) : String
   (doc_render.doc-render-anchor text))
 
 (define (bridge-doc-html-escape [text : (& text str)]) : String
   (doc_html.doc-html-escape text))
-
-(define (bridge-doc-html-page-open [title : String]) : String
-  (doc_html.doc-html-page-open title))
 
 (define (bridge-doc-html-page-open-with-metadata
   [title : String]
@@ -52,12 +50,6 @@
   [needle : String]
   [message : String]) : bool
   (doc_html.doc-html-require-contains rendered needle message))
-
-(define (bridge-doc-html-module-section-source
-  [path : String]
-  [source : String]) : String
-  (doc_html.doc-html-module-section
-    (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))))
 
 (define (bridge-doc-html-module-section-source-url
   [path : String]

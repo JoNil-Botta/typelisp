@@ -6,7 +6,6 @@
 ;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
 ;; iteration and copy costs.
 (import compiler_ir_types as ir)
-(import stdlib.comptime)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as live_label_map)
 (import compiler_owned_view as owned_view)
@@ -15,37 +14,13 @@
 ;; aggregate values as persistent snapshots while mutating their backing dense
 ;; arrays in place, so read sites must not consume the snapshot owner.
 (defmacro (compiler-live-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(owned_view.compiler-owned-shared-view ,place)))
+  `(owned_view.compiler-owned-shared-view ,place))
 
 (defmacro (compiler-live-array-element-shared-view
   [items : Expr]
   [index : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    `(array-ref ,items ,index)
-    `(unsafe
-      (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
-
-(defmacro (compiler-live-box-shared-view [value : Expr]) : Expr
-  (let
-    ;; Spliced into the generated pointer element type.
-    ;; lint-allow: unused-variable
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(let
-      [address : i64
-        (unsafe
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
-      (unsafe
-        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
-
-(defmacro (compiler-live-box-field-shared-view [value : Expr] [field : Expr]) : Expr
-  `(let
-    [payload (compiler-live-box-shared-view ,value)]
-    (compiler-live-shared-view (__tl-project-field payload ,field))))
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (defstruct CompilerLiveI64Set
   (words (__tl_dyn-array i64)))
@@ -125,26 +100,9 @@
   (seq ir.CompilerIrBlockSeq)
   (graph CompilerLiveBlockGraph))
 
-;; Per-analysis edge facts that region-copy planning reads once per region,
-;; computed once per analysis instead:
-;; - `pred-counts`: how many blocks name each block among their successors;
-;; - `succ-offsets` / `succ-index`: each block's successors, in the order its
-;;   label set yields them (ref 0, 1, ...), as block indices (-1 where a label
-;;   names no block);
-;; - `canon`: the index the label map resolves each block's own label to (the
-;;   first block carrying it).
-(defstruct CompilerLiveEdgeIndex
-  (pred-counts (__tl_dyn-array i64))
-  (succ-offsets (__tl_dyn-array i64))
-  (succ-index (__tl_dyn-array i64))
-  (canon (__tl_dyn-array i64)))
-
 (defenum CompilerFunctionLiveness
-  ;; label -> block index, the blocks, and their edge index.
-  (Liveness
-    live_label_map.Map
-    (__tl_dyn-array CompilerLiveBlock)
-    CompilerLiveEdgeIndex))
+  ;; label -> block index, and the blocks.
+  (Liveness live_label_map.Map (__tl_dyn-array CompilerLiveBlock)))
 
 (defenum CompilerLiveMaybeBlock
   (No)
@@ -176,13 +134,9 @@
 ;; per eight bytes, and reaching it costs the argument moves and the `call`.
 ;; That is roughly `5n` against `18 + n`, which crosses just above four words.
 ;;
-;; The threshold is not a guess and the scalar arm is not vestigial: a
-;; word-count census over an opt2 self-compile puts half of every live-set copy
-;; at three words or fewer (freezes: 4.9% empty, 25.9% one word, 14.2% two,
-;; 10.1% three; the range copies are wider still at the tail but 52% of them are
-;; also three or fewer). Those calls are half the traffic and 7% of the words,
-;; so they must keep the cheap arm while the long tail -- which is where nearly
-;; all the words are -- takes the bulk copy.
+;; The scalar arm is not vestigial: about half of all live-set copies are three
+;; words or fewer, so they keep the cheap arm while the long tail -- which is
+;; where nearly all the words are -- takes the bulk copy.
 (define (compiler-live-set-bulk-copy-words) : i64
   5)
 
@@ -214,16 +168,10 @@
 (define (compiler-live-set-bit-mask [value : i64]) : i64
   (shl 1 (compiler-live-set-bit-index value)))
 
-(define (compiler-live-set-words [set : CompilerLiveI64Set]) : (__tl_dyn-array
-    i64)
-  set.words)
-
 ;; Every empty set is the same value: the word array has length zero, so no
 ;; index is in range and nothing can ever be written into it. Handing out one
 ;; shared instance is therefore indistinguishable from allocating a fresh one,
-;; and it removes an allocation from a function called throughout liveness --
-;; call-edge attribution puts 318,627,090 Ir of `tl_alloc` behind this one
-;; caller in an opt2 self-compile.
+;; and it removes an allocation from a function called throughout liveness.
 (define compiler-live-set-empty-value : (__tl_dyn-array CompilerLiveI64Set)
   (__tl_make-array (CompilerLiveI64Set (__tl_make-array i64 0))))
 
@@ -237,24 +185,20 @@
 (define (compiler-live-set-empty) : CompilerLiveI64Set
   (compiler-live-set-empty-shared-view))
 
-(define (compiler-live-set-word-count [set : CompilerLiveI64Set]) : i64
-  (array-length (compiler-live-set-words set)))
+(define (compiler-live-set-word-count [set : (& set CompilerLiveI64Set)]) : i64
+  (array-length set.words))
 
-;; There is no bounds-checked `compiler-live-set-word-at` any more. It existed
-;; to answer "the word at this index, or 0 when the set is too short" behind a
-;; call; P41 spelled that out inside `compiler-live-set-contains?` and P42 did
-;; the same for `compiler-live-set-insert` and `compiler-live-set-eq?`, which
-;; were the last two callers. Every remaining word read either proves its index
-;; in range and uses `-bounded` / `-at-data`, or spells the short-set arm out
-;; where the array's own length is already loaded.
+;; There is no bounds-checked "word at this index, or 0 when the set is too
+;; short" helper: every word read either proves its index in range and uses
+;; `-bounded` / `-at-data`, or spells the short-set arm out where the array's
+;; own length is already loaded.
 ;;
 ;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
 (define (compiler-live-set-word-at-bounded
-  [set : CompilerLiveI64Set]
+  [set : (& set CompilerLiveI64Set)]
   [word-index : i64]) : i64
   (unsafe
-    (ptr-read
-      (ptr-offset (__tl_array-data (compiler-live-set-words set)) word-index))))
+    (ptr-read (ptr-offset (__tl_array-data set.words) word-index))))
 
 ;; The backing pointer `compiler-live-set-word-at-bounded` reloads on every
 ;; call: the set handle, the array handle behind it, and the data pointer behind
@@ -266,7 +210,7 @@
 ;; allocate, as long as they do not write to this set.
 (define (compiler-live-set-word-data [set : CompilerLiveI64Set]) : (MutPtr i64)
   (unsafe
-    (__tl_array-data (compiler-live-set-words set))))
+    (__tl_array-data set.words)))
 
 ;; Same word `compiler-live-set-word-at-bounded` returns for this index, read
 ;; through a pointer the caller hoisted with `compiler-live-set-word-data`.
@@ -280,11 +224,9 @@
 ;; Copy `src[index, count)` into the same range of `dst`. Both callers below
 ;; allocate `dst` fresh at a length that covers `count` and never pass a `count`
 ;; past the end of `src`, so `dst` and `src` are always distinct arrays and the
-;; range is in bounds for both -- the recursive `array-ref`/`array-set!` form
-;; this replaces re-read both lengths and re-tested them on every word, which is
-;; four of the fourteen instructions it spent per word. Reading the backing
-;; pointers once and indexing them directly leaves the five-instruction word
-;; body, and once the range is wide enough to pay for the call (see
+;; range is in bounds for both. The backing pointers are therefore read once and
+;; indexed directly instead of re-reading and re-testing both lengths per word.
+;; Once the range is wide enough to pay for the call (see
 ;; `compiler-live-set-bulk-copy-words`) `tl_memcpy` moves it eight bytes per
 ;; instruction instead. Distinct arrays means the ranges cannot overlap, so the
 ;; forward bulk copy sees exactly what the ascending word walk saw.
@@ -324,7 +266,7 @@
   [set : CompilerLiveI64Set]
   [capacity : i64]) : (__tl_dyn-array i64)
   (let
-    [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
+    [words : (__tl_dyn-array i64) set.words]
     [old-capacity : i64 (array-length words)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [copy-count : i64 (compiler-live-set-min old-capacity capacity)]
@@ -337,7 +279,7 @@
       out)))
 
 (define (compiler-live-set-trim-length
-  [words : (__tl_dyn-array i64)]
+  [words : (& words (__tl_dyn-array i64))]
   [count : i64]) : i64
   (let
     [i : i64 count]
@@ -350,8 +292,7 @@
   [words : (__tl_dyn-array i64)]
   [count : i64]) : CompilerLiveI64Set
   (let
-    [n : i64
-      (compiler-live-set-trim-length (compiler-live-shared-view words) count)]
+    [n : i64 (compiler-live-set-trim-length words count)]
     (if (<= n 0)
       (compiler-live-set-empty)
       (if (= n (array-length words))
@@ -366,32 +307,27 @@
               n)
             (CompilerLiveI64Set out)))))))
 
-;; Membership is the hottest liveness primitive in an opt2 self-compile --
-;; 13,669,761 calls spread over 25 register-allocator and backend sites, none of
-;; them dominant -- so the word read is spelled out here instead of going through
-;; the bounds-checked `compiler-live-set-word-at` helper this used to call (P42
-;; retired it once `insert` and `eq?` stopped calling it too). What that helper
-;; charged THIS caller was a call/ret and an argument move, a
-;; `word-index < 0` test that the `value < 0` guard above already decides (a
-;; non-negative value cannot shift right into a negative index), and -- because
-;; the mask has to survive the call -- a callee-saved register plus the frame to
-;; save and restore it in. Everything the helper does for an in-range index is
-;; done here directly, and an out-of-range index still answers false: the helper
-;; returned word 0 for it, and 0 masks to 0.
+;; Membership is the hottest liveness primitive, spread over many
+;; register-allocator and backend sites, so the word read is spelled out here
+;; instead of going through a bounds-checked helper call: that would cost this
+;; caller a call/ret and an argument move, a `word-index < 0` test that the
+;; `value < 0` guard above already decides (a non-negative value cannot shift
+;; right into a negative index), and -- because the mask has to survive the
+;; call -- a callee-saved register plus the frame to save and restore it in. An
+;; out-of-range index still answers false.
 ;;
-;; The RANGE test now runs before the mask is built, and that is the larger half
-;; of the win rather than a tidying: 46% of the calls in an opt2 self-compile
-;; answer false without reading a word (measured -- the average call costs 19.7
-;; instructions against 28 for the full path), and every one of them used to pay
-;; for `compiler-live-set-bit-mask` first, which is a `shl` by a computed amount
-;; and so carries the two range checks the shift itself needs. Deciding the
+;; The RANGE test runs before the mask is built: many calls answer false without
+;; reading a word, and `compiler-live-set-bit-mask` is a `shl` by a computed
+;; amount that carries the two range checks the shift itself needs. Deciding the
 ;; cheap, always-needed comparison first lets those calls skip the whole
 ;; sequence.
-(define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
+(define (compiler-live-set-contains?
+  [set : (& set CompilerLiveI64Set)]
+  [value : i64]) : bool
   (if (< value 0)
     false
     (let
-      [words : (__tl_dyn-array i64) (compiler-live-set-words set)]
+      [words : (__tl_dyn-array i64) set.words]
       [word-index : i64 (compiler-live-set-word-index value)]
       (if (>= word-index (array-length words))
         false
@@ -403,58 +339,20 @@
               (compiler-live-set-bit-mask value))
             0))))))
 
-;; True iff `a` and `b` share at least one element (bitset word-level AND). Used
-;; by the SplitKit phi-carried loop homing to test whether ANY member of a
-;; coalesce group is live across a region boundary edge (no single member is live
-;; on every boundary edge of a phi-carried value, so the per-var live-on-edge test
-;; is insufficient -- the group/slot is what must be loaded/stored).
-(define (compiler-live-set-intersects?
-  [a : CompilerLiveI64Set]
-  [b : CompilerLiveI64Set]) : bool
-  (let
-    [na : i64 (compiler-live-set-word-count (compiler-live-shared-view a))]
-    [nb : i64 (compiler-live-set-word-count (compiler-live-shared-view b))]
-    [n : i64
-      (if (< na nb)
-        na
-        nb)]
-    [i : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (not
-            (=
-              (bit-and
-                (compiler-live-set-word-at-bounded
-                  (compiler-live-shared-view a)
-                  i)
-                (compiler-live-set-word-at-bounded
-                  (compiler-live-shared-view b)
-                  i))
-              0))
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
-
-;; The word read is spelled out rather than routed through the bounds-checked
-;; `compiler-live-set-word-at` helper, for the reason P41 gave for
-;; `compiler-live-set-contains?`: the call reloads the word array
-;; handle that `compiler-live-set-word-count` has already loaded one line above,
-;; and both are on the hot path of a function the liveness walk runs 2.4M times
-;; in an opt2 self-compile. Taking `words` once serves the count, the range test
-;; and the read. The helper's `word-index >= 0` half is dropped with it: `value`
-;; is non-negative on this arm and `compiler-live-set-word-index` is a right
-;; shift, so a negative index cannot arise here. The capacity `max` is spelled
-;; inline for P28's reason -- it is a real out-of-line call with 28 other sites
-;; keeping it that way, and this one sits on the hot path.
+;; The word read is spelled out rather than routed through a bounds-checked
+;; helper, as in `compiler-live-set-contains?`: the call would reload the word
+;; array handle that `compiler-live-set-word-count` has already loaded one line
+;; above, on the hot path of the liveness walk. Taking `words` once serves the
+;; count, the range test and the read. No `word-index >= 0` test is needed:
+;; `value` is non-negative on this arm and `compiler-live-set-word-index` is a
+;; right shift, so a negative index cannot arise here. The capacity `max` is
+;; spelled inline because it is a real out-of-line call and this one sits on
+;; the hot path.
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
     set
     (let
-      [words : (__tl_dyn-array i64)
-        (compiler-live-set-words (compiler-live-shared-view set))]
+      [words : (__tl_dyn-array i64) (compiler-live-shared-view set.words)]
       [word-count : i64 (array-length words)]
       [word-index : i64 (compiler-live-set-word-index value)]
       [mask : i64 (compiler-live-set-bit-mask value)]
@@ -476,40 +374,12 @@
             (set! (array-ref out word-index) (bit-or old-bits mask))
             (CompilerLiveI64Set out)))))))
 
-(define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
-  (if (< value 0)
-    set
-    (let
-      [word-index : i64 (compiler-live-set-word-index value)]
-      [capacity : i64
-        (compiler-live-set-word-count (compiler-live-shared-view set))]
-      [mask : i64 (compiler-live-set-bit-mask value)]
-      (if (>= word-index capacity)
-        set
-        (let
-          [old-bits : i64
-            (compiler-live-set-word-at-bounded
-              (compiler-live-shared-view set)
-              word-index)]
-          (if (= (bit-and old-bits mask) 0)
-            set
-            (let
-              [out : (__tl_dyn-array i64)
-                (compiler-live-set-copy-with-capacity set capacity)]
-              (begin
-                (set!
-                  (array-ref out word-index)
-                  (bit-and old-bits (bit-xor mask -1)))
-                (compiler-live-set-from-words-trimmed out capacity)))))))))
-
 (define (compiler-live-set-union
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [left-words : (__tl_dyn-array i64)
-      (compiler-live-set-words (compiler-live-shared-view left))]
-    [right-words : (__tl_dyn-array i64)
-      (compiler-live-set-words (compiler-live-shared-view right))]
+    [left-words : (__tl_dyn-array i64) left.words]
+    [right-words : (__tl_dyn-array i64) right.words]
     [left-count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     (if (= right-count 0)
@@ -596,9 +466,8 @@
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [left-words : (__tl_dyn-array i64)
-      (compiler-live-set-words (compiler-live-shared-view left))]
-    [right-words : (__tl_dyn-array i64) (compiler-live-set-words right)]
+    [left-words : (__tl_dyn-array i64) left.words]
+    [right-words : (__tl_dyn-array i64) right.words]
     [count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     [probe-count : i64 (compiler-live-set-min count right-count)]
@@ -643,26 +512,22 @@
             (compiler-live-set-from-words-trimmed out count)))
         left))))
 
-;; Two `compiler-live-set-word-at` calls per word was the whole cost of this
-;; comparison: each reloaded the set handle, the array handle behind it and the
-;; data pointer behind that, for one i64. Both arrays' handles, lengths and
-;; backing pointers are taken once here and the reads are spelled out, exactly
-;; as P41 did inside `compiler-live-set-contains?`. This was the helper's last
-;; caller together with `compiler-live-set-insert`, so it is gone. The short-set
-;; arm it provided is kept verbatim -- a set narrower than `count` reads 0 for
-;; its trailing words, which is what a missing word means -- so the same word
-;; pairs are compared in the same order and the same answer comes out.
+;; Both arrays' handles, lengths and backing pointers are taken once here and
+;; the reads are spelled out, as in `compiler-live-set-contains?`, rather than
+;; reloading the set handle, the array handle and the data pointer per word. A
+;; set narrower than `count` reads 0 for its trailing words, which is what a
+;; missing word means.
 ;;
 ;; The range proof is local: `index` starts at 0 and only ever increments, and
 ;; each read is guarded against that array's OWN length, so no caller contract
-;; is involved. The pointers cannot go stale either -- with the calls gone the
-;; loop body contains none at all, so nothing in it can allocate.
+;; is involved. The pointers cannot go stale either -- the loop body contains
+;; no calls at all, so nothing in it can allocate.
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : bool
   (let
-    [left-words : (__tl_dyn-array i64) (compiler-live-set-words left)]
-    [right-words : (__tl_dyn-array i64) (compiler-live-set-words right)]
+    [left-words : (__tl_dyn-array i64) left.words]
+    [right-words : (__tl_dyn-array i64) right.words]
     [left-count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
     [count : i64
@@ -714,12 +579,12 @@
 
 (define (compiler-live-scratch-copy-set!
   [words : (__tl_dyn-array i64)]
-  [set : CompilerLiveI64Set]) : i64
+  [set : (& set CompilerLiveI64Set)]) : i64
   (let
     [dst : (MutPtr i64)
       (unsafe
         (__tl_array-data words))]
-    [src-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
+    [src-words : (__tl_dyn-array i64) set.words]
     [src : (MutPtr i64)
       (unsafe
         (__tl_array-data src-words))]
@@ -749,7 +614,7 @@
     [dst : (MutPtr i64)
       (unsafe
         (__tl_array-data words))]
-    [src-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
+    [src-words : (__tl_dyn-array i64) set.words]
     [src : (MutPtr i64)
       (unsafe
         (__tl_array-data src-words))]
@@ -780,9 +645,9 @@
 ;; bits. `count` is computed from the same three widths, so the returned trim
 ;; length is the same too.
 (define (compiler-live-scratch-step-ids!
-  [words : (__tl_dyn-array i64)]
+  [words : (&mut words (__tl_dyn-array i64))]
   [active-count : i64]
-  [ids : (__tl_dyn-array i64)]
+  [ids : (& ids (__tl_dyn-array i64))]
   [id-count : i64]
   [def-var : i64]) : i64
   (let
@@ -815,14 +680,14 @@
 (define (compiler-live-scratch-step!
   [words : (__tl_dyn-array i64)]
   [active-count : i64]
-  [uses : CompilerLiveI64Set]
-  [defs : CompilerLiveI64Set]) : i64
+  [uses : (& uses CompilerLiveI64Set)]
+  [defs : (& defs CompilerLiveI64Set)]) : i64
   (let
     [dst : (MutPtr i64)
       (unsafe
         (__tl_array-data words))]
-    [use-words : (__tl_dyn-array i64) (compiler-live-set-words uses)]
-    [def-words : (__tl_dyn-array i64) (compiler-live-set-words defs)]
+    [use-words : (__tl_dyn-array i64) uses.words]
+    [def-words : (__tl_dyn-array i64) defs.words]
     [use-data : (MutPtr i64)
       (unsafe
         (__tl_array-data use-words))]
@@ -866,12 +731,11 @@
   [active-count : i64]
   [set : CompilerLiveI64Set]) : bool
   (let
-    [set-count : i64
-      (compiler-live-set-word-count (compiler-live-shared-view set))]
+    [set-count : i64 (compiler-live-set-word-count set)]
     [data : (MutPtr i64)
       (unsafe
         (__tl_array-data words))]
-    [set-words : (__tl_dyn-array i64) (compiler-live-set-words set)]
+    [set-words : (__tl_dyn-array i64) set.words]
     [set-data : (MutPtr i64)
       (unsafe
         (__tl_array-data set-words))]
@@ -894,10 +758,7 @@
   [words : (__tl_dyn-array i64)]
   [active-count : i64]) : CompilerLiveI64Set
   (let
-    [count : i64
-      (compiler-live-set-trim-length
-        (compiler-live-shared-view words)
-        active-count)]
+    [count : i64 (compiler-live-set-trim-length words active-count)]
     (if (<= count 0)
       (compiler-live-set-empty)
       (let
@@ -945,12 +806,11 @@
         1)
       (compiler-live-set-word-count-bits bits (+ bit 1)))))
 
-(define (compiler-live-set-count [set : CompilerLiveI64Set]) : i64
+(define (compiler-live-set-count [set : (& set CompilerLiveI64Set)]) : i64
   (let
     [index : i64 0]
     [count : i64 0]
-    [word-count : i64
-      (compiler-live-set-word-count (compiler-live-shared-view set))]
+    [word-count : i64 (compiler-live-set-word-count set)]
     (begin
       (while (< index word-count)
         (begin
@@ -959,50 +819,13 @@
             (+
               count
               (compiler-live-set-word-count-bits
-                (compiler-live-set-word-at-bounded
-                  (compiler-live-shared-view set)
-                  index)
+                (compiler-live-set-word-at-bounded set index)
                 0)))
           (set! index (+ index 1))))
       count)))
 
-(define (compiler-live-set-score-word-desc
-  [bits : i64]
-  [base : i64]
-  [bit : i64]
-  [acc : i64]) : i64
-  (if (< bit 0)
-    acc
-    (compiler-live-set-score-word-desc
-      bits
-      base
-      (- bit 1)
-      (if (= (bit-and bits (shl 1 bit)) 0)
-        acc
-        (+ (+ base (+ bit 1)) (* 17 acc))))))
-
-(define (compiler-live-set-score [set : CompilerLiveI64Set]) : i64
-  (let
-    [index : i64
-      (- (compiler-live-set-word-count (compiler-live-shared-view set)) 1)]
-    [score : i64 0]
-    (begin
-      (while (>= index 0)
-        (begin
-          (set!
-            score
-            (compiler-live-set-score-word-desc
-              (compiler-live-set-word-at-bounded
-                (compiler-live-shared-view set)
-                index)
-              (* index (compiler-live-set-word-bits))
-              (- (compiler-live-set-word-bits) 1)
-              score))
-          (set! index (- index 1))))
-      score)))
-
 (define (compiler-live-set-builder-insert!
-  [words : (__tl_dyn-array i64)]
+  [words : (&mut words (__tl_dyn-array i64))]
   [value : i64]) : unit
   (if (< value 0)
     unit
@@ -1024,41 +847,7 @@
   (let
     [words : (__tl_dyn-array i64) (compiler-live-set-builder a)]
     (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (CompilerLiveI64Set words))))
-
-(define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
-  (let
-    [words : (__tl_dyn-array i64)
-      (compiler-live-set-builder (compiler-live-set-max a b))]
-    (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) b)
-      (CompilerLiveI64Set words))))
-
-(define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
-  (let
-    [words : (__tl_dyn-array i64)
-      (compiler-live-set-builder
-        (compiler-live-set-max (compiler-live-set-max a b) c))]
-    (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) b)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) c)
-      (CompilerLiveI64Set words))))
-
-(define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
-  (let
-    [words : (__tl_dyn-array i64)
-      (compiler-live-set-builder
-        (compiler-live-set-max
-          (compiler-live-set-max a b)
-          (compiler-live-set-max c d)))]
-    (begin
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) a)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) b)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) c)
-      (compiler-live-set-builder-insert! (compiler-live-shared-view words) d)
+      (compiler-live-set-builder-insert! (&mut words) a)
       (CompilerLiveI64Set words))))
 
 (define (compiler-live-label-set-contains?
@@ -1104,33 +893,6 @@
   [b : ir.CompilerIrValue]) : CompilerLiveI64Set
   (compiler-live-value-vars-into (compiler-live-value-vars b) a))
 
-(define (compiler-live-values3-vars
-  [a : ir.CompilerIrValue]
-  [b : ir.CompilerIrValue]
-  [c : ir.CompilerIrValue]) : CompilerLiveI64Set
-  (compiler-live-value-vars-into (compiler-live-values2-vars b c) a))
-
-(define (compiler-live-values4-vars
-  [a : ir.CompilerIrValue]
-  [b : ir.CompilerIrValue]
-  [c : ir.CompilerIrValue]
-  [d : ir.CompilerIrValue]) : CompilerLiveI64Set
-  (compiler-live-value-vars-into (compiler-live-values3-vars b c d) a))
-
-(define (compiler-live-value-seq-vars-from
-  [values : ir.CompilerIrValueSeq]
-  [index : i64]) : CompilerLiveI64Set
-  (if (>= index values.len)
-    (compiler-live-set-empty)
-    (compiler-live-value-vars-into
-      (compiler-live-value-seq-vars-from
-        (compiler-live-shared-view values)
-        (+ index 1))
-      (ir.compiler-ir-value-seq-ref (compiler-live-shared-view values) index))))
-
-(define (compiler-live-value-seq-vars [values : ir.CompilerIrValueSeq]) : CompilerLiveI64Set
-  (compiler-live-value-seq-vars-from values 0))
-
 (define (compiler-live-call-args-array-vars
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [index : i64]) : CompilerLiveI64Set
@@ -1166,31 +928,6 @@
 (define (compiler-live-spmd-call-args-vars [args : ir.CompilerIrSpmdCallArgSeq]) : CompilerLiveI64Set
   (compiler-live-spmd-call-args-seq-vars args 0))
 
-(define (compiler-live-maybe-value-vars [value : ir.CompilerIrMaybeValue]) : CompilerLiveI64Set
-  (match value
-    [(ir.CompilerIrMaybeValue.No) (compiler-live-set-empty)]
-    [(ir.CompilerIrMaybeValue.Some inner) (compiler-live-value-vars inner)]))
-
-(define (compiler-live-phi-input-vars [inputs : ir.CompilerIrPhiInputSeq]) : CompilerLiveI64Set
-  (let
-    [phi-inputs-at-1155-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-1155-3.len 0)
-      (compiler-live-set-empty)
-      (let
-        [phi-input-at-1155-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-1155-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-1155-3.value]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            (ir.compiler-ir-global-shared-view phi-inputs-at-1155-3.slots)
-            (+ phi-inputs-at-1155-3.start 1)
-            (- phi-inputs-at-1155-3.len 1))]
-        (compiler-live-value-vars-into
-          (compiler-live-phi-input-vars (compiler-live-shared-view rest))
-          value)))))
-
 (define (compiler-live-switch-case-successors
   [set : CompilerLiveLabelSet]
   [cases : ir.CompilerIrSwitchCaseSeq]) : CompilerLiveLabelSet
@@ -1206,153 +943,25 @@
           (set! index (+ index 1))))
       out)))
 
-(define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
-  (match instr
-    [(ir.CompilerIrInstr.Mov _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.OwnRoot _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Alloc _ _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
-    [(ir.CompilerIrInstr.Gep _ base offset _)
-      (compiler-live-values2-vars base offset)]
-    [(ir.CompilerIrInstr.Load _ src _) (compiler-live-value-vars src)]
-    ;; `owner` is optimizer evidence, not a runtime operand. Optimizer DCE
-    ;; preserves its definition explicitly; machine liveness must model only
-    ;; the address that the emitted load actually reads.
-    [(ir.CompilerIrInstr.LoadOwned _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.StorePtr dst src _)
-      (compiler-live-values2-vars dst src)]
-    [(ir.CompilerIrInstr.StoreOwned dst src _)
-      (compiler-live-values2-vars dst src)]
-    [(ir.CompilerIrInstr.CopyBytes dst src _)
-      (compiler-live-values2-vars dst src)]
-    [(ir.CompilerIrInstr.BoundsCheck index length _)
-      (compiler-live-values2-vars index length)]
-    [(ir.CompilerIrInstr.Cast _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Bitcast _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
-      (compiler-live-values2-vars lhs rhs)]
-    [(ir.CompilerIrInstr.UnOp _ _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.LaneId _ _ _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.Splat _ value _ _) (compiler-live-value-vars value)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [lhs (compiler-live-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-live-box-field-shared-view payload-box rhs)]
-        (compiler-live-values2-vars lhs rhs))]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (let
-        [src (compiler-live-box-field-shared-view payload-box src)]
-        [carry (compiler-live-box-field-shared-view payload-box carry)]
-        (compiler-live-values2-vars src carry))]
-    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [lhs (compiler-live-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-live-box-field-shared-view payload-box rhs)]
-        (compiler-live-values2-vars lhs rhs))]
-    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (compiler-live-values2-vars lhs rhs)]
-    [(ir.CompilerIrInstr.MaskNot _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.MaskReduce _ _ src _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (let
-        [mask (compiler-live-box-field-shared-view payload-box mask)]
-        [on-true (compiler-live-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-live-box-field-shared-view payload-box on-false)]
-        (compiler-live-values3-vars mask on-true on-false))]
-    [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
-      (compiler-live-values2-vars base index)]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        [value (compiler-live-box-field-shared-view payload-box value)]
-        (compiler-live-values3-vars base index value))]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        [value (compiler-live-box-field-shared-view payload-box value)]
-        [mask (compiler-live-box-field-shared-view payload-box mask)]
-        (compiler-live-values4-vars base index value mask))]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        [mask (compiler-live-box-field-shared-view payload-box mask)]
-        (compiler-live-values3-vars base index mask))]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [index-base
-          (compiler-live-box-field-shared-view payload-box index-base)]
-        [index (compiler-live-box-field-shared-view payload-box index)]
-        (compiler-live-values3-vars base index-base index))]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (let
-        [source (compiler-live-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-live-box-field-shared-view payload-box selector-low)]
-        [selector-high
-          (compiler-live-box-field-shared-view payload-box selector-high)]
-        [active-lanes
-          (compiler-live-box-field-shared-view payload-box active-lanes)]
-        (compiler-live-set-union
-          (compiler-live-values3-vars source selector-low active-lanes)
-          (compiler-live-maybe-value-vars selector-high)))]
-    [(ir.CompilerIrInstr.TailMask _ index len _)
-      (compiler-live-values2-vars index len)]
-    [(ir.CompilerIrInstr.EntryArgc _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.EntryArgv _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.EntryEnvp _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
-      (compiler-live-values2-vars leaf subleaf)]
-    [(ir.CompilerIrInstr.Xgetbv _ index) (compiler-live-value-vars index)]
-    [(ir.CompilerIrInstr.Syscall _ args) (compiler-live-call-args-vars args)]
-    [(ir.CompilerIrInstr.Call _ _ args _) (compiler-live-call-args-vars args)]
-    [(ir.CompilerIrInstr.CallIndirect _ func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [args (compiler-live-box-field-shared-view payload-box args)]
-        (compiler-live-value-vars-into (compiler-live-call-args-vars args) base))]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-live-box-field-shared-view payload-box base)]
-        [func (compiler-live-box-field-shared-view payload-box callee)]
-        [args (compiler-live-box-field-shared-view payload-box args)]
-        (compiler-live-value-vars-into
-          (compiler-live-value-vars-into
-            (compiler-live-call-args-vars args)
-            base)
-          func))]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (let
-        [active-mask
-          (compiler-live-box-field-shared-view payload-box active-mask)]
-        [args (compiler-live-box-field-shared-view payload-box args)]
-        (compiler-live-value-vars-into
-          (compiler-live-spmd-call-args-vars args)
-          active-mask))]
-    [(ir.CompilerIrInstr.TailCall _ args _) (compiler-live-call-args-vars args)]
-    [(ir.CompilerIrInstr.Store _ value _) (compiler-live-value-vars value)]
-    [(ir.CompilerIrInstr.Branch cond _ _) (compiler-live-value-vars cond)]
-    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
-      (compiler-live-value-vars cond)]
-    [(ir.CompilerIrInstr.Return value) (compiler-live-maybe-value-vars value)]
-    [(ir.CompilerIrInstr.Phi _ inputs _) (compiler-live-phi-input-vars inputs)]
-    [(ir.CompilerIrInstr.Pack _ words _) (compiler-live-value-seq-vars words)]
-    [(ir.CompilerIrInstr.Word _ src _ _) (compiler-live-value-vars src)]
-    [(ir.CompilerIrInstr.Jump _) (compiler-live-set-empty)]
-    [(ir.CompilerIrInstr.TailCallIndirect func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
-    [(ir.CompilerIrInstr.Switch index _ _ _) (compiler-live-value-vars index)]
-    [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
-      (compiler-live-value-vars index)]))
+(define (compiler-live-use-vars-into
+  [_role : ir.CompilerIrOperandRole]
+  [set : CompilerLiveI64Set]
+  [value : ir.CompilerIrValue]) : CompilerLiveI64Set
+  (compiler-live-value-vars-into set value))
+
+;; The vars `instr` reads: its uses, Pack words and phi inputs included, and
+;; AddrOf's storage var.
+(define (compiler-live-instr-uses [instr : (& instr ir.CompilerIrInstr)]) : CompilerLiveI64Set
+  (let
+    [instr : ir.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
+    (match (compiler-live-shared-view instr)
+      [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
+      [_
+        (ir.compiler-ir-instr-fold-uses
+          instr
+          (compiler-live-set-empty)
+          compiler-live-use-vars-into)])))
 
 ;; ---------------------------------------------------------------------------
 ;; Direct per-instruction var-id extraction.
@@ -1366,77 +975,21 @@
 ;; allocation and the word scan are both pure overhead.
 ;;
 ;; These entry points hand the ids over directly:
-;;   * `compiler-live-instr-def-var` -- the single defined var, or -1.
+;;   * `ir.compiler-ir-instr-dst` -- the single defined var, or -1.
 ;;   * `compiler-live-instr-use-ids-into!` -- the DISTINCT used var ids written
 ;;     into a caller-owned scratch array, or -1 when they do not fit.
-;; Both are exact mirrors of `compiler-live-instr-defs` / `-uses`: same arms,
-;; same operands, same de-duplication, so `{ids} == set` element-wise. Order is
-;; operand order rather than the set's ascending id order, which is why
-;; order-sensitive consumers (remat's var renumbering) keep the bitset.
+;; Both mirror `compiler-live-instr-defs` / `-uses`: same operands, same
+;; de-duplication, so `{ids} == set` element-wise. Order is operand order rather
+;; than the set's ascending id order, so a consumer that needs ascending order
+;; keeps the bitset.
 ;; ---------------------------------------------------------------------------
-;; The single var an instruction defines, or -1. Mirrors compiler-live-instr-defs
-;; arm for arm (compiler_regalloc's compiler-reg-instr-def-var is the same
-;; function over the same arms, kept there for the def census).
-(define (compiler-live-instr-def-var [instr : ir.CompilerIrInstr]) : i64
-  (match instr
-    [(ir.CompilerIrInstr.Mov dst _ _) dst]
-    [(ir.CompilerIrInstr.OwnRoot dst _ _) dst]
-    [(ir.CompilerIrInstr.Alloc dst _) dst]
-    [(ir.CompilerIrInstr.AddrOf dst _) dst]
-    [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Load dst _ _) dst]
-    [(ir.CompilerIrInstr.LoadOwned dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Cast dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(ir.CompilerIrInstr.LaneId dst _ _) dst]
-    [(ir.CompilerIrInstr.Splat dst _ _ _) dst]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.MaskNot dst _ _) dst]
-    [(ir.CompilerIrInstr.MaskReduce dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (compiler-live-box-field-shared-view payload-box dst)]
-    [(ir.CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(ir.CompilerIrInstr.EntryArgc dst) dst]
-    [(ir.CompilerIrInstr.EntryArgv dst) dst]
-    [(ir.CompilerIrInstr.EntryEnvp dst) dst]
-    [(ir.CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(ir.CompilerIrInstr.Xgetbv dst _) dst]
-    [(ir.CompilerIrInstr.Syscall dst _) dst]
-    [(ir.CompilerIrInstr.Call dst _ _ _) dst]
-    [(ir.CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(ir.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (match (compiler-live-box-field-shared-view payload-box result)
-        [(ir.CompilerIrSpmdCallResult.Unit) -1]
-        [(ir.CompilerIrSpmdCallResult.Value dst _ _) dst])]
-    [(ir.CompilerIrInstr.Phi dst _ _) dst]
-    [(ir.CompilerIrInstr.Pack dst _ _) dst]
-    [(ir.CompilerIrInstr.Word dst _ _ _) dst]
-    [_ -1]))
-
 ;; Append `id` to `out[0..n)` unless it is already there (the bitset de-dups,
 ;; so `x = x + x` must yield one id, not two). Negative ids are dropped exactly
 ;; as compiler-live-set-builder-insert! drops them. Returns the new count, or
 ;; -1 once the ids no longer fit; -1 is sticky so an overflow survives the rest
 ;; of the walk and the caller falls back to the bitset.
 (define (compiler-live-use-ids-push!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [id : i64]) : i64
   (if (< n 0)
@@ -1462,7 +1015,7 @@
                 (+ n 1)))))))))
 
 (define (compiler-live-use-ids-add-value!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [value : ir.CompilerIrValue]) : i64
   (match value
@@ -1470,7 +1023,7 @@
     [_ n]))
 
 (define (compiler-live-use-ids-add-maybe-value!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [value : ir.CompilerIrMaybeValue]) : i64
   (match value
@@ -1479,14 +1032,14 @@
       (compiler-live-use-ids-add-value! out n inner)]))
 
 (define (compiler-live-use-ids-add-value-array!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [index : i64]) : i64
   (if (>= index (array-length values))
     n
     (compiler-live-use-ids-add-value-array!
-      (compiler-live-shared-view out)
+      out
       (compiler-live-use-ids-add-value!
         out
         n
@@ -1495,7 +1048,7 @@
       (+ index 1))))
 
 (define (compiler-live-use-ids-add-call-args!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [args : ir.CompilerIrCallArgs]) : i64
   (match args
@@ -1504,7 +1057,7 @@
       (compiler-live-use-ids-add-value! out n value)]
     [(ir.CompilerIrCallArgs.Two a b)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out n a)
         b)]
     [(ir.CompilerIrCallArgs.Array values)
@@ -1514,55 +1067,55 @@
 
 ;; Walk dense value slots in place; no transient chain is materialized.
 (define (compiler-live-use-ids-add-value-seq-from!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [seq : ir.CompilerIrValueSeq]
   [index : i64]) : i64
   (if (>= index seq.len)
     n
     (compiler-live-use-ids-add-value-seq-from!
-      (compiler-live-shared-view out)
+      out
       (compiler-live-use-ids-add-value!
         out
         n
         (compiler-live-array-element-shared-view seq.slots index))
-      (compiler-live-shared-view seq)
+      seq
       (+ index 1))))
 
 (define (compiler-live-use-ids-add-value-seq!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [values : ir.CompilerIrValueSeq]) : i64
   (compiler-live-use-ids-add-value-seq-from! out n values 0))
 
 (define (compiler-live-use-ids-add-phi-inputs!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [inputs : ir.CompilerIrPhiInputSeq]) : i64
   (if (<= inputs.len 0)
     n
     (let
       [input : ir.CompilerIrPhiInput
-        (ir.compiler-ir-phi-input-seq-ref (compiler-live-shared-view inputs) 0)]
+        (ir.compiler-ir-phi-input-seq-ref inputs 0)]
       [rest : ir.CompilerIrPhiInputSeq
         (ir.CompilerIrPhiInputSeq
-          (compiler-live-shared-view inputs.slots)
+          inputs.slots
           (+ inputs.start 1)
           (- inputs.len 1))]
       (compiler-live-use-ids-add-phi-inputs!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out n input.value)
-        (compiler-live-shared-view rest)))))
+        rest))))
 
 (define (compiler-live-use-ids-add-spmd-args-seq!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [seq : ir.CompilerIrSpmdCallArgSeq]
   [index : i64]) : i64
   (if (>= index seq.len)
     n
     (compiler-live-use-ids-add-spmd-args-seq!
-      (compiler-live-shared-view out)
+      out
       (match (array-ref seq.slots index)
         [(ir.CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-live-use-ids-add-value! out n value)])
@@ -1570,52 +1123,49 @@
       (+ index 1))))
 
 (define (compiler-live-use-ids-add-spmd-args!
-  [out : (__tl_dyn-array i64)]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [args : ir.CompilerIrSpmdCallArgSeq]) : i64
   (compiler-live-use-ids-add-spmd-args-seq! out n args 0))
 
 ;; Write the distinct used var ids of `instr` into `out`, returning the count,
 ;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).
-;; Arm for arm this is compiler-live-instr-uses with `compiler-live-set*`
-;; replaced by `push!`.
+;; The ids are those of compiler-live-instr-uses. This per-instruction hot path
+;; keeps its own match instead of compiler-ir-instr-fold-uses, whose inlined
+;; operand loops would give every call a larger frame.
 (define (compiler-live-instr-use-ids-into!
   [instr : ir.CompilerIrInstr]
-  [out : (__tl_dyn-array i64)]) : i64
+  [out : (&mut out (__tl_dyn-array i64))]) : i64
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
-      (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.OwnRoot _ src _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Alloc _ _) 0]
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
     [(ir.CompilerIrInstr.Gep _ base offset _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 base)
         offset)]
     [(ir.CompilerIrInstr.Load _ src _)
       (compiler-live-use-ids-add-value! out 0 src)]
-    [(ir.CompilerIrInstr.LoadOwned _ src _ _)
-      (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.StorePtr dst src _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 dst)
         src)]
     [(ir.CompilerIrInstr.StoreOwned dst src _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 dst)
         src)]
     [(ir.CompilerIrInstr.CopyBytes dst src _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 dst)
         src)]
     [(ir.CompilerIrInstr.BoundsCheck index length _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 index)
         length)]
     [(ir.CompilerIrInstr.Cast _ src _ _)
@@ -1624,7 +1174,7 @@
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 lhs)
         rhs)]
     [(ir.CompilerIrInstr.UnOp _ _ src _)
@@ -1634,33 +1184,30 @@
       (compiler-live-use-ids-add-value! out 0 value)]
     [(ir.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorBinOpPayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrVectorBinOpPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value! out 0 payload.lhs)
           payload.rhs))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorPrefixPayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrVectorPrefixPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value! out 0 payload.src)
           payload.carry))]
     [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorComparePayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrVectorComparePayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value! out 0 payload.lhs)
           payload.rhs))]
     [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 lhs)
         rhs)]
     [(ir.CompilerIrInstr.MaskNot _ src _)
@@ -1669,84 +1216,78 @@
       (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Select payload-box)
       (let
-        [payload : ir.CompilerIrInstrSelectPayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrSelectPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-value! out 0 payload.mask)
             payload.on-true)
           payload.on-false))]
     [(ir.CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 base)
         index)]
     [(ir.CompilerIrInstr.VectorStore payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorStorePayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrVectorStorePayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-value! out 0 payload.base)
             payload.index)
           payload.value))]
     [(ir.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [payload : ir.CompilerIrInstrPredicatedStorePayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrPredicatedStorePayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-value!
-              (compiler-live-shared-view out)
+              out
               (compiler-live-use-ids-add-value! out 0 payload.base)
               payload.index)
             payload.value)
           payload.mask))]
     [(ir.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [payload : ir.CompilerIrInstrPredicatedLoadPayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrPredicatedLoadPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-value! out 0 payload.base)
             payload.index)
           payload.mask))]
     [(ir.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [payload : ir.CompilerIrInstrGatherLoadPayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrGatherLoadPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-value! out 0 payload.base)
             payload.index-base)
           payload.index))]
     [(ir.CompilerIrInstr.VectorShuffle payload-box)
       (let
-        [payload : ir.CompilerIrInstrVectorShufflePayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrVectorShufflePayload (deref payload-box)]
         (compiler-live-use-ids-add-maybe-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-value!
-              (compiler-live-shared-view out)
+              out
               (compiler-live-use-ids-add-value! out 0 payload.source)
               payload.selector-low)
             payload.active-lanes)
           payload.selector-high))]
     [(ir.CompilerIrInstr.TailMask _ index len _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 index)
         len)]
     [(ir.CompilerIrInstr.EntryArgc _) 0]
@@ -1754,7 +1295,7 @@
     [(ir.CompilerIrInstr.EntryEnvp _) 0]
     [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-value! out 0 leaf)
         subleaf)]
     [(ir.CompilerIrInstr.Xgetbv _ index)
@@ -1765,39 +1306,38 @@
       (compiler-live-use-ids-add-call-args! out 0 args)]
     [(ir.CompilerIrInstr.CallIndirect _ func args _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
     [(ir.CompilerIrInstr.CallIndirectC _ func args _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [payload : ir.CompilerIrInstrCallCAbiStoreResultPayload
-          (compiler-live-box-shared-view payload-box)]
+          (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-call-args! out 0 payload.args)
           payload.base))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
         [payload : ir.CompilerIrInstrCallIndirectCAbiStoreResultPayload
-          (compiler-live-box-shared-view payload-box)]
+          (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-value!
-            (compiler-live-shared-view out)
+            out
             (compiler-live-use-ids-add-call-args! out 0 payload.args)
             payload.base)
           payload.callee))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
-        [payload : ir.CompilerIrInstrSpmdCallPayload
-          (compiler-live-box-shared-view payload-box)]
+        [payload : ir.CompilerIrInstrSpmdCallPayload (deref payload-box)]
         (compiler-live-use-ids-add-value!
-          (compiler-live-shared-view out)
+          out
           (compiler-live-use-ids-add-spmd-args! out 0 payload.args)
           payload.active-mask))]
     [(ir.CompilerIrInstr.TailCall _ args _)
@@ -1819,7 +1359,7 @@
     [(ir.CompilerIrInstr.Jump _) 0]
     [(ir.CompilerIrInstr.TailCallIndirect func args _)
       (compiler-live-use-ids-add-value!
-        (compiler-live-shared-view out)
+        out
         (compiler-live-use-ids-add-call-args! out 0 args)
         func)]
     [(ir.CompilerIrInstr.Switch index _ _ _)
@@ -1831,7 +1371,7 @@
 ;; are edge uses, so the phi point itself uses nothing.
 (define (compiler-live-instr-use-ids-nophi-into!
   [instr : ir.CompilerIrInstr]
-  [out : (__tl_dyn-array i64)]) : i64
+  [out : (&mut out (__tl_dyn-array i64))]) : i64
   (match (compiler-live-shared-view instr)
     [(ir.CompilerIrInstr.Phi _ _ _) 0]
     [_ (compiler-live-instr-use-ids-into! instr out)]))
@@ -1842,32 +1382,28 @@
 ;; down the liveness / interval / ref-count call chains. Hold the ids only until
 ;; the next `compiler-live-instr-use-ids!` call.
 ;;
-;; 64 slots: an opt2 self-compile decodes 15,877,540 use lists whose widest is a
-;; 17..64-id call/phi (1,571 of them) and never exceeds 64; a wider one simply
+;; 64 slots covers the widest call/phi use lists in practice; a wider one simply
 ;; returns -1 and the caller takes the bitset path, so capacity is a throughput
 ;; choice, not a correctness one.
-(define compiler-live-instr-ids-buffer : (__tl_dyn-array (__tl_dyn-array i64))
-  (__tl_make-array (__tl_make-array i64 64)))
+(define compiler-live-instr-ids-buffer : (__tl_dyn-array i64)
+  (__tl_make-array i64 64))
 
-(define (compiler-live-instr-ids-buffer-shared-view) : (__tl_dyn-array i64)
-  (unsafe
-    (ptr-read
-      (ptr-cast
-        (__tl_array-data compiler-live-instr-ids-buffer)
-        : (Ptr (__tl_dyn-array i64))))))
-
+;; The ids of the last extraction, for consumers in other modules: a view of the
+;; shared buffer, spelled out because the stage0 bootstrap spelling of a place
+;; view would borrow the global.
 (define (compiler-live-instr-ids) : (__tl_dyn-array i64)
-  (compiler-live-instr-ids-buffer-shared-view))
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-live-instr-ids-buffer))))
 
 (define (compiler-live-instr-use-ids! [instr : ir.CompilerIrInstr]) : i64
   (compiler-live-instr-use-ids-into!
     instr
-    (compiler-live-instr-ids-buffer-shared-view)))
+    (&mut compiler-live-instr-ids-buffer)))
 
 (define (compiler-live-instr-use-ids-nophi! [instr : ir.CompilerIrInstr]) : i64
   (compiler-live-instr-use-ids-nophi-into!
     instr
-    (compiler-live-instr-ids-buffer-shared-view)))
+    (&mut compiler-live-instr-ids-buffer)))
 
 ;; Word count of the bitset the ids would have produced: the widest id decides
 ;; it, exactly as `compiler-live-set-word-count` reads it off a set whose top
@@ -1896,71 +1432,10 @@
 
 (define (compiler-live-instr-defs [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (let
-    [dst : i64 (compiler-live-instr-def-var instr)]
+    [dst : i64 (ir.compiler-ir-instr-dst instr)]
     (if (< dst 0)
       (compiler-live-set-empty)
       (compiler-live-set1 dst))))
-
-(define (compiler-live-block-use-def-instrs
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [uses : CompilerLiveI64Set]
-  [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
-  (let
-    [cursor : i64 index]
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
-    ;; Leading phis read in parallel (see compiler-live-leading-phi-count).
-    [phi-end : i64
-      (if (= index 0)
-        (compiler-live-leading-phi-count (compiler-live-shared-view instrs))
-        0)]
-    [out-uses : CompilerLiveI64Set uses]
-    [out-defs : CompilerLiveI64Set defs]
-    (begin
-      (while (< cursor count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs cursor)]
-          [instr-uses : CompilerLiveI64Set
-            (compiler-live-instr-uses (compiler-live-shared-view instr))]
-          [instr-defs : CompilerLiveI64Set
-            (if (< cursor phi-end)
-              (compiler-live-set-empty)
-              (compiler-live-instr-defs instr))]
-          (begin
-            (set!
-              out-uses
-              (compiler-live-set-union
-                out-uses
-                (compiler-live-set-minus
-                  instr-uses
-                  (compiler-live-shared-view out-defs))))
-            (set! out-defs (compiler-live-set-union out-defs instr-defs))
-            (when
-              (= (+ cursor 1) phi-end)
-              (let
-                [j : i64 0]
-                (while (< j phi-end)
-                  (begin
-                    (set!
-                      out-defs
-                      (compiler-live-set-union
-                        out-defs
-                        (compiler-live-instr-defs
-                          (ir.compiler-ir-instr-seq-ref
-                            (compiler-live-shared-view instrs)
-                            j))))
-                    (set! j (+ j 1))))))
-            (set! cursor (+ cursor 1)))))
-      (CompilerLiveUseDef out-uses out-defs))))
-
-(define (compiler-live-block-use-def [instrs : ir.CompilerIrInstrSeq]) : CompilerLiveUseDef
-  (compiler-live-block-use-def-instrs
-    instrs
-    0
-    (compiler-live-set-empty)
-    (compiler-live-set-empty)))
 
 ;; Id form of compiler-live-block-use-def-step!: `uses |= instr-uses & ~defs`
 ;; and `defs |= instr-defs`, applied one bit at a time.
@@ -1972,9 +1447,9 @@
 ;; `compiler-live-instr-use-ids-into!` de-duplicates -- writes exactly the bits
 ;; the OR of the two word arrays would have written.
 (define (compiler-live-block-use-def-step-ids!
-  [uses : (__tl_dyn-array i64)]
-  [defs : (__tl_dyn-array i64)]
-  [ids : (__tl_dyn-array i64)]
+  [uses : (&mut uses (__tl_dyn-array i64))]
+  [defs : (&mut defs (__tl_dyn-array i64))]
+  [ids : (& ids (__tl_dyn-array i64))]
   [id-count : i64]
   [def-var : i64]) : unit
   (let
@@ -2001,8 +1476,8 @@
 (define (compiler-live-block-use-def-step!
   [uses : (__tl_dyn-array i64)]
   [defs : (__tl_dyn-array i64)]
-  [instr-uses : CompilerLiveI64Set]
-  [instr-defs : CompilerLiveI64Set]) : unit
+  [instr-uses : (& instr-uses CompilerLiveI64Set)]
+  [instr-defs : (& instr-defs CompilerLiveI64Set)]) : unit
   (let
     [use-data : (MutPtr i64)
       (unsafe
@@ -2010,10 +1485,8 @@
     [def-data : (MutPtr i64)
       (unsafe
         (__tl_array-data defs))]
-    [instr-use-words : (__tl_dyn-array i64)
-      (compiler-live-set-words instr-uses)]
-    [instr-def-words : (__tl_dyn-array i64)
-      (compiler-live-set-words instr-defs)]
+    [instr-use-words : (__tl_dyn-array i64) instr-uses.words]
+    [instr-def-words : (__tl_dyn-array i64) instr-defs.words]
     [instr-use-data : (MutPtr i64)
       (unsafe
         (__tl_array-data instr-use-words))]
@@ -2062,14 +1535,11 @@
 ;; conservative mode reads this.)
 (define (compiler-live-leading-phi-count [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [index : i64 0]
     (begin
       (while (< index count)
-        (match (ir.compiler-ir-instr-seq-ref
-          (compiler-live-shared-view instrs)
-          index)
+        (match (ir.compiler-ir-instr-seq-ref instrs index)
           [(ir.CompilerIrInstr.Phi _ _ _) (set! index (+ index 1))]
           [_ (return index)]))
       index)))
@@ -2077,7 +1547,7 @@
 (define (compiler-live-leading-phi-defs!
   [instrs : ir.CompilerIrInstrSeq]
   [phi-end : i64]
-  [defs : (__tl_dyn-array i64)]) : i64
+  [defs : (&mut defs (__tl_dyn-array i64))]) : i64
   (let
     [index : i64 0]
     [word-count : i64 0]
@@ -2085,10 +1555,9 @@
       (while (< index phi-end)
         (let
           [def-var : i64
-            (compiler-live-instr-def-var
-              (ir.compiler-ir-instr-seq-ref
-                (compiler-live-shared-view instrs)
-                index))]
+            (let
+              [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+              (ir.compiler-ir-instr-dst instr))]
           (begin
             (when
               (>= def-var 0)
@@ -2114,8 +1583,7 @@
   [defs : (__tl_dyn-array i64)]
   [edge-precise? : bool]) : CompilerLiveUseDef
   (let
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [phi-end : i64
       (compiler-live-leading-phi-count (compiler-live-shared-view instrs))]
     [use-count : i64 0]
@@ -2138,7 +1606,7 @@
           [def-var : i64
             (if (< index phi-end)
               (- 0 1)
-              (compiler-live-instr-def-var (compiler-live-shared-view instr)))]
+              (ir.compiler-ir-instr-dst instr))]
           (begin
             (if (< id-count 0)
               ;; Wider than the extraction buffer: take the bitset path, which
@@ -2148,7 +1616,7 @@
                   (if edge-precise?
                     (compiler-live-instr-uses-nophi
                       (compiler-live-shared-view instr))
-                    (compiler-live-instr-uses (compiler-live-shared-view instr)))]
+                    (compiler-live-instr-uses instr))]
                 [instr-defs : CompilerLiveI64Set
                   (if (< index phi-end)
                     (compiler-live-set-empty)
@@ -2157,8 +1625,8 @@
                   (compiler-live-block-use-def-step!
                     (compiler-live-shared-view uses)
                     (compiler-live-shared-view defs)
-                    (compiler-live-shared-view instr-uses)
-                    (compiler-live-shared-view instr-defs))
+                    instr-uses
+                    instr-defs)
                   (set!
                     use-count
                     (compiler-live-set-max
@@ -2171,9 +1639,9 @@
                       (compiler-live-set-word-count instr-defs)))))
               (begin
                 (compiler-live-block-use-def-step-ids!
-                  (compiler-live-shared-view uses)
-                  (compiler-live-shared-view defs)
-                  (compiler-live-shared-view ids)
+                  (&mut uses)
+                  (&mut defs)
+                  ids
                   id-count
                   def-var)
                 (set!
@@ -2195,14 +1663,14 @@
                   (compiler-live-leading-phi-defs!
                     (compiler-live-shared-view instrs)
                     phi-end
-                    (compiler-live-shared-view defs)))))
+                    (&mut defs)))))
             (set! index (+ index 1)))))
       (CompilerLiveUseDef
         (compiler-live-scratch-freeze uses use-count)
         (compiler-live-scratch-freeze defs def-count)))))
 
 (define (compiler-live-instr-seq-last [instrs : ir.CompilerIrInstrSeq]) : CompilerLiveMaybeInstr
-  (if (ir.compiler-ir-instr-seq-empty? (compiler-live-shared-view instrs))
+  (if (ir.compiler-ir-instr-seq-empty? instrs)
     CompilerLiveMaybeInstr.No
     (CompilerLiveMaybeInstr.Some
       (ir.compiler-ir-instr-seq-ref
@@ -2294,7 +1762,7 @@
 (define (compiler-live-label-set-fill-indexes!
   [labels : CompilerLiveLabelSet]
   [ids : (& ids live_label_map.Map)]
-  [items : (__tl_dyn-array i64)]
+  [items : (&mut items (__tl_dyn-array i64))]
   [index : i64]) : i64
   (match (compiler-live-shared-view labels)
     [(CompilerLiveLabelSet.Nil) index]
@@ -2326,25 +1794,21 @@
         i64
         (compiler-live-label-set-count (compiler-live-shared-view labels)))]
     [count : i64
-      (compiler-live-label-set-fill-indexes!
-        labels
-        ids
-        (compiler-live-shared-view items)
-        0)]
+      (compiler-live-label-set-fill-indexes! labels ids (&mut items) 0)]
     (CompilerLiveIndexVec (compiler-live-i64-array-prefix-copy items count))))
 
 ;; Precompute reverse CFG edges once. The worklist below only reprocesses
 ;; predecessors of a changed block, preserving deterministic source/RPO order.
 (define (compiler-live-predecessor-counts-add!
   [successors : (__tl_dyn-array CompilerLiveIndexVec)]
-  [counts : (__tl_dyn-array i64)]
+  [counts : (&mut counts (__tl_dyn-array i64))]
   [source : i64]) : unit
   (if (>= source (array-length successors))
     unit
     (let
       [row : CompilerLiveIndexVec
         (compiler-live-array-element-shared-view successors source)]
-      [items : (__tl_dyn-array i64) (compiler-live-shared-view row.items)]
+      [items : (__tl_dyn-array i64) row.items]
       [i : i64 0]
       (begin
         (while (< i (array-length items))
@@ -2358,7 +1822,7 @@
 (define (compiler-live-predecessor-items-make
   [counts : (__tl_dyn-array i64)]
   [index : i64]
-  [out : (__tl_dyn-array CompilerLiveIndexVec)]) : unit
+  [out : (&mut out (__tl_dyn-array CompilerLiveIndexVec))]) : unit
   (if (>= index (array-length counts))
     unit
     (begin
@@ -2377,8 +1841,7 @@
     (let
       [source-row : CompilerLiveIndexVec
         (compiler-live-array-element-shared-view successors source)]
-      [items : (__tl_dyn-array i64)
-        (compiler-live-shared-view source-row.items)]
+      [items : (__tl_dyn-array i64) source-row.items]
       [i : i64 0]
       (begin
         (while (< i (array-length items))
@@ -2387,8 +1850,7 @@
             [slot : i64 (array-ref next target)]
             [target-row : CompilerLiveIndexVec
               (compiler-live-array-element-shared-view predecessors target)]
-            [target-items : (__tl_dyn-array i64)
-              (compiler-live-shared-view target-row.items)]
+            [target-items : (__tl_dyn-array i64) target-row.items]
             (begin
               (set! (array-ref target-items slot) source)
               (set! (array-ref next target) (+ slot 1))
@@ -2411,12 +1873,9 @@
     (begin
       (compiler-live-predecessor-counts-add!
         (compiler-live-shared-view successors)
-        (compiler-live-shared-view counts)
+        (&mut counts)
         0)
-      (compiler-live-predecessor-items-make
-        counts
-        0
-        (compiler-live-shared-view out))
+      (compiler-live-predecessor-items-make counts 0 (&mut out))
       (compiler-live-predecessor-fill!
         successors
         (compiler-live-shared-view out)
@@ -2474,8 +1933,8 @@
       (compiler-live-scratch-step!
         (compiler-live-shared-view words)
         live-out-count
-        (compiler-live-shared-view block.uses)
-        (compiler-live-shared-view block.defs))]
+        block.uses
+        block.defs)]
     [live-in : CompilerLiveI64Set
       (if (compiler-live-scratch-eq-set?
         (compiler-live-shared-view words)
@@ -2500,7 +1959,7 @@
     (compiler-live-set-eq? left.live-out right.live-out)))
 
 (define (compiler-live-worklist-seed!
-  [pending : (__tl_dyn-array bool)]
+  [pending : (&mut pending (__tl_dyn-array bool))]
   [index : i64]) : unit
   (if (>= index (array-length pending))
     unit
@@ -2511,7 +1970,8 @@
 ;; Blocks are laid out in the lowering's deterministic reverse-postorder. For
 ;; backward liveness, consume that order backwards; changed facts flow only to
 ;; predecessor blocks, which are re-enqueued at most once while pending.
-(define (compiler-live-worklist-pick! [pending : (__tl_dyn-array bool)]) : i64
+(define (compiler-live-worklist-pick!
+  [pending : (&mut pending (__tl_dyn-array bool))]) : i64
   (let
     [index : i64 (- (array-length pending) 1)]
     [picked : i64 -1]
@@ -2528,11 +1988,11 @@
 (define (compiler-live-worklist-enqueue-predecessors!
   [graph : CompilerLiveBlockGraph]
   [slot : i64]
-  [pending : (__tl_dyn-array bool)]) : unit
+  [pending : (&mut pending (__tl_dyn-array bool))]) : unit
   (let
     [row : CompilerLiveIndexVec
       (compiler-live-array-element-shared-view graph.predecessors slot)]
-    [items : (__tl_dyn-array i64) (compiler-live-shared-view row.items)]
+    [items : (__tl_dyn-array i64) row.items]
     [i : i64 0]
     (while (< i (array-length items))
       (begin
@@ -2542,18 +2002,17 @@
 (define (compiler-live-instr-seq-fill-after!
   [instrs : ir.CompilerIrInstrSeq]
   [live-out : CompilerLiveI64Set]
-  [out : (__tl_dyn-array CompilerLiveI64Set)]
+  [out : (&mut out (__tl_dyn-array CompilerLiveI64Set))]
   [words : (__tl_dyn-array i64)]
   [edge-precise? : bool]) : unit
   (let
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [index : i64 (- count 1)]
     [at-live-out? : bool true]
     [active-count : i64
       (compiler-live-scratch-copy-set!
         (compiler-live-shared-view words)
-        (compiler-live-shared-view live-out))]
+        live-out)]
     (while (>= index 0)
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
@@ -2563,8 +2022,7 @@
             (compiler-live-instr-use-ids-nophi!
               (compiler-live-shared-view instr))
             (compiler-live-instr-use-ids! (compiler-live-shared-view instr)))]
-        [def-var : i64
-          (compiler-live-instr-def-var (compiler-live-shared-view instr))]
+        [def-var : i64 (ir.compiler-ir-instr-dst instr)]
         (begin
           ;; The final point is already a stored immutable set. Reuse it
           ;; rather than copying scratch once more at every block boundary.
@@ -2579,16 +2037,20 @@
           (set!
             active-count
             (if (< id-count 0)
-              (compiler-live-scratch-step!
-                (compiler-live-shared-view words)
-                active-count
-                (if edge-precise?
-                  (compiler-live-instr-uses-nophi
-                    (compiler-live-shared-view instr))
-                  (compiler-live-instr-uses (compiler-live-shared-view instr)))
-                (compiler-live-instr-defs instr))
+              (let
+                [instr-uses
+                  (if edge-precise?
+                    (compiler-live-instr-uses-nophi
+                      (compiler-live-shared-view instr))
+                    (compiler-live-instr-uses instr))]
+                [instr-defs (compiler-live-instr-defs instr)]
+                (compiler-live-scratch-step!
+                  (compiler-live-shared-view words)
+                  active-count
+                  instr-uses
+                  instr-defs))
               (compiler-live-scratch-step-ids!
-                (compiler-live-shared-view words)
+                (&mut words)
                 active-count
                 ids
                 id-count
@@ -2606,12 +2068,12 @@
         [items : (__tl_dyn-array CompilerLiveI64Set)
           (__tl_make-array
             CompilerLiveI64Set
-            (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs)))]
+            (ir.compiler-ir-instr-seq-count instrs))]
         (begin
           (compiler-live-instr-seq-fill-after!
             instrs
             (compiler-live-shared-view block.live-out)
-            (compiler-live-shared-view items)
+            (&mut items)
             words
             edge-precise?)
           (CompilerLiveBlock
@@ -2622,81 +2084,6 @@
             block.live-out
             block.successors
             (CompilerLiveInstrSetVec items))))]))
-
-(define (compiler-live-edge-index-build
-  [ids : (& ids live_label_map.Map)]
-  [blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerLiveEdgeIndex
-  (let
-    [count : i64 (array-length blocks)]
-    [pred-counts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [succ-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [canon : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [edges : i64 0]
-    [b : i64 0]
-    (begin
-      (while (< b count)
-        (begin
-          (set! (array-ref succ-offsets b) edges)
-          (let
-            [block : CompilerLiveBlock
-              (compiler-live-array-element-shared-view blocks b)]
-            (set!
-              edges
-              (+
-                edges
-                (compiler-live-label-set-count
-                  (compiler-live-shared-view block.successors)))))
-          (set! b (+ b 1))))
-      (set! (array-ref succ-offsets count) edges)
-      (let
-        [succ-index : (__tl_dyn-array i64) (__tl_make-array i64 edges)]
-        (begin
-          (set! b 0)
-          (while (< b count)
-            (let
-              [block : CompilerLiveBlock
-                (compiler-live-array-element-shared-view blocks b)]
-              [base : i64 (array-ref succ-offsets b)]
-              (begin
-                (set!
-                  (array-ref canon b)
-                  (compiler-live-label-id-map-get ids block.label))
-                (match (compiler-live-shared-view block.successors)
-                  [(CompilerLiveLabelSet.Nil) unit]
-                  [(CompilerLiveLabelSet.Dense items len)
-                    (let
-                      [k : i64 0]
-                      (while (< k len)
-                        (let
-                          [index : i64
-                            (compiler-live-label-id-map-get
-                              ids
-                              (array-ref items (- (- len 1) k)))]
-                          (begin
-                            (set! (array-ref succ-index (+ base k)) index)
-                            (when
-                              (>= index 0)
-                              (set!
-                                (array-ref pred-counts index)
-                                (+ (array-ref pred-counts index) 1)))
-                            (set! k (+ k 1))))))])
-                (set! b (+ b 1)))))
-          (CompilerLiveEdgeIndex pred-counts succ-offsets succ-index canon))))))
-
-(define (compiler-live-function-liveness
-  [ids : live_label_map.Map]
-  [blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerFunctionLiveness
-  (let
-    [edge-index : CompilerLiveEdgeIndex
-      (compiler-live-edge-index-build
-        (& ids)
-        (compiler-live-shared-view blocks))]
-    (CompilerFunctionLiveness.Liveness ids blocks edge-index)))
-
-(define (compiler-live-function-edge-index
-  [liveness : CompilerFunctionLiveness]) : CompilerLiveEdgeIndex
-  (match liveness
-    [(CompilerFunctionLiveness.Liveness _ _ edge-index) edge-index]))
 
 (define (compiler-live-analyze-function [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
@@ -2717,7 +2104,7 @@
             (compiler-live-shared-view graph.blocks)
             word-count
             false)
-          (compiler-live-function-liveness graph.ids graph.blocks)))]))
+          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Edge-precise (SSA) phi liveness -- used by scalar opt2 allocation and its
@@ -2759,14 +2146,12 @@
       unit
       (let
         [phi-input-at-2533-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-2533-3)
-            0)]
+          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-2533-3 0)]
         [value : ir.CompilerIrValue phi-input-at-2533-3.value]
         [label : i64 phi-input-at-2533-3.label]
         [rest : ir.CompilerIrPhiInputSeq
           (ir.CompilerIrPhiInputSeq
-            (ir.compiler-ir-global-shared-view phi-inputs-at-2533-3.slots)
+            phi-inputs-at-2533-3.slots
             (+ phi-inputs-at-2533-3.start 1)
             (- phi-inputs-at-2533-3.len 1))]
         (begin
@@ -2784,18 +2169,14 @@
                     unit)
                   unit))]
             [_ unit])
-          (compiler-live-phi-out-add-inputs!
-            (compiler-live-shared-view rest)
-            ids
-            phi-out))))))
+          (compiler-live-phi-out-add-inputs! rest ids phi-out))))))
 
 (define (compiler-live-phi-out-add-seq!
   [instrs : ir.CompilerIrInstrSeq]
   [ids : (& ids live_label_map.Map)]
   [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (let
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-live-shared-view instrs))]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 0]
     (while (< i count)
       (begin
@@ -2845,8 +2226,8 @@
       (compiler-live-scratch-step!
         (compiler-live-shared-view words)
         live-out-count
-        (compiler-live-shared-view block.uses)
-        (compiler-live-shared-view block.defs))]
+        block.uses
+        block.defs)]
     [live-in : CompilerLiveI64Set
       (if (compiler-live-scratch-eq-set?
         (compiler-live-shared-view words)
@@ -2875,11 +2256,10 @@
     [words : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
     [done : bool false]
     (begin
-      (compiler-live-worklist-seed! (compiler-live-shared-view pending) 0)
+      (compiler-live-worklist-seed! (&mut pending) 0)
       (while (not done)
         (let
-          [index : i64
-            (compiler-live-worklist-pick! (compiler-live-shared-view pending))]
+          [index : i64 (compiler-live-worklist-pick! (&mut pending))]
           (if (< index 0)
             (set! done true)
             (let
@@ -2901,7 +2281,7 @@
                   (compiler-live-worklist-enqueue-predecessors!
                     (compiler-live-shared-view graph)
                     index
-                    (compiler-live-shared-view pending))))))))
+                    (&mut pending))))))))
       graph)))
 
 ;; The analysis reads nothing but the block list, so callers holding blocks
@@ -2916,9 +2296,7 @@
     [build : CompilerLiveFunctionGraphBuild
       (compiler-live-function-graph-build
         (compiler-live-shared-view seq)
-        (compiler-live-build-block-array-nophi
-          (compiler-live-shared-view seq)
-          vars))]
+        (compiler-live-build-block-array-nophi seq vars))]
     [graph0 : CompilerLiveBlockGraph build.graph]
     [phi-out : (__tl_dyn-array CompilerLiveI64Set)
       (__tl_make-array CompilerLiveI64Set (array-length graph0.blocks))]
@@ -2931,7 +2309,7 @@
             (set! (array-ref phi-out i) (compiler-live-set-empty))
             (set! i (+ i 1)))))
       (compiler-live-phi-out-build-seq!
-        (compiler-live-shared-view seq)
+        seq
         (& graph0.ids)
         (compiler-live-shared-view phi-out))
       (let
@@ -2943,7 +2321,7 @@
             (compiler-live-shared-view graph.blocks)
             word-count
             true)
-          (compiler-live-function-liveness graph.ids graph.blocks))))))
+          (CompilerFunctionLiveness.Liveness graph.ids graph.blocks))))))
 
 (define (compiler-live-analyze-function-edge-precise
   [func : ir.CompilerIrFunction]) : CompilerFunctionLiveness
@@ -2955,23 +2333,20 @@
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : i64
   (match liveness
-    [(CompilerFunctionLiveness.Liveness ids _ _)
+    [(CompilerFunctionLiveness.Liveness ids _)
       (compiler-live-label-id-map-get (& ids) label)]))
 
 (define (compiler-live-function-find-block
   [liveness : CompilerFunctionLiveness]
   [label : i64]) : CompilerLiveMaybeBlock
   (match liveness
-    [(CompilerFunctionLiveness.Liveness ids blocks _)
+    [(CompilerFunctionLiveness.Liveness ids blocks)
       (let
         [index : i64 (compiler-live-label-id-map-get (& ids) label)]
         (if (>= index 0)
           (CompilerLiveMaybeBlock.Some
             (compiler-live-array-element-shared-view blocks index))
           CompilerLiveMaybeBlock.No))]))
-
-(define (compiler-live-block-uses [block : CompilerLiveBlock]) : CompilerLiveI64Set
-  block.uses)
 
 (define (compiler-live-block-defs [block : CompilerLiveBlock]) : CompilerLiveI64Set
   block.defs)
@@ -2982,14 +2357,11 @@
 (define (compiler-live-block-live-out [block : CompilerLiveBlock]) : CompilerLiveI64Set
   block.live-out)
 
-(define (compiler-live-block-successor-labels [block : CompilerLiveBlock]) : CompilerLiveLabelSet
-  block.successors)
-
 (define (compiler-live-block-instr-after [block : CompilerLiveBlock]) : CompilerLiveInstrSetVec
   block.instr-after)
 
 (define (compiler-live-instr-set-vec-nth
-  [sets : CompilerLiveInstrSetVec]
+  [sets : (& sets CompilerLiveInstrSetVec)]
   [index : i64]) : CompilerLiveI64Set
   (let
     [items : (__tl_dyn-array CompilerLiveI64Set) sets.items]
@@ -3003,9 +2375,9 @@
   [index : i64]) : CompilerLiveI64Set
   (match (compiler-live-function-find-block liveness label)
     [(CompilerLiveMaybeBlock.Some block)
-      (compiler-live-instr-set-vec-nth
-        (compiler-live-block-instr-after block)
-        index)]
+      (let
+        [block-instr-after (compiler-live-block-instr-after block)]
+        (compiler-live-instr-set-vec-nth block-instr-after index))]
     [(CompilerLiveMaybeBlock.No) (compiler-live-set-empty)]))
 
 ;; Dense-array path for liveness analysis.
@@ -3016,12 +2388,11 @@
     [_ (ir.compiler-ir-block-seq-from-list blocks)]))
 
 (define (compiler-live-build-block-array-with
-  [blocks : ir.CompilerIrBlockSeq]
+  [blocks : (& blocks ir.CompilerIrBlockSeq)]
   [vars : i64]
   [edge-precise? : bool]) : (__tl_dyn-array CompilerLiveBlock)
   (let
-    [count : i64
-      (ir.compiler-ir-block-seq-count (compiler-live-shared-view blocks))]
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [out : (__tl_dyn-array CompilerLiveBlock)
       (__tl_make-array CompilerLiveBlock count)]
     [word-count : i64 (compiler-live-var-word-count vars)]
@@ -3031,8 +2402,7 @@
     (begin
       (while (< i count)
         (let
-          [block : ir.CompilerIrBlock
-            (ir.compiler-ir-block-seq-ref (compiler-live-shared-view blocks) i)]
+          [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref blocks i)]
           (begin
             (match (compiler-live-shared-view block)
               [(ir.CompilerIrBlock.Block _ instrs)
@@ -3054,23 +2424,20 @@
   (compiler-live-build-block-array-with blocks vars false))
 
 (define (compiler-live-build-block-array-nophi
-  [blocks : ir.CompilerIrBlockSeq]
+  [blocks : (& blocks ir.CompilerIrBlockSeq)]
   [vars : i64]) : (__tl_dyn-array CompilerLiveBlock)
   (compiler-live-build-block-array-with blocks vars true))
 
 (define (compiler-live-phi-out-build-seq!
-  [blocks : ir.CompilerIrBlockSeq]
+  [blocks : (& blocks ir.CompilerIrBlockSeq)]
   [ids : (& ids live_label_map.Map)]
   [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (let
-    [count : i64
-      (ir.compiler-ir-block-seq-count (compiler-live-shared-view blocks))]
+    [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [i : i64 0]
     (while (< i count)
       (begin
-        (match (ir.compiler-ir-block-seq-ref
-          (compiler-live-shared-view blocks)
-          i)
+        (match (ir.compiler-ir-block-seq-ref blocks i)
           [(ir.CompilerIrBlock.Block _ instrs)
             (compiler-live-phi-out-add-seq!
               instrs
@@ -3081,7 +2448,7 @@
 (define (compiler-live-block-graph-fill-successors-from-array!
   [blocks : (__tl_dyn-array CompilerLiveBlock)]
   [ids : (& ids live_label_map.Map)]
-  [successors : (__tl_dyn-array CompilerLiveIndexVec)]
+  [successors : (&mut successors (__tl_dyn-array CompilerLiveIndexVec))]
   [index : i64]) : unit
   (if (>= index (array-length blocks))
     unit
@@ -3118,7 +2485,7 @@
       (compiler-live-block-graph-fill-successors-from-array!
         (compiler-live-shared-view blocks)
         (& ids)
-        (compiler-live-shared-view successors)
+        (&mut successors)
         0)
       (CompilerLiveBlockGraph
         ids
@@ -3142,7 +2509,7 @@
   (let
     [count : i64
       (compiler-live-set-min
-        (ir.compiler-ir-block-seq-count (compiler-live-shared-view ir-blocks))
+        (ir.compiler-ir-block-seq-count ir-blocks)
         (array-length blocks))]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
     [i : i64 0]
@@ -3151,9 +2518,7 @@
         (set!
           (array-ref blocks i)
           (compiler-live-fill-instr-after-block
-            (ir.compiler-ir-block-seq-ref
-              (compiler-live-shared-view ir-blocks)
-              i)
+            (ir.compiler-ir-block-seq-ref ir-blocks i)
             (compiler-live-array-element-shared-view blocks i)
             (compiler-live-shared-view words)
             edge-precise?))
@@ -3170,11 +2535,10 @@
     [words : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
     [done : bool false]
     (begin
-      (compiler-live-worklist-seed! (compiler-live-shared-view pending) 0)
+      (compiler-live-worklist-seed! (&mut pending) 0)
       (while (not done)
         (let
-          [index : i64
-            (compiler-live-worklist-pick! (compiler-live-shared-view pending))]
+          [index : i64 (compiler-live-worklist-pick! (&mut pending))]
           (if (< index 0)
             (set! done true)
             (let
@@ -3195,5 +2559,5 @@
                   (compiler-live-worklist-enqueue-predecessors!
                     (compiler-live-shared-view graph)
                     index
-                    (compiler-live-shared-view pending))))))))
+                    (&mut pending))))))))
       graph)))

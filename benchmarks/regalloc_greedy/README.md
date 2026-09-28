@@ -16,13 +16,13 @@ All in `src/compiler_regalloc.tl` unless noted.
 
 | Compiler function | What the kernel replicates |
 |---|---|
-| `compiler-reg-greedy-alloc-all!` (33891) and its caller `compiler-reg-greedy-state-with-scratch-exclusions` (35216) | the real order of operations: collect the candidate roots, `sort!` them, allocate the pending/evict-count/heap/occupancy state once per function, seed, run |
+| `compiler-reg-greedy-alloc-all!` and its caller `compiler-reg-greedy-state-with-scratch-exclusions` | the real order of operations: collect the candidate roots, `sort!` them, allocate the pending/evict-count/heap/occupancy state once per function, seed, run |
 | `compiler-reg-greedy-collect-vars` | the candidate roots taken out of the candidate sequence in candidate order |
 | `compiler-reg-greedy-sort!` / `-merge-pass!` / `-merge-run!` / `-copy-range!` / `-weight-before?` | the stable bottom-up merge sort by (weight desc, var asc), including the strict "tie goes left" rule that makes it stable and the flip-buffer copy-back |
-| `compiler-reg-greedy-worklist-seed!` (33745) | the recursive seed: mark each root pending, push it on the heap |
-| `compiler-reg-greedy-worklist-run!` (33792) | the recursive pop / dequeue / `alloc-one!` / record-stage loop |
+| `compiler-reg-greedy-worklist-seed!` | the recursive seed: mark each root pending, push it on the heap |
+| `compiler-reg-greedy-worklist-run!` | the recursive pop / dequeue / `alloc-one!` / record-stage loop |
 | `compiler-reg-greedy-heap-weight` / `-heap-better?` / `-heap-swap!` / `-heap-sift-up!` / `-heap-sift-down!` / `-heap-push!` / `-heap-pop!` | the binary max-heap over (weight desc, var asc) with the pending array authoritative for membership and lazy discard on pop |
-| `compiler-reg-greedy-alloc-one!` (33154) | the whole stage machine: `already-assigned?`, the group-var skip, `var-spans-clobber?` for call/div/shift, the CSR-only restriction for call-spanning and parameter roots, `forbidden-regs`, `arg-pref-reg`, `hint-free-reg`, `first-free`, `first-evictable` + `evict-requeue!`, then spill with `RS_Split` / `RS_Spill` |
+| `compiler-reg-greedy-alloc-one!` | the whole stage machine: `already-assigned?`, the group-var skip, `var-spans-clobber?` for call/div/shift, the CSR-only restriction for call-spanning and parameter roots, `forbidden-regs`, `arg-pref-reg`, `hint-free-reg`, `first-free`, `first-evictable` + `evict-requeue!`, then spill with `RS_Split` / `RS_Spill` |
 | `compiler-reg-greedy-arg-pref-reg` | the free-only ABI argument-register bias, declined for CSR-only roots |
 | `compiler-reg-greedy-hint-free-reg` | the copy-hint pick through `assignment-table-lookup` + `pool-index` + the allowed-bank membership scan |
 | `compiler-reg-greedy-first-free` / `-first-evictable` | the recursive pool scans from `start-idx` |
@@ -35,13 +35,13 @@ All in `src/compiler_regalloc.tl` unless noted.
 | `compiler-reg-live-union-entry-words` / `-neg-inf` / `-effective-start` / `-lower-bound` / `-segment-hits?` / `-interferes?` / `-refresh-max!` / `-insert-segment!` / `-add!` / `-remove!` | the LiveIntervalUnion: three i64 per entry (effective start, end, prefix maximum of end), sorted by effective start, one binary search plus one load per candidate segment, the shift-up insert, and the single merge pass that compacts a removed var's segments out |
 | `compiler-reg-greedy-assignment-register!` / `-spill!` / `-unassign!`, `compiler-reg-assignment-table-insert` / `-unassign` / `-lookup` | the present/kind/register assignment table |
 | `compiler-reg-interval-overlap?`, `compiler-reg-interval-seq-overlaps?`, `compiler-reg-vars-interfere-segmented-index?`, `compiler-reg-vars-interfere-index?` | the two-cursor segment scan with the half-open rule and the point-0 exception, and the coarse fallback |
-| `compiler-reg-call-set-in-range?` / `-call-set-in-range-words?` / `-call-word-in-range?`, `compiler-reg-segments-span-clobber?`, `compiler-reg-greedy-var-spans-clobber?` (34166) | the word-bounded clobber-point scan, the hull gate and the segment-aware answer with its inclusive/exclusive start rule |
+| `compiler-reg-call-set-in-range?` / `-call-set-in-range-words?` / `-call-word-in-range?`, `compiler-reg-segments-span-clobber?`, `compiler-reg-greedy-var-spans-clobber?` | the word-bounded clobber-point scan, the hull gate and the segment-aware answer with its inclusive/exclusive start rule |
 | `compiler-reg-low-bit-index32` / `-low-bit-index32-nonzero` | the De Bruijn `0x077cb531` multiply-and-look-up table |
 | `compiler-reg-greedy-combine-spill-weights` / `-combine-tie-span`, `compiler-reg-spill-weight-clamp` | `weight = clamp(discounted) * 1024 + (raw scaled into [0,1024))` |
-| `compiler-reg-priority-keys!` (14260) / `-priority-band-value` / `-priority-band-span` / `-priority-local-span` / `-block-index-of-point` / `-priority-key-weight` | the local-first band packed under the weight, with the binary search for the owning block and the band-free weight recovered by division for every eviction comparison |
-| `compiler-reg-greedy-integer-pool-for-abi` Linux (34072) / `-caller-saved-count` | the 14-register SysV pool in order — `rax rsi rdi r9 rcx rdx r10 r11 r8 \| r12 r13 r14 r15 rbx` — with the caller-saved prefix of 9 |
-| `compiler-reg-assignment-table-location-conflicts?` (8663) | the self-check: no two vars holding one register may have overlapping segments |
-| `compiler-reg-function-spill-weights` (14453), `compiler-reg-loop-depth-weight` (11497), `compiler-reg-ref-counts-blocks-weighted!` | computed by the exporter (`tools/export_intervals.py`) and shipped as the per-var raw weight; the kernel does the combine and the band packing |
+| `compiler-reg-priority-keys!` / `-priority-band-value` / `-priority-band-span` / `-priority-local-span` / `-block-index-of-point` / `-priority-key-weight` | the local-first band packed under the weight, with the binary search for the owning block and the band-free weight recovered by division for every eviction comparison |
+| `compiler-reg-greedy-integer-pool-for-abi` Linux / `-caller-saved-count` | the 14-register SysV pool in order — `rax rsi rdi r9 rcx rdx r10 r11 r8 \| r12 r13 r14 r15 rbx` — with the caller-saved prefix of 9 |
+| `compiler-reg-assignment-table-location-conflicts?` | the self-check: no two vars holding one register may have overlapping segments |
+| `compiler-reg-function-spill-weights`, `compiler-reg-loop-depth-weight`, `compiler-reg-ref-counts-blocks-weighted!` | computed by the exporter and shipped as the per-var raw weight; the kernel does the combine and the band packing |
 | `compiler-reg-live-intervals`, `compiler-reg-live-interval-selection`, `-instr-seq`, `-blocks-with-live`, `compiler-reg-extend-interval*`, `compiler-reg-segment-note-point!` / `-flush-var!` (`src/compiler_liveness.tl`'s `compiler-live-analyze-function-edge-precise` and `compiler-live-instr-seq-fill-after!` underneath) | ported to Python in the exporter, which is where the shipped segments come from |
 
 ## Fidelity
@@ -80,8 +80,9 @@ All in `src/compiler_regalloc.tl` unless noted.
 
 1. **The region-split post-pass.** `alloc-one!` returns `RS_Split` for a
    spilled root with a split-eligible (multi-segment) range and the kernel
-   counts it; the splitter itself rewrites IR in a separate backend pass and is
-   not part of `selectOrSplit`.
+   counts it. At the export commit a separate backend pass rewrote those roots;
+   that loop-split rescue has since been removed, so the compiler now spills
+   them too.
 2. **Group/pair roots and scratch pseudos.** The compiler leaves both
    unassigned: the group set is empty here (the membership test still runs on
    every pop) and `unspillable-from` is `-1`, which is the value every ordinary
@@ -155,8 +156,8 @@ nseg nrows`, the `nblocks + 1` block start points, the candidate var ids in
 candidate order, the call / div / shift points (doubled instruction indices),
 and one row per var that has a live interval:
 `var k (start end)*k weight hint argpref flags`. `#` starts a comment to end of
-line. Every field and the compiler function it comes from is documented at the
-top of `tools/export_intervals.py`.
+line. Every field and the compiler function it comes from is documented in the
+exporter's header (see Regeneration).
 
 Provenance: the `--dump-ir` final optimized IR of `src/compiler_load.tl` and
 `src/compiler_regalloc.tl`, compiled by the 2026-08-25 snapshot compiler
@@ -175,37 +176,15 @@ truncating to its stdlib-heavy prefix.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. dump the final optimized IR of the two modules
-/tmp/tlsnap compile src/compiler_load.tl --dump-ir \
-    -o /tmp/compiler_load.final.opt2.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-/tmp/tlsnap compile src/compiler_regalloc.tl --dump-ir \
-    -o /tmp/compiler_regalloc.final.opt2.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. export (byte budget and source order are part of the corpus identity;
-#    --verify additionally runs the Python greedy and prints the totals above)
-python3 benchmarks/regalloc_greedy/tools/export_intervals.py \
-    benchmarks/regalloc_greedy/data/intervals.txt 900000 --verify \
-    /tmp/compiler_load.final.opt2.ir /tmp/compiler_regalloc.final.opt2.ir
-```
-
-The dumps shipped for this benchmark were produced that way by the 2026-08-25
-snapshot compiler and live in `target/bench6-dumps/aug25/`. `--dump-ir` on the
-current `main` compilers segfaults for every compiler module; that crash is
-tracked separately by the orchestrator, which is why the snapshot route is the
-documented one.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `7` in `optimization.tsv` | tunes TypeLisp Ir to 0.83 G and C to 0.42 G |
 | round rotation | the starting function advances by one per round | each round folds the same per-function checksums in a different order, so no round repeats an earlier accumulator |
 | register pool | 14 SysV integer registers, caller-saved prefix 9 | `compiler-reg-greedy-integer-pool-for-abi Linux` with `compiler-reg-rbp-pool-enabled` false |
 | eviction cascade cap | 4, `evict-inf` 2^45 | `compiler-reg-greedy-evict-cascade-cap` / `-evict-inf` |
@@ -218,5 +197,4 @@ documented one.
 | live union | `14 * (max segments + 1) * 3` = 73,290 i64 | worst case is one register holding every segment; the compiler grows each union geometrically instead, which the one-shot allocation replaces |
 | heap array | `5 * max vars + 16` = 13,611 i64 | a root is pushed once by the seed and at most `cascade cap` = 4 more times by eviction |
 | clobber bitsets | 3 arrays of `max point / 32 + 2` = 132 i64 | 32-bit words, matching `compiler-live-set-word-bits` |
-| checksum | 64-bit FNV-1a, no division on loop-carried values | identical bits in TypeLisp i64 and C `uint64_t` |
 | folded per function | vars, candidates, assignments, spills, `RS_Split` marks, evictions, call-spanning count, conflicts, then every candidate's stage / location kind / register | the whole plan, not a summary of it |

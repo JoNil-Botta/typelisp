@@ -3,6 +3,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-ir-types-smoke-instr-seq-prepend
   [instr : compiler_ir_types.CompilerIrInstr]
@@ -14,7 +15,7 @@
       (compiler_ir_types.compiler-ir-instr-builder-push! (&mut builder) instr)
       (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        (compiler_ir_types.compiler-ir-global-shared-view rest)
+        rest
         0
         rest.len)
       (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
@@ -149,39 +150,35 @@
   [want : String]) : bool
   (if (= functions.len 0)
     false
-    (match (compiler_ir_types.compiler-ir-function-seq-ref
-      (compiler_ir_types.compiler-ir-global-shared-view functions)
-      0)
+    (match (compiler_ir_types.compiler-ir-function-seq-ref functions 0)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-function-seq-name-at?
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]
   [index : i64]
   [want : String]) : bool
   (if (or (< index 0) (>= index functions.len))
     false
-    (match (compiler_ir_types.compiler-ir-function-seq-ref
-      (compiler_ir_types.compiler-ir-global-shared-view functions)
-      index)
+    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
         (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-block-list-label-at?
-  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
   [index : i64]
   [want : i64]) : bool
-  (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (if (= index 0)
-        (match block
-          [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
-        (compiler-ir-smoke-block-list-label-at?
-          (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
-          (- index 1)
-          want))]
-    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (owned_view.compiler-owned-reference-shared-view blocks)]
+    (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
+      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+        (if (= index 0)
+          (match block
+            [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
+          (compiler-ir-smoke-block-list-label-at? (deref rest) (- index 1) want))]
+      [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+      [(compiler_ir_types.CompilerIrBlockList.Array _) false])))
 
 (define (compiler-ir-smoke-param-seq-entry-i64?
   [seq : compiler_ir_types.CompilerIrParamSeq]
@@ -190,14 +187,9 @@
   [want-var : i64]) : bool
   (if (or
     (< index 0)
-    (>=
-      index
-      (compiler_ir_types.compiler-ir-param-seq-count
-        (compiler_ir_types.compiler-ir-global-shared-view seq))))
+    (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler_ir_types.compiler-ir-global-shared-view seq)
-      index)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
       [(compiler_ir_types.CompilerIrParam.Param name ty var)
         (and
           (string.eq name want-name)
@@ -213,14 +205,9 @@
   [want-var : i64]) : bool
   (if (or
     (< index 0)
-    (>=
-      index
-      (compiler_ir_types.compiler-ir-param-seq-count
-        (compiler_ir_types.compiler-ir-global-shared-view seq))))
+    (>= index (compiler_ir_types.compiler-ir-param-seq-count seq)))
     false
-    (match (compiler_ir_types.compiler-ir-param-seq-ref
-      (compiler_ir_types.compiler-ir-global-shared-view seq)
-      index)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref seq index)
       [(compiler_ir_types.CompilerIrParam.Param name ty var)
         (and
           (string.eq name want-name)
@@ -253,10 +240,7 @@
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _ _)
           (and
-            (=
-              (compiler_ir_types.compiler-ir-param-seq-count
-                (compiler_ir_types.compiler-ir-global-shared-view stored))
-              2)
+            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
             (compiler-ir-smoke-param-seq-entry-i64?
               (compiler_ir_types.compiler-ir-global-shared-view stored)
               0
@@ -266,10 +250,7 @@
       (match cloned
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _ _)
           (and
-            (=
-              (compiler_ir_types.compiler-ir-param-seq-count
-                (compiler_ir_types.compiler-ir-global-shared-view stored))
-              2)
+            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
             (compiler-ir-smoke-param-seq-entry-i64?
               (compiler_ir_types.compiler-ir-global-shared-view stored)
               0
@@ -278,7 +259,7 @@
             (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))]))))
 
 (define (compiler-ir-smoke-function-seq-count-two?
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]) : bool
   (= functions.len 2))
 
 (define (compiler-ir-smoke-global-seq-count?
@@ -381,10 +362,7 @@
         (compiler_ir_types.compiler-ir-global-shared-view compact-globals)
         0
         "first-global")
-      (compiler-ir-smoke-global-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-globals)
-        1
-        "second-global")
+      (compiler-ir-smoke-global-seq-name-at? compact-globals 1 "second-global")
       (compiler-ir-smoke-global-seq-name-at? cloned-globals 0 "first-global")
       (compiler-ir-smoke-extern-seq-count?
         (compiler_ir_types.compiler-ir-global-shared-view compact-externs)
@@ -399,14 +377,8 @@
         0
         "first-extern")
       (compiler-ir-smoke-extern-seq-name-at? cloned-externs 1 "second-extern")
-      (=
-        (compiler_ir_types.compiler-ir-summary-globals
-          (compiler_ir_types.compiler-ir-global-shared-view summary))
-        2)
-      (=
-        (compiler_ir_types.compiler-ir-summary-functions
-          (compiler_ir_types.compiler-ir-global-shared-view summary))
-        0)
+      (= (compiler_ir_types.compiler-ir-summary-globals summary) 2)
+      (= (compiler_ir_types.compiler-ir-summary-functions summary) 0)
       (= (compiler_ir_types.compiler-ir-summary-externs summary) 2))))
 
 (define (compiler-ir-smoke-function-seq-roundtrip-ok?) : bool
@@ -463,31 +435,18 @@
           (compiler_ir_types.compiler-ir-global-shared-view compact)
           (compiler_ir_types.compiler-ir-extern-seq-empty)))]
     (and
-      (compiler-ir-smoke-function-seq-count-two?
-        (compiler_ir_types.compiler-ir-global-shared-view compact))
+      (compiler-ir-smoke-function-seq-count-two? compact)
       (compiler-ir-smoke-function-seq-count-two? cloned)
-      (=
-        (compiler_ir_types.compiler-ir-function-seq-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact))
-        2)
+      (= (compiler_ir_types.compiler-ir-function-seq-count compact) 2)
       (compiler-ir-smoke-function-seq-first-name?
         (compiler_ir_types.compiler-ir-global-shared-view compact)
         "first")
-      (=
-        (compiler_ir_types.compiler-ir-function-seq-block-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact))
-        2)
+      (= (compiler_ir_types.compiler-ir-function-seq-block-count compact) 2)
       (=
         (compiler_ir_types.compiler-ir-function-seq-instruction-count compact)
         4)
-      (=
-        (compiler_ir_types.compiler-ir-summary-functions
-          (compiler_ir_types.compiler-ir-global-shared-view summary))
-        2)
-      (=
-        (compiler_ir_types.compiler-ir-summary-blocks
-          (compiler_ir_types.compiler-ir-global-shared-view summary))
-        2)
+      (= (compiler_ir_types.compiler-ir-summary-functions summary) 2)
+      (= (compiler_ir_types.compiler-ir-summary-blocks summary) 2)
       (= (compiler_ir_types.compiler-ir-summary-instructions summary) 4))))
 
 (define (compiler-ir-smoke-reversed-compaction-ok?) : bool
@@ -513,10 +472,9 @@
             first-block
             compiler_ir_types.CompilerIrBlockList.Nil)))]
     [compact-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact-reversed
-        reversed-blocks)]
+      (compiler-ir-block-list-compact-reversed reversed-blocks)]
     [array-reversed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-compact-reversed
+      (compiler-ir-block-list-compact-reversed
         (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
     [first-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
@@ -561,49 +519,36 @@
     [array-reversed-functions : compiler_ir_types.CompilerIrFunctionSeq
       reversed-functions]
     (and
-      (=
-        (compiler_ir_types.compiler-ir-block-list-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))
-        3)
+      (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 3)
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compact-blocks
         0
         (compiler_ir_types.compiler-ir-label "first"))
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compact-blocks
         1
         (compiler_ir_types.compiler-ir-label "second"))
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks)
+        compact-blocks
         2
         (compiler_ir_types.compiler-ir-label "third"))
       (compiler-ir-smoke-block-list-label-at?
-        (compiler_ir_types.compiler-ir-global-shared-view array-reversed-blocks)
+        array-reversed-blocks
         0
         (compiler_ir_types.compiler-ir-label "third"))
       (compiler-ir-smoke-block-list-label-at?
         array-reversed-blocks
         2
         (compiler_ir_types.compiler-ir-label "first"))
-      (=
-        (compiler_ir_types.compiler-ir-function-seq-count
-          (compiler_ir_types.compiler-ir-global-shared-view compact-functions))
-        3)
+      (= (compiler_ir_types.compiler-ir-function-seq-count compact-functions) 3)
+      (compiler-ir-smoke-function-seq-name-at? compact-functions 0 "first-func")
       (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-functions)
-        0
-        "first-func")
-      (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-functions)
+        compact-functions
         1
         "second-func")
+      (compiler-ir-smoke-function-seq-name-at? compact-functions 2 "third-func")
       (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view compact-functions)
-        2
-        "third-func")
-      (compiler-ir-smoke-function-seq-name-at?
-        (compiler_ir_types.compiler-ir-global-shared-view
-          array-reversed-functions)
+        array-reversed-functions
         0
         "third-func")
       (compiler-ir-smoke-function-seq-name-at?
@@ -633,15 +578,18 @@
     value))
 
 (define (compiler-ir-smoke-value-code
-  [value : compiler_ir_types.CompilerIrValue]) : i64
-  (match value
-    [(compiler_ir_types.CompilerIrValue.Var id) id]
-    [(compiler_ir_types.CompilerIrValue.I64 n) (+ 1000 n)]
-    [(compiler_ir_types.CompilerIrValue.Bool b)
-      (if b
-        2001
-        2000)]
-    [_ (- 0 1)]))
+  [value : (& value compiler_ir_types.CompilerIrValue)]) : i64
+  (let
+    [value : compiler_ir_types.CompilerIrValue
+      (owned_view.compiler-owned-reference-shared-view value)]
+    (match value
+      [(compiler_ir_types.CompilerIrValue.Var id) id]
+      [(compiler_ir_types.CompilerIrValue.I64 n) (+ 1000 n)]
+      [(compiler_ir_types.CompilerIrValue.Bool b)
+        (if b
+          2001
+          2000)]
+      [_ (- 0 1)])))
 
 (define (compiler-ir-smoke-record-value!
   [seen : (__tl_dyn-array i64)]
@@ -693,7 +641,7 @@
           (compiler_ir_types.CompilerIrValue.Bool true)))]
     [nil-mapped : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.compiler-ir-call-args-map
-        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ir_types.CompilerIrCallArgs.Nil)
         compiler-ir-smoke-map-value
         10)]
     [one-mapped : compiler_ir_types.CompilerIrCallArgs
@@ -728,7 +676,7 @@
     [_visited : unit
       (begin
         (compiler_ir_types.compiler-ir-call-args-visit
-          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
           compiler-ir-smoke-record-value!
           (compiler_ir_types.compiler-ir-global-shared-view seen))
         (compiler_ir_types.compiler-ir-call-args-visit
@@ -743,7 +691,7 @@
           compiler-ir-smoke-record-value!
           (compiler_ir_types.compiler-ir-global-shared-view seen))
         (compiler_ir_types.compiler-ir-call-args-visit
-          (compiler_ir_types.compiler-ir-global-shared-view many)
+          many
           compiler-ir-smoke-record-value!
           (compiler_ir_types.compiler-ir-global-shared-view seen))
         (compiler_ir_types.compiler-ir-call-args-visit
@@ -769,44 +717,20 @@
         [(compiler_ir_types.CompilerIrCallArgs.Array values)
           (and
             (= (array-length values) 4)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 0))
-              13)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 1))
-              1009)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 2))
-              14)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 3))
-              2001))]
+            (= (compiler-ir-smoke-value-code (array-ref values 0)) 13)
+            (= (compiler-ir-smoke-value-code (array-ref values 1)) 1009)
+            (= (compiler-ir-smoke-value-code (array-ref values 2)) 14)
+            (= (compiler-ir-smoke-value-code (array-ref values 3)) 2001))]
         [_ false])
       (match sret-mapped
         [(compiler_ir_types.CompilerIrCallArgs.Sret values index)
           (and
             (= index 2)
             (= (array-length values) 4)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 0))
-              13)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 1))
-              1009)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 2))
-              14)
-            (=
-              (compiler-ir-smoke-value-code
-                (compiler_ir_types.compiler-ir-array-shared-view values 3))
-              2001))]
+            (= (compiler-ir-smoke-value-code (array-ref values 0)) 13)
+            (= (compiler-ir-smoke-value-code (array-ref values 1)) 1009)
+            (= (compiler-ir-smoke-value-code (array-ref values 2)) 14)
+            (= (compiler-ir-smoke-value-code (array-ref values 3)) 2001))]
         [_ false])
       (= (array-ref seen 0) 11)
       (= (array-ref seen 1) 1)
@@ -847,14 +771,8 @@
     (and
       (= mapped.len 2)
       (= (array-length mapped.slots) 2)
-      (=
-        (compiler-ir-smoke-value-code
-          (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 0))
-        15)
-      (=
-        (compiler-ir-smoke-value-code
-          (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 1))
-        1011)
+      (= (compiler-ir-smoke-value-code (array-ref mapped.slots 0)) 15)
+      (= (compiler-ir-smoke-value-code (array-ref mapped.slots 1)) 1011)
       (= (array-ref seen 0) 2)
       (= (array-ref seen 1) 5)
       (= (array-ref seen 2) 1011))))
@@ -1007,11 +925,7 @@
           " private spmd-private-v1 @helper avx2 lanes 8 [0 active-mask : bool,"
           " 1 source 0 uniform i64 : i64, 2 source 1 varying i64 : i64]"
           " index none result varying i64"))
-      (string.eq
-        (compiler_ir_types.compiler-ir-instr-describe
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (compiler_ir_types.compiler-ir-global-shared-view instr))
-        "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
+      (= (compiler_ir_types.compiler-ir-instr-dst instr) 6)
       (match (compiler_ir_types.compiler-ir-global-shared-view instr)
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (let
@@ -1021,7 +935,7 @@
                 args)]
             (and (= stored-args.len 2) (= (array-length stored-args.slots) 2)))]
         [_ false])
-      (compiler_ir_types.compiler-ir-effect-is?
+      (compiler-ir-effect-is?
         (compiler_ir_types.compiler-ir-global-shared-view instr)
         compiler_ir_types.CompilerIrEffect.Unknown)
       (=
@@ -1040,9 +954,9 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.compiler-ir-global-shared-view instr)))
       (match (compiler_ir_types.compiler-source-spans-lookup-instr
-        (compiler_ir_types.compiler-ir-global-shared-view spans)
+        spans
         span-function
-        (compiler_ir_types.compiler-ir-global-shared-view instr))
+        instr)
         [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
           (and
             (= (ast.ast-source-span-start-line found) 3)
@@ -1088,7 +1002,7 @@
         [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
           (string.eq
             (compiler_ir_types.compiler-ir-spmd-call-descriptor-error
-              (compiler_ir_types.compiler-ir-box-shared-view payload-box))
+              (deref payload-box))
             "")]
         [_ false])
       (match cloned
@@ -1099,7 +1013,7 @@
             [(compiler_ir_types.CompilerIrSpmdCallOrigin.Imported origin-box)
               (let
                 [origin : compiler_ir_types.CompilerIrImportedSpmdCall
-                  (compiler_ir_types.compiler-ir-box-shared-view origin-box)]
+                  (deref origin-box)]
                 (and
                   (string.eq origin.package-owner "fixture")
                   (string.eq origin.package-version "1.0.0")
@@ -1270,23 +1184,12 @@
         1
         "_tl_helper"))))
 
-(define (compiler-ir-smoke-owned-capability-ok?) : bool
+(define (compiler-ir-smoke-store-owned-ok?) : bool
   (let
-    [root : compiler_ir_types.CompilerIrInstr
-      (compiler_ir_types.CompilerIrInstr.OwnRoot
-        3
-        (compiler_ir_types.CompilerIrValue.Var 2)
-        (ast.AstType.String))]
     [store : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.StoreOwned
         (compiler_ir_types.CompilerIrValue.Var 4)
         (compiler_ir_types.CompilerIrValue.Var 3)
-        (ast.AstType.String))]
-    [load : compiler_ir_types.CompilerIrInstr
-      (compiler_ir_types.CompilerIrInstr.LoadOwned
-        5
-        (compiler_ir_types.CompilerIrValue.Var 4)
-        3
         (ast.AstType.String))]
     [session : cis.InternStructuralSessionHandle
       (cis.InternStructuralSessionHandle 0)]
@@ -1296,53 +1199,19 @@
         (compiler_ir_types.compiler-ir-instr-render
           session
           bases
-          (compiler_ir_types.compiler-ir-global-shared-view root))
-        "  %3 = own_root %2 : String")
-      (string.eq
-        (compiler_ir_types.compiler-ir-instr-render
-          session
-          bases
           (compiler_ir_types.compiler-ir-global-shared-view store))
         "  store_owned %3 -> %4 : String")
-      (string.eq
-        (compiler_ir_types.compiler-ir-instr-render
-          session
-          bases
-          (compiler_ir_types.compiler-ir-global-shared-view load))
-        "  %5 = load_owned %4, owner %3 : String")
-      (compiler_ir_types.compiler-ir-effect-is?
-        (compiler_ir_types.compiler-ir-global-shared-view root)
-        compiler_ir_types.CompilerIrEffect.Pure)
-      (compiler_ir_types.compiler-ir-effect-is?
+      (compiler-ir-effect-is?
         (compiler_ir_types.compiler-ir-global-shared-view store)
         compiler_ir_types.CompilerIrEffect.MemoryWrite)
-      (compiler_ir_types.compiler-ir-effect-is?
-        (compiler_ir_types.compiler-ir-global-shared-view load)
-        compiler_ir_types.CompilerIrEffect.MemoryRead)
       (string.eq
         (compiler_ir_types.compiler-ir-instr-render
           session
           bases
           (compiler_ir_types.compiler-ir-clone-instr
             (ast.ast-node-pool-reader-context-current)
-            (compiler_ir_types.compiler-ir-global-shared-view root)))
-        "  %3 = own_root %2 : String")
-      (string.eq
-        (compiler_ir_types.compiler-ir-instr-render
-          session
-          bases
-          (compiler_ir_types.compiler-ir-clone-instr
-            (ast.ast-node-pool-reader-context-current)
-            (compiler_ir_types.compiler-ir-global-shared-view store)))
-        "  store_owned %3 -> %4 : String")
-      (string.eq
-        (compiler_ir_types.compiler-ir-instr-render
-          session
-          bases
-          (compiler_ir_types.compiler-ir-clone-instr
-            (ast.ast-node-pool-reader-context-current)
-            (compiler_ir_types.compiler-ir-global-shared-view load)))
-        "  %5 = load_owned %4, owner %3 : String"))))
+            store))
+        "  store_owned %3 -> %4 : String"))))
 
 (define (compiler-ir-smoke-access-helpers-ok?) : bool
   (let
@@ -1388,10 +1257,7 @@
           (- 0 1))
         7)
       (=
-        (compiler_ir_types.compiler-ir-instr-array-loop-dst-or
-          (compiler_ir_types.compiler-ir-global-shared-view slots)
-          1
-          (- 0 1))
+        (compiler_ir_types.compiler-ir-instr-array-loop-dst-or slots 1 (- 0 1))
         (- 0 1))
       (=
         (compiler_ir_types.compiler-ir-instr-seq-loop-dst-or
@@ -1405,22 +1271,14 @@
           1
           (- 0 1))
         (- 0 1))
+      (not (compiler_ir_types.compiler-ir-instr-seq-phi? seq 0))
       (not
-        (compiler_ir_types.compiler-ir-instr-seq-phi?
+        (compiler-ir-instr-seq-return?
           (compiler_ir_types.compiler-ir-global-shared-view seq)
           0))
-      (not
-        (compiler_ir_types.compiler-ir-instr-seq-return?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          0))
-      (not
-        (compiler_ir_types.compiler-ir-instr-seq-bounds-check?
-          (compiler_ir_types.compiler-ir-global-shared-view seq)
-          0))
-      (compiler_ir_types.compiler-ir-instr-seq-bounds-check?
-        (compiler_ir_types.compiler-ir-global-shared-view seq)
-        1)
-      (compiler_ir_types.compiler-ir-instr-seq-return?
+      (not (compiler_ir_types.compiler-ir-instr-seq-bounds-check? seq 0))
+      (compiler_ir_types.compiler-ir-instr-seq-bounds-check? seq 1)
+      (compiler-ir-instr-seq-return?
         (compiler_ir_types.compiler-ir-global-shared-view seq)
         3)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -1440,19 +1298,12 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [lifetime : i64 (ci.intern "ir-slice")]
-    [slice : ast.AstType
-      (ast.ast-ty-slice-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        ast.AstType.I64)]
-    [borrowed : ast.AstType
-      (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        lifetime
-        slice)]
+    [slice : ast.AstType (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
+    [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime slice)]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     [clone : ast.AstType
       (compiler_ir_types.compiler-ir-clone-type
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
+        pools
         (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [render-original : String
       (compiler_ir_types.compiler-ir-type-render
@@ -1469,9 +1320,7 @@
         bases
         (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [name-original-again : String
-      (compiler_ir_types.compiler-ir-type-name
-        bases
-        (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
+      (compiler_ir_types.compiler-ir-type-name bases borrowed)]
     [render-clone : String
       (compiler_ir_types.compiler-ir-type-render
         (cis.InternStructuralSessionHandle 0)
@@ -1488,7 +1337,7 @@
       (string.eq name-original-again name-original)
       (string.eq render-clone render-original)
       (string.eq name-clone name-original)
-      (match (compiler_ir_types.compiler-ir-global-shared-view clone)
+      (match clone
         [(ast.AstType.Ref cloned-lifetime cloned-inner)
           (and
             (= cloned-lifetime lifetime)
@@ -1527,13 +1376,10 @@
           7
           source))]
     [borrowed : ast.AstType
-      (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        lifetime
-        ast.AstType.I64)]
+      (ast.ast-ty-ref-with-pools pools lifetime ast.AstType.I64)]
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
+        pools
         (cis.intern-fresh-local-identity-raw
           (cis.intern-structural-session-fresh-local-identity session 8 source))
         ast.AstType.I64)]
@@ -1542,10 +1388,7 @@
       (cis.intern-structural-session-handle-from-source-names
         (ci.intern-source-name-session-handle-from-state (& other-intern)))]
     [invalid : ast.AstType
-      (ast.ast-ty-ref-with-pools
-        (compiler_ir_types.compiler-ir-global-shared-view pools)
-        (ci.intern-capacity)
-        ast.AstType.I64)]
+      (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) ast.AstType.I64)]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
       (string.eq
@@ -1560,10 +1403,7 @@
       ;; Equal-looking record indexes from another owner never decode this
       ;; compile's table-backed lifetime.
       (string.eq
-        (compiler_ir_types.compiler-ir-type-render
-          other-session
-          bases
-          (compiler_ir_types.compiler-ir-global-shared-view borrowed))
+        (compiler_ir_types.compiler-ir-type-render other-session bases borrowed)
         (str_cat.str-cat "(& <id:" (string.int->string lifetime) "> i64)"))
       (string.eq
         (compiler_ir_types.compiler-ir-type-render session bases invalid)
@@ -1572,9 +1412,9 @@
           (string.int->string (ci.intern-capacity))
           "> i64)")))))
 
-;; The derived-symbol table exists because the fixed intern pool ran out of
-;; generated ids on a whole-program self-compile (refs #6293), so what has to
-;; hold is: one id per spelling and that spelling back unchanged, growth past
+;; The derived-symbol table exists because the fixed intern pool cannot hold
+;; the generated ids of a whole-program self-compile (refs #6293), so what has
+;; to hold is: one id per spelling and that spelling back unchanged, growth past
 ;; the initial slab without losing earlier entries, a capacity-independent
 ;; one-word domain that cannot collide with any u32 source handle or neighboring
 ;; compiler identity, and no cost at all to the intern lanes -- the budget the
@@ -1649,7 +1489,7 @@
       (unless (= second (+ first 1)) (set! ok false))
       (unless (< second domain-limit) (set! ok false))
       (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot first) (- first base))
+        (= (compiler-ir-symbol-slot first) (- first base))
         (set! ok false))
       (unless
         (compiler_ir_types.compiler-ir-symbol-owned? first)
@@ -1658,7 +1498,7 @@
         (compiler_ir_types.compiler-ir-symbol-domain? first)
         (set! ok false))
       (unless (not (ci.intern-renderable-id? first)) (set! ok false))
-      ;; More than today's 131,072 possible source handles -- including the old
+      ;; More than today's `intern-capacity` source handles -- including the old
       ;; 4*capacity collision point -- all fail ownership and slot decoding.
       ;; This deliberately uses raw u32-domain handles because today's fixed
       ;; pool cannot allocate the future values the namespace must reserve.
@@ -1669,9 +1509,7 @@
             (set! ok false)
             unit)
           (unless
-            (=
-              (compiler_ir_types.compiler-ir-symbol-slot logical-source-handle)
-              -1)
+            (= (compiler-ir-symbol-slot logical-source-handle) -1)
             (set! ok false))
           (set! logical-source-handle (+ logical-source-handle 1))))
       (unless (< old-collision-base compact-limit) (set! ok false))
@@ -1679,7 +1517,7 @@
         (not (compiler_ir_types.compiler-ir-symbol-owned? old-collision-base))
         (set! ok false))
       (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot old-collision-base) -1)
+        (= (compiler-ir-symbol-slot old-collision-base) -1)
         (set! ok false))
       (unless
         (string.eq
@@ -1702,7 +1540,7 @@
               (set! ok false)
               unit)
             (unless
-              (= (compiler_ir_types.compiler-ir-symbol-slot unallocated) -1)
+              (= (compiler-ir-symbol-slot unallocated) -1)
               (set! ok false))
             (unless
               (string.eq
@@ -1713,17 +1551,11 @@
       ;; Adjacent identity domains, the compact-u32 limit, and sentinels also
       ;; fail closed rather than indexing or reaching intern-str.
       (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot (- compact-limit 1)) -1)
+        (= (compiler-ir-symbol-slot (- compact-limit 1)) -1)
         (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot cfg-base) -1)
-        (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot current-cfg-key) -1)
-        (set! ok false))
-      (unless
-        (= (compiler_ir_types.compiler-ir-symbol-slot structural-base) -1)
-        (set! ok false))
+      (unless (= (compiler-ir-symbol-slot cfg-base) -1) (set! ok false))
+      (unless (= (compiler-ir-symbol-slot current-cfg-key) -1) (set! ok false))
+      (unless (= (compiler-ir-symbol-slot structural-base) -1) (set! ok false))
       ;; Unminted ids in the IR domain, other tags, and the negative sentinel
       ;; render empty rather than aborting: diagnostics reach this path with
       ;; whatever the IR is holding.
@@ -1875,7 +1707,7 @@
             (compiler_ir_types.CompilerSourceLocation path-id span))
           (and (= path-id 4) (= (ast.ast-source-span-start-line span) 50))]
         [_ false])
-      (match (compiler_ir_types.compiler-ir-global-shared-view escaped)
+      (match escaped
         [(compiler_ir_types.CompilerSourceSpans.Spans _ instr-entries _)
           (and
             (match (compiler_ir_types.compiler-source-spans-instr-entry-list-lookup
@@ -2036,8 +1868,8 @@
         (compiler-ir-smoke-representation-kind-group?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view group-ty))
+            index
+            group-ty)
           2
           2)
         (return 1))
@@ -2045,8 +1877,8 @@
         (compiler-ir-smoke-representation-kind-group?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view region-ty))
+            index
+            region-ty)
           2
           2)
         (return 2))
@@ -2054,8 +1886,8 @@
         (compiler-ir-smoke-representation-kind-group?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view signature-ty))
+            index
+            signature-ty)
           2
           2)
         (return 3))
@@ -2063,42 +1895,42 @@
         (compiler-ir-smoke-representation-kind-one?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view one-ty)))
+            index
+            one-ty))
         (return 4))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view conflict-ty)))
+            index
+            conflict-ty))
         (return 5))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view private-ty)))
+            index
+            private-ty))
         (return 6))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
-            (ast.ast-global-shared-view malformed-ty)))
+            index
+            malformed-ty))
         (return 7))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             (ast.AstType.Var 99)))
         (return 8))
       (unless
         (compiler-ir-smoke-representation-kind-unknown?
           (compiler_ir_types.compiler-ir-representation-index-kind
             bases
-            (compiler_ir_types.compiler-ir-global-shared-view index)
+            index
             (ast.AstType.String)))
         (return 9))
       0)))
@@ -2490,8 +2322,10 @@
       (compiler_ir_types.compiler-ir-function-builder-push!
         (&mut builder)
         helper)
-      (compiler_ir_types.compiler-ir-spmd-private-abi-program-error
-        (compiler_ir_types.compiler-ir-function-builder-to-seq builder)))))
+      (let
+        [functions : compiler_ir_types.CompilerIrFunctionSeq
+          (compiler_ir_types.compiler-ir-function-builder-to-seq builder)]
+        (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)))))
 
 (define (pabi-program-rejects?
   [helper : compiler_ir_types.CompilerIrFunction]
@@ -2512,9 +2346,9 @@
 
 (define (pabi-function-private-abi
   [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrSpmdPrivateAbi
-  (match (compiler_ir_types.compiler-ir-function-abi func)
+  (match (compiler-ir-function-abi func)
     [(compiler_ir_types.CompilerIrFunctionAbi.SpmdPrivate private-box)
-      (compiler_ir_types.compiler-ir-box-shared-view private-box)]
+      (deref private-box)]
     [(compiler_ir_types.CompilerIrFunctionAbi.Ordinary)
       (pabi
         "ordinary"
@@ -3018,7 +2852,7 @@
             bases
             (pabi-function-private-abi
               (compiler_ir_types.compiler-ir-clone-function
-                (compiler_ir_types.compiler-ir-global-shared-view pools)
+                pools
                 (pabi-private-helper)))
             (pabi-base)))
         52]
@@ -3039,7 +2873,7 @@
           (string.eq
             (pabi-render-function
               (compiler_ir_types.compiler-ir-clone-function
-                (compiler_ir_types.compiler-ir-global-shared-view pools)
+                pools
                 (pabi-private-helper)))
             (pabi-render-function (pabi-private-helper))))
         55]
@@ -3060,7 +2894,7 @@
         57]
       [(not
           (match (compiler_ir_types.compiler-ir-clone-instr
-            (compiler_ir_types.compiler-ir-global-shared-view pools)
+            pools
             (compiler_ir_types.CompilerIrInstr.SpmdCall
               (box (pabi-base-payload 0 0))))
             [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
@@ -3071,12 +2905,2327 @@
                     private-box)
                   (compiler_ir_types.compiler-ir-spmd-private-abi-eq?
                     bases
-                    (compiler_ir_types.compiler-ir-box-shared-view private-box)
+                    (deref private-box)
                     (pabi-base))]
                 [_ false])]
             [_ false]))
         58]
       [else 0])))
+
+;; Operand API: one sample per instruction variant. Uses are numbered from 10
+;; in constructor order, the def is 1 and labels count from 70. The expected
+;; summary pins each variant's uses (role letter and var), def, successor
+;; labels and whether it states a destination type; the remaining checks hold
+;; the macros consistent with each other.
+(define compiler-ir-smoke-operand-visits : i64
+  0)
+(define compiler-ir-smoke-operand-labels : String
+  "")
+
+(define (operand-var [id : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var id))
+
+(define (compiler-ir-smoke-operand-origin) : compiler_ir_types.CompilerIrSpmdCallOrigin
+  (compiler_ir_types.CompilerIrSpmdCallOrigin.Imported
+    (box
+      (compiler_ir_types.CompilerIrImportedSpmdCall
+        "pkg"
+        "1.0.0"
+        "helper"
+        "sig"
+        "spmd-call-v1"
+        "avx2"
+        4
+        "args"
+        "result"
+        0
+        "link"))))
+
+(define (compiler-ir-smoke-operand-slots) : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
+    (begin
+      (set!
+        (array-ref slots 0)
+        (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot (ast.AstType.I64) 0))
+      (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slots 1))))
+
+(define (compiler-ir-smoke-role-letter
+  [role : compiler_ir_types.CompilerIrOperandRole]) : String
+  (match role
+    [(compiler_ir_types.CompilerIrOperandRole.Scalar) "S"]
+    [(compiler_ir_types.CompilerIrOperandRole.Address) "A"]
+    [(compiler_ir_types.CompilerIrOperandRole.Vector) "V"]
+    [(compiler_ir_types.CompilerIrOperandRole.Mask) "M"]
+    [(compiler_ir_types.CompilerIrOperandRole.CallArg) "C"]
+    [(compiler_ir_types.CompilerIrOperandRole.PhiInput) "P"]
+    [(compiler_ir_types.CompilerIrOperandRole.Condition) "D"]))
+
+(define (compiler-ir-smoke-use-text
+  [delta : i64]
+  [role : compiler_ir_types.CompilerIrOperandRole]
+  [acc : String]
+  [value : compiler_ir_types.CompilerIrValue]) : String
+  (str_cat.str-cat
+    acc
+    " "
+    (compiler-ir-smoke-role-letter role)
+    (match value
+      [(compiler_ir_types.CompilerIrValue.Var id)
+        (string.int->string (+ id delta))]
+      [_ "?"])))
+
+(define (compiler-ir-smoke-uses-text
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]
+  [delta : i64]) : String
+  (let
+    [instr : compiler_ir_types.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
+    [empty : String ""]
+    (compiler_ir_types.compiler-ir-instr-fold-uses
+      instr
+      empty
+      compiler-ir-smoke-use-text
+      delta)))
+
+(define (compiler-ir-smoke-count-use
+  [_role : compiler_ir_types.CompilerIrOperandRole]
+  [_value : compiler_ir_types.CompilerIrValue]) : unit
+  (set! compiler-ir-smoke-operand-visits (+ compiler-ir-smoke-operand-visits 1)))
+
+(define (compiler-ir-smoke-count-fold
+  [_role : compiler_ir_types.CompilerIrOperandRole]
+  [acc : i64]
+  [_value : compiler_ir_types.CompilerIrValue]) : i64
+  (+ acc 1))
+
+(define (compiler-ir-smoke-visits-match-fold?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (let
+    [zero : i64 0]
+    (begin
+      (set! compiler-ir-smoke-operand-visits 0)
+      (compiler_ir_types.compiler-ir-instr-visit-uses
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        compiler-ir-smoke-count-use)
+      (=
+        compiler-ir-smoke-operand-visits
+        (compiler_ir_types.compiler-ir-instr-fold-uses
+          instr
+          zero
+          compiler-ir-smoke-count-fold)))))
+
+(define (compiler-ir-smoke-shift-use
+  [delta : i64]
+  [_role : compiler_ir_types.CompilerIrOperandRole]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValue
+  (match (compiler_ir_types.compiler-ir-global-shared-view value)
+    [(compiler_ir_types.CompilerIrValue.Var id) (operand-var (+ id delta))]
+    [_ value]))
+
+(define (compiler-ir-smoke-shift-def [dst : i64]) : i64
+  (+ dst 1000))
+
+(define (compiler-ir-smoke-shift-label [label : i64]) : i64
+  (+ label 7))
+
+(define (compiler-ir-smoke-note-label [delta : i64] [label : i64]) : unit
+  (set!
+    compiler-ir-smoke-operand-labels
+    (str_cat.str-cat
+      (compiler_ir_types.compiler-ir-global-shared-view
+        compiler-ir-smoke-operand-labels)
+      " "
+      (string.int->string (+ label delta)))))
+
+(define (compiler-ir-smoke-successor-text
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]
+  [delta : i64]) : String
+  (let
+    [instr : compiler_ir_types.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view instr)]
+    (begin
+      (set! compiler-ir-smoke-operand-labels "")
+      (compiler_ir_types.compiler-ir-instr-visit-successors
+        instr
+        compiler-ir-smoke-note-label
+        delta)
+      (compiler_ir_types.compiler-ir-global-shared-view
+        compiler-ir-smoke-operand-labels))))
+
+(define (compiler-ir-smoke-operand-summary
+  [instr : compiler_ir_types.CompilerIrInstr]) : String
+  (str_cat.str-cat
+    (compiler-ir-smoke-uses-text instr 0)
+    " | dst "
+    (string.int->string (compiler_ir_types.compiler-ir-instr-dst instr))
+    " | succ"
+    (compiler-ir-smoke-successor-text instr 0)
+    (match (compiler_ir_types.compiler-ir-instr-dst-type instr)
+      [(ast.AstMaybeType.Some _) " | typed"]
+      [(ast.AstMaybeType.No) ""])))
+
+(define (compiler-ir-smoke-value-eq
+  [a : compiler_ir_types.CompilerIrValue]
+  [b : compiler_ir_types.CompilerIrValue]) : bool
+  (match a
+    [(compiler_ir_types.CompilerIrValue.Var x)
+      (match b
+        [(compiler_ir_types.CompilerIrValue.Var y) (= x y)]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-ir-smoke-type-eq [a : ast.AstType] [b : ast.AstType]) : bool
+  (match a
+    [(ast.AstType.I64)
+      (match b
+        [(ast.AstType.I64) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-ir-smoke-zip-eq?
+  [a : compiler_ir_types.CompilerIrInstr]
+  [b : (& b compiler_ir_types.CompilerIrInstr)]) : bool
+  (let
+    [b : compiler_ir_types.CompilerIrInstr
+      (owned_view.compiler-owned-reference-shared-view b)]
+    (compiler_ir_types.compiler-ir-instr-zip-eq
+      a
+      b
+      compiler-ir-smoke-value-eq
+      compiler-ir-smoke-type-eq)))
+
+;; 0, or the number of the failed check.
+(define (compiler-ir-smoke-operand-failure
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [expected : String]) : i64
+  (let
+    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
+    [spmd? : bool
+      (match (compiler_ir_types.compiler-ir-global-shared-view instr)
+        [(compiler_ir_types.CompilerIrInstr.SpmdCall _) true]
+        [_ false])]
+    [mapped : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.compiler-ir-instr-map-uses
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        compiler-ir-smoke-shift-use
+        100)]
+    [renamed : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.compiler-ir-instr-map
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        _
+        compiler-ir-smoke-shift-def
+        _
+        compiler-ir-smoke-shift-label)]
+    (cond
+      [(not
+          (string.eq
+            (compiler-ir-smoke-operand-summary
+              (compiler_ir_types.compiler-ir-global-shared-view instr))
+            expected))
+        1]
+      [(not
+          (compiler-ir-smoke-visits-match-fold?
+            (compiler_ir_types.compiler-ir-global-shared-view instr)))
+        2]
+      [(not
+          (string.eq
+            (compiler-ir-smoke-uses-text mapped 0)
+            (compiler-ir-smoke-uses-text instr 100)))
+        3]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-instr-dst renamed)
+            (if (< dst 0)
+              dst
+              (+ dst 1000))))
+        4]
+      [(not
+          (string.eq
+            (compiler-ir-smoke-successor-text renamed 0)
+            (compiler-ir-smoke-successor-text instr 7)))
+        5]
+      [(not
+          (=
+            (compiler-ir-smoke-zip-eq?
+              (compiler_ir_types.compiler-ir-global-shared-view instr)
+              instr)
+            (not spmd?)))
+        6]
+      [(and
+          (not (string.eq (compiler-ir-smoke-uses-text instr 0) ""))
+          (compiler-ir-smoke-zip-eq?
+            (compiler_ir_types.compiler-ir-global-shared-view instr)
+            mapped))
+        7]
+      [(and
+          (not spmd?)
+          (not
+            (compiler-ir-smoke-zip-eq?
+              (compiler_ir_types.compiler-ir-clone-instr
+                (ast.ast-node-pool-reader-context-current)
+                (compiler_ir_types.compiler-ir-global-shared-view instr))
+              instr)))
+        8]
+      [(not
+          (=
+            (let
+              [instr (compiler_ir_types.compiler-ir-instr-with-dst instr 5)]
+              (compiler_ir_types.compiler-ir-instr-dst instr))
+            (if (< dst 0)
+              dst
+              5)))
+        9]
+      [else 0])))
+
+;; 0, or 100 * the sample index plus the failed check.
+(define (compiler-ir-smoke-operand-api-failure) : i64
+  (let
+    [index : i64 1]
+    [failure : i64 0]
+    (begin
+      (while (and (= failure 0) (<= index 54))
+        (begin
+          (set!
+            failure
+            (compiler-ir-smoke-operand-failure
+              (compiler-ir-smoke-operand-sample index)
+              (compiler-ir-smoke-operand-expect index)))
+          (set! index (+ index 1))))
+      (if (= failure 0)
+        0
+        (+ (* (- index 1) 100) failure)))))
+
+(define (compiler-ir-smoke-operand-sample [index : i64]) : compiler_ir_types.CompilerIrInstr
+  (cond
+    [(= index 1)
+      (compiler_ir_types.CompilerIrInstr.Mov
+        1
+        (operand-var 10)
+        (ast.AstType.I64))]
+    [(= index 2) (compiler_ir_types.CompilerIrInstr.Alloc 1 (ast.AstType.I64))]
+    [(= index 3) (compiler_ir_types.CompilerIrInstr.AddrOf 1 50)]
+    [(= index 4)
+      (compiler_ir_types.CompilerIrInstr.Gep
+        1
+        (operand-var 10)
+        (operand-var 11)
+        (ast.AstType.I64))]
+    [(= index 5)
+      (compiler_ir_types.CompilerIrInstr.Load
+        1
+        (operand-var 10)
+        (ast.AstType.I64))]
+    [(= index 6)
+      (compiler_ir_types.CompilerIrInstr.StoreOwned
+        (operand-var 10)
+        (operand-var 11)
+        (ast.AstType.I64))]
+    [(= index 7)
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (operand-var 10)
+        (operand-var 11)
+        (ast.AstType.I64))]
+    [(= index 8)
+      (compiler_ir_types.CompilerIrInstr.CopyBytes
+        (operand-var 10)
+        (operand-var 11)
+        4)]
+    [(= index 9)
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (operand-var 10)
+        (operand-var 11)
+        70)]
+    [(= index 10)
+      (compiler_ir_types.CompilerIrInstr.Cast
+        1
+        (operand-var 10)
+        (ast.AstType.I64)
+        (ast.AstType.I64))]
+    [(= index 11)
+      (compiler_ir_types.CompilerIrInstr.Bitcast
+        1
+        (operand-var 10)
+        (ast.AstType.I64)
+        (ast.AstType.I64))]
+    [(= index 12)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        1
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (operand-var 10)
+        (operand-var 11)
+        (ast.AstType.I64))]
+    [(= index 13)
+      (compiler_ir_types.CompilerIrInstr.UnOp
+        1
+        (compiler_ir_types.CompilerIrUnOp.Neg)
+        (operand-var 10)
+        (ast.AstType.I64))]
+    [(= index 14)
+      (compiler_ir_types.CompilerIrInstr.LaneId 1 4 (ast.AstType.I64))]
+    [(= index 15)
+      (compiler_ir_types.CompilerIrInstr.Splat
+        1
+        (operand-var 10)
+        4
+        (ast.AstType.I64))]
+    [(= index 16)
+      (compiler_ir_types.ir-instr-vector-bin-op
+        1
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (operand-var 10)
+        (operand-var 11)
+        4
+        (ast.AstType.I64))]
+    [(= index 17)
+      (compiler_ir_types.ir-instr-vector-prefix
+        1
+        (compiler_ir_types.CompilerIrVectorPrefixOp.Sum)
+        (operand-var 10)
+        (operand-var 11)
+        4
+        (ast.AstType.I64))]
+    [(= index 18)
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        1
+        (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+        (operand-var 10)
+        4
+        (ast.AstType.I64))]
+    [(= index 19)
+      (compiler_ir_types.ir-instr-vector-compare
+        1
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (operand-var 10)
+        (operand-var 11)
+        4
+        (ast.AstType.I64))]
+    [(= index 20)
+      (compiler_ir_types.CompilerIrInstr.MaskBinOp
+        1
+        (compiler_ir_types.CompilerIrMaskBinOp.And)
+        (operand-var 10)
+        (operand-var 11)
+        4)]
+    [(= index 21)
+      (compiler_ir_types.CompilerIrInstr.MaskNot 1 (operand-var 10) 4)]
+    [(= index 22)
+      (compiler_ir_types.CompilerIrInstr.MaskReduce
+        1
+        (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+        (operand-var 10)
+        4)]
+    [(= index 23)
+      (compiler_ir_types.ir-instr-select
+        1
+        (operand-var 10)
+        (operand-var 11)
+        (operand-var 12)
+        4
+        (ast.AstType.I64))]
+    [(= index 24)
+      (compiler_ir_types.CompilerIrInstr.VectorLoad
+        1
+        (operand-var 10)
+        (operand-var 11)
+        4
+        (ast.AstType.I64))]
+    [(= index 25)
+      (compiler_ir_types.ir-instr-vector-store
+        (operand-var 10)
+        (operand-var 11)
+        (operand-var 12)
+        4
+        (ast.AstType.I64))]
+    [(= index 26)
+      (compiler_ir_types.ir-instr-predicated-store
+        (operand-var 10)
+        (operand-var 11)
+        (operand-var 12)
+        (operand-var 13)
+        4
+        (ast.AstType.I64))]
+    [(= index 27)
+      (compiler_ir_types.ir-instr-predicated-load
+        1
+        (operand-var 10)
+        (operand-var 11)
+        (operand-var 12)
+        4
+        (ast.AstType.I64))]
+    [(= index 28)
+      (compiler_ir_types.ir-instr-gather-load
+        1
+        (operand-var 10)
+        (operand-var 11)
+        (operand-var 12)
+        true
+        4
+        (ast.AstType.I64))]
+    [(= index 29)
+      (compiler_ir_types.ir-instr-vector-shuffle
+        1
+        (operand-var 10)
+        (operand-var 11)
+        (compiler_ir_types.CompilerIrMaybeValue.Some (operand-var 12))
+        (operand-var 13)
+        4
+        (ast.AstType.I64))]
+    [(= index 30)
+      (compiler_ir_types.CompilerIrInstr.TailMask
+        1
+        (operand-var 10)
+        (operand-var 11)
+        4)]
+    [(= index 31) (compiler_ir_types.CompilerIrInstr.EntryArgc 1)]
+    [(= index 32) (compiler_ir_types.CompilerIrInstr.EntryArgv 1)]
+    [(= index 33) (compiler_ir_types.CompilerIrInstr.EntryEnvp 1)]
+    [(= index 34)
+      (compiler_ir_types.CompilerIrInstr.CpuId
+        1
+        (operand-var 10)
+        (operand-var 11)
+        4)]
+    [(= index 35) (compiler_ir_types.CompilerIrInstr.Xgetbv 1 (operand-var 10))]
+    [(= index 36)
+      (compiler_ir_types.CompilerIrInstr.Syscall
+        1
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 10)
+          (operand-var 11)))]
+    [(= index 37)
+      (compiler_ir_types.CompilerIrInstr.Call
+        1
+        0
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 10)
+          (operand-var 11))
+        (ast.AstType.I64))]
+    [(= index 38)
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        1
+        (operand-var 10)
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 11)
+          (operand-var 12))
+        (ast.AstType.I64))]
+    [(= index 39)
+      (compiler_ir_types.CompilerIrInstr.CallIndirectC
+        1
+        (operand-var 10)
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 11)
+          (operand-var 12))
+        (ast.AstType.I64))]
+    [(= index 40)
+      (compiler_ir_types.ir-instr-call-cabi-store-result
+        (operand-var 10)
+        0
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 11)
+          (operand-var 12))
+        (compiler-ir-smoke-operand-slots))]
+    [(= index 41)
+      (compiler_ir_types.ir-instr-call-indirect-cabi-store-result
+        (operand-var 10)
+        (operand-var 11)
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 12)
+          (operand-var 13))
+        (compiler-ir-smoke-operand-slots))]
+    [(= index 42)
+      (compiler_ir_types.CompilerIrInstr.SpmdCall
+        (box
+          (compiler_ir_types.CompilerIrInstrSpmdCallPayload
+            0
+            (compiler_ir_types.CompilerIrSpmdBackend.Avx2)
+            4
+            (operand-var 10)
+            (compiler_ir_types.compiler-ir-spmd-call-arg-seq2
+              (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+                (operand-var 11)
+                (ast.AstType.I64))
+              (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+                (operand-var 12)
+                (ast.AstType.I64)))
+            (compiler_ir_types.CompilerIrSpmdCallResult.Value
+              1
+              (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+              (ast.AstType.I64))
+            (compiler-ir-smoke-operand-origin))))]
+    [(= index 43)
+      (compiler_ir_types.CompilerIrInstr.TailCall
+        0
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 10)
+          (operand-var 11))
+        (ast.AstType.I64))]
+    [(= index 44)
+      (compiler_ir_types.CompilerIrInstr.Store
+        0
+        (operand-var 10)
+        (ast.AstType.I64))]
+    [(= index 45) (compiler_ir_types.CompilerIrInstr.Jump 70)]
+    [(= index 46)
+      (compiler_ir_types.CompilerIrInstr.Branch (operand-var 10) 70 71)]
+    [(= index 47)
+      (compiler_ir_types.CompilerIrInstr.TotalEnumBranch (operand-var 10) 70 71)]
+    [(= index 48)
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some (operand-var 10)))]
+    [(= index 49)
+      (compiler_ir_types.CompilerIrInstr.Phi
+        1
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (operand-var 10)
+          70
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+            (operand-var 11)
+            71
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+        (ast.AstType.I64))]
+    [(= index 50)
+      (compiler_ir_types.CompilerIrInstr.Pack
+        1
+        (compiler_ir_types.compiler-ir-value-seq2
+          (operand-var 10)
+          (operand-var 11))
+        (ast.AstType.I64))]
+    [(= index 51)
+      (compiler_ir_types.CompilerIrInstr.Word
+        1
+        (operand-var 10)
+        4
+        (ast.AstType.I64))]
+    [(= index 52)
+      (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+        (operand-var 10)
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (operand-var 11)
+          (operand-var 12))
+        (ast.AstType.I64))]
+    [(= index 53)
+      (compiler_ir_types.CompilerIrInstr.Switch
+        (operand-var 10)
+        4
+        (compiler_ir_types.compiler-ir-switch-case-seq2
+          (compiler_ir_types.CompilerIrSwitchCase.Case 0 70)
+          (compiler_ir_types.CompilerIrSwitchCase.Case 1 71))
+        72)]
+    [(= index 54)
+      (compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+        (operand-var 10)
+        4
+        (compiler_ir_types.compiler-ir-switch-case-seq2
+          (compiler_ir_types.CompilerIrSwitchCase.Case 0 70)
+          (compiler_ir_types.CompilerIrSwitchCase.Case 1 71))
+        72
+        73)]
+    [else (compiler_ir_types.CompilerIrInstr.Jump 0)]))
+
+(define (compiler-ir-smoke-operand-expect [index : i64]) : String
+  (cond
+    [(= index 1) " S10 | dst 1 | succ | typed"]
+    [(= index 2) " | dst 1 | succ"]
+    [(= index 3) " | dst 1 | succ"]
+    [(= index 4) " A10 S11 | dst 1 | succ"]
+    [(= index 5) " A10 | dst 1 | succ | typed"]
+    [(= index 6) " A10 S11 | dst -1 | succ"]
+    [(= index 7) " A10 S11 | dst -1 | succ"]
+    [(= index 8) " A10 A11 | dst -1 | succ"]
+    [(= index 9) " S10 S11 | dst -1 | succ"]
+    [(= index 10) " S10 | dst 1 | succ | typed"]
+    [(= index 11) " S10 | dst 1 | succ | typed"]
+    [(= index 12) " S10 S11 | dst 1 | succ | typed"]
+    [(= index 13) " S10 | dst 1 | succ | typed"]
+    [(= index 14) " | dst 1 | succ"]
+    [(= index 15) " S10 | dst 1 | succ"]
+    [(= index 16) " V10 V11 | dst 1 | succ"]
+    [(= index 17) " V10 S11 | dst 1 | succ"]
+    [(= index 18) " V10 | dst 1 | succ | typed"]
+    [(= index 19) " V10 V11 | dst 1 | succ"]
+    [(= index 20) " M10 M11 | dst 1 | succ"]
+    [(= index 21) " M10 | dst 1 | succ"]
+    [(= index 22) " M10 | dst 1 | succ | typed"]
+    [(= index 23) " M10 V11 V12 | dst 1 | succ"]
+    [(= index 24) " A10 S11 | dst 1 | succ"]
+    [(= index 25) " A10 S11 V12 | dst -1 | succ"]
+    [(= index 26) " A10 S11 V12 M13 | dst -1 | succ"]
+    [(= index 27) " A10 S11 M12 | dst 1 | succ"]
+    [(= index 28) " A10 A11 S12 | dst 1 | succ"]
+    [(= index 29) " V10 V11 V12 S13 | dst 1 | succ"]
+    [(= index 30) " S10 S11 | dst 1 | succ"]
+    [(= index 31) " | dst 1 | succ"]
+    [(= index 32) " | dst 1 | succ"]
+    [(= index 33) " | dst 1 | succ"]
+    [(= index 34) " S10 S11 | dst 1 | succ"]
+    [(= index 35) " S10 | dst 1 | succ"]
+    [(= index 36) " C10 C11 | dst 1 | succ"]
+    [(= index 37) " C10 C11 | dst 1 | succ | typed"]
+    [(= index 38) " A10 C11 C12 | dst 1 | succ | typed"]
+    [(= index 39) " A10 C11 C12 | dst 1 | succ | typed"]
+    [(= index 40) " A10 C11 C12 | dst -1 | succ"]
+    [(= index 41) " A10 A11 C12 C13 | dst -1 | succ"]
+    [(= index 42) " M10 C11 V12 | dst 1 | succ | typed"]
+    [(= index 43) " C10 C11 | dst -1 | succ"]
+    [(= index 44) " S10 | dst -1 | succ"]
+    [(= index 45) " | dst -1 | succ 70"]
+    [(= index 46) " D10 | dst -1 | succ 70 71"]
+    [(= index 47) " D10 | dst -1 | succ 70 71"]
+    [(= index 48) " S10 | dst -1 | succ"]
+    [(= index 49) " P10 P11 | dst 1 | succ | typed"]
+    [(= index 50) " S10 S11 | dst 1 | succ | typed"]
+    [(= index 51) " S10 | dst 1 | succ | typed"]
+    [(= index 52) " A10 C11 C12 | dst -1 | succ"]
+    [(= index 53) " D10 | dst -1 | succ 72 70 71"]
+    [(= index 54) " D10 | dst -1 | succ 72 73 70 71"]
+    [else ""]))
+
+;; Dense index of a symbol this table minted, for callers keeping a side table;
+;; malformed, foreign-domain and unallocated ids fail closed.
+(define (compiler-ir-symbol-slot [symbol : i64]) : i64
+  (if (compiler_ir_types.compiler-ir-symbol-owned? symbol)
+    (compiler_ir_types.compiler-ir-symbol-slot-unchecked symbol)
+    -1))
+
+(define (compiler-ir-instr-seq-return?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (match (& (array-ref instrs.slots index))
+    [(compiler_ir_types.CompilerIrInstr.Return _) true]
+    [_ false]))
+
+(define (compiler-ir-block-list-compact-reversed
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.CompilerIrBlockList.Array
+    (compiler_ir_types.compiler-ir-block-seq-from-reversed-list blocks)))
+
+(define (compiler-ir-function-abi [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionAbi
+  (match func
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ _ function-abi)
+      (clone function-abi)]))
+
+(defenum CompilerIrMaybeDescriptorPairKind
+  (No)
+  (Some compiler_ir_types.CompilerIrDescriptorPairKind))
+
+(define (compiler-ir-descriptor-pair-kind-for-handle-type [ty : ast.AstType]) : CompilerIrMaybeDescriptorPairKind
+  (match ty
+    [(ast.AstType.String)
+      (CompilerIrMaybeDescriptorPairKind.Some
+        (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString))]
+    [(ast.AstType.DynArray elem)
+      (CompilerIrMaybeDescriptorPairKind.Some
+        (compiler_ir_types.CompilerIrDescriptorPairKind.DynamicArray elem))]
+    [_ (CompilerIrMaybeDescriptorPairKind.No)]))
+
+(define (compiler-ir-switch-case-seq-empty) : compiler_ir_types.CompilerIrSwitchCaseSeq
+  (compiler_ir_types.CompilerIrSwitchCaseSeq
+    (__tl_make-array compiler_ir_types.CompilerIrSwitchCase 0)
+    0))
+
+(define (compiler-ir-instr-seq-rewrite!
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [rewrite
+    : (-> compiler_ir_types.CompilerIrInstr compiler_ir_types.CompilerIrInstr)]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 instrs.len]
+    (while (< index count)
+      (begin
+        (compiler_ir_types.compiler-ir-instr-seq-set!
+          (&mut instrs)
+          index
+          (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-instr-seq-compact!
+  [instrs : (&mut instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [keep? : (-> compiler_ir_types.CompilerIrInstr bool)]) : unit
+  (let
+    [read : i64 0]
+    [write : i64 0]
+    [count : i64 instrs.len]
+    (begin
+      (while (< read count)
+        (begin
+          (if (keep? (clone (array-ref instrs.slots read)))
+            (begin
+              (if (not (= write read))
+                (set!
+                  (array-ref instrs.slots write)
+                  (clone (array-ref instrs.slots read)))
+                unit)
+              (set! write (+ write 1)))
+            unit)
+          (set! read (+ read 1))))
+      (set! instrs.len write))))
+
+(define (compiler-ir-value-var-eq?
+  [value : compiler_ir_types.CompilerIrValue]
+  [want : i64]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var id) (= id want)]
+    [_ false]))
+
+(define (compiler-ir-effect-is?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [effect : compiler_ir_types.CompilerIrEffect]) : bool
+  (compiler_ir_types.compiler-ir-effect-eq?
+    (compiler_ir_types.compiler-ir-instr-effect instr)
+    effect))
+
+(define (compiler-ir-instruction-effects-ok?) : bool
+  (and
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.AddrOf 1 0)
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Gep
+        2
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Cast
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (ast.AstType.I64)
+        (ast.AstType.I32))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        4
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.UnOp
+        5
+        (compiler_ir_types.CompilerIrUnOp.Neg)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Phi
+        6
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Load
+        7
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Alloc 8 (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 2)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.CopyBytes
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        16)
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Store
+        (compiler_ir_types.compiler-ir-test-symbol "global")
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Call
+        9
+        cbi.compiler-builtin-id-tl-region-mark
+        (compiler_ir_types.CompilerIrCallArgs.Nil)
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.CpuId
+        10
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        0)
+      compiler_ir_types.CompilerIrEffect.CpuProbe)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Xgetbv
+        11
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      compiler_ir_types.CompilerIrEffect.CpuProbe)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "bounds_ok"))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.TailCall
+        (compiler_ir_types.compiler-ir-test-symbol "fact_loop")
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1))
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "done"))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Bool true)
+        (compiler_ir_types.compiler-ir-label "then")
+        (compiler_ir_types.compiler-ir-label "else"))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Switch
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        1
+        (compiler_ir_types.compiler-ir-switch-case-seq2
+          (compiler_ir_types.CompilerIrSwitchCase.Case
+            1
+            (compiler_ir_types.compiler-ir-label "one"))
+          (compiler_ir_types.CompilerIrSwitchCase.Case
+            2
+            (compiler_ir_types.compiler-ir-label "two")))
+        (compiler_ir_types.compiler-ir-label "default"))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.I64 0)))
+      compiler_ir_types.CompilerIrEffect.ControlFlow)))
+
+(define (compiler-ir-vector-mask-effects-ok?) : bool
+  (and
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.LaneId 20 4 (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.Splat
+        21
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-vector-bin-op
+        22
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ir_types.CompilerIrValue.Var 21)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-vector-prefix
+        32
+        (compiler_ir_types.CompilerIrVectorPrefixOp.Sum)
+        (compiler_ir_types.CompilerIrValue.Var 22)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        23
+        (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+        (compiler_ir_types.CompilerIrValue.Var 22)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-vector-compare
+        24
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ir_types.CompilerIrValue.Var 21)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.MaskBinOp
+        25
+        (compiler_ir_types.CompilerIrMaskBinOp.And)
+        (compiler_ir_types.CompilerIrValue.Var 24)
+        (compiler_ir_types.CompilerIrValue.Var 24)
+        4)
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.MaskNot
+        26
+        (compiler_ir_types.CompilerIrValue.Var 25)
+        4)
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.MaskReduce
+        27
+        (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+        (compiler_ir_types.CompilerIrValue.Var 26)
+        4)
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-select
+        28
+        (compiler_ir_types.CompilerIrValue.Var 24)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler_ir_types.CompilerIrValue.Var 21)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.TailMask
+        29
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        4)
+      compiler_ir_types.CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.CompilerIrInstr.VectorLoad
+        30
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-predicated-load
+        31
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 29)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-vector-store
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 22)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler-ir-effect-is?
+      (compiler_ir_types.ir-instr-predicated-store
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 22)
+        (compiler_ir_types.CompilerIrValue.Var 29)
+        4
+        (ast.AstType.I64))
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)))
+
+(define (compiler-ir-effect-predicates-ok?) : bool
+  (and
+    (not
+      (compiler_ir_types.compiler-ir-effect-has-side-effect?
+        compiler_ir_types.CompilerIrEffect.Pure))
+    (not
+      (compiler_ir_types.compiler-ir-effect-has-side-effect?
+        compiler_ir_types.CompilerIrEffect.MemoryRead))
+    (compiler_ir_types.compiler-ir-effect-has-side-effect?
+      compiler_ir_types.CompilerIrEffect.CpuProbe)
+    (compiler_ir_types.compiler-ir-effect-has-side-effect?
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler_ir_types.compiler-ir-effect-has-side-effect?
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler_ir_types.compiler-ir-effect-has-side-effect?
+      compiler_ir_types.CompilerIrEffect.Unknown)
+    (not
+      (compiler_ir_types.compiler-ir-effect-invalidates-cse?
+        compiler_ir_types.CompilerIrEffect.Pure))
+    (compiler_ir_types.compiler-ir-effect-invalidates-cse?
+      compiler_ir_types.CompilerIrEffect.MemoryRead)
+    (compiler_ir_types.compiler-ir-effect-invalidates-cse?
+      compiler_ir_types.CompilerIrEffect.CpuProbe)
+    (compiler_ir_types.compiler-ir-effect-invalidates-cse?
+      compiler_ir_types.CompilerIrEffect.MemoryWrite)
+    (compiler_ir_types.compiler-ir-effect-invalidates-cse?
+      compiler_ir_types.CompilerIrEffect.ControlFlow)
+    (compiler_ir_types.compiler-ir-effect-invalidates-cse?
+      compiler_ir_types.CompilerIrEffect.Unknown)))
+
+(define (compiler-ir-renders-as?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [want : String]) : bool
+  (string.eq
+    (compiler_ir_types.compiler-ir-instr-render
+      (cis.InternStructuralSessionHandle 0)
+      (ast.ast-node-pool-reader-type-segment-bases)
+      instr)
+    want))
+
+(define (compiler-ir-display-op-names-ok?) : bool
+  (and
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        8
+        compiler_ir_types.CompilerIrVectorReduceOp.Sum
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_sum %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        8
+        compiler_ir_types.CompilerIrVectorReduceOp.Min
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_min %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        8
+        compiler_ir_types.CompilerIrVectorReduceOp.Max
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_max %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-prefix
+        42
+        compiler_ir_types.CompilerIrVectorPrefixOp.Sum
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_sum %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-prefix
+        42
+        compiler_ir_types.CompilerIrVectorPrefixOp.Max
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_max %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-prefix
+        42
+        compiler_ir_types.CompilerIrVectorPrefixOp.All
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_all %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-prefix
+        42
+        compiler_ir_types.CompilerIrVectorPrefixOp.Any
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))
+      "  %42 = vector_prefix_any %7, carry -3 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.MaskReduce
+        9
+        compiler_ir_types.CompilerIrMaskReduceOp.All
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        4)
+      "  %9 = mask_reduce_all %5 lanes 4")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.MaskBinOp
+        4
+        compiler_ir_types.CompilerIrMaskBinOp.And
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        4)
+      "  %4 = mask_and %3, %3 lanes 4")))
+
+(define (compiler-ir-display-instrs-ok?) : bool
+  (and
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.LaneId 0 4 (ast.AstType.I64))
+      "  %0 = lane_id 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.Splat
+        1
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        4
+        (ast.AstType.I64))
+      "  %1 = splat 7 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-bin-op
+        2
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        4
+        (ast.AstType.I64))
+      "  %2 = vector_add %0, %1 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        8
+        (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        4
+        (ast.AstType.I64))
+      "  %8 = vector_reduce_sum %2 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-compare
+        3
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        4
+        (ast.AstType.I64))
+      "  %3 = vector_compare_lt %0, %1 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.MaskBinOp
+        4
+        (compiler_ir_types.CompilerIrMaskBinOp.Or)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        4)
+      "  %4 = mask_or %3, %3 lanes 4")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.MaskNot
+        5
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        4)
+      "  %5 = mask_not %4 lanes 4")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.MaskReduce
+        9
+        (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        4)
+      "  %9 = mask_reduce_any %5 lanes 4")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-select
+        6
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        4
+        (ast.AstType.I64))
+      "  %6 = select %5, %2, %1 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.CompilerIrInstr.VectorLoad
+        7
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        4
+        (ast.AstType.I64))
+      "  %7 = vector_load %10, %11 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-store
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        4
+        (ast.AstType.I64))
+      "  vector_store %12, %11, %6 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-predicated-store
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        4
+        (ast.AstType.I64))
+      "  predicated_store %12, %11, %6 mask %5 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-predicated-load
+        10
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        4
+        (ast.AstType.I64))
+      "  %10 = predicated_load %12, %11 mask %5 lanes 4 : i64")))
+
+(define (compiler-ir-vector-prefix-display-clone-ok?) : bool
+  (let
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-vector-prefix
+        42
+        (compiler_ir_types.CompilerIrVectorPrefixOp.Min)
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 -3)
+        4
+        (ast.AstType.I64))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [cloned : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.compiler-ir-clone-instr
+        pools
+        (compiler_ir_types.compiler-ir-global-shared-view instr))]
+    (and
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          (cis.InternStructuralSessionHandle 0)
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler_ir_types.compiler-ir-global-shared-view instr))
+        "  %42 = vector_prefix_min %7, carry -3 lanes 4 : i64")
+      (compiler-ir-effect-is? instr compiler_ir_types.CompilerIrEffect.Pure)
+      (match cloned
+        [(compiler_ir_types.CompilerIrInstr.VectorPrefix payload-box)
+          (let
+            [dst
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                dst)]
+            [op
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                op)]
+            [src
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                src)]
+            [carry
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                carry)]
+            [lanes
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                lanes)]
+            [ty
+              (compiler_ir_types.compiler-ir-box-field-shared-view
+                payload-box
+                ty)]
+            (and
+              (= dst 42)
+              (match op
+                [(compiler_ir_types.CompilerIrVectorPrefixOp.Min) true]
+                [_ false])
+              (compiler-ir-value-var-eq? src 7)
+              (match carry
+                [(compiler_ir_types.CompilerIrValue.I64 value) (= value -3)]
+                [_ false])
+              (= lanes 4)
+              (match ty
+                [(ast.AstType.I64) true]
+                [_ false])))]
+        [_ false]))))
+
+(define (compiler-ir-display-tail-mask-ok?) : bool
+  (let
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.TailMask
+        9
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        8)]
+    (and
+      (compiler-ir-renders-as?
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        "  %9 = tail_mask %1, %2 lanes 8")
+      (compiler-ir-effect-is?
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        compiler_ir_types.CompilerIrEffect.Pure)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.TailMask dst index len lanes)
+          (and
+            (= dst 9)
+            (compiler-ir-value-var-eq? index 1)
+            (compiler-ir-value-var-eq? len 2)
+            (= lanes 8))]
+        [_ false]))))
+
+(define (compiler-ir-display-self-test-ok?) : bool
+  (and
+    (compiler-ir-display-op-names-ok?)
+    (compiler-ir-display-instrs-ok?)
+    (compiler-ir-vector-prefix-display-clone-ok?)
+    (compiler-ir-display-tail-mask-ok?)))
+
+(define (compiler-ir-tail-call-render-ok?) : bool
+  (string.eq
+    (compiler_ir_types.compiler-ir-instr-render
+      (cis.InternStructuralSessionHandle 0)
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (compiler_ir_types.CompilerIrInstr.TailCall
+        (compiler_ir_types.compiler-ir-test-symbol "fact_loop")
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1))
+        (ast.AstType.I64)))
+    "  tailcall fact_loop(%3, 1) : i64"))
+
+(define (compiler-ir-switch-render-ok?) : bool
+  (let
+    [cases : compiler_ir_types.CompilerIrSwitchCaseSeq
+      (compiler_ir_types.compiler-ir-switch-case-seq2
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          4
+          (compiler_ir_types.compiler-ir-label "four"))
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          5
+          (compiler_ir_types.compiler-ir-label "five")))]
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Switch
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        4
+        cases
+        (compiler_ir_types.compiler-ir-label "other"))]
+    (compiler-ir-renders-as?
+      instr
+      "  switch %9 base 4 [4:four, 5:five] default other")))
+
+(define (compiler-ir-source-spans-entry-list-ok?) : bool
+  (let
+    [span1 : ast.AstSourceSpan (ast.ast-source-span 1 2 1 3)]
+    [span2 : ast.AstSourceSpan (ast.ast-source-span 4 5 4 8)]
+    [span3 : ast.AstSourceSpan (ast.ast-source-span 7 8 7 12)]
+    [first : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "first"))]
+    [second : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "second"))]
+    [one : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "one"))]
+    [two : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "two"))]
+    [same : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "same"))]
+    [source-provenance : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-source-slice "span-same-provenance" 0 20))]
+    [generated-provenance : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-name "span-same-provenance"))]
+    [grow : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (ci.intern-generated-canonical-name "grow"))]
+    [entries : compiler_ir_types.CompilerSourceSpansEntryList
+      (compiler_ir_types.compiler-source-spans-entry-list-append
+        (compiler_ir_types.compiler-source-spans-entry-list-append
+          (compiler_ir_types.compiler-source-spans-entry-list-empty)
+          (compiler_ir_types.CompilerSourceSpansEntry.Entry first 0 span1))
+        (compiler_ir_types.CompilerSourceSpansEntry.Entry second 0 span2))]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert
+        (compiler_ir_types.compiler-source-spans-insert
+          (compiler_ir_types.compiler-source-spans-empty)
+          one
+          span1)
+        two
+        span2)]
+    [shadowed : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert
+        (compiler_ir_types.compiler-source-spans-insert
+          (compiler_ir_types.compiler-source-spans-empty)
+          same
+          span1)
+        same
+        span3)]
+    [same-spelling : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert
+        (compiler_ir_types.compiler-source-spans-insert
+          (compiler_ir_types.compiler-source-spans-empty)
+          source-provenance
+          span1)
+        generated-provenance
+        span2)]
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Mov
+        9
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (ast.AstType.I64))]
+    [instr-function : compiler_ir_types.CompilerIrSymbolId one]
+    [instr-spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr
+        (compiler_ir_types.compiler-source-spans-insert-instr
+          (compiler_ir_types.compiler-source-spans-empty)
+          instr-function
+          (compiler_ir_types.compiler-ir-global-shared-view instr)
+          span1)
+        instr-function
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        span3)]
+    [provenance-instr-spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr
+        (compiler_ir_types.compiler-source-spans-insert-instr
+          (compiler_ir_types.compiler-source-spans-empty)
+          source-provenance
+          (compiler_ir_types.compiler-ir-global-shared-view instr)
+          span1)
+        generated-provenance
+        (compiler_ir_types.compiler-ir-global-shared-view instr)
+        span2)]
+    [grown-entries : compiler_ir_types.CompilerSourceSpansEntryList
+      (compiler_ir_types.compiler-source-spans-entry-list-empty)]
+    [grown-instr-spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-empty)]
+    [i : i64 0]
+    (begin
+      (while (< i 6)
+        (begin
+          (set!
+            grown-entries
+            (compiler_ir_types.compiler-source-spans-entry-list-append
+              grown-entries
+              (compiler_ir_types.CompilerSourceSpansEntry.Entry
+                grow
+                0
+                (if (= i 5)
+                  span3
+                  span1))))
+          (set!
+            grown-instr-spans
+            (compiler_ir_types.compiler-source-spans-insert-instr
+              grown-instr-spans
+              instr-function
+              (compiler_ir_types.compiler-ir-global-shared-view instr)
+              (if (= i 5)
+                span3
+                span1)))
+          (set! i (+ i 1))))
+      (and
+        (= (compiler_ir_types.compiler-source-spans-entry-list-count entries) 2)
+        (= (compiler_ir_types.compiler-source-spans-count spans) 2)
+        (=
+          (compiler_ir_types.compiler-source-spans-entry-list-count
+            grown-entries)
+          6)
+        (= (array-length grown-entries.slots) 8)
+        (match (compiler_ir_types.compiler-ir-global-shared-view
+          grown-instr-spans)
+          [(compiler_ir_types.CompilerSourceSpans.Spans
+              _
+              grown-instr-entries
+              grown-instr-count)
+            (and
+              (= grown-instr-count 6)
+              (= grown-instr-entries.len 6)
+              (= (array-length grown-instr-entries.slots) 8))])
+        (match (compiler_ir_types.compiler-source-spans-entry-list-lookup
+          entries
+          second)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (and
+              (= (ast.ast-source-span-start-line found) 4)
+              (= (ast.ast-source-span-end-col found) 8))]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-entry-list-lookup
+          grown-entries
+          grow)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (and
+              (= (ast.ast-source-span-start-line found) 7)
+              (= (ast.ast-source-span-end-col found) 12))]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-lookup shadowed same)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (and
+              (= (ast.ast-source-span-start-line found) 7)
+              (= (ast.ast-source-span-end-col found) 12))]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (not
+          (compiler_ir_types.compiler-ir-symbol-id-eq?
+            source-provenance
+            generated-provenance))
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-id-text source-provenance)
+          (compiler_ir_types.compiler-ir-symbol-id-text generated-provenance))
+        (match (compiler_ir_types.compiler-source-spans-lookup
+          (compiler_ir_types.compiler-ir-global-shared-view same-spelling)
+          source-provenance)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 1)]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-lookup
+          same-spelling
+          generated-provenance)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 4)]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          instr-spans
+          instr-function
+          (compiler_ir_types.compiler-ir-global-shared-view instr))
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (and
+              (= (ast.ast-source-span-start-line found) 7)
+              (= (ast.ast-source-span-end-col found) 12))]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          grown-instr-spans
+          instr-function
+          (compiler_ir_types.compiler-ir-global-shared-view instr))
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (and
+              (= (ast.ast-source-span-start-line found) 7)
+              (= (ast.ast-source-span-end-col found) 12))]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          (compiler_ir_types.compiler-ir-global-shared-view
+            provenance-instr-spans)
+          source-provenance
+          (compiler_ir_types.compiler-ir-global-shared-view instr))
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 1)]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          provenance-instr-spans
+          generated-provenance
+          instr)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 4)]
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) false])))))
+
+(define (compiler-ir-instr-seq-mov-dst?
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [index : i64]
+  [want : i64]) : bool
+  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+    [(compiler_ir_types.CompilerIrInstr.Mov dst _ _) (= dst want)]
+    [_ false]))
+
+(define (compiler-ir-instr-seq-return-var?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [want : i64]) : bool
+  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+    [(compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var var)))
+      (= var want)]
+    [_ false]))
+
+(define (compiler-ir-instr-seq-test-rewrite
+  [instr : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrInstr
+  (match (compiler_ir_types.compiler-ir-global-shared-view instr)
+    [(compiler_ir_types.CompilerIrInstr.Mov dst value ty)
+      (compiler_ir_types.CompilerIrInstr.Mov (+ dst 10) value ty)]
+    [(compiler_ir_types.CompilerIrInstr.Alloc dst ty)
+      (compiler_ir_types.CompilerIrInstr.Alloc dst ty)]
+    [(compiler_ir_types.CompilerIrInstr.Return value)
+      (compiler_ir_types.CompilerIrInstr.Return value)]
+    [_ instr]))
+
+(define (compiler-ir-instr-seq-test-keep-non-alloc?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Alloc _ _) false]
+    [_ true]))
+
+(define (compiler-ir-instr-seq-mutable-rewrite-ok?) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq3
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.I64 20)
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 2))))]
+    (begin
+      (compiler-ir-instr-seq-rewrite!
+        (compiler_ir_types.compiler-ir-global-shared-view seq)
+        compiler-ir-instr-seq-test-rewrite)
+      (and
+        (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
+        (compiler-ir-instr-seq-mov-dst? seq 0 11)
+        (compiler-ir-instr-seq-mov-dst? seq 1 12)
+        (compiler-ir-instr-seq-return-var? seq 2 2)))))
+
+(define (compiler-ir-instr-seq-mutable-compact-ok?) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq4
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Alloc 9 (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.I64 20)
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 2))))]
+    (begin
+      (compiler-ir-instr-seq-compact!
+        (&mut seq)
+        compiler-ir-instr-seq-test-keep-non-alloc?)
+      (and
+        (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
+        (compiler-ir-instr-seq-mov-dst? seq 0 1)
+        (compiler-ir-instr-seq-mov-dst? seq 1 2)
+        (compiler-ir-instr-seq-return-var? seq 2 2)))))
+
+(define (compiler-ir-block-list-first-label?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [want : String]) : bool
+  (match (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Cons block _)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block label _)
+          (string.eq (compiler_ir_types.compiler-ir-label-text label) want)])]
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
+
+(define (compiler-ir-block-list-label-at-cons?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [index : i64]
+  [want : String]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (if (= index 0)
+        (match block
+          [(compiler_ir_types.CompilerIrBlock.Block label _)
+            (string.eq (compiler_ir_types.compiler-ir-label-text label) want)])
+        (compiler-ir-block-list-label-at-cons? (deref rest) (- index 1) want))]
+    [(compiler_ir_types.CompilerIrBlockList.Array _) false]))
+
+(define (compiler-ir-block-list-label-at?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [index : i64]
+  [want : String]) : bool
+  (compiler-ir-block-list-label-at-cons?
+    (compiler_ir_types.compiler-ir-block-list-force-cons blocks)
+    index
+    want))
+
+(define (compiler-ir-function-seq-name-at?
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]
+  [index : i64]
+  [want : String]) : bool
+  (if (or (< index 0) (>= index functions.len))
+    false
+    (match (array-ref functions.slots index)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _ _)
+        (string.eq (compiler_ir_types.compiler-ir-symbol-text name) want)])))
+
+(define (compiler-ir-test-function [name : String]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (compiler_ir_types.compiler-ir-test-symbol name)
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (ast.AstType.I64)
+    1
+    compiler_ir_types.CompilerIrBlockList.Nil
+    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+
+(define (compiler-ir-dense-builders-order-ok?) : bool
+  (let
+    [instr-builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 1)]
+    [block-builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 1)]
+    [function-builder : compiler_ir_types.CompilerIrFunctionBuilder
+      (compiler_ir_types.compiler-ir-function-builder-with-capacity 1)]
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq-empty)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      compiler_ir_types.CompilerIrBlockList.Nil]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-empty)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instr-builder)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (ast.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instr-builder)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.I64 20)
+          (ast.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instr-builder)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 2))))
+      (set!
+        instrs
+        (compiler_ir_types.compiler-ir-instr-builder-to-seq instr-builder))
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut block-builder)
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut block-builder)
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "middle")
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut block-builder)
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "done")
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (set!
+        blocks
+        (compiler_ir_types.compiler-ir-block-builder-to-list block-builder))
+      (compiler_ir_types.compiler-ir-function-builder-push!
+        (&mut function-builder)
+        (compiler-ir-test-function "first"))
+      (compiler_ir_types.compiler-ir-function-builder-push!
+        (&mut function-builder)
+        (compiler-ir-test-function "second"))
+      (compiler_ir_types.compiler-ir-function-builder-push!
+        (&mut function-builder)
+        (compiler-ir-test-function "third"))
+      (set!
+        functions
+        (compiler_ir_types.compiler-ir-function-builder-to-seq function-builder))
+      (and
+        (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 3)
+        (compiler-ir-instr-seq-mov-dst? instrs 0 1)
+        (compiler-ir-instr-seq-mov-dst? instrs 1 2)
+        (compiler-ir-instr-seq-return-var? instrs 2 2)
+        (= (compiler_ir_types.compiler-ir-block-list-count blocks) 3)
+        (compiler-ir-block-list-label-at?
+          (compiler_ir_types.compiler-ir-global-shared-view blocks)
+          0
+          "entry")
+        (compiler-ir-block-list-label-at?
+          (compiler_ir_types.compiler-ir-global-shared-view blocks)
+          1
+          "middle")
+        (compiler-ir-block-list-label-at? blocks 2 "done")
+        (= (compiler_ir_types.compiler-ir-function-seq-count functions) 3)
+        (compiler-ir-function-seq-name-at? functions 0 "first")
+        (compiler-ir-function-seq-name-at? functions 1 "second")
+        (compiler-ir-function-seq-name-at? functions 2 "third")))))
+
+(define (compiler-ir-param-seq-entry-i64?
+  [seq : (& seq compiler_ir_types.CompilerIrParamSeq)]
+  [index : i64]
+  [want-name : String]
+  [want-var : i64]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (match (compiler_ir_types.compiler-ir-array-shared-view seq.slots index)
+      [(compiler_ir_types.CompilerIrParam.Param name ty var)
+        (and
+          (string.eq name want-name)
+          (= var want-var)
+          (match ty
+            [(ast.AstType.I64) true]
+            [_ false]))])))
+
+(define (compiler-ir-param-seq-entry-bool?
+  [seq : compiler_ir_types.CompilerIrParamSeq]
+  [index : i64]
+  [want-name : String]
+  [want-var : i64]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (match (array-ref seq.slots index)
+      [(compiler_ir_types.CompilerIrParam.Param name ty var)
+        (and
+          (string.eq name want-name)
+          (= var want-var)
+          (match ty
+            [(ast.AstType.Bool) true]
+            [_ false]))])))
+
+(define (compiler-ir-param-seq-dense-order-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [builder : compiler_ir_types.CompilerIrParamBuilder
+      (compiler_ir_types.compiler-ir-param-builder-with-capacity 1)]
+    [snapshot : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-empty)]
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-empty)]
+    [cloned : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-empty)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (compiler_ir_types.compiler-ir-test-symbol "dense_params")
+        params
+        (ast.AstType.Unit)
+        8
+        compiler_ir_types.CompilerIrBlockList.Nil
+        compiler_ir_types.CompilerIrFunctionAbi.Ordinary)]
+    [cloned-func : compiler_ir_types.CompilerIrFunction func]
+    (begin
+      (compiler_ir_types.compiler-ir-param-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrParam.Param "value" (ast.AstType.I64) 3))
+      (set!
+        snapshot
+        (compiler_ir_types.compiler-ir-param-builder-snapshot (& builder)))
+      (compiler_ir_types.compiler-ir-param-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrParam.Param "flag" (ast.AstType.Bool) 7))
+      (set! params (compiler_ir_types.compiler-ir-param-builder-to-seq builder))
+      (set!
+        cloned
+        (compiler_ir_types.compiler-ir-clone-param-seq
+          pools
+          (compiler_ir_types.compiler-ir-global-shared-view params)))
+      (set!
+        func
+        (compiler_ir_types.CompilerIrFunction.Function
+          (compiler_ir_types.compiler-ir-test-symbol "dense_params")
+          (compiler_ir_types.compiler-ir-global-shared-view params)
+          (ast.AstType.Unit)
+          8
+          compiler_ir_types.CompilerIrBlockList.Nil
+          compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
+      (set!
+        cloned-func
+        (compiler_ir_types.compiler-ir-clone-function pools func))
+      (and
+        (= (compiler_ir_types.compiler-ir-param-seq-count snapshot) 1)
+        (compiler-ir-param-seq-entry-i64? snapshot 0 "value" 3)
+        (= (compiler_ir_types.compiler-ir-param-seq-count params) 2)
+        (compiler-ir-param-seq-entry-i64? params 0 "value" 3)
+        (compiler-ir-param-seq-entry-bool? params 1 "flag" 7)
+        (= (compiler_ir_types.compiler-ir-param-seq-count cloned) 2)
+        (compiler-ir-param-seq-entry-i64? cloned 0 "value" 3)
+        (compiler-ir-param-seq-entry-bool? cloned 1 "flag" 7)
+        (match cloned-func
+          [(compiler_ir_types.CompilerIrFunction.Function
+              _
+              cloned-params
+              _
+              _
+              _
+              _)
+            (and
+              (=
+                (compiler_ir_types.compiler-ir-param-seq-count cloned-params)
+                2)
+              (compiler-ir-param-seq-entry-i64? cloned-params 0 "value" 3)
+              (compiler-ir-param-seq-entry-bool? cloned-params 1 "flag" 7))])))))
+
+(define (compiler-ir-c-abi-return-slot-seq-entry-i64-offset?
+  [seq : (& seq compiler_ir_types.CompilerIrCAbiReturnSlotSeq)]
+  [index : i64]
+  [want-offset : i64]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (match (array-ref seq.slots index)
+      [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot ty offset)
+        (and
+          (= offset want-offset)
+          (match ty
+            [(ast.AstType.I64) true]
+            [_ false]))])))
+
+(define (compiler-ir-c-abi-return-slot-seq-entry-f64-offset?
+  [seq : compiler_ir_types.CompilerIrCAbiReturnSlotSeq]
+  [index : i64]
+  [want-offset : i64]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (match (array-ref seq.slots index)
+      [(compiler_ir_types.CompilerIrCAbiReturnSlot.Slot ty offset)
+        (and
+          (= offset want-offset)
+          (match ty
+            [(ast.AstType.F64) true]
+            [_ false]))])))
+
+(define (compiler-ir-c-abi-return-slot-dense-order-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [slot-data : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
+      (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 2)]
+    [_fill : unit
+      (begin
+        (set!
+          (array-ref slot-data 0)
+          (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot (ast.AstType.I64) 0))
+        (set!
+          (array-ref slot-data 1)
+          (compiler_ir_types.CompilerIrCAbiReturnSlot.Slot (ast.AstType.F64) 8)))]
+    [slots : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+      (compiler_ir_types.CompilerIrCAbiReturnSlotSeq slot-data 2)]
+    [cloned : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+      (match (compiler_ir_types.compiler-ir-clone-instr
+        pools
+        (compiler_ir_types.ir-instr-call-cabi-store-result
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          0
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ir_types.compiler-ir-global-shared-view slots)))
+        [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            slots)]
+        [_
+          (compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+            (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
+            0)])]
+    (and
+      (= slots.len 2)
+      (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? slots 0 0)
+      (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? slots 1 8)
+      (= cloned.len 2)
+      (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? cloned 0 0)
+      (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? cloned 1 8))))
+
+(define (compiler-ir-value-seq-entry-var?
+  [seq : (& seq compiler_ir_types.CompilerIrValueSeq)]
+  [index : i64]
+  [want : i64]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (match (array-ref seq.slots index)
+      [(compiler_ir_types.CompilerIrValue.Var id) (= id want)]
+      [_ false])))
+
+(define (compiler-ir-pack-value-seq-dense-order-ok?) : bool
+  (let
+    [builder : compiler_ir_types.CompilerIrValueBuilder
+      (compiler_ir_types.compiler-ir-value-builder-with-capacity 1)]
+    [_first-two : unit
+      (begin
+        (compiler_ir_types.compiler-ir-value-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrValue.Var 10))
+        (compiler_ir_types.compiler-ir-value-builder-push!
+          (&mut builder)
+          (compiler_ir_types.CompilerIrValue.Var 20)))]
+    [snapshot : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-builder-snapshot (& builder))]
+    [_third : unit
+      (compiler_ir_types.compiler-ir-value-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrValue.Var 30))]
+    [words : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-builder-to-seq builder)]
+    [cloned : compiler_ir_types.CompilerIrValueSeq
+      (match (compiler_ir_types.compiler-ir-clone-instr
+        (ast.ast-node-pool-reader-context-current)
+        (compiler_ir_types.CompilerIrInstr.Pack
+          40
+          (compiler_ir_types.compiler-ir-global-shared-view words)
+          (ast.AstType.I64)))
+        [(compiler_ir_types.CompilerIrInstr.Pack _ cloned-words _) cloned-words]
+        [_ (compiler_ir_types.compiler-ir-value-seq-empty)])]
+    [instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Pack
+        40
+        (compiler_ir_types.compiler-ir-global-shared-view words)
+        (ast.AstType.Struct (ci.intern "Triple")))]
+    (and
+      (= snapshot.len 2)
+      (= (array-length snapshot.slots) 2)
+      (compiler-ir-value-seq-entry-var? snapshot 0 10)
+      (compiler-ir-value-seq-entry-var? snapshot 1 20)
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Pack _ packed _)
+          (and
+            (= packed.len 3)
+            (= (array-length packed.slots) 3)
+            (compiler-ir-value-seq-entry-var? packed 0 10)
+            (compiler-ir-value-seq-entry-var? packed 1 20)
+            (compiler-ir-value-seq-entry-var? packed 2 30))]
+        [_ false])
+      (= cloned.len 3)
+      (compiler-ir-value-seq-entry-var? cloned 0 10)
+      (compiler-ir-value-seq-entry-var? cloned 1 20)
+      (compiler-ir-value-seq-entry-var? cloned 2 30)
+      (string.eq
+        (compiler_ir_types.compiler-ir-value-seq-render
+          (compiler_ir_types.compiler-ir-global-shared-view words))
+        "%10, %20, %30"))))
+
+(define (compiler-ir-descriptor-pair-capability-ok?) : bool
+  (let
+    [string-kind : compiler_ir_types.CompilerIrDescriptorPairKind
+      (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString)]
+    [array-kind : compiler_ir_types.CompilerIrDescriptorPairKind
+      (compiler_ir_types.CompilerIrDescriptorPairKind.DynamicArray 77)]
+    [pack : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-descriptor-pair-pack
+        30
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        string-kind)]
+    [data : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-descriptor-pair-data
+        31
+        (compiler_ir_types.CompilerIrValue.Var 30))]
+    [length : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-descriptor-pair-length
+        32
+        (compiler_ir_types.CompilerIrValue.Var 30))]
+    (and
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type
+        (ast.AstType.String))
+        [(CompilerIrMaybeDescriptorPairKind.Some kind)
+          (match kind
+            [(compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString) true]
+            [_ false])]
+        [(CompilerIrMaybeDescriptorPairKind.No) false])
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type
+        (ast.AstType.DynArray 77))
+        [(CompilerIrMaybeDescriptorPairKind.Some kind)
+          (match kind
+            [(compiler_ir_types.CompilerIrDescriptorPairKind.DynamicArray elem)
+              (= elem 77)]
+            [_ false])]
+        [(CompilerIrMaybeDescriptorPairKind.No) false])
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type
+        (ast.AstType.Array 77 4))
+        [(CompilerIrMaybeDescriptorPairKind.No) true]
+        [_ false])
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type
+        (ast.AstType.Str))
+        [(CompilerIrMaybeDescriptorPairKind.No) true]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-descriptor-pair-handle-type
+        array-kind)
+        [(ast.AstType.DynArray elem) (= elem 77)]
+        [_ false])
+      (match pack
+        [(compiler_ir_types.CompilerIrInstr.Pack dst words ty)
+          (and
+            (= dst 30)
+            (match ty
+              [(ast.AstType.String) true]
+              [_ false])
+            (= words.len 2)
+            (compiler-ir-value-seq-entry-var? words 0 10)
+            (compiler-ir-value-seq-entry-var? words 1 20))]
+        [_ false])
+      (match data
+        [(compiler_ir_types.CompilerIrInstr.Word
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            index
+            ty)
+          (and
+            (= dst 31)
+            (= src 30)
+            (= index 0)
+            (match ty
+              [(ast.AstType.U64) true]
+              [_ false]))]
+        [_ false])
+      (match length
+        [(compiler_ir_types.CompilerIrInstr.Word
+            dst
+            (compiler_ir_types.CompilerIrValue.Var src)
+            index
+            ty)
+          (and
+            (= dst 32)
+            (= src 30)
+            (= index 1)
+            (match ty
+              [(ast.AstType.I64) true]
+              [_ false]))]
+        [_ false]))))
+
+(define (compiler-ir-phi-input-seq-entry-var-label?
+  [seq : compiler_ir_types.CompilerIrPhiInputSeq]
+  [index : i64]
+  [want-var : i64]
+  [want-label : String]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (let
+      [input : compiler_ir_types.CompilerIrPhiInput
+        (compiler_ir_types.compiler-ir-phi-input-seq-ref seq index)]
+      (and
+        (string.eq
+          (compiler_ir_types.compiler-ir-label-text input.label)
+          want-label)
+        (match input.value
+          [(compiler_ir_types.CompilerIrValue.Var id) (= id want-var)]
+          [_ false])))))
+
+(define (compiler-ir-phi-input-dense-order-ok?) : bool
+  (let
+    [inputs : compiler_ir_types.CompilerIrPhiInputSeq
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.Var 20)
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))]
+    [cloned : compiler_ir_types.CompilerIrPhiInputSeq
+      (match (compiler_ir_types.compiler-ir-clone-instr
+        (ast.ast-node-pool-reader-context-current)
+        (compiler_ir_types.CompilerIrInstr.Phi
+          1
+          (compiler_ir_types.compiler-ir-global-shared-view inputs)
+          (ast.AstType.I64)))
+        [(compiler_ir_types.CompilerIrInstr.Phi _ cloned-inputs _)
+          cloned-inputs]
+        [_ (compiler_ir_types.compiler-ir-phi-input-seq-empty)])]
+    [tail : compiler_ir_types.CompilerIrPhiInputSeq
+      (let
+        [phi-inputs-at-9678-7 : compiler_ir_types.CompilerIrPhiInputSeq
+          (compiler_ir_types.compiler-ir-global-shared-view inputs)]
+        (if (<= phi-inputs-at-9678-7.len 0)
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)
+          (let
+            [rest : compiler_ir_types.CompilerIrPhiInputSeq
+              (compiler_ir_types.CompilerIrPhiInputSeq
+                phi-inputs-at-9678-7.slots
+                (+ phi-inputs-at-9678-7.start 1)
+                (- phi-inputs-at-9678-7.len 1))]
+            rest)))]
+    [reversed : compiler_ir_types.CompilerIrPhiInputSeq
+      (compiler_ir_types.compiler-ir-phi-input-seq-reverse-onto
+        (compiler_ir_types.compiler-ir-global-shared-view inputs)
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty))]
+    (and
+      (= (compiler_ir_types.compiler-ir-phi-input-seq-count inputs) 2)
+      (compiler-ir-phi-input-seq-entry-var-label?
+        (compiler_ir_types.compiler-ir-global-shared-view inputs)
+        0
+        10
+        "entry")
+      (compiler-ir-phi-input-seq-entry-var-label? inputs 1 20 "loop")
+      (compiler-ir-phi-input-seq-entry-var-label? cloned 0 10 "entry")
+      (= (compiler_ir_types.compiler-ir-phi-input-seq-count tail) 1)
+      (compiler-ir-phi-input-seq-entry-var-label? tail 0 20 "loop")
+      (compiler-ir-phi-input-seq-entry-var-label?
+        (compiler_ir_types.compiler-ir-global-shared-view reversed)
+        0
+        20
+        "loop")
+      (compiler-ir-phi-input-seq-entry-var-label? reversed 1 10 "entry"))))
+
+(define (compiler-ir-switch-case-seq-entry-tag-label?
+  [seq : (& seq compiler_ir_types.CompilerIrSwitchCaseSeq)]
+  [index : i64]
+  [want-tag : i64]
+  [want-label : String]) : bool
+  (if (or (< index 0) (>= index seq.len))
+    false
+    (match (array-ref seq.slots index)
+      [(compiler_ir_types.CompilerIrSwitchCase.Case tag label)
+        (and
+          (= tag want-tag)
+          (string.eq
+            (compiler_ir_types.compiler-ir-label-text label)
+            want-label))])))
+
+(define (compiler-ir-switch-case-dense-order-ok?) : bool
+  (let
+    [builder : compiler_ir_types.CompilerIrSwitchCaseBuilder
+      (compiler_ir_types.compiler-ir-switch-case-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          4
+          (compiler_ir_types.compiler-ir-label "four")))
+      (compiler_ir_types.compiler-ir-switch-case-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrSwitchCase.Case
+          5
+          (compiler_ir_types.compiler-ir-label "five")))
+      (let
+        [cases : compiler_ir_types.CompilerIrSwitchCaseSeq
+          (compiler_ir_types.compiler-ir-switch-case-builder-to-seq builder)]
+        [cloned : compiler_ir_types.CompilerIrSwitchCaseSeq
+          (match (compiler_ir_types.compiler-ir-clone-instr
+            (ast.ast-node-pool-reader-context-current)
+            (compiler_ir_types.CompilerIrInstr.Switch
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              0
+              (compiler_ir_types.compiler-ir-global-shared-view cases)
+              (compiler_ir_types.compiler-ir-label "default")))
+            [(compiler_ir_types.CompilerIrInstr.Switch _ _ cloned-cases _)
+              cloned-cases]
+            [_ (compiler-ir-switch-case-seq-empty)])]
+        (and
+          (= (compiler_ir_types.compiler-ir-switch-case-seq-count cases) 2)
+          (string.eq
+            (compiler_ir_types.compiler-ir-switch-case-seq-render cases)
+            "4:four, 5:five")
+          (compiler-ir-switch-case-seq-entry-tag-label? cases 0 4 "four")
+          (compiler-ir-switch-case-seq-entry-tag-label? cases 1 5 "five")
+          (compiler-ir-switch-case-seq-entry-tag-label? cloned 0 4 "four")
+          (compiler-ir-switch-case-seq-entry-tag-label? cloned 1 5 "five"))))))
+
+(define (compiler-ir-instr-seq-dense-construction-ok?) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrInstrSeq
+      (compiler_ir_types.compiler-ir-instr-seq3
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.I64 10)
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.I64 20)
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 2))))]
+    [block-list : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (compiler_ir_types.compiler-ir-global-shared-view seq))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [compact-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-list-compact
+        (compiler_ir_types.compiler-ir-global-shared-view block-list))]
+    (and
+      (= (compiler_ir_types.compiler-ir-instr-seq-count seq) 3)
+      (not (compiler_ir_types.compiler-ir-instr-seq-empty? seq))
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref seq 2)
+        [(compiler_ir_types.CompilerIrInstr.Return _) true]
+        [_ false])
+      (=
+        (compiler_ir_types.compiler-ir-block-list-instruction-count block-list)
+        3)
+      (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 1)
+      (compiler-ir-block-list-first-label? compact-blocks "entry")
+      (compiler-ir-instr-seq-mov-dst? seq 0 1))))
+
+(define (compiler-ir-effect-self-test) : i64
+  (begin
+    (unless (compiler-ir-instruction-effects-ok?) (return 1))
+    (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
+    (unless (compiler-ir-effect-predicates-ok?) (return 1))
+    (unless (compiler-ir-display-self-test-ok?) (return 1))
+    (unless (compiler-ir-tail-call-render-ok?) (return 1))
+    (unless (compiler-ir-switch-render-ok?) (return 1))
+    (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
+    (unless (compiler-ir-instr-seq-dense-construction-ok?) (return 1))
+    (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
+    (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
+    (unless (compiler-ir-dense-builders-order-ok?) (return 1))
+    (unless (compiler-ir-param-seq-dense-order-ok?) (return 1))
+    (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
+    (unless (compiler-ir-pack-value-seq-dense-order-ok?) (return 1))
+    (unless (compiler-ir-descriptor-pair-capability-ok?) (return 1))
+    (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
+    (unless (compiler-ir-switch-case-dense-order-ok?) (return 1))
+    42))
 
 (define (main) : i64
   (begin
@@ -3099,11 +5248,12 @@
       (unless
         (= representation-failure 0)
         (return (+ 11 representation-failure))))
-    (unless (compiler-ir-smoke-owned-capability-ok?) (return 21))
+    (unless (compiler-ir-smoke-store-owned-ok?) (return 21))
     (unless (compiler-ir-smoke-call-arg-map-visit-ok?) (return 22))
     (unless (compiler-ir-smoke-spmd-map-visit-ok?) (return 23))
     (unless (compiler-ir-smoke-value-seq-map-visit-ok?) (return 24))
+    (unless (= (compiler-ir-smoke-operand-api-failure) 0) (return 25))
     (let
       [private-abi-failure : i64 (compiler-ir-smoke-spmd-private-abi-failure)]
       (unless (= private-abi-failure 0) (return (+ 100 private-abi-failure))))
-    (compiler_ir_types.compiler-ir-effect-self-test)))
+    (compiler-ir-effect-self-test)))

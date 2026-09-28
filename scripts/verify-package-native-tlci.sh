@@ -18,13 +18,7 @@ cd "$ROOT"
 native_link_detect_host
 
 # Target-conditioned prefix declarations change how much source work the
-# hydrated dependency surface bypasses. Removing stdlib.array removes ten
-# declarations from the consumer prefix on both hosts; the by-value ownership
-# cutover's explicit compiler-owned-view import adds one back. Explicit clone
-# generation adds seven public declaration macros to the loaded prefix. Test
-# declaration metadata adds two source-visible declarations to that prefix.
-# Removing the generic shared-view bridge subtracts one on both hosts.
-# The checked C function-pointer null abort adds one runtime declaration.
+# hydrated dependency surface bypasses.
 case "$NL_HOST_OS" in
     windows) TRUSTED_PREFIX_SKIPPED=224 ;;
     *) TRUSTED_PREFIX_SKIPPED=219 ;;
@@ -84,10 +78,8 @@ NEW_IMAGE="$TRANSITION/rebuild_fixture.new.tlci"
 SOURCE_CHANGED_CONSUMER_ASM="$TRANSITION/rebuild_consumer.source-changed.s"
 TRANSITION_EVIDENCE="$TRANSITION/evidence.txt"
 
-fail() {
-    echo "[package-native-tlci] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[package-native-tlci] '
+. "$ROOT/scripts/lib-gate.sh"
 
 # Windows package emission may profile package lowering and side-assembly
 # regeneration as separate jobs. Validate the first job that exercised a route;

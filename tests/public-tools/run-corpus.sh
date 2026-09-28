@@ -554,15 +554,6 @@ run_repl_corpus() {
             done
         fi
     fi
-
-    selfhost_repl_dir="$FIXTURE_ROOT/selfhost-repl"
-    if [ "$HOST_OS" = linux ] && [ -d "$selfhost_repl_dir" ]; then
-        for path in "$selfhost_repl_dir"/*.linux.in; do
-            [ -f "$path" ] || continue
-            base=${path%.linux.in}
-            run_repl_fixture "$path" "selfhost-repl/$(basename "$path")" "$base.linux.spec.json" "$COMPILER"
-        done
-    fi
 }
 
 run_lsp_corpus() {

@@ -18,8 +18,9 @@
 ;#   opt-callgraph-init-edges / -add-callee / -instr / -instr-seq / -blocks /
 ;#   -callees / -build-slots / -build / -callee-count
 ;#                              -- one adjacency list per function slot
-;#   opt-inline-census-depth-weight / -depth-clear! / -depth-edge! /
-;#   -depth-ranges! / -depth-prefix! / -depths-build! / -depth-at
+;#   opt-inline-census-depth-weight / -depth-clear! / -depths-build! /
+;#   -depth-at, with the census's former block-order back-edge walk (the
+;#   compiler now reads the register allocator's loop depths instead, INL-16)
 ;#                              -- the block-order loop-depth estimate: back
 ;#                                 edges coalesced to the furthest latch per
 ;#                                 header, a descending pass to a difference
@@ -613,8 +614,8 @@
                 (- (array-ref cg-depth-slots end) 1))))
           (set! i (- i 1)))))))
 
-;; opt-inline-census-depth-mark! over one function's terminator edges, in block
-;; order. A body with no back edge leaves the estimate inactive.
+;; The census's former back-edge marking over one function's terminator edges,
+;; in block order. A body with no back edge leaves the estimate inactive.
 (define (cg-census-depths-build! [func : i64]) : unit
   (let
     [count : i64 (array-ref cg-func-blocks func)]

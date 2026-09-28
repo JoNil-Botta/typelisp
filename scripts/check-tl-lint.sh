@@ -9,8 +9,6 @@ set -eu
 #
 # The public `typelisp lint` command is warn-only by default so cleanup can
 # happen in normal reviewable slices. This gate opts into enforcing mode.
-#
-# refs #1164.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -27,24 +25,10 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
+gate_require_compiler
 
 WORKDIR="$ROOT/target/tl-lint-check"
 rm -rf "$WORKDIR"
@@ -162,7 +146,7 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 # ordered chunks so opt-in timing can attribute individual outliers. Split at
 # src/ boundaries as well as the size bound: compiler sources receive the union
 # of normal and deprecated-concat rules in one parse/traversal, while the other
-# source units retain their existing opt-in rule scope. Refs #7826.
+# source units retain their existing opt-in rule scope.
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"

@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import compiler_intern as ci)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import stdlib.string)
 (import compiler_driver_core as driver)
 (import compiler_ast_types as ast)
@@ -190,7 +191,7 @@
             (io.panic "repeated checked error changed diagnostic"))
           (set! index (+ index 1))))
       ;; Includes copied diagnostics and restored parent selectors. Leaking one
-      ;; source/checked pool per error retained 29 MB for these eight jobs.
+      ;; source/checked pool per error retains far more than this bound.
       (unless
         (< (- (profile.alloc-live) before) 1048576)
         (io.panic "checked errors retained retired AST pool generations")))))
@@ -263,13 +264,13 @@
   (begin
     (load.compiler-load-test-mkdir "target/exp")
     (load.compiler-load-test-mkdir "target/exp/package-runtime-lifetime")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-runtime-lifetime/helper.tl"
       "(module helper) (define value : i64 42)")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-runtime-lifetime/good.tl"
       "(import helper as helper) (define (main) : i64 helper.value)")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-runtime-lifetime/bad.tl"
       "(import helper as helper) (import absent_runtime as absent) (define (main) : i64 helper.value)")
     (let
@@ -320,7 +321,7 @@
             (io.panic "repeated direct object emission lost side assembly"))
           (set! index (+ index 1))))
       ;; Includes retained object images, assembly and restored parent state.
-      ;; Eight unretired side-backend arenas pushed this fixture above 1 MiB.
+      ;; Unretired side-backend arenas push this fixture above the bound.
       (unless
         (< (- (profile.alloc-live) before) 1048576)
         (io.panic "direct object jobs retained private side-backend arenas")))))

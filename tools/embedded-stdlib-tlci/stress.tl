@@ -1,27 +1,26 @@
 ;; Sustained-dispatch stress harness for the mapped embedded image (refs #5528,
 ;; #5460).
 ;;
-;; #5460 saw machine-dependent corruption after roughly 13.5k catalog calls: a
-;; registration shell returned its impossible status-1 sentinel, which can only
-;; happen if the `count` argument arriving at the mapped entry was clobbered.
-;; Existing coverage is three dispatches (`verify.tl`), four orders of magnitude
-;; below that, so nothing proves the raw bridge survives the scale at which the
-;; failure appears.
+;; #5460 saw machine-dependent corruption only after many thousands of catalog
+;; calls: a registration shell returned its impossible status-1 sentinel, which
+;; can only happen if the `count` argument arriving at the mapped entry was
+;; clobbered. `verify.tl` dispatches only a few times, so this harness is what
+;; proves the raw bridge survives the scale at which the failure appears.
 ;;
 ;; The three tiers separate production entry shapes so a failure names one:
 ;;
-;; - tier 1 dispatches the final macro moved off a shell, text_buf/append!,
-;;   through its two fixed operands and dynamic set!-place callback chain.
-;; - tier 2 dispatches core_macros/__tl-box-place over one set of operands built before the
-;;   loop, auditing the session arguments the callbacks read after every
-;;   dispatch.
+;; - tier 1 dispatches text_buf/append! through its two fixed operands and
+;;   dynamic set!-place callback chain.
+;; - tier 2 dispatches core_macros/__tl-box-place over one set of operands
+;;   built before the loop, auditing the session arguments the callbacks read
+;;   after every dispatch.
 ;; - tier 3 runs the same native entry but captures pools and pushes a fresh
 ;;   operand every iteration. A failure here with tier 2 clean is the
 ;;   per-iteration session/pool cycling.
 ;;
 ;; Progress is written as a fixed-size record before and after each checkpoint
-;; so a crash leaves actionable evidence: stderr/stdout are buffered and were
-;; lost in the original investigation.
+;; so a crash leaves actionable evidence: stderr/stdout are buffered and are
+;; lost on a crash.
 ;;
 ;; usage: stress <tier> <iterations> <progress-file>   (tier: 1, 2, or 3)
 (import compiler_embedded_stdlib_tlci)
@@ -37,17 +36,13 @@
 (import stdlib.string)
 
 (defmacro (stress-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define stress-cookie : i64
   0x5528)
 
-;: Entry dispatched by tier 1. This is intentionally the final macro moved off
-;: its registration shell: the stress gate now proves its dynamic unquoted
+;: Entry dispatched by tier 1. The stress gate proves its dynamic unquoted
 ;: set!-place path remains native under sustained dispatch. Refs #6550.
 (define stress-tier1-identity : String
   "stdlib.text_buf/append!")
@@ -368,10 +363,10 @@
 ;: 3 failure with tier 2 clean therefore isolates per-iteration pool/operand
 ;: cycling; tier 1 independently stresses append!'s two-operand callback chain.
 ;;
-;; Note on "does not allocate AST nodes" in #5528's tier list: no stdlib entry
-;; drives host callbacks without allocating its own expansion, so what tier 2
-;; holds fixed is the harness's allocation -- operands and pools are built once,
-;; before the loop. The entry's expansion still allocates, as it must.
+;; No stdlib entry drives host callbacks without allocating its own expansion,
+;; so what tier 2 holds fixed is the harness's allocation -- operands and pools
+;; are built once, before the loop. The entry's expansion still allocates, as
+;; it must.
 ;;
 ;; What tier 2 adds beyond running the same entry as tier 3 is the per-iteration
 ;; audit of the session arguments themselves, which neither other tier performs

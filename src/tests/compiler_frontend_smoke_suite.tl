@@ -5,17 +5,18 @@
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.str_cat)
-(import compiler_symbols)
+(import compiler_symbols_tests as sym_tests)
 (import compiler_check_tests)
-(import compiler_semantic_index)
-(import compiler_typecheck)
+(import compiler_semantic_index_tests as sem_tests)
+(import compiler_typecheck_tests as tc_tests)
 (import compiler_ctfe)
+(import compiler_ctfe_tests)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
 (import compiler_intern as ci)
 (import compiler_diagnostic as cdiag)
 (import compiler_embedded_stdlib as embedded_stdlib)
-(import doc_test)
+(import doc_test_tests as doc_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
 
@@ -64,8 +65,8 @@
               (owned_view.compiler-owned-shared-view first)
               (owned_view.compiler-owned-shared-view second)))
           params
-          (owned_view.compiler-owned-shared-view first)
-          (owned_view.compiler-owned-shared-view second)
+          first
+          second
           arity
           (+ index 1))])))
 
@@ -83,11 +84,11 @@
   [builtin-index : i64]
   [arity : i64]) : i64
   (if (= arity 1)
-    (compiler_ctfe.compiler-ctfe-call1-in-env
+    (compiler_ctfe_tests.compiler-ctfe-call1-in-env
       env
       (cbi.compiler-builtin-ctfe-ref builtin-index)
       (compiler-ctfe-source-parity-param-var env params 0))
-    (compiler_ctfe.compiler-ctfe-call2-in-env
+    (compiler_ctfe_tests.compiler-ctfe-call2-in-env
       env
       (cbi.compiler-builtin-ctfe-ref builtin-index)
       (compiler-ctfe-source-parity-param-var env params 0)
@@ -151,7 +152,7 @@
   [arity : i64]) : bool
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
-    (match (ast.ast-decl-list-ref (ast.ast-global-shared-view decls) index)
+    (match (ast.ast-decl-list-ref decls index)
       [(ast.AstDecl.DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-parity-eval-decl
@@ -162,7 +163,7 @@
             second
             arity)
           (compiler-ctfe-source-parity-find
-            (ast.ast-global-shared-view decls)
+            decls
             (+ index 1)
             name-id
             builtin-index
@@ -171,7 +172,7 @@
             arity))]
       [_
         (compiler-ctfe-source-parity-find
-          (ast.ast-global-shared-view decls)
+          decls
           (+ index 1)
           name-id
           builtin-index
@@ -189,7 +190,7 @@
   (compiler-ctfe-source-parity-find
     decls
     0
-    (ci.intern (owned_view.compiler-owned-shared-view name))
+    (ci.intern name)
     builtin-index
     first
     second
@@ -253,18 +254,18 @@
   [message : String]) : bool
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
-    (match (ast.ast-decl-list-ref (ast.ast-global-shared-view decls) index)
+    (match (ast.ast-decl-list-ref decls index)
       [(ast.AstDecl.DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-placeholder-eval? params body message)
           (compiler-ctfe-source-placeholder-find?
-            (ast.ast-global-shared-view decls)
+            decls
             (+ index 1)
             name-id
             message))]
       [_
         (compiler-ctfe-source-placeholder-find?
-          (ast.ast-global-shared-view decls)
+          decls
           (+ index 1)
           name-id
           message)])))
@@ -318,8 +319,7 @@
     [exprs : ast.AstExprList (ast.ast-expr-list-new)]
     [clause : ast.AstExprClause (ast.ast-expr-clause true-node false-node)]
     [clause-value : compiler_ctfe.CompilerCtfeValue
-      (compiler_ctfe.CompilerCtfeValue.ExprClause
-        (owned_view.compiler-owned-shared-view clause))]
+      (compiler_ctfe.CompilerCtfeValue.ExprClause clause)]
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [binding : ast.AstExprBindingClause
       (ast.ast-expr-binding-clause-id
@@ -563,21 +563,20 @@
             (match program
               [(ast.AstProgram.Program decls-box)
                 (compiler-ctfe-stdlib-source-parity-for-decls?
-                  (owned_view.compiler-owned-box-shared-view decls-box))])]
+                  (deref decls-box))])]
           [(parser.ResultAstProgram.Err _) false])]
       [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         false])))
 
 (define (compiler-smoke-suite-require-child [name : String] [message : String]) : unit
   (let
-    [started-ms : i64
-      (compiler_semantic_index.compiler-semantic-index-smoke-timing-start)]
+    [started-ms : i64 (sem_tests.compiler-semantic-index-smoke-timing-start)]
     [result : process.ResultProcessOutput
       (process.output
         (process.command (io.arg 0) (process.args-single (string.copy name))))]
     [status : i64 (process.result-status-or (clone result) -1)]
     [timing-ok : bool
-      (compiler_semantic_index.compiler-semantic-index-smoke-timing-record
+      (sem_tests.compiler-semantic-index-smoke-timing-record
         (str_cat.str-cat "child-" name)
         started-ms
         status)]
@@ -590,24 +589,24 @@
     [(string.eq name "symbols")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (compiler_symbols.compiler-symbols-self-test))]
+        (sym_tests.compiler-symbols-self-test))]
     [(string.eq name "check")
       (if (compiler_check_tests.compiler-check-tests-ok?)
         42
         1)]
     [(string.eq name "ctfe")
       (if (and
-        (= (compiler_ctfe.compiler-ctfe-self-test) 42)
+        (= (compiler_ctfe_tests.compiler-ctfe-self-test) 42)
         (compiler-ctfe-stdlib-source-parity-ok?))
         42
         1)]
     [(string.eq name "reflection")
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
-        (if (compiler_typecheck.compiler-typecheck-reflection-tests-ok?)
+        (if (tc_tests.compiler-typecheck-reflection-tests-ok?)
           42
           1))]
-    [(string.eq name "doc-test") (doc_test.doc-test-smoke-all)]
+    [(string.eq name "doc-test") (doc_tests.doc-test-smoke-all)]
     [else 1]))
 
 (define (main) : i64

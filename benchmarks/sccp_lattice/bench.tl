@@ -142,7 +142,7 @@
 (define sccp-class-bool : i64
   4)
 
-;; Pre-interned type ids (see tools/export_sccp_tape.py).
+;; Pre-interned type ids (assigned by the corpus exporter; see README.md).
 (define sccp-ty-i64 : i64
   0)
 (define sccp-ty-bool : i64

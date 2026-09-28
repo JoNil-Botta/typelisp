@@ -4,15 +4,25 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
+(import compiler_load_tests as load_tests)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
+(import compiler_diagnostic_tests as cdiag_tests)
 (import compiler_semantic_index as semantic_index)
+(import compiler_semantic_index_tests as sem_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_typecheck_api as tc_api)
 (import compiler_typecheck_core as tc_core)
+(import stdlib.io)
+(import compiler_ast_types as ast)
+(import compiler_owned_view as owned_view)
+(import compiler_symbols as csym)
+(import compiler_target_cfg_core as target_cfg)
+(import compiler_parse_core as parser)
+(import sym_i64_env)
 
 (define (compiler-check-fix-test-position-index
-  [source : String]
+  [source : (& source str)]
   [target-line : i64]
   [target-col : i64]) : i64
   (let
@@ -37,7 +47,7 @@
         found))))
 
 (define (compiler-check-fix-test-apply
-  [source : String]
+  [source : (& source str)]
   [edit : cdiag.CompilerDiagnosticTextEdit]) : cdiag.CompilerDiagnosticMaybeString
   (let
     [span : cdiag.CompilerDiagnosticSpan
@@ -45,12 +55,12 @@
         (cdiag.compiler-diagnostic-place-shared-view edit))]
     [start : i64
       (compiler-check-fix-test-position-index
-        (tc_core.tc-global-shared-view source)
+        source
         (cdiag.compiler-diagnostic-span-start-line span)
         (cdiag.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-check-fix-test-position-index
-        (tc_core.tc-global-shared-view source)
+        source
         (cdiag.compiler-diagnostic-span-end-line span)
         (cdiag.compiler-diagnostic-span-end-col span))]
     [source-len : i64 (string.string-length source)]
@@ -62,33 +72,23 @@
           (cdiag.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 
-(define (compiler-check-near-miss-fix-source) : String
-  "(define (render-value [value : i64]) : i64
-  value)
-
-(define (main) : i64
-  (render-vaule 42))")
-
-(define (compiler-check-near-miss-fixed-source) : String
-  "(define (render-value [value : i64]) : i64
-  value)
-
-(define (main) : i64
-  (render-value 42))")
-
 (define (compiler-check-near-miss-fix-ok?) : bool
   (let
     [path : String "tests/near_miss_fix.tl"]
-    [source : String (compiler-check-near-miss-fix-source)]
-    (match (compiler_check_core.compiler-check-source
+    [source : String
+      "(define (render-value [value : i64]) : i64
+  value)
+
+(define (main) : i64
+  (render-vaule 42))"]
+    (match (check_core.compiler-check-source
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source))
       [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
       [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
         (let
           [diag : cdiag.CompilerDiagnostic
-            (cdiag.compiler-diagnostic-list-first
-              (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+            (cdiag.compiler-diagnostic-list-first (deref diag-box))]
           [fixes : cdiag.CompilerDiagnosticFixSeq
             (cdiag.compiler-diagnostic-fixes diag)]
           (and
@@ -104,8 +104,7 @@
                   (cdiag.compiler-diagnostic-fix-title
                     (cdiag.compiler-diagnostic-place-shared-view fix))
                   "Replace misspelled name")
-                (match (cdiag.compiler-diagnostic-fix-applicability
-                  (cdiag.compiler-diagnostic-place-shared-view fix))
+                (match (cdiag.compiler-diagnostic-fix-applicability fix)
                   [cdiag.CompilerDiagnosticMachineApplicable true]
                   [_ false])
                 (= edits.len 1)
@@ -125,29 +124,28 @@
                       (cdiag.compiler-diagnostic-text-edit-replacement
                         (cdiag.compiler-diagnostic-place-shared-view edit))
                       "render-value")
-                    (match (compiler-check-fix-test-apply
-                      source
-                      (cdiag.compiler-diagnostic-place-shared-view edit))
+                    (match (compiler-check-fix-test-apply source edit)
                       [(cdiag.CompilerDiagnosticSomeString updated)
                         (and
                           (string.eq
                             updated
-                            (compiler-check-near-miss-fixed-source))
-                          (compiler_check_core.compiler-check-source-ok?
-                            path
-                            updated))]
+                            "(define (render-value [value : i64]) : i64
+  value)
+
+(define (main) : i64
+  (render-value 42))")
+                          (compiler-check-source-ok? path updated))]
                       [cdiag.CompilerDiagnosticNoString false])))))))])))
 
 (define (compiler-check-stdlib-import-help-not-machine-fix-ok?) : bool
-  (match (compiler_check_core.compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/import_help_only.tl"
     "(define (main) : i64 (begin (println \"value\") 0))")
     [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
     [(compiler_check_core.ResultCompilerCheck.Err diag _)
       (let
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag))]
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
         (= (__tl-project-field (cdiag.compiler-diagnostic-fixes first) len) 0))]))
 
 (define (compiler-check-first-diagnostic-exact?
@@ -167,13 +165,9 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq (cdiag.compiler-diagnostic-message diagnostic) message)
           (string.eq (cdiag.compiler-diagnostic-path diagnostic) path)
           (= (cdiag.compiler-diagnostic-line diagnostic) line)
@@ -257,15 +251,11 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         [fixes : cdiag.CompilerDiagnosticFixSeq
           (cdiag.compiler-diagnostic-fixes diagnostic)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.emti")
@@ -278,8 +268,7 @@
                 (cdiag.compiler-diagnostic-place-shared-view fix))]
             (and
               (string.eq
-                (cdiag.compiler-diagnostic-fix-title
-                  (cdiag.compiler-diagnostic-place-shared-view fix))
+                (cdiag.compiler-diagnostic-fix-title fix)
                 "Replace misspelled name")
               (= edits.len 1)
               (string.eq
@@ -303,13 +292,9 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message diagnostic)
             "typecheck: unbound name io.missing")
@@ -320,7 +305,7 @@
             0)))]))
 
 (define (compiler-check-duplicate-type-location-ok?) : bool
-  (match (compiler_check_core.compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/duplicate_type_location.tl"
     "(defstruct Point (x i64))
 (defstruct Point (y i64))
@@ -329,8 +314,7 @@
     [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
       (let
         [diag : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-list-box-shared-view diag-box))]
+          (cdiag.compiler-diagnostic-list-first (deref diag-box))]
         [message : String (cdiag.compiler-diagnostic-message diag)]
         [diag-path : String (cdiag.compiler-diagnostic-path diag)]
         (and
@@ -340,7 +324,7 @@
           (= (cdiag.compiler-diagnostic-col diag) 1)))]))
 
 (define (compiler-check-independent-diagnostics-ok?) : bool
-  (match (compiler_check_core.compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/multiple_diagnostics.tl"
     "(define (a) : i64 (unknown-one 1))
 (define (b) : i64 (unknown-two 2))
@@ -352,22 +336,13 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            2)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            3)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "typecheck: unbound name unknown-one")
@@ -390,22 +365,13 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            0)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 0)]
         [second : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            1)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 1)]
         [third : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics)
-            2)]
+          (cdiag.compiler-diagnostic-list-get diagnostics 2)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            3)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "parse: malformed define")
@@ -432,12 +398,12 @@
 (define (main) : i64 0)"]
     (and
       (compiler-check-parser-recovery-result-ok?
-        (compiler_check_core.compiler-check-source
+        (check_core.compiler-check-source
           (tc_core.tc-global-shared-view path)
           (tc_core.tc-global-shared-view source)))
       (compiler-check-parser-recovery-result-ok?
         (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
-          (tc_core.tc-global-shared-view path)
+          path
           source
           (svec.new)
           "."
@@ -445,7 +411,7 @@
           (compiler_check_core.compiler-check-language-cfgs))))))
 
 (define (compiler-check-poison-suppresses-derived-diagnostics-ok?) : bool
-  (match (compiler_check_core.compiler-check-source
+  (match (check_core.compiler-check-source
     "tests/poison_diagnostics.tl"
     "(define (broken) : i64 (unknown-origin 1))
 (define (derived-one) : i64 (broken))
@@ -458,13 +424,9 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
-          (cdiag.compiler-diagnostic-list-first
-            (cdiag.compiler-diagnostic-place-shared-view diagnostics))]
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (=
-            (cdiag.compiler-diagnostic-list-count
-              (cdiag.compiler-diagnostic-place-shared-view diagnostics))
-            1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message first)
             "typecheck: unbound name unknown-origin")))]))
@@ -521,23 +483,23 @@
     (begin
       (set! shadowed (+ shadowed 1))
       shadowed)))"]
-    (match (semantic_index.compiler-check-source-index-with-roots
+    (match (sem_tests.compiler-check-source-index-with-roots
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source)
       (svec.new))
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
         (let
           [slot-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [slot-write : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
@@ -546,96 +508,96 @@
               (& index)
               slot-write)]
           [slot-rhs-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [slot-result-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "slot"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-param-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               0)]
           [shadow-local-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Definition
               1)]
           [shadow-param-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               0)]
           [shadow-local-write : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               1)]
           [shadow-local-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               2)]
           [shadow-local-result-read : i64
-            (semantic_index.compiler-semantic-source-index-find-name-occurrence
+            (sem_tests.compiler-semantic-source-index-find-name-occurrence
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "shadowed"
               semantic_index.CompilerSemanticRecordRole.Use
               3)]
           [bump-read : i64
-            (semantic_index.compiler-semantic-source-index-find-record
+            (sem_tests.compiler-semantic-source-index-find-record
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "bump"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]
           [import-read : i64
-            (semantic_index.compiler-semantic-source-index-find-record
+            (sem_tests.compiler-semantic-source-index-find-record
               (& index)
-              (tc_core.tc-global-shared-view path)
+              path
               "imported-value"
               semantic_index.CompilerSemanticRecordRole.Use
               -1)]
           [macro-read : i64
-            (semantic_index.compiler-semantic-source-index-find-macro-use
+            (sem_tests.compiler-semantic-source-index-find-macro-use
               (& index)
               "wrap"
               true
               0)]
           [generated-macro : i64
-            (semantic_index.compiler-semantic-source-index-find-macro-use
+            (sem_tests.compiler-semantic-source-index-find-macro-use
               (& index)
               "wrap"
               false
               0)]
           [generated-definition : i64
-            (semantic_index.compiler-semantic-source-index-find-record
+            (sem_tests.compiler-semantic-source-index-find-record
               (& index)
               ""
               "generated-from-macro"
               semantic_index.CompilerSemanticRecordRole.Definition
               -1)]
           [unknown-ok : bool
-            (match (semantic_index.compiler-check-source-index-with-roots
+            (match (sem_tests.compiler-check-source-index-with-roots
               "src/tests/semantic_access_unknown.tl"
               "(module semantic.access.unknown)
 (define (broken) : i64 unresolved-name)"
@@ -646,7 +608,7 @@
                 (let
                   [ok : bool
                     (<
-                      (semantic_index.compiler-semantic-source-index-find-name-occurrence
+                      (sem_tests.compiler-semantic-source-index-find-name-occurrence
                         (& partial)
                         "src/tests/semantic_access_unknown.tl"
                         "unresolved-name"
@@ -779,7 +741,11 @@
         2
         1
         "fatal after advisory")]
-    [_append : bool (tc_core.tc-job-state-add-advisory! job (& warning))]
+    [_append : bool
+      (cdiag_tests.compiler-advisory-sink-push!
+        (tc_core.tc-job-state-advisory-sink job)
+        cdiag.CompilerAdvisoryPhase.Semantic
+        (& warning))]
     [success : check_core.ResultCompilerCheck
       (check_core.ResultCompilerCheck.Ok
         (tc_core.CompilerTypecheckSummary 1 0 0)
@@ -811,16 +777,464 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (and
-      (= (check_core.compiler-check-self-test) 42)
+      (= (compiler-check-self-test) 42)
       (compiler-check-near-miss-fix-ok?)
       (compiler-check-stdlib-import-help-not-machine-fix-ok?)
       (compiler-check-duplicate-type-location-ok?)
       (compiler-check-independent-diagnostics-ok?)
       (compiler-check-parser-recovery-diagnostics-ok?)
       (compiler-check-poison-suppresses-derived-diagnostics-ok?)
-      (semantic_index.compiler-check-semantic-index-ok?)
+      (sem_tests.compiler-check-semantic-index-ok?)
       (compiler-check-semantic-access-ok?)
       (compiler-check-advisory-result-ok?)
       (compiler-check-subform-diagnostic-spans-ok?)
       (compiler-check-qualified-near-miss-ok?)
       (compiler-check-qualified-unbound-display-ok?))))
+
+(define (compiler-check-source-ok? [path : String] [source : String]) : bool
+  (match (check_core.compiler-check-source path source)
+    [(check_core.ResultCompilerCheck.Ok _ _) true]
+    [(check_core.ResultCompilerCheck.Err _ _) false]))
+
+(define (compiler-check-source-error-ok?
+  [path : String]
+  [source : String]
+  [want : String]) : bool
+  (match (check_core.compiler-check-source path source)
+    [(check_core.ResultCompilerCheck.Ok _ _) false]
+    [(check_core.ResultCompilerCheck.Err diag _)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-box-shared-view diag)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
+        (string.eq (cdiag.compiler-diagnostic-message first) want))]))
+
+(define (compiler-check-virtual-import-source) : String
+  "(import compiler_ast_types as ast)
+(import compiler_ast_types as ast)
+(define selected : ast.AstType (ast.AstType.I64))
+(define (main) : i64
+  (match (unsafe (ptr-read (ptr-addr-of selected)))
+    [(ast.AstType.I64) 42]
+    [_ 0]))")
+
+(define (compiler-check-direct-source [path : String] [source : String]) : check_core.ResultCompilerCheck
+  (begin
+    (check_core.compiler-check-reset-pools!)
+    (tc_core.tc-job-state-reset-advisories! (tc_core.tc-serial-job-state))
+    (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
+      (owned_view.compiler-owned-shared-view path)
+      source
+      (check_core.compiler-check-language-cfgs))
+      [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
+        (check_core.compiler-check-result-with-parse-diagnostics
+          (deref diagnostics)
+          (match program
+            [(ast.AstProgram.Program decls-box)
+              (check_core.compiler-check-program
+                path
+                (ast.ast-decl-list-box-shared-view decls-box)
+                (ast.ast-decl-path-list-new)
+                (svec.new)
+                (check_core.compiler-check-language-cfgs)
+                (tc_api.compiler-typecheck-prefix-cache-scope
+                  "typecheck-prefix-check"
+                  (svec.new)
+                  (check_core.compiler-check-language-cfgs))
+                (tc_core.tc-serial-job-state))]))]
+      [(parser.ResultAstProgramRecovery.Fatal diagnostics)
+        (check_core.ResultCompilerCheck.Err
+          diagnostics
+          (check_core.compiler-check-serial-advisories))])))
+
+(define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
+  (match (compiler-check-direct-source path source)
+    [(check_core.ResultCompilerCheck.Ok _ _) true]
+    [(check_core.ResultCompilerCheck.Err _ _) false]))
+
+;; The implicit core prelude and compiler-private dynamic-buffer forms compose
+;; without any compatibility-module import.
+(define (compiler-check-implicit-core-prelude-source) : String
+  "
+(define (main) : i64
+  (let
+    [value : i64 0]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (begin
+      (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
+      (unless (or false false false) (set! value (+ value 20)))
+      (set! (array-ref items 0) value)
+      (__tl_array-push! items 2)
+      (+
+        (__tl_array-length items)
+        (+ (array-ref items 0) (array-ref items 1))))))")
+
+;; Private dynamic-buffer parser coverage remains separate from public fixed
+;; arrays and generated vectors.
+(define (compiler-check-private-dynamic-buffer-source) : String
+  "(define (main) : i64
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    (array-length items)))")
+
+(define (compiler-check-virtual-import-ok?) : bool
+  (match (check_core.compiler-check-source
+    "src/virtual_entry.tl"
+    (compiler-check-virtual-import-source))
+    [(check_core.ResultCompilerCheck.Ok summary _)
+      (> (tc_api.compiler-typecheck-summary-score summary) 0)]
+    [(check_core.ResultCompilerCheck.Err _ _) false]))
+
+(define (compiler-check-inline-layout-name-ok?
+  [ctx : tc_core.TcContext]
+  [name : String]) : bool
+  (match (tc_api.compiler-typecheck-context-program ctx)
+    [(ast.AstProgram.Program decls-box)
+      (let
+        [decls : ast.AstDeclList (deref decls-box)]
+        [index : i64 0]
+        [name-id : i64 -1]
+        (begin
+          (while (and (< name-id 0) (< index decls.len))
+            (let
+              [decl : ast.AstDecl
+                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+              (begin
+                (match decl
+                  [(ast.AstDecl.DefStruct decl-meta candidate _ _ _)
+                    (if (string.eq
+                      (tc_core.tc-env-key-name-text candidate)
+                      name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(ast.AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
+                    (if (string.eq
+                      (tc_core.tc-env-key-name-text candidate)
+                      name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(ast.AstDecl.DefEnum decl-meta candidate _ _)
+                    (if (string.eq
+                      (tc_core.tc-env-key-name-text candidate)
+                      name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(ast.AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
+                    (if (string.eq
+                      (tc_core.tc-env-key-name-text candidate)
+                      name)
+                      (set! name-id candidate)
+                      unit)]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          (if (< name-id 0)
+            false
+            (match (tc_core.tc-inline-aggregate-layout-finite-ok
+              ctx
+              name
+              name-id)
+              [(tc_core.ResultTcUnit.Ok) true]
+              [(tc_core.ResultTcUnit.Err _) false]))))]))
+
+(define (compiler-check-virtual-import-inline-layout-ok?) : bool
+  (match (compiler_load.compiler-load-source-with-paths
+    "src/virtual_entry.tl"
+    (compiler-check-virtual-import-source)
+    (sym_i64_env.sym-i64-empty))
+    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
+      (let
+        [program : ast.AstProgram (ast.ast-program decls)]
+        (match (csym.build-compiler-symbols program)
+          [(csym.ResultCompilerSymbols.Ok symbols)
+            (match (csym.build-compiler-registries program)
+              [(csym.ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : tc_core.TcContext
+                    (tc_core.tc-context-new
+                      program
+                      symbols
+                      registries
+                      ""
+                      cbi.compiler-builtin-id-fix-empty
+                      (ast.ast-node-pool-context-capture-active))]
+                  (and
+                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
+                    (compiler-check-inline-layout-name-ok?
+                      ctx
+                      "AstVariantDefList")))]
+              [(csym.ResultCompilerRegistries.Err _) false])]
+          [(csym.ResultCompilerSymbols.Err _) false]))]
+    [(compiler_load.ResultCompilerLoadWithPaths.Err _) false]))
+
+(define (compiler-check-export-ok?) : bool
+  (match (check_core.compiler-check-source
+    "src/export_entry.tl"
+    "(defstruct Pair (left i64))
+(defenum Maybe (Present i64))
+(define answer : i64 42)
+(define (main) : i64 answer)")
+    [(check_core.ResultCompilerCheck.Ok summary _)
+      (> (tc_api.compiler-typecheck-summary-score summary) 0)]
+    [(check_core.ResultCompilerCheck.Err _ _) false]))
+
+(define (compiler-check-qualified-export-cache-reset-ok?) : bool
+  (and
+    (compiler-check-direct-source-ok?
+      "tests/qualified_export_cache_exported.tl"
+      "(module a)
+(define x : i64 1)
+(module b)
+(import a)
+(define (main) : i64 a.x)")
+    ;; There is no export list: values are reachable across modules through the
+    ;; module symbol table, so this previously-private access type-checks.
+    (compiler-check-direct-source-ok?
+      "tests/qualified_export_cache_private.tl"
+      "(module a)
+(define x : i64 1)
+(module b)
+(import a)
+(define (main) : i64 a.x)")))
+
+(define (compiler-check-virtual-error-ok?) : bool
+  (match (check_core.compiler-check-source
+    "docs/examples/bad_type.tl"
+    "(define (main) : i64 true)")
+    [(check_core.ResultCompilerCheck.Ok _ _) false]
+    [(check_core.ResultCompilerCheck.Err diag _)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-box-shared-view diag)]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
+        (if (string.eq
+          (cdiag.compiler-diagnostic-path first)
+          "docs/examples/bad_type.tl")
+          (if (= (cdiag.compiler-diagnostic-line first) 1)
+            (string.eq
+              (cdiag.compiler-diagnostic-message first)
+              "typecheck: return type mismatch: expected i64, found bool")
+            false)
+          false))]))
+
+(define (compiler-check-runtime-stdlib-boundary-no-import-ok?) : bool
+  (and
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_tl"
+      "(define (main) : i64 (begin (flush-stdout) 0))"
+      "typecheck: unbound name flush-stdout")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_file.tl"
+      "(define (main [path : String]) : String (io.read-file path))"
+      "typecheck: unknown qualified name io.read-file; import the module or use a visible dotted module alias")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_env.tl"
+      "(define (main [name : String]) : String (var-value name))"
+      "typecheck: unbound name var-value")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_fs.tl"
+      "(define (main) : String (current-dir))"
+      "typecheck: unbound name current-dir")
+    (compiler-check-source-error-ok?
+      "tests/runtime_boundary_no_profile.tl"
+      "(define (main) : i64 (profile-now-ms))"
+      "typecheck: unbound name profile-now-ms")))
+
+(define (compiler-check-private-dynamic-buffer-vector-ok?) : bool
+  (compiler-check-source-ok?
+    "tests/private_dynamic_buffer_vector.tl"
+    "(import stdlib.vector)
+(import (vector.vector String) as svec)
+(import (vector.vector i64) as i64vec)
+(define (main) : i64
+  (let
+    [items : i64vec.Vec (i64vec.with-capacity 2)]
+    (begin
+      (i64vec.push-ref! (&mut items) 41)
+      (i64vec.push-ref! (&mut items) 1)
+      (i64vec.len (& items)))))"))
+
+(define (compiler-check-private-dynamic-buffer-accepted-ok?) : bool
+  (compiler-check-source-ok?
+    "tests/private_dynamic_buffer_public.tl"
+    (compiler-check-private-dynamic-buffer-source)))
+
+(define (compiler-check-implicit-core-prelude-ok?) : bool
+  (compiler-check-source-ok?
+    "tests/implicit_core_prelude_check.tl"
+    (compiler-check-implicit-core-prelude-source)))
+
+(define (compiler-check-seen-root-ok?) : bool
+  (let
+    [path : String "src/already_loaded.tl"]
+    [source : String "(define answer : i64 1)"]
+    (match (compiler_load.compiler-load-source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (sym_i64_env.sym-i64-empty))
+      [(compiler_load.ResultCompilerLoad.Ok _ seen)
+        (match (compiler_load.compiler-load-source path source seen)
+          [(compiler_load.ResultCompilerLoad.Ok decls _)
+            (match (ast.ast-decl-list-step decls)
+              [(ast.AstDeclListStep.Nil) true]
+              [_ false])]
+          [(compiler_load.ResultCompilerLoad.Err _) false])]
+      [(compiler_load.ResultCompilerLoad.Err _) false])))
+
+(define (compiler-check-pool-reset-ok?) : bool
+  (let
+    [source : String "(define (main) : i64 0)"]
+    (begin
+      (ast.ty-node-pool-reset!)
+      (match (check_core.compiler-check-source
+        "tests/pool_reset_a.tl"
+        (owned_view.compiler-owned-shared-view source))
+        [(check_core.ResultCompilerCheck.Ok _ _)
+          (let
+            [first-len : i64 (ast.ty-node-pool-len)]
+            (match (check_core.compiler-check-source
+              "tests/pool_reset_b.tl"
+              source)
+              [(check_core.ResultCompilerCheck.Ok _ _)
+                (let
+                  [second-len : i64 (ast.ty-node-pool-len)]
+                  (and (> first-len 0) (= first-len second-len)))]
+              [(check_core.ResultCompilerCheck.Err _ _) false]))]
+        [(check_core.ResultCompilerCheck.Err _ _) false]))))
+
+(define (compiler-check-target-cfg-ok?) : bool
+  (let
+    [source : String
+      "(cfg linux (define platform-value : i64 40))
+(cfg windows (define platform-value : i64 40))
+(cfg tooling-feature (define cfg-value : i64 2))
+(define (main) : i64 (+ platform-value cfg-value))"]
+    [names : svec.Vec (svec.new)]
+    (begin
+      (svec.push-ref! (&mut names) "tooling-feature")
+      (and
+        (match (check_core.compiler-check-source-with-roots-and-cfg
+          "tests/check_cfg_linux.tl"
+          (owned_view.compiler-owned-shared-view source)
+          (svec.new)
+          (target_cfg.compiler-target-cfgs-with-names
+            target_cfg.CompilerTargetCfg.Linux
+            (owned_view.compiler-owned-shared-view names)))
+          [(check_core.ResultCompilerCheck.Ok _ _) true]
+          [(check_core.ResultCompilerCheck.Err _ _) false])
+        (match (check_core.compiler-check-source-with-roots-and-cfg
+          "tests/check_cfg_windows.tl"
+          source
+          (svec.new)
+          (target_cfg.compiler-target-cfgs-with-names
+            target_cfg.CompilerTargetCfg.Windows
+            names))
+          [(check_core.ResultCompilerCheck.Ok _ _) true]
+          [(check_core.ResultCompilerCheck.Err _ _) false])))))
+
+(define (compiler-check-self-test) : i64
+  (begin
+    (unless
+      (= (load_tests.compiler-load-self-test) 42)
+      (return (io.panic "compiler-check: loader smoke mismatch")))
+    (unless
+      (compiler-check-virtual-import-ok?)
+      (return (io.panic "compiler-check: virtual import smoke mismatch")))
+    (unless
+      (compiler-check-virtual-import-inline-layout-ok?)
+      (return
+        (io.panic "compiler-check: virtual import inline layout smoke mismatch")))
+    (unless
+      (compiler-check-export-ok?)
+      (return (io.panic "compiler-check: export smoke mismatch")))
+    (unless
+      (compiler-check-qualified-export-cache-reset-ok?)
+      (return
+        (io.panic "compiler-check: qualified export cache reset smoke mismatch")))
+    (unless
+      (compiler-check-virtual-error-ok?)
+      (return (io.panic "compiler-check: virtual diagnostic smoke mismatch")))
+    (unless
+      (compiler-check-runtime-stdlib-boundary-no-import-ok?)
+      (return
+        (io.panic
+          "compiler-check: runtime stdlib boundary no-import smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_tl"
+        "(import stdlib.io)
+(import stdlib.byte_buf)
+(define (main [path : String]) : i64
+  (let
+    [data : byte_buf.ByteBuf (io.read-file (clone path))]
+    (begin
+      (io.print-format \"{}\" \"\")
+      (io.flush-stdout)
+      (+ (byte_buf.len (& data))
+         (unsafe (io.file-open-status path 0))))))")
+      (return
+        (io.panic "compiler-check: runtime stdlib io boundary smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_env.tl"
+        "(import stdlib.env)
+(import stdlib.string)
+(define (main [name : String]) : i64
+  (+ (if (env.var-exists? name) 1 0)
+     (+ (string.string-length (env.var-value name))
+        (string.string-length (env.path-separator)))))")
+      (return
+        (io.panic "compiler-check: runtime stdlib env boundary smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_fs.tl"
+        "(import stdlib.fs)
+(import stdlib.string)
+(define (main [path : String]) : i64
+  (+ (fs.process-id)
+     (+ (fs.current-dir-status)
+        (+ (string.string-length (fs.current-dir))
+           (fs.file-size-status path)))))")
+      (return
+        (io.panic "compiler-check: runtime stdlib fs boundary smoke mismatch")))
+    (unless
+      (compiler-check-source-ok?
+        "tests/runtime_boundary_profile.tl"
+        "(import stdlib.profile)
+(define (main) : i64
+  (begin
+    (profile.alloc-reset-peak)
+    (+ (profile.now-ms)
+       (+ (profile.alloc-total)
+          (+ (profile.alloc-live) (profile.alloc-peak))))))")
+      (return
+        (io.panic
+          "compiler-check: runtime stdlib profile boundary smoke mismatch")))
+    (unless
+      (compiler-check-private-dynamic-buffer-vector-ok?)
+      (return
+        (io.panic
+          "compiler-check: private dynamic-buffer vector smoke mismatch")))
+    (unless
+      (compiler-check-private-dynamic-buffer-accepted-ok?)
+      (return
+        (io.panic
+          "compiler-check: private dynamic-buffer public smoke mismatch")))
+    (unless
+      (compiler-check-implicit-core-prelude-ok?)
+      (return (io.panic "compiler-check: implicit core prelude smoke mismatch")))
+    (unless
+      (compiler-check-seen-root-ok?)
+      (return (io.panic "compiler-check: seen root smoke mismatch")))
+    (unless
+      (compiler-check-pool-reset-ok?)
+      (return (io.panic "compiler-check: pool reset smoke mismatch")))
+    (unless
+      (compiler-check-target-cfg-ok?)
+      (return (io.panic "compiler-check: target/cfg smoke mismatch")))
+    42))

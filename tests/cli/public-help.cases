@@ -1,0 +1,115 @@
+# Public CLI usage, version, per-command help and explain (gate
+# stage2-public-tool-surface). Run by scripts/verify-public-tools.sh.
+do none
+target -
+opt -
+
+case usage
+run --help
+stdout empty
+stderr contains Synopsis:
+stderr contains Commands:
+stderr contains typelisp repl
+stderr contains typelisp lsp
+stderr contains typelisp fmt
+stderr contains typelisp doc
+stderr contains typelisp explain
+stderr contains typelisp clean
+stderr contains Global Options:
+stderr contains Common Command Options:
+stderr contains Environment:
+stderr contains typelisp compile        Generate assembly or IR
+stderr contains --opt-level <0|1|2>            Select optimizer level
+stderr contains Run `typelisp <command> --help` for command-specific usage.
+
+case version
+run --version
+stderr empty
+stdout match typelisp[ ]
+stdout match [ ]built[ ]
+
+# A frame without Content-Length: the public lsp command is available.
+case lsp-command-probe
+sh printf 'X-Test: 1\r\n\r\n' > "{{dir}}/probe.in"
+run lsp < "{{dir}}/probe.in"
+exit nonzero
+stderr not-contains not yet available
+
+case help
+each build run check fmt lint test doc compile inspect explain repl new init clean lsp
+step {{each}}-help
+run {{each}} --help
+stdout empty
+stderr contains Usage:
+stderr contains typelisp {{each}}
+stderr contains Summary:
+step {{each}}-short-help
+run {{each}} -h
+stdout empty
+stderr contains Usage:
+stderr contains typelisp {{each}}
+stderr contains Summary:
+
+case help-details
+run build -h
+stderr contains --opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)
+stderr contains --locked
+stderr contains --update-lock
+run compile -h
+stderr contains --emit-ir                      Emit intermediate representation
+stderr contains --dump-ir [after-<pass>]       Emit textual IR, optionally after a pass
+stderr contains --verify-ir                    Verify optimized IR before writing output
+stderr contains --trace-passes                 Trace optimizer pass/function sizes to stderr
+run repl -h
+stderr contains REPL Commands:
+run clean -h
+stderr contains --experiments
+
+case explain
+step explain-detailed
+run explain E0201
+stderr empty
+stdout contains E0201: unbound name
+stdout contains Description:
+stdout contains Minimal failing example:
+stdout contains Fix:
+step explain-generic-detailed
+run explain E0100
+stderr empty
+stdout contains E0100: parse error
+stdout contains Minimal failing example:
+stdout contains See also:
+step explain-lowercase
+run explain e0207
+stderr empty
+stdout contains E0207: borrow violation
+step explain-list
+run explain --list
+stderr empty
+stdout contains E0100: parse error
+stdout contains E0212: arena ownership violation
+step explain-search
+run explain --search BORROW
+stderr empty
+stdout contains E0207: borrow violation
+step explain-search-empty
+run explain --search no-such-diagnostic-family
+exit nonzero
+stdout empty
+stderr contains explain: no diagnostic codes match `no-such-diagnostic-family`
+step explain-unknown
+run explain E9999
+exit nonzero
+stdout empty
+stderr contains explain: unknown diagnostic code `E9999`
+step explain-missing-code
+run explain
+exit nonzero
+stdout empty
+stderr contains Usage:
+
+case missing-command
+run
+exit nonzero
+stdout empty
+stderr contains-any Usage: || usage:

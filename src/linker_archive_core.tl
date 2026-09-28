@@ -1,6 +1,6 @@
 ;; Checked, target-neutral ar containers for #7033, #7038 and #7244.
 ;; Payloads borrow the immutable input; names and indexes remain dialect policy.
-(import compiler_incremental_binary as binary)
+(import stdlib.byte_reader)
 (import stdlib.string)
 
 ;; The caller assigns stable input and content/revision tokens. Reusing a
@@ -162,11 +162,7 @@
   (if (or
     (not (valid-rule? rule))
     (<= width 0)
-    (not
-      (binary.compiler-incremental-binary-range-present?
-        (string.string-length data)
-        start
-        width)))
+    (not (byte_reader.range-present? (string.string-length data) start width)))
     (NumberFailed (InvalidProfile) start)
     (let
       [index : i64 0]
@@ -200,10 +196,7 @@
 
 (define (valid-name-at? [data : (& n str)] [start : i64] [ascii-only : bool]) : bool
   (and
-    (binary.compiler-incremental-binary-range-present?
-      (string.string-length data)
-      start
-      16)
+    (byte_reader.range-present? (string.string-length data) start 16)
     (or
       (not ascii-only)
       (let
@@ -356,7 +349,7 @@
               (ScanFailed (ArchiveError (WorkLimit) identity ordinal cursor))))
           (set! work (- (- work 137) (* patterns 32)))
           (unless
-            (binary.compiler-incremental-binary-range-present? length cursor 60)
+            (byte_reader.range-present? length cursor 60)
             (return
               (ScanFailed
                 (ArchiveError (TruncatedHeader) identity ordinal cursor))))
@@ -368,10 +361,7 @@
                 [payload : i64 (+ cursor 60)]
                 (begin
                   (unless
-                    (binary.compiler-incremental-binary-range-present?
-                      length
-                      payload
-                      size)
+                    (byte_reader.range-present? length payload size)
                     (return
                       (ScanFailed
                         (ArchiveError (PayloadRange) identity ordinal payload))))

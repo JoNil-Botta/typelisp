@@ -28,17 +28,10 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='spmd-package-calls: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
 PRODUCER="$ROOT/tests/spmd/package_callable"
 CONSUMER="$ROOT/tests/spmd/package_consumer"
@@ -50,11 +43,6 @@ PRODUCER_ARCHIVE="$PRODUCER_TARGET/${ARCHIVE_PREFIX}spmd_fixture$ARCHIVE_SUFFIX"
 PRODUCER_TLCI="$PRODUCER_TARGET/spmd_fixture.tlci"
 CONSUMER_ASM="$CONSUMER_TARGET/spmd_consumer.s"
 CONSUMER_BIN="$CONSUMER_TARGET/spmd_consumer$EXE_SUFFIX"
-
-fail() {
-    echo "spmd-package-calls: $*" >&2
-    exit 1
-}
 
 run_consumer() {
     mode=$1

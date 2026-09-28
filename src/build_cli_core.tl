@@ -24,7 +24,6 @@
 (import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
-(import host_plan)
 (import build_run_core)
 (import compiler_backend as backend)
 (import compiler_ast_types as ast)
@@ -35,7 +34,6 @@
 (import compiler_lower as lower)
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
-(cfg test (import compiler_object_elf))
 (import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)
@@ -54,8 +52,11 @@
   (import compiler_package_surface_producer as package_surface))
 (import sym_i64_env)
 
+;; The package-build parser's result. `Source` only records that a source-file
+;; argument was seen: `build` sends source files to `build-cli-config-from`,
+;; and `run` rejects a source that follows run options.
 (defenum BuildConfig
-  (Source String bool String bool String String String String)
+  (Source)
   (Package
     String
     bool
@@ -236,10 +237,6 @@
   (Ok BuildPackageGraphNode)
   (Err String))
 
-(defenum ResultBuildPkgDep
-  (Ok load.CompilerPkgDep)
-  (Err String))
-
 (defstruct BuildGitDependency
   (remote String)
   (pin-kind String)
@@ -377,7 +374,7 @@
   [key : String]
   [value : i64]) : build_string_i64_map.Map
   (let
-    [out : build_string_i64_map.Map (owned_view.compiler-owned-shared-view map)]
+    [out : build_string_i64_map.Map map]
     (begin
       (build_string_i64_map.insert-ref! (&mut out) key value)
       out)))
@@ -433,18 +430,6 @@
 (define (build-package-default-opt-level) : i64
   (build-profile-default-opt-level (build-default-profile)))
 
-(define (build-package-profile-opt-level-smoke-ok?) : bool
-  (and
-    (= (build-profile-default-opt-level (BuildProfile.Release)) 2)
-    (= (build-profile-default-opt-level (BuildProfile.Dev)) 0)
-    (= (build-package-default-opt-level) 2)))
-
-(test
-  build-package-profile-opt-level-smoke
-  (unless
-    (build-package-profile-opt-level-smoke-ok?)
-    (io.panic "build package profile opt-level smoke failed")))
-
 (define (build-parse-profile [value : String]) : ResultBuildProfile
   (if (string.eq value "dev")
     (ResultBuildProfile.Ok (BuildProfile.Dev))
@@ -480,11 +465,6 @@
       (build_run_core.source-tool-args-append args "--update-lock")]
     [(BuildPackageLockPolicy.Default) args]))
 
-(define (build-append-stdlib [stdlib-lines : String] [root : String]) : String
-  (str_cat.str-cat
-    stdlib-lines
-    (host_plan.host-plan-netline "stdlib-root" root)))
-
 (define (build-parse-target [value : String]) : ResultBuildTarget
   (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
     (ResultBuildTarget.Ok (backend.CompilerBackendTarget.Linux))
@@ -494,791 +474,294 @@
       (ResultBuildTarget.Ok (backend.CompilerBackendTarget.Windows))
       (ResultBuildTarget.Err (build-unknown-target value)))))
 
-(define (build-parse-opt-level [value : String]) : i64
-  (cond
-    [(string.eq value "0") 0]
-    [(string.eq value "1") 1]
-    [(string.eq value "2") 2]
-    [else -1]))
+;; Options a package build accepts.
+(define (build-package-cli-options) : String
+  "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+   --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
+   --profile <dev|release> --release --locked --update-lock")
 
-(define (build-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [output : String]
-  [has-output : bool]
-  [manifest : String]
-  [has-manifest : bool]
-  [target : String]
-  [has-target : bool]
-  [mode : String]
-  [profile : BuildProfile]
-  [has-profile : bool]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-lines : String]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (build-parse-options
-        next-idx
-        count
-        source
-        has-source
-        output
-        has-output
-        manifest
-        has-manifest
-        target
-        has-target
-        mode
-        profile
-        has-profile
-        opt-level
-        has-opt-level
-        lock-policy
-        (build-append-stdlib
-          stdlib-lines
-          (owned_view.compiler-owned-shared-view value))
-        (let
-          [next-roots : cli_svec.Vec
-            (owned_view.compiler-owned-shared-view stdlib-roots)]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots)))]
-    [(cli_option.CliCommonOptionKind.Target)
-      (if (host_plan.host-plan-target-valid?
-        (owned_view.compiler-owned-shared-view value))
-        (build-parse-options
-          next-idx
-          count
-          source
-          has-source
-          output
-          has-output
-          manifest
-          has-manifest
-          value
-          true
-          mode
-          profile
-          has-profile
-          opt-level
-          has-opt-level
-          lock-policy
-          stdlib-lines
-          stdlib-roots)
-        (ResultBuildConfig.Err (build-unknown-target value)))]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if has-opt-level
-        (ResultBuildConfig.Err "build: --opt-level was provided more than once")
-        (let
-          [parsed : i64
-            (build-parse-opt-level
-              (owned_view.compiler-owned-shared-view value))]
-          (if (< parsed 0)
-            (ResultBuildConfig.Err (build-unknown-opt-level value))
-            (build-parse-options
-              next-idx
-              count
-              source
-              has-source
-              output
-              has-output
+(define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args "build" (build-package-cli-options) idx count)]
+    [has-source : bool false]
+    [has-output : bool false]
+    [manifest : String ""]
+    [has-manifest : bool false]
+    [target : String (build_run_core.source-tool-default-target-name)]
+    [has-target : bool false]
+    [mode : String "scalar"]
+    [profile : BuildProfile (build-default-profile)]
+    [has-profile : bool false]
+    [opt-level : i64 (build-package-default-opt-level)]
+    [has-opt-level : bool false]
+    [lock-policy : BuildPackageLockPolicy (BuildPackageLockPolicy.Default)]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build-parse-target (string.copy (& value)))
+                [(ResultBuildTarget.Ok _)
+                  (begin
+                    (set! target value)
+                    (set! has-target true))]
+                [(ResultBuildTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (cond
+                [has-opt-level
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "build: --opt-level was provided more than once")]
+                [(< level 0)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-unknown-opt-level value))]
+                [else
+                  (begin
+                    (set! opt-level level)
+                    (set! has-opt-level true))]))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "-o")
+            (if has-output
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: -o was provided more than once")
+              (set! has-output true))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: --manifest-path was provided more than once")
+              (begin
+                (set! manifest (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(string.eq args.name "--backend-mode")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-backend-mode
+                "build"
+                (string.copy (& value)))
+                [(build_run_core.ResultSourceToolBackendMode.Ok _)
+                  (set! mode value)]
+                [(build_run_core.ResultSourceToolBackendMode.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-unknown-mode value))]))]
+          [(and
+              has-profile
+              (or
+                (string.eq args.name "--profile")
+                (string.eq args.name "--release")))
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: profile was provided more than once")]
+          [(string.eq args.name "--profile")
+            (match (build-parse-profile (cli_option.cli-args-value (& args)))
+              [(ResultBuildProfile.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)]
+              [(ResultBuildProfile.Ok parsed-profile)
+                (begin
+                  (set! profile parsed-profile)
+                  (set! has-profile true))])]
+          [(string.eq args.name "--release")
+            (begin
+              (set! profile (BuildProfile.Release))
+              (set! has-profile true))]
+          [(or
+              (string.eq args.name "--locked")
+              (string.eq args.name "--update-lock"))
+            (if (build-package-lock-policy-provided? lock-policy)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                (build-package-lock-policy-option-error))
+              (set!
+                lock-policy
+                (if (string.eq args.name "--locked")
+                  (BuildPackageLockPolicy.Locked)
+                  (BuildPackageLockPolicy.Update))))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: accepts only one source file")]
+          [else (set! has-source true)]))
+      (cond
+        [args.failed (ResultBuildConfig.Err args.error)]
+        [(and has-source has-manifest)
+          (ResultBuildConfig.Err
+            "build: cannot combine a source file with --manifest-path")]
+        [has-source (ResultBuildConfig.Ok (BuildConfig.Source))]
+        [has-output
+          (ResultBuildConfig.Err "build: -o requires a source file argument")]
+        [else
+          (ResultBuildConfig.Ok
+            (BuildConfig.Package
               manifest
               has-manifest
               target
               has-target
               mode
               profile
-              has-profile
-              parsed
-              true
+              has-opt-level
+              (if has-opt-level
+                opt-level
+                (build-profile-default-opt-level profile))
               lock-policy
-              stdlib-lines
-              stdlib-roots))))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultBuildConfig.Err "build: internal unsupported common option")]))
+              stdlib-roots))]))))
 
-(define (build-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [output : String]
-  [has-output : bool]
-  [manifest : String]
-  [has-manifest : bool]
-  [target : String]
-  [has-target : bool]
-  [mode : String]
-  [profile : BuildProfile]
-  [has-profile : bool]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-lines : String]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildConfig
-  (if (>= idx count)
-    (if has-source
-      (begin
-        (when
-          has-manifest
-          (return
-            (ResultBuildConfig.Err
-              "build: cannot combine a source file with --manifest-path")))
-        (ResultBuildConfig.Ok
-          (BuildConfig.Source
-            source
-            has-source
-            output
-            has-output
-            target
-            mode
-            (if has-opt-level
-              (string.int->string opt-level)
-              "")
-            stdlib-lines)))
-      (begin
-        (when
-          has-output
-          (return
-            (ResultBuildConfig.Err "build: -o requires a source file argument")))
-        (ResultBuildConfig.Ok
-          (BuildConfig.Package
-            manifest
-            has-manifest
-            target
-            has-target
-            mode
-            profile
-            has-opt-level
-            (if has-opt-level
-              opt-level
-              (build-profile-default-opt-level profile))
-            lock-policy
-            stdlib-roots))))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
+;; Parse the private `--package-worker` / `--package-doctest-worker` protocol.
+(define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "build"
+        "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+         --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
+         --profile <dev|release> --release --locked --update-lock --resolved-dep"
         idx
-        count
-        cli_option.cli-common-option-build)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultBuildConfig.Err
-            (cli_option.cli-common-option-missing-message "build" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (build-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            source
-            has-source
-            output
-            has-output
-            manifest
-            has-manifest
-            target
-            has-target
-            mode
-            profile
-            has-profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-lines
-            stdlib-roots)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-lines
-                  stdlib-roots))]
-            [(string.eq current "-o")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err "build: -o requires a value")
-                (if has-output
-                  (ResultBuildConfig.Err
-                    "build: -o was provided more than once")
-                  (build-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    (io.arg (+ idx 1))
-                    true
-                    manifest
-                    has-manifest
-                    target
-                    has-target
-                    mode
-                    profile
-                    has-profile
-                    opt-level
+        count)]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [target : backend.CompilerBackendTarget
+      (build_run_core.source-tool-default-target)]
+    [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+    [profile : BuildProfile (build-default-profile)]
+    [opt-level : i64 (build-package-default-opt-level)]
+    [has-opt-level : bool false]
+    [lock-policy : BuildPackageLockPolicy (BuildPackageLockPolicy.Default)]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-target (string.copy (& value)))
+                [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
+                  (set! target parsed-target)]
+                [(build_run_core.ResultSourceToolTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-cli-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (if (< level 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-unknown-opt-level value))
+                (begin
+                  (set! opt-level level)
+                  (set! has-opt-level true))))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "--manifest-path")
+            (begin
+              (set! manifest-path (cli_option.cli-args-value (& args)))
+              (set! has-manifest true))]
+          [(string.eq args.name "--backend-mode")
+            (match (build_run_core.source-tool-backend-mode
+              "build"
+              (cli_option.cli-args-value (& args)))
+              [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
+                (set! mode parsed-mode)]
+              [(build_run_core.ResultSourceToolBackendMode.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)])]
+          ;; A profile also selects its default opt level unless --opt-level
+          ;; already chose one.
+          [(string.eq args.name "--profile")
+            (match (build-parse-profile (cli_option.cli-args-value (& args)))
+              [(ResultBuildProfile.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)]
+              [(ResultBuildProfile.Ok parsed-profile)
+                (begin
+                  (unless
                     has-opt-level
-                    lock-policy
-                    stdlib-lines
-                    stdlib-roots)))]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err
-                  "build: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultBuildConfig.Err
-                    "build: --manifest-path was provided more than once")
-                  (build-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    output
-                    has-output
-                    (io.arg (+ idx 1))
-                    true
-                    target
-                    has-target
-                    mode
-                    profile
-                    has-profile
-                    opt-level
-                    has-opt-level
-                    lock-policy
-                    stdlib-lines
-                    stdlib-roots)))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err "build: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (if (host_plan.host-plan-backend-mode-valid?
-                    (owned_view.compiler-owned-shared-view value))
-                    (build-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      output
-                      has-output
-                      manifest
-                      has-manifest
-                      target
-                      has-target
-                      value
-                      profile
-                      has-profile
+                    (set!
                       opt-level
-                      has-opt-level
-                      lock-policy
-                      stdlib-lines
-                      stdlib-roots)
-                    (ResultBuildConfig.Err (build-unknown-mode value)))))]
-            [(string.eq current "--profile")
-              (if (>= (+ idx 1) count)
-                (ResultBuildConfig.Err "build: --profile requires a value")
-                (if has-profile
-                  (ResultBuildConfig.Err
-                    "build: profile was provided more than once")
-                  (match (build-parse-profile (io.arg (+ idx 1)))
-                    [(ResultBuildProfile.Err message)
-                      (ResultBuildConfig.Err message)]
-                    [(ResultBuildProfile.Ok parsed-profile)
-                      (build-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        mode
-                        parsed-profile
-                        true
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-lines
-                        stdlib-roots)])))]
-            [(string.eq current "--release")
-              (if has-profile
-                (ResultBuildConfig.Err
-                  "build: profile was provided more than once")
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  (BuildProfile.Release)
-                  true
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-lines
-                  stdlib-roots))]
-            [(string.eq current "--locked")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildConfig.Err (build-package-lock-policy-option-error))
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  (BuildPackageLockPolicy.Locked)
-                  stdlib-lines
-                  stdlib-roots))]
-            [(string.eq current "--update-lock")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildConfig.Err (build-package-lock-policy-option-error))
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  (BuildPackageLockPolicy.Update)
-                  stdlib-lines
-                  stdlib-roots))]
-            [(host_plan.host-plan-flag?
-                (owned_view.compiler-owned-shared-view current))
-              (ResultBuildConfig.Err
-                (str_cat.str-cat "build: unknown flag " current))]
-            [else
-              (if has-source
-                (ResultBuildConfig.Err "build: accepts only one source file")
-                (build-parse-options
-                  (+ idx 1)
-                  count
-                  current
-                  true
-                  output
-                  has-output
-                  manifest
-                  has-manifest
-                  target
-                  has-target
-                  mode
-                  profile
-                  has-profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-lines
-                  stdlib-roots))])]))))
-
-(define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
-  (build-parse-options
-    idx
-    count
-    ""
-    false
-    ""
-    false
-    ""
-    false
-    (host_plan.host-plan-default-target)
-    false
-    "scalar"
-    (build-default-profile)
-    false
-    (build-package-default-opt-level)
-    false
-    (BuildPackageLockPolicy.Default)
-    ""
-    (cli_svec.new)))
-
-(define (build-package-worker-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [profile : BuildProfile]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [resolved-deps : load.CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (build-package-worker-parse-options
-        next-idx
-        count
-        manifest-path
-        has-manifest
-        target
-        mode
-        profile
-        opt-level
-        has-opt-level
-        lock-policy
-        (let
-          [next-roots : cli_svec.Vec
-            (owned_view.compiler-owned-shared-view stdlib-roots)]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        resolved-deps)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (match (build_run_core.source-tool-target
-        (owned_view.compiler-owned-shared-view value))
-        [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-          (build-package-worker-parse-options
-            next-idx
-            count
-            manifest-path
-            has-manifest
-            parsed-target
-            mode
-            profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots
-            resolved-deps)]
-        [(build_run_core.ResultSourceToolTarget.Err _)
-          (ResultBuildPackageWorkerConfig.Err (build-cli-unknown-target value))])]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if (build_run_core.source-tool-opt-level-valid?
-        (owned_view.compiler-owned-shared-view value))
-        (build-package-worker-parse-options
-          next-idx
-          count
-          manifest-path
-          has-manifest
-          target
-          mode
-          profile
-          (string.>int value)
-          true
-          lock-policy
-          stdlib-roots
-          resolved-deps)
-        (ResultBuildPackageWorkerConfig.Err (build-unknown-opt-level value)))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultBuildPackageWorkerConfig.Err
-        "build: internal unsupported common option")]))
-
-(define (build-package-worker-parse-options
-  [idx : i64]
-  [count : i64]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [profile : BuildProfile]
-  [opt-level : i64]
-  [has-opt-level : bool]
-  [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]
-  [resolved-deps : load.CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
-  (if (>= idx count)
-    (if has-manifest
-      (ResultBuildPackageWorkerConfig.Ok
-        (BuildPackageWorkerConfig
-          manifest-path
-          has-manifest
-          target
-          mode
-          profile
-          opt-level
-          lock-policy
-          stdlib-roots
-          resolved-deps))
-      (ResultBuildPackageWorkerConfig.Err
-        "build: --package-worker requires --manifest-path"))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-build)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultBuildPackageWorkerConfig.Err
-            (cli_option.cli-common-option-missing-message "build" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (build-package-worker-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            manifest-path
-            has-manifest
-            target
-            mode
-            profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots
-            resolved-deps)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(or
-                (string.eq current "--debug")
-                (string.eq current "-g")
-                (string.eq current "--backtrace"))
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (build-package-worker-parse-options
-                  (+ idx 1)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --manifest-path requires a value")
-                (build-package-worker-parse-options
-                  (+ idx 2)
-                  count
-                  (io.arg (+ idx 1))
-                  true
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (match (build_run_core.source-tool-backend-mode "build" value)
-                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                      (build-package-worker-parse-options
-                        (+ idx 2)
-                        count
-                        manifest-path
-                        has-manifest
-                        target
-                        parsed-mode
-                        profile
-                        opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots
-                        resolved-deps)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err message)
-                      (ResultBuildPackageWorkerConfig.Err message)])))]
-            [(string.eq current "--profile")
-              (if (>= (+ idx 1) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --profile requires a value")
-                (match (build-parse-profile (io.arg (+ idx 1)))
-                  [(ResultBuildProfile.Err message)
-                    (ResultBuildPackageWorkerConfig.Err message)]
-                  [(ResultBuildProfile.Ok parsed-profile)
-                    (let
-                      [next-opt-level : i64
-                        (if has-opt-level
-                          opt-level
-                          (build-profile-default-opt-level parsed-profile))]
-                      (build-package-worker-parse-options
-                        (+ idx 2)
-                        count
-                        manifest-path
-                        has-manifest
-                        target
-                        mode
-                        parsed-profile
-                        next-opt-level
-                        has-opt-level
-                        lock-policy
-                        stdlib-roots
-                        resolved-deps))]))]
-            [(string.eq current "--release")
-              (build-package-worker-parse-options
-                (+ idx 1)
-                count
-                manifest-path
-                has-manifest
-                target
-                mode
-                (BuildProfile.Release)
-                (if has-opt-level
-                  opt-level
-                  (build-profile-default-opt-level (BuildProfile.Release)))
+                      (build-profile-default-opt-level parsed-profile)))
+                  (set! profile parsed-profile))])]
+          [(string.eq args.name "--release")
+            (begin
+              (unless
                 has-opt-level
+                (set!
+                  opt-level
+                  (build-profile-default-opt-level (BuildProfile.Release))))
+              (set! profile (BuildProfile.Release)))]
+          [(or
+              (string.eq args.name "--locked")
+              (string.eq args.name "--update-lock"))
+            (if (build-package-lock-policy-provided? lock-policy)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                (build-package-lock-policy-option-error))
+              (set!
                 lock-policy
-                stdlib-roots
-                resolved-deps)]
-            [(string.eq current "--locked")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildPackageWorkerConfig.Err
-                  (build-package-lock-policy-option-error))
-                (build-package-worker-parse-options
-                  (+ idx 1)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
+                (if (string.eq args.name "--locked")
                   (BuildPackageLockPolicy.Locked)
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--update-lock")
-              (if (build-package-lock-policy-provided? lock-policy)
-                (ResultBuildPackageWorkerConfig.Err
-                  (build-package-lock-policy-option-error))
-                (build-package-worker-parse-options
-                  (+ idx 1)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  (BuildPackageLockPolicy.Update)
-                  stdlib-roots
-                  resolved-deps))]
-            [(string.eq current "--resolved-dep")
-              (if (>= (+ idx 2) count)
-                (ResultBuildPackageWorkerConfig.Err
-                  "build: --resolved-dep requires alias and path")
-                (build-package-worker-parse-options
-                  (+ idx 3)
-                  count
-                  manifest-path
-                  has-manifest
-                  target
-                  mode
-                  profile
-                  opt-level
-                  has-opt-level
-                  lock-policy
-                  stdlib-roots
+                  (BuildPackageLockPolicy.Update))))]
+          ;; Takes an alias and a path, with its own missing-value wording.
+          [(string.eq args.name "--resolved-dep")
+            (if (>= (+ args.index 2) count)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: --resolved-dep requires alias and path")
+              (begin
+                (set!
+                  resolved-deps
                   (load.compiler-pkg-dep-list-push
                     resolved-deps
-                    (load.CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2))))))]
-            [(host_plan.host-plan-flag?
-                (owned_view.compiler-owned-shared-view current))
-              (ResultBuildPackageWorkerConfig.Err
-                (str_cat.str-cat "build: unknown package worker flag " current))]
-            [else
-              (ResultBuildPackageWorkerConfig.Err
-                (str_cat.str-cat
-                  "build: unexpected package worker argument "
-                  current))])]))))
-
-(define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
-  (build-package-worker-parse-options
-    idx
-    count
-    ""
-    false
-    (build_run_core.source-tool-default-target)
-    (backend.CompilerBackendMode.Scalar)
-    (build-default-profile)
-    (build-package-default-opt-level)
-    false
-    (BuildPackageLockPolicy.Default)
-    (cli_svec.new)
-    (load.compiler-pkg-dep-list-empty)))
-
-(define (build-source-plan-render [config : BuildConfig]) : String
-  (match config
-    [(BuildConfig.Source
-        source
-        _
-        output
-        has-output
-        target
-        mode
-        opt-level
-        stdlib-lines)
-      (str_cat.str-cat
-        (host_plan.host-plan-header)
-        (host_plan.host-plan-word-line "action" "build-source")
-        (host_plan.host-plan-netline "source" source)
-        (if has-output
-          (host_plan.host-plan-netline "output" output)
-          "")
-        (host_plan.host-plan-word-line "target" target)
-        (host_plan.host-plan-word-line "backend-mode" mode)
-        (if (string.eq opt-level "")
-          ""
-          (host_plan.host-plan-word-line "opt-level" opt-level))
-        stdlib-lines
-        "end\n")]
-    [_ ""]))
+                    (load.CompilerPkgDep
+                      (cli_option.cli-args-value-at (& args) 1)
+                      (cli_option.cli-args-value-at (& args) 2))))
+                (set! args.next (+ args.index 3))))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "build: unknown package worker flag ")]
+          [else
+            (cli_option.cli-args-fail-arg!
+              (&mut args)
+              "build: unexpected package worker argument ")]))
+      (cond
+        [args.failed (ResultBuildPackageWorkerConfig.Err args.error)]
+        [has-manifest
+          (ResultBuildPackageWorkerConfig.Ok
+            (BuildPackageWorkerConfig
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              lock-policy
+              stdlib-roots
+              resolved-deps))]
+        [else
+          (ResultBuildPackageWorkerConfig.Err
+            "build: --package-worker requires --manifest-path")]))))
 
 (define (build-discover-manifest-up [prefix : String] [fuel : i64]) : load.CompilerLoadMaybePath
   (if (<= fuel 0)
@@ -1300,13 +783,11 @@
       [(load.ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultBuildManifest.Ok manifest)]
       [(load.ResultCompilerPkgManifestDiagnostic.Err diag)
-        (ResultBuildManifest.Err
-          (build-invalid-manifest-message
-            (owned_view.compiler-owned-box-shared-view diag)))])
+        (ResultBuildManifest.Err (build-invalid-manifest-message (deref diag)))])
     (ResultBuildManifest.Err
       (str_cat.str-cat "cannot read package manifest '" manifest-path "'"))))
 
-(define (build-package-output-dir [manifest-dir : String] [name : String]) : String
+(define (build-package-output-dir [manifest-dir : String] [name : (& name str)]) : String
   (build-package-output-dir-profile manifest-dir name (build-default-profile)))
 
 (define (build-package-output-dir-profile
@@ -1440,47 +921,6 @@
   [artifacts : BuildPackageArtifactPaths]) : String
   artifacts.tlci)
 
-(define (build-package-path-layout-smoke-ok?) : bool
-  (and
-    (string.eq
-      (build-package-output-dir-profile "root/app" "pkg" (BuildProfile.Release))
-      "root/app/target/release")
-    (string.eq
-      (build-package-asm-path-profile "root/app" "pkg" (BuildProfile.Dev))
-      "root/app/target/dev/pkg.s")
-    (string.eq
-      (build-package-bin-path-profile
-        "root/app"
-        "pkg"
-        (BuildProfile.Release)
-        (backend.CompilerBackendTarget.Windows))
-      "root/app/target/release/pkg.exe")
-    (string.eq
-      (build-package-lib-path-profile
-        "root/app"
-        "pkg"
-        (BuildProfile.Release)
-        (backend.CompilerBackendTarget.Linux))
-      "root/app/target/release/libpkg.a")
-    (string.eq
-      (build-package-tlci-path-profile "root/app" "pkg" (BuildProfile.Dev))
-      "root/app/target/dev/pkg.tlci")
-    (string.eq
-      (build-package-host-tlci-artifact-path
-        (build-package-artifact-paths
-          "root/app"
-          "pkg"
-          (CompilerPkgKindBin)
-          (BuildProfile.Dev)
-          (backend.CompilerBackendTarget.Windows)))
-      "root/app/target/dev/pkg.tlci")))
-
-(test
-  build-package-path-layout-smoke
-  (unless
-    (build-package-path-layout-smoke-ok?)
-    (io.panic "build package path layout smoke failed")))
-
 (define (build-package-artifact-state-dirty?
   [state : BuildPackageArtifactState]) : bool
   (match state
@@ -1518,28 +958,6 @@
     path
     ": "
     (build-package-artifact-state-render state)))
-
-(cfg
-  test
-  (define (build-package-artifact-status-smoke-ok?) : bool
-    (and
-      (not
-        (build-package-artifact-state-dirty? (BuildPackageArtifactState.Clean)))
-      (build-package-artifact-state-dirty? (BuildPackageArtifactState.Missing))
-      (build-package-artifact-state-dirty?
-        (BuildPackageArtifactState.Stale "metadata changed"))
-      (string.eq
-        (build-package-artifact-state-render
-          (BuildPackageArtifactState.Stale "metadata changed"))
-        "metadata changed"))))
-
-(cfg
-  test
-  (test
-    build-package-artifact-status-smoke
-    (unless
-      (build-package-artifact-status-smoke-ok?)
-      (io.panic "build package artifact status smoke failed"))))
 
 (define (build-package-kind-lib? [kind : load.CompilerPkgKind]) : bool
   (match kind
@@ -1584,7 +1002,7 @@
         alias
         "manifest"
         "typelisp.pkg"
-        (owned_view.compiler-owned-shared-view checkout-root))
+        checkout-root)
         [(package_source_core.ResultPackageSourceConfinedPath.Err message)
           (ResultBuildString.Err message)]
         [(package_source_core.ResultPackageSourceConfinedPath.Ok _)
@@ -1599,13 +1017,13 @@
       (match (package_source_core.package-source-confined-existing-file
         (owned_view.compiler-owned-shared-view manifest.name)
         "entry"
-        (owned_view.compiler-owned-shared-view manifest.entry)
+        manifest.entry
         (owned_view.compiler-owned-shared-view checkout-root))
         [(package_source_core.ResultPackageSourceConfinedPath.Err message)
           (ResultBuildString.Err message)]
         [(package_source_core.ResultPackageSourceConfinedPath.Ok _)
           (match (package_source_core.package-source-fetched-checkout-audit
-            (owned_view.compiler-owned-shared-view manifest.name)
+            manifest.name
             checkout-root)
             [(package_source_core.ResultPackageSourceConfinedPath.Err message)
               (ResultBuildString.Err message)]
@@ -1765,9 +1183,7 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildMaybeLockEntry
-  (match (package_lock_core.package-lock-entry-list-lookup
-    entries
-    (owned_view.compiler-owned-shared-view alias))
+  (match (package_lock_core.package-lock-entry-list-lookup entries alias)
     [(package_lock_core.PackageLockMaybeEntry.No) (BuildMaybeLockEntry.No)]
     [(package_lock_core.PackageLockMaybeEntry.Some entry)
       (if (build-package-lock-entry-matches?
@@ -1781,9 +1197,7 @@
   [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildPackageLockEntryStatus
-  (match (package_lock_core.package-lock-entry-list-lookup
-    entries
-    (owned_view.compiler-owned-shared-view alias))
+  (match (package_lock_core.package-lock-entry-list-lookup entries alias)
     [(package_lock_core.PackageLockMaybeEntry.No)
       (BuildPackageLockEntryStatus.Missing)]
     [(package_lock_core.PackageLockMaybeEntry.Some entry)
@@ -1893,7 +1307,7 @@
     (load.compiler-load-join-root-path manifest-dir dep-root)))
 
 (define (build-ensure-github-cache-parent
-  [manifest-dir : String]
+  [manifest-dir : (& manifest-dir str)]
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String
@@ -1991,7 +1405,7 @@
 
 (define (build-package-cache-staging-path
   [alias : String]
-  [root : String]
+  [root : (& root str)]
   [key : (& key package_cache_core.PackageCacheKey)]
   [attempt : i64]) : ResultBuildString
   (if (> attempt 16)
@@ -2046,9 +1460,9 @@
 
 (define (build-package-cache-hit-result
   [alias : String]
-  [entry-path : String]
+  [entry-path : (& entry-path str)]
   [relative-entry-root : String]) : ResultBuildString
-  (if (io.file-exists? (build-package-cache-manifest-path (& entry-path)))
+  (if (io.file-exists? (build-package-cache-manifest-path entry-path))
     (ResultBuildString.Ok relative-entry-root)
     (ResultBuildString.Err
       (build-git-dep-error alias "cached package is missing typelisp.pkg"))))
@@ -2056,12 +1470,12 @@
 (define (build-package-cache-finalize-staged
   [alias : String]
   [staged-path : String]
-  [entry-path : String]
+  [entry-path : (& entry-path str)]
   [relative-entry-root : String]
   [key : (& key package_cache_core.PackageCacheKey)]) : ResultBuildString
   (match (package_cache_core.package-cache-finalize-staged
     staged-path
-    (owned_view.compiler-owned-shared-view entry-path))
+    entry-path)
     [(io.OkIoUnit) (ResultBuildString.Ok relative-entry-root)]
     [(io.ErrIoUnit error)
       (match (package_cache_core.package-cache-entry-state entry-path key)
@@ -2111,7 +1525,7 @@
     [(io.OkIoUnit)
       (match (build-package-cache-staging-path
         (owned_view.compiler-owned-shared-view alias)
-        (owned_view.compiler-owned-shared-view root)
+        root
         key
         1)
         [(ResultBuildString.Err message) (ResultBuildString.Err message)]
@@ -2174,8 +1588,7 @@
                                     (build-package-cache-finalize-staged
                                       alias
                                       staged-path
-                                      (owned_view.compiler-owned-shared-view
-                                        entry-path)
+                                      entry-path
                                       relative-entry-root
                                       key)])])]))])])])])]))
 
@@ -2221,7 +1634,7 @@
           [(ResultBuildString.Err message) (ResultBuildString.Err message)]
           [(ResultBuildString.Ok _)
             (build-package-cache-fetch-staged
-              (owned_view.compiler-owned-shared-view alias)
+              alias
               dep
               root
               (& key)
@@ -2276,7 +1689,7 @@
         (owned_view.compiler-owned-shared-view alias)))
       (ResultBuildString.Ok manifest-path)
       (match (build-ensure-github-cache-parent
-        (owned_view.compiler-owned-shared-view manifest-dir)
+        manifest-dir
         (owned_view.compiler-owned-shared-view alias))
         [(ResultBuildString.Err message) (ResultBuildString.Err message)]
         [(ResultBuildString.Ok _)
@@ -2340,9 +1753,7 @@
         (ResultBuildResolvedGitDependency.Err message)]
       [(ResultBuildString.Ok dep-root)
         (ResultBuildResolvedGitDependency.Ok
-          (BuildResolvedGitDependency
-            dep-root
-            (owned_view.compiler-owned-shared-view entry)))])))
+          (BuildResolvedGitDependency dep-root entry))])))
 
 (define (build-resolve-github-dependency-without-lock
   [manifest-dir : String]
@@ -2432,38 +1843,22 @@
             (ResultBuildResolvedPkgDep.Err message)]
           [(ResultBuildGitDependency.Ok git-dep)
             (match (build-resolve-github-dependency
-              (owned_view.compiler-owned-shared-view manifest-dir)
+              manifest-dir
               (owned_view.compiler-owned-shared-view alias)
-              (owned_view.compiler-owned-shared-view git-dep)
-              (owned_view.compiler-owned-shared-view lock-entries)
+              git-dep
+              lock-entries
               lock-policy)
               [(ResultBuildResolvedGitDependency.Err message)
                 (ResultBuildResolvedPkgDep.Err message)]
               [(ResultBuildResolvedGitDependency.Ok resolved)
                 (ResultBuildResolvedPkgDep.Ok
                   (BuildResolvedPkgDep
-                    (load.CompilerPkgDep
-                      (owned_view.compiler-owned-shared-view alias)
-                      resolved.dep-root)
+                    (load.CompilerPkgDep alias resolved.dep-root)
                     (BuildMaybeLockEntry.Some resolved.lock-entry)))])]))
       (ResultBuildResolvedPkgDep.Ok
         (BuildResolvedPkgDep
-          (load.CompilerPkgDep
-            (owned_view.compiler-owned-shared-view alias)
-            path)
+          (load.CompilerPkgDep alias path)
           (BuildMaybeLockEntry.No))))))
-
-(define (build-package-resolve-dep
-  [manifest-dir : String]
-  [dep : load.CompilerPkgDep]) : ResultBuildPkgDep
-  (match (build-package-resolve-dep-with-lock
-    manifest-dir
-    (package_lock_entry_vec.new)
-    (BuildPackageLockPolicy.Default)
-    dep)
-    [(ResultBuildResolvedPkgDep.Err message) (ResultBuildPkgDep.Err message)]
-    [(ResultBuildResolvedPkgDep.Ok resolved)
-      (ResultBuildPkgDep.Ok resolved.dep)]))
 
 (define (build-package-lock-entry-list-add
   [entries : package_lock_entry_vec.Vec]
@@ -2475,7 +1870,7 @@
       (package_lock_core.package-lock-entry-list-insert entries entry)]))
 
 (define (build-package-lock-list-has-exact-entry?
-  [entries : package_lock_entry_vec.Vec]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [entry : package_lock_core.PackageLockEntry]) : bool
   (package_lock_core.package-lock-list-has-entry?
     entries
@@ -2487,18 +1882,18 @@
 
 (define (build-package-lock-list-contains-all?
   [haystack : package_lock_entry_vec.Vec]
-  [needles : package_lock_entry_vec.Vec]) : bool
+  [needles : (& needles package_lock_entry_vec.Vec)]) : bool
   (build-package-lock-list-contains-all-from haystack (& needles) 0))
 
 (define (build-package-lock-list-contains-all-from
-  [haystack : package_lock_entry_vec.Vec]
+  [haystack : (& haystack package_lock_entry_vec.Vec)]
   [needles : (& needles package_lock_entry_vec.Vec)]
   [index : i64]) : bool
   (if (>= index (package_lock_entry_vec.len needles))
     true
     (and
       (build-package-lock-list-has-exact-entry?
-        (owned_view.compiler-owned-shared-view haystack)
+        haystack
         (package_lock_entry_vec.get
           needles
           index
@@ -2507,7 +1902,7 @@
 
 (define (build-package-lock-list-eq?
   [left : package_lock_entry_vec.Vec]
-  [right : package_lock_entry_vec.Vec]) : bool
+  [right : (& right package_lock_entry_vec.Vec)]) : bool
   (and
     (=
       (package_lock_entry_vec.len (& left))
@@ -2517,7 +1912,7 @@
 (define (build-package-lock-policy-check
   [policy : BuildPackageLockPolicy]
   [lock-state : BuildPackageLockState]
-  [resolved : BuildResolvedPkgDeps]) : ResultBuildString
+  [resolved : (& resolved BuildResolvedPkgDeps)]) : ResultBuildString
   (if (build-package-lock-policy-locked? policy)
     (if (and resolved.has-remote (not lock-state.has-lock))
       (ResultBuildString.Err
@@ -2562,8 +1957,8 @@
         (ResultBuildResolvedPkgDeps.Err message)]
       [(ResultBuildResolvedPkgDep.Ok resolved-dep)
         (match (build-package-resolve-deps-with-lock
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view lock-entries)
+          manifest-dir
+          lock-entries
           lock-policy
           deps
           (+ index 1))
@@ -2571,7 +1966,7 @@
             (ResultBuildResolvedPkgDeps.Err message)]
           [(ResultBuildResolvedPkgDeps.Ok resolved-rest)
             (match (build-package-lock-entry-list-add
-              (owned_view.compiler-owned-shared-view resolved-rest.lock-entries)
+              resolved-rest.lock-entries
               (owned_view.compiler-owned-shared-view resolved-dep.lock-entry))
               [(package_lock_core.ResultPackageLockEntryList.Err message)
                 (ResultBuildResolvedPkgDeps.Err message)]
@@ -2580,13 +1975,12 @@
                 (ResultBuildResolvedPkgDeps.Ok
                   (BuildResolvedPkgDeps
                     (load.compiler-pkg-dep-list-cons
-                      (owned_view.compiler-owned-shared-view resolved-dep.dep)
-                      (owned_view.compiler-owned-shared-view resolved-rest.deps))
+                      resolved-dep.dep
+                      resolved-rest.deps)
                     next-lock-entries
                     (or
                       resolved-rest.has-remote
-                      (match (owned_view.compiler-owned-shared-view
-                        resolved-dep.lock-entry)
+                      (match resolved-dep.lock-entry
                         [(BuildMaybeLockEntry.No) false]
                         [(BuildMaybeLockEntry.Some _) true]))))])])])))
 
@@ -2629,13 +2023,13 @@
                 (match (build-package-lock-policy-check
                   lock-policy
                   (owned_view.compiler-owned-shared-view lock-state)
-                  (owned_view.compiler-owned-shared-view resolved))
+                  resolved)
                   [(ResultBuildString.Err message)
                     (ResultBuildManifest.Err message)]
                   [(ResultBuildString.Ok _)
                     (match (build-package-maybe-write-lock
                       lock-policy
-                      (owned_view.compiler-owned-shared-view lock-state)
+                      lock-state
                       (owned_view.compiler-owned-shared-view resolved))
                       [(ResultBuildString.Err message)
                         (ResultBuildManifest.Err message)]
@@ -2652,10 +2046,11 @@
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (load.compiler-load-normalize-path manifest-path))
 
-(define (build-package-graph-node-vec-len [v : BuildPackageGraphNodeVec]) : i64
+(define (build-package-graph-node-vec-len [v : (& v BuildPackageGraphNodeVec)]) : i64
   v.len)
 
-(define (build-package-graph-node-vec-capacity [v : BuildPackageGraphNodeVec]) : i64
+(define (build-package-graph-node-vec-capacity
+  [v : (& v BuildPackageGraphNodeVec)]) : i64
   (array-length v.slots))
 
 (define (build-package-graph-node-vec-with-capacity [capacity : i64]) : BuildPackageGraphNodeVec
@@ -2670,12 +2065,15 @@
   (build-package-graph-node-vec-with-capacity 4))
 
 (define (build-package-graph-node-vec-at
-  [v : BuildPackageGraphNodeVec]
+  [v : (& v BuildPackageGraphNodeVec)]
   [index : i64]) : BuildPackageGraphNode
-  (array-ref v.slots index))
+  (let
+    [v : BuildPackageGraphNodeVec
+      (owned_view.compiler-owned-reference-shared-view v)]
+    (array-ref v.slots index)))
 
 (define (build-package-graph-node-vec-copy-range!
-  [dst : (__tl_dyn-array BuildPackageGraphNode)]
+  [dst : (&mut dst (__tl_dyn-array BuildPackageGraphNode))]
   [src : (__tl_dyn-array BuildPackageGraphNode)]
   [count : i64]) : unit
   (let
@@ -2687,40 +2085,26 @@
 
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view v))]
+    [count : i64 (build-package-graph-node-vec-len v)]
     [bigger : (__tl_dyn-array BuildPackageGraphNode)
       (__tl_make-array
         BuildPackageGraphNode
-        (*
-          (build-package-graph-node-vec-capacity
-            (owned_view.compiler-owned-shared-view v))
-          2))]
+        (* (build-package-graph-node-vec-capacity v) 2))]
     (begin
-      (build-package-graph-node-vec-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        v.slots
-        count)
+      (build-package-graph-node-vec-copy-range! (&mut bigger) v.slots count)
       (BuildPackageGraphNodeVec bigger count))))
 
 (define (build-package-graph-node-vec-push
   [v : BuildPackageGraphNodeVec]
   [node : BuildPackageGraphNode]) : BuildPackageGraphNodeVec
   (if (<
-    (build-package-graph-node-vec-len (owned_view.compiler-owned-shared-view v))
-    (build-package-graph-node-vec-capacity
-      (owned_view.compiler-owned-shared-view v)))
+    (build-package-graph-node-vec-len v)
+    (build-package-graph-node-vec-capacity v))
     (let
       [slots : (__tl_dyn-array BuildPackageGraphNode)
         (owned_view.compiler-owned-shared-view v.slots)]
       (begin
-        (set!
-          (array-ref
-            slots
-            (build-package-graph-node-vec-len
-              (owned_view.compiler-owned-shared-view v)))
-          node)
+        (set! (array-ref slots (build-package-graph-node-vec-len v)) node)
         (BuildPackageGraphNodeVec
           slots
           (+ (build-package-graph-node-vec-len v) 1))))
@@ -2751,11 +2135,11 @@
     [provenance : BuildPackageSourceProvenance
       (build-package-dep-provenance
         (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view declared-dep)
+        declared-dep
         (owned_view.compiler-owned-shared-view resolved-dep))]
     [dep-manifest-path : String
       (build-package-dep-manifest-path
-        (owned_view.compiler-owned-shared-view manifest-dir)
+        manifest-dir
         (owned_view.compiler-owned-shared-view resolved-dep))]
     (match (build-package-validate-fetched-checkout-before-manifest
       (owned_view.compiler-owned-shared-view provenance))
@@ -2846,9 +2230,9 @@
             (ResultBuildPackageGraphState.Err message)]
           [(ResultBuildPackageGraphState.Ok next-state)
             (build-package-graph-add-deps
-              (owned_view.compiler-owned-shared-view manifest-dir)
-              (owned_view.compiler-owned-shared-view declared-deps)
-              (owned_view.compiler-owned-shared-view resolved-deps)
+              manifest-dir
+              declared-deps
+              resolved-deps
               (+ index 1)
               next-state)])])))
 
@@ -2863,7 +2247,7 @@
       (BuildPackageGraphState
         (build-string-index-map-put
           (build_string_i64_map.with-capacity 32)
-          (owned_view.compiler-owned-shared-view root-path)
+          root-path
           1)
         (build-package-graph-node-vec-new))]
     (match (build-package-graph-add-deps
@@ -2889,7 +2273,7 @@
 
 (define (build-package-root-compiler?
   [manifest-dir : String]
-  [manifest : load.CompilerPkgManifest]) : bool
+  [manifest : (& manifest load.CompilerPkgManifest)]) : bool
   ;; Keep the compiler-only cfg out of ordinary packages. The source marker
   ;; also prevents an unrelated package named `typelisp` from opting in.
   (and
@@ -2943,7 +2327,7 @@
             [else
               (match (build_run_core.source-tool-write-file
                 identity-path
-                (owned_view.compiler-owned-shared-view identity)
+                identity
                 "build: failed to write root compiler identity")
                 [(build_run_core.SourceToolCommandStatus.Err message)
                   (ResultBuildString.Err message)]
@@ -2952,7 +2336,7 @@
 
 (define (build-package-compile-context
   [manifest-dir : String]
-  [manifest : load.CompilerPkgManifest]) : BuildPackageCompileContext
+  [manifest : (& manifest load.CompilerPkgManifest)]) : BuildPackageCompileContext
   (if (build-package-root-compiler?
     (owned_view.compiler-owned-shared-view manifest-dir)
     manifest)
@@ -2978,7 +2362,7 @@
 
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
-  [_name : String]
+  [_name : (& _name str)]
   [profile : BuildProfile]) : bool
   (let
     [target-dir : String
@@ -3115,134 +2499,6 @@
       [(CompilerPkgKindLib) backend.CompilerDirectObjectArtifactKind.StaticLib])
     image))
 
-(cfg
-  test
-  (test
-    build-package-linux-direct-object-render-parity
-    (match (backend.compiler-backend-emit-source-object-image-for-target
-      "(define (main) : i64 42)"
-      (backend.CompilerBackendTarget.Linux))
-      [(backend.ResultCompilerBackendObject.Err _)
-        (io.panic "Linux object fixture failed")]
-      [(backend.ResultCompilerBackendObject.Ok image)
-        (unless
-          (and
-            (match (build-package-render-linux-direct-object
-              (CompilerPkgKindBin)
-              (owned_view.compiler-owned-shared-view image))
-              [(build_run_core.ResultSourceToolLinuxDirectObject.Ok typed)
-                (match (compiler_object_elf.compiler-object-elf-render
-                  (owned_view.compiler-owned-shared-view image))
-                  [(compiler_object_elf.ResultCompilerObjectElf.Ok serialized)
-                    (string.eq typed serialized)]
-                  [_ false])]
-              [_ false])
-            (match (build-package-render-linux-direct-object
-              (CompilerPkgKindLib)
-              (owned_view.compiler-owned-shared-view image))
-              [(build_run_core.ResultSourceToolLinuxDirectObject.Ok typed)
-                (match (compiler_object_elf.compiler-object-elf-render image)
-                  [(compiler_object_elf.ResultCompilerObjectElf.Ok serialized)
-                    (string.eq typed serialized)]
-                  [_ false])]
-              [_ false]))
-          (io.panic "Linux package direct-object bytes changed"))])))
-
-(cfg
-  test
-  (test
-    build-package-linux-direct-object-missing-entry
-    (match (build-package-render-linux-direct-object
-      (CompilerPkgKindBin)
-      (compiler_object_elf.compiler-object-elf-smoke-image))
-      [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
-          (backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol))
-        unit]
-      [_ (io.panic "Linux package missing-entry reason changed")])))
-
-(cfg
-  test
-  (test
-    build-package-linux-direct-object-source-fallback-parity
-    (match (build_run_core.source-tool-render-linkable-linux-elf-object
-      (compiler_object_elf.compiler-object-elf-smoke-image))
-      [(build_run_core.ResultSourceToolString.Err message)
-        (unless
-          (string.eq
-            message
-            "linux direct object unavailable: missing-entry-symbol")
-          (io.panic "Linux source object fallback lost its typed reason"))]
-      [_ (io.panic "Linux source object accepted an image without entry")])))
-
-(cfg
-  test
-  (define (build-package-linux-direct-object-with-relocation
-    [reloc : cobj.CompilerObjectRelocation]) : build_run_core.ResultSourceToolLinuxDirectObject
-    (let
-      [fixture : cobj.CompilerObjectImage
-        (compiler_object_elf.compiler-object-elf-smoke-image)]
-      [relocations : cobj.CompilerObjectRelocationList
-        (cobj.compiler-object-relocation-builder-finish
-          (cobj.compiler-object-relocation-builder-push
-            (cobj.compiler-object-relocation-builder-with-capacity 1)
-            reloc))]
-      (build-package-render-linux-direct-object
-        (CompilerPkgKindLib)
-        (cobj.CompilerObjectImage fixture.sections fixture.symbols relocations)))))
-
-(cfg
-  test
-  (define (build-package-linux-direct-object-with-pdata) : build_run_core.ResultSourceToolLinuxDirectObject
-    (let
-      [fixture : cobj.CompilerObjectImage
-        (compiler_object_elf.compiler-object-elf-smoke-image)]
-      [sections : cobj.CompilerObjectSectionList
-        (cobj.compiler-object-section-builder-finish
-          (cobj.compiler-object-section-builder-push
-            (cobj.compiler-object-section-builder-with-capacity 1)
-            (cobj.CompilerObjectSection.Section
-              (cobj.CompilerObjectSectionKind.Pdata)
-              (cobj.compiler-object-data-record-builder-finish
-                (cobj.compiler-object-data-record-builder-with-capacity 1))
-              (cobj.compiler-object-instr-builder-finish
-                (cobj.compiler-object-instr-builder-with-capacity 1)))))]
-      (build-package-render-linux-direct-object
-        (CompilerPkgKindLib)
-        (cobj.CompilerObjectImage sections fixture.symbols fixture.relocations)))))
-
-(cfg
-  test
-  (test
-    build-package-linux-direct-object-typed-serializer-fallbacks
-    (unless
-      (and
-        (match (build-package-linux-direct-object-with-pdata)
-          [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
-              (backend.CompilerDirectObjectFallbackReason.ObjectEncoding))
-            true]
-          [_ false])
-        (match (build-package-linux-direct-object-with-relocation
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "_tl_empty"
-            (cobj.CompilerObjectRelocationKind.Abs64)
-            "_tl_empty"))
-          [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
-              (backend.CompilerDirectObjectFallbackReason.ObjectRelocation))
-            true]
-          [_ false])
-        (match (build-package-linux-direct-object-with-relocation
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "_tl_no_site"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "_tl_empty"))
-          [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
-              (backend.CompilerDirectObjectFallbackReason.ObjectFixup))
-            true]
-          [_ false]))
-      (io.panic "Linux package serializer reasons changed"))))
-
 (define (build-package-write-direct-object-artifact
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
@@ -3273,9 +2529,9 @@
     [_ false]))
 
 (define (build-package-decl-has-spmd-callable? [decl : ast.AstDecl]) : bool
-  (match (owned_view.compiler-owned-shared-view decl)
+  (match decl
     [(ast.AstDecl.DefFn _ _ _ _ _ metadata)
-      (match (owned_view.compiler-owned-shared-view metadata)
+      (match metadata
         [(ast.AstFnMetadata.SpmdCallable _) true]
         [_ false])]
     [(ast.AstDecl.Unsafe inner)
@@ -3284,14 +2540,12 @@
     [_ false]))
 
 (define (build-package-decls-have-spmd-callable? [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step (owned_view.compiler-owned-shared-view decls))
+  (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (or
-        (build-package-decl-has-spmd-callable?
-          (owned_view.compiler-owned-shared-view decl))
-        (build-package-decls-have-spmd-callable?
-          (owned_view.compiler-owned-shared-view rest)))]))
+        (build-package-decl-has-spmd-callable? decl)
+        (build-package-decls-have-spmd-callable? rest))]))
 
 (define (build-package-direct-object-owned-path-budget) : i64
   ;; Large package direct-object emission duplicates enough object/ELF state to
@@ -3315,12 +2569,6 @@
   [paths : (& paths ast.AstDeclPathList)]) : i64
   (build-package-direct-object-owned-path-count-from paths 0))
 
-(define (build-package-direct-object-within-budget?
-  [paths : (& paths ast.AstDeclPathList)]) : bool
-  (<=
-    (build-package-direct-object-owned-path-count paths)
-    (build-package-direct-object-owned-path-budget)))
-
 (define (build-package-direct-object-size-ok?
   [target : backend.CompilerBackendTarget]
   [path-budget : i64]
@@ -3333,75 +2581,6 @@
         (<= (build-package-direct-object-owned-path-count paths) path-budget))]
     [(backend.CompilerBackendTarget.Windows)
       (<= (build-package-direct-object-owned-path-count paths) path-budget)]))
-
-(cfg
-  test
-  (define (build-package-direct-object-test-paths
-    [count : i64]
-    [path : String]
-    [out : ast.AstDeclPathList]) : ast.AstDeclPathList
-    (if (<= count 0)
-      out
-      (build-package-direct-object-test-paths
-        (- count 1)
-        (string.copy (& path))
-        (ast.ast-decl-path-list-prepend-builder-with-owner-id
-          path
-          cbi.compiler-builtin-id-fix-empty
-          out)))))
-
-(cfg
-  test
-  (define (build-package-direct-object-size-smoke-ok?) : bool
-    (let
-      [budget : i64 (build-package-direct-object-owned-path-budget)]
-      [ordinary-decl : ast.AstDecl
-        (ast.ast-decl-def-fn-id
-          (ci.intern "direct-object-ordinary")
-          (ast.ast-param-list-new)
-          (ast.AstType.I64)
-          cbi.compiler-builtin-id-fix-empty)]
-      [spmd-decl : ast.AstDecl
-        (ast.ast-decl-def-fn-metadata-id
-          (ci.intern "direct-object-spmd")
-          (ast.ast-param-list-new)
-          (ast.AstType.I64)
-          cbi.compiler-builtin-id-fix-empty
-          (ast.ast-fn-metadata-full
-            ast.AstFnExport.No
-            (ast.AstSpmdCallable.Callable
-              (ast.ast-spmd-specialization-list-new))))]
-      [within : ast.AstDeclPathList
-        (build-package-direct-object-test-paths
-          budget
-          "pkg.tl"
-          (ast.ast-decl-path-list-new))]
-      [over : ast.AstDeclPathList
-        (build-package-direct-object-test-paths
-          (+ budget 1)
-          "pkg.tl"
-          (ast.ast-decl-path-list-new))]
-      [mixed : ast.AstDeclPathList
-        (ast.ast-decl-root-path-cons
-          ""
-          (ast.ast-decl-root-path-cons "pkg.tl" (ast.ast-decl-path-list-new)))]
-      (and
-        (not (build-package-decl-has-spmd-callable? ordinary-decl))
-        (build-package-decl-has-spmd-callable?
-          (owned_view.compiler-owned-shared-view spmd-decl))
-        (build-package-decls-have-spmd-callable?
-          (ast.ast-decl-cons spmd-decl (ast.ast-decl-list-new)))
-        (= (build-package-direct-object-owned-path-count (& mixed)) 1)
-        (build-package-direct-object-within-budget? (& within))
-        (not (build-package-direct-object-within-budget? (& over)))))))
-
-(cfg
-  test
-  (test
-    build-package-direct-object-size-smoke
-    (unless
-      (build-package-direct-object-size-smoke-ok?)
-      (io.panic "build package direct object size smoke failed"))))
 
 (defenum BuildPackageDirectObjectPreflight
   (Eligible)
@@ -3452,189 +2631,6 @@
           path-budget))]
     [else BuildPackageDirectObjectPreflight.Eligible]))
 
-(cfg
-  test
-  (define (build-package-preflight-category-is?
-    [result : BuildPackageDirectObjectPreflight]
-    [expected : String]) : bool
-    (match result
-      [(BuildPackageDirectObjectPreflight.Eligible) (string.eq expected "")]
-      [(BuildPackageDirectObjectPreflight.Fallback reason)
-        (string.eq
-          (backend.compiler-direct-object-fallback-category reason)
-          expected)])))
-
-(cfg
-  test
-  (test
-    build-package-direct-object-typed-route
-    (let
-      [empty-decls : ast.AstDeclList (ast.ast-decl-list-new)]
-      [empty-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
-      [one-path : ast.AstDeclPathList
-        (build-package-direct-object-test-paths
-          1
-          "pkg.tl"
-          (ast.ast-decl-path-list-new))]
-      [spmd-decl : ast.AstDecl
-        (ast.ast-decl-def-fn-metadata-id
-          (ci.intern "typed-route-spmd")
-          (ast.ast-param-list-new)
-          (ast.AstType.I64)
-          cbi.compiler-builtin-id-fix-empty
-          (ast.ast-fn-metadata-full
-            ast.AstFnExport.No
-            (ast.AstSpmdCallable.Callable
-              (ast.ast-spmd-specialization-list-new))))]
-      [spmd-decls : ast.AstDeclList
-        (ast.ast-decl-cons spmd-decl (ast.ast-decl-list-new))]
-      (unless
-        (and
-          (build-package-preflight-category-is?
-            (build-package-direct-object-preflight
-              (CompilerPkgKindLib)
-              (backend.CompilerBackendTarget.Windows)
-              (backend.CompilerBackendMode.Scalar)
-              false
-              512
-              false
-              (owned_view.compiler-owned-shared-view empty-decls)
-              (& empty-paths))
-            "artifact-kind-unavailable")
-          (build-package-preflight-category-is?
-            (build-package-direct-object-preflight
-              (CompilerPkgKindBin)
-              (backend.CompilerBackendTarget.Windows)
-              (backend.CompilerBackendMode.Scalar)
-              true
-              512
-              false
-              (owned_view.compiler-owned-shared-view empty-decls)
-              (& empty-paths))
-            "debug-metadata")
-          (build-package-preflight-category-is?
-            (build-package-direct-object-preflight
-              (CompilerPkgKindBin)
-              (backend.CompilerBackendTarget.Windows)
-              (backend.CompilerBackendMode.Avx2)
-              false
-              512
-              false
-              (owned_view.compiler-owned-shared-view empty-decls)
-              (& empty-paths))
-            "backend-mode")
-          (build-package-preflight-category-is?
-            (build-package-direct-object-preflight
-              (CompilerPkgKindBin)
-              (backend.CompilerBackendTarget.Windows)
-              (backend.CompilerBackendMode.Scalar)
-              false
-              512
-              false
-              spmd-decls
-              (& empty-paths))
-            "private-spmd-abi")
-          (build-package-preflight-category-is?
-            (build-package-direct-object-preflight
-              (CompilerPkgKindBin)
-              (backend.CompilerBackendTarget.Windows)
-              (backend.CompilerBackendMode.Scalar)
-              false
-              0
-              false
-              (owned_view.compiler-owned-shared-view empty-decls)
-              (& one-path))
-            "resource-budget")
-          (match (build-package-direct-object-preflight
-            (CompilerPkgKindBin)
-            (backend.CompilerBackendTarget.Windows)
-            (backend.CompilerBackendMode.Scalar)
-            false
-            1
-            false
-            (owned_view.compiler-owned-shared-view empty-decls)
-            (& one-path))
-            [(BuildPackageDirectObjectPreflight.Eligible) true]
-            [_ false]))
-        (io.panic "typed package direct-object route failed")))))
-
-(cfg
-  test
-  (define (build-package-typed-route-table-from [index : i64]) : bool
-    (if (>= index 192)
-      true
-      (let
-        [target-index : i64 (% index 2)]
-        [kind-index : i64 (% (/ index 2) 2)]
-        [debug-index : i64 (% (/ index 4) 2)]
-        [mode-index : i64 (% (/ index 8) 3)]
-        [spmd-index : i64 (% (/ index 24) 2)]
-        [size-index : i64 (% (/ index 48) 2)]
-        [override-index : i64 (% (/ index 96) 2)]
-        [target : backend.CompilerBackendTarget
-          (if (= target-index 0)
-            (backend.CompilerBackendTarget.Linux)
-            (backend.CompilerBackendTarget.Windows))]
-        [kind : load.CompilerPkgKind
-          (if (= kind-index 0)
-            (CompilerPkgKindBin)
-            (CompilerPkgKindLib))]
-        [mode : backend.CompilerBackendMode
-          (cond
-            [(= mode-index 0) (backend.CompilerBackendMode.Scalar)]
-            [(= mode-index 1) (backend.CompilerBackendMode.Avx2)]
-            [else (backend.CompilerBackendMode.Avx512)])]
-        [decls : ast.AstDeclList
-          (if (= spmd-index 0)
-            (ast.ast-decl-list-new)
-            (ast.ast-decl-cons
-              (ast.ast-decl-def-fn-metadata-id
-                (ci.intern "typed-route-table-spmd")
-                (ast.ast-param-list-new)
-                (ast.AstType.I64)
-                cbi.compiler-builtin-id-fix-empty
-                (ast.ast-fn-metadata-full
-                  ast.AstFnExport.No
-                  (ast.AstSpmdCallable.Callable
-                    (ast.ast-spmd-specialization-list-new))))
-              (ast.ast-decl-list-new)))]
-        [paths : ast.AstDeclPathList
-          (build-package-direct-object-test-paths
-            size-index
-            "pkg.tl"
-            (ast.ast-decl-path-list-new))]
-        [expected : String
-          (cond
-            [(and (= target-index 1) (= kind-index 1))
-              "artifact-kind-unavailable"]
-            [(= debug-index 1) "debug-metadata"]
-            [(> mode-index 0) "backend-mode"]
-            [(= spmd-index 1) "private-spmd-abi"]
-            [(and (= size-index 1) (or (= target-index 1) (= override-index 0)))
-              "resource-budget"]
-            [else ""])]
-        (and
-          (build-package-preflight-category-is?
-            (build-package-direct-object-preflight
-              kind
-              target
-              mode
-              (= debug-index 1)
-              0
-              (= override-index 1)
-              decls
-              (& paths))
-            expected)
-          (build-package-typed-route-table-from (+ index 1)))))))
-
-(cfg
-  test
-  (test
-    build-package-direct-object-route-table
-    (unless
-      (build-package-typed-route-table-from 0)
-      (io.panic "typed package direct-object route table failed"))))
-
 (define (build-package-emit-assembly-fallback
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
@@ -3657,7 +2653,7 @@
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
         (ResultBuildPackagePreparedRuntime.Err
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (owned_view.compiler-owned-box-shared-view diag))))]
+            (deref diag))))]
     [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
@@ -3715,7 +2711,7 @@
                   (& advisories))
                 (ResultBuildPackagePreparedRuntime.Err
                   (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (owned_view.compiler-owned-box-shared-view diag))))])]
+                    (deref diag))))])]
         [(backend.CompilerBackendTarget.Windows)
           ;; The shared Windows batch emitter owns the semantic gate as well as
           ;; the COFF encoding/linkability checks. Its Assembly result is an
@@ -3759,7 +2755,7 @@
                   (& advisories))
                 (ResultBuildPackagePreparedRuntime.Err
                   (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (owned_view.compiler-owned-box-shared-view diag))))])])]
+                    (deref diag))))])])]
     [(BuildPackageDirectObjectPreflight.Fallback reason)
       (build-package-emit-assembly-fallback
         target
@@ -3769,50 +2765,6 @@
         crt-entry
         lowered
         reason)]))
-
-(define (build-package-try-prepare-direct-runtime
-  [name : String]
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [debug-info : bool]
-  [path-budget : i64]
-  [linux-budget-override : bool]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
-  (let
-    [preflight : BuildPackageDirectObjectPreflight
-      (build-package-direct-object-preflight
-        kind
-        target
-        mode
-        debug-info
-        path-budget
-        linux-budget-override
-        (owned_view.compiler-owned-shared-view decls)
-        (& paths))]
-    [lowered : compiler_driver_core.ResultCompilerDriverLowered
-      (compiler_driver_core.compiler-driver-lower-package-loaded
-        ""
-        name
-        target
-        mode
-        decls
-        paths
-        (owned_view.compiler-owned-shared-view cfgs))]
-    (build-package-emit-preflighted-runtime
-      kind
-      target
-      opt-level
-      mode
-      emit-entry
-      crt-entry
-      preflight
-      lowered)))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
@@ -3836,27 +2788,13 @@
   (build-package-runtime-artifact-path
     (build-package-graph-node-artifact-paths node profile target)))
 
-(define (build-package-graph-node-tlci-path
-  [node : BuildPackageGraphNode]
-  [profile : BuildProfile]) : String
-  (let
-    [manifest-path : String node.manifest-path]
-    [manifest : load.CompilerPkgManifest node.manifest]
-    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-    (build-package-tlci-path-profile manifest-dir manifest.name profile)))
-
 (define (build-package-validate-graph-checkouts-from
   [nodes : BuildPackageGraphNodeVec]
   [index : i64]) : ResultBuildString
-  (if (>=
-    index
-    (build-package-graph-node-vec-len
-      (owned_view.compiler-owned-shared-view nodes)))
+  (if (>= index (build-package-graph-node-vec-len nodes))
     (ResultBuildString.Ok "")
     (match (build-package-validate-graph-node-checkout
-      (build-package-graph-node-vec-at
-        (owned_view.compiler-owned-shared-view nodes)
-        index))
+      (build-package-graph-node-vec-at nodes index))
       [(ResultBuildString.Err message) (ResultBuildString.Err message)]
       [(ResultBuildString.Ok _)
         (build-package-validate-graph-checkouts-from nodes (+ index 1))])))
@@ -3870,11 +2808,7 @@
   [profile : BuildProfile]
   [target : backend.CompilerBackendTarget]) : process.ProcessStringList
   (let
-    [index : i64
-      (-
-        (build-package-graph-node-vec-len
-          (owned_view.compiler-owned-shared-view nodes))
-        1)]
+    [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
     [libs : process.ProcessStringList (process.args-empty)]
     (begin
       (while (>= index 0)
@@ -3885,38 +2819,11 @@
               libs
               (process.args-single
                 (build-package-graph-node-artifact-path
-                  (build-package-graph-node-vec-at
-                    (owned_view.compiler-owned-shared-view nodes)
-                    index)
+                  (build-package-graph-node-vec-at nodes index)
                   profile
                   target))))
           (set! index (- index 1))))
       libs)))
-
-(define (build-package-graph-tlci-paths
-  [nodes : BuildPackageGraphNodeVec]
-  [profile : BuildProfile]) : process.ProcessStringList
-  (let
-    [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
-    [paths : process.ProcessStringList (process.args-empty)]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            paths
-            (process.args-append
-              paths
-              (process.args-single
-                (build-package-graph-node-tlci-path
-                  (build-package-graph-node-vec-at
-                    (owned_view.compiler-owned-shared-view nodes)
-                    index)
-                  profile))))
-          (set! index (+ index 1))))
-      paths)))
 
 (define (build-package-catalog-dep-root
   [manifest-dir : String]
@@ -3927,10 +2834,10 @@
       (load.compiler-load-join-root-path manifest-dir dep.path))))
 
 (define (build-package-catalog-deps-contain-root?
-  [deps : load.CompilerPkgDepList]
+  [deps : (& deps load.CompilerPkgDepList)]
   [count : i64]
   [manifest-dir : String]
-  [root : String]) : bool
+  [root : (& root str)]) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -3941,7 +2848,7 @@
             (build-package-catalog-dep-root
               (owned_view.compiler-owned-shared-view manifest-dir)
               (load.compiler-pkg-dep-list-at (& deps) index))
-            (owned_view.compiler-owned-shared-view root))
+            root)
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -3953,31 +2860,26 @@
   [direct-deps : load.CompilerPkgDepList]) : load.CompilerPkgDepList
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [direct-count : i64 (load.compiler-pkg-dep-list-count (& direct-deps))]
     [deps : load.CompilerPkgDepList direct-deps]
     (begin
       (while (< index count)
         (let
           [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
+            (build-package-graph-node-vec-at nodes index)]
           [root : String
             (load.compiler-load-canonical-path
-              (load.compiler-load-dirname
-                (owned_view.compiler-owned-shared-view node.manifest-path)))]
+              (load.compiler-load-dirname node.manifest-path))]
           (begin
             ;; Graph construction already canonicalizes and deduplicates node
             ;; roots. Only direct manifest requests need comparison here so
             ;; their aliases and duplicate request telemetry stay intact.
             (if (build-package-catalog-deps-contain-root?
-              (owned_view.compiler-owned-shared-view deps)
+              deps
               direct-count
               (owned_view.compiler-owned-shared-view manifest-dir)
-              (owned_view.compiler-owned-shared-view root))
+              root)
               unit
               (set!
                 deps
@@ -3987,280 +2889,9 @@
             (set! index (+ index 1)))))
       deps)))
 
-(define (build-package-graph-test-manifest [name : String]) : load.CompilerPkgManifest
-  (load.CompilerPkgManifest
-    name
-    "0.1.0"
-    (CompilerPkgKindLib)
-    "src/lib.tl"
-    (load.compiler-pkg-deps-empty)
-    (load.compiler-pkg-link-empty)))
-
-(define (build-package-graph-test-manifest-with-deps
-  [name : String]
-  [deps : load.CompilerPkgDepList]) : load.CompilerPkgManifest
-  (load.CompilerPkgManifest
-    name
-    "0.1.0"
-    (CompilerPkgKindLib)
-    "src/lib.tl"
-    (load.compiler-pkg-deps-from-list deps)
-    (load.compiler-pkg-link-empty)))
-
-(define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
-  (BuildPackageGraphNode
-    manifest-path
-    (build-package-graph-test-manifest name)
-    (BuildPackageSourceProvenance.Local)))
-
-(define (build-package-graph-test-link-arg-target
-  [node : BuildPackageGraphNode]
-  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
-  (process.args-single
-    (build-package-graph-node-artifact-path node (BuildProfile.Release) target)))
-
-(define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
-  (build-package-graph-test-link-arg-target
-    node
-    (backend.CompilerBackendTarget.Linux)))
-
-(define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
-  (process.args-single
-    (build-package-graph-node-tlci-path node (BuildProfile.Release))))
-
-(define (build-package-graph-vector-smoke-ok?) : bool
-  (let
-    [first : BuildPackageGraphNode
-      (build-package-graph-test-node "root/first/typelisp.pkg" "first")]
-    [second : BuildPackageGraphNode
-      (build-package-graph-test-node "root/second/typelisp.pkg" "second")]
-    [third : BuildPackageGraphNode
-      (build-package-graph-test-node "root/third/typelisp.pkg" "third")]
-    [nodes : BuildPackageGraphNodeVec
-      (build-package-graph-node-vec-push
-        (build-package-graph-node-vec-push
-          (build-package-graph-node-vec-push
-            (build-package-graph-node-vec-with-capacity 1)
-            (owned_view.compiler-owned-shared-view first))
-          (owned_view.compiler-owned-shared-view second))
-        (owned_view.compiler-owned-shared-view third))]
-    [libs : process.ProcessStringList
-      (build-package-graph-link-libs
-        (owned_view.compiler-owned-shared-view nodes)
-        (BuildProfile.Release)
-        (backend.CompilerBackendTarget.Linux))]
-    [windows-libs : process.ProcessStringList
-      (build-package-graph-link-libs
-        (owned_view.compiler-owned-shared-view nodes)
-        (BuildProfile.Release)
-        (backend.CompilerBackendTarget.Windows))]
-    [tlcis : process.ProcessStringList
-      (build-package-graph-tlci-paths
-        (owned_view.compiler-owned-shared-view nodes)
-        (BuildProfile.Release))]
-    [catalog-deps : load.CompilerPkgDepList
-      (build-package-graph-catalog-deps
-        (owned_view.compiler-owned-shared-view nodes)
-        "root"
-        (load.compiler-pkg-dep-list-empty))]
-    [direct-catalog-deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push
-        (load.compiler-pkg-dep-list-push
-          (load.compiler-pkg-dep-list-empty)
-          (load.CompilerPkgDep "first-a" "first"))
-        (load.CompilerPkgDep "first-b" "first/."))]
-    [merged-catalog-deps : load.CompilerPkgDepList
-      (build-package-graph-catalog-deps
-        (owned_view.compiler-owned-shared-view nodes)
-        "root"
-        direct-catalog-deps)]
-    [expected : process.ProcessStringList
-      (process.args-append
-        (process.args-append
-          (build-package-graph-test-link-arg
-            (owned_view.compiler-owned-shared-view third))
-          (build-package-graph-test-link-arg
-            (owned_view.compiler-owned-shared-view second)))
-        (build-package-graph-test-link-arg
-          (owned_view.compiler-owned-shared-view first)))]
-    [expected-tlcis : process.ProcessStringList
-      (process.args-append
-        (process.args-append
-          (build-package-graph-test-tlci-arg
-            (owned_view.compiler-owned-shared-view first))
-          (build-package-graph-test-tlci-arg
-            (owned_view.compiler-owned-shared-view second)))
-        (build-package-graph-test-tlci-arg
-          (owned_view.compiler-owned-shared-view third)))]
-    [expected-windows : process.ProcessStringList
-      (process.args-append
-        (process.args-append
-          (build-package-graph-test-link-arg-target
-            third
-            (backend.CompilerBackendTarget.Windows))
-          (build-package-graph-test-link-arg-target
-            second
-            (backend.CompilerBackendTarget.Windows)))
-        (build-package-graph-test-link-arg-target
-          (owned_view.compiler-owned-shared-view first)
-          (backend.CompilerBackendTarget.Windows)))]
-    (and
-      (=
-        (build-package-graph-node-vec-len
-          (owned_view.compiler-owned-shared-view nodes))
-        3)
-      (string.eq
-        (__tl-project-field
-          (build-package-graph-node-vec-at nodes 0)
-          manifest-path)
-        "root/first/typelisp.pkg")
-      (build_run_core.source-tool-string-list-eq? libs expected)
-      (build_run_core.source-tool-string-list-eq? windows-libs expected-windows)
-      (build_run_core.source-tool-string-list-eq? tlcis expected-tlcis)
-      (= (load.compiler-pkg-dep-list-count catalog-deps) 3)
-      (string.eq (load.compiler-pkg-dep-list-at catalog-deps 0).alias "first")
-      (load.compiler-load-absolute-path?
-        (load.compiler-pkg-dep-list-at catalog-deps 0).path)
-      (= (load.compiler-pkg-dep-list-count merged-catalog-deps) 4)
-      (string.eq
-        (load.compiler-pkg-dep-list-at merged-catalog-deps 0).alias
-        "first-a")
-      (string.eq
-        (load.compiler-pkg-dep-list-at merged-catalog-deps 1).alias
-        "first-b")
-      (string.eq
-        (load.compiler-pkg-dep-list-at merged-catalog-deps 2).alias
-        "second"))))
-
-(cfg
-  test
-  (define (build-package-graph-artifact-paths-smoke-ok?) : bool
-    (let
-      [bin-manifest : load.CompilerPkgManifest
-        (load.CompilerPkgManifest
-          "app"
-          "0.1.0"
-          (CompilerPkgKindBin)
-          "src/main.tl"
-          (load.compiler-pkg-deps-empty)
-          (load.compiler-pkg-link-empty))]
-      [bin-node : BuildPackageGraphNode
-        (BuildPackageGraphNode
-          "root/app/typelisp.pkg"
-          bin-manifest
-          (BuildPackageSourceProvenance.Local))]
-      [dep-node : BuildPackageGraphNode
-        (build-package-graph-test-node "root/dep/typelisp.pkg" "dep")]
-      [bin-artifacts : BuildPackageArtifactPaths
-        (build-package-graph-node-artifact-paths
-          bin-node
-          (BuildProfile.Dev)
-          (backend.CompilerBackendTarget.Windows))]
-      [dep-artifacts : BuildPackageArtifactPaths
-        (build-package-graph-node-artifact-paths
-          dep-node
-          (BuildProfile.Release)
-          (backend.CompilerBackendTarget.Linux))]
-      (and
-        (string.eq
-          (build-package-runtime-artifact-path
-            (owned_view.compiler-owned-shared-view bin-artifacts))
-          "root/app/target/dev/app.exe")
-        (string.eq
-          (build-package-host-tlci-artifact-path bin-artifacts)
-          "root/app/target/dev/app.tlci")
-        (string.eq
-          (build-package-runtime-artifact-path
-            (owned_view.compiler-owned-shared-view dep-artifacts))
-          "root/dep/target/release/libdep.a")
-        (string.eq
-          (build-package-host-tlci-artifact-path dep-artifacts)
-          "root/dep/target/release/dep.tlci")))))
-
-(define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
-  (let
-    [dep : load.CompilerPkgDep (load.CompilerPkgDep "dep" "../dep")]
-    [deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push (load.compiler-pkg-dep-list-empty) dep)]
-    [node : BuildPackageGraphNode
-      (BuildPackageGraphNode
-        "root/app/typelisp.pkg"
-        (build-package-graph-test-manifest-with-deps "app" deps)
-        (BuildPackageSourceProvenance.Local))]
-    [nodes : BuildPackageGraphNodeVec
-      (build-package-graph-node-vec-push
-        (build-package-graph-node-vec-new)
-        node)]
-    (match (build-package-schedule-pass
-      nodes
-      (build_string_i64_map.with-capacity 4)
-      (build_string_i64_map.with-capacity 4)
-      (backend.CompilerBackendTarget.Linux)
-      0
-      (BuildProfile.Release)
-      (backend.CompilerBackendMode.Scalar)
-      (BuildPackageLockPolicy.Default)
-      (cli_svec.new))
-      [(ResultBuildPackageSchedulePass.Err _) false]
-      [(ResultBuildPackageSchedulePass.Ok pass)
-        (and
-          (build-package-graph-worker-list-empty? (& pass.workers))
-          (not
-            (build-package-node-scheduled?
-              pass.scheduled
-              "root/app/typelisp.pkg")))])))
-
-(define (build-package-library-dependency-policy-smoke-ok?) : bool
-  (let
-    [dep : load.CompilerPkgDep (load.CompilerPkgDep "runtime" "../runtime")]
-    [deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push (load.compiler-pkg-dep-list-empty) dep)]
-    [resolve-manifest : load.CompilerPkgManifest
-      (build-package-graph-test-manifest-with-deps "layer" (clone deps))]
-    [graph-node : BuildPackageGraphNode
-      (BuildPackageGraphNode
-        "acquired/layer/typelisp.pkg"
-        (build-package-graph-test-manifest-with-deps "layer" deps)
-        (BuildPackageSourceProvenance.Local))]
-    [state : BuildPackageGraphState
-      (BuildPackageGraphState
-        (build_string_i64_map.with-capacity 4)
-        (build-package-graph-node-vec-new))]
-    (and
-      (match (build-package-resolve-manifest-deps
-        "unreadable/typelisp.pkg"
-        resolve-manifest
-        (BuildPackageLockPolicy.Locked))
-        [(ResultBuildManifest.Err message)
-          (string.eq
-            message
-            "build: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
-        [(ResultBuildManifest.Ok _) false])
-      (match (build-package-graph-add-node graph-node state)
-        [(ResultBuildPackageGraphState.Err message)
-          (string.eq
-            message
-            "build: acquired manifest at acquired/layer/typelisp.pkg: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
-        [(ResultBuildPackageGraphState.Ok _) false]))))
-
-(test
-  build-package-graph-vector-smoke
-  (unless
-    (and
-      (build-package-graph-vector-smoke-ok?)
-      (build-package-graph-scheduler-no-progress-smoke-ok?)
-      (build-package-library-dependency-policy-smoke-ok?))
-    (io.panic "build package graph vector smoke failed")))
-
-(cfg
-  test
-  (test
-    build-package-graph-artifact-paths-smoke
-    (unless
-      (build-package-graph-artifact-paths-smoke-ok?)
-      (io.panic "build package graph artifact paths smoke failed"))))
-
-(define (build-package-tlci-owner-stdlib-path? [owner : String] [path : String]) : bool
+(define (build-package-tlci-owner-stdlib-path?
+  [owner : String]
+  [path : (& path str)]) : bool
   (if (= (string.string-length owner) 0)
     false
     (let
@@ -4270,7 +2901,7 @@
         (>= (string.string-length path) prefix-len)
         (string.eq (string.substring path 0 prefix-len) prefix)))))
 
-(define (build-package-tlci-stdlib-path? [owner : String] [path : String]) : bool
+(define (build-package-tlci-stdlib-path? [owner : String] [path : (& path str)]) : bool
   (or
     (load.compiler-load-stdlib-import? path)
     (build-package-tlci-owner-stdlib-path? owner path)))
@@ -4301,7 +2932,7 @@
         (let
           [order : i64
             (tlci.tlci-spmd-specialization-compare
-              (owned_view.compiler-owned-shared-view item)
+              item
               (tlci.tlci-spmd-specializations-ref items scan))]
           (cond
             [(= order 0)
@@ -4349,7 +2980,7 @@
       (while (< scan count)
         (if (<
           (tlci.tlci-spmd-callable-compare
-            (owned_view.compiler-owned-shared-view item)
+            item
             (tlci.tlci-spmd-callables-ref items scan))
           0)
           (begin
@@ -4436,7 +3067,7 @@
         package-name
         canonical-name
         signature
-        (owned_view.compiler-owned-shared-view ret)
+        ret
         items
         (+ index 1)
         limit
@@ -4478,170 +3109,6 @@
         spmd-backend
         (tlci.tlci-spmd-specializations-empty)))))
 
-(cfg
-  test
-  (define (build-package-tlci-callable-smoke-ok?) : bool
-    (let
-      [first-classes : ast.AstSpmdParamClassList
-        (ast.ast-spmd-param-class-list-new)]
-      [second-classes : ast.AstSpmdParamClassList
-        (ast.ast-spmd-param-class-list-new)]
-      [specializations : ast.AstSpmdSpecializationList
-        (ast.ast-spmd-specialization-list-new)]
-      [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
-      [x-id : i64 (ci.intern-generated-canonical-name "x")]
-      [scale-id : i64 (ci.intern-generated-canonical-name "scale")]
-      (begin
-        (ast.ast-spmd-param-class-list-push
-          (&mut first-classes)
-          ast.AstSpmdParamClass.Varying)
-        (ast.ast-spmd-param-class-list-push
-          (&mut first-classes)
-          ast.AstSpmdParamClass.Uniform)
-        (ast.ast-spmd-param-class-list-push
-          (&mut second-classes)
-          ast.AstSpmdParamClass.Uniform)
-        (ast.ast-spmd-param-class-list-push
-          (&mut second-classes)
-          ast.AstSpmdParamClass.Varying)
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization
-            8
-            (box first-classes)
-            ast.AstSpmdResultClass.Varying
-            0))
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization
-            8
-            (box second-classes)
-            ast.AstSpmdResultClass.Varying
-            1))
-        (let
-          [callable : tlci.TlciSpmdCallable
-            (build-package-tlci-callable
-              "pkg"
-              "pkg"
-              helper-id
-              (ast.ast-param-cons
-                (ast.ast-param-id x-id (ast.AstType.I64) false)
-                (ast.ast-param-cons
-                  (ast.ast-param-id scale-id (ast.AstType.I64) false)
-                  (ast.ast-param-list-new)))
-              (ast.AstType.I64)
-              specializations
-              (backend.CompilerBackendMode.Scalar))]
-          [ordinary-metadata : tlci.TlciMetadata
-            (build-package-tlci-metadata
-              (build-package-graph-test-manifest "pkg")
-              (tlci.tlci-spmd-callables-empty))]
-          [emitted : tlci.TlciSpmdSpecializations callable.specializations]
-          (and
-            (string.eq ordinary-metadata.version "v1")
-            (=
-              (tlci.tlci-spmd-callables-len ordinary-metadata.spmd-callables)
-              0)
-            (string.eq callable.name "pkg/helper")
-            (string.eq callable.signature "(-> i64 i64 i64)")
-            (= (tlci.tlci-spmd-specializations-len emitted) 2)
-            (let
-              [item : tlci.TlciSpmdSpecialization
-                (tlci.tlci-spmd-specializations-ref emitted 0)]
-              [next : tlci.TlciSpmdSpecialization
-                (tlci.tlci-spmd-specializations-ref emitted 1)]
-              (and
-                (string.eq item.abi "spmd-call-v1")
-                (string.eq item.backend "scalar")
-                (= item.lanes 1)
-                (string.eq item.args "uv")
-                (string.eq item.result "v")
-                (= item.index-param 1)
-                (string.eq
-                  item.symbol
-                  (backend.compiler-backend-user-symbol-uncached
-                    (ci.intern-str
-                      (ci.intern-generated-canonical-name
-                        (lower.lower-spmd-package-symbol
-                          "pkg"
-                          "pkg/helper"
-                          "(-> i64 i64 i64)"
-                          (ast.AstType.I64)
-                          ir.CompilerIrSpmdBackend.Scalar
-                          1
-                          "uv"
-                          "v"
-                          1)))))
-                (string.eq next.args "vu")
-                (= next.index-param 0)))))))))
-
-(cfg
-  test
-  (define (build-package-tlci-scalar-collapse-smoke-ok?) : bool
-    (let
-      [first-classes : ast.AstSpmdParamClassList
-        (ast.ast-spmd-param-class-list-new)]
-      [second-classes : ast.AstSpmdParamClassList
-        (ast.ast-spmd-param-class-list-new)]
-      [specializations : ast.AstSpmdSpecializationList
-        (ast.ast-spmd-specialization-list-new)]
-      [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
-      [x-id : i64 (ci.intern-generated-canonical-name "x")]
-      (begin
-        (ast.ast-spmd-param-class-list-push
-          (&mut first-classes)
-          ast.AstSpmdParamClass.Uniform)
-        (ast.ast-spmd-param-class-list-push
-          (&mut second-classes)
-          ast.AstSpmdParamClass.Uniform)
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization
-            8
-            (box first-classes)
-            ast.AstSpmdResultClass.Uniform
-            -1))
-        (ast.ast-spmd-specialization-list-push
-          (&mut specializations)
-          (ast.AstSpmdSpecialization
-            16
-            (box second-classes)
-            ast.AstSpmdResultClass.Uniform
-            -1))
-        (let
-          [callable : tlci.TlciSpmdCallable
-            (build-package-tlci-callable
-              "pkg"
-              "pkg"
-              helper-id
-              (ast.ast-param-cons
-                (ast.ast-param-id x-id (ast.AstType.I64) false)
-                (ast.ast-param-list-new))
-              (ast.AstType.I64)
-              specializations
-              (backend.CompilerBackendMode.Scalar))]
-          [emitted : tlci.TlciSpmdSpecializations callable.specializations]
-          (and
-            (= (tlci.tlci-spmd-specializations-len emitted) 1)
-            (let
-              [item : tlci.TlciSpmdSpecialization
-                (tlci.tlci-spmd-specializations-ref emitted 0)]
-              (and
-                (= item.lanes 1)
-                (string.eq item.args "u")
-                (string.eq item.result "u")
-                (= item.index-param -1)))))))))
-
-(cfg
-  test
-  (test
-    build-package-tlci-callable-smoke
-    (unless
-      (and
-        (build-package-tlci-callable-smoke-ok?)
-        (build-package-tlci-scalar-collapse-smoke-ok?))
-      (io.panic "build package TLCI callable smoke failed"))))
-
 (define (build-package-tlci-collect-decl-callable
   [decl : ast.AstDecl]
   [owned-path : String]
@@ -4676,8 +3143,7 @@
                 collector.error))]))]
     [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-callable
-        (ast.ast-decl-box-shared-view
-          (owned_view.compiler-owned-shared-view inner-box))
+        (ast.ast-decl-box-shared-view inner-box)
         owned-path
         module
         package-name
@@ -4749,7 +3215,7 @@
   [owned-path : String]
   [module : String]
   [package-name : String]
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [out : (&mut out cli_svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
@@ -4778,7 +3244,7 @@
                 body)))))]
     [(ast.AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-macro!
-        (owned_view.compiler-owned-box-shared-view inner-box)
+        (deref inner-box)
         owned-path
         module
         package-name
@@ -4787,7 +3253,7 @@
         captures)]
     [(ast.AstDecl.ModuleBody nested-module body-box)
       (build-package-tlci-collect-macros-into!
-        (owned_view.compiler-owned-box-shared-view body-box)
+        (deref body-box)
         (ast.ast-decl-path-list-new)
         owned-path
         (ci.intern-str nested-module)
@@ -4797,7 +3263,7 @@
         captures)]
     [_ unit]))
 
-(define (build-package-tlci-source-map [sources : cli_svec.Vec]) : build_string_i64_map.Map
+(define (build-package-tlci-source-map [sources : (& sources cli_svec.Vec)]) : build_string_i64_map.Map
   (let
     [out : build_string_i64_map.Map
       (build_string_i64_map.with-capacity
@@ -4815,8 +3281,8 @@
       out)))
 
 (define (build-package-tlci-source-owned?
-  [owned-sources : build_string_i64_map.Map]
-  [path : String]) : bool
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
+  [path : (& path str)]) : bool
   (match (build_string_i64_map.get
     (& owned-sources)
     (load.compiler-load-normalize-path path))
@@ -4829,7 +3295,7 @@
   [fallback-path : String]
   [initial-module : String]
   [package-name : String]
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [out : (&mut out cli_svec.Vec)]
   [captures
     : (&mut captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : unit
@@ -4839,20 +3305,16 @@
     [module : String initial-module]
     [done : bool false]
     (while (not done)
-      (match (ast.ast-decl-list-step
-        (owned_view.compiler-owned-shared-view decl-cursor))
+      (match (ast.ast-decl-list-step decl-cursor)
         [(ast.AstDeclListStep.Nil) (set! done true)]
         [(ast.AstDeclListStep.Cons decl rest)
           (let
             [decl-path : String
-              (match (ast.ast-decl-path-list-step
-                (owned_view.compiler-owned-shared-view path-cursor))
+              (match (ast.ast-decl-path-list-step path-cursor)
                 [(ast.AstDeclPathListStep.Nil) fallback-path]
                 [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
-              (if (build-package-tlci-source-owned?
-                (owned_view.compiler-owned-shared-view owned-sources)
-                (owned_view.compiler-owned-shared-view decl-path))
+              (if (build-package-tlci-source-owned? owned-sources decl-path)
                 decl-path
                 "")]
             (begin
@@ -4864,18 +3326,17 @@
                     owned-path
                     (owned_view.compiler-owned-shared-view module)
                     (owned_view.compiler-owned-shared-view package-name)
-                    (owned_view.compiler-owned-shared-view owned-sources)
+                    owned-sources
                     out
                     captures)])
               (set! decl-cursor rest)
-              (match (ast.ast-decl-path-list-step
-                (owned_view.compiler-owned-shared-view path-cursor))
+              (match (ast.ast-decl-path-list-step path-cursor)
                 [(ast.AstDeclPathListStep.Nil) unit]
                 [(ast.AstDeclPathListStep.Cons _ path-rest)
                   (set! path-cursor path-rest)])))]))))
 
 (define (build-package-tlci-macro-collector
-  [source-set : package_source_core.PackageSourceSet]
+  [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
@@ -4897,108 +3358,6 @@
         (&mut captures))
       (build-package-tlci-finish-macro-collector (&mut out) captures))))
 
-(cfg
-  test
-  (define (build-package-tlci-macro-capture-smoke-ok?) : bool
-    (let
-      [source : String
-        "(module z.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(module dep.macros)\n(defmacro (foreign [value : Expr]) : Expr `(foreign ,value))\n(module a.macros)\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n"]
-      (match (compiler_parse_core.parse-ast-source source)
-        [(compiler_parse_core.ResultAstProgram.Err _) false]
-        [(compiler_parse_core.ResultAstProgram.Ok program)
-          (match program
-            [(ast.AstProgram.Program decls-box)
-              (let
-                [decls : ast.AstDeclList
-                  (owned_view.compiler-owned-box-shared-view decls-box)]
-                [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
-                [owned-sources : build_string_i64_map.Map
-                  (build_string_i64_map.with-capacity 4)]
-                [names : cli_svec.Vec (cli_svec.new)]
-                [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
-                  (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-                (begin
-                  (build_string_i64_map.insert-ref!
-                    (&mut owned-sources)
-                    (load.compiler-load-normalize-path "pkg/src/macros.tl")
-                    1)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "dep/src/lib.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "dep/src/lib.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (ast.ast-decl-path-list-push-with-owner-id
-                    (&mut paths)
-                    "pkg/src/macros.tl"
-                    cbi.compiler-builtin-id-fix-empty)
-                  (build-package-tlci-collect-macros-into!
-                    decls
-                    paths
-                    ""
-                    ""
-                    "pkg"
-                    owned-sources
-                    (&mut names)
-                    (&mut captures))
-                  (let
-                    [collector : BuildPackageTlciMacroCollector
-                      (build-package-tlci-finish-macro-collector
-                        (&mut names)
-                        captures)]
-                    [catalog : (__tl_dyn-array String) collector.names]
-                    [_source : String
-                      (compiler_tlci_native_producer.embedded-native-source
-                        (owned_view.compiler-owned-shared-view catalog)
-                        (& collector.captures))]
-                    (and
-                      (= (array-length catalog) 2)
-                      (string.eq (array-ref catalog 0) "a.macros/fold")
-                      (string.eq (array-ref catalog 1) "z.macros/wrap")
-                      (= collector.captures.len 2)
-                      (>=
-                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& collector.captures)
-                          "a.macros/fold")
-                        0)
-                      (>=
-                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& collector.captures)
-                          "z.macros/wrap")
-                        0)
-                      (<
-                        (compiler_tlci_native_producer.tlci-native-macro-capture-slot
-                          (& collector.captures)
-                          "dep.macros/foreign")
-                        0)
-                      (=
-                        (array-ref
-                          compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
-                          0)
-                        2)))))])]))))
-
-(cfg
-  test
-  (test
-    build-package-tlci-macro-capture
-    (unless
-      (build-package-tlci-macro-capture-smoke-ok?)
-      (io.panic "build package tlci macro capture smoke failed"))))
-
 (define (build-package-tlci-collect-callables-into!
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
@@ -5006,7 +3365,7 @@
   [initial-module : String]
   [package-name : String]
   [mode : backend.CompilerBackendMode]
-  [owned-sources : build_string_i64_map.Map]
+  [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (let
     [decl-cursor : ast.AstDeclList decls]
@@ -5016,20 +3375,16 @@
     [current : BuildPackageTlciCallableCollector collector]
     (begin
       (while (and (not done) (= (string.string-length current.error) 0))
-        (match (ast.ast-decl-list-step
-          (owned_view.compiler-owned-shared-view decl-cursor))
+        (match (ast.ast-decl-list-step decl-cursor)
           [(ast.AstDeclListStep.Nil) (set! done true)]
           [(ast.AstDeclListStep.Cons decl rest)
             (let
               [decl-path : String
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view path-cursor))
+                (match (ast.ast-decl-path-list-step path-cursor)
                   [(ast.AstDeclPathListStep.Nil) fallback-path]
                   [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
-                (if (build-package-tlci-source-owned?
-                  (owned_view.compiler-owned-shared-view owned-sources)
-                  (owned_view.compiler-owned-shared-view decl-path))
+                (if (build-package-tlci-source-owned? owned-sources decl-path)
                   decl-path
                   "")]
               (begin
@@ -5041,32 +3396,31 @@
                       (build-package-tlci-collect-callables-into!
                         (ast.ast-decl-list-box-shared-view body-box)
                         (ast.ast-decl-path-list-new)
-                        (owned_view.compiler-owned-shared-view owned-path)
+                        owned-path
                         (ci.intern-str nested-module)
                         (owned_view.compiler-owned-shared-view package-name)
                         mode
-                        (owned_view.compiler-owned-shared-view owned-sources)
-                        (owned_view.compiler-owned-shared-view current)))]
+                        owned-sources
+                        current))]
                   [_
                     (set!
                       current
                       (build-package-tlci-collect-decl-callable
-                        (owned_view.compiler-owned-shared-view decl)
-                        (owned_view.compiler-owned-shared-view owned-path)
+                        decl
+                        owned-path
                         (owned_view.compiler-owned-shared-view module)
                         (owned_view.compiler-owned-shared-view package-name)
                         mode
-                        (owned_view.compiler-owned-shared-view current)))])
+                        current))])
                 (set! decl-cursor rest)
-                (match (ast.ast-decl-path-list-step
-                  (owned_view.compiler-owned-shared-view path-cursor))
+                (match (ast.ast-decl-path-list-step path-cursor)
                   [(ast.AstDeclPathListStep.Nil) unit]
                   [(ast.AstDeclPathListStep.Cons _ path-rest)
                     (set! path-cursor path-rest)])))]))
       current)))
 
 (define (build-package-tlci-callable-collector
-  [source-set : package_source_core.PackageSourceSet]
+  [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
@@ -5120,7 +3474,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-tlci-source-inputs
     [manifest-path : String]
-    [producer-identity : String]) : ResultBuildPackageTlciSourceInputs
+    [producer-identity : (& producer-identity str)]) : ResultBuildPackageTlciSourceInputs
     (if (not (tlci.tlci-producer-identity-valid? producer-identity))
       (ResultBuildPackageTlciSourceInputs.Err
         "build: exact producer compiler identity is unavailable")
@@ -5153,7 +3507,7 @@
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [source-set : package_source_core.PackageSourceSet]) : ResultBuildPackageTlciExports
+  [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
   (let
     [home : arena.Arena (arena.current)]
     (with-scratch
@@ -5191,11 +3545,11 @@
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [source-set : package_source_core.PackageSourceSet]) : ResultBuildPackageTlciExports
+  [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
   (let
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
-        (owned_view.compiler-owned-shared-view source-set)
+        source-set
         (owned_view.compiler-owned-shared-view manifest)
         mode
         (owned_view.compiler-owned-shared-view decls)
@@ -5288,8 +3642,8 @@
         (string.eq (byte_buf.to-string contents) expected)]
       [(io.ErrIoBytes _) false])))
 
-(define (build-package-file-digest [path : String] [context : String]) : ResultBuildPackageFileDigest
-  (match (io.try-read-file (& path))
+(define (build-package-file-digest [path : (& path str)] [context : String]) : ResultBuildPackageFileDigest
+  (match (io.try-read-file path)
     [(io.ErrIoBytes error)
       (ResultBuildPackageFileDigest.Err
         (str_cat.str-cat context ": " (io.error-message error)))]
@@ -5351,8 +3705,10 @@
       ":"
       (string.int->string hash-b))))
 
-(define (build-package-tool-file-digest [path : String] [context : String]) : ResultBuildPackageFileDigest
-  (match (fs.try-file-metadata (& path))
+(define (build-package-tool-file-digest
+  [path : (& path str)]
+  [context : String]) : ResultBuildPackageFileDigest
+  (match (fs.try-file-metadata path)
     [(fs.ErrFsMetadata error)
       (ResultBuildPackageFileDigest.Err
         (str_cat.str-cat context ": " (io.error-message error)))]
@@ -5360,7 +3716,7 @@
       (let
         [size : i64 (fs.metadata-size metadata)]
         [sample-size : i64 65536]
-        (match (io.file-open (& path) (io.OpenMode.OpenRead))
+        (match (io.file-open path (io.OpenMode.OpenRead))
           [(io.ErrIoFile error)
             (ResultBuildPackageFileDigest.Err
               (str_cat.str-cat context ": " (io.error-message error)))]
@@ -5476,7 +3832,7 @@
           " executable "
           executable))
       (match (build-package-tool-file-digest
-        (owned_view.compiler-owned-shared-view executable)
+        executable
         (str_cat.str-cat
           "build: cannot fingerprint "
           (owned_view.compiler-owned-shared-view role)
@@ -5520,7 +3876,7 @@
 (define (build-package-link-path-transcript [path : String]) : ResultBuildString
   (if (build-package-file-regular? (owned_view.compiler-owned-shared-view path))
     (match (build-package-file-digest
-      (owned_view.compiler-owned-shared-view path)
+      path
       "build: cannot fingerprint native link input")
       [(ResultBuildPackageFileDigest.Err message)
         (ResultBuildString.Err message)]
@@ -5612,8 +3968,7 @@
   [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
   (let
     [libraries : process.ProcessStringList
-      (build_run_core.source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view inputs))]
+      (build_run_core.source-tool-link-inputs-libs inputs)]
     [dirs : process.ProcessStringList
       (build_run_core.source-tool-link-inputs-search-dirs inputs)]
     [library-index : i64 0]
@@ -5819,9 +4174,9 @@
 
 (define (build-package-runtime-output-fingerprint
   [input-transcript : String]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]) : ResultBuildString
+  [asm-path : (& asm-path str)]
+  [obj-path : (& obj-path str)]
+  [artifact-path : (& artifact-path str)]) : ResultBuildString
   (match (build-package-file-digest
     asm-path
     "build: cannot fingerprint package assembly")
@@ -5874,8 +4229,8 @@
     false
     (match (build-package-runtime-output-fingerprint
       input-transcript
-      (owned_view.compiler-owned-shared-view asm-path)
-      (owned_view.compiler-owned-shared-view obj-path)
+      asm-path
+      obj-path
       artifact-path)
       [(ResultBuildString.Err _) false]
       [(ResultBuildString.Ok expected)
@@ -5894,8 +4249,8 @@
       object-text)
     (build-package-runtime-fingerprint-fresh?
       input-transcript
-      (owned_view.compiler-owned-shared-view asm-path)
-      (owned_view.compiler-owned-shared-view obj-path)
+      asm-path
+      obj-path
       artifact-path
       fingerprint-path)))
 
@@ -5912,13 +4267,13 @@
       asm)
     (build-package-runtime-fingerprint-fresh?
       input-transcript
-      (owned_view.compiler-owned-shared-view asm-path)
-      (owned_view.compiler-owned-shared-view obj-path)
+      asm-path
+      obj-path
       artifact-path
       fingerprint-path)))
 
-(define (build-package-path-present? [path : String]) : bool
-  (match (fs.try-file-metadata (& path))
+(define (build-package-path-present? [path : (& path str)]) : bool
+  (match (fs.try-file-metadata path)
     [(fs.OkFsMetadata _) true]
     [(fs.ErrFsMetadata _) false]))
 
@@ -5933,8 +4288,7 @@
         (load.compiler-load-join-root-path
           (owned_view.compiler-owned-shared-view output-dir)
           (str_cat.str-cat ".t" (string.int->string attempt)))]
-      (if (build-package-path-present?
-        (owned_view.compiler-owned-shared-view candidate))
+      (if (build-package-path-present? candidate)
         (build-package-stage-dir-attempt output-dir _name (+ attempt 1))
         (if (build-mkdir-ok-owned?
           (owned_view.compiler-owned-shared-view candidate))
@@ -5947,9 +4301,9 @@
 (define (build-package-stage-file
   [dir : String]
   [stem : String]
-  [final-path : String]) : String
+  [final-path : (& final-path str)]) : String
   (let
-    [extension : String (fs.extension (& final-path))]
+    [extension : String (fs.extension final-path)]
     (load.compiler-load-join-root-path
       dir
       (if (= (string.string-length extension) 0)
@@ -5959,11 +4313,11 @@
 (define (build-package-stage-paths
   [output-dir : String]
   [name : String]
-  [asm-path : String]
-  [obj-path : String]
-  [artifact-path : String]
-  [fingerprint-path : String]
-  [tlci-path : String]) : ResultBuildPackageStagePaths
+  [asm-path : (& asm-path str)]
+  [obj-path : (& obj-path str)]
+  [artifact-path : (& artifact-path str)]
+  [fingerprint-path : (& fingerprint-path str)]
+  [tlci-path : (& tlci-path str)]) : ResultBuildPackageStagePaths
   (match (build-package-stage-dir-attempt output-dir name 1)
     [(ResultBuildString.Err message) (ResultBuildPackageStagePaths.Err message)]
     [(ResultBuildString.Ok dir)
@@ -6009,8 +4363,8 @@
     unit))
 
 (define (build-package-rollback-preserves-backup?
-  [rollback : BuildPackageRollbackDisposition]
-  [backup-path : String]) : bool
+  [rollback : (& rollback BuildPackageRollbackDisposition)]
+  [backup-path : (& backup-path str)]) : bool
   (let
     [index : i64 0]
     [preserve : bool false]
@@ -6028,14 +4382,12 @@
 
 (define (build-package-remove-staged-file-after-rollback
   [path : String]
-  [rollback : BuildPackageRollbackDisposition]) : unit
+  [rollback : (& rollback BuildPackageRollbackDisposition)]) : unit
   (begin
     (fs.try-remove-file-if-exists (& path))
     (let
       [backup : String (str_cat.str-cat path ".previous")]
-      (if (build-package-rollback-preserves-backup?
-        (owned_view.compiler-owned-shared-view rollback)
-        (owned_view.compiler-owned-shared-view backup))
+      (if (build-package-rollback-preserves-backup? rollback backup)
         unit
         (let
           [_ : io.ResultIoUnit (fs.try-remove-file-if-exists (& backup))]
@@ -6043,34 +4395,29 @@
     unit))
 
 (define (build-package-clean-stage-after-rollback
-  [paths : BuildPackageStagePaths]
+  [paths : (& paths BuildPackageStagePaths)]
   [rollback : BuildPackageRollbackDisposition]) : unit
   ;; Always discard new staged data. Delete only superseded `.previous` files;
   ;; a retained entry also keeps the containing stage directory recoverable.
-  (begin
-    (build-package-remove-staged-file-after-rollback
-      paths.asm
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.obj
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.artifact
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.fingerprint
-      (owned_view.compiler-owned-shared-view rollback))
-    (build-package-remove-staged-file-after-rollback
-      paths.tlci
-      (owned_view.compiler-owned-shared-view rollback))
-    (let
-      [dir : String paths.dir]
-      (if (build-package-rollback-recovery-required? rollback)
-        unit
-        (let
-          [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
-          unit)))
-    unit))
+  (let
+    [paths : BuildPackageStagePaths
+      (owned_view.compiler-owned-reference-shared-view paths)]
+    (begin
+      (build-package-remove-staged-file-after-rollback paths.asm rollback)
+      (build-package-remove-staged-file-after-rollback paths.obj rollback)
+      (build-package-remove-staged-file-after-rollback paths.artifact rollback)
+      (build-package-remove-staged-file-after-rollback
+        paths.fingerprint
+        rollback)
+      (build-package-remove-staged-file-after-rollback paths.tlci rollback)
+      (let
+        [dir : String paths.dir]
+        (if (build-package-rollback-recovery-required? rollback)
+          unit
+          (let
+            [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
+            unit)))
+      unit)))
 
 (define (build-package-commit-plan-new) : BuildPackageCommitPlan
   (BuildPackageCommitPlan
@@ -6173,7 +4520,8 @@
         "; restore the reported .previous files before removing it")
       with-secondary)))
 
-(define (build-package-commit-plan-preflight [plan : BuildPackageCommitPlan]) : ResultBuildString
+(define (build-package-commit-plan-preflight
+  [plan : (& plan BuildPackageCommitPlan)]) : ResultBuildString
   (let
     [index : i64 0]
     [count : i64 plan.len]
@@ -6297,8 +4645,7 @@
       rollback)))
 
 (define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildPackageCommit
-  (match (build-package-commit-plan-preflight
-    (owned_view.compiler-owned-shared-view plan))
+  (match (build-package-commit-plan-preflight plan)
     [(ResultBuildString.Err message)
       (ResultBuildPackageCommit.Err
         message
@@ -6391,489 +4738,19 @@
               error
               (build-package-commit-plan-rollback plan installed backed-up)))))]))
 
-(cfg
-  test
-  (define (build-package-rollback-test-expect-ok
-    [result : io.ResultIoUnit]
-    [context : String]) : unit
-    (match result
-      [(io.OkIoUnit) unit]
-      [(io.ErrIoUnit error)
-        (io.panic (str_cat.str-cat context ": " (io.error-message error)))])))
-
-(cfg
-  test
-  (define (build-package-rollback-test-temp [label : String]) : String
-    (match (fs.try-create-temp-dir (& label))
-      [(io.OkIoString path) path]
-      [(io.ErrIoString error)
-        (io.panic
-          (str_cat.str-cat
-            "build package rollback test temp: "
-            (io.error-message error)))])))
-
-(cfg
-  test
-  (define (build-package-rollback-test-path [root : String] [name : String]) : String
-    (fs.path-join (& root) (& name))))
-
-(cfg
-  test
-  (define (build-package-rollback-test-stage [root : String]) : BuildPackageStagePaths
-    (let
-      [name : String "stage"]
-      [dir : String (fs.path-join (& root) (& name))]
-      (begin
-        (build-package-rollback-test-expect-ok
-          (fs.try-mkdir (& dir))
-          "build package rollback test mkdir stage")
-        (BuildPackageStagePaths
-          (owned_view.compiler-owned-shared-view dir)
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "a")
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "o")
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "r")
-          (build-package-rollback-test-path
-            (owned_view.compiler-owned-shared-view dir)
-            "f")
-          (build-package-rollback-test-path dir "t"))))))
-
-(cfg
-  test
-  (define (build-package-rollback-test-write [path : String] [text : String]) : unit
-    (build-package-rollback-test-expect-ok
-      (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
-      "build package rollback test write")))
-
-(cfg
-  test
-  (define (build-package-rollback-test-path-exists? [path : String]) : bool
-    (match (io.try-file-exists? (& path))
-      [(io.OkIoBool exists) exists]
-      [(io.ErrIoBool _) false])))
-
-(cfg
-  test
-  (define (build-package-rollback-test-restored-at?
-    [rollback : BuildPackageRollbackDisposition]
-    [index : i64]
-    [backup-path : String]
-    [final-path : String]) : bool
-    (if (>= index rollback.len)
-      false
-      (match (owned_view.compiler-owned-array-element-shared-view
-        rollback.backups
-        index)
-        [(BuildPackageBackupRollback.Restored backup final)
-          (and (string.eq backup backup-path) (string.eq final final-path))]
-        [_ false]))))
-
-(cfg
-  test
-  (define (build-package-rollback-test-retained-at?
-    [rollback : BuildPackageRollbackDisposition]
-    [index : i64]
-    [backup-path : String]
-    [final-path : String]) : bool
-    (if (>= index rollback.len)
-      false
-      (match (owned_view.compiler-owned-array-element-shared-view
-        rollback.backups
-        index)
-        [(BuildPackageBackupRollback.Retained backup final error)
-          (and
-            (string.eq backup backup-path)
-            (string.eq final final-path)
-            (> (string.string-length error) 0))]
-        [_ false]))))
-
-(cfg
-  test
-  (define (build-package-rollback-test-clean
-    [root : String]
-    [stage : BuildPackageStagePaths]
-    [final-a : String]
-    [final-b : String]) : unit
-    (begin
-      (build-package-clean-stage (owned_view.compiler-owned-shared-view stage))
-      (fs.try-remove-file-if-exists (& final-a))
-      (fs.try-remove-file-if-exists (& final-b))
-      (fs.try-remove-dir-if-exists (& final-a))
-      (fs.try-remove-dir-if-exists (& final-b))
-      (let
-        [stage-dir : String stage.dir]
-        (fs.try-remove-dir-if-exists (& stage-dir)))
-      (fs.try-remove-dir-if-exists (& root))
-      unit)))
-
-(cfg
-  test
-  (define (build-package-rollback-partial-restore-test-ok?) : bool
-    (let
-      [root : String
-        (build-package-rollback-test-temp "typelisp build rollback partial")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final-a : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final-a")]
-      [final-b : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final-b")]
-      [backup-a : String
-        (str_cat.str-cat
-          (owned_view.compiler-owned-shared-view stage.asm)
-          ".previous")]
-      [backup-b : String
-        (str_cat.str-cat
-          (owned_view.compiler-owned-shared-view stage.obj)
-          ".previous")]
-      [plan : BuildPackageCommitPlan
-        (build-package-commit-plan-add
-          (build-package-commit-plan-add
-            (build-package-commit-plan-new)
-            (owned_view.compiler-owned-shared-view final-a)
-            (owned_view.compiler-owned-shared-view stage.asm))
-          (owned_view.compiler-owned-shared-view final-b)
-          (owned_view.compiler-owned-shared-view stage.obj))]
-      (begin
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view backup-a)
-          "old-a")
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view backup-b)
-          "old-b")
-        (build-package-rollback-test-expect-ok
-          (fs.try-mkdir (& final-b))
-          "build package rollback test mkdir restore collision")
-        (build-package-commit-plan-set-had-old!
-          (owned_view.compiler-owned-shared-view plan)
-          0)
-        (build-package-commit-plan-set-had-old!
-          (owned_view.compiler-owned-shared-view plan)
-          1)
-        (let
-          [rollback : BuildPackageRollbackDisposition
-            (build-package-commit-plan-rollback plan 0 2)]
-          [diagnostic : String
-            (build-package-commit-error-message
-              "primary commit error"
-              (owned_view.compiler-owned-shared-view rollback)
-              (owned_view.compiler-owned-shared-view stage.dir))]
-          (begin
-            (build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
-              (owned_view.compiler-owned-shared-view rollback))
-            (build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [primary-needle : String "primary commit error"]
-              [restore-needle : String
-                "rollback failed to restore previous package artifact"]
-              [stage-needle : String "retained package artifact recovery stage"]
-              [ok : bool
-                (and
-                  (= rollback.len 2)
-                  (build-package-rollback-test-retained-at?
-                    (owned_view.compiler-owned-shared-view rollback)
-                    0
-                    (owned_view.compiler-owned-shared-view backup-b)
-                    (owned_view.compiler-owned-shared-view final-b))
-                  (build-package-rollback-test-restored-at?
-                    (owned_view.compiler-owned-shared-view rollback)
-                    1
-                    (owned_view.compiler-owned-shared-view backup-a)
-                    (owned_view.compiler-owned-shared-view final-a))
-                  (build-package-rollback-recovery-required?
-                    (owned_view.compiler-owned-shared-view rollback))
-                  (build-package-file-text-eq?
-                    (owned_view.compiler-owned-shared-view final-a)
-                    "old-a")
-                  (build-package-file-text-eq?
-                    (owned_view.compiler-owned-shared-view backup-b)
-                    "old-b")
-                  (build-package-rollback-test-path-exists?
-                    (owned_view.compiler-owned-shared-view stage.dir))
-                  (string.eq
-                    (string.substring
-                      (& diagnostic)
-                      0
-                      (string.string-length primary-needle))
-                    primary-needle)
-                  (string.contains (& diagnostic) (& restore-needle))
-                  (string.contains (& diagnostic) (& stage-needle)))]
-              (begin
-                (build-package-rollback-test-clean root stage final-a final-b)
-                ok))))))))
-
-(cfg
-  test
-  (define (build-package-rollback-complete-test-ok?) : bool
-    (let
-      [root : String
-        (build-package-rollback-test-temp "typelisp build rollback complete")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
-      [backup : String
-        (str_cat.str-cat
-          (owned_view.compiler-owned-shared-view stage.asm)
-          ".previous")]
-      [plan : BuildPackageCommitPlan
-        (build-package-commit-plan-add
-          (build-package-commit-plan-new)
-          (owned_view.compiler-owned-shared-view final)
-          (owned_view.compiler-owned-shared-view stage.asm))]
-      (begin
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view final)
-          "new")
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view backup)
-          "old")
-        (build-package-commit-plan-set-had-old!
-          (owned_view.compiler-owned-shared-view plan)
-          0)
-        (let
-          [rollback : BuildPackageRollbackDisposition
-            (build-package-commit-plan-rollback plan 1 1)]
-          (begin
-            (build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [ok : bool
-                (and
-                  (= rollback.len 1)
-                  (= (string.string-length rollback.errors) 0)
-                  (not
-                    (build-package-rollback-recovery-required?
-                      (owned_view.compiler-owned-shared-view rollback)))
-                  (build-package-rollback-test-restored-at?
-                    (owned_view.compiler-owned-shared-view rollback)
-                    0
-                    (owned_view.compiler-owned-shared-view backup)
-                    (owned_view.compiler-owned-shared-view final))
-                  (build-package-file-text-eq?
-                    (owned_view.compiler-owned-shared-view final)
-                    "old")
-                  (not
-                    (build-package-rollback-test-path-exists?
-                      (owned_view.compiler-owned-shared-view backup)))
-                  (not
-                    (build-package-rollback-test-path-exists?
-                      (owned_view.compiler-owned-shared-view stage.dir))))]
-              (begin
-                (build-package-rollback-test-clean root stage final unused)
-                ok))))))))
-
-(cfg
-  test
-  (define (build-package-rollback-remove-failure-test-ok?) : bool
-    (let
-      [root : String
-        (build-package-rollback-test-temp "typelisp build rollback remove")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      ;; Empty paths are explicitly invalid on both hosts, so this injects a
-      ;; deterministic removal failure without relying on directory unlink
-      ;; differences between Linux and Windows.
-      [final : String ""]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
-      [plan : BuildPackageCommitPlan
-        (build-package-commit-plan-add
-          (build-package-commit-plan-new)
-          (owned_view.compiler-owned-shared-view final)
-          (owned_view.compiler-owned-shared-view stage.asm))]
-      (let
-        [rollback : BuildPackageRollbackDisposition
-          (build-package-commit-plan-rollback plan 1 0)]
-        (begin
-          (build-package-clean-stage-after-rollback
-            (owned_view.compiler-owned-shared-view stage)
-            (owned_view.compiler-owned-shared-view rollback))
-          (let
-            [needle : String
-              "rollback failed to remove installed package artifact"]
-            [invalid-needle : String "io: invalid path"]
-            [ok : bool
-              (and
-                (= rollback.len 0)
-                (> (string.string-length rollback.errors) 0)
-                (string.contains (& rollback.errors) (& needle))
-                (string.contains (& rollback.errors) (& invalid-needle))
-                (not
-                  (build-package-rollback-recovery-required?
-                    (owned_view.compiler-owned-shared-view rollback)))
-                (not
-                  (build-package-rollback-test-path-exists?
-                    (owned_view.compiler-owned-shared-view stage.dir))))]
-            (begin
-              (build-package-rollback-test-clean root stage final unused)
-              ok)))))))
-
-(cfg
-  test
-  (define (build-package-commit-preflight-test-ok?) : bool
-    (let
-      [root : String
-        (build-package-rollback-test-temp "typelisp build commit preflight")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
-      [plan : BuildPackageCommitPlan
-        (build-package-commit-plan-add
-          (build-package-commit-plan-new)
-          (owned_view.compiler-owned-shared-view final)
-          (owned_view.compiler-owned-shared-view stage.asm))]
-      (match (build-package-commit-plan-run plan)
-        [(ResultBuildPackageCommit.Ok)
-          (begin
-            (build-package-rollback-test-clean root stage final unused)
-            false)]
-        [(ResultBuildPackageCommit.Err message rollback)
-          (begin
-            (build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [needle : String
-                "staged package artifact is missing or non-regular"]
-              [ok : bool
-                (and
-                  (= rollback.len 0)
-                  (= (string.string-length rollback.errors) 0)
-                  (string.contains (& message) (& needle))
-                  (not
-                    (build-package-rollback-test-path-exists?
-                      (owned_view.compiler-owned-shared-view stage.dir))))]
-              (begin
-                (build-package-rollback-test-clean root stage final unused)
-                ok)))]))))
-
-(cfg
-  test
-  (define (build-package-commit-success-cleanup-test-ok?) : bool
-    (let
-      [root : String
-        (build-package-rollback-test-temp "typelisp build commit success")]
-      [stage : BuildPackageStagePaths
-        (build-package-rollback-test-stage
-          (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
-      [unused : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "unused")]
-      [backup : String
-        (str_cat.str-cat
-          (owned_view.compiler-owned-shared-view stage.asm)
-          ".previous")]
-      [plan : BuildPackageCommitPlan
-        (build-package-commit-plan-add
-          (build-package-commit-plan-new)
-          (owned_view.compiler-owned-shared-view final)
-          (owned_view.compiler-owned-shared-view stage.asm))]
-      (begin
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view final)
-          "old")
-        (build-package-rollback-test-write
-          (owned_view.compiler-owned-shared-view stage.asm)
-          "new")
-        (match (build-package-commit-plan-run plan)
-          [(ResultBuildPackageCommit.Err _ rollback)
-            (begin
-              (build-package-clean-stage-after-rollback
-                (owned_view.compiler-owned-shared-view stage)
-                rollback)
-              (build-package-rollback-test-clean root stage final unused)
-              false)]
-          [(ResultBuildPackageCommit.Ok)
-            (begin
-              (build-package-clean-stage
-                (owned_view.compiler-owned-shared-view stage))
-              (let
-                [ok : bool
-                  (and
-                    (build-package-file-text-eq?
-                      (owned_view.compiler-owned-shared-view final)
-                      "new")
-                    (not
-                      (build-package-rollback-test-path-exists?
-                        (owned_view.compiler-owned-shared-view backup)))
-                    (not
-                      (build-package-rollback-test-path-exists?
-                        (owned_view.compiler-owned-shared-view stage.dir))))]
-                (begin
-                  (build-package-rollback-test-clean root stage final unused)
-                  ok)))])))))
-
-(cfg
-  test
-  (test
-    build-package-commit-rollback-recovery
-    (unless
-      (build-package-rollback-partial-restore-test-ok?)
-      (io.panic "build package rollback partial restore test failed"))
-    (unless
-      (build-package-rollback-complete-test-ok?)
-      (io.panic "build package rollback complete test failed"))
-    (unless
-      (build-package-rollback-remove-failure-test-ok?)
-      (io.panic "build package rollback removal failure test failed"))
-    (unless
-      (build-package-commit-preflight-test-ok?)
-      (io.panic "build package commit preflight test failed"))
-    (unless
-      (build-package-commit-success-cleanup-test-ok?)
-      (io.panic "build package commit success cleanup test failed"))))
-
-(define (build-package-write-tlci [path : String] [text : String]) : build_run_core.SourceToolCommandStatus
+(define (build-package-write-tlci [path : (& path str)] [text : String]) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
     path
     text
     "build: failed to write package tlci"))
 
 (define (build-package-write-assembly
-  [path : String]
+  [path : (& path str)]
   [asm : String]
   [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
   (match (build_run_core.source-tool-write-file
-    (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view asm)
+    path
+    asm
     "build: failed to write package assembly")
     [(build_run_core.SourceToolCommandStatus.Err message)
       (build_run_core.SourceToolCommandStatus.Err message)]
@@ -6885,7 +4762,7 @@
         (if (and
           (backend.compiler-backend-target-linux? target)
           (not (string.contains (& haystack) (& needle))))
-          (match (io.try-append-file (& path) (byte_buf.str-as-bytes (& note)))
+          (match (io.try-append-file path (byte_buf.str-as-bytes (& note)))
             [(io.OkIoUnit) build_run_core.SourceToolCommandStatus.Ok]
             [(io.ErrIoUnit error)
               (build_run_core.SourceToolCommandStatus.Err
@@ -6941,16 +4818,16 @@
       (if runtime-dirty
         (match (build-package-runtime-output-fingerprint
           input-transcript
-          (owned_view.compiler-owned-shared-view stage.asm)
-          (owned_view.compiler-owned-shared-view stage.obj)
-          (owned_view.compiler-owned-shared-view stage.artifact))
+          stage.asm
+          stage.obj
+          stage.artifact)
           [(ResultBuildString.Err message)
             (begin
               (set! ok false)
               (set! error message))]
           [(ResultBuildString.Ok fingerprint)
             (match (build_run_core.source-tool-write-file
-              (owned_view.compiler-owned-shared-view stage.fingerprint)
+              stage.fingerprint
               fingerprint
               "build: failed to stage package runtime fingerprint")
               [(build_run_core.SourceToolCommandStatus.Err message)
@@ -6981,13 +4858,11 @@
                     plan
                     (build-package-commit-plan-add
                       plan
-                      (owned_view.compiler-owned-shared-view fingerprint-path)
+                      fingerprint-path
                       (owned_view.compiler-owned-shared-view stage.fingerprint))))])])
         unit)
       (if (and ok tlci-dirty)
-        (match (build-package-write-tlci
-          (owned_view.compiler-owned-shared-view stage.tlci)
-          tlci-text)
+        (match (build-package-write-tlci stage.tlci tlci-text)
           [(build_run_core.SourceToolCommandStatus.Err message)
             (begin
               (set! ok false)
@@ -7005,7 +4880,7 @@
           [(ResultBuildPackageCommit.Err message rollback)
             (begin
               (build-package-clean-stage-after-rollback
-                (owned_view.compiler-owned-shared-view stage)
+                stage
                 (owned_view.compiler-owned-shared-view rollback))
               (io.print-error
                 (build-package-commit-error-message message rollback stage.dir))
@@ -7014,8 +4889,8 @@
             (begin
               (build-package-clean-stage stage)
               (build-package-announce-freshness
-                (owned_view.compiler-owned-shared-view artifact-path)
-                (owned_view.compiler-owned-shared-view tlci-path)
+                artifact-path
+                tlci-path
                 runtime-dirty
                 tlci-dirty
                 announce))])
@@ -7089,13 +4964,13 @@
                 false
                 announce))
             (match (build-package-stage-paths
-              (owned_view.compiler-owned-shared-view output-dir)
-              (owned_view.compiler-owned-shared-view name)
-              (owned_view.compiler-owned-shared-view asm-path)
-              (owned_view.compiler-owned-shared-view obj-path)
-              (owned_view.compiler-owned-shared-view artifact-path)
-              (owned_view.compiler-owned-shared-view fingerprint-path)
-              (owned_view.compiler-owned-shared-view tlci-path))
+              output-dir
+              name
+              asm-path
+              obj-path
+              artifact-path
+              fingerprint-path
+              tlci-path)
               [(ResultBuildPackageStagePaths.Err message)
                 (begin
                   (io.print-error message)
@@ -7109,21 +4984,19 @@
                         target
                         (owned_view.compiler-owned-shared-view stage.obj)
                         (owned_view.compiler-owned-shared-view stage.artifact)
-                        (owned_view.compiler-owned-shared-view link-inputs)
-                        (owned_view.compiler-owned-shared-view object-text))
+                        link-inputs
+                        object-text)
                       build_run_core.SourceToolDirectObjectStatus.Ok)]
                   (match runtime-status
                     [(build_run_core.SourceToolDirectObjectStatus.Err message)
                       (begin
-                        (build-package-clean-stage
-                          (owned_view.compiler-owned-shared-view stage))
+                        (build-package-clean-stage stage)
                         (io.print-error message)
                         1)]
                     [(build_run_core.SourceToolDirectObjectStatus.Unavailable
                         message)
                       (begin
-                        (build-package-clean-stage
-                          (owned_view.compiler-owned-shared-view stage))
+                        (build-package-clean-stage stage)
                         (io.print-error message)
                         1)]
                     [(build_run_core.SourceToolDirectObjectStatus.Ok)
@@ -7131,15 +5004,14 @@
                         [asm-status : build_run_core.SourceToolCommandStatus
                           (if runtime-dirty
                             (build-package-write-assembly
-                              (owned_view.compiler-owned-shared-view stage.asm)
+                              stage.asm
                               side-assembly
                               target)
                             build_run_core.SourceToolCommandStatus.Ok)]
                         (match asm-status
                           [(build_run_core.SourceToolCommandStatus.Err message)
                             (begin
-                              (build-package-clean-stage
-                                (owned_view.compiler-owned-shared-view stage))
+                              (build-package-clean-stage stage)
                               (io.print-error message)
                               1)]
                           [(build_run_core.SourceToolCommandStatus.Ok)
@@ -7230,11 +5102,11 @@
             (match (build-package-stage-paths
               output-dir
               name
-              (owned_view.compiler-owned-shared-view asm-path)
-              (owned_view.compiler-owned-shared-view obj-path)
-              (owned_view.compiler-owned-shared-view artifact-path)
-              (owned_view.compiler-owned-shared-view fingerprint-path)
-              (owned_view.compiler-owned-shared-view tlci-path))
+              asm-path
+              obj-path
+              artifact-path
+              fingerprint-path
+              tlci-path)
               [(ResultBuildPackageStagePaths.Err message)
                 (begin
                   (io.print-error message)
@@ -7244,7 +5116,7 @@
                   [runtime-status : build_run_core.SourceToolCommandStatus
                     (if runtime-dirty
                       (match (build-package-write-assembly
-                        (owned_view.compiler-owned-shared-view stage.asm)
+                        stage.asm
                         augmented-asm
                         target)
                         [(build_run_core.SourceToolCommandStatus.Err message)
@@ -7257,22 +5129,21 @@
                             (owned_view.compiler-owned-shared-view stage.obj)
                             (owned_view.compiler-owned-shared-view
                               stage.artifact)
-                            (owned_view.compiler-owned-shared-view link-inputs)
+                            link-inputs
                             (build_run_core.SourceToolDirectObjectStatus.Unavailable
                               "freshness fallback"))])
                       build_run_core.SourceToolCommandStatus.Ok)]
                   (match runtime-status
                     [(build_run_core.SourceToolCommandStatus.Err message)
                       (begin
-                        (build-package-clean-stage
-                          (owned_view.compiler-owned-shared-view stage))
+                        (build-package-clean-stage stage)
                         (io.print-error message)
                         1)]
                     [(build_run_core.SourceToolCommandStatus.Ok)
                       (begin
                         (compiler_driver_core.compiler-driver-reset-file-state!)
                         (build-package-commit-generated-artifacts
-                          (owned_view.compiler-owned-shared-view stage)
+                          stage
                           asm-path
                           obj-path
                           artifact-path
@@ -7318,8 +5189,8 @@
         link-inputs
         tlci-path
         tlci-text
-        (owned_view.compiler-owned-shared-view object-text)
-        (owned_view.compiler-owned-shared-view side-assembly)
+        object-text
+        side-assembly
         announce)]
     [(ResultBuildPackagePreparedRuntime.Assembly asm _)
       (build-package-finish-assembly-fresh-artifacts
@@ -7337,11 +5208,11 @@
         link-inputs
         tlci-path
         tlci-text
-        (owned_view.compiler-owned-shared-view asm)
+        asm
         announce)]
     [(ResultBuildPackagePreparedRuntime.Err message)
       (begin
-        (io.print-error (owned_view.compiler-owned-shared-view message))
+        (io.print-error message)
         1)]))
 
 (define (build-package-require-direct-object
@@ -7356,65 +5227,6 @@
           (backend.compiler-direct-object-fallback-transcript reason)))]
     [(ResultBuildPackagePreparedRuntime.Err message)
       (ResultBuildPackagePreparedRuntime.Err message)]))
-
-(cfg
-  test
-  (test
-    build-package-require-direct-object-typed-fallback
-    (unless
-      (and
-        (string.eq
-          (backend.compiler-direct-object-fallback-transcript
-            (backend.CompilerDirectObjectFallbackReason.ArtifactKindUnavailable
-              (backend.CompilerBackendTarget.Windows)
-              backend.CompilerDirectObjectArtifactKind.StaticLib))
-          "artifact-kind-unavailable|target=windows-x86_64|kind=staticlib")
-        (match (build-package-require-direct-object
-          (ResultBuildPackagePreparedRuntime.Assembly
-            "assembly"
-            (backend.CompilerDirectObjectFallbackReason.ResourceBudget 513 512)))
-          [(ResultBuildPackagePreparedRuntime.Err message)
-            (string.eq
-              message
-              "build: direct object required: resource-budget|owned-paths=513|limit=512")]
-          [_ false])
-        (match (build-package-require-direct-object
-          (ResultBuildPackagePreparedRuntime.DirectObject
-            "object"
-            "side assembly"))
-          [(ResultBuildPackagePreparedRuntime.DirectObject object assembly)
-            (and
-              (string.eq object "object")
-              (string.eq assembly "side assembly"))]
-          [_ false])
-        (match (build-package-require-direct-object
-          (ResultBuildPackagePreparedRuntime.Err "diagnostic"))
-          [(ResultBuildPackagePreparedRuntime.Err message)
-            (string.eq message "diagnostic")]
-          [_ false]))
-      (io.panic "strict direct-object route failed"))))
-
-(define (build-package-prepare-runtime
-  [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
-  (let
-    [prepared : ResultBuildPackagePreparedRuntime
-      (build-package-try-prepare-direct-runtime
-        request.name
-        request.kind
-        request.target
-        request.opt-level
-        request.mode
-        request.debug-info
-        request.path-budget
-        request.linux-budget-override
-        request.emit-entry
-        request.crt-entry
-        request.decls
-        request.paths
-        request.cfgs)]
-    (if request.require-direct-object
-      (build-package-require-direct-object prepared)
-      prepared)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -7510,11 +5322,11 @@
       (let
         [exports : ResultBuildPackageTlciExports
           (build-package-tlci-capture-exports
-            (owned_view.compiler-owned-shared-view manifest)
+            manifest
             mode
             (owned_view.compiler-owned-shared-view decls)
             source-paths
-            (owned_view.compiler-owned-shared-view source-inputs.source-set))]
+            source-inputs.source-set)]
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-owned-runtime
             (owned_view.compiler-owned-shared-view scope)
@@ -7526,14 +5338,13 @@
               mode
               emit-entry
               crt-entry
-              (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view owned-paths)
-              (owned_view.compiler-owned-shared-view cfgs)))]
+              decls
+              owned-paths
+              cfgs))]
         [_abort : unit
           (match (owned_view.compiler-owned-shared-view prepared)
             [(ResultBuildPackagePreparedRuntime.Err message)
-              (package_surface.package-surface-capture-abort!
-                (owned_view.compiler-owned-shared-view message))]
+              (package_surface.package-surface-capture-abort! message)]
             [_ unit])]
         [captured : package_surface.ResultPackageSurfacePayloads
           (package_surface.package-surface-capture-take)]
@@ -7603,9 +5414,7 @@
             (build-package-doctest-paths
               (owned_view.compiler-owned-shared-view owner)
               rest)]
-          (if (build-package-tlci-stdlib-path?
-            owner
-            (owned_view.compiler-owned-shared-view path))
+          (if (build-package-tlci-stdlib-path? owner path)
             tail
             (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
               path
@@ -7632,14 +5441,15 @@
       (begin
         (io.print-error
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (owned_view.compiler-owned-box-shared-view diag)))
+            (deref diag)))
         1)]
     [(compiler_driver_core.ResultCompilerDriverPackagePaths.Ok paths)
-      (build-doctest-typecheck-package-paths
-        (build-package-doctest-paths owner paths)
-        stdlib-roots
-        manifest-dir
-        deps)]))
+      (doc_test.doc-test-report-status
+        (doc_test.doc-test-typecheck-package-paths-with-roots
+          (build-package-doctest-paths owner paths)
+          stdlib-roots
+          manifest-dir
+          deps))]))
 
 (define (build-inline-test-typecheck-package-sources
   [manifest-path : String]
@@ -7751,9 +5561,7 @@
     [emit-entry : bool]
     [compile-cfgs : sym_i64_env.SymI64Env]
     [announce : bool]) : i64
-    (match (build-package-tlci-source-inputs
-      manifest-path
-      (owned_view.compiler-owned-shared-view producer-identity))
+    (match (build-package-tlci-source-inputs manifest-path producer-identity)
       [(ResultBuildPackageTlciSourceInputs.Err message)
         (begin
           (io.print-error message)
@@ -7771,7 +5579,7 @@
             (begin
               (io.print-error
                 (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag)))
+                  (deref diag)))
               1)]
           [(load.ResultCompilerLoadWithPaths.Ok decls paths _ seen)
             (let
@@ -7779,8 +5587,8 @@
                 (load.compiler-load-package-owned-paths-for-decls
                   (owned_view.compiler-owned-shared-view manifest.name)
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (owned_view.compiler-owned-shared-view entry-path)
+                  stdlib-roots
+                  entry-path
                   (owned_view.compiler-owned-shared-view decls)
                   (owned_view.compiler-owned-shared-view paths))]
               [metadata-link-inputs : build_run_core.SourceToolLinkInputs
@@ -7799,8 +5607,7 @@
                   emit-entry
                   (build_run_core.source-tool-linux-crt-entry?
                     target
-                    (owned_view.compiler-owned-shared-view
-                      effective-link-inputs)))]
+                    effective-link-inputs))]
               (build-package-finish-fresh-artifacts-with-surface
                 scope
                 (owned_view.compiler-owned-shared-view manifest)
@@ -7828,7 +5635,7 @@
                 effective-link-inputs
                 tlci-path
                 announce
-                (owned_view.compiler-owned-shared-view compile-cfgs)))])])))
+                compile-cfgs))])])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -7857,7 +5664,7 @@
       [compile-context : BuildPackageCompileContext
         (build-package-compile-context
           (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view manifest))]
+          manifest)]
       [entry-path : String
         (load.compiler-load-join-root-path
           (owned_view.compiler-owned-shared-view manifest-dir)
@@ -7902,7 +5709,7 @@
         (not
           (build-ensure-package-output-dirs
             (owned_view.compiler-owned-shared-view manifest-dir)
-            (owned_view.compiler-owned-shared-view name)
+            name
             profile)))
         (let
           [message : String
@@ -7910,10 +5717,7 @@
               compile-context.error
               (str_cat.str-cat
                 "build: failed to create package output directory "
-                (build-package-output-dir-profile
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
-                  profile)))]
+                (build-package-output-dir-profile manifest-dir name profile)))]
           (begin
             (io.print-error message)
             1))
@@ -7944,7 +5748,7 @@
             (let
               [pre-emit-doctest-status : i64
                 (build-package-run-doctest-worker-or-inline
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   (owned_view.compiler-owned-shared-view entry-path)
                   (owned_view.compiler-owned-shared-view manifest-path)
                   target
@@ -8050,7 +5854,7 @@
 
 (define (build-package-worker-append-stdlib-roots
   [args : process.ProcessStringList]
-  [roots : cli_svec.Vec]) : process.ProcessStringList
+  [roots : (& roots cli_svec.Vec)]) : process.ProcessStringList
   (let
     [i : i64 0]
     [n : i64 (cli_svec.len (& roots))]
@@ -8084,43 +5888,6 @@
         deps
         (+ index 1)))))
 
-(define (build-package-worker-resolved-deps-args-smoke-ok?) : bool
-  (let
-    [remote : load.CompilerPkgDep
-      (load.CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
-    [local : load.CompilerPkgDep (load.CompilerPkgDep "local" "../local")]
-    [deps : load.CompilerPkgDepList
-      (load.compiler-pkg-dep-list-push
-        (load.compiler-pkg-dep-list-push
-          (load.compiler-pkg-dep-list-empty)
-          remote)
-        local)]
-    [actual : process.ProcessStringList
-      (build-package-worker-append-resolved-deps (process.args-empty) deps 0)]
-    [expected0 : process.ProcessStringList
-      (build_run_core.source-tool-args-append
-        (process.args-empty)
-        "--resolved-dep")]
-    [expected1 : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected0 "remote")]
-    [expected2 : process.ProcessStringList
-      (build_run_core.source-tool-args-append
-        expected1
-        "target/typelisp/git-deps/remote")]
-    [expected3 : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected2 "--resolved-dep")]
-    [expected4 : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected3 "local")]
-    [expected : process.ProcessStringList
-      (build_run_core.source-tool-args-append expected4 "../local")]
-    (build_run_core.source-tool-string-list-eq? actual expected)))
-
-(test
-  build-package-worker-resolved-deps-args-smoke
-  (unless
-    (build-package-worker-resolved-deps-args-smoke-ok?)
-    (io.panic "build package worker resolved deps args smoke failed")))
-
 (define (build-package-worker-args-with-flag
   [worker-flag : String]
   [manifest-path : String]
@@ -8130,7 +5897,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
       (build-package-worker-command-prefix (process.args-empty))]
@@ -8175,7 +5942,7 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessStringList
   (build-package-worker-args-with-flag
     "--package-worker"
     manifest-path
@@ -8194,7 +5961,7 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args
@@ -8214,7 +5981,7 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
-  [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : process.ProcessCommand
   (process.command
     (io.arg 0)
     (build-package-worker-args-with-flag
@@ -8259,11 +6026,10 @@
       mode
       lock-policy
       resolved-deps
-      (owned_view.compiler-owned-shared-view stdlib-roots)))
+      stdlib-roots))
     [(process.OkProcessOutput output)
       (begin
-        (build_run_core.source-tool-forward-output
-          (owned_view.compiler-owned-shared-view output))
+        (build_run_core.source-tool-forward-output output)
         (process.output-status output))]
     [(process.ErrProcessOutput error)
       (if (or
@@ -8277,7 +6043,7 @@
             owner
             entry-path
             target
-            (owned_view.compiler-owned-shared-view stdlib-roots)
+            stdlib-roots
             manifest-dir
             deps
             emit-entry))
@@ -8394,8 +6160,7 @@
                 [(ResultBuildManifest.Ok resolved-manifest)
                   (let
                     [manifest-dir : String
-                      (load.compiler-load-dirname
-                        (owned_view.compiler-owned-shared-view normalized-path))]
+                      (load.compiler-load-dirname normalized-path)]
                     [entry-path : String
                       (load.compiler-load-join-root-path
                         (owned_view.compiler-owned-shared-view manifest-dir)
@@ -8417,7 +6182,7 @@
   [manifest-dir : String]
   [deps : load.CompilerPkgDepList]
   [index : i64]
-  [built : build_string_i64_map.Map]) : bool
+  [built : (& built build_string_i64_map.Map)]) : bool
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     true
     (let
@@ -8425,14 +6190,14 @@
         (build-package-dep-manifest-path
           (owned_view.compiler-owned-shared-view manifest-dir)
           (load.compiler-pkg-dep-list-at deps index))]
-      (match (build_string_i64_map.get (& built) dep-manifest-path)
+      (match (build_string_i64_map.get built dep-manifest-path)
         [(build_string_i64_map.LookupFound _)
           (build-package-deps-built? manifest-dir deps (+ index 1) built)]
         [(build_string_i64_map.LookupMissing) false]))))
 
 (define (build-package-node-ready?
   [node : BuildPackageGraphNode]
-  [built : build_string_i64_map.Map]) : bool
+  [built : (& built build_string_i64_map.Map)]) : bool
   (let
     [manifest-path : String node.manifest-path]
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
@@ -8444,7 +6209,7 @@
       built)))
 
 (define (build-package-node-scheduled?
-  [scheduled : build_string_i64_map.Map]
+  [scheduled : (& scheduled build_string_i64_map.Map)]
   [manifest-path : String]) : bool
   (match (build_string_i64_map.get (& scheduled) manifest-path)
     [(build_string_i64_map.LookupFound _) true]
@@ -8479,7 +6244,7 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageGraphWorker
+  [stdlib-roots : (& stdlib-roots cli_svec.Vec)]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String
       (owned_view.compiler-owned-shared-view node.manifest-path)]
@@ -8508,10 +6273,7 @@
         (match (process.start command)
           [(process.OkProcessChild child)
             (ResultBuildPackageGraphWorker.Ok
-              (BuildPackageGraphWorker
-                (owned_view.compiler-owned-shared-view node)
-                artifacts
-                child))]
+              (BuildPackageGraphWorker node artifacts child))]
           [(process.ErrProcessChild error)
             (ResultBuildPackageGraphWorker.Err
               (str_cat.str-cat
@@ -8523,7 +6285,7 @@
 (define (build-package-schedule-pass-with
   [nodes : BuildPackageGraphNodeVec]
   [scheduled : build_string_i64_map.Map]
-  [built : build_string_i64_map.Map]
+  [built : (& built build_string_i64_map.Map)]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
@@ -8540,29 +6302,27 @@
         (build-package-graph-worker-list-reverse workers)))
     (let
       [node : BuildPackageGraphNode
-        (build-package-graph-node-vec-at
-          (owned_view.compiler-owned-shared-view nodes)
-          index)]
+        (build-package-graph-node-vec-at nodes index)]
       [manifest-path : String
         (owned_view.compiler-owned-shared-view node.manifest-path)]
       (if (or
         (build-package-node-scheduled?
-          (owned_view.compiler-owned-shared-view scheduled)
+          scheduled
           (owned_view.compiler-owned-shared-view manifest-path))
         (not
           (build-package-node-ready?
             (owned_view.compiler-owned-shared-view node)
-            (owned_view.compiler-owned-shared-view built))))
+            built)))
         (build-package-schedule-pass-with
-          (owned_view.compiler-owned-shared-view nodes)
-          (owned_view.compiler-owned-shared-view scheduled)
-          (owned_view.compiler-owned-shared-view built)
+          nodes
+          scheduled
+          built
           target
           opt-level
           profile
           mode
           lock-policy
-          (owned_view.compiler-owned-shared-view stdlib-roots)
+          stdlib-roots
           workers
           (+ index 1)
           count)
@@ -8573,22 +6333,22 @@
           profile
           mode
           lock-policy
-          (owned_view.compiler-owned-shared-view stdlib-roots))
+          stdlib-roots)
           [(ResultBuildPackageGraphWorker.Err message)
             (ResultBuildPackageSchedulePass.Err message)]
           [(ResultBuildPackageGraphWorker.Ok worker)
             (begin
               (build-string-index-map-put! (&mut scheduled) manifest-path 1)
               (build-package-schedule-pass-with
-                (owned_view.compiler-owned-shared-view nodes)
+                nodes
                 scheduled
-                (owned_view.compiler-owned-shared-view built)
+                built
                 target
                 opt-level
                 profile
                 mode
                 lock-policy
-                (owned_view.compiler-owned-shared-view stdlib-roots)
+                stdlib-roots
                 (BuildPackageGraphWorkerList.More worker (box workers))
                 (+ index 1)
                 count))])))))
@@ -8604,9 +6364,7 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageSchedulePass
   (let
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     (build-package-schedule-pass-with
       nodes
       scheduled
@@ -8623,20 +6381,16 @@
 
 (define (build-package-all-built?
   [nodes : BuildPackageGraphNodeVec]
-  [built : build_string_i64_map.Map]) : bool
+  [built : (& built build_string_i64_map.Map)]) : bool
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [all-built : bool true]
     (begin
       (while (and all-built (< index count))
         (let
           [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
+            (build-package-graph-node-vec-at nodes index)]
           [manifest-path : String node.manifest-path]
           (begin
             (match (build_string_i64_map.get (& built) manifest-path)
@@ -8665,8 +6419,7 @@
       [(process.OkProcessOutput output)
         (begin
           (if (or announce (not (process.success? output)))
-            (build_run_core.source-tool-forward-output
-              (owned_view.compiler-owned-shared-view output))
+            (build_run_core.source-tool-forward-output output)
             unit)
           (if (process.success? output)
             (let
@@ -8738,8 +6491,7 @@
         (ResultBuildPackageWait.Err failed-status))]
     [(BuildPackageGraphWorkerList.More worker tail)
       (let
-        [next-built : build_string_i64_map.Map
-          (owned_view.compiler-owned-shared-view built)]
+        [next-built : build_string_i64_map.Map built]
         [next-failed-status : i64 failed-status]
         (begin
           (build-package-wait-worker
@@ -8772,11 +6524,11 @@
   [built : build_string_i64_map.Map]) : i64
   (if (build-package-all-built?
     (owned_view.compiler-owned-shared-view nodes)
-    (owned_view.compiler-owned-shared-view built))
+    built)
     0
     (match (build-package-schedule-pass
       (owned_view.compiler-owned-shared-view nodes)
-      (owned_view.compiler-owned-shared-view scheduled)
+      scheduled
       (owned_view.compiler-owned-shared-view built)
       target
       opt-level
@@ -8794,22 +6546,19 @@
             (io.print-error
               "build: package dependency scheduler made no progress")
             1)
-          (match (build-package-wait-workers
-            pass.workers
-            (owned_view.compiler-owned-shared-view built)
-            announce)
+          (match (build-package-wait-workers pass.workers built announce)
             [(ResultBuildPackageWait.Err status) status]
             [(ResultBuildPackageWait.Ok next-built)
               (build-package-emit-graph-nodes-parallel-loop
-                (owned_view.compiler-owned-shared-view nodes)
+                nodes
                 target
                 opt-level
                 profile
                 mode
                 lock-policy
-                (owned_view.compiler-owned-shared-view stdlib-roots)
+                stdlib-roots
                 announce
-                (owned_view.compiler-owned-shared-view pass.scheduled)
+                pass.scheduled
                 next-built)]))])))
 
 (define (build-package-emit-graph-nodes-parallel
@@ -8845,17 +6594,13 @@
   [announce : bool]) : i64
   (let
     [index : i64 0]
-    [count : i64
-      (build-package-graph-node-vec-len
-        (owned_view.compiler-owned-shared-view nodes))]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
     [status : i64 0]
     (begin
       (while (and (= status 0) (< index count))
         (let
           [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
+            (build-package-graph-node-vec-at nodes index)]
           [validation : ResultBuildString
             (build-package-validate-graph-node-checkout
               (owned_view.compiler-owned-shared-view node))]
@@ -8926,38 +6671,6 @@
       producer-identity
       announce)))
 
-(define (build-doctest-report [report : doc_test.DocTestRunReport]) : i64
-  (if (doc_test.doc-test-run-report-ok?
-    (owned_view.compiler-owned-shared-view report))
-    0
-    (begin
-      (io.print-error (doc_test.doc-test-run-report-render report))
-      1)))
-
-(define (build-doctest-typecheck-file
-  [source : String]
-  [stdlib-roots : cli_svec.Vec]) : i64
-  (match (io.try-read-file (& source))
-    [(io.ErrIoBytes _) 0]
-    [(io.OkIoBytes contents)
-      (build-doctest-report
-        (doc_test.doc-test-typecheck-source-with-roots
-          source
-          (byte_buf.to-string contents)
-          stdlib-roots))]))
-
-(define (build-doctest-typecheck-package-paths
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [deps : load.CompilerPkgDeps]) : i64
-  (build-doctest-report
-    (doc_test.doc-test-typecheck-package-paths-with-roots
-      paths
-      stdlib-roots
-      manifest-dir
-      deps)))
-
 (define (build-doctest-build-source
   [source : String]
   [output : String]
@@ -8969,7 +6682,7 @@
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64
-      (build-doctest-typecheck-file
+      (doc_test.doc-test-typecheck-file-status
         (owned_view.compiler-owned-shared-view source)
         (owned_view.compiler-owned-shared-view stdlib-roots))]
     (if (= doctest-status 0)
@@ -9012,7 +6725,7 @@
   (match (build-parse-target target-text)
     [(ResultBuildTarget.Err message)
       (begin
-        (io.print-error (owned_view.compiler-owned-shared-view message))
+        (io.print-error message)
         1)]
     [(ResultBuildTarget.Ok target)
       (let
@@ -9024,17 +6737,16 @@
           lock-policy)
           [(ResultBuildManifest.Err message)
             (begin
-              (io.print-error (owned_view.compiler-owned-shared-view message))
+              (io.print-error message)
               1)]
           [(ResultBuildManifest.Ok resolved-manifest)
             (match (build-package-dependency-graph
               (owned_view.compiler-owned-shared-view normalized-path)
-              (owned_view.compiler-owned-shared-view manifest)
+              manifest
               (owned_view.compiler-owned-shared-view resolved-manifest))
               [(ResultBuildPackageGraph.Err message)
                 (begin
-                  (io.print-error
-                    (owned_view.compiler-owned-shared-view message))
+                  (io.print-error message)
                   1)]
               [(ResultBuildPackageGraph.Ok graph)
                 (let
@@ -9121,22 +6833,19 @@
   (match (build_run_core.source-tool-backend-mode "build" mode)
     [(build_run_core.ResultSourceToolBackendMode.Err message)
       (begin
-        (io.print-error (owned_view.compiler-owned-shared-view message))
+        (io.print-error message)
         1)]
     [(build_run_core.ResultSourceToolBackendMode.Ok backend-mode)
       (match (build-load-manifest
         (owned_view.compiler-owned-shared-view manifest-path))
         [(ResultBuildManifest.Err message)
           (begin
-            (io.print-error
-              (str_cat.str-cat
-                "Error: "
-                (owned_view.compiler-owned-shared-view message)))
+            (io.print-error (str_cat.str-cat "Error: " message))
             1)]
         [(ResultBuildManifest.Ok manifest)
           (build-package-emit
             manifest-path
-            (owned_view.compiler-owned-shared-view manifest)
+            manifest
             target-text
             has-target
             opt-level
@@ -9210,14 +6919,9 @@
   (match (build-config-from idx (io.arg-count))
     [(ResultBuildConfig.Ok config)
       (match (owned_view.compiler-owned-shared-view config)
-        [(BuildConfig.Source _ _ _ _ _ _ _ _)
-          (begin
-            (io.print-format "{}" (build-source-plan-render config))
-            0)]
+        [(BuildConfig.Source) (build-source-direct-from idx (io.arg-count))]
         [(BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
-          (build-package
-            (owned_view.compiler-owned-shared-view config)
-            producer-identity)])]
+          (build-package config producer-identity)])]
     [(ResultBuildConfig.Err message)
       (begin
         (io.print-error message)
@@ -9236,394 +6940,160 @@
 (define (build-cli-unknown-opt-level [value : String]) : String
   (str_cat.str-cat "build: unknown opt level " value "; expected 0, 1, or 2"))
 
-(defenum BuildCliOption
-  (Output)
-  (StdlibRoot)
-  (Target)
-  (BackendMode)
-  (OptLevel)
-  (Profile)
-  (Release)
-  (LinkLib)
-  (LinkSearch)
-  (LinkArg)
-  (ManifestPath)
-  (Locked)
-  (UpdateLock)
-  (Debug)
-  (Other))
+;; Native link options only source builds accept.
+(define (build-link-cli-options) : String
+  "--link-lib <name> --link-search <dir> --link-arg <arg>")
 
-(define (build-cli-option-rest6 [current : String]) : BuildCliOption
-  (cond
-    [(string.eq current "--link-arg") (BuildCliOption.LinkArg)]
-    [(string.eq current "--manifest-path") (BuildCliOption.ManifestPath)]
-    [(string.eq current "--locked") (BuildCliOption.Locked)]
-    [(string.eq current "--update-lock") (BuildCliOption.UpdateLock)]
-    [else (BuildCliOption.Other)]))
-
-(define (build-cli-option-rest5 [current : String]) : BuildCliOption
-  (if (string.eq current "--link-search")
-    (BuildCliOption.LinkSearch)
-    (build-cli-option-rest6 current)))
-
-(define (build-cli-option-rest4 [current : String]) : BuildCliOption
-  (if (string.eq current "--link-lib")
-    (BuildCliOption.LinkLib)
-    (build-cli-option-rest5 current)))
-
-(define (build-cli-option-rest3 [current : String]) : BuildCliOption
-  (if (string.eq current "--release")
-    (BuildCliOption.Release)
-    (build-cli-option-rest4 current)))
-
-(define (build-cli-option-rest-profile [current : String]) : BuildCliOption
-  (if (string.eq current "--profile")
-    (BuildCliOption.Profile)
-    (build-cli-option-rest3 current)))
-
-(define (build-cli-option-rest-opt [current : String]) : BuildCliOption
-  (if (string.eq current "--opt-level")
-    (BuildCliOption.OptLevel)
-    (build-cli-option-rest-profile current)))
-
-(define (build-cli-option-rest2 [current : String]) : BuildCliOption
-  (if (string.eq current "--backend-mode")
-    (BuildCliOption.BackendMode)
-    (build-cli-option-rest-opt current)))
-
-(define (build-cli-option-rest1 [current : String]) : BuildCliOption
-  (if (string.eq current "--target")
-    (BuildCliOption.Target)
-    (build-cli-option-rest2 current)))
-
-(define (build-cli-option-rest0 [current : String]) : BuildCliOption
-  (if (string.eq current "--stdlib-root")
-    (BuildCliOption.StdlibRoot)
-    (build-cli-option-rest1 current)))
-
-(define (build-cli-option [current : String]) : BuildCliOption
-  (cond
-    [(string.eq current "-o") (BuildCliOption.Output)]
-    [(or
-        (string.eq current "--debug")
-        (string.eq current "-g")
-        (string.eq current "--backtrace"))
-      (BuildCliOption.Debug)]
-    [else (build-cli-option-rest0 current)]))
-
+;; Whether the arguments name a source file: the first argument that is neither
+;; a build option, an option value, nor another flag.
 (define (build-args-have-source? [idx : i64] [count : i64]) : bool
-  (if (>= idx count)
-    false
-    (let
-      [current : String (io.arg idx)]
-      (match (build-cli-option (owned_view.compiler-owned-shared-view current))
-        [(BuildCliOption.Other)
-          (if (build_run_core.source-tool-flag? current)
-            (build-args-have-source? (+ idx 1) count)
-            true)]
-        [(BuildCliOption.Release) (build-args-have-source? (+ idx 1) count)]
-        [(BuildCliOption.Locked) (build-args-have-source? (+ idx 1) count)]
-        [(BuildCliOption.UpdateLock) (build-args-have-source? (+ idx 1) count)]
-        [(BuildCliOption.Debug) (build-args-have-source? (+ idx 1) count)]
-        [_ (build-args-have-source? (+ idx 2) count)]))))
-
-(define (build-cli-parse-common-option
-  [kind : cli_option.CliCommonOptionKind]
-  [value : String]
-  [next-idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [output : String]
-  [has-output : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildCliConfig
-  (match kind
-    [(cli_option.CliCommonOptionKind.StdlibRoot)
-      (build-cli-parse-options
-        next-idx
-        count
-        source
-        has-source
-        output
-        has-output
-        target
-        mode
+  (let
+    [specs : String
+      (str_cat.str-cat (build-package-cli-options) " " (build-link-cli-options))]
+    [i : i64 idx]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i count))
         (let
-          [next-roots : cli_svec.Vec
-            (owned_view.compiler-owned-shared-view stdlib-roots)]
-          (begin
-            (cli_svec.push-ref! (&mut next-roots) value)
-            next-roots))
-        opt-level
-        link-inputs)]
-    [(cli_option.CliCommonOptionKind.Target)
-      (match (build_run_core.source-tool-target
-        (owned_view.compiler-owned-shared-view value))
-        [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-          (build-cli-parse-options
-            next-idx
-            count
-            source
-            has-source
-            output
-            has-output
-            parsed-target
-            mode
-            stdlib-roots
-            opt-level
-            link-inputs)]
-        [(build_run_core.ResultSourceToolTarget.Err _)
-          (ResultBuildCliConfig.Err (build-cli-unknown-target value))])]
-    [(cli_option.CliCommonOptionKind.OptLevel)
-      (if (build_run_core.source-tool-opt-level-valid?
-        (owned_view.compiler-owned-shared-view value))
-        (build-cli-parse-options
-          next-idx
-          count
-          source
-          has-source
-          output
-          has-output
-          target
-          mode
-          stdlib-roots
-          (string.>int value)
-          link-inputs)
-        (ResultBuildCliConfig.Err (build-cli-unknown-opt-level value)))]
-    [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultBuildCliConfig.Err "build: internal unsupported common option")]))
-
-(define (build-cli-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [output : String]
-  [has-output : bool]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildCliConfig
-  (if (>= idx count)
-    (if has-source
-      (ResultBuildCliConfig.Ok
-        (BuildCliConfig.Config
-          source
-          has-source
-          output
-          has-output
-          target
-          mode
-          stdlib-roots
-          opt-level
-          link-inputs))
-      (if has-output
-        (ResultBuildCliConfig.Err "build: -o requires a source file argument")
-        (ResultBuildCliConfig.Err "build: expected source path")))
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        cli_option.cli-common-option-build)
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultBuildCliConfig.Err
-            (cli_option.cli-common-option-missing-message "build" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (build-cli-parse-common-option
-            kind
-            value
-            next-idx
-            count
-            source
-            has-source
-            output
-            has-output
-            target
-            mode
-            stdlib-roots
-            opt-level
-            link-inputs)]
-        [(cli_option.CliCommonOption.NotCommon)
-          (match (build-cli-option
-            (owned_view.compiler-owned-shared-view current))
-            [(BuildCliOption.Debug)
-              (begin
-                (ir.compiler-debug-info-set-enabled! true)
-                (build-cli-parse-options
-                  (+ idx 1)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  link-inputs))]
-            [(BuildCliOption.Output)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err "build: -o requires a value")
-                (if has-output
-                  (ResultBuildCliConfig.Err
-                    "build: -o was provided more than once")
-                  (build-cli-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    (io.arg (+ idx 1))
-                    true
-                    target
-                    mode
-                    stdlib-roots
-                    opt-level
-                    link-inputs)))]
-            [(BuildCliOption.StdlibRoot)
-              (ResultBuildCliConfig.Err
-                "build: internal common option dispatch")]
-            [(BuildCliOption.Target)
-              (ResultBuildCliConfig.Err
-                "build: internal common option dispatch")]
-            [(BuildCliOption.OptLevel)
-              (ResultBuildCliConfig.Err
-                "build: internal common option dispatch")]
-            [(BuildCliOption.BackendMode)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err
-                  "build: --backend-mode requires a value")
-                (let
-                  [value : String (io.arg (+ idx 1))]
-                  (match (build_run_core.source-tool-backend-mode "build" value)
-                    [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                      (build-cli-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        target
-                        parsed-mode
-                        stdlib-roots
-                        opt-level
-                        link-inputs)]
-                    [(build_run_core.ResultSourceToolBackendMode.Err message)
-                      (ResultBuildCliConfig.Err message)])))]
-            [(BuildCliOption.Profile)
-              (ResultBuildCliConfig.Err
-                "build: --profile is only valid for package builds")]
-            [(BuildCliOption.Release)
-              (ResultBuildCliConfig.Err
-                "build: --release is only valid for package builds")]
-            [(BuildCliOption.Locked)
-              (ResultBuildCliConfig.Err
-                "build: --locked is only valid for package builds")]
-            [(BuildCliOption.UpdateLock)
-              (ResultBuildCliConfig.Err
-                "build: --update-lock is only valid for package builds")]
-            [(BuildCliOption.LinkLib)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err "build: --link-lib requires a value")
-                (build-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-lib
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(BuildCliOption.LinkSearch)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err
-                  "build: --link-search requires a value")
-                (build-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-search-dir
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(BuildCliOption.LinkArg)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err "build: --link-arg requires a value")
-                (build-cli-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  output
-                  has-output
-                  target
-                  mode
-                  stdlib-roots
-                  opt-level
-                  (build_run_core.source-tool-link-inputs-add-raw-arg
-                    link-inputs
-                    (io.arg (+ idx 1)))))]
-            [(BuildCliOption.ManifestPath)
-              (if (>= (+ idx 1) count)
-                (ResultBuildCliConfig.Err
-                  "build: --manifest-path requires a value")
-                (ResultBuildCliConfig.Err
-                  "build: --manifest-path is handled by Rust typelisp build; selfhost build tool expects a source file"))]
-            [(BuildCliOption.Other)
-              (if (build_run_core.source-tool-flag?
-                (owned_view.compiler-owned-shared-view current))
-                (ResultBuildCliConfig.Err
-                  (str_cat.str-cat "build: unknown flag " current))
-                (if has-source
-                  (ResultBuildCliConfig.Err
-                    "build: accepts only one source file")
-                  (build-cli-parse-options
-                    (+ idx 1)
-                    count
-                    current
-                    true
-                    output
-                    has-output
-                    target
-                    mode
-                    stdlib-roots
-                    opt-level
-                    link-inputs)))])]))))
+          [current : String (io.arg i)]
+          (match (cli_option.cli-option-lookup (& specs) (& current))
+            [(cli_option.CliOptionMatch.Found _ arity)
+              (set! i (+ i (+ arity 1)))]
+            [(cli_option.CliOptionMatch.None)
+              (if (cli_option.cli-flag? (& current))
+                (set! i (+ i 1))
+                (set! found true))])))
+      found)))
 
 (define (build-cli-config-from [idx : i64] [count : i64]) : ResultBuildCliConfig
-  (build-cli-parse-options
-    idx
-    count
-    ""
-    false
-    ""
-    false
-    (build_run_core.source-tool-default-target)
-    (backend.CompilerBackendMode.Scalar)
-    (cli_svec.new)
-    (opt.compiler-optimize-default-level)
-    (build_run_core.source-tool-link-inputs-empty)))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "build"
+        (str_cat.str-cat
+          "--stdlib-root <dir> --target <target> --opt-level <0|1|2>
+           --debug|-g|--backtrace -o <exe> --backend-mode <mode>
+           --manifest-path <file> --profile --release --locked --update-lock "
+          (build-link-cli-options))
+        idx
+        count)]
+    [source : String ""]
+    [has-source : bool false]
+    [output : String ""]
+    [has-output : bool false]
+    [target : backend.CompilerBackendTarget
+      (build_run_core.source-tool-default-target)]
+    [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
+    [opt-level : i64 (opt.compiler-optimize-default-level)]
+    [link-inputs : build_run_core.SourceToolLinkInputs
+      (build_run_core.source-tool-link-inputs-empty)]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-target (string.copy (& value)))
+                [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
+                  (set! target parsed-target)]
+                [(build_run_core.ResultSourceToolTarget.Err _)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (build-cli-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (if (< level 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-cli-unknown-opt-level value))
+                (set! opt-level level)))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "-o")
+            (if has-output
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "build: -o was provided more than once")
+              (begin
+                (set! output (cli_option.cli-args-value (& args)))
+                (set! has-output true)))]
+          [(string.eq args.name "--backend-mode")
+            (match (build_run_core.source-tool-backend-mode
+              "build"
+              (cli_option.cli-args-value (& args)))
+              [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
+                (set! mode parsed-mode)]
+              [(build_run_core.ResultSourceToolBackendMode.Err message)
+                (cli_option.cli-args-fail! (&mut args) message)])]
+          [(string.eq args.name "--link-lib")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-lib
+                link-inputs
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--link-search")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-search-dir
+                link-inputs
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--link-arg")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-raw-arg
+                link-inputs
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--manifest-path")
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: cannot combine a source file with --manifest-path")]
+          ;; Package-only options.
+          [(> (string.string-length args.name) 0)
+            (let
+              [message : String
+                (string.concat3-borrowed
+                  "build: "
+                  (& args.name)
+                  " is only valid for package builds")]
+              (cli_option.cli-args-fail! (&mut args) message))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: accepts only one source file")]
+          [else
+            (begin
+              (set! source (string.copy (& args.arg)))
+              (set! has-source true))]))
+      (cond
+        [args.failed (ResultBuildCliConfig.Err args.error)]
+        [has-source
+          (ResultBuildCliConfig.Ok
+            (BuildCliConfig.Config
+              source
+              has-source
+              output
+              has-output
+              target
+              mode
+              stdlib-roots
+              opt-level
+              link-inputs))]
+        [has-output
+          (ResultBuildCliConfig.Err "build: -o requires a source file argument")]
+        [else (ResultBuildCliConfig.Err "build: expected source path")]))))
 
-;; Build a source file directly. Manifest builds use the older package parser so
-;; `typelisp build` can still discover `typelisp.pkg` from the working tree.
+;; Build a source file directly. Manifest builds go through the package parser
+;; (`build-main-from`) so `typelisp build` discovers `typelisp.pkg` from the
+;; working tree.
 (define (build-source-direct-from [idx : i64] [count : i64]) : i64
   (match (build-cli-config-from idx count)
     [(ResultBuildCliConfig.Ok config)

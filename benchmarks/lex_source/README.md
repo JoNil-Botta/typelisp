@@ -27,23 +27,8 @@ when it compiles itself:
 Each module is followed by a newline if it does not already end in one, so a
 module's last token cannot fuse with the next module's first token.
 
-## Arguments
-
-```
-bench <corpus-path> <rounds>
-```
-
-`optimization.tsv` ships `benchmarks/lex_source/data/corpus.tl-txt 8`, which is
-about 1.0G retired instructions for the TypeLisp build.
-
 ## Regenerating the corpus
 
-From the repository root:
-
-```sh
-python3 benchmarks/lex_source/tools/export_corpus.py
-```
-
-The module list lives in `tools/export_corpus.py` (`SOURCES`). Regeneration is
-deterministic, but any change to the listed modules changes the corpus and
-therefore the benchmark checksum.
+Exported at `5fce734af` (#5989) from the checked-in compiler sources, and since
+edited in place by language migrations; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).

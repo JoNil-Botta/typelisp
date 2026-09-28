@@ -37,15 +37,19 @@
     [(package_source.ResultPackageSourceSet.Err message) (io.panic message)]))
 
 (define (package-dependency-transition-capability
-  [state : load.CompilerLoadSessionState]
+  [state : (& state load.CompilerLoadSessionState)]
   [slot : i64]
   [identity : String]) : load.CompilerLoadDependencyCatalogCapability
-  (match (load.compiler-load-dependency-catalog-lookup-macro
-    state
-    slot
-    identity)
-    [(load.CompilerLoadDependencyCatalogLookup.Resolved capability) capability]
-    [_ (io.panic "package tlci transition: macro was not a native result")]))
+  (let
+    [state : load.CompilerLoadSessionState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (match (load.compiler-load-dependency-catalog-lookup-macro
+      state
+      slot
+      identity)
+      [(load.CompilerLoadDependencyCatalogLookup.Resolved capability)
+        capability]
+      [_ (io.panic "package tlci transition: macro was not a native result")])))
 
 (define (package-dependency-transition-stale
   [state : load.CompilerLoadSessionState]
@@ -121,11 +125,10 @@
         (owned_view.compiler-owned-shared-view state)
         (package-dependency-transition-source-set (string.copy manifest-path)))]
     [old-observed : load.CompilerLoadDependencyCatalogObservation
-      (load.compiler-load-dependency-catalog-observe
-        (owned_view.compiler-owned-shared-view state))]
+      (load.compiler-load-dependency-catalog-observe state)]
     [old-capability : load.CompilerLoadDependencyCatalogCapability
       (package-dependency-transition-capability
-        (owned_view.compiler-owned-shared-view state)
+        state
         old-slot
         (string.copy identity))]
     (begin
@@ -144,8 +147,7 @@
             (package-dependency-transition-source-set
               (string.copy manifest-path)))]
         [stale-observed : load.CompilerLoadDependencyCatalogObservation
-          (load.compiler-load-dependency-catalog-observe
-            (owned_view.compiler-owned-shared-view state))]
+          (load.compiler-load-dependency-catalog-observe state)]
         [stale : PackageDependencyTransitionStale
           (package-dependency-transition-stale
             (owned_view.compiler-owned-shared-view state)
@@ -169,11 +171,10 @@
                 (package-dependency-transition-source-set
                   (string.copy manifest-path)))]
             [rebuilt-observed : load.CompilerLoadDependencyCatalogObservation
-              (load.compiler-load-dependency-catalog-observe
-                (owned_view.compiler-owned-shared-view state))]
+              (load.compiler-load-dependency-catalog-observe state)]
             [rebuilt-capability : load.CompilerLoadDependencyCatalogCapability
               (package-dependency-transition-capability
-                (owned_view.compiler-owned-shared-view state)
+                state
                 rebuilt-slot
                 (string.copy identity))]
             (begin
@@ -187,7 +188,7 @@
                     (owned_view.compiler-owned-shared-view old-capability.key)
                     (owned_view.compiler-owned-shared-view
                       rebuilt-capability.key)
-                    (owned_view.compiler-owned-shared-view stale)))
+                    stale))
                 "package tlci transition: rebuilt image key was not admitted")
               (package-dependency-transition-copy-file
                 old-source-path
@@ -202,11 +203,10 @@
                     (package-dependency-transition-source-set
                       (string.copy manifest-path)))]
                 [restored-observed : load.CompilerLoadDependencyCatalogObservation
-                  (load.compiler-load-dependency-catalog-observe
-                    (owned_view.compiler-owned-shared-view state))]
+                  (load.compiler-load-dependency-catalog-observe state)]
                 [restored-capability : load.CompilerLoadDependencyCatalogCapability
                   (package-dependency-transition-capability
-                    (owned_view.compiler-owned-shared-view state)
+                    state
                     restored-slot
                     (string.copy identity))]
                 [reused-slot : i64
@@ -214,8 +214,7 @@
                     (owned_view.compiler-owned-shared-view state)
                     (package-dependency-transition-source-set manifest-path))]
                 [reused-observed : load.CompilerLoadDependencyCatalogObservation
-                  (load.compiler-load-dependency-catalog-observe
-                    (owned_view.compiler-owned-shared-view state))]
+                  (load.compiler-load-dependency-catalog-observe state)]
                 (begin
                   (package-dependency-transition-require
                     (and
@@ -228,8 +227,7 @@
                         reused-observed
                         4)
                       (load.compiler-load-dependency-catalog-key-eq?
-                        (owned_view.compiler-owned-shared-view
-                          old-capability.key)
+                        old-capability.key
                         (owned_view.compiler-owned-shared-view
                           restored-capability.key)))
                     "package tlci transition: exact restored key was not reused")

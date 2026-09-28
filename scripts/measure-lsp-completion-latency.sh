@@ -4,33 +4,21 @@ set -eu
 # Measure cold analysis separately from repeated completion over one retained
 # document/workspace snapshot.  The hot loop alternates a deep lexical query
 # and a large-workspace import query without edits, filesystem reads, or
-# compiler reruns between requests.
+# compiler reruns between requests. scripts/lib-lsp-client.sh describes the
+# client and its clock.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-lsp-client.sh"
+gate_compiler
 
 if [ ! -x "$COMPILER" ] && [ ! -f "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 fi
-
-if [ -n "${TYPELISP_PYTHON:-}" ]; then
-    PYTHON=$TYPELISP_PYTHON
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON=python3
-elif command -v python >/dev/null 2>&1; then
-    PYTHON=python
-else
-    echo "measure-lsp-completion-latency.sh requires Python 3" >&2
-    exit 1
-fi
+lsp_require_clock
 
 WORKDIR=${TYPELISP_LSP_COMPLETION_WORKDIR:-target/lsp-completion-latency}
 REQUESTS=${TYPELISP_LSP_COMPLETION_REQUESTS:-100}
@@ -56,229 +44,109 @@ if [ "$REQUESTS" -lt 100 ]; then
 fi
 
 rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
+mkdir -p "$WORKDIR/bench"
 
-exec "$PYTHON" - "$COMPILER" "$ROOT" "$WORKDIR" "$REQUESTS" "$TOP_LEVEL" "$DEPTH" "$MODULES" <<'PY'
-import json
-import os
-import statistics
-import subprocess
-import sys
-import time
-from pathlib import Path
+i=0
+while [ "$i" -lt "$MODULES" ]; do
+    printf '(module bench.mod%d)\n(define module_value_%d : i64 %d)\n(define (module_function_%d [value : i64]) : i64 value)\n' \
+        "$i" "$i" "$i" "$i" > "$WORKDIR/bench/mod$i.tl"
+    i=$((i + 1))
+done
 
+# main.tl: the import line, TOP_LEVEL definitions, then one function whose
+# body nests DEPTH lets; the deep query sits on the innermost reference.
+awk -v top="$TOP_LEVEL" -v depth="$DEPTH" 'BEGIN {
+    print "(module bench.main)"
+    print "(import bench.mod0 as m0)"
+    for (i = 0; i < top; i++) printf "(define benchmark_value_%d : i64 %d)\n", i, i
+    body = "deep_" (depth - 1)
+    for (i = depth - 1; i >= 0; i--) {
+        initial = (i == 0) ? "root" : "deep_" (i - 1)
+        body = "(let [deep_" i " : i64 " initial "] " body ")"
+    }
+    print "(define (deep [root : i64]) : i64 " body ")"
+}' > "$WORKDIR/main.tl"
+deep_line_number=$((TOP_LEVEL + 2))
+# The cursor sits just after the `deep_` of the last `deep_<DEPTH-1>`.
+deep_cursor=$(awk -v n="$((deep_line_number + 1))" -v name="deep_$((DEPTH - 1))" 'NR == n {
+    s = $0; at = 0
+    while ((i = index(s, name)) > 0) { at += i; s = substr(s, i + 1) }
+    print at - 1 + length("deep_"); exit
+}' "$WORKDIR/main.tl")
+uri=$(lsp_uri "$WORKDIR/main.tl")
+root_uri=$(lsp_uri "$WORKDIR")
+deep_params="{\"textDocument\":{\"uri\":\"$uri\"},\"position\":{\"line\":$deep_line_number,\"character\":$deep_cursor}}"
+import_params="{\"textDocument\":{\"uri\":\"$uri\"},\"position\":{\"line\":1,\"character\":15}}"
 
-compiler, root_text, workdir_text, requests_text, top_text, depth_text, modules_text = sys.argv[1:]
-root = Path(root_text)
-workdir = Path(workdir_text)
-request_count = int(requests_text)
-top_level_count = int(top_text)
-depth = int(depth_text)
-module_count = int(modules_text)
-cachegrind_enabled = os.environ.get("TYPELISP_LSP_COMPLETION_CACHEGRIND") == "1"
-cachegrind_path = workdir / "cachegrind.out"
-
-
-def frame(message):
-    body = json.dumps(message, separators=(",", ":")).encode("utf-8")
-    return b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n" + body
-
-
-def rss_bytes(pid):
-    try:
-        for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8").splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
-    except (FileNotFoundError, PermissionError, ValueError):
-        pass
-    return None
-
-
-class Client:
-    def __init__(self):
-        command = [compiler, "lsp", "--stdlib-root", str(root / "stdlib")]
-        if cachegrind_enabled:
-            command = [
-                "valgrind",
-                "--tool=cachegrind",
-                "--quiet",
-                f"--cachegrind-out-file={cachegrind_path}",
-                "--",
-            ] + command
-        self.process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        self.next_id = 1
-
-    def send(self, message):
-        self.process.stdin.write(frame(message))
-        self.process.stdin.flush()
-
-    def read(self):
-        headers = {}
-        while True:
-            line = self.process.stdout.readline()
-            if not line:
-                error = self.process.stderr.read().decode("utf-8", "replace")
-                raise RuntimeError("LSP ended before response: " + error)
-            line = line.rstrip(b"\r\n")
-            if not line:
-                break
-            name, separator, value = line.partition(b":")
-            if not separator:
-                raise RuntimeError(f"malformed LSP header: {line!r}")
-            headers[name.lower()] = value.strip()
-        length = int(headers[b"content-length"])
-        body = self.process.stdout.read(length)
-        if len(body) != length:
-            raise RuntimeError("truncated LSP body")
-        return json.loads(body.decode("utf-8"))
-
-    def request(self, method, params):
-        request_id = self.next_id
-        self.next_id += 1
-        started = time.perf_counter_ns()
-        self.send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
-        while True:
-            message = self.read()
-            if message.get("id") != request_id:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"{method} failed: {message['error']}")
-            elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
-            return elapsed_ms, message.get("result")
-
-    def notify(self, method, params):
-        self.send({"jsonrpc": "2.0", "method": method, "params": params})
-
-    def close(self):
-        self.request("shutdown", None)
-        self.notify("exit", None)
-        self.process.stdin.close()
-        stderr = self.process.stderr.read().decode("utf-8", "replace")
-        code = self.process.wait(timeout=30)
-        if code != 0:
-            raise RuntimeError(f"LSP exited with {code}: {stderr}")
-
-
-for index in range(module_count):
-    path = workdir / "bench" / f"mod{index}.tl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"(module bench.mod{index})\n"
-        f"(define module_value_{index} : i64 {index})\n"
-        f"(define (module_function_{index} [value : i64]) : i64 value)\n",
-        encoding="utf-8",
-    )
-
-lines = ["(module bench.main)", "(import bench.mod0 as m0)"]
-for index in range(top_level_count):
-    lines.append(f"(define benchmark_value_{index} : i64 {index})")
-
-body = f"deep_{depth - 1}"
-for index in reversed(range(depth)):
-    initial = "root" if index == 0 else f"deep_{index - 1}"
-    body = f"(let [deep_{index} : i64 {initial}] {body})"
-deep_line = f"(define (deep [root : i64]) : i64 {body})"
-deep_line_number = len(lines)
-deep_cursor = deep_line.rfind(f"deep_{depth - 1}") + len("deep_")
-lines.append(deep_line)
-source = "\n".join(lines) + "\n"
-main_path = workdir / "main.tl"
-main_path.write_text(source, encoding="utf-8")
-uri = main_path.resolve().as_uri()
-root_uri = workdir.resolve().as_uri()
-
-deep_params = {
-    "textDocument": {"uri": uri},
-    "position": {"line": deep_line_number, "character": deep_cursor},
-}
-import_params = {
-    "textDocument": {"uri": uri},
-    "position": {"line": 1, "character": len("(import bench.m")},
+# completion_count: the number of items in the last completion response, a
+# bare list or a CompletionList (each CompletionItem has exactly one "label").
+completion_count() {
+    lsp_result_text | LC_ALL=C awk '{
+        if ($0 !~ /^(\[|\{)/) { print "invalid"; exit }
+        if ($0 ~ /^\{/ && $0 !~ /"items":\[/) { print "invalid"; exit }
+        print gsub(/"label":/, "&")
+    }'
 }
 
-client = Client()
-try:
-    client.request("initialize", {"rootUri": root_uri, "capabilities": {}})
-    opened = time.perf_counter_ns()
-    client.notify(
-        "textDocument/didOpen",
-        {
-            "textDocument": {
-                "uri": uri,
-                "languageId": "typelisp",
-                "version": 1,
-                "text": source,
-            }
-        },
-    )
-    cold_request_ms, cold_result = client.request("textDocument/completion", deep_params)
-    cold_total_ms = (time.perf_counter_ns() - opened) / 1_000_000
-    if isinstance(cold_result, dict):
-        cold_items = cold_result.get("items")
-    else:
-        cold_items = cold_result
-    if not isinstance(cold_items, list):
-        raise RuntimeError(f"unexpected completion result: {cold_result!r}")
+if [ "${TYPELISP_LSP_COMPLETION_CACHEGRIND:-}" = 1 ]; then
+    lsp_start "$WORKDIR" valgrind --tool=cachegrind --quiet \
+        "--cachegrind-out-file=$WORKDIR/cachegrind.out" -- \
+        "$COMPILER" lsp --stdlib-root "$ROOT/stdlib"
+else
+    lsp_start "$WORKDIR" "$COMPILER" lsp --stdlib-root "$ROOT/stdlib"
+fi
+lsp_request initialize "{\"rootUri\":\"$root_uri\",\"capabilities\":{}}"
+{
+    printf '{"textDocument":{"uri":"%s","languageId":"typelisp","version":1,"text":' "$uri"
+    lsp_json_string_file "$WORKDIR/main.tl"
+    printf '}}'
+} > "$WORKDIR/params.json"
+opened=$(date +%s%N)
+lsp_notify_file textDocument/didOpen "$WORKDIR/params.json"
+lsp_request textDocument/completion "$deep_params"
+cold_total_ns=$((LSP_HEADER_NS - opened))
+cold_request_ns=$LSP_ELAPSED_NS
+cold_candidates=$(completion_count)
+case "$cold_candidates" in
+    '' | *[!0-9]*) fail "unexpected completion result: $(cat "$WORKDIR/response.json")" ;;
+esac
 
-    rss_before = rss_bytes(client.process.pid)
-    timings = []
-    candidate_counts = []
-    for index in range(request_count):
-        params = deep_params if index % 2 == 0 else import_params
-        elapsed_ms, result = client.request("textDocument/completion", params)
-        items = result.get("items") if isinstance(result, dict) else result
-        if not isinstance(items, list):
-            raise RuntimeError(f"unexpected completion result: {result!r}")
-        timings.append(elapsed_ms)
-        candidate_counts.append(len(items))
-    rss_after = rss_bytes(client.process.pid)
-    client.close()
-except Exception:
-    if client.process.poll() is None:
-        client.process.kill()
-    raise
+rss_before=$(lsp_rss_bytes)
+: > "$WORKDIR/timings.txt"
+: > "$WORKDIR/candidates.txt"
+i=0
+while [ "$i" -lt "$REQUESTS" ]; do
+    if [ $((i % 2)) -eq 0 ]; then
+        lsp_request textDocument/completion "$deep_params"
+    else
+        lsp_request textDocument/completion "$import_params"
+    fi
+    count=$(completion_count)
+    case "$count" in
+        '' | *[!0-9]*) fail "unexpected completion result: $(cat "$WORKDIR/response.json")" ;;
+    esac
+    echo "$LSP_ELAPSED_NS" >> "$WORKDIR/timings.txt"
+    echo "$count" >> "$WORKDIR/candidates.txt"
+    i=$((i + 1))
+done
+rss_after=$(lsp_rss_bytes)
+lsp_close
 
-ordered = sorted(timings)
-p95_index = min(len(ordered) - 1, int(len(ordered) * 0.95))
-retained = "unavailable"
-if rss_before is not None and rss_after is not None:
-    retained = str(rss_after - rss_before)
-instruction_count = "unavailable"
-if cachegrind_enabled:
-    try:
-        for line in cachegrind_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("summary:"):
-                instruction_count = line.split()[1]
-                break
-    except (FileNotFoundError, IndexError, ValueError):
-        pass
+retained=unavailable
+if [ "$rss_before" != unavailable ] && [ "$rss_after" != unavailable ]; then
+    retained=$((rss_after - rss_before))
+fi
+instruction_count=unavailable
+if [ "${TYPELISP_LSP_COMPLETION_CACHEGRIND:-}" = 1 ] && [ -f "$WORKDIR/cachegrind.out" ]; then
+    instruction_count=$(awk '$1 == "summary:" && $2 != "" { print $2; found = 1; exit }
+        END { if (!found) print "unavailable" }' "$WORKDIR/cachegrind.out")
+fi
+set -- $(lsp_stats "$WORKDIR/timings.txt")
+p50=$2 p95=$3 max=$4
+set -- $(sort -n "$WORKDIR/candidates.txt" | sed -n '1p;$p')
 
-print(
-    "[lsp-completion] "
-    f"cold_total_ms={cold_total_ms:.3f} cold_request_ms={cold_request_ms:.3f} "
-    f"cold_candidates={len(cold_items)}"
-)
-print(
-    "[lsp-completion] "
-    f"requests={request_count} p50_ms={statistics.median(timings):.3f} "
-    f"p95_ms={ordered[p95_index]:.3f} max_ms={max(timings):.3f} "
-    f"candidate_min={min(candidate_counts)} candidate_max={max(candidate_counts)}"
-)
-print(
-    "[lsp-completion] "
-    f"rss_before_bytes={rss_before if rss_before is not None else 'unavailable'} "
-    f"rss_after_bytes={rss_after if rss_after is not None else 'unavailable'} "
-    f"retained_rss_delta_bytes={retained}"
-)
-print(
-    "[lsp-completion] "
-    f"top_level={top_level_count} lexical_depth={depth} workspace_modules={module_count} "
-    "compiler_reruns_in_hot_loop=0 filesystem_reads_in_hot_loop=0"
-)
-print(f"[lsp-completion] dynamic_instructions={instruction_count}")
-PY
+echo "[lsp-completion] cold_total_ms=$(lsp_ms "$cold_total_ns") cold_request_ms=$(lsp_ms "$cold_request_ns") cold_candidates=$cold_candidates"
+echo "[lsp-completion] requests=$REQUESTS p50_ms=$p50 p95_ms=$p95 max_ms=$max candidate_min=$1 candidate_max=$2"
+echo "[lsp-completion] rss_before_bytes=$rss_before rss_after_bytes=$rss_after retained_rss_delta_bytes=$retained"
+echo "[lsp-completion] top_level=$TOP_LEVEL lexical_depth=$DEPTH workspace_modules=$MODULES compiler_reruns_in_hot_loop=0 filesystem_reads_in_hot_loop=0"
+echo "[lsp-completion] dynamic_instructions=$instruction_count"

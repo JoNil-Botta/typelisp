@@ -73,8 +73,8 @@ All in `src/compiler_optimize.tl`:
 - `opt-scc-next-child` rescans the entire callee list for every child step,
   making the SCC walk quadratic in a function's out-degree. That is the
   compiler's real cost and is kept.
-- A round re-initialises the maps and the node pool without freeing them, as
-  the packet requires; the map `clear-ref!` still touches every slot, which is
+- A round re-initialises the maps and the node pool without freeing them; the
+  map `clear-ref!` still touches every slot, which is
   what the compiler's fresh zeroed `with-capacity` array costs per compile.
 
 **Dropped, and why none of it changes what is measured.**
@@ -103,8 +103,7 @@ All in `src/compiler_optimize.tl`:
    the ten dumps is named `main`, so the test is constant-false over this
    corpus; dropping it cannot change an absorb class.
 5. **`opt-scc-copy-order` allocates its result.** Here it copies into a scratch
-   array reserved once at the corpus maximum, as rule 5 of the benchmark
-   conventions requires. The copy itself is unchanged.
+   array reserved once at the corpus maximum. The copy itself is unchanged.
 6. **Address-taken references are represented but unexercised.** Both kernels
    implement `opt-inline-census-add-address` and the corpus format carries
    kind 1, but none of the ten `after-fold` dumps contains a `fn@` operand, so
@@ -122,7 +121,7 @@ Layout: format version, program count, then per program
 `name-id nblocks nedges nrefs`, `nedges` `src dst` pairs and `nrefs`
 `block callee-name-id kind` triples. `#` starts a comment to end of line. The
 grammar, the reference kinds and the two self-check quantities are documented
-at the top of `tools/export_callgraph.py`.
+in the exporter's header (see Regeneration).
 
 `name-id` is a 64-bit FNV-1a of the function's mangled name text, masked to 62
 bits. The compiler keys `OptFunctionNameIndex.ids` by the name's interned
@@ -158,55 +157,28 @@ record, functions are deduplicated by name, keeping the first occurrence (a
 per-pass dump holds one snapshot per pipeline iteration; the census sees each
 function once).
 
-The two whole-compiler modules `compiler_load` and `compiler_regalloc` used by
-`cfg_domloops` and `gvn_table` are **not** in this corpus: the per-pass dump
-path clones the accumulated snapshot buffer on every observation, so its memory
-is quadratic in the function count and both modules OOM at 16 GB. Ten modules
-in the ~250–2000 function range were dumped instead. Regenerating `--dump-ir`
-of any compiler module with a current-main compiler segfaults; that is tracked
-by the orchestrator, and the snapshot route below is the supported one, exactly
-as in `benchmarks/gvn_table/README.md`.
+The whole-compiler modules `compiler_load` and `compiler_regalloc` that
+`cfg_domloops` and `gvn_table` use are not in this corpus: their per-pass dumps
+did not fit in memory at the export commit, so ten modules in the ~250–2000
+function range were dumped instead.
 
 ### Regeneration
 
-```sh
-# 1. snapshot compiler and its own sources (git archive 98bdc6f5 src stdlib)
-S=<extracted 98bdc6f5 sources>; TL=<snapshot typelisp 98bdc6f5>
-
-# 2. dump each module at the first opt1 dump point
-for M in lex read format_rules format_tokens token compiler_object_elf \
-         package_lock_core tlci_loader compiler_clone compiler_diagnostic; do
-  systemd-run --user --scope -q -p MemoryMax=32G -p MemorySwapMax=0 \
-      $TL compile $S/src/$M.tl --dump-ir after-fold -o /tmp/$M.fold.opt1.ir \
-      --stdlib-root $S/stdlib --stdlib-root $S/src --opt-level 1
-done
-
-# 3. export (the source order is part of the corpus identity)
-python3 benchmarks/callgraph_scc/tools/export_callgraph.py \
-    benchmarks/callgraph_scc/data/callgraph.txt \
-    /tmp/lex.fold.opt1.ir /tmp/read.fold.opt1.ir \
-    /tmp/format_rules.fold.opt1.ir /tmp/format_tokens.fold.opt1.ir \
-    /tmp/token.fold.opt1.ir /tmp/compiler_object_elf.fold.opt1.ir \
-    /tmp/package_lock_core.fold.opt1.ir /tmp/tlci_loader.fold.opt1.ir \
-    /tmp/compiler_clone.fold.opt1.ir /tmp/compiler_diagnostic.fold.opt1.ir
-```
-
-The exporter writes the corpus byte-identically from the same inputs; only the
-`# sources:` comment records the paths it was given.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `200` in `optimization.tsv` | tunes TypeLisp Ir to 0.79 G and C to 0.35 G; 200 rounds is 20 passes over each of the ten programs |
 | round rotation | program advances by one per round, and the fold's starting slot advances by one | each round folds a different program, and inside a round a different rotation of that program's slots |
 | index / census map capacity | `round-up-pow2(count < 4 ? 8 : count * 2)` | `opt-function-index-capacity`, `opt-inline-census-capacity` and `round-capacity` |
 | map growth threshold | `len >= capacity - capacity / 4` | `growth-limit-for` for `stdlib/hashmap.tl`'s scalar family. Capacity is at least twice the function count, so `grow!` never fires on this corpus; the test itself is on every insert |
 | node pool | one node per reference across the whole corpus, bump cursor reset per round | peak live is one `Cons` per deduplicated edge; the reset is the compiler's arena rewind |
 | depth weight | `8^min(depth, 2)` | `opt-inline-census-depth-base` / `-depth-cap` |
 | absorb class ceiling | 2 | `opt-inline-dup-max-refcount` |
-| checksum | 64-bit FNV-1a, no division | identical bits in TypeLisp i64 and C `uint64_t` |
 | folded per slot | SCC id, callee count, refcount, hot refcount, absorb class | the five quantities every inline site reads back; the bottom-up SCC order and the edge total are folded once per round |
 | self-check | deduplicated call-graph edge count and SCC count, per program | both are computed independently by the exporter (the edge count from a Python replay of `opt-slot-list-add`'s dedup, the SCC count from an independent recursive Tarjan) and carried in the corpus; each round compares them against its own tables and aborts with exit 134 on a mismatch |
 

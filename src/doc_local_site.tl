@@ -49,17 +49,17 @@
     (doc_render.doc-module-list-count modules)))
 
 (define (doc-local-site-search-index
-  [compiler-identity : String]
-  [source-identity : String]
-  [package-identity : String]
+  [compiler-identity : (& compiler-identity str)]
+  [source-identity : (& source-identity str)]
+  [package-identity : (& package-identity str)]
   [modules : doc_module_vec.Vec]) : String
   (str_cat.str-cat
     "globalThis.TYPELISP_DOC_SEARCH=Object.freeze({\"schema\":1,\"compilerIdentity\":"
-    (doc_html.doc-html-json-string (& compiler-identity))
+    (doc_html.doc-html-json-string compiler-identity)
     ",\"sourceIdentity\":"
-    (doc_html.doc-html-json-string (& source-identity))
+    (doc_html.doc-html-json-string source-identity)
     ",\"packageIdentity\":"
-    (doc_html.doc-html-json-string (& package-identity))
+    (doc_html.doc-html-json-string package-identity)
     ",\"records\":Object.freeze(["
     (doc-local-site-search-records modules)
     "])});\n"))
@@ -78,18 +78,13 @@
         (owned_view.compiler-owned-shared-view compiler-identity)
         (owned_view.compiler-owned-shared-view source-identity)
         (owned_view.compiler-owned-shared-view package-identity))
-      (doc_html.doc-html-header
-        (owned_view.compiler-owned-shared-view title)
-        "package documentation")
+      (doc_html.doc-html-header title "package documentation")
       "<p class=\"tl-doc-build-identity\">Package <code>"
-      (doc_html.doc-html-escape
-        (owned_view.compiler-owned-shared-view package-identity))
+      (doc_html.doc-html-escape package-identity)
       "</code> · compiler <code>"
-      (doc_html.doc-html-escape
-        (owned_view.compiler-owned-shared-view compiler-identity))
+      (doc_html.doc-html-escape compiler-identity)
       "</code> · source <code>"
-      (doc_html.doc-html-escape
-        (owned_view.compiler-owned-shared-view source-identity))
+      (doc_html.doc-html-escape source-identity)
       "</code></p>\n"
       "<div class=\"tl-doc-search\" role=\"search\">\n<label for=\"tl-doc-search-input\">Search documentation <small>(press /)</small></label>\n<input id=\"tl-doc-search-input\" data-doc-search-input type=\"search\" autocomplete=\"off\" aria-controls=\"tl-doc-search-results\" aria-describedby=\"tl-doc-search-status\">\n<p id=\"tl-doc-search-status\" class=\"tl-doc-search-status\" data-doc-search-status aria-live=\"polite\"></p>\n<ul id=\"tl-doc-search-results\" class=\"tl-doc-search-results\" data-doc-search-results hidden></ul>\n</div>\n"
       (doc_html.doc-html-module-nav

@@ -1,5 +1,5 @@
 ;; FORCING TEST for the backend's post-register-allocation block layout
-;; (#block-layout; scripts/verify-asm-shape-gates.sh check_block_layout).
+;; (#block-layout; tests/codegen/asm-shape.cases case block-layout).
 ;;
 ;; Three probes, one per decision the pass makes. Never-taken self-recursion
 ;; blocks inlining so the named bodies survive for the gate to inspect.

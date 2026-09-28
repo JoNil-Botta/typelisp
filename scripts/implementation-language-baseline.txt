@@ -1,8 +1,8 @@
 # Baseline for scripts/check-implementation-languages.sh.
 #
-# The Rust stage0 has been removed (#795): there are no baselined
-# implementation-language files anymore. This file is intentionally empty (only
-# this comment). The gate now fails on ANY new forbidden-language file outside
+# There are no baselined implementation-language files. This file is
+# intentionally empty (only this comment). The gate fails on ANY new
+# forbidden-language file outside
 # the documented path exceptions (scripts/*.sh, tests/public-tools/*.sh,
 # scripts/*.ps1, benchmarks/**, tools/vs-code-extension/**), enforcing the
 # self-hosted, TypeLisp-only implementation policy.

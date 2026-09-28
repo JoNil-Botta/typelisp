@@ -94,27 +94,17 @@ jumps live.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. emit the compiler's own assembly
-/tmp/tlsnap compile src/main.tl -o /tmp/main.s \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. sample it (the byte budget is part of the corpus identity)
-python3 benchmarks/peephole_lines/tools/export_asm_slice.py \
-    benchmarks/peephole_lines/data/self-compile.asm 3000000 /tmp/main.s
-```
+Exported at `b70653e95` (#6015) from the snapshot compiler's own `--opt-level 2`
+assembly; function names in this README refer to that commit (the fallthrough
+scan has since been folded into the records parse). See
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed. A missing argument or an unreadable corpus is an empty text on both sides, so both print the same checksum and exit 0 |
-| rounds | argument 2, `2` in `optimization.tsv` | tunes TypeLisp Ir to 1.72 G and C to 0.46 G |
+| missing corpus | a missing argument or an unreadable corpus is an empty text on both sides | both print the same checksum and exit 0 |
 | round rotation | starting chunk advances by one per round | each chunk is an independent peephole group, so rotating them is faithful and makes every round's accumulator differ |
 | owner map | 14 registers, `%rbp`/`%rsp` untracked | `CompilerBackendPeepholeOwners` |
 | sweep caps | 4096 candidates, 4096 reads per region | stands in for the compiler's growable `compiler-backend-sweep-i64-push` arrays |
-| checksum | 64-bit FNV-1a, no division | identical bits in TypeLisp i64 and C `uint64_t`; no `%` on a live loop-carried dividend (#5982) |
 | folded per chunk | record count, kept, dropped, rule 1..4 hits, elided reloads, cross-register reuses, fallthrough jumps dropped, dead stores swept | kept lines, dropped lines, and rule hits by class |

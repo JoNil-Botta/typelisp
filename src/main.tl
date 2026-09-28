@@ -15,7 +15,7 @@
 ;; needs neither a host-language compiler driver nor per-command driver
 ;; recompilation. Every command shares the single full typechecker frontend
 ;; (`compiler_check_core` ->
-;; `compiler_typecheck`), so `check` does the same macro-expansion and
+;; `compiler_typecheck_api`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
 (import stdlib.str_cat_runtime as str_cat)
 (cfg

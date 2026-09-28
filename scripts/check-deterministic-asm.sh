@@ -31,7 +31,7 @@ done
 # default linux-x86_64 backend emits identical `.s` text regardless of host; no
 # assembler/linker is invoked) twice and `cmp`s the outputs. Allow it on Linux
 # and on Windows hosts (Git Bash / MSYS / Cygwin) so the Windows CI job can run
-# it for parity (#755). Other hosts stay gated until the check is exercised
+# it for parity. Other hosts stay gated until the check is exercised
 # there.
 case "$(uname -s)" in
     Linux* | MINGW* | MSYS* | CYGWIN*) ;;
@@ -92,7 +92,6 @@ string_length tests/integration/string_length.tl
 substring tests/integration/substring.tl
 sym_i64_env tests/integration/sym_i64_env.tl
 tl_alloc tests/integration/tl_alloc.tl
-tl_format_doc src/tests/format_doc.tl
 tl_lex src/lex.tl
 tl_compiler_parse_core src/compiler_parse_core.tl
 tl_compiler_symbols src/compiler_symbols.tl

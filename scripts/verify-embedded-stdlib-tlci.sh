@@ -100,12 +100,8 @@ fi
 
 run_native_identity_self_test
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
 
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*) HOST_TARGET=windows ;;
@@ -213,7 +209,7 @@ fi
 
 # Ratchet the native-coverage numbers. The native entry count overstates
 # coverage on its own: a native entry can still hand single match arms back to
-# the interpreter, so every fallback dimension is checked. Refs #5596.
+# the interpreter, so every fallback dimension is checked.
 coverage_field() {
     sed -n 's/^embedded stdlib tlci: coverage .*'"$1"'=\([0-9][0-9]*\).*$/\1/p' \
         "$COVERAGE_LOG"
@@ -249,7 +245,7 @@ done
 
 # The opt-in census is diagnostics-only: it must preserve the normal image and
 # the two stdout coverage lines while replacing scalar stderr rows with an
-# explicit, duplicate-free blocked/walked relation. Refs #5742.
+# explicit, duplicate-free blocked/walked relation.
 if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
     :
 else
@@ -283,7 +279,7 @@ if ! cmp -s "$COVERAGE_LOG" "$FULL_BLOCKER_STDOUT"; then
     exit 1
 fi
 
-# #6609: derive identity, declared-parameter shape, and result kind from the
+# Derive identity, declared-parameter shape, and result kind from the
 # exact parsed producer inputs, then require the reviewed fixture manifest to
 # match it byte-for-byte. This makes catalog additions/removals and declaration
 # changes fail before the route corpus can become stale or vacuous.
@@ -354,11 +350,11 @@ if [ "$BLOCKED_SHELLS" -ne "$SHELL_ENTRIES" ]; then
         "coverage reports $SHELL_ENTRIES" >&2
     exit 1
 fi
-# Pin the landed families, not just the aggregate ratchet. Each identity must
+# Pin the native families, not just the aggregate ratchet. Each identity must
 # exist in the catalog and, because every shell is accounted for by the blocked
-# relation above, must not be one of those blocked identities. Refs #6550,
-# #6552, #6553, #6554, #6555, #6556. The same assertion has deterministic
-# missing and blocked identity coverage in run_native_identity_self_test.
+# relation above, must not be one of those blocked identities. The same
+# assertion has deterministic missing and blocked identity coverage in
+# run_native_identity_self_test.
 verify_required_native_identities "$IMAGE_A" "$FULL_BLOCKER_STDERR"
 if [ "$SHELL_ENTRIES" -gt 0 ] &&
     ! grep -q "$(printf '\twalked\t')" "$FULL_BLOCKER_STDERR"; then
@@ -448,18 +444,18 @@ if cmp -s "$IMAGE_A" "$MUTATED_IMAGE"; then
     exit 1
 fi
 
-# #5528: sustained-dispatch stress over the real mapped image. #5460 saw
-# corruption after ~13.5k catalog calls, while the loader verifier above makes
-# three dispatches -- four orders of magnitude below the failure scale.
+# Sustained-dispatch stress over the real mapped image. Dispatch corruption
+# has surfaced only after ~13.5k catalog calls, while the loader verifier above
+# makes three dispatches.
 #
 # The three tiers exist so a failure names an entry/session shape instead of a
-# symptom. With #6550 there are no production shells left: tier 1 now sustains
-# the newly native text_buf/append! two-operand dynamic set!-place callback
-# chain. Tier 2 runs core_macros/__tl-box-place over one persistent set of pools/operands and
+# symptom. There are no production shells: tier 1 sustains the native
+# text_buf/append! two-operand dynamic set!-place callback chain. Tier 2 runs
+# core_macros/__tl-box-place over one persistent set of pools/operands and
 # audits the count, operand, cookie and stack state after every fresh session.
 # Tier 3 runs that same entry but captures pools and pushes a fresh operand each
-# iteration, adding pool/operand cycling. All three run above the observed
-# #5460 threshold and on both hosts.
+# iteration, adding pool/operand cycling. All three run above that call count
+# and on both hosts.
 STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
 for STRESS_TIER in 1 2 3; do
     STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"

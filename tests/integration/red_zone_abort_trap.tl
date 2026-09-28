@@ -1,7 +1,7 @@
 (import stdlib.io)
 
 ;; FORCING TEST for T1-6 (a), abort-site half (pinned by
-;; scripts/verify-asm-shape-gates.sh:check_red_zone_leaf and run end to end by
+;; tests/codegen/asm-shape.cases case red-zone-leaf and run end to end by
 ;; the red_zone_abort_* manifest cases). `rzt-probe` is a call-free leaf whose
 ;; only `call` is the never-taken `tl_oob_abort_at` edge and whose frame lives
 ;; in the red zone, so it carries NO stack adjustment: the located abort

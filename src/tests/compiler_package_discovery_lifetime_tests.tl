@@ -15,11 +15,15 @@
 (import compiler_driver_core as driver)
 (import compiler_intern as ci)
 (import compiler_load as load)
+(import compiler_load_tests as load_tests)
 (import compiler_owned_view as owned_view)
 (import doc_test)
+(import doc_test_tests as doc_tests)
 (import sym_i64_env)
 (import tlci_core as tlci)
 (import tlci_loader)
+(import tlci_core_tests)
+(import tlci_loader_tests)
 
 (define (discovery-test-roots) : roots_vec.Vec
   (let
@@ -42,11 +46,11 @@
 
 (define (discovery-test-paths-equal?
   [expected : ast.AstDeclPathList]
-  [actual : ast.AstDeclPathList]) : bool
+  [actual : (& actual ast.AstDeclPathList)]) : bool
   (let
     [count : i64 (ast.ast-decl-path-list-len (& expected))]
     [index : i64 0]
-    [ok : bool (= count (ast.ast-decl-path-list-len (& actual)))]
+    [ok : bool (= count (ast.ast-decl-path-list-len actual))]
     (begin
       (while (and ok (< index count))
         (begin
@@ -55,9 +59,9 @@
             (and
               (string.eq
                 (ast.ast-decl-path-list-get (& expected) index "")
-                (ast.ast-decl-path-list-get (& actual) index ""))
-              (= (ast.ast-decl-path-list-owner-id (& actual) index 123) -1)
-              (= (ast.ast-decl-path-list-provenance-id (& actual) index 123) -1)))
+                (ast.ast-decl-path-list-get actual index ""))
+              (= (ast.ast-decl-path-list-owner-id actual index 123) -1)
+              (= (ast.ast-decl-path-list-provenance-id actual index 123) -1)))
           (set! index (+ index 1))))
       (and ok (> count 0)))))
 
@@ -76,16 +80,16 @@
     (load.compiler-load-test-mkdir "target/exp")
     (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime")
     (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime/src")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/helper.tl"
       "(module helper)\n(define value : i64 42)")
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/main.tl"
       (str_cat.str-cat
         "(import helper as helper)\n"
-        (doc_test.doc-test-smoke-source)
+        (doc_tests.doc-test-smoke-source)
         "\n(define (main) : i64 helper.value)"))
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/bad.tl"
       "(define broken : i64")))
 
@@ -113,7 +117,7 @@
             (load.compiler-load-active-session-state-shared-view)]
           [_bind-owner : unit
             (load.compiler-load-session-state-use-with-intern-state!
-              (owned_view.compiler-owned-shared-view session)
+              session
               (ci.intern-compat-state-capture-active))]
           (match (discovery-test-load
             "target/exp/package-discovery-lifetime/src/main.tl"
@@ -134,9 +138,7 @@
                   (io.panic "discovery did not restore enclosing owners"))
                 (discovery-test-reuse-storage!)
                 (unless
-                  (discovery-test-paths-equal?
-                    expected
-                    (owned_view.compiler-owned-shared-view copied))
+                  (discovery-test-paths-equal? expected copied)
                   (io.panic
                     "retired discovery changed path order or retained ids"))
                 (let
@@ -198,17 +200,17 @@
   package-discovery-extraction-owns-code-output-and-errors
   (begin
     (discovery-test-write-fixture!)
-    (load.compiler-load-write-file-text
+    (load_tests.compiler-load-write-file-text
       "target/exp/package-discovery-lifetime/src/extract.tl"
-      (doc_test.doc-test-runnable-source))
+      (doc_tests.doc-test-runnable-source))
     (let
       [runnable : doc_test.DocTestExtraction
         (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/extract.tl")]
       [_replace : unit
-        (load.compiler-load-write-file-text
+        (load_tests.compiler-load-write-file-text
           "target/exp/package-discovery-lifetime/src/extract.tl"
-          (doc_test.doc-test-malformed-source))]
+          (doc_tests.doc-test-malformed-source))]
       [malformed : doc_test.DocTestExtraction
         (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/extract.tl")]
@@ -218,22 +220,17 @@
           [(doc_test.DocTestExtraction.Extraction examples errors)
             (unless
               (and
-                (=
-                  (doc_test.doc-test-example-list-count
-                    (owned_view.compiler-owned-shared-view examples))
-                  2)
+                (= (doc_test.doc-test-example-list-count examples) 2)
                 (= (doc_test.doc-test-error-list-count errors) 0)
-                (doc_test.doc-test-runnable-example-ok?
-                  (doc_test.doc-test-example-list-ref
-                    (owned_view.compiler-owned-shared-view examples)
-                    0)
+                (doc_tests.doc-test-runnable-example-ok?
+                  (doc_test.doc-test-example-list-ref examples 0)
                   1
                   2
                   0
                   "hello\n"
                   "error\tline\r"
                   "(define (main)")
-                (doc_test.doc-test-runnable-example-ok?
+                (doc_tests.doc-test-runnable-example-ok?
                   (doc_test.doc-test-example-list-ref examples 1)
                   2
                   14
@@ -248,11 +245,8 @@
             (unless
               (and
                 (= (doc_test.doc-test-example-list-count examples) 0)
-                (=
-                  (doc_test.doc-test-error-list-count
-                    (owned_view.compiler-owned-shared-view errors))
-                  3)
-                (doc_test.doc-test-malformed-errors-ok? errors))
+                (= (doc_test.doc-test-error-list-count errors) 3)
+                (doc_tests.doc-test-malformed-errors-ok? errors))
               (io.panic "malformed fence ordering or messages escaped scratch"))])
         (match (doc_test.doc-test-extract-package-file-text
           "target/exp/package-discovery-lifetime/src/not-present.tl")
@@ -308,13 +302,13 @@
   [owner : i64]) : bool
   (in-arena
     (arena.Arena owner)
-    (match (tlci_loader.tlci-loader-test-emit-with-real-fixup)
+    (match (tlci_loader_tests.tlci-loader-test-emit-with-real-fixup)
       [(tlci.ResultTlciBytes.Err _) false]
       [(tlci.ResultTlciBytes.Ok bytes)
         (match (tlci_loader.tlci-loader-load-from-bytes-with-host
           owner
           bytes
-          (tlci.tlci-test-host-callback-table))
+          (tlci_core_tests.tlci-test-host-callback-table))
           [(tlci_loader.ResultTlciLoadedImage.Err _) false]
           [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
             (=
@@ -332,7 +326,7 @@
                     tlci.tlci-callback-abi-version
                     "abcdef0")
                   (load.CompilerLoadDependencyCatalogImage.Some
-                    (tlci_loader.tlci-loader-test-image 0))
+                    (tlci_loader_tests.tlci-loader-test-image 0))
                   (tlci.tlci-spmd-callables-empty)
                   (load.CompilerLoadDependencyCatalogStatus.TrustedCode loaded)))
               0)])])))
@@ -369,9 +363,7 @@
         (load.compiler-load-session-state-dependency-surfaces-release!
           (owned_view.compiler-owned-shared-view state))
         (discovery-test-reuse-storage!)
-        (match (load.compiler-load-dependency-catalog-admitted-image
-          (owned_view.compiler-owned-shared-view state)
-          0)
+        (match (load.compiler-load-dependency-catalog-admitted-image state 0)
           [(load.CompilerLoadDependencyCatalogAdmittedImage.TrustedCode
               _
               loaded)

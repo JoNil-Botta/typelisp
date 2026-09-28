@@ -110,8 +110,6 @@ expensive and that a "textbook" SSA construction would not have:
   dominance frontier's set-build order and the phi-site order were checked
   against the `OptLabelSet.Dense` read convention (`opt-label-ref 0` is the
   newest element) and are unchanged.
-- Scratch arrays are allocated once at the corpus maxima and reused instead of
-  per function. Both implementations do the same.
 
 ## Corpus
 
@@ -124,8 +122,8 @@ expect-verify`, then the parameters as `var typeclass` pairs, then per block
 `nsucc succ... ninstr` followed by the instructions. Blocks are numbered
 0..n-1 in dump (= block-list) order, which is the CFG id numbering
 `opt-cfg-index-build` assigns; successor edges are in `opt-cfg-instr-successors`
-discovery order (the terminator rules of
-`benchmarks/cfg_domloops/tools/export_cfg_blocks.py`). Instruction records name
+discovery order (the terminator rules of the `cfg_domloops` exporter).
+Instruction records name
 the `opt-ssa-facts-add-instr` arm they land in:
 
 ```
@@ -159,7 +157,7 @@ those already satisfy `opt-verify-single-defs?` (the pass returns them
 unchanged) and are dropped, 153 could not be parsed (a `message "…"` operand
 whose string spans lines breaks the line-oriented reader) and are dropped, and
 the remaining 475 — the records the pass actually transforms — are the corpus.
-The rendered corpus is 0.48 MB, under the 3 MB budget, so the stride is 1.
+The corpus is small enough to keep whole, so the stride is 1.
 
 None of the 475 trips an early-out: every one of them has at least one
 candidate, none has a candidate phi destination, none exceeds the 4096-block
@@ -176,40 +174,10 @@ function. The exporter predicts this independently and the kernels assert it.
 
 ### Regeneration
 
-```sh
-# 1. the snapshot compiler and its sources (see target/bench6-dumps/aug25/README.txt)
-S=<extracted 98bdc6f5 sources>; TL=target/dev/tl-aug25s2
-
-# 2. dump each module after the rotation pass (16G is enough for these modules;
-#    compiler_load / compiler_regalloc OOM in the per-pass dump path, which is
-#    why the corpus comes from medium modules)
-for m in lex read format_rules format_tokens token compiler_object_elf \
-         package_lock_core tlci_loader compiler_clone compiler_diagnostic; do
-  systemd-run --user --scope -q -p MemoryMax=16G -p MemorySwapMax=0 \
-      $TL compile $S/src/$m.tl --dump-ir after-rotation \
-      -o target/bench6-dumps/aug25/$m.rotation.opt2.ir \
-      --stdlib-root $S/stdlib --stdlib-root $S/src --opt-level 2
-done
-
-# 3. export (file order is part of the corpus identity: first occurrence wins)
-python3 benchmarks/ssa_construct/tools/export_ssa_funcs.py \
-    benchmarks/ssa_construct/data/ssa-funcs.txt 3000000 \
-    target/bench6-dumps/aug25/lex.rotation.opt2.ir \
-    target/bench6-dumps/aug25/read.rotation.opt2.ir \
-    target/bench6-dumps/aug25/format_rules.rotation.opt2.ir \
-    target/bench6-dumps/aug25/format_tokens.rotation.opt2.ir \
-    target/bench6-dumps/aug25/token.rotation.opt2.ir \
-    target/bench6-dumps/aug25/compiler_object_elf.rotation.opt2.ir \
-    target/bench6-dumps/aug25/package_lock_core.rotation.opt2.ir \
-    target/bench6-dumps/aug25/tlci_loader.rotation.opt2.ir \
-    target/bench6-dumps/aug25/compiler_clone.rotation.opt2.ir \
-    target/bench6-dumps/aug25/compiler_diagnostic.rotation.opt2.ir
-```
-
-`--dump-ir` of any compiler module segfaults on the current `main` compiler;
-that is tracked separately by the orchestrator, which is why the corpus is
-produced by the pinned 2026-08-25 snapshot compiler, exactly as
-`benchmarks/cfg_domloops` and `benchmarks/gvn_table` are.
+Exported at `933fdf56c` (#7382) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Self-check
 
@@ -236,8 +204,5 @@ the printed number.
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `12` in `optimization.tsv` | tunes TypeLisp Ir to 0.83 G and C to 0.43 G |
-| round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order, so no round repeats an earlier accumulator and nothing can be hoisted |
-| checksum | 64-bit FNV-1a, `h = (h ^ x) * 1099511628211`, basis `1469598103934665603` | wrapping multiply and xor only — no division or `%`, so TypeLisp i64 and C `uint64_t` produce identical bits |
+| round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | folded per function | the early-out taken (or 6 for a full construction), the candidate count, the inserted-phi count, the final vreg count, the number of renamed definitions, the verify verdict, the three self-check verdicts, and then every materialized instruction's kind, destination and resolved operands | covers the phi placement, the renaming, and every phi-operand resolution id |

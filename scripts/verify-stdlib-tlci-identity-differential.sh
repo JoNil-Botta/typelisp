@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Exhaustive per-identity embedded stdlib TLCI route differential (#6609).
+# Exhaustive per-identity embedded stdlib TLCI route differential.
 # The supplied profile compiler must contain embedded-stdlib-tlci and the
 # runtime-gated identity records compiled with tlci-native-route-stress.
 
@@ -40,10 +40,8 @@ DEFAULT_BATCH="$WORKDIR/default.batch"
 EXPLICIT_BATCH="$WORKDIR/explicit.batch"
 SOURCE_BATCH="$WORKDIR/source.batch"
 
-fail() {
-    echo "[tlci-identity-differential] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[tlci-identity-differential] '
+. "$ROOT/scripts/lib-gate.sh"
 
 batch_path() {
     if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then

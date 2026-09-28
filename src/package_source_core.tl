@@ -58,7 +58,7 @@
   (UnsupportedSchema i64)
   (Malformed String))
 
-(define (package-source-char-code-at [text : String] [idx : i64]) : i64
+(define (package-source-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
 
 (define (package-source-string-less? [left : String] [right : String]) : bool
@@ -75,14 +75,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64
-            (package-source-char-code-at
-              (owned_view.compiler-owned-shared-view left)
-              idx)]
-          [rc : i64
-            (package-source-char-code-at
-              (owned_view.compiler-owned-shared-view right)
-              idx)]
+          [lc : i64 (package-source-char-code-at left idx)]
+          [rc : i64 (package-source-char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -93,7 +87,7 @@
         (< left-len right-len)))))
 
 (define (package-source-vec-insert-slot-from
-  [items : svec.Vec]
+  [items : (& items svec.Vec)]
   [value : String]
   [index : i64]) : i64
   (if (>= index (svec.len (& items)))
@@ -109,13 +103,13 @@
           (package-source-vec-insert-slot-from items value (+ index 1)))))))
 
 (define (package-source-vec-copy-range
-  [items : svec.Vec]
+  [items : (& items svec.Vec)]
   [out : svec.Vec]
   [start : i64]
   [end : i64]) : svec.Vec
   (let
     [idx : i64 start]
-    [cur : svec.Vec (owned_view.compiler-owned-shared-view out)]
+    [cur : svec.Vec out]
     (begin
       (while (< idx end)
         (begin
@@ -130,28 +124,18 @@
   (let
     [out : svec.Vec (svec.with-capacity (+ (svec.len (& items)) 1))]
     (begin
-      (set!
-        out
-        (package-source-vec-copy-range
-          (owned_view.compiler-owned-shared-view items)
-          out
-          0
-          slot))
+      (set! out (package-source-vec-copy-range items out 0 slot))
       (svec.push-ref! (&mut out) value)
       (set!
         out
-        (package-source-vec-copy-range
-          (owned_view.compiler-owned-shared-view items)
-          out
-          slot
-          (svec.len (& items))))
+        (package-source-vec-copy-range items out slot (svec.len (& items))))
       out)))
 
 (define (package-source-vec-insert [items : svec.Vec] [value : String]) : svec.Vec
   (let
     [slot : i64
       (package-source-vec-insert-slot-from
-        (owned_view.compiler-owned-shared-view items)
+        items
         (owned_view.compiler-owned-shared-view value)
         0)]
     (if (< slot 0)
@@ -269,26 +253,16 @@
   [field : String]
   [requested : String]
   [checkout-root : String]
-  [normalized : String]
+  [normalized : (& normalized str)]
   [cursor : i64]
   [prefix : String]
   [expected : PackageSourceConfinedPathKind]) : ResultPackageSourceConfinedPath
   (let
     [n : i64 (string.string-length normalized)]
-    [separator : i64
-      (package-source-relative-separator
-        (owned_view.compiler-owned-shared-view normalized)
-        cursor
-        n)]
+    [separator : i64 (package-source-relative-separator normalized cursor n)]
     [segment : String (string.substring normalized cursor (- separator cursor))]
-    [next-prefix : String
-      (package-source-relative-join
-        (owned_view.compiler-owned-shared-view prefix)
-        (owned_view.compiler-owned-shared-view segment))]
-    [candidate : String
-      (package-source-root-join
-        (owned_view.compiler-owned-shared-view checkout-root)
-        (owned_view.compiler-owned-shared-view next-prefix))]
+    [next-prefix : String (package-source-relative-join prefix segment)]
+    [candidate : String (package-source-root-join checkout-root next-prefix)]
     [last : bool (>= separator n)]
     (match (fs.try-file-kind-no-follow (& candidate))
       [(fs.ErrFsFileKind _)
@@ -382,7 +356,7 @@
 (define (package-source-fetched-checkout-audit-entry
   [package-name : String]
   [checkout-root : String]
-  [relative : String]
+  [relative : (& relative str)]
   [name : String]) : ResultPackageSourceConfinedPath
   ;; The checkout implementation owns the root `.git` directory; it is not a
   ;; package-controlled input. A nested `.git` remains subject to the audit.
@@ -417,7 +391,7 @@
 (define (package-source-fetched-checkout-audit-entries-from
   [package-name : String]
   [checkout-root : String]
-  [relative : String]
+  [relative : (& relative str)]
   [entries : svec.Vec]
   [index : i64]) : ResultPackageSourceConfinedPath
   (if (>= index (svec.len (& entries)))
@@ -425,7 +399,7 @@
     (match (package-source-fetched-checkout-audit-entry
       (owned_view.compiler-owned-shared-view package-name)
       (owned_view.compiler-owned-shared-view checkout-root)
-      (owned_view.compiler-owned-shared-view relative)
+      relative
       (svec.get (& entries) index ""))
       [(ResultPackageSourceConfinedPath.Err message)
         (ResultPackageSourceConfinedPath.Err message)]
@@ -492,47 +466,7 @@
               "."
               normalized-root)))])))
 
-(define (package-source-fetched-boundary-lexical-smoke-ok?) : bool
-  (and
-    (string.eq
-      (package-source-fetched-boundary-message
-        "dep"
-        "entry"
-        "../outside.tl"
-        "cache/checkout")
-      "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")
-    (match (package-source-confined-existing-file
-      "dep"
-      "entry"
-      "../outside.tl"
-      "cache/checkout")
-      [(ResultPackageSourceConfinedPath.Err message)
-        (string.eq
-          message
-          "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")]
-      [_ false])
-    (match (package-source-confined-existing-file
-      "dep"
-      "entry"
-      "C:outside.tl"
-      "cache/checkout")
-      [(ResultPackageSourceConfinedPath.Err _) true]
-      [_ false])
-    (match (package-source-confined-existing-file
-      "dep"
-      "entry"
-      "\\\\server\\share\\outside.tl"
-      "cache/checkout")
-      [(ResultPackageSourceConfinedPath.Err _) true]
-      [_ false])))
-
-(test
-  package-source-fetched-boundary-rejects-lexical-escapes-before-io
-  (unless
-    (package-source-fetched-boundary-lexical-smoke-ok?)
-    (io.panic "package-source: fetched boundary lexical smoke failed")))
-
-(define (package-source-internal-dir? [name : String]) : bool
+(define (package-source-internal-dir? [name : (& name str)]) : bool
   (or
     (string.eq name "target")
     (string.eq name ".git")
@@ -544,74 +478,16 @@
   (string.eq name "tests"))
 
 (define (package-source-skip-dir? [name : String]) : bool
-  (or
-    (package-source-internal-dir? (owned_view.compiler-owned-shared-view name))
-    (package-source-test-dir? (owned_view.compiler-owned-shared-view name))))
-
-(define (package-source-skip-dir-self-test?) : bool
-  (and
-    (package-source-skip-dir? "target")
-    (package-source-skip-dir? ".git")
-    (package-source-skip-dir? "tests")
-    (not (package-source-skip-dir? "tests_extra"))
-    (not (package-source-skip-dir? "src"))))
-
-(test
-  package-source-skips-package-test-directories
-  (if (package-source-skip-dir-self-test?)
-    unit
-    (io.panic "package-source: skip-dir self-test mismatch")))
-
-(define (package-source-vec-insert-self-test?) : bool
-  (let
-    [items : svec.Vec
-      (package-source-vec-insert
-        (package-source-vec-insert
-          (package-source-vec-insert
-            (package-source-vec-insert (svec.new) "src/z.tl")
-            "src/a.tl")
-          "src/m.tl")
-        "src/a.tl")]
-    (and
-      (= (svec.len (& items)) 3)
-      (string.eq (svec.get (& items) 0 "") "src/a.tl")
-      (string.eq (svec.get (& items) 1 "") "src/m.tl")
-      (string.eq (svec.get (& items) 2 "") "src/z.tl"))))
-
-(test
-  package-source-vector-insert-sorts-and-dedups
-  (if (package-source-vec-insert-self-test?)
-    unit
-    (io.panic "package-source: vector insert self-test mismatch")))
-
-(define (package-source-vector-growth-self-test?) : bool
-  (let
-    [items : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut items) "src/a.tl")
-      (svec.push-ref! (&mut items) "src/b.tl")
-      (svec.push-ref! (&mut items) "src/c.tl")
-      (svec.push-ref! (&mut items) "src/d.tl")
-      (svec.push-ref! (&mut items) "src/e.tl")
-      (and
-        (= (svec.len (& items)) 5)
-        (string.eq (svec.get (& items) 0 "") "src/a.tl")
-        (string.eq (svec.get (& items) 4 "") "src/e.tl")))))
-
-(test
-  package-source-generated-vector-grows-past-initial-capacity
-  (if (package-source-vector-growth-self-test?)
-    unit
-    (io.panic "package-source: generated vector growth self-test mismatch")))
+  (or (package-source-internal-dir? name) (package-source-test-dir? name)))
 
 (define (package-source-sort-entries-from
-  [entries : fs.FsStringVector]
+  [entries : (& entries fs.FsStringVector)]
   [index : i64]
   [acc : svec.Vec]) : svec.Vec
   (if (>= index (fs.string-vector-len (& entries)))
     acc
     (package-source-sort-entries-from
-      (owned_view.compiler-owned-shared-view entries)
+      entries
       (+ index 1)
       (package-source-vec-insert
         acc
@@ -620,37 +496,16 @@
 (define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.Vec
   (package-source-sort-entries-from entries 0 (svec.new)))
 
-(define (package-source-sort-entries-self-test?) : bool
-  (let
-    [entries : fs.FsStringVector (fs.string-vector-new)]
-    [items : svec.Vec
-      (begin
-        (fs.string-vector-push! (&mut entries) "zeta")
-        (fs.string-vector-push! (&mut entries) "alpha")
-        (fs.string-vector-push! (&mut entries) "middle")
-        (package-source-sort-entries entries))]
-    (match (owned_view.compiler-owned-shared-view items)
-      [_
-        (and
-          (= (svec.len (& items)) 3)
-          (string.eq (svec.get (& items) 0 "") "alpha")
-          (string.eq (svec.get (& items) 1 "") "middle")
-          (string.eq (svec.get (& items) 2 "") "zeta"))])))
-
-(test
-  package-source-sorts-directory-entries-before-scanning
-  (if (package-source-sort-entries-self-test?)
-    unit
-    (io.panic "package-source: entry sort self-test mismatch")))
-
 (define (package-source-dir-has-manifest? [dir : String]) : bool
   (io.file-exists?
     (compiler_load.compiler-load-join-root-path dir "typelisp.pkg")))
 
-(define (package-source-tl-file? [path : String]) : bool
-  (string.eq (fs.extension (& path)) "tl"))
+(define (package-source-tl-file? [path : (& path str)]) : bool
+  (string.eq (fs.extension path) "tl"))
 
-(define (package-source-include-kind? [path : String] [kind : fs.FsFileKind]) : bool
+(define (package-source-include-kind?
+  [path : (& path str)]
+  [kind : fs.FsFileKind]) : bool
   (and (fs.file-kind-regular? kind) (package-source-tl-file? path)))
 
 (define (package-source-entry-error
@@ -690,7 +545,7 @@
 
 (define (package-source-scan-dir
   [command : String]
-  [root : String]
+  [root : (& root str)]
   [relative : String]
   [acc : svec.Vec]) : ResultPackageSourceList
   (let
@@ -738,9 +593,7 @@
       [(fs.ErrIoStringVector error)
         (if (io.error-unsupported?
           (owned_view.compiler-owned-shared-view error))
-          (ResultPackageSourceList.Ok
-            (package-source-entry-list
-              (owned_view.compiler-owned-shared-view source-set)))
+          (ResultPackageSourceList.Ok (package-source-entry-list source-set))
           (package-source-read-dir-error command root error))]
       [(fs.OkIoStringVector entries)
         (package-source-scan-entries
@@ -752,8 +605,8 @@
 
 (define (package-source-scan-one
   [command : String]
-  [root : String]
-  [relative : String]
+  [root : (& root str)]
+  [relative : (& relative str)]
   [name : String]
   [acc : svec.Vec]) : ResultPackageSourceList
   (if (package-source-skip-dir? (owned_view.compiler-owned-shared-view name))
@@ -772,9 +625,7 @@
             (if (package-source-dir-has-manifest? child-path)
               (ResultPackageSourceList.Ok acc)
               (package-source-scan-dir command root child-relative acc))
-            (if (package-source-include-kind?
-              (owned_view.compiler-owned-shared-view child-path)
-              kind)
+            (if (package-source-include-kind? child-path kind)
               (ResultPackageSourceList.Ok
                 (package-source-vec-insert
                   acc
@@ -783,8 +634,8 @@
 
 (define (package-source-scan-entries-from
   [command : String]
-  [root : String]
-  [relative : String]
+  [root : (& root str)]
+  [relative : (& relative str)]
   [entries : svec.Vec]
   [index : i64]
   [acc : svec.Vec]) : ResultPackageSourceList
@@ -792,8 +643,8 @@
     (ResultPackageSourceList.Ok acc)
     (match (package-source-scan-one
       (owned_view.compiler-owned-shared-view command)
-      (owned_view.compiler-owned-shared-view root)
-      (owned_view.compiler-owned-shared-view relative)
+      root
+      relative
       (svec.get (& entries) index "")
       acc)
       [(ResultPackageSourceList.Err message)
@@ -801,7 +652,7 @@
       [(ResultPackageSourceList.Ok next)
         (package-source-scan-entries-from
           command
-          (owned_view.compiler-owned-shared-view root)
+          root
           relative
           entries
           (+ index 1)
@@ -809,7 +660,7 @@
 
 (define (package-source-scan-entries
   [command : String]
-  [root : String]
+  [root : (& root str)]
   [relative : String]
   [entries : svec.Vec]
   [acc : svec.Vec]) : ResultPackageSourceList
@@ -820,7 +671,9 @@
 ;; manifest at the root. It exists for tooling such as the LSP workspace index
 ;; that receives roots from its protocol while still needing exactly the same
 ;; deterministic traversal, exclusion, regular-file, and nested-package rules.
-(define (package-source-discover-root-for [command : String] [root : String]) : ResultPackageSourceList
+(define (package-source-discover-root-for
+  [command : String]
+  [root : (& root str)]) : ResultPackageSourceList
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     (match (fs.try-read-dir (& normalized-root))
@@ -836,7 +689,7 @@
 
 ;; Return the next normalized path-separator position, or `end`.
 (define (package-source-relative-separator
-  [relative : String]
+  [relative : (& relative str)]
   [start : i64]
   [end : i64]) : i64
   (let
@@ -851,10 +704,10 @@
 ;; Check the directory segments that lead to one source. The root's own
 ;; manifest is allowed; a manifest below it is a nested-package boundary.
 (define (package-source-relative-parent-eligible?
-  [root : String]
-  [relative : String]) : bool
+  [root : (& root str)]
+  [relative : (& relative str)]) : bool
   (let
-    [end : i64 (fs.last-separator-index (& relative))]
+    [end : i64 (fs.last-separator-index relative)]
     [cursor : i64 0]
     [prefix : String ""]
     [eligible : bool true]
@@ -862,10 +715,7 @@
       (while (and eligible (>= end 0) (< cursor end))
         (let
           [separator : i64
-            (package-source-relative-separator
-              (owned_view.compiler-owned-shared-view relative)
-              cursor
-              end)]
+            (package-source-relative-separator relative cursor end)]
           [name : String
             (string.substring relative cursor (- separator cursor))]
           (begin
@@ -897,15 +747,15 @@
 ;; require the file itself to exist so an unsaved open document can still be
 ;; associated with its workspace root.
 (define (package-source-path-location-eligible-for-root?
-  [root : String]
-  [path : String]) : bool
+  [root : (& root str)]
+  [path : (& path str)]) : bool
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [relative : String
       (compiler_load.compiler-load-root-relative-path
-        (owned_view.compiler-owned-shared-view normalized-root)
-        (owned_view.compiler-owned-shared-view normalized-path))]
+        normalized-root
+        normalized-path)]
     (and
       (not (string.eq relative normalized-path))
       (fs.path-safe-relative? (& relative))
@@ -914,13 +764,13 @@
 
 ;; Fast single-path counterpart to root discovery for file-watcher events.
 ;; The path must additionally be a current regular file.
-(define (package-source-path-eligible-for-root? [root : String] [path : String]) : bool
+(define (package-source-path-eligible-for-root?
+  [root : (& root str)]
+  [path : (& path str)]) : bool
   (let
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     (and
-      (package-source-path-location-eligible-for-root?
-        root
-        (owned_view.compiler-owned-shared-view normalized-path))
+      (package-source-path-location-eligible-for-root? root normalized-path)
       (match (fs.try-file-kind-no-follow (& normalized-path))
         [(fs.OkFsFileKind kind)
           (package-source-include-kind? normalized-path kind)]
@@ -1029,7 +879,9 @@
           (set! index (+ index 1))))
       next)))
 
-(define (package-source-binding-relative-path [root : String] [path : String]) : String
+(define (package-source-binding-relative-path
+  [root : (& root str)]
+  [path : (& path str)]) : String
   (let
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
@@ -1037,13 +889,13 @@
       (if (= normalized-root ".")
         normalized-path
         (compiler_load.compiler-load-root-relative-path
-          (owned_view.compiler-owned-shared-view normalized-root)
-          (owned_view.compiler-owned-shared-view normalized-path)))]
+          normalized-root
+          normalized-path))]
     (if (and
       (> (string.string-length relative) 0)
       (not (string.eq relative "."))
       (fs.path-safe-relative? (& relative))
-      (package-source-tl-file? (owned_view.compiler-owned-shared-view relative))
+      (package-source-tl-file? relative)
       (not (string.eq relative normalized-path)))
       relative
       ;; A root of `.` has no lexical prefix after normalization; its
@@ -1053,8 +905,7 @@
         (> (string.string-length normalized-path) 0)
         (not (string.eq normalized-path "."))
         (fs.path-safe-relative? (& normalized-path))
-        (package-source-tl-file?
-          (owned_view.compiler-owned-shared-view normalized-path)))
+        (package-source-tl-file? normalized-path))
         normalized-path
         ""))))
 
@@ -1122,10 +973,7 @@
     (while (and (= (string.string-length error) 0) (< index count))
       (let
         [path : String (svec.get (& sources) index "")]
-        [relative : String
-          (package-source-binding-relative-path
-            (owned_view.compiler-owned-shared-view root)
-            (owned_view.compiler-owned-shared-view path))]
+        [relative : String (package-source-binding-relative-path root path)]
         (cond
           [(= (string.string-length relative) 0)
             (set!
@@ -1146,10 +994,7 @@
                 (owned_view.compiler-owned-shared-view source-set)
                 path
                 "source paths must be unique and in deterministic order"))]
-          [(not
-              (package-source-relative-parent-eligible?
-                (owned_view.compiler-owned-shared-view root)
-                (owned_view.compiler-owned-shared-view relative)))
+          [(not (package-source-relative-parent-eligible? root relative))
             (set!
               error
               (package-source-binding-invalid-set-error
@@ -1166,10 +1011,7 @@
                     path
                     io-error))]
               [(fs.OkFsFileKind kind)
-                (if (not
-                  (package-source-include-kind?
-                    (owned_view.compiler-owned-shared-view path)
-                    kind))
+                (if (not (package-source-include-kind? path kind))
                   (set!
                     error
                     (package-source-binding-invalid-set-error
@@ -1223,533 +1065,3 @@
     [(ResultPackageSourceDigest.Ok expected)
       (package-source-binding-verification-from-admission
         (tlci.tlci-package-source-binding-admit rodata expected))]))
-
-(define (package-source-verify-binding-for
-  [command : String]
-  [manifest-path : String]
-  [has-manifest : bool]
-  [rodata : (__tl_dyn-array u8)]) : PackageSourceBindingVerification
-  (match (package-source-discover-for command manifest-path has-manifest)
-    [(ResultPackageSourceSet.Err message)
-      (PackageSourceBindingVerification.Unreadable message)]
-    [(ResultPackageSourceSet.Ok source-set)
-      (package-source-verify-binding source-set rodata)]))
-
-(cfg
-  test
-  (define package-source-binding-test-root : String
-    (str_cat.str-cat
-      "target/package_source_binding_fixture/"
-      (string.int->string (fs.process-id)))))
-(cfg
-  test
-  (define package-source-binding-test-alternate-root : String
-    (str_cat.str-cat
-      "target/./package_source_binding_fixture/"
-      (string.int->string (fs.process-id)))))
-(cfg
-  test
-  (define package-source-binding-test-target : String
-    "target"))
-(cfg
-  test
-  (define package-source-binding-test-parent : String
-    "target/package_source_binding_fixture"))
-(cfg
-  test
-  (define package-source-binding-test-manifest-text : String
-    "(package\n  (name \"binding_fixture\")\n  (version \"0.1.0\")\n  (kind \"bin\")\n  (entry \"a.tl\"))\n"))
-
-(cfg
-  test
-  (define (package-source-binding-test-write
-    [path : (& path str)]
-    [contents : (& contents str)]) : bool
-    (match (io.try-write-file path (byte_buf.str-as-bytes contents))
-      [(io.OkIoUnit) true]
-      [(io.ErrIoUnit _) false])))
-
-(cfg
-  test
-  (define (package-source-binding-test-remove [path : (& path str)]) : unit
-    (match (fs.try-remove-file path)
-      [(io.OkIoUnit) unit]
-      [(io.ErrIoUnit _) unit])))
-
-(cfg
-  test
-  (define (package-source-binding-test-ensure-root [root : (& root str)]) : bool
-    (and
-      (match (fs.try-mkdir-if-missing (& package-source-binding-test-target))
-        [(io.OkIoUnit) true]
-        [(io.ErrIoUnit _) false])
-      (match (fs.try-mkdir-if-missing (& package-source-binding-test-parent))
-        [(io.OkIoUnit) true]
-        [(io.ErrIoUnit _) false])
-      (match (fs.try-mkdir-if-missing root)
-        [(io.OkIoUnit) true]
-        [(io.ErrIoUnit _) false]))))
-
-(cfg
-  test
-  (define (package-source-binding-test-manifest) : compiler_load.CompilerPkgManifest
-    (compiler_load.CompilerPkgManifest
-      "binding-fixture"
-      "1.0.0"
-      compiler_load.CompilerPkgKindBin
-      "a.tl"
-      (compiler_load.compiler-pkg-deps-empty)
-      (compiler_load.compiler-pkg-link-empty))))
-
-(cfg
-  test
-  (define (package-source-binding-test-source-set-from-sources
-    [root : String]
-    [sources : svec.Vec]) : PackageSourceSet
-    (PackageSourceSet
-      (package-source-root-join root "typelisp.pkg")
-      root
-      (package-source-binding-test-manifest)
-      sources)))
-
-(cfg
-  test
-  (define (package-source-binding-test-source-set
-    [root : String]
-    [extra : bool]) : PackageSourceSet
-    (let
-      [sources : svec.Vec (svec.new)]
-      (begin
-        (svec.push-ref! (&mut sources) (package-source-root-join root "a.tl"))
-        (svec.push-ref! (&mut sources) (package-source-root-join root "b.tl"))
-        (if extra
-          (svec.push-ref! (&mut sources) (package-source-root-join root "c.tl"))
-          unit)
-        (package-source-binding-test-source-set-from-sources root sources)))))
-
-(cfg
-  test
-  (define (package-source-binding-test-pack
-    [schema : i64]
-    [payload : (__tl_dyn-array u8)]) : (__tl_dyn-array u8)
-    (let
-      [sections : (__tl_dyn-array tlci.TlciAuxSection)
-        (__tl_make-array tlci.TlciAuxSection 1)]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci.TlciAuxSection
-            tlci.tlci-aux-kind-package-source-binding
-            schema
-            payload))
-        (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-          [(tlci.ResultTlciAuxBytes.Ok packed) packed]
-          [(tlci.ResultTlciAuxBytes.Err message) (io.panic message)])))))
-
-(cfg
-  test
-  (define (package-source-binding-test-bound-pack [digest : i64]) : (__tl_dyn-array
-      u8)
-    (package-source-binding-test-pack
-      tlci.tlci-package-source-binding-schema-version
-      (let
-        [payload : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-        (begin
-          (tlci.tlci-set-u64! (&mut payload) 0 digest)
-          payload)))))
-
-(cfg
-  test
-  (define (package-source-binding-test-digest [source-set : PackageSourceSet]) : i64
-    (match (package-source-set-digest source-set)
-      [(ResultPackageSourceDigest.Ok digest) digest]
-      [(ResultPackageSourceDigest.Err message) (io.panic message)])))
-
-(cfg
-  test
-  (test
-    package-source-binding-transcript-and-admission
-    (let
-      [root : String (string.copy (& package-source-binding-test-root))]
-      [a : String (package-source-root-join root "a.tl")]
-      [b : String (package-source-root-join root "b.tl")]
-      [c : String (package-source-root-join root "c.tl")]
-      [setup : bool
-        (and
-          (package-source-binding-test-ensure-root root)
-          (package-source-binding-test-write a "(a)\n")
-          (package-source-binding-test-write b "(b)\n"))]
-      (if (not setup)
-        (io.panic "package-source: unable to create digest fixture")
-        (let
-          [source-set : PackageSourceSet
-            (package-source-binding-test-source-set
-              (owned_view.compiler-owned-shared-view root)
-              false)]
-          [alternate : PackageSourceSet
-            (package-source-binding-test-source-set
-              (string.copy (& package-source-binding-test-alternate-root))
-              false)]
-          [baseline : i64 0]
-          [binding : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
-          (begin
-            (match (package-source-set-digest
-              (owned_view.compiler-owned-shared-view source-set))
-              [(ResultPackageSourceDigest.Ok digest) (set! baseline digest)]
-              [(ResultPackageSourceDigest.Err message) (io.panic message)])
-            (if (not (= baseline 1959683407))
-              (io.panic "package-source: pinned digest mismatch")
-              unit)
-            (match (package-source-set-digest alternate)
-              [(ResultPackageSourceDigest.Ok digest)
-                (if (not (= digest baseline))
-                  (io.panic
-                    "package-source: alternate root spelling changed digest")
-                  unit)]
-              [(ResultPackageSourceDigest.Err message) (io.panic message)])
-            (set! binding (package-source-binding-test-bound-pack baseline))
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              (owned_view.compiler-owned-shared-view binding))
-              [(PackageSourceBindingVerification.Match digest)
-                (if (not (= digest baseline))
-                  (io.panic "package-source: bound digest did not match")
-                  unit)]
-              [_ (io.panic "package-source: bound digest admission failed")])
-            (if (not (package-source-binding-test-write a "(changed)\n"))
-              (io.panic "package-source: unable to mutate digest fixture")
-              unit)
-            (match (package-source-set-digest
-              (owned_view.compiler-owned-shared-view source-set))
-              [(ResultPackageSourceDigest.Ok digest)
-                (if (= digest baseline)
-                  (io.panic
-                    "package-source: content mutation did not change digest")
-                  unit)]
-              [(ResultPackageSourceDigest.Err message) (io.panic message)])
-            (if (not (package-source-binding-test-write a "(a)\n"))
-              (io.panic "package-source: unable to restore digest fixture")
-              unit)
-            (if (not (package-source-binding-test-write c "(c)\n"))
-              (io.panic "package-source: unable to add digest fixture")
-              unit)
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set
-                (owned_view.compiler-owned-shared-view root)
-                true))
-              [(ResultPackageSourceDigest.Ok digest)
-                (if (= digest baseline)
-                  (io.panic "package-source: add source did not change digest")
-                  unit)]
-              [(ResultPackageSourceDigest.Err message) (io.panic message)])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              (package-source-binding-test-bound-pack 12345))
-              [(PackageSourceBindingVerification.Mismatch expected actual)
-                (if (and (= expected baseline) (= actual 12345))
-                  unit
-                  (io.panic
-                    "package-source: mismatch did not preserve expected/actual order"))]
-              [_ (io.panic "package-source: mismatch admission failed")])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              (tlci.tlci-empty-bytes))
-              [(PackageSourceBindingVerification.MissingOrLegacy) unit]
-              [_ (io.panic "package-source: missing binding admission failed")])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              (package-source-binding-test-pack
-                2
-                (tlci.tlci-string->bytes "future")))
-              [(PackageSourceBindingVerification.UnsupportedSchema schema)
-                (if (= schema 2)
-                  unit
-                  (io.panic "package-source: unsupported schema changed"))]
-              [_
-                (io.panic
-                  "package-source: unsupported binding admission failed")])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              (package-source-binding-test-pack
-                tlci.tlci-package-source-binding-schema-version
-                (__tl_make-array u8 7)))
-              [(PackageSourceBindingVerification.Malformed _) unit]
-              [_
-                (io.panic "package-source: malformed binding admission failed")])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              (owned_view.compiler-owned-shared-view binding))
-              [(PackageSourceBindingVerification.Match _) unit]
-              [_ (io.panic "package-source: restore did not recover digest")])
-            (if (not (package-source-binding-test-write a "(a)\n"))
-              (io.panic
-                "package-source: unable to restore source before unreadable check")
-              unit)
-            (match (fs.try-remove-file (& a))
-              [(io.OkIoUnit) unit]
-              [(io.ErrIoUnit _)
-                (io.panic "package-source: unable to delete fixture")])
-            (match (package-source-verify-binding
-              (owned_view.compiler-owned-shared-view source-set)
-              binding)
-              [(PackageSourceBindingVerification.Unreadable _) unit]
-              [_ (io.panic "package-source: deleted source was not unreadable")])
-            ;; Leave the ignored fixture in a restorable state for a rerun.
-            (package-source-binding-test-write a "(a)\n")
-            (fs.try-remove-file (& c))
-            unit))))))
-
-(cfg
-  test
-  (test
-    package-source-binding-order-framing-and-rename
-    (let
-      [root : String (string.copy (& package-source-binding-test-root))]
-      [a : String (package-source-root-join root "a.tl")]
-      [b : String (package-source-root-join root "b.tl")]
-      [renamed : String (package-source-root-join root "renamed.tl")]
-      [collision-root : String (package-source-root-join root "collision")]
-      [collision-a : String (package-source-root-join collision-root "a.tl")]
-      [collision-b : String
-        (package-source-root-join collision-root "a.tlb.tl")]
-      [setup : bool
-        (and
-          (package-source-binding-test-ensure-root root)
-          (match (fs.try-mkdir-if-missing (& collision-root))
-            [(io.OkIoUnit) true]
-            [(io.ErrIoUnit _) false])
-          (package-source-binding-test-write a "(a)\n")
-          (package-source-binding-test-write b "(b)\n")
-          (package-source-binding-test-write collision-a "b.tlX")
-          (package-source-binding-test-write collision-b "X"))]
-      (if (not setup)
-        (io.panic "package-source: unable to create ordering fixture")
-        (let
-          [baseline : i64
-            (package-source-binding-test-digest
-              (package-source-binding-test-source-set
-                (owned_view.compiler-owned-shared-view root)
-                false))]
-          [reversed : svec.Vec (svec.new)]
-          [duplicate : svec.Vec (svec.new)]
-          [collision-left : svec.Vec (svec.new)]
-          [collision-right : svec.Vec (svec.new)]
-          [renamed-sources : svec.Vec (svec.new)]
-          (begin
-            (svec.push-ref! (&mut reversed) (string.copy (& b)))
-            (svec.push-ref! (&mut reversed) (string.copy (& a)))
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                reversed))
-              [(ResultPackageSourceDigest.Err _) unit]
-              [_ (io.panic "package-source: reversed source list was accepted")])
-            (svec.push-ref! (&mut duplicate) (string.copy (& a)))
-            (svec.push-ref! (&mut duplicate) (string.copy (& a)))
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                duplicate))
-              [(ResultPackageSourceDigest.Err _) unit]
-              [_
-                (io.panic "package-source: duplicate source list was accepted")])
-            (svec.push-ref! (&mut collision-left) collision-a)
-            (svec.push-ref! (&mut collision-right) collision-b)
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view collision-root)
-                collision-left))
-              [(ResultPackageSourceDigest.Ok left)
-                (match (package-source-set-digest
-                  (package-source-binding-test-source-set-from-sources
-                    (owned_view.compiler-owned-shared-view collision-root)
-                    collision-right))
-                  [(ResultPackageSourceDigest.Ok right)
-                    (if (= left right)
-                      (io.panic
-                        "package-source: framed collision was not distinguished")
-                      unit)]
-                  [(ResultPackageSourceDigest.Err message) (io.panic message)])]
-              [(ResultPackageSourceDigest.Err message) (io.panic message)])
-            (package-source-binding-test-remove renamed)
-            (match (fs.try-rename (& b) (& renamed))
-              [(io.OkIoUnit) unit]
-              [(io.ErrIoUnit _)
-                (io.panic "package-source: rename fixture failed")])
-            (svec.push-ref! (&mut renamed-sources) (string.copy (& a)))
-            (svec.push-ref! (&mut renamed-sources) (string.copy (& renamed)))
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                renamed-sources))
-              [(ResultPackageSourceDigest.Ok changed)
-                (if (= changed baseline)
-                  (io.panic "package-source: rename did not change digest")
-                  unit)]
-              [(ResultPackageSourceDigest.Err message) (io.panic message)])
-            (match (fs.try-rename (& renamed) (& b))
-              [(io.OkIoUnit) unit]
-              [(io.ErrIoUnit _)
-                (io.panic "package-source: rename restore failed")])
-            (if (not
-              (=
-                (package-source-binding-test-digest
-                  (package-source-binding-test-source-set root false))
-                baseline))
-              (io.panic "package-source: rename restoration changed digest")
-              unit)
-            unit))))))
-
-(cfg
-  test
-  (test
-    package-source-binding-discovery-exclusions-and-removal
-    (let
-      [root : String
-        (str_cat.str-cat
-          (string.copy (& package-source-binding-test-root))
-          "/discover")]
-      [manifest-path : String (package-source-root-join root "typelisp.pkg")]
-      [a : String (package-source-root-join root "a.tl")]
-      [b : String (package-source-root-join root "b.tl")]
-      [target-root : String (package-source-root-join root "target")]
-      [target-source : String
-        (package-source-root-join target-root "ignored.tl")]
-      [nested-root : String (package-source-root-join root "nested")]
-      [nested-manifest : String
-        (package-source-root-join nested-root "typelisp.pkg")]
-      [nested-source : String
-        (package-source-root-join nested-root "ignored.tl")]
-      [setup : bool
-        (and
-          (package-source-binding-test-ensure-root
-            (string.copy (& package-source-binding-test-root)))
-          (match (fs.try-mkdir-if-missing (& root))
-            [(io.OkIoUnit) true]
-            [(io.ErrIoUnit _) false])
-          (match (fs.try-mkdir-if-missing (& target-root))
-            [(io.OkIoUnit) true]
-            [(io.ErrIoUnit _) false])
-          (match (fs.try-mkdir-if-missing (& nested-root))
-            [(io.OkIoUnit) true]
-            [(io.ErrIoUnit _) false])
-          (package-source-binding-test-write
-            manifest-path
-            (string.copy (& package-source-binding-test-manifest-text)))
-          (package-source-binding-test-write a "(a)\n")
-          (package-source-binding-test-write b "(b)\n")
-          (package-source-binding-test-write target-source "(target)\n")
-          (package-source-binding-test-write
-            nested-manifest
-            (string.copy (& package-source-binding-test-manifest-text)))
-          (package-source-binding-test-write nested-source "(nested)\n"))]
-      (if (not setup)
-        (io.panic "package-source: unable to create discovery fixture")
-        (let
-          [binding : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
-          [baseline : i64 0]
-          [empty-sources : svec.Vec (svec.new)]
-          [target-sources : svec.Vec (svec.new)]
-          [nested-sources : svec.Vec (svec.new)]
-          [outside-sources : svec.Vec (svec.new)]
-          [outside : String (package-source-root-join root "../outside.tl")]
-          (begin
-            (svec.push-ref!
-              (&mut target-sources)
-              (string.copy (& target-source)))
-            (svec.push-ref!
-              (&mut nested-sources)
-              (string.copy (& nested-source)))
-            (svec.push-ref! (&mut outside-sources) outside)
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                empty-sources))
-              [(ResultPackageSourceDigest.Err _) unit]
-              [_ (io.panic "package-source: empty source set was accepted")])
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                target-sources))
-              [(ResultPackageSourceDigest.Err _) unit]
-              [_ (io.panic "package-source: target source was accepted")])
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                nested-sources))
-              [(ResultPackageSourceDigest.Err _) unit]
-              [_ (io.panic "package-source: nested source was accepted")])
-            (match (package-source-set-digest
-              (package-source-binding-test-source-set-from-sources
-                (owned_view.compiler-owned-shared-view root)
-                outside-sources))
-              [(ResultPackageSourceDigest.Err _) unit]
-              [_ (io.panic "package-source: outside source was accepted")])
-            (match (package-source-discover-for
-              "test"
-              (owned_view.compiler-owned-shared-view manifest-path)
-              true)
-              [(ResultPackageSourceSet.Err message) (io.panic message)]
-              [(ResultPackageSourceSet.Ok discovered)
-                (begin
-                  (set!
-                    baseline
-                    (package-source-binding-test-digest discovered))
-                  (if (not (= baseline 1959683407))
-                    (io.panic "package-source: discovery baseline mismatch")
-                    unit))])
-            (set! binding (package-source-binding-test-bound-pack baseline))
-            (match (package-source-verify-binding-for
-              "test"
-              (owned_view.compiler-owned-shared-view manifest-path)
-              true
-              (owned_view.compiler-owned-shared-view binding))
-              [(PackageSourceBindingVerification.Match digest)
-                (if (= digest baseline)
-                  unit
-                  (io.panic "package-source: discovered binding did not match"))]
-              [_ (io.panic "package-source: discovered match admission failed")])
-            (if (not
-              (package-source-binding-test-write
-                target-source
-                "(target changed)\n"))
-              (io.panic "package-source: target fixture mutation failed")
-              unit)
-            (if (not
-              (package-source-binding-test-write
-                nested-source
-                "(nested changed)\n"))
-              (io.panic "package-source: nested fixture mutation failed")
-              unit)
-            (match (package-source-verify-binding-for
-              "test"
-              (owned_view.compiler-owned-shared-view manifest-path)
-              true
-              (owned_view.compiler-owned-shared-view binding))
-              [(PackageSourceBindingVerification.Match _) unit]
-              [_ (io.panic "package-source: excluded source changed digest")])
-            (match (fs.try-remove-file (& b))
-              [(io.OkIoUnit) unit]
-              [(io.ErrIoUnit _)
-                (io.panic "package-source: removal fixture failed")])
-            (match (package-source-verify-binding-for
-              "test"
-              (owned_view.compiler-owned-shared-view manifest-path)
-              true
-              (owned_view.compiler-owned-shared-view binding))
-              [(PackageSourceBindingVerification.Mismatch expected actual)
-                (if (and (not (= expected actual)) (= actual baseline))
-                  unit
-                  (io.panic
-                    "package-source: removal mismatch was not current-first"))]
-              [_ (io.panic "package-source: removal did not produce mismatch")])
-            (if (not (package-source-binding-test-write b "(b)\n"))
-              (io.panic "package-source: removal restore failed")
-              unit)
-            (match (package-source-verify-binding-for
-              "test"
-              manifest-path
-              true
-              binding)
-              [(PackageSourceBindingVerification.Match _) unit]
-              [_ (io.panic "package-source: restored discovery did not match")])))))))

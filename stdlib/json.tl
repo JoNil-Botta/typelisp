@@ -83,6 +83,7 @@
 
 (import (vector.vector Json core) as jvec)
 (import (vector.vector JsonMember core) as jmvec)
+(cfg test (import stdlib.test))
 
 ;: Validate a live prefix before deriving a count, loop bound or storage access.
 ;: Both operands are evaluated once; expansion adds no raw access or allocation.
@@ -1630,10 +1631,6 @@
     unit
     (io.panic message)))
 
-;: Inline test assertion for false predicates.
-(define (stdlib-inline-test-assert-false [condition : bool] [message : String]) : unit
-  (stdlib.json.stdlib-inline-test-assert-true (not condition) message))
-
 ;: Inline test assertion for `bool` equality.
 (define (stdlib-inline-test-assert-bool-eq
   [actual : bool]
@@ -2066,28 +2063,28 @@
     (stdlib.json.stdlib-inline-test-assert-true
       (stdlib.json.stdlib-inline-test-char-code-eq-at "AZ" 0 65)
       "stdlib.json.char-code-eq-at true")
-    (stdlib.json.stdlib-inline-test-assert-false
+    (test.assert-false
       (stdlib.json.stdlib-inline-test-char-code-eq-at "AZ" 2 65)
       "stdlib.json.char-code-eq-at out of range")
     (stdlib.json.stdlib-inline-test-assert-true
       (stdlib.json.space-code? 32)
       "stdlib.json.space-code? space")
-    (stdlib.json.stdlib-inline-test-assert-false
+    (test.assert-false
       (stdlib.json.space-code? 65)
       "stdlib.json.space-code? false")
     (stdlib.json.stdlib-inline-test-assert-true
       (stdlib.json.digit-code? 57)
       "stdlib.json.digit-code? true")
-    (stdlib.json.stdlib-inline-test-assert-false
+    (test.assert-false
       (stdlib.json.digit-code? 65)
       "stdlib.json.digit-code? false")
     (stdlib.json.stdlib-inline-test-assert-true
       (stdlib.json.stdlib-inline-test-digit-at? "a5" 1)
       "stdlib.json.digit-at? true")
-    (stdlib.json.stdlib-inline-test-assert-false
+    (test.assert-false
       (stdlib.json.stdlib-inline-test-digit-at? "a5" 0)
       "stdlib.json.digit-at? false")
-    (stdlib.json.stdlib-inline-test-assert-false
+    (test.assert-false
       (stdlib.json.stdlib-inline-test-digit-at? "a5" 2)
       "stdlib.json.digit-at? out of range")
     (stdlib.json.stdlib-inline-test-assert-i64-eq
@@ -2097,7 +2094,7 @@
     (stdlib.json.stdlib-inline-test-assert-true
       (stdlib.json.stdlib-inline-test-prefix-at? "abcdef" "cd" 2)
       "stdlib.json.string-prefix-at? true")
-    (stdlib.json.stdlib-inline-test-assert-false
+    (test.assert-false
       (stdlib.json.stdlib-inline-test-prefix-at? "abcdef" "cd" 5)
       "stdlib.json.string-prefix-at? false")
     (stdlib.json.stdlib-inline-test-assert-i64-eq

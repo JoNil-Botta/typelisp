@@ -95,19 +95,6 @@
   (slots (__tl_dyn-array LintPolicyAssignment))
   (len i64))
 
-(define (lint-policy-assignments-empty) : LintPolicyAssignments
-  (LintPolicyAssignments (__tl_make-array LintPolicyAssignment 0) 0))
-
-(define (lint-policy-assignments-from
-  [slots : (__tl_dyn-array LintPolicyAssignment)]) : LintPolicyAssignments
-  (let
-    [len : i64 (array-length slots)]
-    (LintPolicyAssignments slots len)))
-
-(define (lint-policy-assignments-count
-  [items : (& items LintPolicyAssignments)]) : i64
-  items.len)
-
 (define (lint-policy-assignments-ref
   [items : (& items LintPolicyAssignments)]
   [index : i64]) : LintPolicyAssignment
@@ -120,15 +107,6 @@
 (defstruct LintPolicyGroupMembers
   (slots (__tl_dyn-array LintPolicyGroupMember))
   (len i64))
-
-(define (lint-policy-group-members-empty) : LintPolicyGroupMembers
-  (LintPolicyGroupMembers (__tl_make-array LintPolicyGroupMember 0) 0))
-
-(define (lint-policy-group-members-from
-  [slots : (__tl_dyn-array LintPolicyGroupMember)]) : LintPolicyGroupMembers
-  (let
-    [len : i64 (array-length slots)]
-    (LintPolicyGroupMembers slots len)))
 
 (define (lint-policy-group-members-ref
   [items : (& items LintPolicyGroupMembers)]
@@ -147,14 +125,6 @@
 
 (define (lint-policy-groups-empty) : LintPolicyGroups
   (LintPolicyGroups (__tl_make-array LintPolicyGroup 0) 0))
-
-(define (lint-policy-groups-from [slots : (__tl_dyn-array LintPolicyGroup)]) : LintPolicyGroups
-  (let
-    [len : i64 (array-length slots)]
-    (LintPolicyGroups slots len)))
-
-(define (lint-policy-groups-count [items : (& items LintPolicyGroups)]) : i64
-  items.len)
 
 (define (lint-policy-groups-ref
   [items : (& items LintPolicyGroups)]
@@ -190,15 +160,6 @@
         capacity))
     0))
 
-(define (lint-policy-diagnostics-count
-  [items : (& items LintPolicyDiagnostics)]) : i64
-  items.len)
-
-(define (lint-policy-diagnostics-ref
-  [items : (& items LintPolicyDiagnostics)]
-  [index : i64]) : LintPolicyDiagnostic
-  (owned_view.compiler-owned-array-element-shared-view items.slots index))
-
 (define (lint-policy-diagnostics-add
   [items : LintPolicyDiagnostics]
   [diagnostic : LintPolicyDiagnostic]) : LintPolicyDiagnostics
@@ -216,9 +177,6 @@
 (defstruct LintPolicyDecisions
   (slots (__tl_dyn-array LintPolicyDecision))
   (len i64))
-
-(define (lint-policy-decisions-count [items : (& items LintPolicyDecisions)]) : i64
-  items.len)
 
 (define (lint-policy-decisions-ref
   [items : (& items LintPolicyDecisions)]
@@ -261,11 +219,6 @@
 (define (lint-policy-trace-count [items : (& items LintPolicyTrace)]) : i64
   items.len)
 
-(define (lint-policy-trace-ref
-  [items : (& items LintPolicyTrace)]
-  [index : i64]) : LintPolicyTraceEntry
-  (owned_view.compiler-owned-array-element-shared-view items.slots index))
-
 (define (lint-policy-trace-add
   [items : LintPolicyTrace]
   [entry : LintPolicyTraceEntry]) : LintPolicyTrace
@@ -287,14 +240,6 @@
   (diagnostics LintPolicyDiagnostics)
   (trace LintPolicyTrace)
   (stats LintPolicyStats))
-
-(define (lint-policy-resolution-diagnostics-count
-  [resolution : (& resolution LintPolicyResolution)]) : i64
-  (lint-policy-diagnostics-count resolution.diagnostics))
-
-(define (lint-policy-resolution-trace-count
-  [resolution : (& resolution LintPolicyResolution)]) : i64
-  (lint-policy-trace-count resolution.trace))
 
 (define (lint-policy-group-member-total [groups : (& groups LintPolicyGroups)]) : i64
   (let
@@ -390,7 +335,7 @@
 (define (lint-policy-validate-group-names
   [groups : (& groups LintPolicyGroups)]
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
-  [valid : (__tl_dyn-array bool)]
+  [valid : (&mut valid (__tl_dyn-array bool))]
   [diagnostics : LintPolicyDiagnostics]) : LintPolicyDiagnostics
   (let
     [index : i64 0]
@@ -429,10 +374,10 @@
                       LintPolicyDiagnosticKind.DuplicateGroup
                       (owned_view.compiler-owned-shared-view group.name)
                       group.layer
-                      (owned_view.compiler-owned-shared-view group.origin)
+                      group.origin
                       (str_cat.str-cat
                         "duplicate lint group definition: "
-                        (owned_view.compiler-owned-shared-view group.name))))))
+                        group.name)))))
               unit)
             (set! index (+ index 1)))))
       out)))
@@ -441,7 +386,7 @@
   [rules : (& rules lint_core.LintRuleList)]
   [groups : (& groups LintPolicyGroups)]
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
-  [valid : (__tl_dyn-array bool)]
+  [valid : (&mut valid (__tl_dyn-array bool))]
   [diagnostics : LintPolicyDiagnostics]) : LintPolicyDiagnostics
   (let
     [group-index : i64 0]
@@ -570,12 +515,10 @@
                                     (owned_view.compiler-owned-shared-view
                                       group.name)
                                     group.layer
-                                    (owned_view.compiler-owned-shared-view
-                                      group.origin)
+                                    group.origin
                                     (str_cat.str-cat
                                       "cyclic lint group definition: "
-                                      (owned_view.compiler-owned-shared-view
-                                        group.name)))))))
+                                      group.name))))))
                           (set! cycle-here true)
                           (set! done true)
                           (when (= current cycle-root) (set! propagating false))))))])
@@ -592,10 +535,10 @@
                     LintPolicyDiagnosticKind.InvalidGroupReference
                     (owned_view.compiler-owned-shared-view group.name)
                     group.layer
-                    (owned_view.compiler-owned-shared-view group.origin)
+                    group.origin
                     (str_cat.str-cat
                       "lint group depends on an invalid group: "
-                      (owned_view.compiler-owned-shared-view group.name)))))))
+                      group.name))))))
           (set! (array-ref colors current) 2)
           (LintPolicyGroupGraphWalk out cycle-root propagating))))))
 
@@ -647,7 +590,7 @@
         (lint-policy-validate-group-names
           groups
           index-map
-          (owned_view.compiler-owned-shared-view valid)
+          (&mut valid)
           diagnostics))
       (set!
         diagnostics
@@ -655,7 +598,7 @@
           rules
           groups
           index-map
-          (owned_view.compiler-owned-shared-view valid)
+          (&mut valid)
           diagnostics))
       (set!
         diagnostics
@@ -988,7 +931,7 @@
     reason))
 
 (define (lint-policy-apply-to-rule
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [rule-index : i64]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
@@ -1020,7 +963,7 @@
           state.trace
           (lint-policy-trace-entry
             assignment-index
-            (owned_view.compiler-owned-shared-view current.rule-id)
+            current.rule-id
             current.level
             assignment
             LintPolicyTraceOutcome.Rejected
@@ -1101,7 +1044,7 @@
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
   [valid-groups : (& valid-groups (__tl_dyn-array bool))]
   [membership : (& membership (__tl_dyn-array bool))]
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1142,7 +1085,7 @@
                     (set!
                       out
                       (lint-policy-apply-to-rule
-                        (owned_view.compiler-owned-shared-view decisions)
+                        decisions
                         rule-index
                         (owned_view.compiler-owned-shared-view assignment)
                         assignment-index
@@ -1166,7 +1109,7 @@
 
 (define (lint-policy-apply-rule-assignment
   [rules : (& rules lint_core.LintRuleList)]
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [assignment : LintPolicyAssignment]
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1202,7 +1145,7 @@
   [valid-groups : (& valid-groups (__tl_dyn-array bool))]
   [membership : (& membership (__tl_dyn-array bool))]
   [assignments : (& assignments LintPolicyAssignments)]
-  [decisions : LintPolicyDecisions]
+  [decisions : (& decisions LintPolicyDecisions)]
   [layer-rank : i64]
   [rules-only : bool]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
@@ -1226,7 +1169,7 @@
                 (if rules-only
                   (lint-policy-apply-rule-assignment
                     rules
-                    (owned_view.compiler-owned-shared-view decisions)
+                    decisions
                     assignment
                     index
                     out)
@@ -1236,7 +1179,7 @@
                     index-map
                     valid-groups
                     membership
-                    (owned_view.compiler-owned-shared-view decisions)
+                    decisions
                     assignment
                     index
                     out)))
@@ -1283,10 +1226,8 @@
       (+ 8 member-count (* groups.len 3) (* assignments.len (+ rule-count 2)))]
     [validation : LintPolicyGroupValidation
       (lint-policy-validate-groups rules groups diagnostic-capacity)]
-    [valid-groups : (__tl_dyn-array bool)
-      (owned_view.compiler-owned-shared-view validation.valid)]
-    [group-index-map : lint_policy_string_i64_map.Map
-      (owned_view.compiler-owned-shared-view validation.index-map)]
+    [valid-groups : (__tl_dyn-array bool) validation.valid]
+    [group-index-map : lint_policy_string_i64_map.Map validation.index-map]
     [diagnostics : LintPolicyDiagnostics
       (lint-policy-validate-assignments
         rules
@@ -1321,7 +1262,7 @@
               valid-groups
               membership
               assignments
-              (owned_view.compiler-owned-shared-view decisions)
+              decisions
               layer
               false
               state))
@@ -1334,7 +1275,7 @@
               valid-groups
               membership
               assignments
-              (owned_view.compiler-owned-shared-view decisions)
+              decisions
               layer
               true
               state))
@@ -1353,11 +1294,6 @@
             state.expanded-rule-updates
             trace-count))))))
 
-(define (lint-policy-default) : LintPolicyResolution
-  (lint-policy-resolve
-    (lint-policy-groups-empty)
-    (lint-policy-assignments-empty)))
-
 (define (lint-policy-rule-assignment
   [name : String]
   [level : lint_core.LintLevel]
@@ -1373,48 +1309,6 @@
     selected
     origin))
 
-(define (lint-policy-group-assignment
-  [name : String]
-  [level : lint_core.LintLevel]
-  [layer : LintPolicyLayer]
-  [mode : LintPolicyAssignmentMode]
-  [selected : bool]
-  [origin : LintPolicyOrigin]) : LintPolicyAssignment
-  (LintPolicyAssignment
-    (LintPolicySubject.Group name)
-    level
-    layer
-    mode
-    selected
-    origin))
-
-(defstruct LintPolicyResolvedFinding
-  (finding lint_core.LintFinding)
-  (decision LintPolicyDecision))
-
-;: Attach the effective level and exact winning origin to a policy-neutral
-;: finding. Unknown collector rule ids fail closed to `allow`; registry-aware
-;: composition services should diagnose such collector bugs separately.
-(define (lint-policy-resolve-finding
-  [resolution : LintPolicyResolution]
-  [finding : lint_core.LintFinding]) : LintPolicyResolvedFinding
-  (let
-    [rule-id : String (owned_view.compiler-owned-shared-view finding.rule-id)]
-    (match (lint-policy-decision-find resolution rule-id)
-      [(LintMaybePolicyDecision.Found decision)
-        (LintPolicyResolvedFinding finding decision)]
-      [(LintMaybePolicyDecision.NotFound)
-        (LintPolicyResolvedFinding
-          finding
-          (LintPolicyDecision
-            rule-id
-            (lint_core.LintLevel.Allow)
-            LintPolicyLayer.Builtin
-            -1
-            (lint-policy-origin
-              "registry"
-              "unknown collector rule fails closed")))])))
-
 (define (lint-policy-level-enabled? [level : lint_core.LintLevel]) : bool
   (> (lint_core.lint-level-rank level) 0))
 
@@ -1426,12 +1320,8 @@
     [(LintMaybePolicyDecision.Found decision)
       (lint-policy-level-enabled? decision.level)]))
 
-(define (lint-policy-resolved-finding-enabled?
-  [finding : LintPolicyResolvedFinding]) : bool
-  (lint-policy-level-enabled? finding.decision.level))
-
 (define (lint-policy-legacy-assignment-add
-  [slots : (__tl_dyn-array LintPolicyAssignment)]
+  [slots : (&mut slots (__tl_dyn-array LintPolicyAssignment))]
   [len : i64]
   [name : String]
   [reason : String]) : i64
@@ -1465,7 +1355,7 @@
         (set!
           len
           (lint-policy-legacy-assignment-add
-            (owned_view.compiler-owned-shared-view slots)
+            (&mut slots)
             len
             (lint_core.lint-rule-deprecated-string-concat-id)
             "--deprecated-string-concat at-least-warn"))
@@ -1474,7 +1364,7 @@
         (set!
           len
           (lint-policy-legacy-assignment-add
-            (owned_view.compiler-owned-shared-view slots)
+            (&mut slots)
             len
             (lint_core.lint-rule-redundant-function-name-id)
             "--redundant-function-name at-least-warn"))
@@ -1484,28 +1374,28 @@
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-global-name-case-id)
               "--name-case expands global-name-case at-least-warn"))
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-function-name-case-id)
               "--name-case expands function-name-case at-least-warn"))
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-local-name-case-id)
               "--name-case expands local-name-case at-least-warn"))
           (set!
             len
             (lint-policy-legacy-assignment-add
-              (owned_view.compiler-owned-shared-view slots)
+              (&mut slots)
               len
               (lint_core.lint-rule-type-name-case-id)
               "--name-case expands type-name-case at-least-warn")))

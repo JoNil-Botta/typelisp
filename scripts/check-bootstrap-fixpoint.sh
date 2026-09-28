@@ -15,18 +15,13 @@ set -eu
 # to persist the stage1 / converged compiler paths for callers that reuse the
 # freshly bootstrapped compilers.
 #
-# TYPELISP_BOOTSTRAP_CFG adds one cfg predicate to every compiler generation.
 # TYPELISP_BOOTSTRAP_WORKDIR isolates a second bootstrap in the same job, and
 # TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 skips the redundant stage1 CLI surface
-# checks for that second run. CI uses these together for the scratch-vreg
-# self-hosting regression gate. After convergence that gate also compiles,
-# links, and runs the configured compiler backend smoke with the scratch-built
-# compiler, so cfg-only backend test bodies cannot silently go unchecked.
-# TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 turns that isolated second run into the
-# same-commit embedded-stdlib mutation handoff witness. It copies src/ and
-# stdlib/ below the selected workdir and never edits checked-in sources.
-#
-# refs #47.
+# checks for that second run. CI uses these together for the TLCI mutation
+# bootstrap gate: TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 turns that isolated second
+# run into the same-commit embedded-stdlib mutation handoff witness. It copies
+# src/ and stdlib/ below the selected workdir and never edits checked-in
+# sources.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -37,7 +32,6 @@ cd "$ROOT"
 # assemble_and_link.
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
-. "$ROOT/scripts/lib-bootstrap-ctfe.sh"
 . "$ROOT/scripts/lib-bootstrap-fixpoint-control.sh"
 . "$ROOT/scripts/lib-build-provenance.sh"
 
@@ -62,21 +56,13 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# The seed is invoked from a scratch directory when it needs the legacy
-# prelude, so normalize a caller-provided relative path while we are at ROOT.
+# Some compiles run from a scratch directory, so normalize a caller-provided
+# relative path while we are at ROOT.
 case "$COMPILER" in
     /* | [A-Za-z]:[\\/]*) ;;
     *) COMPILER="$ROOT/$COMPILER" ;;
 esac
 
-BOOTSTRAP_CFG=${TYPELISP_BOOTSTRAP_CFG:-}
-case "$BOOTSTRAP_CFG" in
-    "") ;;
-    *[!A-Za-z0-9_-]*)
-        echo "invalid TYPELISP_BOOTSTRAP_CFG: $BOOTSTRAP_CFG" >&2
-        exit 2
-        ;;
-esac
 BOOTSTRAP_SKIP_CLI_SMOKE=${TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE:-0}
 case "$BOOTSTRAP_SKIP_CLI_SMOKE" in
     0 | 1) ;;
@@ -95,27 +81,10 @@ case "$BOOTSTRAP_TLCI_MUTATION" in
 esac
 
 bootstrap_extra_cfg_args() {
-    if [ -n "$BOOTSTRAP_CFG" ]; then
-        printf '%s\n' --cfg "$BOOTSTRAP_CFG"
-    fi
     if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
         printf '%s\n' --cfg tlci-bootstrap-mutation-witness
     fi
 }
-
-bootstrap_seed_global_view_cfg_args() {
-    # The published seed does not yet classify tl_abort_string as an
-    # always-linked runtime symbol. Keep that one-shot stage1 bootstrap on the
-    # old interner abort path; converged stages compile the explicit diagnostic.
-    # It also predates correct borrowed matching of inline nominal struct
-    # payloads, so keep token name IDs scalar for this one generation. Stage1
-    # contains the fixed lowerer and compiles the nominal representation onward.
-    printf '%s\n' --cfg stage0-seed-intern-abort
-    printf '%s\n' --cfg stage0-token-scalar-bootstrap
-    printf '%s\n' --cfg stage0-borrowed-inline-bootstrap
-    bootstrap_legacy_global_view_cfg_args
-}
-
 
 assert_contains() {
     file=$1
@@ -237,45 +206,6 @@ BUILD_IDENTITY=$(build_provenance_hash "$0")
 mkdir -p "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0"
 printf '%s' "$BUILD_IDENTITY" \
     > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/git-hash.txt"
-
-SEED_DOTTED_IMPORT_BRIDGE_ROOT=$(
-    bootstrap_seed_dotted_import_bridge_root \
-        "$ROOT" "$COMPILER" "$WORKDIR"
-)
-SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
-    bootstrap_seed_comptime_short_variant_bridge_root \
-        "$ROOT" "$COMPILER" "$WORKDIR"
-)
-SEED_CAPABILITY_ROOT=$ROOT
-if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
-    SEED_CAPABILITY_ROOT=$SEED_COMPTIME_VARIANT_BRIDGE_ROOT
-fi
-SEED_CTFE_COMPAT_STDLIB=$(
-    bootstrap_seed_ctfe_macro_builders_legacy_stdlib \
-        "$SEED_CAPABILITY_ROOT" "$COMPILER" "$WORKDIR"
-)
-if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-    echo "[bootstrap] seed lacks current CTFE macro builders; using the legacy prelude for stage0 -> stage1"
-else
-    echo "[bootstrap] seed supports current CTFE macro builders; using iterative core macros"
-fi
-if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ] && {
-    [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ] ||
-        [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ] ||
-        [ -n "$SEED_CTFE_COMPAT_STDLIB" ];
-}; then
-    echo "bootstrap tlci mutation requires a current converged seed" >&2
-    exit 1
-fi
-
-# Resolve the original seed's global-view capability against the same prepared
-# source tree used by any one-generation bridge. Bridge compiles must not
-# unconditionally select the legacy spelling: newer seeds reject moving the
-# selected value out of a global.
-bootstrap_resolve_seed_global_views_for_bridges \
-    "$ROOT" "$COMPILER" "$WORKDIR" \
-    "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" \
-    "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT"
 
 STAGE1_ASM="$WORKDIR/stage1.s"
 STAGE1_OBJ="$WORKDIR/stage1.$OBJ_EXT"
@@ -559,7 +489,7 @@ check_stage2_embedded_stdlib() {
         "$STAGE2_BIN" inspect embedded:stdlib.tlci
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
-        "embedded-loader-macro-count: 162"
+        "embedded-loader-macro-count: 158"
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
         "package-name: stdlib"
@@ -677,116 +607,12 @@ EOF
 # the branch-built equivalent of a published stage0 and CI can run every
 # downstream gate on it.
 
-# The published seed immediately predating dotted imports cannot hold the
-# larger generated-name graph. Build its own source revision with the capacity
-# and nominal-owner fixes, then use that private compiler for the real stage1.
-# Current compiler sources continue to reject string-path imports.
-if [ -n "$SEED_DOTTED_IMPORT_BRIDGE_ROOT" ]; then
-    echo "[bootstrap] published seed predates the dotted-import cutover; building a one-generation bridge"
-    DOTTED_BRIDGE_DIR="$WORKDIR/dotted-import-seed-bridge/build"
-    DOTTED_BRIDGE_ASM="$DOTTED_BRIDGE_DIR/bridge.s"
-    DOTTED_BRIDGE_OBJ="$DOTTED_BRIDGE_DIR/bridge.$OBJ_EXT"
-    DOTTED_BRIDGE_BIN="$DOTTED_BRIDGE_DIR/bridge$BIN_EXT"
-    mkdir -p "$DOTTED_BRIDGE_DIR"
-    run_with_heartbeat \
-        "published seed -> dotted-import bridge" \
-        "$COMPILER" compile \
-        "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src/main.tl" \
-        -o "$DOTTED_BRIDGE_ASM" \
-        --target "$BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        $(bootstrap_extra_cfg_args) \
-        $(bootstrap_seed_global_view_cfg_args) \
-        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/stdlib" \
-        --stdlib-root "$SEED_DOTTED_IMPORT_BRIDGE_ROOT/src" \
-        --opt-level 2
-    bootstrap_seed_runtime_small_arena_compat "$DOTTED_BRIDGE_ASM"
-    assemble_and_link \
-        "dotted-import bridge" \
-        "$DOTTED_BRIDGE_ASM" "$DOTTED_BRIDGE_OBJ" "$DOTTED_BRIDGE_BIN"
-    COMPILER=$DOTTED_BRIDGE_BIN
-    echo "[bootstrap] dotted-import bridge ready; building stage1 from current sources"
-fi
-
-# A published seed may predate the short stdlib.comptime variant ABI or the
-# private StructGet spelling used to compile that module without a dotted-macro
-# dependency cycle. Build one compiler from a source mirror containing only the
-# required seed spellings, then use that compiler for the real stage1.
-if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
-    echo "[bootstrap] seed requires a comptime source bridge"
-    BRIDGE_DIR="$WORKDIR/comptime-short-variant-seed-bridge"
-    BRIDGE_ASM="$BRIDGE_DIR/bridge.s"
-    BRIDGE_OBJ="$BRIDGE_DIR/bridge.$OBJ_EXT"
-    BRIDGE_BIN="$BRIDGE_DIR/bridge$BIN_EXT"
-    BRIDGE_CWD="$BRIDGE_DIR/cwd"
-    mkdir -p "$BRIDGE_CWD"
-    # Isolate bridge compiles so repository-local implicit stdlib roots cannot shadow the prepared roots.
-    if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-        BRIDGE_LEGACY_STDLIB="$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/bootstrap/stdlib"
-        (
-            cd "$BRIDGE_CWD"
-            run_with_heartbeat \
-                "published seed -> comptime short-variant bridge" \
-                "$COMPILER" compile \
-                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
-                -o "$BRIDGE_ASM" \
-                --target "$BOOTSTRAP_TARGET" \
-                $(native_target_cfg_args) \
-                $(bootstrap_extra_cfg_args) \
-                $(bootstrap_seed_global_view_cfg_args) \
-                --stdlib-root "$BRIDGE_LEGACY_STDLIB" \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
-                --opt-level 2
-        )
-    else
-        (
-            cd "$BRIDGE_CWD"
-            run_with_heartbeat \
-                "published seed -> comptime short-variant bridge" \
-                "$COMPILER" compile \
-                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
-                -o "$BRIDGE_ASM" \
-                --target "$BOOTSTRAP_TARGET" \
-                $(native_target_cfg_args) \
-                $(bootstrap_extra_cfg_args) \
-                $(bootstrap_seed_global_view_cfg_args) \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
-                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
-                --opt-level 2
-        )
-    fi
-    assemble_and_link \
-        "comptime short-variant bridge" \
-        "$BRIDGE_ASM" "$BRIDGE_OBJ" "$BRIDGE_BIN"
-    COMPILER=$BRIDGE_BIN
-    SEED_CTFE_COMPAT_STDLIB=
-    echo "[bootstrap] short-variant bridge ready; building stage1 from current sources"
-fi
-
-# A second bootstrap (for example the scratch-vreg gate) starts from the freshly
-# converged compiler, whose global-move checker must see the real unsafe view
-# instead of the legacy direct read. The shared helper probes the actual seed
-# after any compatibility bridge, so only a seed that needs the legacy spelling
-# receives the cfg; the stage0 publication flow uses the same probe.
-bootstrap_resolve_seed_global_views "$COMPILER" "$WORKDIR" "$ROOT"
-
 # opt2 bootstrap. First test the common stage2.s == stage3.s fixpoint. A backend
 # codegen fix can take another self-host round to propagate from an unconverged
 # seed, so build stage4 only as a fallback and then require stage3.s == stage4.s.
 echo "[bootstrap] stage0 -> stage1.s"
-if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-    SEED_BOOTSTRAP_CWD="$WORKDIR/seed-bootstrap-cwd"
-    mkdir -p "$SEED_BOOTSTRAP_CWD"
-    (
-        cd "$SEED_BOOTSTRAP_CWD"
-        run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC_ABS" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) $(bootstrap_seed_global_view_cfg_args) --cfg compiler-build-identity --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-    )
-else
-    run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) $(bootstrap_seed_global_view_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-fi
+run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 
-bootstrap_seed_runtime_small_arena_compat "$STAGE1_ASM"
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
@@ -831,53 +657,6 @@ if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
     build_bootstrap_embedded_stdlib "$BOOTSTRAP_COMPILER_BIN"
     bootstrap_tlci_mutation_snapshot \
         "$BOOTSTRAP_COMPILER_STAGE" "$BOOTSTRAP_COMPILER_BIN"
-fi
-
-# A scratch-built compiler must be able to compile the backend's cfg-only
-# self-test and the linked program must pass it. The ordinary backend smoke is
-# compiled without scratch-vreg, so it cannot cover these bodies; a bootstrap
-# fixpoint alone only proves that the compiler can compile itself.
-if [ "$BOOTSTRAP_CFG" = scratch-vreg ]; then
-    SCRATCH_BACKEND_SMOKE_ASM="$WORKDIR/compiler-backend-scratch-vreg-smoke.s"
-    SCRATCH_BACKEND_SMOKE_OBJ="$WORKDIR/compiler-backend-scratch-vreg-smoke.$OBJ_EXT"
-    SCRATCH_BACKEND_SMOKE_BIN="$WORKDIR/compiler-backend-scratch-vreg-smoke$BIN_EXT"
-    SCRATCH_BACKEND_SMOKE_STDOUT="$WORKDIR/compiler-backend-scratch-vreg-smoke.stdout"
-    SCRATCH_BACKEND_SMOKE_STDERR="$WORKDIR/compiler-backend-scratch-vreg-smoke.stderr"
-    echo "[bootstrap] scratch-vreg compiler backend smoke"
-    run_with_heartbeat \
-        "scratch-vreg compiler backend smoke compile" \
-        "$BOOTSTRAP_COMPILER_BIN" compile \
-        "$BOOTSTRAP_COMPILER_ROOT/tests/compiler_backend_smoke.tl" \
-        -o "$SCRATCH_BACKEND_SMOKE_ASM" \
-        --target "$BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --cfg scratch-vreg \
-        --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" \
-        --stdlib-root "$BOOTSTRAP_COMPILER_ROOT"
-    assemble_and_link \
-        "scratch-vreg compiler backend smoke" \
-        "$SCRATCH_BACKEND_SMOKE_ASM" \
-        "$SCRATCH_BACKEND_SMOKE_OBJ" \
-        "$SCRATCH_BACKEND_SMOKE_BIN"
-    set +e
-    "$SCRATCH_BACKEND_SMOKE_BIN" \
-        > "$SCRATCH_BACKEND_SMOKE_STDOUT" \
-        2> "$SCRATCH_BACKEND_SMOKE_STDERR"
-    SCRATCH_BACKEND_SMOKE_STATUS=$?
-    set -e
-    if [ "$SCRATCH_BACKEND_SMOKE_STATUS" -ne 42 ]; then
-        echo "scratch-vreg compiler backend smoke exited $SCRATCH_BACKEND_SMOKE_STATUS, expected 42" >&2
-        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDOUT" >&2 || true
-        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDERR" >&2 || true
-        exit 1
-    fi
-    if [ -s "$SCRATCH_BACKEND_SMOKE_STDOUT" ] || \
-       [ -s "$SCRATCH_BACKEND_SMOKE_STDERR" ]; then
-        echo "scratch-vreg compiler backend smoke produced unexpected output" >&2
-        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDOUT" >&2 || true
-        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDERR" >&2 || true
-        exit 1
-    fi
 fi
 
 # The stage2 -> stage3 compile runs from the repo root, where the loader's

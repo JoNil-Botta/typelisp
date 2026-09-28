@@ -56,88 +56,18 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(defstruct SourceToolCfgNames
-  (slots (__tl_dyn-array String))
-  (len i64))
-
-(define (source-tool-cfg-names-with-capacity [capacity : i64]) : SourceToolCfgNames
+(define (source-tool-cfg-names-to-env [names : cli_svec.Vec]) : sym_i64_env.SymI64Env
   (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (SourceToolCfgNames (__tl_make-array String cap) 0)))
-
-(define (source-tool-cfg-names-empty) : SourceToolCfgNames
-  (source-tool-cfg-names-with-capacity 4))
-
-(define (source-tool-cfg-names-copy-range!
-  [dst : (&mut dst (__tl_dyn-array String))]
-  [src : (& src (__tl_dyn-array String))]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
-
-(define (source-tool-cfg-names-grow! [names : (&mut names SourceToolCfgNames)]) : unit
-  (let
-    [count : i64 names.len]
-    [old-cap : i64 (array-length names.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
     (begin
-      (source-tool-cfg-names-copy-range! (&mut bigger) (& names.slots) 0 count)
-      (set! names.slots bigger))))
-
-(define (source-tool-cfg-names-push!
-  [names : (&mut names SourceToolCfgNames)]
-  [name : String]) : unit
-  (begin
-    (if (< names.len (array-length names.slots))
-      unit
-      (source-tool-cfg-names-grow! names))
-    (let
-      [index : i64 names.len]
-      (begin
-        (set! (array-ref names.slots index) name)
-        (set! names.len (+ index 1))))))
-
-(define (source-tool-cfg-names-get
-  [names : (& names SourceToolCfgNames)]
-  [index : i64]) : String
-  (if (if (>= index 0)
-    (< index names.len)
-    false)
-    (array-ref names.slots index)
-    ""))
-
-(define (source-tool-cfg-names-add [names : SourceToolCfgNames] [name : String]) : SourceToolCfgNames
-  (let
-    [next : SourceToolCfgNames (owned_view.compiler-owned-shared-view names)]
-    (begin
-      (source-tool-cfg-names-push! (&mut next) name)
-      next)))
-
-(define (source-tool-cfg-names-to-env-from
-  [names : (& names SourceToolCfgNames)]
-  [index : i64]
-  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index names.len)
-    env
-    (source-tool-cfg-names-to-env-from
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable env (source-tool-cfg-names-get names index)))))
-
-(define (source-tool-cfg-names-to-env [names : SourceToolCfgNames]) : sym_i64_env.SymI64Env
-  (source-tool-cfg-names-to-env-from (& names) 0 (cfg_core.compiler-cfg-empty)))
+      (while (< index (cli_svec.len (& names)))
+        (begin
+          (set!
+            env
+            (cfg_core.compiler-cfg-enable env (cli_svec.get (& names) index "")))
+          (set! index (+ index 1))))
+      env)))
 
 (define (source-tool-target-name [target : backend.CompilerBackendTarget]) : String
   (match target
@@ -172,12 +102,6 @@
     [else
       (ResultSourceToolBackendMode.Err
         (str_cat.str-cat command ": unknown backend mode " value))]))
-
-(define (source-tool-opt-level-valid? [value : String]) : bool
-  (or (string.eq value "0") (string.eq value "1") (string.eq value "2")))
-
-(define (source-tool-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
 (define (source-tool-args-append
   [args : process.ProcessStringList]
@@ -309,11 +233,19 @@
   [archives : process.ProcessStringList]) : SourceToolLinkInputs
   (SourceToolLinkInputs (process.args-empty) (process.args-empty) archives))
 
-(define (source-tool-link-inputs-libs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  inputs.libs)
+(define (source-tool-link-inputs-libs
+  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.libs))
 
-(define (source-tool-link-inputs-search-dirs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  inputs.search-dirs)
+(define (source-tool-link-inputs-search-dirs
+  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.search-dirs))
 
 (define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   inputs.raw-args)
@@ -327,7 +259,7 @@
 
 (define (source-tool-linux-crt-entry?
   [target : backend.CompilerBackendTarget]
-  [link-inputs : SourceToolLinkInputs]) : bool
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : bool
   (match target
     [(backend.CompilerBackendTarget.Linux)
       (not (source-tool-link-inputs-empty? link-inputs))]
@@ -337,40 +269,30 @@
   [inputs : SourceToolLinkInputs]
   [name : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-args-append
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view inputs))
-      name)
-    (source-tool-link-inputs-search-dirs
-      (owned_view.compiler-owned-shared-view inputs))
+    (source-tool-args-append (source-tool-link-inputs-libs inputs) name)
+    (source-tool-link-inputs-search-dirs inputs)
     (source-tool-link-inputs-raw-args inputs)))
 
 (define (source-tool-link-inputs-add-search-dir
   [inputs : SourceToolLinkInputs]
   [dir : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-link-inputs-libs
-      (owned_view.compiler-owned-shared-view inputs))
-    (source-tool-args-append
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view inputs))
-      dir)
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-args-append (source-tool-link-inputs-search-dirs inputs) dir)
     (source-tool-link-inputs-raw-args inputs)))
 
 (define (source-tool-link-inputs-add-raw-arg
   [inputs : SourceToolLinkInputs]
   [arg-value : String]) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (source-tool-link-inputs-libs
-      (owned_view.compiler-owned-shared-view inputs))
-    (source-tool-link-inputs-search-dirs
-      (owned_view.compiler-owned-shared-view inputs))
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-link-inputs-search-dirs inputs)
     (source-tool-args-append
       (source-tool-link-inputs-raw-args inputs)
       arg-value)))
 
 (define (source-tool-string-list-contains?
-  [items : process.ProcessStringList]
+  [items : (& items process.ProcessStringList)]
   [value : String]) : bool
   (let
     [n : i64 (process.args-count items)]
@@ -389,7 +311,7 @@
   [items : process.ProcessStringList]
   [value : String]) : process.ProcessStringList
   (if (source-tool-string-list-contains?
-    (owned_view.compiler-owned-shared-view items)
+    items
     (owned_view.compiler-owned-shared-view value))
     items
     (source-tool-args-append items value)))
@@ -410,36 +332,16 @@
           (set! i (+ i 1))))
       out)))
 
-(define (source-tool-string-list-eq?
-  [left : process.ProcessStringList]
-  [right : process.ProcessStringList]) : bool
-  (let
-    [n : i64 (process.args-count left)]
-    [i : i64 0]
-    [same : bool (= n (process.args-count right))]
-    (begin
-      (while (and same (< i n))
-        (begin
-          (if (string.eq (process.args-ref left i) (process.args-ref right i))
-            unit
-            (set! same false))
-          (set! i (+ i 1))))
-      same)))
-
 (define (source-tool-link-inputs-merge
   [left : SourceToolLinkInputs]
   [right : SourceToolLinkInputs]) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view left))
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view right)))
+      (source-tool-link-inputs-libs left)
+      (source-tool-link-inputs-libs right))
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view left))
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view right)))
+      (source-tool-link-inputs-search-dirs left)
+      (source-tool-link-inputs-search-dirs right))
     (source-tool-string-list-merge-unique
       (source-tool-link-inputs-raw-args left)
       (source-tool-link-inputs-raw-args right))))
@@ -451,27 +353,21 @@
     [(ast.AstExternLinkInput.Lib name)
       (SourceToolLinkInputs
         (source-tool-args-append-unique
-          (source-tool-link-inputs-libs
-            (owned_view.compiler-owned-shared-view inputs))
+          (source-tool-link-inputs-libs inputs)
           name)
-        (source-tool-link-inputs-search-dirs
-          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-search-dirs inputs)
         (source-tool-link-inputs-raw-args inputs))]
     [(ast.AstExternLinkInput.Search dir)
       (SourceToolLinkInputs
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-libs inputs)
         (source-tool-args-append-unique
-          (source-tool-link-inputs-search-dirs
-            (owned_view.compiler-owned-shared-view inputs))
+          (source-tool-link-inputs-search-dirs inputs)
           dir)
         (source-tool-link-inputs-raw-args inputs))]
     [(ast.AstExternLinkInput.Arg arg-value)
       (SourceToolLinkInputs
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs))
-        (source-tool-link-inputs-search-dirs
-          (owned_view.compiler-owned-shared-view inputs))
+        (source-tool-link-inputs-libs inputs)
+        (source-tool-link-inputs-search-dirs inputs)
         (source-tool-args-append-unique
           (source-tool-link-inputs-raw-args inputs)
           arg-value))]))
@@ -492,73 +388,6 @@
       items
       (+ index 1))))
 
-(define (source-tool-link-inputs-eq?
-  [left : SourceToolLinkInputs]
-  [right : SourceToolLinkInputs]) : bool
-  (and
-    (source-tool-string-list-eq?
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view left))
-      (source-tool-link-inputs-libs
-        (owned_view.compiler-owned-shared-view right)))
-    (source-tool-string-list-eq?
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view left))
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view right)))
-    (source-tool-string-list-eq?
-      (source-tool-link-inputs-raw-args left)
-      (source-tool-link-inputs-raw-args right))))
-
-(define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
-  (let
-    [metadata-items : ast.AstExternLinkInputList
-      (ast.ast-extern-link-input-list-new)]
-    [metadata-inputs : SourceToolLinkInputs
-      (begin
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Lib "m"))
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Lib "m"))
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Search "native"))
-        (ast.ast-extern-link-input-list-push
-          (&mut metadata-items)
-          (ast.AstExternLinkInput.Arg "-Wl,a"))
-        (source-tool-link-inputs-add-ast-list
-          (source-tool-link-inputs-empty)
-          (& metadata-items)
-          0))]
-    [explicit-inputs : SourceToolLinkInputs
-      (source-tool-link-inputs-add-raw-arg
-        (source-tool-link-inputs-add-raw-arg
-          (source-tool-link-inputs-add-search-dir
-            (source-tool-link-inputs-add-search-dir
-              (source-tool-link-inputs-add-lib
-                (source-tool-link-inputs-add-lib
-                  (source-tool-link-inputs-empty)
-                  "m")
-                "z")
-              "native")
-            "cli")
-          "-Wl,a")
-        "-Wl,b")]
-    [expected : SourceToolLinkInputs
-      (SourceToolLinkInputs
-        (process.args-cons "m" (process.args-cons "z" (process.args-empty)))
-        (process.args-cons
-          "native"
-          (process.args-cons "cli" (process.args-empty)))
-        (process.args-cons
-          "-Wl,a"
-          (process.args-cons "-Wl,b" (process.args-empty))))]
-    (source-tool-link-inputs-eq?
-      (source-tool-link-inputs-merge metadata-inputs explicit-inputs)
-      expected)))
-
 (define (source-tool-link-inputs-from-decls
   [decls : ast.AstDeclList]
   [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
@@ -571,8 +400,7 @@
           [(ast.AstDecl.Extern decl-meta _ _ metadata _)
             (let
               [metadata-items : ast.AstExternLinkInputList
-                (ast.ast-extern-metadata-link-inputs
-                  (owned_view.compiler-owned-box-shared-view metadata))]
+                (ast.ast-extern-metadata-link-inputs (deref metadata))]
               (source-tool-link-inputs-from-decls
                 rest
                 (source-tool-link-inputs-add-ast-list
@@ -587,9 +415,9 @@
   [cfgs : sym_i64_env.SymI64Env]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
   (match (load.compiler-load-file-with-paths-and-roots-cfg
-    (owned_view.compiler-owned-shared-view source)
+    source
     (sym_i64_env.sym-i64-empty)
-    (owned_view.compiler-owned-shared-view stdlib-roots)
+    stdlib-roots
     cfgs)
     [(load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (ResultSourceToolLinkInputs.Ok
@@ -601,12 +429,12 @@
     [(load.ResultCompilerLoadWithPaths.Err diag)
       (ResultSourceToolLinkInputs.Err
         (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (owned_view.compiler-owned-box-shared-view diag)))]))
+          (deref diag)))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
 
-(define (source-tool-has-path-separator? [path : String]) : bool
+(define (source-tool-has-path-separator? [path : (& path str)]) : bool
   (let
     [n : i64 (string.string-length path)]
     [i : i64 0]
@@ -625,25 +453,25 @@
     tool
     (source-tool-fs-path-join dir tool)))
 
-(define (source-tool-fs-path-join [left : String] [right : String]) : String
-  (fs.path-join (& left) (& right)))
+(define (source-tool-fs-path-join [left : (& left str)] [right : String]) : String
+  (fs.path-join left (& right)))
 
-(define (source-tool-fs-basename [path : String]) : String
-  (fs.basename (& path)))
+(define (source-tool-fs-basename [path : (& path str)]) : String
+  (fs.basename path))
 
-(define (source-tool-try-file-exists? [path : String]) : io.ResultIoBool
-  (io.try-file-exists? (& path)))
+(define (source-tool-try-file-exists? [path : (& path str)]) : io.ResultIoBool
+  (io.try-file-exists? path))
 
-(define (source-tool-try-read-file [path : String]) : io.ResultIoString
-  (match (io.try-read-file (& path))
+(define (source-tool-try-read-file [path : (& path str)]) : io.ResultIoString
+  (match (io.try-read-file path)
     [(io.OkIoBytes contents) (io.OkIoString (byte_buf.to-string contents))]
     [(io.ErrIoBytes error) (io.ErrIoString error)]))
 
-(define (source-tool-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
-  (fs.try-remove-file-if-exists (& path)))
+(define (source-tool-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
+  (fs.try-remove-file-if-exists path))
 
-(define (source-tool-try-remove-dir-if-exists [path : String]) : io.ResultIoUnit
-  (fs.try-remove-dir-if-exists (& path)))
+(define (source-tool-try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
+  (fs.try-remove-dir-if-exists path))
 
 (define (source-tool-stdout-write [text : String]) : unit
   (io.stdout-write (byte_buf.str-as-bytes (& text))))
@@ -651,7 +479,7 @@
 (define (source-tool-stderr-write [text : String]) : unit
   (io.stderr-write (byte_buf.str-as-bytes (& text))))
 
-(define (source-tool-path-command-exists? [candidate : String]) : bool
+(define (source-tool-path-command-exists? [candidate : (& candidate str)]) : bool
   (match (source-tool-try-file-exists? candidate)
     [(io.OkIoBool exists) exists]
     [(io.ErrIoBool _) false]))
@@ -675,8 +503,7 @@
         (source-tool-path-entry-command
           (env.string-list-ref paths index)
           (owned_view.compiler-owned-shared-view tool))]
-      (if (source-tool-path-command-exists?
-        (owned_view.compiler-owned-shared-view candidate))
+      (if (source-tool-path-command-exists? candidate)
         candidate
         (let
           [exe-candidate : String
@@ -684,8 +511,7 @@
               (owned_view.compiler-owned-shared-view candidate))]
           (if (and
             (not (string.eq exe-candidate candidate))
-            (source-tool-path-command-exists?
-              (owned_view.compiler-owned-shared-view exe-candidate)))
+            (source-tool-path-command-exists? exe-candidate))
             exe-candidate
             (source-tool-find-command-on-path-from tool paths (+ index 1))))))))
 
@@ -695,8 +521,7 @@
   (source-tool-find-command-on-path-from tool paths 0))
 
 (define (source-tool-resolve-command [tool : String]) : String
-  (if (source-tool-has-path-separator?
-    (owned_view.compiler-owned-shared-view tool))
+  (if (source-tool-has-path-separator? tool)
     tool
     (let
       [name : String "PATH"]
@@ -785,17 +610,19 @@
     [(backend.CompilerBackendTarget.Windows)
       (str_cat.str-cat name (source-tool-static-library-extension target))]))
 
-(define (source-tool-artifact-stem [source : String]) : String
+(define (source-tool-artifact-stem [source : (& source str)]) : String
   (source-tool-replace-extension (source-tool-fs-basename source) ""))
 
-(define (source-tool-asm-path [temp-dir : String] [source : String]) : String
+(define (source-tool-asm-path
+  [temp-dir : (& temp-dir str)]
+  [source : (& source str)]) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat (source-tool-artifact-stem source) ".s")))
 
 (define (source-tool-obj-path
-  [temp-dir : String]
-  [source : String]
+  [temp-dir : (& temp-dir str)]
+  [source : (& source str)]
   [target : backend.CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
@@ -805,8 +632,8 @@
       (source-tool-object-extension target))))
 
 (define (source-tool-temp-bin-path
-  [temp-dir : String]
-  [source : String]
+  [temp-dir : (& temp-dir str)]
+  [source : (& source str)]
   [target : backend.CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
@@ -825,7 +652,7 @@
   [error : io.IoError]) : String
   (str_cat.str-cat
     "Error: cannot read module '"
-    (owned_view.compiler-owned-shared-view source)
+    source
     "': "
     (io.error-message error)))
 
@@ -836,9 +663,8 @@
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match (source-tool-try-read-file
-    (owned_view.compiler-owned-shared-view source))
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
+  (match (source-tool-try-read-file source)
     [(io.ErrIoString error)
       (ResultSourceToolString.Err
         (source-tool-cannot-read-module-message source error))]
@@ -864,7 +690,7 @@
               (& advisories))
             (ResultSourceToolString.Err
               (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag))))])]))
+                (deref diag))))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -888,28 +714,25 @@
   (cond
     [(not
         (compiler_object_elf.compiler-object-elf-sections-supported?
-          (owned_view.compiler-owned-shared-view image.sections)))
+          image.sections))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
     [(not
         (compiler_object_elf.compiler-object-elf-relocation-list-supported?
-          (owned_view.compiler-owned-shared-view image.relocations)))
+          image.relocations))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
     [(not
         (and
           (compiler_object_elf.compiler-object-elf-relocation-sites-known?
-            (owned_view.compiler-owned-shared-view image)
-            (owned_view.compiler-owned-shared-view image.relocations))
-          (compiler_object_elf.compiler-object-elf-text-targets-known?
-            (owned_view.compiler-owned-shared-view image))
+            image
+            image.relocations)
+          (compiler_object_elf.compiler-object-elf-text-targets-known? image)
           (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
-            (owned_view.compiler-owned-shared-view image))))
+            image)))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
-    [(not
-        (compiler_object_elf.compiler-object-elf-image-supported?
-          (owned_view.compiler-owned-shared-view image)))
+    [(not (compiler_object_elf.compiler-object-elf-image-supported? image))
       (SourceToolLinuxDirectObjectEligibility.Fallback
         backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
     [(match kind
@@ -917,12 +740,12 @@
           (not
             (or
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
+                image.symbols
                 "_tl_start"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))
               (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
+                image.symbols
                 "main"
                 (cobj.CompilerObjectSymbolBinding.Export)
                 (cobj.CompilerObjectSymbolKind.Function))))]
@@ -933,7 +756,7 @@
         [(backend.CompilerDirectObjectArtifactKind.Bin)
           (<=
             (compiler_object_elf.compiler-object-elf-section-raw-size
-              (owned_view.compiler-owned-shared-view image)
+              image
               (cobj.CompilerObjectSectionKind.Text))
             0)]
         [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
@@ -957,14 +780,6 @@
           (ResultSourceToolLinuxDirectObject.Fallback
             backend.CompilerDirectObjectFallbackReason.ObjectEncoding)])]))
 
-(define (source-tool-linux-direct-object-linkable?
-  [image : cobj.CompilerObjectImage]) : bool
-  (match (source-tool-linux-direct-object-eligibility
-    backend.CompilerDirectObjectArtifactKind.Bin
-    image)
-    [(SourceToolLinuxDirectObjectEligibility.Eligible) true]
-    [(SourceToolLinuxDirectObjectEligibility.Fallback _) false]))
-
 (define (source-tool-render-linkable-linux-elf-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
   (match (source-tool-render-linux-direct-object
@@ -978,111 +793,11 @@
           "linux direct object unavailable: "
           (backend.compiler-direct-object-fallback-transcript reason)))]))
 
-(define (source-tool-emit-linux-elf-object
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match target
-    [(backend.CompilerBackendTarget.Linux)
-      (match (source-tool-try-read-file
-        (owned_view.compiler-owned-shared-view source))
-        [(io.ErrIoString error)
-          (ResultSourceToolString.Err
-            (source-tool-cannot-read-module-message
-              (owned_view.compiler-owned-shared-view source)
-              error))]
-        [(io.OkIoString _)
-          (match (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
-            (owned_view.compiler-owned-shared-view source)
-            target
-            true
-            stdlib-roots
-            opt-level
-            mode
-            cfgs
-            (source-tool-linux-crt-entry? target link-inputs))
-            [(compiler_driver_core.ResultCompilerDriverObject.Ok
-                image
-                advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (source-tool-render-linkable-linux-elf-object image))]
-            [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-                category
-                _)
-              (ResultSourceToolString.Err
-                (backend.compiler-direct-object-fallback-category category))]
-            [(compiler_driver_core.ResultCompilerDriverObject.Err
-                diag
-                advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (ResultSourceToolString.Err
-                  (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (owned_view.compiler-owned-box-shared-view diag))))])])]
-    [(backend.CompilerBackendTarget.Windows)
-      (ResultSourceToolString.Err
-        "direct ELF object emission is only available for linux-x86_64")]))
-
-(define (source-tool-emit-lowered-linux-elf-object
-  [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match target
-    [(backend.CompilerBackendTarget.Linux)
-      (match (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-        (ast.ast-node-pool-reader-context-current)
-        source
-        program
-        spans
-        target
-        true
-        (backend.CompilerBackendMode.Scalar)
-        opt-level
-        true
-        (source-tool-linux-crt-entry? target link-inputs))
-        [(compiler_driver_core.ResultCompilerDriverObject.Ok image advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (source-tool-render-linkable-linux-elf-object image))]
-        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-            category
-            _)
-          (ResultSourceToolString.Err
-            (backend.compiler-direct-object-fallback-category category))]
-        [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (ResultSourceToolString.Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag))))])]
-    [(backend.CompilerBackendTarget.Windows)
-      (ResultSourceToolString.Err
-        "direct ELF object emission is only available for linux-x86_64")]))
-
 (define (source-tool-windows-direct-object-env-name) : String
   "TYPELISP_WINDOWS_DIRECT_OBJECT")
 
 (define (source-tool-windows-direct-object-enabled?) : bool
   (source-tool-env-command-set? (source-tool-windows-direct-object-env-name)))
-
-(define (source-tool-windows-direct-object-relocations-linkable?
-  [symbols : cobj.CompilerObjectSymbolList]
-  [relocs : cobj.CompilerObjectRelocationList]) : bool
-  (compiler_windows_coff_core.compiler-windows-coff-relocations-linkable?
-    symbols
-    relocs))
 
 (define (source-tool-windows-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
@@ -1095,106 +810,13 @@
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-windows-direct-object-linkable?
     (owned_view.compiler-owned-shared-view image))
-    (match (compiler_object_coff.compiler-object-coff-render
-      (owned_view.compiler-owned-shared-view image))
+    (match (compiler_object_coff.compiler-object-coff-render image)
       [(compiler_object_coff.ResultCompilerObjectCoff.Ok obj)
         (ResultSourceToolString.Ok obj)]
       [(compiler_object_coff.ResultCompilerObjectCoff.Err message)
         (ResultSourceToolString.Err message)])
     (ResultSourceToolString.Err
       (source-tool-windows-direct-object-unavailable-message))))
-
-(define (source-tool-emit-windows-coff-object
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match target
-    [(backend.CompilerBackendTarget.Linux)
-      (ResultSourceToolString.Err
-        "direct COFF object emission is only available for windows-x86_64")]
-    [(backend.CompilerBackendTarget.Windows)
-      (match (source-tool-try-read-file
-        (owned_view.compiler-owned-shared-view source))
-        [(io.ErrIoString error)
-          (ResultSourceToolString.Err
-            (source-tool-cannot-read-module-message
-              (owned_view.compiler-owned-shared-view source)
-              error))]
-        [(io.OkIoString _)
-          (match (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
-            (owned_view.compiler-owned-shared-view source)
-            target
-            true
-            stdlib-roots
-            opt-level
-            mode
-            cfgs
-            (source-tool-linux-crt-entry? target link-inputs))
-            [(compiler_driver_core.ResultCompilerDriverObject.Ok
-                image
-                advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (source-tool-render-linkable-windows-coff-object image))]
-            [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-                category
-                _)
-              (ResultSourceToolString.Err
-                (backend.compiler-direct-object-fallback-category category))]
-            [(compiler_driver_core.ResultCompilerDriverObject.Err
-                diag
-                advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (ResultSourceToolString.Err
-                  (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (owned_view.compiler-owned-box-shared-view diag))))])])]))
-
-(define (source-tool-emit-lowered-windows-coff-object
-  [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]) : ResultSourceToolString
-  (match target
-    [(backend.CompilerBackendTarget.Linux)
-      (ResultSourceToolString.Err
-        "direct COFF object emission is only available for windows-x86_64")]
-    [(backend.CompilerBackendTarget.Windows)
-      (match (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-        (ast.ast-node-pool-reader-context-current)
-        source
-        program
-        spans
-        target
-        true
-        (backend.CompilerBackendMode.Scalar)
-        opt-level
-        true
-        false)
-        [(compiler_driver_core.ResultCompilerDriverObject.Ok image advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (source-tool-render-linkable-windows-coff-object image))]
-        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-            category
-            _)
-          (ResultSourceToolString.Err
-            (backend.compiler-direct-object-fallback-category category))]
-        [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (ResultSourceToolString.Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag))))])]))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -1214,16 +836,16 @@
       haystack)))
 
 (define (source-tool-write-file
-  [path : String]
-  [contents : String]
+  [path : (& path str)]
+  [contents : (& contents str)]
   [context : String]) : SourceToolCommandStatus
-  (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))
+  (match (io.try-write-file path (byte_buf.str-as-bytes contents))
     [(io.OkIoUnit) SourceToolCommandStatus.Ok]
     [(io.ErrIoUnit error)
       (SourceToolCommandStatus.Err
         (str_cat.str-cat context ": " (io.error-message error)))]))
 
-(define (source-tool-forward-output [output : process.ProcessOutput]) : unit
+(define (source-tool-forward-output [output : (& output process.ProcessOutput)]) : unit
   (begin
     (source-tool-stdout-write (process.output-stdout output))
     (source-tool-stderr-write (process.output-stderr output))))
@@ -1239,8 +861,7 @@
     (match (process.output command-to-run)
       [(process.OkProcessOutput output)
         (begin
-          (source-tool-forward-output
-            (owned_view.compiler-owned-shared-view output))
+          (source-tool-forward-output output)
           (if (process.success? output)
             SourceToolCommandStatus.Ok
             (SourceToolCommandStatus.Err
@@ -1319,12 +940,9 @@
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-linux-link-search-args
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-link-inputs-search-dirs inputs))
     (process.args-append
-      (source-tool-linux-link-lib-args
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
       (source-tool-link-inputs-raw-args inputs))))
 
 (define (source-tool-linker-command
@@ -1375,14 +993,6 @@
     "kernel32.lib"
     (process.args-cons "ntdll.lib" (process.args-empty))))
 
-(define (source-tool-windows-system-libs-smoke-ok?) : bool
-  (let
-    [libs : process.ProcessStringList (source-tool-windows-link-libs)]
-    (and
-      (= (process.args-count libs) 2)
-      (string.eq (process.args-ref libs 0) "kernel32.lib")
-      (string.eq (process.args-ref libs 1) "ntdll.lib"))))
-
 ;; Keep the historical 256 MiB PE reserve used by the native-link scripts. The
 ;; freestanding entry now uses this stack only for bounded argv/fiber bootstrap;
 ;; `main`, including a self-hosted compiler, runs on the runtime-owned 1 GiB
@@ -1400,12 +1010,9 @@
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-windows-link-search-args
-      (source-tool-link-inputs-search-dirs
-        (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-link-inputs-search-dirs inputs))
     (process.args-append
-      (source-tool-windows-link-lib-args
-        (source-tool-link-inputs-libs
-          (owned_view.compiler-owned-shared-view inputs)))
+      (source-tool-windows-link-lib-args (source-tool-link-inputs-libs inputs))
       (source-tool-link-inputs-raw-args inputs))))
 
 (define (source-tool-windows-linker-args
@@ -1436,165 +1043,6 @@
       (if (ir.compiler-debug-info-enabled?)
         (process.args-cons "/DEBUG" args)
         args))))
-
-(define (source-tool-windows-stack-reserve-smoke-ok?) : bool
-  (source-tool-string-list-contains?
-    (source-tool-windows-linker-args
-      "input.obj"
-      "output.exe"
-      (source-tool-link-inputs-empty))
-    (source-tool-windows-stack-reserve-arg)))
-
-(define (source-tool-windows-debug-linker-smoke-ok?) : bool
-  (let
-    [previous : bool (ir.compiler-debug-info-enabled?)]
-    [ok : bool false]
-    (begin
-      (ir.compiler-debug-info-set-enabled! true)
-      (set!
-        ok
-        (source-tool-string-list-contains?
-          (source-tool-windows-linker-args
-            "input.obj"
-            "output.exe"
-            (source-tool-link-inputs-empty))
-          "/DEBUG"))
-      (ir.compiler-debug-info-set-enabled! previous)
-      ok)))
-
-(define (source-tool-linux-direct-object-linkability-smoke-ok?) : bool
-  (match (backend.compiler-backend-emit-source-object-image-for-target
-    "(define answer : i64 40)
-(define (inc [x : i64]) : i64 (+ x 1))
-(define (main) : i64 (inc answer))"
-    (backend.CompilerBackendTarget.Linux))
-    [(backend.ResultCompilerBackendObject.Ok image)
-      (if (source-tool-linux-direct-object-linkable?
-        (owned_view.compiler-owned-shared-view image))
-        (match (source-tool-render-linkable-linux-elf-object
-          (owned_view.compiler-owned-shared-view image))
-          [(ResultSourceToolString.Ok obj) (> (string.string-length obj) 0)]
-          [(ResultSourceToolString.Err _) false])
-        false)]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
-
-(define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
-  (match (backend.compiler-backend-emit-source-object-image-for-target
-    "(extern (unused-direct [value : i64]) : i64
-  (:symbol \"typelisp_unused_direct\"))
-(extern unused-data (:symbol \"typelisp_unused_data\") : i64)
-(extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (CFunc non-null (-> i64 i64)))
-(define (main) : i64 0)"
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackendObject.Ok image)
-      (if (source-tool-windows-direct-object-linkable?
-        (owned_view.compiler-owned-shared-view image))
-        (match (source-tool-render-linkable-windows-coff-object
-          (owned_view.compiler-owned-shared-view image))
-          [(ResultSourceToolString.Ok obj) (> (string.string-length obj) 0)]
-          [(ResultSourceToolString.Err _) false])
-        false)]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
-
-(define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
-  (match (backend.compiler-backend-emit-source-object-image-for-target
-    "(define (main) : i64
-  (let [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (array-length items)))"
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackendObject.Ok image)
-      (not (source-tool-windows-direct-object-linkable? image))]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
-
-(define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
-  (let
-    [symbols0 : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-with-capacity 4)]
-    [symbols1 : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-push
-        symbols0
-        (cobj.CompilerObjectSymbol.Symbol
-          "GetStdHandle"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
-    [symbols2 : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-push
-        symbols1
-        (cobj.CompilerObjectSymbol.Symbol
-          "NtCreateFile"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
-    [symbols3 : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-push
-        symbols2
-        (cobj.CompilerObjectSymbol.Symbol
-          "GetCurrentProcessId"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
-    [symbols4 : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-push
-        symbols3
-        (cobj.CompilerObjectSymbol.Symbol
-          "NtOpenFile"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
-    [symbols : cobj.CompilerObjectSymbolList
-      (cobj.compiler-object-symbol-builder-finish symbols4)]
-    [empty-relocs : cobj.CompilerObjectRelocationList
-      (cobj.compiler-object-relocation-builder-finish
-        (cobj.compiler-object-relocation-builder-with-capacity 1))]
-    [allowed-relocs : cobj.CompilerObjectRelocationList
-      (cobj.compiler-object-relocation-builder-finish
-        (cobj.compiler-object-relocation-builder-push
-          (cobj.compiler-object-relocation-builder-push
-            (cobj.compiler-object-relocation-builder-with-capacity 2)
-            (cobj.CompilerObjectRelocation.Relocation
-              (cobj.CompilerObjectSectionKind.Text)
-              "main"
-              (cobj.CompilerObjectRelocationKind.Call)
-              "GetStdHandle"))
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "NtCreateFile")))]
-    [blocked-win32-relocs : cobj.CompilerObjectRelocationList
-      (cobj.compiler-object-relocation-builder-finish
-        (cobj.compiler-object-relocation-builder-push
-          (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "GetCurrentProcessId")))]
-    [blocked-ntdll-relocs : cobj.CompilerObjectRelocationList
-      (cobj.compiler-object-relocation-builder-finish
-        (cobj.compiler-object-relocation-builder-push
-          (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "NtOpenFile")))]
-    (and
-      (source-tool-windows-direct-object-relocations-linkable?
-        (owned_view.compiler-owned-shared-view symbols)
-        empty-relocs)
-      (source-tool-windows-direct-object-relocations-linkable?
-        (owned_view.compiler-owned-shared-view symbols)
-        allowed-relocs)
-      (not
-        (source-tool-windows-direct-object-relocations-linkable?
-          (owned_view.compiler-owned-shared-view symbols)
-          blocked-win32-relocs))
-      (not
-        (source-tool-windows-direct-object-relocations-linkable?
-          symbols
-          blocked-ntdll-relocs)))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]
@@ -1672,7 +1120,7 @@
     (cast (+ (cast c : i64) 32) : char)
     c))
 
-(define (source-tool-ascii-case-eq [left : String] [right : String]) : bool
+(define (source-tool-ascii-case-eq [left : (& left str)] [right : String]) : bool
   (let
     [left-n : i64 (string.string-length left)]
     [right-n : i64 (string.string-length right)]
@@ -1689,22 +1137,18 @@
           (set! i (+ i 1))))
       same)))
 
-(define (source-tool-windows-llvm-archiver-name? [command : String]) : bool
+(define (source-tool-windows-llvm-archiver-name? [command : (& command str)]) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
-      (source-tool-ascii-case-eq
-        (owned_view.compiler-owned-shared-view basename)
-        "llvm-ar")
+      (source-tool-ascii-case-eq basename "llvm-ar")
       (source-tool-ascii-case-eq basename "llvm-ar.exe"))))
 
-(define (source-tool-windows-msvc-archiver-name? [command : String]) : bool
+(define (source-tool-windows-msvc-archiver-name? [command : (& command str)]) : bool
   (let
     [basename : String (source-tool-fs-basename command)]
     (or
-      (source-tool-ascii-case-eq
-        (owned_view.compiler-owned-shared-view basename)
-        "lib")
+      (source-tool-ascii-case-eq basename "lib")
       (source-tool-ascii-case-eq basename "lib.exe"))))
 
 (define (source-tool-windows-llvm-archiver-command
@@ -1725,15 +1169,13 @@
         name
         (source-tool-resolve-command "llvm-ar"))]
     (cond
-      [(source-tool-windows-llvm-archiver-name?
-          (owned_view.compiler-owned-shared-view command))
+      [(source-tool-windows-llvm-archiver-name? command)
         (ResultSourceToolCommand.Ok
           (source-tool-windows-llvm-archiver-command
             command
             obj-path
             archive-path))]
-      [(source-tool-windows-msvc-archiver-name?
-          (owned_view.compiler-owned-shared-view command))
+      [(source-tool-windows-msvc-archiver-name? command)
         (ResultSourceToolCommand.Ok
           (process.command
             command
@@ -1867,10 +1309,7 @@
   [link-inputs : SourceToolLinkInputs]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
-  (match (source-tool-write-file
-    (owned_view.compiler-owned-shared-view obj-path)
-    obj
-    context)
+  (match (source-tool-write-file obj-path obj context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolDirectObjectStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1885,10 +1324,7 @@
   [target : backend.CompilerBackendTarget]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
-  (match (source-tool-write-file
-    (owned_view.compiler-owned-shared-view obj-path)
-    obj
-    context)
+  (match (source-tool-write-file obj-path obj context)
     [(SourceToolCommandStatus.Err message)
       (SourceToolDirectObjectStatus.Err message)]
     [(SourceToolCommandStatus.Ok)
@@ -1897,373 +1333,283 @@
         [(SourceToolCommandStatus.Err message)
           (SourceToolDirectObjectStatus.Err message)])]))
 
-(define (source-tool-try-windows-direct-object-and-link
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]
-  [obj-path : String]
-  [bin-path : String]) : SourceToolDirectObjectStatus
-  (if (and
-    (not (ir.compiler-debug-info-enabled?))
-    (source-tool-windows-direct-object-enabled?)
-    (backend.compiler-backend-target-windows? target))
-    (match (source-tool-emit-windows-coff-object
-      source
-      target
-      stdlib-roots
-      opt-level
-      mode
-      cfgs
-      (owned_view.compiler-owned-shared-view link-inputs))
-      [(ResultSourceToolString.Ok obj)
-        (source-tool-write-direct-object-and-link
-          obj-path
-          bin-path
-          target
-          link-inputs
-          obj
-          "source-tool: failed to write direct object artifact")]
-      [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectStatus.Unavailable message)])
-    (SourceToolDirectObjectStatus.Unavailable "windows direct object disabled")))
+;; --- One link route ----------------------------------------------------------
+;;
+;; What a link route compiles: a source file with its stdlib roots and cfg
+;; environment, a program the caller already lowered (the test harness), or
+;; assembly the caller already emitted (doctests).
+(defenum SourceToolProgram
+  (Source cli_svec.Vec sym_i64_env.SymI64Env)
+  (Lowered ir.CompilerIrProgram ir.CompilerSourceSpans)
+  (Assembly String))
 
-(define (source-tool-try-linux-direct-object-and-link
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]
-  [obj-path : String]
-  [bin-path : String]) : SourceToolDirectObjectStatus
-  (if (and
-    (not (ir.compiler-debug-info-enabled?))
-    (source-tool-linux-direct-object-enabled?)
-    (backend.compiler-backend-target-linux? target))
-    (match (source-tool-emit-linux-elf-object
-      source
-      target
-      stdlib-roots
-      opt-level
-      mode
-      cfgs
-      (owned_view.compiler-owned-shared-view link-inputs))
-      [(ResultSourceToolString.Ok obj)
-        (source-tool-write-direct-object-and-link
-          obj-path
-          bin-path
-          target
-          link-inputs
-          obj
-          "source-tool: failed to write direct object artifact")]
-      [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectStatus.Unavailable message)])
-    (SourceToolDirectObjectStatus.Unavailable "linux direct object disabled")))
+;; The artifact paths of one program built in a temp dir.
+(defstruct SourceToolTempFiles
+  (dir String)
+  (asm String)
+  (obj String)
+  (bin String))
 
-(define (source-tool-try-lowered-windows-direct-object-and-link
-  [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]
-  [obj-path : String]
-  [bin-path : String]) : SourceToolDirectObjectStatus
-  (if (and
-    (not (ir.compiler-debug-info-enabled?))
-    (source-tool-windows-direct-object-enabled?)
-    (backend.compiler-backend-target-windows? target))
-    (match (source-tool-emit-lowered-windows-coff-object
-      source
-      program
-      spans
-      target
-      opt-level)
-      [(ResultSourceToolString.Ok obj)
-        (source-tool-write-direct-object-and-link
-          obj-path
-          bin-path
-          target
-          link-inputs
-          obj
-          "test: failed to write direct object artifact")]
-      [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectStatus.Unavailable message)])
-    (SourceToolDirectObjectStatus.Unavailable "windows direct object disabled")))
+;; One request to compile a program and link it into `files.bin`.
+;; `write-context` prefixes a failed assembly write, as in "build: failed to
+;; write assembly artifact".
+(defstruct SourceToolLinkRequest
+  (source String)
+  (program SourceToolProgram)
+  (target backend.CompilerBackendTarget)
+  (opt-level i64)
+  (mode backend.CompilerBackendMode)
+  (link-inputs SourceToolLinkInputs)
+  (files SourceToolTempFiles)
+  (write-context String))
 
-(define (source-tool-try-lowered-linux-direct-object-and-link
-  [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]
-  [obj-path : String]
-  [bin-path : String]) : SourceToolDirectObjectStatus
-  (if (and
-    (not (ir.compiler-debug-info-enabled?))
-    (source-tool-linux-direct-object-enabled?)
-    (backend.compiler-backend-target-linux? target))
-    (match (source-tool-emit-lowered-linux-elf-object
-      source
-      program
-      spans
-      target
-      opt-level
-      (owned_view.compiler-owned-shared-view link-inputs))
-      [(ResultSourceToolString.Ok obj)
-        (source-tool-write-direct-object-and-link
-          obj-path
-          bin-path
-          target
-          link-inputs
-          obj
-          "test: failed to write direct object artifact")]
-      [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectStatus.Unavailable message)])
-    (SourceToolDirectObjectStatus.Unavailable "linux direct object disabled")))
+;; How running a linked program ended.
+(defenum SourceToolRunOutcome
+  (LinkFailed String)
+  (Ran process.ProcessOutput)
+  (SpawnFailed process.ProcessError))
 
-(define (source-tool-write-assembly-and-link
-  [target : backend.CompilerBackendTarget]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [link-inputs : SourceToolLinkInputs]
-  [asm : String]
-  [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-write-file
-    (owned_view.compiler-owned-shared-view asm-path)
-    asm
-    write-context)
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolCommandStatus.Ok)
-      (source-tool-assemble-and-link
-        target
-        asm-path
-        obj-path
-        bin-path
-        link-inputs)]))
+(define (source-tool-temp-files
+  [dir : String]
+  [source : (& source str)]
+  [target : backend.CompilerBackendTarget]) : SourceToolTempFiles
+  (let
+    [asm : String (source-tool-asm-path dir source)]
+    [obj : String (source-tool-obj-path dir source target)]
+    [bin : String (source-tool-temp-bin-path dir source target)]
+    (SourceToolTempFiles dir asm obj bin)))
 
-(define (source-tool-emit-assembly-and-link
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-emit-assembly
-    source
-    target
-    (owned_view.compiler-owned-shared-view stdlib-roots)
-    opt-level
-    mode
-    cfgs
-    (owned_view.compiler-owned-shared-view link-inputs))
-    [(ResultSourceToolString.Err message) (SourceToolCommandStatus.Err message)]
-    [(ResultSourceToolString.Ok asm)
-      (source-tool-write-assembly-and-link
-        target
-        asm-path
-        obj-path
-        bin-path
-        link-inputs
-        asm
-        write-context)]))
+(define (source-tool-clean-temp-files
+  [files : SourceToolTempFiles]
+  [remove-bin : bool]) : unit
+  (source-tool-clean-temp files.dir files.asm files.obj files.bin remove-bin))
 
-(define (source-tool-object-or-assembly-and-link
-  [source : String]
-  [target : backend.CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]
-  [link-inputs : SourceToolLinkInputs]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-try-linux-direct-object-and-link
-    (owned_view.compiler-owned-shared-view source)
-    target
-    (owned_view.compiler-owned-shared-view stdlib-roots)
-    opt-level
-    mode
-    (owned_view.compiler-owned-shared-view cfgs)
-    (owned_view.compiler-owned-shared-view link-inputs)
-    (owned_view.compiler-owned-shared-view obj-path)
-    (owned_view.compiler-owned-shared-view bin-path))
-    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
-    [(SourceToolDirectObjectStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolDirectObjectStatus.Unavailable _)
-      (match (source-tool-try-windows-direct-object-and-link
-        (owned_view.compiler-owned-shared-view source)
-        target
-        (owned_view.compiler-owned-shared-view stdlib-roots)
-        opt-level
-        mode
-        (owned_view.compiler-owned-shared-view cfgs)
-        (owned_view.compiler-owned-shared-view link-inputs)
-        (owned_view.compiler-owned-shared-view obj-path)
-        (owned_view.compiler-owned-shared-view bin-path))
-        [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
-        [(SourceToolDirectObjectStatus.Err message)
-          (SourceToolCommandStatus.Err message)]
-        [(SourceToolDirectObjectStatus.Unavailable _)
-          (source-tool-emit-assembly-and-link
-            source
-            target
-            stdlib-roots
-            opt-level
-            mode
-            cfgs
-            link-inputs
-            asm-path
-            obj-path
-            bin-path
-            write-context)])]))
+(define (source-tool-program-lowered? [program : (& program SourceToolProgram)]) : bool
+  (match program
+    [(SourceToolProgram.Lowered _ _) true]
+    [_ false]))
 
-;; Assembly route for an already lowered program. `mode` is the backend mode
-;; the program was lowered for.
-(define (source-tool-lowered-assembly-and-link
-  [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
+(define (source-tool-program-assembly?
+  [program : (& program SourceToolProgram)]) : bool
+  (match program
+    [(SourceToolProgram.Assembly _) true]
+    [_ false]))
+
+;; Serialize an emitted object image for the target's linker, or say why the
+;; program has to take the assembly route instead.
+(define (source-tool-render-object-result
   [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [write-context : String]) : SourceToolCommandStatus
-  (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
-    source
-    program
-    spans
-    target
-    true
-    mode
-    opt-level)
-    [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+  [result : compiler_driver_core.ResultCompilerDriverObject]) : ResultSourceToolString
+  (match result
+    [(compiler_driver_core.ResultCompilerDriverObject.Ok image advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (source-tool-write-assembly-and-link
-          target
-          asm-path
-          obj-path
-          bin-path
-          link-inputs
-          (source-tool-augment-assembly-for-target asm target)
-          write-context))]
-    [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+        (match target
+          [(backend.CompilerBackendTarget.Linux)
+            (source-tool-render-linkable-linux-elf-object image)]
+          [(backend.CompilerBackendTarget.Windows)
+            (source-tool-render-linkable-windows-coff-object image)]))]
+    [(compiler_driver_core.ResultCompilerDriverObject.Unavailable category _)
+      (ResultSourceToolString.Err
+        (backend.compiler-direct-object-fallback-category category))]
+    [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (SourceToolCommandStatus.Err
+        (ResultSourceToolString.Err
           (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (owned_view.compiler-owned-box-shared-view diag))))]))
+            (deref diag))))]))
 
-(define (source-tool-lowered-scalar-object-or-assembly-and-link
+;; Emit a source or lowered program as a direct object. The lowered emitter
+;; encodes scalar IR.
+(define (source-tool-emit-object
   [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
+  [program : SourceToolProgram]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
-  [link-inputs : SourceToolLinkInputs]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-try-lowered-linux-direct-object-and-link
-    (owned_view.compiler-owned-shared-view source)
-    (owned_view.compiler-owned-shared-view program)
-    (owned_view.compiler-owned-shared-view spans)
-    target
-    opt-level
-    (owned_view.compiler-owned-shared-view link-inputs)
-    (owned_view.compiler-owned-shared-view obj-path)
-    (owned_view.compiler-owned-shared-view bin-path))
-    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
-    [(SourceToolDirectObjectStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolDirectObjectStatus.Unavailable _)
-      (match (source-tool-try-lowered-windows-direct-object-and-link
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
-        target
-        opt-level
-        (owned_view.compiler-owned-shared-view link-inputs)
-        (owned_view.compiler-owned-shared-view obj-path)
-        (owned_view.compiler-owned-shared-view bin-path))
-        [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
-        [(SourceToolDirectObjectStatus.Err message)
-          (SourceToolCommandStatus.Err message)]
-        [(SourceToolDirectObjectStatus.Unavailable _)
-          (source-tool-lowered-assembly-and-link
+  [mode : backend.CompilerBackendMode]
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
+  (let
+    [crt-entry : bool (source-tool-linux-crt-entry? target link-inputs)]
+    (match program
+      [(SourceToolProgram.Source stdlib-roots cfgs)
+        (match (source-tool-try-read-file source)
+          [(io.ErrIoString error)
+            (ResultSourceToolString.Err
+              (source-tool-cannot-read-module-message source error))]
+          [(io.OkIoString _)
+            (source-tool-render-object-result
+              target
+              (compiler_driver_core.compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
+                source
+                target
+                true
+                stdlib-roots
+                opt-level
+                mode
+                cfgs
+                crt-entry))])]
+      [(SourceToolProgram.Lowered lowered spans)
+        (source-tool-render-object-result
+          target
+          (compiler_driver_core.compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+            (ast.ast-node-pool-reader-context-current)
             source
-            program
+            lowered
             spans
             target
-            opt-level
+            true
             (backend.CompilerBackendMode.Scalar)
-            link-inputs
-            asm-path
-            obj-path
-            bin-path
-            write-context)])]))
+            opt-level
+            true
+            crt-entry))]
+      [(SourceToolProgram.Assembly _)
+        (ResultSourceToolString.Err "assembly has no direct object route")])))
 
-;; The lowered direct-object emitters encode scalar IR only (SIMD parity is
-;; #7030), so a SIMD request goes straight to assembly with its mode intact
-;; instead of being offered to an emitter that would pair vector IR with the
-;; scalar backend.
-(define (source-tool-lowered-object-or-assembly-and-link-with-mode
+;; The direct object route, taken only when TYPELISP_{LINUX,WINDOWS}_DIRECT_OBJECT
+;; enables it for the target and no debug information is requested. Lowered
+;; programs take it only in scalar mode: the lowered object emitters encode
+;; scalar IR only (SIMD parity is #7030), so a SIMD program goes to assembly
+;; with its mode intact instead of pairing vector IR with the scalar backend.
+(define (source-tool-try-direct-object-and-link
+  [request : SourceToolLinkRequest]) : SourceToolDirectObjectStatus
+  (let
+    [lowered : bool (source-tool-program-lowered? (& request.program))]
+    (if (and
+      (not (ir.compiler-debug-info-enabled?))
+      (match request.target
+        [(backend.CompilerBackendTarget.Linux)
+          (source-tool-linux-direct-object-enabled?)]
+        [(backend.CompilerBackendTarget.Windows)
+          (source-tool-windows-direct-object-enabled?)])
+      (not (source-tool-program-assembly? (& request.program)))
+      (or (not lowered) (backend.compiler-backend-mode-scalar? request.mode)))
+      (match (source-tool-emit-object
+        request.source
+        request.program
+        request.target
+        request.opt-level
+        request.mode
+        request.link-inputs)
+        [(ResultSourceToolString.Ok obj)
+          (source-tool-write-direct-object-and-link
+            request.files.obj
+            request.files.bin
+            request.target
+            request.link-inputs
+            obj
+            (if lowered
+              "test: failed to write direct object artifact"
+              "source-tool: failed to write direct object artifact"))]
+        [(ResultSourceToolString.Err message)
+          (SourceToolDirectObjectStatus.Unavailable message)])
+      (SourceToolDirectObjectStatus.Unavailable "direct object disabled"))))
+
+;; Emit a program as assembly for the external assembler.
+(define (source-tool-emit-program-assembly
   [source : String]
-  [program : ir.CompilerIrProgram]
-  [spans : ir.CompilerSourceSpans]
+  [program : SourceToolProgram]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [write-context : String]) : SourceToolCommandStatus
-  (if (backend.compiler-backend-mode-scalar? mode)
-    (source-tool-lowered-scalar-object-or-assembly-and-link
-      source
-      program
-      spans
-      target
-      opt-level
-      link-inputs
-      asm-path
-      obj-path
-      bin-path
-      write-context)
-    (source-tool-lowered-assembly-and-link
-      source
-      program
-      spans
-      target
-      opt-level
-      mode
-      link-inputs
-      asm-path
-      obj-path
-      bin-path
-      write-context)))
+  [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
+  (match program
+    [(SourceToolProgram.Source stdlib-roots cfgs)
+      (source-tool-emit-assembly
+        source
+        target
+        stdlib-roots
+        opt-level
+        mode
+        cfgs
+        link-inputs)]
+    [(SourceToolProgram.Lowered lowered spans)
+      (match (compiler_driver_core.compiler-driver-emit-lowered-with-level-and-mode
+        source
+        lowered
+        spans
+        target
+        true
+        mode
+        opt-level)
+        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultSourceToolString.Ok
+              (source-tool-augment-assembly-for-target asm target)))]
+        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultSourceToolString.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (deref diag))))])]
+    [(SourceToolProgram.Assembly asm) (ResultSourceToolString.Ok asm)]))
+
+;; Compile `request`'s program and link it into `request.files.bin`: through a
+;; direct object when that route is enabled and the object is linkable, else
+;; through assembly and the external assembler.
+(define (source-tool-link-program [request : SourceToolLinkRequest]) : SourceToolCommandStatus
+  (match (source-tool-try-direct-object-and-link
+    (owned_view.compiler-owned-shared-view request))
+    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
+    [(SourceToolDirectObjectStatus.Err message)
+      (SourceToolCommandStatus.Err message)]
+    [(SourceToolDirectObjectStatus.Unavailable _)
+      (match (source-tool-emit-program-assembly
+        request.source
+        request.program
+        request.target
+        request.opt-level
+        request.mode
+        request.link-inputs)
+        [(ResultSourceToolString.Err message)
+          (SourceToolCommandStatus.Err message)]
+        [(ResultSourceToolString.Ok asm)
+          (match (source-tool-write-file
+            request.files.asm
+            asm
+            request.write-context)
+            [(SourceToolCommandStatus.Err message)
+              (SourceToolCommandStatus.Err message)]
+            [(SourceToolCommandStatus.Ok)
+              (source-tool-assemble-and-link
+                request.target
+                request.files.asm
+                request.files.obj
+                request.files.bin
+                request.link-inputs)])])]))
+
+;; Link `request` and run the executable with `args` and the env overrides
+;; `env`, streaming its output when `inherit` and capturing it otherwise. The
+;; caller owns the temp files: it decides what to report and whether to keep
+;; them.
+(define (source-tool-link-and-run
+  [request : SourceToolLinkRequest]
+  [args : process.ProcessStringList]
+  [env : process.ProcessEnvList]
+  [inherit : bool]) : SourceToolRunOutcome
+  (let
+    [target : backend.CompilerBackendTarget request.target]
+    [bin-path : String
+      (owned_view.compiler-owned-shared-view request.files.bin)]
+    (match (source-tool-link-program request)
+      [(SourceToolCommandStatus.Err message)
+        (SourceToolRunOutcome.LinkFailed message)]
+      [(SourceToolCommandStatus.Ok)
+        (let
+          [command : process.ProcessCommand
+            (source-tool-command-for-target
+              target
+              (process.command-with-env-list
+                (process.command bin-path args)
+                env))]
+          (match (if inherit
+            (process.inherit command)
+            (process.output command))
+            [(process.OkProcessOutput output) (SourceToolRunOutcome.Ran output)]
+            [(process.ErrProcessOutput error)
+              (SourceToolRunOutcome.SpawnFailed error)]))])))
 
 (define (source-tool-build-source-in-temp
   [source : String]
@@ -2276,73 +1622,60 @@
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
-    [asm-path : String
-      (source-tool-asm-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source))]
-    [obj-path : String
-      (source-tool-obj-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source)
-        target)]
-    [bin-path : String
-      (if has-output
-        output
-        (source-tool-default-output
+    [files : SourceToolTempFiles
+      (source-tool-temp-files temp-dir source target)]
+    [status : i64
+      (begin
+        ;; The executable goes beside the source (or to -o), not in the temp dir.
+        (set!
+          files.bin
+          (if has-output
+            output
+            (source-tool-default-output
+              (owned_view.compiler-owned-shared-view source)
+              target)))
+        (match (source-tool-link-inputs-for-source
           (owned_view.compiler-owned-shared-view source)
-          target))]
-    (match (source-tool-link-inputs-for-source
-      (owned_view.compiler-owned-shared-view source)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      (compiler_driver_core.compiler-driver-target-cfgs
-        target
-        (cfg_core.compiler-cfg-empty))
-      (owned_view.compiler-owned-shared-view link-inputs))
-      [(ResultSourceToolLinkInputs.Err message)
-        (begin
-          (io.print-error message)
-          (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
-          1)]
-      [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
-        (begin
-          (compiler_driver_core.compiler-driver-reset-file-state!)
-          (match (source-tool-object-or-assembly-and-link
-            (owned_view.compiler-owned-shared-view source)
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (compiler_driver_core.compiler-driver-target-cfgs
             target
-            (owned_view.compiler-owned-shared-view stdlib-roots)
-            opt-level
-            mode
-            (cfg_core.compiler-cfg-empty)
-            (owned_view.compiler-owned-shared-view effective-link-inputs)
-            (owned_view.compiler-owned-shared-view asm-path)
-            (owned_view.compiler-owned-shared-view obj-path)
-            (owned_view.compiler-owned-shared-view bin-path)
-            "build: failed to write assembly artifact")
-            [(SourceToolCommandStatus.Err message)
-              (begin
-                (io.print-error message)
-                (source-tool-clean-temp
-                  temp-dir
-                  asm-path
-                  obj-path
-                  bin-path
-                  false)
-                1)]
-            [(SourceToolCommandStatus.Ok)
-              (begin
-                (io.print-format
-                  "{}"
-                  (str_cat.str-cat
-                    "Built "
-                    (owned_view.compiler-owned-shared-view bin-path)
-                    "\n"))
-                (source-tool-clean-temp
-                  temp-dir
-                  asm-path
-                  obj-path
-                  bin-path
-                  false)
-                0)]))])))
+            (cfg_core.compiler-cfg-empty))
+          link-inputs)
+          [(ResultSourceToolLinkInputs.Err message)
+            (begin
+              (io.print-error message)
+              1)]
+          [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
+            (begin
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (match (source-tool-link-program
+                (SourceToolLinkRequest
+                  source
+                  (SourceToolProgram.Source
+                    stdlib-roots
+                    (cfg_core.compiler-cfg-empty))
+                  target
+                  opt-level
+                  mode
+                  effective-link-inputs
+                  (owned_view.compiler-owned-shared-view files)
+                  "build: failed to write assembly artifact"))
+                [(SourceToolCommandStatus.Err message)
+                  (begin
+                    (io.print-error message)
+                    1)]
+                [(SourceToolCommandStatus.Ok)
+                  (begin
+                    (io.print-format
+                      "{}"
+                      (str_cat.str-cat
+                        "Built "
+                        (owned_view.compiler-owned-shared-view files.bin)
+                        "\n"))
+                    0)]))]))]
+    (begin
+      (source-tool-clean-temp-files files false)
+      status)))
 
 (define (source-tool-build-source
   [source : String]
@@ -2371,15 +1704,6 @@
           (str_cat.str-cat "build: failed to create temp dir: " message))
         1)]))
 
-(define (source-tool-run-executable
-  [bin-path : String]
-  [target : backend.CompilerBackendTarget]
-  [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
-  (process.output
-    (source-tool-command-for-target
-      target
-      (process.command bin-path runtime-args))))
-
 ;: Run a user-facing executable while leaving child stdout/stderr connected to
 ;: the caller for live progress output.
 (define (source-tool-run-executable-inherit
@@ -2395,7 +1719,7 @@
   [source : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfg-names : SourceToolCfgNames]
+  [cfg-names : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
@@ -2403,108 +1727,69 @@
   [stream-output : bool]
   [temp-dir : String]) : i64
   (let
-    [asm-path : String
-      (source-tool-asm-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source))]
-    [obj-path : String
-      (source-tool-obj-path
-        (owned_view.compiler-owned-shared-view temp-dir)
+    [files : SourceToolTempFiles
+      (source-tool-temp-files temp-dir source target)]
+    [status : i64
+      (match (source-tool-link-inputs-for-source
         (owned_view.compiler-owned-shared-view source)
-        target)]
-    [bin-path : String
-      (source-tool-temp-bin-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view source)
-        target)]
-    [link-cfgs : sym_i64_env.SymI64Env
-      (source-tool-cfg-names-to-env
-        (owned_view.compiler-owned-shared-view cfg-names))]
-    (match (source-tool-link-inputs-for-source
-      (owned_view.compiler-owned-shared-view source)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      (compiler_driver_core.compiler-driver-target-cfgs target link-cfgs)
-      (owned_view.compiler-owned-shared-view link-inputs))
-      [(ResultSourceToolLinkInputs.Err message)
-        (begin
-          (io.print-error message)
-          (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
-          1)]
-      [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
-        (begin
-          (compiler_driver_core.compiler-driver-reset-file-state!)
-          (let
-            [emit-cfgs : sym_i64_env.SymI64Env
-              (source-tool-cfg-names-to-env cfg-names)]
-            (match (source-tool-object-or-assembly-and-link
-              (owned_view.compiler-owned-shared-view source)
-              target
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              opt-level
-              mode
-              (owned_view.compiler-owned-shared-view emit-cfgs)
-              (owned_view.compiler-owned-shared-view effective-link-inputs)
-              (owned_view.compiler-owned-shared-view asm-path)
-              (owned_view.compiler-owned-shared-view obj-path)
-              (owned_view.compiler-owned-shared-view bin-path)
-              "run: failed to write assembly artifact")
-              [(SourceToolCommandStatus.Err message)
+        (owned_view.compiler-owned-shared-view stdlib-roots)
+        (compiler_driver_core.compiler-driver-target-cfgs
+          target
+          (source-tool-cfg-names-to-env
+            (owned_view.compiler-owned-shared-view cfg-names)))
+        link-inputs)
+        [(ResultSourceToolLinkInputs.Err message)
+          (begin
+            (io.print-error message)
+            1)]
+        [(ResultSourceToolLinkInputs.Ok effective-link-inputs)
+          (begin
+            (compiler_driver_core.compiler-driver-reset-file-state!)
+            (match (source-tool-link-and-run
+              (SourceToolLinkRequest
+                source
+                (SourceToolProgram.Source
+                  stdlib-roots
+                  (source-tool-cfg-names-to-env cfg-names))
+                target
+                opt-level
+                mode
+                effective-link-inputs
+                (owned_view.compiler-owned-shared-view files)
+                "run: failed to write assembly artifact")
+              runtime-args
+              (process.env-empty)
+              stream-output)
+              [(SourceToolRunOutcome.LinkFailed message)
                 (begin
                   (io.print-error message)
-                  (source-tool-clean-temp
-                    temp-dir
-                    asm-path
-                    obj-path
-                    (owned_view.compiler-owned-shared-view bin-path)
-                    true)
                   1)]
-              [(SourceToolCommandStatus.Ok)
-                (match (if stream-output
-                  (source-tool-run-executable-inherit
-                    (owned_view.compiler-owned-shared-view bin-path)
-                    target
-                    runtime-args)
-                  (source-tool-run-executable
-                    (owned_view.compiler-owned-shared-view bin-path)
-                    target
-                    runtime-args))
-                  [(process.OkProcessOutput output)
-                    (let
-                      [status : i64 (process.output-status output)]
-                      (begin
-                        (if stream-output
-                          unit
-                          (source-tool-forward-output output))
-                        (source-tool-clean-temp
-                          temp-dir
-                          asm-path
-                          obj-path
-                          (owned_view.compiler-owned-shared-view bin-path)
-                          true)
-                        status))]
-                  [(process.ErrProcessOutput error)
-                    (begin
-                      (io.print-error
-                        (str_cat.str-cat
-                          "Error: failed to run executable '"
-                          (owned_view.compiler-owned-shared-view bin-path)
-                          "' for target "
-                          (source-tool-target-name target)
-                          ": "
-                          (process.error-message error)))
-                      (source-tool-clean-temp
-                        temp-dir
-                        asm-path
-                        obj-path
-                        bin-path
-                        true)
-                      1)])])))])))
+              [(SourceToolRunOutcome.Ran output)
+                (let
+                  [status : i64 (process.output-status output)]
+                  (begin
+                    (unless stream-output (source-tool-forward-output output))
+                    status))]
+              [(SourceToolRunOutcome.SpawnFailed error)
+                (begin
+                  (io.print-error
+                    (str_cat.str-cat
+                      "Error: failed to run executable '"
+                      (owned_view.compiler-owned-shared-view files.bin)
+                      "' for target "
+                      (source-tool-target-name target)
+                      ": "
+                      (process.error-message error)))
+                  1)]))])]
+    (begin
+      (source-tool-clean-temp-files files true)
+      status)))
 
 (define (source-tool-run-source
   [source : String]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfg-names : SourceToolCfgNames]
+  [cfg-names : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]

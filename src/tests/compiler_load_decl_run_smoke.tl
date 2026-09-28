@@ -11,18 +11,17 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_load)
+(import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
-(import compiler_owned_view as owned_view)
 (import compiler_parse_core as parser)
 (import read as reader)
 (import sym_i64_env)
 
 (define (compiler-load-decl-run-name-id [text : String]) : i64
-  (compiler_load.compiler-load-parse-context-name-id
-    (owned_view.compiler-owned-shared-view text)))
+  (compiler_load.compiler-load-parse-context-name-id text))
 
 (define (compiler-load-decl-run-def [name : String]) : ast.AstDecl
   (ast.ast-decl-def-id
@@ -102,9 +101,7 @@
             (str_cat.str-cat
               out
               (compiler-load-decl-run-decl-text
-                (ast.ast-decl-list-ref
-                  (owned_view.compiler-owned-shared-view decls)
-                  index))
+                (ast.ast-decl-list-ref decls index))
               ";"))
           (set! index (+ index 1))))
       out)))
@@ -158,8 +155,7 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (sym_i64_env.sym-i64-view
-          (owned_view.compiler-owned-shared-view cursor))
+        (match (sym_i64_env.sym-i64-view cursor)
           [(sym_i64_env.SymI64ViewNil) (set! done true)]
           [(sym_i64_env.SymI64ViewBind key value rest)
             (begin
@@ -185,7 +181,7 @@
         (sym_i64_env.sym-i64-empty)
         (compiler-load-decl-run-name-id "fixture.seeded")
         7)]
-    (match (compiler_load.compiler-load-decls-with-module-and-roots-cfg-root
+    (match (load_tests.compiler-load-decls-with-module-and-roots-cfg-root
       (compiler-load-decl-run-fixture)
       "src/tests/compiler_load_decl_run_smoke.tl"
       path-id
@@ -248,9 +244,7 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [got : String (compiler-load-decl-run-shape)]
-      (if (string.eq
-        (owned_view.compiler-owned-shared-view got)
-        (compiler-load-decl-run-expected-shape))
+      (if (string.eq got (compiler-load-decl-run-expected-shape))
         unit
         (io.panic
           (string.copy
@@ -296,7 +290,7 @@
       (io.write-file
         "target/cl_decl_run_origin.tl"
         (byte_buf.str-as-bytes (& source)))
-      (match (compiler_load.compiler-load-file-with-paths
+      (match (load_tests.compiler-load-file-with-paths
         "target/cl_decl_run_origin.tl"
         (sym_i64_env.sym-i64-empty))
         [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -312,9 +306,7 @@
                     (str_cat.str-cat
                       text
                       (compiler-load-decl-run-decl-text
-                        (ast.ast-decl-list-ref
-                          (owned_view.compiler-owned-shared-view decls)
-                          index))
+                        (ast.ast-decl-list-ref decls index))
                       "/"
                       (compiler-load-decl-run-origin-text (& decls) index)
                       ";"))
@@ -339,9 +331,7 @@
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
       [got : String (compiler-load-decl-run-origin-shape)]
-      (if (string.eq
-        (owned_view.compiler-owned-shared-view got)
-        (compiler-load-decl-run-expected-origin-shape))
+      (if (string.eq got (compiler-load-decl-run-expected-origin-shape))
         unit
         (io.panic
           (string.copy

@@ -1,7 +1,7 @@
 ;; scaffold_cli_core.tl - selfhost `typelisp new` / `typelisp init` command logic.
 ;;
-;; Shared by the retained `scaffold.tl` compatibility/coverage driver and the
-;; unified `cli.tl` dispatcher. `new [--lib] <name>` creates a package skeleton
+;; Shared by the unified `main.tl` dispatcher and `cli_core_tests.tl`.
+;; `new [--lib] <name>` creates a package skeleton
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
@@ -14,7 +14,7 @@
 
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
-(define (scaffold-name-bad-char? [name : String] [idx : i64]) : bool
+(define (scaffold-name-bad-char? [name : (& name str)] [idx : i64]) : bool
   (if (>= idx (string.string-length name))
     false
     (let
@@ -28,7 +28,7 @@
         (scaffold-name-bad-char? name (+ idx 1))
         true))))
 
-(define (scaffold-name-ok? [name : String]) : bool
+(define (scaffold-name-ok? [name : (& name str)]) : bool
   (and (> (string.string-length name) 0) (not (scaffold-name-bad-char? name 0))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
@@ -49,33 +49,16 @@
 (define (scaffold-lib-source) : String
   "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
 
-(test
-  scaffold-first-run-source-smoke
-  (let
-    [bin-source : String (scaffold-bin-source)]
-    [lib-source : String (scaffold-lib-source)]
-    [greeting : String "(io.print-format \"{}\" \"Hello, TypeLisp!\\n\")"]
-    [test-import : String "(cfg test (import stdlib.test))"]
-    [test-item : String "(test\n  answer-is-42"]
-    (unless
-      (and
-        (string.contains (& bin-source) (& greeting))
-        (string.contains (& bin-source) (& test-import))
-        (string.contains (& bin-source) (& test-item))
-        (string.contains (& lib-source) (& test-import))
-        (string.contains (& lib-source) (& test-item)))
-      (io.panic "scaffold: first-run source smoke mismatch"))))
+(define (scaffold-try-mkdir [path : (& path str)]) : io.ResultIoUnit
+  (fs.try-mkdir path))
 
-(define (scaffold-try-mkdir [path : String]) : io.ResultIoUnit
-  (fs.try-mkdir (& path)))
-
-(define (scaffold-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
-  (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents))))
+(define (scaffold-try-write-file [path : (& path str)] [contents : String]) : io.ResultIoUnit
+  (io.try-write-file path (byte_buf.str-as-bytes (& contents))))
 
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
 (define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
-  (match (scaffold-try-mkdir (owned_view.compiler-owned-shared-view path))
+  (match (scaffold-try-mkdir path)
     [(io.OkIoUnit) io.OkIoUnit]
     [(io.ErrIoUnit _)
       (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
@@ -92,9 +75,7 @@
           path
           "\n"))
       1)
-    (match (scaffold-try-write-file
-      (owned_view.compiler-owned-shared-view path)
-      contents)
+    (match (scaffold-try-write-file path contents)
       [(io.OkIoUnit) 0]
       [(io.ErrIoUnit _)
         (begin
@@ -170,7 +151,7 @@
             pkg-code))])))
 
 (define (scaffold-new [name : String] [is-lib : bool]) : i64
-  (if (not (scaffold-name-ok? (owned_view.compiler-owned-shared-view name)))
+  (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
@@ -185,7 +166,7 @@
         (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64
-  (if (not (scaffold-name-ok? (owned_view.compiler-owned-shared-view name)))
+  (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))

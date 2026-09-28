@@ -1,29 +1,23 @@
 ;; compiler_surface_ast.tl - package-agnostic serialized frontend AST surface.
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.arena))
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 (import compiler_ast_types as ast)
 
-;; lint-allow: unused-import -- used by compiler-surface-selftest builds.
+;; lint-allow: unused-import -- used only by the cfg-gated surface codecs.
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 
-;; lint-allow: unused-import -- used by compiler-surface-selftest builds.
+;; lint-allow: unused-import -- used only by the cfg-gated surface codecs.
 (import compiler_surface_identity as surface_identity)
 (import compiler_surface_ast_codec_core as codec)
 (import compiler_surface_ast_expr as expr_codec)
-(import compiler_owned_view as owned_view)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_owned_view as owned_view))
 (import sym_i64_env)
 
 (defstruct SurfaceAstHydration
@@ -34,11 +28,7 @@
   (pools ast.AstNodePoolContext))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defenum ResultSurfaceAstBytes
     (Ok (__tl_dyn-array u8))
     (Err String)))
@@ -48,11 +38,7 @@
   (Err String))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-invalid-identity-message
     [session : cis.InternStructuralSessionHandle]
     [name : i64]) : String
@@ -121,11 +107,7 @@
   10)
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-macro-type-kind-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -145,7 +127,7 @@
         unit))))
 
 (define (surface-ast-read-macro-type-kind-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMacroTypeKindList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMacroTypeKindList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [out : ast.AstMacroTypeKindList
@@ -162,11 +144,7 @@
       out)))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-macro-param-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -190,7 +168,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-macro-param-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMacroParamList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMacroParamList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstMacroParam)
@@ -210,11 +188,7 @@
       (ast.AstMacroParamList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-field-cleanup!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -231,7 +205,7 @@
       [(ast.AstFieldCleanup.Owned) (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-field-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFieldCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldCleanup
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -248,11 +222,7 @@
           ast.AstFieldCleanup.No)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-field-def-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -275,7 +245,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-field-def-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFieldDefList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFieldDefList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstFieldDef)
@@ -295,11 +265,7 @@
       (ast.AstFieldDefList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-struct-repr!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [repr : ast.AstStructRepr]) : unit
@@ -310,7 +276,7 @@
         [(ast.AstStructRepr.C) 1]))))
 
 (define (surface-ast-read-struct-repr!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstStructRepr
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructRepr
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
@@ -324,11 +290,7 @@
           ast.AstStructRepr.Default)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-extern-abi!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -342,7 +304,7 @@
           (codec.surface-ast-write-type! out context ty))])))
 
 (define (surface-ast-read-extern-abi!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternAbi
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternAbi
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -358,11 +320,7 @@
           ast.AstExternAbi.C)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-extern-kind!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [kind : ast.AstExternKind]) : unit
@@ -373,7 +331,7 @@
         [(ast.AstExternKind.Function) 1]))))
 
 (define (surface-ast-read-extern-kind!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternKind
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternKind
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (= tag 0)
@@ -387,11 +345,7 @@
           ast.AstExternKind.Value)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-extern-link-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [links : ast.AstExternLinkInputList]) : unit
@@ -417,7 +371,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-extern-link-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternLinkInputList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternLinkInputList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstExternLinkInput)
@@ -445,11 +399,7 @@
       (ast.AstExternLinkInputList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-spmd-param-class!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [value : ast.AstSpmdParamClass]) : unit
@@ -460,17 +410,13 @@
         [(ast.AstSpmdParamClass.Varying) 1]))))
 
 (define (surface-ast-read-spmd-param-class!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClass
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClass
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstSpmdParamClass.Uniform
     ast.AstSpmdParamClass.Varying))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-spmd-param-class-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [items : ast.AstSpmdParamClassList]) : unit
@@ -487,7 +433,7 @@
             (set! index (+ index 1))))))))
 
 (define (surface-ast-read-spmd-param-class-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClassList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdParamClassList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdParamClass)
@@ -503,11 +449,7 @@
       (ast.AstSpmdParamClassList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-spmd-result-class!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [value : ast.AstSpmdResultClass]) : unit
@@ -519,7 +461,7 @@
         [(ast.AstSpmdResultClass.Varying) 2]))))
 
 (define (surface-ast-read-spmd-result-class!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdResultClass
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdResultClass
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -534,11 +476,7 @@
           ast.AstSpmdResultClass.Unit)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-spmd-specialization-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [items : ast.AstSpmdSpecializationList]) : unit
@@ -562,7 +500,7 @@
         unit))))
 
 (define (surface-ast-read-spmd-specialization-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstSpmdSpecializationList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstSpmdSpecializationList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstSpmdSpecialization)
@@ -582,11 +520,7 @@
       (ast.AstSpmdSpecializationList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   ;; Surface AST names retain their existing i64 wire representation. Convert at
   ;; the codec edge so decoded linker/interface names are checked as renderable
   ;; before entering the nominal AST fields.
@@ -603,12 +537,10 @@
       [(ast.AstFnMetadata.SpmdCallable items)
         (begin
           (codec.surface-ast-write-i64! out 2)
-          (surface-ast-write-spmd-specialization-list!
-            out
-            (owned_view.compiler-owned-box-shared-view items)))])))
+          (surface-ast-write-spmd-specialization-list! out (deref items)))])))
 
 (define (surface-ast-read-fn-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstFnMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstFnMetadata
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -627,11 +559,7 @@
           ast.AstFnMetadata.No)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-imported-spmd-specialization-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -672,7 +600,7 @@
         unit))))
 
 (define (surface-ast-read-imported-spmd-specialization-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdSpecializationList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdSpecializationList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstImportedSpmdSpecialization)
@@ -700,11 +628,7 @@
       (ast.AstImportedSpmdSpecializationList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-imported-spmd-callable-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -731,7 +655,7 @@
         unit))))
 
 (define (surface-ast-read-imported-spmd-callable-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdCallableList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdCallableList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstImportedSpmdCallable)
@@ -750,11 +674,7 @@
       (ast.AstImportedSpmdCallableList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-imported-spmd-metadata!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -768,10 +688,10 @@
           (surface-ast-write-imported-spmd-callable-list!
             out
             context
-            (owned_view.compiler-owned-box-shared-view callables)))])))
+            (deref callables)))])))
 
 (define (surface-ast-read-imported-spmd-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportedSpmdMetadata
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -798,11 +718,7 @@
           ast.AstImportedSpmdMetadata.No)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-extern-metadata!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -820,7 +736,7 @@
           (surface-ast-write-imported-spmd-metadata! out context imported))])))
 
 (define (surface-ast-read-extern-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternMetadata
   (ast.AstExternMetadata.Metadata
     (surface-ast-read-extern-abi! reader)
     (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))
@@ -829,11 +745,7 @@
     (surface-ast-read-imported-spmd-metadata! reader)))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-variant-cleanup!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -851,7 +763,7 @@
         (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-variant-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstVariantPayloadCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstVariantPayloadCleanup
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -868,11 +780,7 @@
           ast.AstVariantPayloadCleanup.No)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-variant-def-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -901,7 +809,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-variant-def-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstVariantDefList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstVariantDefList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstVariantDef)
@@ -933,11 +841,7 @@
       (ast.AstVariantDefList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-struct-cleanup!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -953,18 +857,14 @@
             (ci.intern-syntax-id-value name)))])))
 
 (define (surface-ast-read-struct-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstStructCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstStructCleanup.No
     (ast.AstStructCleanup.Fn
       (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-enum-cleanup!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -980,18 +880,14 @@
             (ci.intern-syntax-id-value name)))])))
 
 (define (surface-ast-read-enum-cleanup!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstEnumCleanup
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstEnumCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstEnumCleanup.No
     (ast.AstEnumCleanup.Fn
       (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-maybe-module-name!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1004,17 +900,13 @@
           (codec.surface-ast-write-name! out context name))])))
 
 (define (surface-ast-read-maybe-module-name!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMaybeModuleName
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMaybeModuleName
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstMaybeModuleName.No
     (ast.AstMaybeModuleName.Some (codec.surface-ast-read-name! reader))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-maybe-import-alias!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1027,17 +919,13 @@
           (codec.surface-ast-write-name! out context name))])))
 
 (define (surface-ast-read-maybe-import-alias!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstMaybeImportAlias
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstMaybeImportAlias
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstMaybeImportAlias.No
     (ast.AstMaybeImportAlias.Some (codec.surface-ast-read-name! reader))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-import-kind!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1061,7 +949,7 @@
           (surface-ast-write-maybe-module-name! out context module-name))])))
 
 (define (surface-ast-read-import-kind!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportKind
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportKind
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1085,11 +973,7 @@
           ast.AstImportKind.Module)])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-import-spec!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1101,12 +985,10 @@
           (codec.surface-ast-write-string! out path)
           (surface-ast-write-maybe-module-name! out context module-name)
           (surface-ast-write-maybe-import-alias! out context alias)
-          (codec.surface-ast-write-span!
-            out
-            (owned_view.compiler-owned-box-shared-view span)))])))
+          (codec.surface-ast-write-span! out (deref span)))])))
 
 (define (surface-ast-read-import-spec!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstImportSpec
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstImportSpec
   (ast.AstImportSpec.Spec
     (surface-ast-read-import-kind! reader)
     (codec.surface-ast-read-string! reader)
@@ -1115,11 +997,7 @@
     (box (codec.surface-ast-read-span! reader))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-dispatch-variant-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1143,7 +1021,7 @@
           (set! index (+ index 1)))))))
 
 (define (surface-ast-read-dispatch-variant-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDispatchVariantList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDispatchVariantList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstDispatchVariant)
@@ -1174,16 +1052,12 @@
       (ast.AstDispatchVariantList slots count))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-decl-meta!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [_context : (&mut context codec.SurfaceAstWriteContext)]
     [meta : ast.AstDeclMeta]) : unit
-    (match (owned_view.compiler-owned-box-shared-view meta.value)
+    (match (deref meta.value)
       [(ast.AstDeclMetaValue.Runtime markers)
         (begin
           (codec.surface-ast-write-i64! out 0)
@@ -1203,7 +1077,7 @@
                 (codec.surface-ast-write-string! out key))]))])))
 
 (define (surface-ast-read-decl-meta!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclMeta
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclMeta
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (if (or (= tag 0) (= tag 1))
@@ -1225,7 +1099,7 @@
         (ast.ast-decl-meta-runtime-shared-view)))))
 
 (define (surface-ast-read-comptime-decl-meta!
-  [reader : (& reader codec.SurfaceAstReader)]
+  [reader : (&mut reader codec.SurfaceAstReader)]
   [markers : i64]) : ast.AstDeclMeta
   (let
     [generated-tag : i64 (codec.surface-ast-read-i64! reader)]
@@ -1246,174 +1120,11 @@
     (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Comptime generated markers)))))
 
 (cfg
-  compiler-surface-selftest
-  (define (surface-ast-decl-meta-roundtrip-ok?
-    [meta : ast.AstDeclMeta]
-    [comptime? : bool]
-    [expected-markers : i64]) : bool
-    (let
-      [intern-state : ci.InternCompatState
-        (ci.intern-compat-state-capture-active)]
-      [structural-session : cis.InternStructuralSessionHandle
-        (cis.intern-structural-session-handle-from-source-names
-          (ci.intern-source-name-session-handle-from-state intern-state))]
-      [context : codec.SurfaceAstWriteContext
-        (codec.surface-ast-write-context-new structural-session 0 0)]
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (begin
-        (surface-ast-write-decl-meta! (&mut out) (&mut context) meta)
-        (let
-          [bytes : (__tl_dyn-array u8)
-            (byte_buf_core.byte-buf-builder-finish-array (& out))]
-          [byte-count : i64 (array-length bytes)]
-          [reader : codec.SurfaceAstReader
-            (codec.surface-ast-reader-new
-              bytes
-              structural-session
-              (__tl_make-array i64 0))]
-          [before : arena.ArenaMark (arena.mark)]
-          [decoded : ast.AstDeclMeta (surface-ast-read-decl-meta! (& reader))]
-          [after : arena.ArenaMark (arena.mark)]
-          (and
-            (codec.surface-ast-reader-valid? (& reader))
-            (= (codec.surface-ast-reader-offset (& reader)) byte-count)
-            (or comptime? (!= expected-markers 0) (arena.mark-eq? before after))
-            (match (__tl-box-place decoded.value)
-              [(ast.AstDeclMetaValue.Runtime markers)
-                (and (= markers expected-markers) (not comptime?))]
-              [(ast.AstDeclMetaValue.Comptime _ markers)
-                (and (= markers expected-markers) comptime?)])))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-decl-meta-invalid-flags-ok?) : bool
-    (let
-      [intern-state : ci.InternCompatState
-        (ci.intern-compat-state-capture-active)]
-      [structural-session : cis.InternStructuralSessionHandle
-        (cis.intern-structural-session-handle-from-source-names
-          (ci.intern-source-name-session-handle-from-state intern-state))]
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (begin
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 2)
-        (let
-          [reader : codec.SurfaceAstReader
-            (codec.surface-ast-reader-new
-              (byte_buf_core.byte-buf-builder-finish-array (& out))
-              structural-session
-              (__tl_make-array i64 0))]
-          (begin
-            (surface-ast-read-decl-meta! (& reader))
-            (not (codec.surface-ast-reader-valid? (& reader)))))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-c-function-reference-decode-ok? [signature : i64]) : bool
-    (let
-      [intern-state : ci.InternCompatState
-        (ci.intern-compat-state-capture-active)]
-      [session : cis.InternStructuralSessionHandle
-        (cis.intern-structural-session-handle-from-source-names
-          (ci.intern-source-name-session-handle-from-state intern-state))]
-      [context : codec.SurfaceAstWriteContext
-        (codec.surface-ast-write-context-new session 0 0)]
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (begin
-        (codec.surface-ast-write-i64! (&mut out) surface-ast-magic)
-        (codec.surface-ast-write-i64! (&mut out) surface-ast-schema-version)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 3)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-type!
-          (&mut out)
-          (&mut context)
-          ast.AstType.I64)
-        (codec.surface-ast-write-type!
-          (&mut out)
-          (&mut context)
-          (ast.AstType.Func (box (ast.ast-type-list-new)) 0))
-        (codec.surface-ast-write-type!
-          (&mut out)
-          (&mut context)
-          (ast.AstType.CFunc signature ast.AstCFunctionMode.NonNull))
-        ;; Empty declaration, path, module, and seen lists.
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (match (surface-ast-decode
-          (byte_buf_core.byte-buf-builder-finish-array (& out))
-          session
-          (__tl_make-array i64 0)
-          (ast.ast-node-pool-context-new-with-capacities 4 1))
-          [(ResultSurfaceAstHydration.Ok _) (= signature 1)]
-          [(ResultSurfaceAstHydration.Err message)
-            (and
-              (not (= signature 1))
-              (surface_identity.surface-identity-string-eq?
-                message
-                "surface ast: C function signature must reference a function type"))])))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-old-schema-rejected?) : bool
-    (let
-      [intern-state : ci.InternCompatState
-        (ci.intern-compat-state-capture-active)]
-      [structural-session : cis.InternStructuralSessionHandle
-        (cis.intern-structural-session-handle-from-source-names
-          (ci.intern-source-name-session-handle-from-state intern-state))]
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (begin
-        (codec.surface-ast-write-i64! (&mut out) surface-ast-magic)
-        (codec.surface-ast-write-i64! (&mut out) 9)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (codec.surface-ast-write-i64! (&mut out) 0)
-        (match (surface-ast-decode
-          (byte_buf_core.byte-buf-builder-finish-array (& out))
-          structural-session
-          (__tl_make-array i64 0)
-          (ast.ast-node-pool-context-new-with-capacities 1 1))
-          [(ResultSurfaceAstHydration.Err _) true]
-          [(ResultSurfaceAstHydration.Ok _) false])))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-decl-meta-tests-ok?) : bool
-    (and
-      (surface-ast-decl-meta-roundtrip-ok?
-        (ast.ast-decl-meta-runtime-shared-view)
-        false
-        0)
-      (surface-ast-decl-meta-roundtrip-ok?
-        (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 1)))
-        false
-        1)
-      (surface-ast-decl-meta-roundtrip-ok?
-        (ast.AstDeclMeta
-          (box (ast.AstDeclMetaValue.Comptime ast.AstGeneratedDeclMeta.No 1)))
-        true
-        1)
-      (surface-ast-decl-meta-invalid-flags-ok?)
-      (surface-ast-old-schema-rejected?)
-      (surface-ast-c-function-reference-decode-ok? 1)
-      (surface-ast-c-function-reference-decode-ok? 0)
-      (surface-ast-c-function-reference-decode-ok? 2)
-      (surface-ast-c-function-reference-decode-ok? 3)
-      (surface-ast-c-function-reference-decode-ok? 9223372036854775807))))
-
-(cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-test-metadata!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [metadata : ast.AstTestMetadata]) : unit
-    (match (owned_view.compiler-owned-box-shared-view metadata.value)
+    (match (deref metadata.value)
       [(ast.AstTestMetadataValue.None) (codec.surface-ast-write-i64! out 0)]
       [(ast.AstTestMetadataValue.Metadata ignore-reason slow)
         (begin
@@ -1431,7 +1142,7 @@
               0)))])))
 
 (define (surface-ast-read-test-metadata!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstTestMetadata
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstTestMetadata
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1478,11 +1189,7 @@
           (ast.ast-test-metadata-none-shared-view))])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-decl!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1496,10 +1203,7 @@
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context name)
-          (surface-ast-write-decl-list!
-            out
-            context
-            (owned_view.compiler-owned-box-shared-view body)))]
+          (surface-ast-write-decl-list! out context (deref body)))]
       [(ast.AstDecl.Def meta name maybe-ty value)
         (begin
           (codec.surface-ast-write-i64! out 2)
@@ -1530,10 +1234,7 @@
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-extern-kind! out kind)
-          (surface-ast-write-extern-metadata!
-            out
-            context
-            (ast.ast-extern-metadata-box-shared-view metadata))
+          (surface-ast-write-extern-metadata! out context (deref metadata))
           (codec.surface-ast-write-type! out context ty))]
       [(ast.AstDecl.DefEnum meta name cleanup variants)
         (begin
@@ -1608,17 +1309,10 @@
       [(ast.AstDecl.Unsafe inner)
         (begin
           (codec.surface-ast-write-i64! out 17)
-          (surface-ast-write-decl!
-            out
-            context
-            (ast.ast-decl-box-shared-view inner)))])))
+          (surface-ast-write-decl! out context (deref inner)))])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-decl-list!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1636,7 +1330,7 @@
               (ast.ast-array-shared-view decls.slots (+ decls.offset index)))
             (set! index (+ index 1))))))))
 
-(define (surface-ast-read-decl! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDecl
+(define (surface-ast-read-decl! [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDecl
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1741,7 +1435,7 @@
           (ast.AstDecl.Module (codec.surface-ast-read-name! reader)))])))
 
 (define (surface-ast-read-decl-list!
-  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclList
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array ast.AstDecl) (__tl_make-array ast.AstDecl count)]
@@ -1754,11 +1448,7 @@
       (ast.AstDeclList slots 0 count true))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-paths!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1783,7 +1473,8 @@
               (ast.ast-decl-path-list-provenance-id (& paths) index 0))
             (set! index (+ index 1))))))))
 
-(define (surface-ast-read-paths! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclPathList
+(define (surface-ast-read-paths!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclPathList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array String) (__tl_make-array String count)]
@@ -1801,18 +1492,14 @@
       (ast.AstDeclPathList slots owners 0 count true))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-modules!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
-    [modules : ast.AstDeclModuleList]) : unit
+    [modules : (& modules ast.AstDeclModuleList)]) : unit
     (let
       [index : i64 0]
-      [count : i64 (ast.ast-decl-module-list-len (& modules))]
+      [count : i64 (ast.ast-decl-module-list-len modules)]
       (begin
         (codec.surface-ast-write-i64! out count)
         (while (< index count)
@@ -1823,7 +1510,8 @@
               (array-ref modules.slots (+ modules.offset index)))
             (set! index (+ index 1))))))))
 
-(define (surface-ast-read-modules! [reader : (& reader codec.SurfaceAstReader)]) : ast.AstDeclModuleList
+(define (surface-ast-read-modules!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstDeclModuleList
   (let
     [count : i64 (codec.surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -1836,11 +1524,7 @@
       (ast.AstDeclModuleList slots 0 count true))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-seen!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1862,7 +1546,7 @@
                 (set! cursor rest))]))
         unit))))
 
-(define (surface-ast-read-seen! [reader : (& reader codec.SurfaceAstReader)]) : sym_i64_env.SymI64Env
+(define (surface-ast-read-seen! [reader : (&mut reader codec.SurfaceAstReader)]) : sym_i64_env.SymI64Env
   (let
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
@@ -1881,17 +1565,13 @@
           (sym_i64_env.sym-i64-empty))])))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-compacted!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [program : ast.AstProgram]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [pools : ast.AstNodePoolContext]) : unit
     (let
@@ -1921,25 +1601,18 @@
             (set! index (+ index 1))))
         (match program
           [(ast.AstProgram.Program decls)
-            (surface-ast-write-decl-list!
-              out
-              context
-              (ast.ast-decl-list-box-shared-view decls))])
+            (surface-ast-write-decl-list! out context (deref decls))])
         (surface-ast-write-paths! out context paths)
         (surface-ast-write-modules! out context modules)
         (surface-ast-write-seen! out context seen)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-encode
     [structural-session : cis.InternStructuralSessionHandle]
     [decls : ast.AstDeclList]
     [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
+    [modules : (& modules ast.AstDeclModuleList)]
     [seen : sym_i64_env.SymI64Env]
     [source-pools : ast.AstNodePoolContext]
     [source-identity-count : i64]
@@ -1986,22 +1659,19 @@
                   (codec.surface-ast-write-invalid-name context))))))))))
 
 (define (surface-ast-decode-pools!
-  [reader : (& reader codec.SurfaceAstReader)]
+  [reader : (&mut reader codec.SurfaceAstReader)]
   [pools : ast.AstNodePoolContext]
   [type-count : i64]
   [expr-count : i64]) : unit
   (let
     [index : i64 0]
     (begin
-      (ast.ast-node-pool-context-reset-to!
-        (owned_view.compiler-owned-shared-view pools)
-        0
-        0)
+      (ast.ast-node-pool-context-reset-to! pools 0 0)
       (while (< index type-count)
         (let
           [new-id : i64
             (ast.ast-node-pool-context-type-push
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (codec.surface-ast-read-type! reader))]
           (begin
             (if (= new-id index)
@@ -2015,7 +1685,7 @@
         (let
           [new-id : i64
             (ast.ast-node-pool-context-expr-push
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               (expr_codec.surface-ast-read-expr! reader))]
           (begin
             (if (= new-id index)
@@ -2035,11 +1705,11 @@
     [expected-identity-count : i64 (array-length identity-remap)]
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new bytes structural-session identity-remap)]
-    [magic : i64 (codec.surface-ast-read-i64! reader)]
-    [schema : i64 (codec.surface-ast-read-i64! reader)]
-    [identity-count : i64 (codec.surface-ast-read-i64! reader)]
-    [type-count : i64 (codec.surface-ast-read-count! reader)]
-    [expr-count : i64 (codec.surface-ast-read-count! reader)]
+    [magic : i64 (codec.surface-ast-read-i64! (&mut reader))]
+    [schema : i64 (codec.surface-ast-read-i64! (&mut reader))]
+    [identity-count : i64 (codec.surface-ast-read-i64! (&mut reader))]
+    [type-count : i64 (codec.surface-ast-read-count! (&mut reader))]
+    [expr-count : i64 (codec.surface-ast-read-count! (&mut reader))]
     (if (or
       (not (= magic surface-ast-magic))
       (not (= schema surface-ast-schema-version))
@@ -2047,21 +1717,17 @@
       (ResultSurfaceAstHydration.Err
         "surface ast: bad magic, schema, or identity binding")
       (begin
-        (surface-ast-decode-pools!
-          (& reader)
-          (owned_view.compiler-owned-shared-view pools)
-          type-count
-          expr-count)
+        (surface-ast-decode-pools! (&mut reader) pools type-count expr-count)
         (let
-          [decls : ast.AstDeclList (surface-ast-read-decl-list! (& reader))]
-          [paths : ast.AstDeclPathList (surface-ast-read-paths! (& reader))]
+          [decls : ast.AstDeclList (surface-ast-read-decl-list! (&mut reader))]
+          [paths : ast.AstDeclPathList (surface-ast-read-paths! (&mut reader))]
           [modules : ast.AstDeclModuleList
-            (surface-ast-read-modules! (& reader))]
-          [seen : sym_i64_env.SymI64Env (surface-ast-read-seen! (& reader))]
+            (surface-ast-read-modules! (&mut reader))]
+          [seen : sym_i64_env.SymI64Env (surface-ast-read-seen! (&mut reader))]
           [_c-signatures : unit
             (codec.surface-ast-validate-c-function-signatures!
-              (& reader)
-              (owned_view.compiler-owned-shared-view pools))]
+              (&mut reader)
+              pools)]
           (cond
             [(not (codec.surface-ast-reader-valid? (& reader)))
               (ResultSurfaceAstHydration.Err
@@ -2083,762 +1749,3 @@
             [else
               (ResultSurfaceAstHydration.Ok
                 (SurfaceAstHydration decls paths modules seen pools))]))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-byte-array-eq?
-    [left : (__tl_dyn-array u8)]
-    [right : (__tl_dyn-array u8)]) : bool
-    (let
-      [count : i64 (array-length left)]
-      [index : i64 0]
-      (if (not (= count (array-length right)))
-        false
-        (begin
-          (while (and
-            (< index count)
-            (= (array-ref left index) (array-ref right index)))
-            (set! index (+ index 1)))
-          (= index count))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-encode-deterministic
-    [structural-session : cis.InternStructuralSessionHandle]
-    [decls : ast.AstDeclList]
-    [paths : ast.AstDeclPathList]
-    [modules : ast.AstDeclModuleList]
-    [seen : sym_i64_env.SymI64Env]
-    [source-pools : ast.AstNodePoolContext]
-    [source-count : i64]
-    [identity-count : i64]) : ResultSurfaceAstBytes
-    (match (surface-ast-encode
-      (owned_view.compiler-owned-shared-view structural-session)
-      (owned_view.compiler-owned-shared-view decls)
-      (owned_view.compiler-owned-shared-view paths)
-      (owned_view.compiler-owned-shared-view modules)
-      (owned_view.compiler-owned-shared-view seen)
-      (owned_view.compiler-owned-shared-view source-pools)
-      source-count
-      identity-count)
-      [(ResultSurfaceAstBytes.Err message) (ResultSurfaceAstBytes.Err message)]
-      [(ResultSurfaceAstBytes.Ok first)
-        (match (surface-ast-encode
-          (owned_view.compiler-owned-shared-view structural-session)
-          (owned_view.compiler-owned-shared-view decls)
-          (owned_view.compiler-owned-shared-view paths)
-          (owned_view.compiler-owned-shared-view modules)
-          (owned_view.compiler-owned-shared-view seen)
-          (owned_view.compiler-owned-shared-view source-pools)
-          source-count
-          identity-count)
-          [(ResultSurfaceAstBytes.Err message)
-            (ResultSurfaceAstBytes.Err message)]
-          [(ResultSurfaceAstBytes.Ok second)
-            (if (surface-ast-byte-array-eq?
-              (owned_view.compiler-owned-shared-view first)
-              second)
-              (ResultSurfaceAstBytes.Ok first)
-              (ResultSurfaceAstBytes.Err
-                "surface ast: repeated encoding mismatch"))])])))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-borrowed-slice-type-ok?
-    [pools : ast.AstNodePoolContext]
-    [ty : ast.AstType]) : bool
-    (match ty
-      [(ast.AstType.Ref region inner)
-        (and
-          (surface_identity.surface-identity-string-eq?
-            (ci.intern-str region)
-            "borrow-region")
-          (match (ast.ast-node-pool-context-type-get pools inner)
-            [(ast.AstType.Slice elem)
-              (match (ast.ast-node-pool-context-type-get pools elem)
-                [(ast.AstType.I64) true]
-                [_ false])]
-            [_ false]))]
-      [_ false])))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-int-node-value?
-    [pools : (& pools ast.AstNodePoolContext)]
-    [id : i64]
-    [expected : i64]) : bool
-    (match (ast.ast-node-pool-context-expr-get pools id)
-      [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value expected)]
-      [_ false])))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-hydrated-tuple-set-ok? [pools : ast.AstNodePoolContext]) : bool
-    (let
-      [id : i64 0]
-      [ok : bool false]
-      (begin
-        ;; Compaction may change ids when declarations reach nodes in a
-        ;; different order from construction. Inspect the retained shape rather
-        ;; than comparing producer-generation ids.
-        (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
-          (begin
-            (match (ast.ast-node-pool-context-expr-get pools id)
-              [(ast.AstExpr.StructSet target field value)
-                (set!
-                  ok
-                  (and
-                    (ast.ast-tuple-set-field-id? field)
-                    (= (ast.ast-tuple-set-index-from-field-id field) 3)
-                    (surface-ast-int-node-value? pools target 20)
-                    (surface-ast-int-node-value? pools value 22)))]
-              [_ unit])
-            (set! id (+ id 1))))
-        ok))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-hydrated-spmd-compact-ok?
-    [pools : ast.AstNodePoolContext]) : bool
-    (let
-      [id : i64 0]
-      [ok : bool false]
-      (begin
-        (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
-          (begin
-            (match (ast.ast-node-pool-context-expr-get pools id)
-              [(ast.AstExpr.SpmdCompact compact-box)
-                (match (ast.ast-spmd-compact-box-shared-view compact-box)
-                  [(ast.AstSpmdCompact.Compact
-                      index
-                      (ast.AstType.I64)
-                      start
-                      end
-                      slot
-                      (ast.AstType.I64)
-                      init
-                      keep
-                      body)
-                    (set!
-                      ok
-                      (and
-                        (surface_identity.surface-identity-string-eq?
-                          (ci.intern-str index)
-                          "compact-index")
-                        (surface_identity.surface-identity-string-eq?
-                          (ci.intern-str slot)
-                          "compact-slot")
-                        (surface-ast-int-node-value? (& pools) start 20)
-                        (surface-ast-int-node-value? (& pools) end 22)
-                        (surface-ast-int-node-value? (& pools) init 20)
-                        (match (ast.ast-node-pool-context-expr-get pools keep)
-                          [(ast.AstExpr.Literal (ast.AstLiteral.Bool true))
-                            true]
-                          [_ false])
-                        (match (ast.ast-node-pool-context-expr-get pools body)
-                          [(ast.AstExpr.Literal (ast.AstLiteral.Unit)) true]
-                          [_ false])))]
-                  [_ unit])]
-              [_ unit])
-            (set! id (+ id 1))))
-        ok))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-c-function-param-ok?
-    [pools : ast.AstNodePoolContext]
-    [params : (& params ast.AstParamList)]
-    [index : i64]
-    [mode : ast.AstCFunctionMode]) : bool
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ (ast.AstType.CFunc signature actual-mode) false)
-        (and
-          (ast.ast-c-function-mode-eq? actual-mode mode)
-          (match (ast.ast-node-pool-context-type-get pools signature)
-            [(ast.AstType.Func args result)
-              (let
-                [items : ast.AstTypeList
-                  (ast.ast-type-list-box-shared-view args)]
-                (and
-                  (= (ast.ast-type-list-len (& items)) 1)
-                  (match (ast.ast-node-pool-context-type-get
-                    pools
-                    (ast.ast-type-list-get (& items) 0 -1))
-                    [(ast.AstType.I64) true]
-                    [_ false])
-                  (match (ast.ast-node-pool-context-type-get pools result)
-                    [(ast.AstType.Bool) true]
-                    [_ false])))]
-            [_ false]))]
-      [_ false])))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-tests-ok?) : bool
-    (let
-      [_reset : unit (ci.intern-reset!)]
-      [module-id : i64 (ci.intern "test.module")]
-      [path-id : i64 (ci.intern "test.tl")]
-      [fn-id : i64 (ci.intern "main")]
-      [macro-id : i64 (ci.intern "catalog")]
-      [test-id : i64 (ci.intern "metadata-test")]
-      [struct-id : i64 (ci.intern "MarkedRecord")]
-      [field-id : i64 (ci.intern "count")]
-      [macro-param-id : i64 (ci.intern "T")]
-      [macro-type-id : i64 (ci.intern "type")]
-      [compact-index-id : i64 (ci.intern "compact-index")]
-      [compact-slot-id : i64 (ci.intern "compact-slot")]
-      [kind-i64-id : i64 (ci.intern "i64")]
-      [kind-struct-id : i64 (ci.intern "struct")]
-      [kind-type-var-id : i64 (ci.intern "type-var")]
-      [source-pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-new-with-capacities 8 8)]
-      [left : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Literal (ast.AstLiteral.Int 20 "20")))]
-      [right : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Literal (ast.AstLiteral.Int 22 "22")))]
-      [sum-inner : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Binary ast.AstBinOp.Add left right))]
-      [sum : i64
-        (ast.ast-expr-spanned-with-pools
-          source-pools
-          sum-inner
-          (ast.ast-source-span 4 2 4 9))]
-      [sum-outer : i64
-        (ast.ast-expr-spanned-with-pools
-          source-pools
-          sum
-          (ast.ast-source-span 40 1 40 8))]
-      [borrow-lifetime-id : i64 (ci.intern "borrow-region")]
-      [view-param-id : i64 (ci.intern "view")]
-      [nullable-param-id : i64 (ci.intern "nullable-entry")]
-      [nonnull-param-id : i64 (ci.intern "nonnull-entry")]
-      [unsafe-nullable-param-id : i64 (ci.intern "unsafe-nullable-entry")]
-      [unsafe-nonnull-param-id : i64 (ci.intern "unsafe-nonnull-entry")]
-      [c-signature : i64
-        (ast.ast-node-pool-context-type-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.ast-ty-func-with-pools
-            (owned_view.compiler-owned-shared-view source-pools)
-            (ast.ast-type-cons-with-pools
-              (owned_view.compiler-owned-shared-view source-pools)
-              ast.AstType.I64
-              (ast.ast-type-list-new))
-            ast.AstType.Bool))]
-      [slice-i64 : ast.AstType
-        (ast.ast-ty-slice-with-pools
-          (owned_view.compiler-owned-shared-view source-pools)
-          ast.AstType.I64)]
-      [borrowed-slice : ast.AstType
-        (ast.ast-ty-ref-with-pools
-          (owned_view.compiler-owned-shared-view source-pools)
-          borrow-lifetime-id
-          slice-i64)]
-      [body : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Borrow
-            false
-            (ast.ast-borrow-lifetime-to-id
-              (ast.AstBorrowLifetime.Named borrow-lifetime-id))
-            sum))]
-      [tuple-set : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.StructSet
-            left
-            (ast.ast-tuple-set-field-id-from-index 3)
-            right))]
-      [compact-keep : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
-      [compact-body : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Literal ast.AstLiteral.Unit))]
-      [compact : i64
-        (ast.ast-expr-spmd-compact-id-with-pools
-          (owned_view.compiler-owned-shared-view source-pools)
-          compact-index-id
-          (ast.AstType.I64)
-          left
-          right
-          compact-slot-id
-          (ast.AstType.I64)
-          left
-          compact-keep
-          compact-body)]
-      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-      [combined-body : i64
-        (ast.ast-node-pool-context-expr-push
-          (owned_view.compiler-owned-shared-view source-pools)
-          (ast.AstExpr.Begin
-            (ast.AstExprList
-              (owned_view.compiler-owned-shared-view body-items)
-              3)))]
-      [macro-type-kinds : ast.AstMacroTypeKindList
-        (ast.ast-macro-type-kind-list-with-length 3)]
-      [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
-        (__tl_make-array ast.AstMacroParam 1)]
-      [view-param-slots : (__tl_dyn-array ast.AstParam)
-        (__tl_make-array ast.AstParam 5)]
-      [decl-slots : (__tl_dyn-array ast.AstDecl)
-        (__tl_make-array ast.AstDecl 4)]
-      [path-slots : (__tl_dyn-array String) (__tl_make-array String 4)]
-      [owner-slots : (__tl_dyn-array i64) (__tl_make-array i64 8)]
-      [module-slots : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-      [key-modules : (__tl_dyn-array String) (__tl_make-array String 1)]
-      (begin
-        (set! (array-ref body-items 0) body)
-        (set! (array-ref body-items 1) tuple-set)
-        (set! (array-ref body-items 2) compact)
-        (ast.ast-macro-type-kind-list-set!
-          (&mut macro-type-kinds)
-          0
-          kind-i64-id)
-        (ast.ast-macro-type-kind-list-set!
-          (&mut macro-type-kinds)
-          1
-          kind-struct-id)
-        (ast.ast-macro-type-kind-list-set!
-          (&mut macro-type-kinds)
-          2
-          kind-type-var-id)
-        (set!
-          (array-ref macro-param-slots 0)
-          (ast.AstMacroParam.Param
-            macro-param-id
-            (ast.AstType.Var macro-type-id)
-            false
-            macro-type-kinds))
-        (set!
-          (array-ref view-param-slots 0)
-          (ast.AstParam.Param
-            view-param-id
-            (owned_view.compiler-owned-shared-view borrowed-slice)
-            false))
-        (set!
-          (array-ref view-param-slots 1)
-          (ast.AstParam.Param
-            nullable-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.Nullable)
-            false))
-        (set!
-          (array-ref view-param-slots 2)
-          (ast.AstParam.Param
-            nonnull-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.NonNull)
-            false))
-        (set!
-          (array-ref view-param-slots 3)
-          (ast.AstParam.Param
-            unsafe-nullable-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNullable)
-            false))
-        (set!
-          (array-ref view-param-slots 4)
-          (ast.AstParam.Param
-            unsafe-nonnull-param-id
-            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNonNull)
-            false))
-        (set!
-          (array-ref decl-slots 0)
-          (ast.AstDecl.DefFn
-            (ast.ast-decl-meta-runtime-shared-view)
-            fn-id
-            (ast.AstParamList view-param-slots 5)
-            borrowed-slice
-            combined-body
-            ast.AstFnMetadata.No))
-        (set!
-          (array-ref decl-slots 1)
-          (ast.AstDecl.DefMacro
-            (ast.ast-decl-meta-runtime-shared-view)
-            macro-id
-            (ast.AstMacroParamList macro-param-slots 1)
-            ast.AstType.Unit
-            sum-outer))
-        (set!
-          (array-ref decl-slots 2)
-          (ast.ast-decl-test-metadata-id
-            test-id
-            compact-body
-            (ast.ast-test-metadata-new
-              (ast.AstTestIgnoreReason.Some "surface reason")
-              true)
-            (ast.ast-source-span 50 2 50 32)))
-        (set!
-          (array-ref decl-slots 3)
-          (ast.ast-decl-with-aggregate-markers
-            (ast.ast-decl-def-struct-id
-              struct-id
-              ast.AstStructRepr.Default
-              ast.AstStructCleanup.No
-              (ast.ast-field-def-cons
-                (ast.AstFieldDef.Def
-                  (ci.intern-syntax-id-from-raw field-id)
-                  ast.AstType.I64
-                  ast.AstFieldCleanup.No)
-                (ast.ast-field-def-list-new)))
-            1))
-        (set! (array-ref path-slots 0) "test.tl")
-        (set! (array-ref path-slots 1) "test.tl")
-        (set! (array-ref path-slots 2) "test.tl")
-        (set! (array-ref path-slots 3) "test.tl")
-        (set! (array-ref owner-slots 0) module-id)
-        (set! (array-ref owner-slots 1) module-id)
-        (set! (array-ref owner-slots 2) module-id)
-        (set! (array-ref owner-slots 3) module-id)
-        (set! (array-ref owner-slots 4) path-id)
-        (set! (array-ref owner-slots 5) path-id)
-        (set! (array-ref owner-slots 6) path-id)
-        (set! (array-ref owner-slots 7) path-id)
-        (set! (array-ref module-slots 0) module-id)
-        (set! (array-ref module-slots 1) module-id)
-        (set! (array-ref module-slots 2) module-id)
-        (set! (array-ref module-slots 3) module-id)
-        (set! (array-ref key-modules 0) "test.tl")
-        (let
-          [decls : ast.AstDeclList (ast.AstDeclList decl-slots 0 4 true)]
-          [paths : ast.AstDeclPathList
-            (ast.AstDeclPathList path-slots owner-slots 0 4 true)]
-          [modules : ast.AstDeclModuleList
-            (ast.AstDeclModuleList module-slots 0 4 true)]
-          [seen : sym_i64_env.SymI64Env
-            (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) path-id 1)]
-          [key : surface_identity.SurfaceIdentityKey
-            (surface_identity.SurfaceIdentityKey
-              "test.package"
-              key-modules
-              "source-hash"
-              "compiler-build"
-              "host")]
-          [identity-payload : surface_identity.SurfaceIdentityPayload
-            (surface_identity.surface-identity-capture
-              (owned_view.compiler-owned-shared-view key))]
-          [source-count : i64 (array-length identity-payload.source-names)]
-          [identity-count : i64
-            (+ source-count (array-length identity-payload.generated))]
-          [intern-state : ci.InternCompatState
-            (ci.intern-compat-state-capture-active)]
-          [structural-session : cis.InternStructuralSessionHandle
-            (cis.intern-structural-session-handle-from-source-names
-              (ci.intern-source-name-session-handle-from-state intern-state))]
-          (match (surface_identity.surface-identity-encode identity-payload)
-            [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
-            [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
-              (match (surface-ast-encode-deterministic
-                structural-session
-                decls
-                paths
-                modules
-                seen
-                (owned_view.compiler-owned-shared-view source-pools)
-                source-count
-                identity-count)
-                [(ResultSurfaceAstBytes.Err _) false]
-                [(ResultSurfaceAstBytes.Ok ast-bytes)
-                  (begin
-                    (ci.intern-reset!)
-                    (let
-                      [_unrelated : i64 (ci.intern "unrelated")]
-                      (match (surface_identity.surface-identity-hydrate
-                        identity-bytes
-                        (owned_view.compiler-owned-shared-view key))
-                        [(surface_identity.ResultSurfaceIdentityHydration.Err _)
-                          false]
-                        [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
-                            _)
-                          false]
-                        [(surface_identity.ResultSurfaceIdentityHydration.Ok
-                            identity-hydration)
-                          (let
-                            [dest-pools : ast.AstNodePoolContext
-                              (ast.ast-node-pool-context-new-with-capacities
-                                8
-                                8)]
-                            [hydrated-intern-state : ci.InternCompatState
-                              (ci.intern-compat-state-capture-active)]
-                            [hydrated-session : cis.InternStructuralSessionHandle
-                              (cis.intern-structural-session-handle-from-source-names
-                                (ci.intern-source-name-session-handle-from-state
-                                  hydrated-intern-state))]
-                            (match (surface-ast-decode
-                              ast-bytes
-                              hydrated-session
-                              identity-hydration.remap
-                              dest-pools)
-                              [(ResultSurfaceAstHydration.Err _) false]
-                              [(ResultSurfaceAstHydration.Ok hydration)
-                                (and
-                                  (=
-                                    (ast.ast-node-pool-context-expr-len
-                                      (owned_view.compiler-owned-shared-view
-                                        hydration.pools))
-                                    11)
-                                  (ast.ast-node-pool-context-expr-span-oracle-ok?
-                                    hydration.pools)
-                                  (=
-                                    (ast.ast-decl-list-len (& hydration.decls))
-                                    4)
-                                  (surface_identity.surface-identity-string-eq?
-                                    (ci.intern-str
-                                      (ast.ast-decl-path-list-owner-id
-                                        (& hydration.paths)
-                                        0
-                                        -1))
-                                    "test.module")
-                                  (surface_identity.surface-identity-string-eq?
-                                    (ci.intern-str
-                                      (ast.ast-decl-path-list-provenance-id
-                                        (& hydration.paths)
-                                        0
-                                        -1))
-                                    "test.tl")
-                                  (match (owned_view.compiler-owned-array-element-shared-view
-                                    hydration.decls.slots
-                                    0)
-                                    [(ast.AstDecl.DefFn
-                                        _
-                                        hydrated-name
-                                        hydrated-params
-                                        hydrated-ret
-                                        hydrated-body
-                                        _)
-                                      (and
-                                        (surface_identity.surface-identity-string-eq?
-                                          (ci.intern-str hydrated-name)
-                                          "main")
-                                        (=
-                                          (ast.ast-param-list-len
-                                            (& hydrated-params))
-                                          5)
-                                        (surface-ast-c-function-param-ok?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydration.pools)
-                                          (& hydrated-params)
-                                          1
-                                          ast.AstCFunctionMode.Nullable)
-                                        (surface-ast-c-function-param-ok?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydration.pools)
-                                          (& hydrated-params)
-                                          2
-                                          ast.AstCFunctionMode.NonNull)
-                                        (surface-ast-c-function-param-ok?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydration.pools)
-                                          (& hydrated-params)
-                                          3
-                                          ast.AstCFunctionMode.UnsafeNullable)
-                                        (surface-ast-c-function-param-ok?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydration.pools)
-                                          (& hydrated-params)
-                                          4
-                                          ast.AstCFunctionMode.UnsafeNonNull)
-                                        (surface-ast-borrowed-slice-type-ok?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydration.pools)
-                                          hydrated-ret)
-                                        (match (ast.ast-param-list-get
-                                          (& hydrated-params)
-                                          0
-                                          (ast.ast-param-fallback))
-                                          [(ast.AstParam.Param
-                                              hydrated-param-name
-                                              hydrated-param-ty
-                                              false)
-                                            (and
-                                              (surface_identity.surface-identity-string-eq?
-                                                (ci.intern-str
-                                                  hydrated-param-name)
-                                                "view")
-                                              (surface-ast-borrowed-slice-type-ok?
-                                                (owned_view.compiler-owned-shared-view
-                                                  hydration.pools)
-                                                hydrated-param-ty))]
-                                          [_ false])
-                                        (match (ast.ast-node-pool-context-expr-get
-                                          hydration.pools
-                                          hydrated-body)
-                                          [(ast.AstExpr.Begin hydrated-items)
-                                            (match (ast.ast-node-pool-context-expr-get
-                                              hydration.pools
-                                              (ast.ast-expr-list-get
-                                                hydrated-items
-                                                0
-                                                0))
-                                              [(ast.AstExpr.Borrow
-                                                  mutable
-                                                  lifetime-id
-                                                  hydrated-sum)
-                                                (and
-                                                  (not mutable)
-                                                  (match (ast.ast-borrow-lifetime-from-id
-                                                    lifetime-id)
-                                                    [(ast.AstBorrowLifetime.Named
-                                                        name)
-                                                      (surface_identity.surface-identity-string-eq?
-                                                        (ci.intern-str name)
-                                                        "borrow-region")]
-                                                    [_ false])
-                                                  (match (ast.ast-node-pool-context-expr-get
-                                                    hydration.pools
-                                                    hydrated-sum)
-                                                    [(ast.AstExpr.Spanned
-                                                        hydrated-inner
-                                                        hydrated-span)
-                                                      (and
-                                                        (=
-                                                          (ast.ast-source-span-start-line
-                                                            hydrated-span)
-                                                          4)
-                                                        (match (ast.ast-node-pool-context-expr-span-oracle
-                                                          hydration.pools
-                                                          hydrated-sum)
-                                                          [(ast.AstExprSpanOracleResult.CanonicalMatch)
-                                                            true]
-                                                          [_ false])
-                                                        (match (ast.ast-node-pool-context-expr-get
-                                                          hydration.pools
-                                                          hydrated-inner)
-                                                          [(ast.AstExpr.Binary
-                                                              op
-                                                              _
-                                                              _)
-                                                            (match op
-                                                              [(ast.AstBinOp.Add)
-                                                                true]
-                                                              [_ false])]
-                                                          [_ false]))]
-                                                    [_ false]))]
-                                              [_ false])]
-                                          [_ false]))]
-                                    [_ false])
-                                  (match (owned_view.compiler-owned-array-element-shared-view
-                                    hydration.decls.slots
-                                    1)
-                                    [(ast.AstDecl.DefMacro
-                                        _
-                                        hydrated-macro-name
-                                        hydrated-params
-                                        _
-                                        hydrated-macro-body)
-                                      (and
-                                        (surface_identity.surface-identity-string-eq?
-                                          (ci.intern-str hydrated-macro-name)
-                                          "catalog")
-                                        (=
-                                          (ast.ast-macro-param-list-len
-                                            (& hydrated-params))
-                                          1)
-                                        (match (ast.ast-node-pool-context-expr-span-oracle
-                                          hydration.pools
-                                          hydrated-macro-body)
-                                          [(ast.AstExprSpanOracleResult.ReSpanMatch)
-                                            true]
-                                          [_ false])
-                                        (match (ast.ast-node-pool-context-expr-view-span
-                                          hydration.pools
-                                          hydrated-macro-body)
-                                          [(ast.AstMaybeSourceSpan.Some span)
-                                            (=
-                                              (ast.ast-source-span-start-line
-                                                span)
-                                              40)]
-                                          [_ false])
-                                        (match (ast.ast-macro-param-list-get
-                                          (& hydrated-params)
-                                          0
-                                          (ast.ast-macro-param-fallback))
-                                          [(ast.AstMacroParam.Param
-                                              hydrated-param-name
-                                              (ast.AstType.Var
-                                                hydrated-type-name)
-                                              false
-                                              hydrated-kinds)
-                                            (and
-                                              (surface_identity.surface-identity-string-eq?
-                                                (ci.intern-str
-                                                  hydrated-param-name)
-                                                "T")
-                                              (surface_identity.surface-identity-string-eq?
-                                                (ci.intern-str
-                                                  hydrated-type-name)
-                                                "type")
-                                              (=
-                                                (ast.ast-macro-type-kind-list-len
-                                                  (& hydrated-kinds))
-                                                3)
-                                              (surface_identity.surface-identity-string-eq?
-                                                (ci.intern-str
-                                                  (ast.ast-macro-type-kind-list-get
-                                                    (& hydrated-kinds)
-                                                    0
-                                                    0))
-                                                "i64")
-                                              (surface_identity.surface-identity-string-eq?
-                                                (ci.intern-str
-                                                  (ast.ast-macro-type-kind-list-get
-                                                    (& hydrated-kinds)
-                                                    1
-                                                    0))
-                                                "struct")
-                                              (surface_identity.surface-identity-string-eq?
-                                                (ci.intern-str
-                                                  (ast.ast-macro-type-kind-list-get
-                                                    (& hydrated-kinds)
-                                                    2
-                                                    0))
-                                                "type-var"))]
-                                          [_ false]))]
-                                    [_ false])
-                                  (match (owned_view.compiler-owned-array-element-shared-view
-                                    hydration.decls.slots
-                                    2)
-                                    [(ast.AstDecl.Test
-                                        hydrated-test-name
-                                        _
-                                        hydrated-metadata
-                                        hydrated-test-span)
-                                      (and
-                                        (surface_identity.surface-identity-string-eq?
-                                          (ci.intern-str hydrated-test-name)
-                                          "metadata-test")
-                                        (=
-                                          (ast.ast-source-span-start-line
-                                            hydrated-test-span)
-                                          50)
-                                        (ast.ast-test-metadata-slow?
-                                          (owned_view.compiler-owned-shared-view
-                                            hydrated-metadata))
-                                        (match (ast.ast-test-metadata-ignore-reason
-                                          hydrated-metadata)
-                                          [(ast.AstTestIgnoreReason.Some reason)
-                                            (surface_identity.surface-identity-string-eq?
-                                              reason
-                                              "surface reason")]
-                                          [_ false]))]
-                                    [_ false])
-                                  (ast.ast-decl-must-use?
-                                    (ast.ast-decl-list-ref hydration.decls 3))
-                                  (surface-ast-hydrated-tuple-set-ok?
-                                    (owned_view.compiler-owned-shared-view
-                                      hydration.pools))
-                                  (surface-ast-hydrated-spmd-compact-ok?
-                                    hydration.pools))]))])))])]))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-ast-selftest-main) : i64
-    (if (and (surface-ast-decl-meta-tests-ok?) (surface-ast-tests-ok?))
-      42
-      1)))

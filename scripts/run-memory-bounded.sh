@@ -3,11 +3,12 @@ set -eu
 
 # Cross-host fail-closed process-tree memory cap with a stable report.
 #
-# Linux uses lib-linux-memory-limit.sh (user cgroup or aggregate-RSS watchdog),
-# whose in-boundary sampler provides the observed process-tree peak, plus a
-# monotonic wall clock. Windows delegates to the suspended-start Job Object
-# wrapper. A missing enforcement/measurement backend is a wrapper failure,
-# never an unbounded fallback.
+# Linux requires the user-systemd cgroup backend of lib-linux-memory-limit.sh
+# (MemoryMax with swap disabled), whose in-cgroup process-group sampler
+# provides the observed process-tree peak, plus a monotonic wall clock. Windows
+# delegates to the suspended-start Job Object wrapper. A missing
+# enforcement/measurement backend is a wrapper failure, never an unbounded
+# fallback.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
@@ -28,7 +29,7 @@ if [ "${1:-}" = --linux-rss-measure ]; then
     TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE=$metrics_file
     export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
     measure_status=0
-    linux_memory_limit_run_watchdog "$limit_bytes" "$@" || measure_status=$?
+    linux_memory_limit_sample_process_group "$limit_bytes" "$@" || measure_status=$?
     exit "$measure_status"
 fi
 
@@ -36,21 +37,18 @@ if [ "${1:-}" = --linux-exec ]; then
     shift
     limit_bytes=$1
     timeout_seconds=$2
-    backend=$3
-    metrics_file=$4
-    shift 4
+    metrics_file=$3
+    shift 3
     . "$ROOT/scripts/lib-linux-memory-limit.sh"
-    LINUX_MEMORY_LIMIT_BACKEND=$backend
+    LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
     TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE=$metrics_file
     export LINUX_MEMORY_LIMIT_BACKEND
     export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
-    if [ "$backend" = systemd-user-cgroup ]; then
-        # systemd's MemoryPeak summary can account only the service launcher on
-        # some managers. Keep the hard cgroup cap, and measure the isolated
-        # descendant group from inside that same cgroup for trustworthy RSS.
-        set -- "$ROOT/scripts/run-memory-bounded.sh" --linux-rss-measure \
-            "$limit_bytes" "$metrics_file" "$@"
-    fi
+    # systemd's MemoryPeak summary can account only the service launcher on
+    # some managers. Keep the hard cgroup cap, and measure the isolated
+    # descendant group from inside that same cgroup for trustworthy RSS.
+    set -- "$ROOT/scripts/run-memory-bounded.sh" --linux-rss-measure \
+        "$limit_bytes" "$metrics_file" "$@"
     if [ "$timeout_seconds" -gt 0 ]; then
         exec_status=0
         linux_memory_limit_run "$limit_bytes" \
@@ -262,7 +260,7 @@ set +e
 (
     cd "$working_directory"
     "$ROOT/scripts/run-memory-bounded.sh" \
-        --linux-exec "$limit_bytes" "$timeout_seconds" "$backend" \
+        --linux-exec "$limit_bytes" "$timeout_seconds" \
         "$metrics_file" "$@"
 )
 status=$?

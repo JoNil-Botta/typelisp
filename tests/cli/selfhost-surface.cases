@@ -1,0 +1,426 @@
+# The audited command surface of the freshly bootstrapped compiler: --help
+# lists exactly these commands, and each has a smoke case below (gate
+# stage2-cli-build-run-and-chooser-smoke). A new command needs both.
+do none
+target -
+opt -
+
+file -n main.tl
+(import stdlib.io)
+
+(define (main) : i64
+  (if (= (io.arg-count) 2)
+    0
+    71))
+end-file
+
+file doc-package/typelisp.pkg
+(package
+  (name "surface_doc")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+
+file doc-package/src/main.tl
+;# Package entry docs.
+;# ```typelisp
+;# (define doc-entry-example : i64 1)
+;# ```
+(import extra)
+(define (main) : i64 (extra.doc-extra))
+end-file
+
+file doc-package/src/extra.tl
+;# Package extra docs.
+;# ```typelisp
+;# (define doc-extra-example : i64 2)
+;# ```
+(define (doc-extra) : i64 0)
+end-file
+
+file doc-main.tl
+;# Command surface doc smoke.
+(define (main) : i64
+  0)
+end-file
+
+file fmt-lint-package/typelisp.pkg
+(package
+  (name "surface_fmt_lint")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+
+file -n fmt-lint-package/src/main.tl
+(define (main) : i64
+  0)
+end-file
+
+file fmt-lint-package/src/needs_fmt.tl
+(define (needs-format) : i64
+(+ 1 2))
+end-file
+
+file fmt-lint-package/src/lint_bad.tl
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
+end-file
+
+case selfhost-cli-surface-help
+run --help
+stdout empty
+stderr contains Usage:
+stderr contains Synopsis:
+sh CCV_commands=$(awk '/^Commands:/ { c = 1; next } c && /^[[:space:]]*$/ { c = 0; next } c && /^[^[:space:]]/ { c = 0 } c && /^[[:space:]]+typelisp / { print $2 }' "{{stderr}}" | sort -u | tr '\n' ' ')
+test "{{commands}}" = "build check clean compile doc explain fmt init inspect lint lsp new repl run test "
+
+case selfhost-cli-surface-build
+run build "{{work}}/main.tl" -o "{{dir}}/build-surface{{exe}}"
+stderr empty
+stdout match Built[ ]
+test -f "{{dir}}/build-surface{{exe}}"
+
+case selfhost-cli-surface-run
+file run-main.tl
+(import stdlib.io)
+(import stdlib.byte_buf)
+
+(define (fixture-cstr-len [p : (Ptr u8)]) : i64
+  (let
+    [n : i64 0]
+    (begin
+      (while (not (= (unsafe (ptr-read (ptr-offset p n))) (cast 0 : u8)))
+        (set! n (+ n 1)))
+      n)))
+(define (fixture-stdout-write [text : String]) : unit
+  (io.stdout-write (byte_buf.str-as-bytes (& text))))
+(define (fixture-arg [index : i64]) : String
+  (let
+    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
+    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
+    (unsafe (string-from-bytes raw (fixture-cstr-len raw)))))
+(define (main) : i64
+  (begin
+    (fixture-stdout-write (fixture-arg 1))
+    33))
+end-file
+run run "{{dir}}/run-main.tl" -- surface-run
+exit 33
+stderr empty
+stdout contains surface-run
+
+case selfhost-cli-surface-check
+file check-package/typelisp.pkg
+(package
+  (name "surface_check")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file check-package/src/main.tl
+(import extra)
+(define (main) : i64 (extra.surface-extra))
+end-file
+file check-package/src/extra.tl
+(define (surface-extra) : i64 0)
+end-file
+run check "{{work}}/main.tl"
+stderr empty
+stdout contains Type checking passed!
+step selfhost-cli-surface-check-package
+run check --manifest-path "{{dir}}/check-package/typelisp.pkg"
+stderr empty
+stdout contains Type checking passed!
+
+# fmt, then lint over the rewritten package.
+case selfhost-cli-surface-fmt
+sh cp -R "{{work}}/fmt-lint-package" "{{dir}}/"
+run fmt --check "{{work}}/main.tl"
+stderr empty
+step selfhost-cli-surface-fmt-large-backend
+run fmt --check src/compiler_backend.tl --stdlib-root stdlib
+stdout empty
+stderr empty
+step selfhost-cli-surface-fmt-package-check
+run fmt --manifest-path "{{dir}}/fmt-lint-package/typelisp.pkg" --check
+exit 1
+stdout empty
+stderr contains needs_fmt.tl
+step selfhost-cli-surface-fmt-package-rewrite
+run fmt --manifest-path "{{dir}}/fmt-lint-package/typelisp.pkg"
+stdout empty
+stderr empty
+step selfhost-cli-surface-fmt-package-recheck
+run fmt --manifest-path "{{dir}}/fmt-lint-package/typelisp.pkg" --check
+stdout empty
+stderr empty
+step selfhost-cli-surface-lint
+run lint "{{work}}/main.tl"
+step selfhost-cli-surface-lint-package-check
+run lint --manifest-path "{{dir}}/fmt-lint-package/typelisp.pkg" --check
+exit 1
+stderr empty
+stdout contains lint_bad.tl:
+stdout contains lint: 1 finding(s)
+step selfhost-cli-surface-lint-package-warn
+run lint --manifest-path "{{dir}}/fmt-lint-package/typelisp.pkg"
+stderr empty
+stdout contains lint_bad.tl:
+
+case selfhost-cli-surface-inspect
+file inspect-package/typelisp.pkg
+(package
+  (name "surface_inspect")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file inspect-package/src/lib.tl
+(define surface-inspect-value : i64 42)
+(defstruct SurfaceInspectPoint
+  (x i64)
+  (y i64))
+(defmacro (surface-inspect-macro [expr : Expr]) : Expr expr)
+end-file
+step selfhost-cli-surface-inspect-build-package
+run build --manifest-path "{{dir}}/inspect-package/typelisp.pkg"
+stderr empty
+test -f "{{dir}}/inspect-package/target/release/surface_inspect.tlci" -a -s "{{dir}}/inspect-package/target/release/surface_inspect.tlci"
+run --producer-identity
+stdout capture producer ^([0-9a-f]{40})$
+step selfhost-cli-surface-inspect
+run inspect "{{dir}}/inspect-package/target/release/surface_inspect.tlci"
+stderr empty
+stdout contains tlci image
+stdout contains package-name: surface_inspect
+stdout contains producer-compiler-identity: {{producer}}
+stdout contains metadata-version: v1
+stdout contains code: offset=
+stdout not-contains code: offset=0 bytes=0
+step selfhost-cli-surface-inspect-bad
+sh printf 'bad' > "{{dir}}/bad.tlci"
+run inspect "{{dir}}/bad.tlci"
+exit 1
+stdout empty
+stderr contains inspect: {{native-dir}}/bad.tlci: tlci: truncated header
+
+case selfhost-cli-surface-test
+run test --check "{{work}}/main.tl"
+stderr empty
+stdout contains TypeLisp test typecheck passed
+
+case selfhost-cli-surface-doc
+sh cp -R "{{work}}/doc-package" "{{dir}}/"
+if-host windows
+sh CCV_index=$(cc_native_path "{{dir}}/doc-package/target")'\doc\index.html' CCV_nearest='../target\doc\index.html'
+else
+sh CCV_index="{{dir}}/doc-package/target/doc/index.html" CCV_nearest=../target/doc/index.html
+end-if
+run doc "{{work}}/doc-main.tl" "{{dir}}/doc.md"
+stderr empty
+test -f "{{dir}}/doc.md" -a -s "{{dir}}/doc.md"
+step selfhost-cli-surface-doc-package-generate
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" -o "{{dir}}/doc-package/package-doc.md"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/doc-package/package-doc.md
+contains Package entry docs.
+if-host linux
+contains Package extra docs.
+end-if
+step selfhost-cli-surface-doc-package-default-site
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg"
+stderr empty
+stdout contains Wrote {{index}}
+test -f "{{dir}}/doc-package/target/doc/index.html" -a -s "{{dir}}/doc-package/target/doc/index.html"
+test -f "{{dir}}/doc-package/target/doc/typelisp-docs.css" -a -s "{{dir}}/doc-package/target/doc/typelisp-docs.css"
+test -f "{{dir}}/doc-package/target/doc/typelisp-docs.js" -a -s "{{dir}}/doc-package/target/doc/typelisp-docs.js"
+test -f "{{dir}}/doc-package/target/doc/typelisp-docs-search-index.js" -a -s "{{dir}}/doc-package/target/doc/typelisp-docs-search-index.js"
+in file {{dir}}/doc-package/target/doc/index.html
+contains Package entry docs.
+contains typelisp-package-identity
+contains surface_doc@0.1.0
+contains data-doc-search-input
+in file {{dir}}/doc-package/target/doc/typelisp-docs-search-index.js
+contains "packageIdentity":"surface_doc@0.1.0"
+in file {{dir}}/doc-package/target/doc/typelisp-docs.js
+contains Search index identity does not match this page.
+sh cp -R "{{dir}}/doc-package/target/doc" "{{dir}}/doc.first"
+step selfhost-cli-surface-doc-package-no-deps
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --no-deps
+stderr empty
+stdout contains Wrote {{index}}
+same "{{dir}}/doc.first/index.html" "{{dir}}/doc-package/target/doc/index.html"
+same "{{dir}}/doc.first/typelisp-docs.css" "{{dir}}/doc-package/target/doc/typelisp-docs.css"
+same "{{dir}}/doc.first/typelisp-docs.js" "{{dir}}/doc-package/target/doc/typelisp-docs.js"
+same "{{dir}}/doc.first/typelisp-docs-search-index.js" "{{dir}}/doc-package/target/doc/typelisp-docs-search-index.js"
+test -z "$(find "{{dir}}/doc-package/target/doc" -type f ! -name index.html ! -name typelisp-docs.css ! -name typelisp-docs.js ! -name typelisp-docs-search-index.js)"
+# The opener runs with exactly one user argument: /usr/bin/test, or on Windows
+# the build-surface fixture, which succeeds only then.
+if-host windows
+sh "{{compiler}}" build "{{work}}/main.tl" -o "{{dir}}/build-surface.exe" > /dev/null && CCV_opener=$(cc_native_path "{{dir}}/build-surface.exe")
+else
+sh CCV_opener=/usr/bin/test
+end-if
+step selfhost-cli-surface-doc-package-open
+exec env DISPLAY=:typelisp-doc-test WAYLAND_DISPLAY= SESSIONNAME=Console TYPELISP_DOC_OPEN_PROGRAM="{{opener}}" "{{compiler}}" doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --open --no-deps
+stderr empty
+stdout contains Opened {{index}}
+step selfhost-cli-surface-doc-package-open-headless
+exec env DISPLAY= WAYLAND_DISPLAY= SESSIONNAME=Services WT_SESSION= TYPELISP_DOC_OPEN_PROGRAM=typelisp-doc-opener-must-not-run "{{compiler}}" doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --open
+stderr empty
+stdout contains Open skipped; generated index: {{index}}
+step selfhost-cli-surface-doc-package-open-unsupported
+exec env DISPLAY=:typelisp-doc-test WAYLAND_DISPLAY= SESSIONNAME=Console TYPELISP_DOC_OPEN_PROGRAM=typelisp-doc-opener-missing-7156 "{{compiler}}" doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --open
+stderr empty
+stdout contains Open failed; generated index: {{index}}
+step selfhost-cli-surface-doc-package-test
+run doc --test --manifest-path "{{dir}}/doc-package/typelisp.pkg"
+stderr empty
+stdout contains ---
+stdout contains main.tl
+if-host linux
+stdout contains extra.tl
+end-if
+step selfhost-cli-surface-doc-package-default-nearest
+cwd doc-package/src
+run doc
+stderr empty
+stdout contains Wrote {{nearest}}
+step selfhost-cli-surface-doc-package-test-nearest
+run doc --test
+stderr empty
+stdout contains main.tl
+if-host linux
+stdout contains extra.tl
+end-if
+cwd -
+step selfhost-cli-surface-doc-batch-test
+file -x doc-batch.txt
+{{native-work}}/doc-main.tl
+{{native-dir}}/doc-package/src/main.tl
+end-file
+run doc --test --batch "{{dir}}/doc-batch.txt" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains doc-main.tl
+stdout contains main.tl
+stdout contains Doc tests passed:
+step selfhost-cli-surface-doc-package-open-explicit-output
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" -o "{{dir}}/doc-package/package-doc.md" --open
+exit 1
+stdout empty
+stderr contains --open requires local HTML site output
+step selfhost-cli-surface-doc-package-unknown-flag
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --unknown-doc-flag
+exit 1
+stdout empty
+stderr contains unknown flag --unknown-doc-flag
+step selfhost-cli-surface-doc-package-duplicate-open
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --open --open
+exit 1
+stdout empty
+stderr contains duplicate --open
+step selfhost-cli-surface-doc-package-duplicate-no-deps
+run doc --manifest-path "{{dir}}/doc-package/typelisp.pkg" --no-deps --no-deps
+exit 1
+stdout empty
+stderr contains duplicate --no-deps
+step selfhost-cli-surface-doc-package-mixed-input
+run doc --test --manifest-path "{{dir}}/doc-package/typelisp.pkg" "{{work}}/doc-main.tl"
+exit 1
+stdout empty
+stderr contains cannot combine input paths with --manifest-path
+step selfhost-cli-surface-doc-batch-mixed-input
+run doc --test --batch "{{dir}}/doc-batch.txt" "{{work}}/doc-main.tl"
+exit 1
+stdout empty
+stderr contains cannot combine input paths with --batch
+step selfhost-cli-surface-doc-batch-empty
+sh : > "{{dir}}/doc-empty-batch.txt"
+run doc --test --batch "{{dir}}/doc-empty-batch.txt"
+exit 1
+stdout empty
+stderr contains --batch list is empty
+
+case selfhost-cli-surface-explain
+run explain E0206
+stderr empty
+stdout contains E0206: type mismatch
+stdout contains Minimal failing example:
+stdout contains Fix:
+
+case selfhost-cli-surface-compile
+run compile "{{work}}/main.tl" -o "{{dir}}/compile.s"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/compile.s
+contains main:
+
+case selfhost-cli-surface-clean
+file -n clean-surface.tl
+(define (main) : i64 0)
+end-file
+sh for e in .s .ir .o .obj '' .exe; do : > "{{dir}}/clean-surface$e"; done
+step selfhost-cli-surface-clean-dry-run
+run clean --dry-run "{{dir}}/clean-surface.tl"
+stderr empty
+stdout contains Would remove:
+stdout contains clean-surface.s
+test -f "{{dir}}/clean-surface.s"
+test -f "{{dir}}/clean-surface"
+step selfhost-cli-surface-clean
+run clean "{{dir}}/clean-surface.tl"
+stderr empty
+stdout contains Removed:
+test -f "{{dir}}/clean-surface.tl"
+test ! -e "{{dir}}/clean-surface.s"
+test ! -e "{{dir}}/clean-surface.ir"
+test ! -e "{{dir}}/clean-surface.o"
+test ! -e "{{dir}}/clean-surface.obj"
+test ! -e "{{dir}}/clean-surface"
+test ! -e "{{dir}}/clean-surface.exe"
+step selfhost-cli-surface-clean-idempotent
+run clean "{{dir}}/clean-surface.tl"
+stdout empty
+stderr empty
+
+case selfhost-cli-surface-repl
+file repl.in
+.help
+.exit
+end-file
+run repl < "{{dir}}/repl.in"
+stderr empty
+stdout contains TypeLisp REPL commands:
+
+case selfhost-cli-surface-lsp
+sh b='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" > "{{dir}}/lsp.in"
+sh b='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}' && printf 'Content-Length: %s\r\n\r\n%s' "${#b}" "$b" >> "{{dir}}/lsp.in"
+run lsp < "{{dir}}/lsp.in"
+stderr empty
+stdout contains "id":1
+stdout contains "textDocumentSync"
+stdout contains "id":2
+
+case selfhost-cli-surface-new
+cwd .
+run new surface_new
+stderr empty
+stdout contains scaffold: created bin package surface_new
+test -f "{{dir}}/surface_new/typelisp.pkg"
+test -f "{{dir}}/surface_new/src/main.tl"
+
+case selfhost-cli-surface-init
+sh mkdir -p "{{dir}}/surface_init"
+cwd surface_init
+run init surface_init
+stderr empty
+stdout contains scaffold: created bin package surface_init
+test -f "{{dir}}/surface_init/typelisp.pkg"
+test -f "{{dir}}/surface_init/src/main.tl"

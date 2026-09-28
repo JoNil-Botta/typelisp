@@ -16,6 +16,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.vector)
 
 (defenum DocItemKind
@@ -95,10 +96,10 @@
 (define (doc-item-fallback) : DocItem
   (DocItem.Item (DocItemKind.Define) "" "" "" 0))
 
-(define (doc-item-list-count [items : doc_item_vec.Vec]) : i64
+(define (doc-item-list-count [items : (& items doc_item_vec.Vec)]) : i64
   (doc_item_vec.len (& items)))
 
-(define (doc-item-list-ref [items : doc_item_vec.Vec] [index : i64]) : DocItem
+(define (doc-item-list-ref [items : (& items doc_item_vec.Vec)] [index : i64]) : DocItem
   (doc_item_vec.get (& items) index (doc-item-fallback)))
 
 (define (doc-item-array-copy-to-list
@@ -131,32 +132,7 @@
 (define (doc-newline? [c : char]) : bool
   (or (= c '\n') (= c '\r')))
 
-(define (doc-line-end [src : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (doc-newline? (string.string-ref src i))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (doc-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [k : char (string.string-ref src line-end)]
-      (begin
-        (unless (= k '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref src (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
-(define (doc-first-nonspace [src : String] [start : i64] [end : i64]) : i64
+(define (doc-first-nonspace [src : (& src str)] [start : i64] [end : i64]) : i64
   (let
     [i : i64 start]
     [keep : bool true]
@@ -169,52 +145,6 @@
           (set! keep false)))
       i)))
 
-(define (doc-string-prefix-at?
-  [text : (& text str)]
-  [prefix : (& prefix str)]
-  [start : i64]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (< start 0)
-      false
-      (if (> (+ start prefix-len) text-len)
-        false
-        (let
-          [i : i64 0]
-          [ok : bool true]
-          (begin
-            (while ok
-              (if (< i prefix-len)
-                (if (=
-                  (string.string-ref text (+ start i))
-                  (string.string-ref prefix i))
-                  (set! i (+ i 1))
-                  (set! ok false))
-                (set! ok false)))
-            (= i prefix-len)))))))
-
-(define (doc-string-contains? [text : (& text str)] [needle : (& needle str)]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (= needle-len 0)
-      true
-      (let
-        [i : i64 0]
-        [found : bool false]
-        [done : bool false]
-        (begin
-          (while (not done)
-            (if (<= (+ i needle-len) text-len)
-              (if (doc-string-prefix-at? text needle i)
-                (begin
-                  (set! found true)
-                  (set! done true))
-                (set! i (+ i 1)))
-              (set! done true)))
-          found)))))
-
 (define (doc-append-line
   [current : String]
   [has-current : bool]
@@ -224,7 +154,7 @@
     line))
 
 (define (doc-comment-body
-  [src : String]
+  [src : (& src str)]
   [line-start : i64]
   [line-end : i64]
   [prefix-len : i64]) : String
@@ -238,17 +168,17 @@
         (set! body-start body-start))
       (string.substring src body-start (- line-end body-start)))))
 
-(define (doc-module-doc-prefix-len [src : String] [line-start : i64]) : i64
-  (if (doc-string-prefix-at? src ";#" line-start)
+(define (doc-module-doc-prefix-len [src : (& src str)] [line-start : i64]) : i64
+  (if (string.is-string-prefix-at src ";#" line-start)
     2
     0))
 
-(define (doc-item-doc-prefix-len [src : String] [line-start : i64]) : i64
-  (if (doc-string-prefix-at? src ";:" line-start)
+(define (doc-item-doc-prefix-len [src : (& src str)] [line-start : i64]) : i64
+  (if (string.is-string-prefix-at src ";:" line-start)
     2
     0))
 
-(define (doc-scan-string-end [src : String] [start : i64] [n : i64]) : i64
+(define (doc-scan-string-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [i : i64 (+ start 1)]
     [escaped : bool false]
@@ -275,34 +205,7 @@
           (set! keep false)))
       i)))
 
-(define (doc-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (doc-scan-apostrophe-char-literal-end
-  [src : String]
-  [start : i64]
-  [n : i64]) : i64
-  (if (< (+ start 1) n)
-    (let
-      [payload : char (string.string-ref src (+ start 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ start 3) n)
-            (doc-apostrophe-char-escape? (string.string-ref src (+ start 2)))
-            (= (string.string-ref src (+ start 3)) '\''))
-            (+ start 4)
-            (+ start 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ start 1)]
-        [else
-          (if (and
-            (< (+ start 2) n)
-            (= (string.string-ref src (+ start 2)) '\''))
-            (+ start 3)
-            (+ start 1))]))
-    (+ start 1)))
-
-(define (doc-scan-form-end [src : String] [start : i64] [n : i64]) : i64
+(define (doc-scan-form-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
     [depth : i64 0]
@@ -316,27 +219,10 @@
               [(= c ';')
                 (set!
                   i
-                  (doc-next-line-start
-                    (owned_view.compiler-owned-shared-view src)
-                    (doc-line-end
-                      (owned_view.compiler-owned-shared-view src)
-                      i
-                      n)
-                    n))]
-              [(= c '"')
-                (set!
-                  i
-                  (doc-scan-string-end
-                    (owned_view.compiler-owned-shared-view src)
-                    i
-                    n))]
+                  (source_text.next-line-start src (source_text.line-end src i)))]
+              [(= c '"') (set! i (doc-scan-string-end src i n))]
               [(= c '\'')
-                (set!
-                  i
-                  (doc-scan-apostrophe-char-literal-end
-                    (owned_view.compiler-owned-shared-view src)
-                    i
-                    n))]
+                (set! i (source_text.source-text-skip-char-literal src i n))]
               [(or (= c '(') (= c '['))
                 (begin
                   (set! depth (+ depth 1))
@@ -377,7 +263,7 @@
         0)
       1)))
 
-(define (doc-decl-symbol-start? [src : String] [idx : i64] [n : i64]) : bool
+(define (doc-decl-symbol-start? [src : (& src str)] [idx : i64] [n : i64]) : bool
   (if (< idx n)
     (let
       [c : char (string.string-ref src idx)]
@@ -395,7 +281,7 @@
                 false))))))
     false))
 
-(define (doc-decl-next-token [src : String] [idx : i64] [n : i64]) : i64
+(define (doc-decl-next-token [src : (& src str)] [idx : i64] [n : i64]) : i64
   (let
     [i : i64 idx]
     [keep : bool true]
@@ -409,18 +295,12 @@
               [(= c ';')
                 (set!
                   i
-                  (doc-next-line-start
-                    (owned_view.compiler-owned-shared-view src)
-                    (doc-line-end
-                      (owned_view.compiler-owned-shared-view src)
-                      i
-                      n)
-                    n))]
+                  (source_text.next-line-start src (source_text.line-end src i)))]
               [else (set! keep false)]))
           (set! keep false)))
       i)))
 
-(define (doc-decl-symbol-end [src : String] [idx : i64] [n : i64]) : i64
+(define (doc-decl-symbol-end [src : (& src str)] [idx : i64] [n : i64]) : i64
   (let
     [i : i64 idx]
     [keep : bool true]
@@ -433,93 +313,68 @@
           (set! keep false)))
       i)))
 
-(define (doc-info-after-name [kind : DocItemKind] [src : String] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-name
+  [kind : DocItemKind]
+  [src : (& src str)]
+  [idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
-    [name-idx : i64
-      (doc-decl-next-token (owned_view.compiler-owned-shared-view src) idx n)]
-    (if (doc-decl-symbol-start?
-      (owned_view.compiler-owned-shared-view src)
-      name-idx
-      n)
+    [name-idx : i64 (doc-decl-next-token src idx n)]
+    (if (doc-decl-symbol-start? src name-idx n)
       (DocDeclInfo
         kind
         (string.substring
-          (owned_view.compiler-owned-shared-view src)
+          src
           name-idx
-          (-
-            (doc-decl-symbol-end
-              (owned_view.compiler-owned-shared-view src)
-              name-idx
-              n)
-            name-idx)))
+          (- (doc-decl-symbol-end src name-idx n) name-idx)))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-info-after-define [src : String] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-define [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
-    [next : i64
-      (doc-decl-next-token (owned_view.compiler-owned-shared-view src) idx n)]
+    [next : i64 (doc-decl-next-token src idx n)]
     (if (if (< next n)
       (= (string.string-ref src next) '(')
       false)
       (doc-info-after-name (DocItemKind.Function) src (+ next 1))
       (doc-info-after-name (DocItemKind.Define) src next))))
 
-(define (doc-info-after-extern [src : String] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-extern [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
-    [next : i64
-      (doc-decl-next-token (owned_view.compiler-owned-shared-view src) idx n)]
+    [next : i64 (doc-decl-next-token src idx n)]
     (if (if (< next n)
       (= (string.string-ref src next) '(')
       false)
       (doc-info-after-name (DocItemKind.Extern) src (+ next 1))
       (doc-info-after-name (DocItemKind.Extern) src next))))
 
-(define (doc-info-after-defmacro [src : String] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-defmacro [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
-    [next : i64
-      (doc-decl-next-token (owned_view.compiler-owned-shared-view src) idx n)]
+    [next : i64 (doc-decl-next-token src idx n)]
     (if (if (< next n)
       (= (string.string-ref src next) '(')
       false)
       (doc-info-after-name (DocItemKind.DefMacro) src (+ next 1))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-decl-info-at-list [src : String] [open-idx : i64]) : DocMaybeDeclInfo
+(define (doc-decl-info-at-list [src : (& src str)] [open-idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
     (if (if (< open-idx n)
       (= (string.string-ref src open-idx) '(')
       false)
       (let
-        [head-idx : i64
-          (doc-decl-next-token
-            (owned_view.compiler-owned-shared-view src)
-            (+ open-idx 1)
-            n)]
-        (if (doc-decl-symbol-start?
-          (owned_view.compiler-owned-shared-view src)
-          head-idx
-          n)
+        [head-idx : i64 (doc-decl-next-token src (+ open-idx 1) n)]
+        (if (doc-decl-symbol-start? src head-idx n)
           (let
             [head : String
               (string.substring
                 src
                 head-idx
-                (-
-                  (doc-decl-symbol-end
-                    (owned_view.compiler-owned-shared-view src)
-                    head-idx
-                    n)
-                  head-idx))]
-            [after-head : i64
-              (doc-decl-symbol-end
-                (owned_view.compiler-owned-shared-view src)
-                head-idx
-                n)]
+                (- (doc-decl-symbol-end src head-idx n) head-idx))]
+            [after-head : i64 (doc-decl-symbol-end src head-idx n)]
             (cond
               [(string.eq head "define") (doc-info-after-define src after-head)]
               [(string.eq head "extern") (doc-info-after-extern src after-head)]
@@ -533,14 +388,10 @@
           (DocMaybeDeclInfo.No)))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
+(define (doc-decl-info [signature : (& signature str)]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length signature)]
-    [open-idx : i64
-      (doc-decl-next-token
-        (owned_view.compiler-owned-shared-view signature)
-        0
-        n)]
+    [open-idx : i64 (doc-decl-next-token signature 0 n)]
     (doc-decl-info-at-list signature open-idx)))
 
 (define (doc-source-line-at [src : (& src str)] [offset : i64]) : i64
@@ -568,28 +419,16 @@
     (begin
       (while (< i n)
         (let
-          [line-end : i64
-            (doc-line-end (owned_view.compiler-owned-shared-view src) i n)]
-          [line-start : i64
-            (doc-first-nonspace
-              (owned_view.compiler-owned-shared-view src)
-              i
-              line-end)]
+          [line-end : i64 (source_text.line-end src i)]
+          [line-start : i64 (doc-first-nonspace src i line-end)]
           (if (= line-start line-end)
-            (set!
-              i
-              (doc-next-line-start
-                (owned_view.compiler-owned-shared-view src)
-                line-end
-                n))
+            (set! i (source_text.next-line-start src line-end))
             (let
               [c : char (string.string-ref src line-start)]
               (if (= c ';')
                 (let
                   [module-prefix-len : i64
-                    (doc-module-doc-prefix-len
-                      (owned_view.compiler-owned-shared-view src)
-                      line-start)]
+                    (doc-module-doc-prefix-len src line-start)]
                   (if (> module-prefix-len 0)
                     (begin
                       (set!
@@ -598,24 +437,17 @@
                           module-doc
                           module-has
                           (doc-comment-body
-                            (owned_view.compiler-owned-shared-view src)
+                            src
                             line-start
                             line-end
                             module-prefix-len)))
                       (set! module-has true)
                       (set! pending-doc "")
                       (set! pending-has false)
-                      (set!
-                        i
-                        (doc-next-line-start
-                          (owned_view.compiler-owned-shared-view src)
-                          line-end
-                          n)))
+                      (set! i (source_text.next-line-start src line-end)))
                     (let
                       [item-prefix-len : i64
-                        (doc-item-doc-prefix-len
-                          (owned_view.compiler-owned-shared-view src)
-                          line-start)]
+                        (doc-item-doc-prefix-len src line-start)]
                       (if (> item-prefix-len 0)
                         (begin
                           (set!
@@ -624,42 +456,24 @@
                               pending-doc
                               pending-has
                               (doc-comment-body
-                                (owned_view.compiler-owned-shared-view src)
+                                src
                                 line-start
                                 line-end
                                 item-prefix-len)))
                           (set! pending-has true)
-                          (set!
-                            i
-                            (doc-next-line-start
-                              (owned_view.compiler-owned-shared-view src)
-                              line-end
-                              n)))
+                          (set! i (source_text.next-line-start src line-end)))
                         (begin
                           (set! pending-doc "")
                           (set! pending-has false)
-                          (set!
-                            i
-                            (doc-next-line-start
-                              (owned_view.compiler-owned-shared-view src)
-                              line-end
-                              n)))))))
+                          (set! i (source_text.next-line-start src line-end)))))))
                 (if (= c '(')
                   (let
-                    [form-end : i64
-                      (doc-scan-form-end
-                        (owned_view.compiler-owned-shared-view src)
-                        line-start
-                        n)]
+                    [form-end : i64 (doc-scan-form-end src line-start n)]
                     [signature : String
-                      (string.substring
-                        (owned_view.compiler-owned-shared-view src)
-                        line-start
-                        (- form-end line-start))]
+                      (string.substring src line-start (- form-end line-start))]
                     (begin
                       (if pending-has
-                        (match (doc-decl-info
-                          (owned_view.compiler-owned-shared-view signature))
+                        (match (doc-decl-info signature)
                           [(DocDeclInfo kind name)
                             (__tl_array-push!
                               items
@@ -678,201 +492,8 @@
                   (begin
                     (set! pending-doc "")
                     (set! pending-has false)
-                    (set!
-                      i
-                      (doc-next-line-start
-                        (owned_view.compiler-owned-shared-view src)
-                        line-end
-                        n)))))))))
+                    (set! i (source_text.next-line-start src line-end)))))))))
       (DocExtraction.Extraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
   (doc-extract-source (byte_buf.to-string (io.read-file path))))
-
-(define (doc-extract-smoke-source) : String
-  ";# Module title
-;# second module line
-
-;; ordinary comment ignored
-;: answer doc
-;: still answer
-(define answer : i64 42)
-
-;: lost before ordinary comment
-;; ordinary comment clears pending docs
-(define missed : i64 0)
-(define ignored-quote-char : char '\"')
-(define ignored-paren-char : char '(')
-;: function doc
-(define (main [argc : i64]) : i64
-  answer)
-; ordinary comment clears pending docs
-;: enum doc
-(defenum Maybe (None) (Some i64))
-
-;# later module
-;: external doc
-(extern (io.emit [arg0 : String]) : unit)
-;: struct doc
-(defstruct Point (x i64) (y i64))
-;: macro doc
-(defmacro (guard [condition : bool] [body : unit]) : unit
-  `(if ,condition ,body unit))
-;: EOF unattached")
-
-(define (doc-extract-legacy-smoke-source) : String
-  ";# Legacy module
-;: legacy item
-(define legacy : i64 1)")
-
-(define (doc-extract-declaration-smoke-source) : String
-  ";: box doc
-(defstruct Box_String
-  (value String))
-
-;: helper doc
-(define (box-string-value [value : Box_String]) : String
-  value.value)")
-
-(define (doc-item-ok?
-  [item : DocItem]
-  [kind-tag : i64]
-  [name : String]
-  [doc-text : String]
-  [signature-fragment : String]) : bool
-  (match item
-    [(DocItem.Item kind item-name item-doc signature _)
-      (begin
-        (unless (= (doc-kind-tag kind) kind-tag) (return false))
-        (unless (string.eq item-name name) (return false))
-        (unless (string.eq item-doc doc-text) (return false))
-        (doc-string-contains? signature signature-fragment))]))
-
-(define (doc-extract-smoke-items-ok? [items : doc_item_vec.Vec]) : bool
-  (begin
-    (unless
-      (= (doc-item-list-count (owned_view.compiler-owned-shared-view items)) 6)
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc-item-list-ref (owned_view.compiler-owned-shared-view items) 0)
-        1
-        "answer"
-        "answer doc\nstill answer"
-        "(define answer : i64 42)")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc-item-list-ref (owned_view.compiler-owned-shared-view items) 1)
-        2
-        "main"
-        "function doc"
-        "(define (main [argc : i64])")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc-item-list-ref (owned_view.compiler-owned-shared-view items) 2)
-        4
-        "Maybe"
-        "enum doc"
-        "(defenum Maybe")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc-item-list-ref (owned_view.compiler-owned-shared-view items) 3)
-        3
-        "io.emit"
-        "external doc"
-        "(extern (io.emit")
-      (return false))
-    (unless
-      (doc-item-ok?
-        (doc-item-list-ref (owned_view.compiler-owned-shared-view items) 4)
-        5
-        "Point"
-        "struct doc"
-        "(defstruct Point")
-      (return false))
-    (doc-item-ok?
-      (doc-item-list-ref items 5)
-      6
-      "guard"
-      "macro doc"
-      "(defmacro (guard")))
-
-(define (doc-extract-declaration-smoke-ok?) : bool
-  (match (doc-extract-source (doc-extract-declaration-smoke-source))
-    [(DocExtraction.Extraction _ items)
-      (and
-        (=
-          (doc-item-list-count (owned_view.compiler-owned-shared-view items))
-          2)
-        (doc-item-ok?
-          (doc-item-list-ref (owned_view.compiler-owned-shared-view items) 0)
-          5
-          "Box_String"
-          "box doc"
-          "(defstruct Box_String")
-        (doc-item-ok?
-          (doc-item-list-ref items 1)
-          2
-          "box-string-value"
-          "helper doc"
-          "(define (box-string-value"))]))
-
-(define (doc-extract-source-line-smoke-ok?) : bool
-  (match (doc-extract-source ";: docs\n(define answer : i64 42)\n")
-    [(DocExtraction.Extraction _ items)
-      (and
-        (=
-          (doc-item-list-count (owned_view.compiler-owned-shared-view items))
-          1)
-        (= (doc-item-source-line (doc-item-list-ref items 0)) 2))]))
-
-(define (doc-extract-smoke) : i64
-  (match (doc-extract-source (doc-extract-smoke-source))
-    [(DocExtraction.Extraction module-doc items)
-      (begin
-        (unless
-          (string.eq
-            module-doc
-            "Module title\nsecond module line\nlater module")
-          (return (io.panic "doc-extract: module doc smoke mismatch")))
-        (unless
-          (=
-            (doc-item-list-count (owned_view.compiler-owned-shared-view items))
-            6)
-          (return (io.panic "doc-extract: item count smoke mismatch")))
-        (unless
-          (doc-extract-smoke-items-ok?
-            (owned_view.compiler-owned-shared-view items))
-          (return (io.panic "doc-extract: item doc smoke mismatch")))
-        (unless
-          (doc-extract-declaration-smoke-ok?)
-          (return (io.panic "doc-extract: declaration item mismatch")))
-        (unless
-          (doc-extract-source-line-smoke-ok?)
-          (return (io.panic "doc-extract: declaration source line mismatch")))
-        (match (doc-extract-source (doc-extract-legacy-smoke-source))
-          [(DocExtraction.Extraction legacy-module legacy-items)
-            (begin
-              (unless
-                (string.eq legacy-module "Legacy module")
-                (return (io.panic "doc-extract: legacy module doc mismatch")))
-              (unless
-                (=
-                  (doc-item-list-count
-                    (owned_view.compiler-owned-shared-view legacy-items))
-                  1)
-                (return (io.panic "doc-extract: legacy item count mismatch")))
-              (unless
-                (doc-item-ok?
-                  (doc-item-list-ref
-                    (owned_view.compiler-owned-shared-view legacy-items)
-                    0)
-                  1
-                  "legacy"
-                  "legacy item"
-                  "(define legacy : i64 1)")
-                (return (io.panic "doc-extract: legacy item mismatch")))
-              42)]))]))

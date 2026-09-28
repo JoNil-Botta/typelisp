@@ -1,14 +1,12 @@
 ;; repl_cli_core.tl - Selfhost REPL session command logic.
 ;;
-;; Shared by the retained `repl.tl` compatibility/coverage wrapper and the
-;; unified `cli.tl` dispatcher.
+;; Shared by the unified `main.tl` dispatcher and `cli_core_tests.tl`.
 ;;
-;; Owns the REPL line loop and the dot-command behavior of the Rust REPL
-;; skeleton's in-process slices. It reads
-;; lines with `read-stdin-line` until `.exit` or end of input, printing a flushed
-;; `tl> ` prompt (or a `... ` continuation marker while a multiline form is
-;; pending) before each read so the prompt is visible in an interactive
-;; session, and dispatches the dot commands:
+;; Owns the REPL line loop and the dot-commands. It reads lines with
+;; `read-stdin-line` until `.exit` or end of input, printing a flushed `tl> `
+;; prompt (or a `... ` continuation marker while a multiline form is pending)
+;; before each read so the prompt is visible in an interactive session, and
+;; dispatches the dot commands:
 ;;
 ;;   - `.exit`            ends the session.
 ;;   - `.help`            prints the command help to stdout.
@@ -44,6 +42,7 @@
 (import compiler_backend as backend)
 (import build_run_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import sym_i64_env)
 
 (defenum ReplTypeCommand
@@ -83,8 +82,8 @@
 (define (repl-stderr-write-line [text : String]) : unit
   (io.stderr-write-line (byte_buf.str-as-bytes (& text))))
 
-(define (repl-path-join [left : String] [right : String]) : String
-  (fs.path-join (& left) (& right)))
+(define (repl-path-join [left : (& left str)] [right : String]) : String
+  (fs.path-join left (& right)))
 
 (define (repl-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
   (fs.try-remove-file-if-exists (& path)))
@@ -104,28 +103,19 @@
     (io.stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
-(define (repl-dot-command? [line : String]) : bool
+(define (repl-dot-command? [line : (& line str)]) : bool
   (if (> (string.string-length line) 0)
     (= (string.string-ref line 0) '.')
     false))
 
-(define (repl-space? [c : char]) : bool
-  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
-
-(define (repl-string-prefix? [text : String] [prefix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (> prefix-len text-len)
-      false
-      (string.eq (string.substring text 0 prefix-len) prefix))))
-
-(define (repl-trim-left-from [text : String] [start : i64]) : String
+(define (repl-trim-left-from [text : (& text str)] [start : i64]) : String
   (let
     [i : i64 start]
     [len : i64 (string.string-length text)]
     (begin
-      (while (and (< i len) (repl-space? (string.string-ref text i)))
+      (while (and
+        (< i len)
+        (source_text.source-text-space? (string.string-ref text i)))
         (set! i (+ i 1)))
       (if (< i len)
         (string.substring text i (- len i))
@@ -134,7 +124,7 @@
 (define (repl-line-ending? [c : char]) : bool
   (or (= c '\r') (= c '\n')))
 
-(define (repl-leading-utf8-bom? [text : String]) : bool
+(define (repl-leading-utf8-bom? [text : (& text str)]) : bool
   (if (< (string.string-length text) 3)
     false
     (and
@@ -143,7 +133,7 @@
       (= (cast (string.string-ref text 2) : i64) 191))))
 
 (define (repl-trim-leading-utf8-bom [text : String]) : String
-  (if (repl-leading-utf8-bom? (owned_view.compiler-owned-shared-view text))
+  (if (repl-leading-utf8-bom? text)
     (string.substring text 3 (- (string.string-length text) 3))
     text))
 
@@ -166,20 +156,20 @@
 (define (repl-normalize-input-line [text : String]) : String
   (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
 
-(define (repl-type-command [line : String]) : ReplTypeCommand
-  (if (repl-string-prefix? (owned_view.compiler-owned-shared-view line) ".type")
+(define (repl-type-command [line : (& line str)]) : ReplTypeCommand
+  (if (source_text.starts-with? line ".type")
     (if (= (string.string-length line) 5)
       (ReplTypeCommand.Expr "")
-      (if (repl-space? (string.string-ref line 5))
+      (if (source_text.source-text-space? (string.string-ref line 5))
         (ReplTypeCommand.Expr (repl-trim-left-from line 5))
         (ReplTypeCommand.No)))
     (ReplTypeCommand.No)))
 
-(define (repl-load-command [line : String]) : ReplLoadCommand
-  (if (repl-string-prefix? (owned_view.compiler-owned-shared-view line) ".load")
+(define (repl-load-command [line : (& line str)]) : ReplLoadCommand
+  (if (source_text.starts-with? line ".load")
     (if (= (string.string-length line) 5)
       (ReplLoadCommand.Path "")
-      (if (repl-space? (string.string-ref line 5))
+      (if (source_text.source-text-space? (string.string-ref line 5))
         (ReplLoadCommand.Path (repl-trim-left-from line 5))
         (ReplLoadCommand.No)))
     (ReplLoadCommand.No)))
@@ -237,8 +227,7 @@
     [(ast.AstType.Func args ret)
       (str_cat.str-cat
         "(->"
-        (repl-type-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view args))
+        (repl-type-list-render-spaced (deref args))
         " "
         (repl-type-render (ast.ty-node-get ret))
         ")")]
@@ -252,8 +241,7 @@
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple"
-        (repl-type-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view elems))
+        (repl-type-list-render-spaced (deref elems))
         ")")]
     [(ast.AstType.Array elem count)
       (str_cat.str-cat
@@ -301,24 +289,21 @@
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view lifetimes))
+        (repl-lifetime-list-render-spaced (deref lifetimes))
         ")")]
     [(ast.AstType.Struct name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.StructArgs name lifetimes)
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view lifetimes))
+        (repl-lifetime-list-render-spaced (deref lifetimes))
         ")")]
     [(ast.AstType.Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
     [(ast.AstType.VarArgs name lifetimes)
       (str_cat.str-cat
         "("
         (ci.intern-str name)
-        (repl-lifetime-list-render-spaced
-          (owned_view.compiler-owned-box-shared-view lifetimes))
+        (repl-lifetime-list-render-spaced (deref lifetimes))
         ")")]))
 
 (define (repl-print-error-line [message : String]) : unit
@@ -329,16 +314,12 @@
 
 (define (repl-report-diagnostics [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
-    [count : i64
-      (cdiag.compiler-diagnostic-list-count
-        (owned_view.compiler-owned-shared-view diagnostics))]
+    [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
     (while (< index count)
       (begin
         (repl-report-diagnostic
-          (cdiag.compiler-diagnostic-list-get
-            (owned_view.compiler-owned-shared-view diagnostics)
-            index))
+          (cdiag.compiler-diagnostic-list-get diagnostics index))
         (set! index (+ index 1))))))
 
 (define (repl-char-display-helpers-source) : String
@@ -562,8 +543,7 @@
         (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : tc.ResultCompilerTypecheck
-  (match (repl-load-session-decls
-    (owned_view.compiler-owned-shared-view session-source))
+  (match (repl-load-session-decls session-source)
     [(ResultReplDeclList.Ok decls)
       (compiler_typecheck_api.typecheck-compiler-program
         (ast.ast-program decls))]
@@ -603,12 +583,9 @@
   (match (build_run_core.source-tool-create-temp-dir "typelisp-repl")
     [(build_run_core.ResultSourceToolString.Ok temp-dir)
       (let
-        [source-path : String
-          (repl-path-join
-            (owned_view.compiler-owned-shared-view temp-dir)
-            "repl_expr.tl")]
+        [source-path : String (repl-path-join temp-dir "repl_expr.tl")]
         (match (build_run_core.source-tool-write-file
-          (owned_view.compiler-owned-shared-view source-path)
+          source-path
           source
           "repl: failed to write scratch source")
           [(build_run_core.SourceToolCommandStatus.Err message)
@@ -627,7 +604,7 @@
                   (owned_view.compiler-owned-shared-view source-path)
                   (build_run_core.source-tool-default-target)
                   (cli_svec.new)
-                  (build_run_core.source-tool-cfg-names-empty)
+                  (cli_svec.new)
                   (process.args-empty)
                   (opt.compiler-optimize-default-level)
                   (backend.CompilerBackendMode.Scalar)
@@ -714,8 +691,7 @@
                 candidate)]
             [(tc.ResultCompilerTypecheck.Err diag)
               (begin
-                (repl-report-diagnostics
-                  (owned_view.compiler-owned-box-shared-view diag))
+                (repl-report-diagnostics (deref diag))
                 session-source)]))]
       [(io.ErrIoBytes error)
         (begin
@@ -733,20 +709,19 @@
             [candidate : String
               (repl-session-candidate
                 (owned_view.compiler-owned-shared-view session-source)
-                (owned_view.compiler-owned-shared-view input))]
+                input)]
             (match (repl-typecheck-session-source
               (owned_view.compiler-owned-shared-view candidate))
               [(tc.ResultCompilerTypecheck.Ok _) candidate]
               [(tc.ResultCompilerTypecheck.Err diag)
                 (begin
-                  (repl-report-diagnostics
-                    (owned_view.compiler-owned-box-shared-view diag))
+                  (repl-report-diagnostics (deref diag))
                   session-source)]))]
         [(AstReplExpr expr)
           (begin
             (repl-evaluate-expr
               (owned_view.compiler-owned-shared-view session-source)
-              (owned_view.compiler-owned-shared-view input)
+              input
               (ast.ast-node-get expr))
             session-source)])]
     [(parser.ResultAstReplItem.Err message)
@@ -754,53 +729,25 @@
         (repl-print-error-line (str_cat.str-cat "REPL parse error: " message))
         session-source)]))
 
-;; Completeness tracking mirrors the Rust REPL's delimiter check closely enough
-;; for the selfhost slice: strings, comments, and char literals do not count
-;; delimiters; unmatched closing delimiters are considered complete so parsing can
-;; report the real error and the session can recover.
-(define (repl-skip-comment [text : String] [idx : i64] [len : i64]) : i64
+;; Completeness tracking is a delimiter check: strings, comments, and char
+;; literals do not count delimiters; unmatched closing delimiters are considered
+;; complete so parsing can report the real error and the session can recover.
+(define (repl-skip-comment [text : (& text str)] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
     (if (= (string.string-ref text idx) '\n')
       (+ idx 1)
       (repl-skip-comment text (+ idx 1) len))))
 
-(define (repl-skip-char-literal [text : String] [idx : i64] [len : i64]) : i64
+(define (repl-skip-char-literal [text : (& text str)] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
     (if (= (string.string-ref text idx) '\'')
       (+ idx 1)
       (repl-skip-char-literal text (+ idx 1) len))))
 
-(define (repl-apostrophe-char-escape? [c : char]) : bool
-  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
-
-(define (repl-skip-apostrophe-char-literal
-  [text : String]
-  [idx : i64]
-  [len : i64]) : i64
-  (if (< (+ idx 1) len)
-    (let
-      [payload : char (string.string-ref text (+ idx 1))]
-      (cond
-        [(= payload '\\')
-          (if (and
-            (< (+ idx 3) len)
-            (repl-apostrophe-char-escape? (string.string-ref text (+ idx 2)))
-            (= (string.string-ref text (+ idx 3)) '\''))
-            (+ idx 4)
-            (+ idx 1))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
-        [else
-          (if (and
-            (< (+ idx 2) len)
-            (= (string.string-ref text (+ idx 2)) '\''))
-            (+ idx 3)
-            (+ idx 1))]))
-    (+ idx 1)))
-
 (define (repl-input-complete-loop
-  [text : String]
+  [text : (& text str)]
   [idx : i64]
   [len : i64]
   [parens : i64]
@@ -852,7 +799,7 @@
                 false)])]
         [(= c ';')
           (repl-input-complete-loop
-            (owned_view.compiler-owned-shared-view text)
+            text
             (repl-skip-comment text (+ idx 1) len)
             len
             parens
@@ -870,8 +817,8 @@
             false)]
         [(= c '\'')
           (repl-input-complete-loop
-            (owned_view.compiler-owned-shared-view text)
-            (repl-skip-apostrophe-char-literal text idx len)
+            text
+            (source_text.source-text-skip-char-literal text idx len)
             len
             parens
             brackets
@@ -879,7 +826,7 @@
             false)]
         [(= c '#')
           (repl-input-complete-loop
-            (owned_view.compiler-owned-shared-view text)
+            text
             (repl-skip-char-literal text (+ idx 1) len)
             len
             parens
@@ -936,9 +883,9 @@
             false
             false)]))))
 
-(define (repl-input-complete? [input : String]) : bool
+(define (repl-input-complete? [input : (& input str)]) : bool
   (repl-input-complete-loop
-    (owned_view.compiler-owned-shared-view input)
+    input
     0
     (string.string-length input)
     0
@@ -957,8 +904,7 @@
   [line : String]) : ReplLineResult
   (let
     [next-pending : String (repl-append-pending pending line)]
-    (if (repl-input-complete?
-      (owned_view.compiler-owned-shared-view next-pending))
+    (if (repl-input-complete? next-pending)
       (ReplLineResult.Line (repl-handle-input session-source next-pending) "")
       (ReplLineResult.Line session-source next-pending))))
 
@@ -971,7 +917,7 @@
   (if (string.eq pending "")
     (if (string.eq line "")
       (ReplLineResult.Line session-source "")
-      (match (repl-type-command (owned_view.compiler-owned-shared-view line))
+      (match (repl-type-command line)
         [(ReplTypeCommand.Expr expr-source)
           (begin
             (repl-handle-type-command
@@ -979,8 +925,7 @@
               expr-source)
             (ReplLineResult.Line session-source ""))]
         [(ReplTypeCommand.No)
-          (match (repl-load-command
-            (owned_view.compiler-owned-shared-view line))
+          (match (repl-load-command line)
             [(ReplLoadCommand.Path path)
               (ReplLineResult.Line
                 (repl-handle-load-command session-source path)
@@ -990,8 +935,7 @@
                 (begin
                   (repl-stdout-write (repl-help-text))
                   (ReplLineResult.Line session-source ""))
-                (if (repl-dot-command?
-                  (owned_view.compiler-owned-shared-view line))
+                (if (repl-dot-command? line)
                   (begin
                     (repl-stderr-write
                       (str_cat.str-cat "Unknown REPL command: " line))
@@ -1046,126 +990,3 @@
       (io.print-error "Error: repl does not accept arguments\n")
       1)
     (repl-run)))
-
-(define (repl-scratch-source-canonical-output-ok?
-  [expr-source : String]
-  [ty : ast.AstType]) : bool
-  (let
-    [canonical-newline-call : String "(io.println"]
-    (match (repl-scratch-source "" expr-source ty)
-      [(ResultReplString.Ok source)
-        (string.contains (& source) (& canonical-newline-call))]
-      [(ResultReplString.Err _) false])))
-
-(define (repl-scratch-source-stdlib-imports-ok?) : bool
-  (let
-    [io-import : String "(import stdlib.io)\n"]
-    [string-import : String "(import stdlib.string)\n"]
-    [legacy-tl-import : String "stdlib/tl"]
-    [legacy-io-import : String "stdlib/io.tl"]
-    (match (repl-scratch-source "" "1" (ast.AstType.I64))
-      [(ResultReplString.Ok source)
-        (and
-          (string.contains (& source) (& io-import))
-          (string.contains (& source) (& string-import))
-          (not (string.contains (& source) (& legacy-tl-import)))
-          (not (string.contains (& source) (& legacy-io-import)))
-          (repl-scratch-source-canonical-output-ok? "3.5" (ast.AstType.F64))
-          (repl-scratch-source-canonical-output-ok? "'Z'" (ast.AstType.Char))
-          (repl-scratch-source-canonical-output-ok?
-            "\"hi\""
-            (ast.AstType.String)))]
-      [(ResultReplString.Err _) false])))
-
-(test
-  repl-scratch-source-stdlib-imports
-  (if (repl-scratch-source-stdlib-imports-ok?)
-    unit
-    (io.panic "repl: scratch source stdlib imports mismatch")))
-
-(define (repl-scratch-cleanup-report-test-ok?) : bool
-  (let
-    [both : String
-      (repl-scratch-cleanup-report-text
-        (io.ResultIoUnit.ErrIoUnit
-          (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
-        (io.ResultIoUnit.ErrIoUnit
-          (io.IoError.IoPermissionDenied "/secret/repl-dir")))]
-    [secret : String "/secret"]
-    [code : String "123"]
-    (and
-      (string.eq
-        (repl-scratch-cleanup-report-text
-          (io.ResultIoUnit.OkIoUnit)
-          (io.ResultIoUnit.OkIoUnit))
-        "")
-      (string.eq
-        (repl-scratch-cleanup-report-text
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
-          (io.ResultIoUnit.OkIoUnit))
-        "repl: scratch file cleanup failed (system-error)\n")
-      (string.eq
-        (repl-scratch-cleanup-report-text
-          (io.ResultIoUnit.OkIoUnit)
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
-        "repl: scratch directory cleanup failed (permission-denied)\n")
-      (string.eq
-        both
-        (str_cat.str-cat
-          "repl: scratch file cleanup failed (system-error)\n"
-          "repl: scratch directory cleanup failed (permission-denied)\n"))
-      (string.eq
-        (repl-run-and-scratch-cleanup-report-text
-          0
-          (io.ResultIoUnit.OkIoUnit)
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
-        "repl: scratch directory cleanup failed (permission-denied)\n")
-      (string.eq
-        (repl-run-and-scratch-cleanup-report-text
-          135
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
-        (str_cat.str-cat
-          "\nREPL evaluation exited with status 135\n"
-          "repl: scratch file cleanup failed (system-error)\n"
-          "repl: scratch directory cleanup failed (permission-denied)\n"))
-      (not (string.contains (& both) (& secret)))
-      (not (string.contains (& both) (& code)))
-      (string.eq
-        (repl-scratch-cleanup-message
-          "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoNotFound "hidden")))
-        "repl: scratch file cleanup failed (not-found)")
-      (string.eq
-        (repl-scratch-cleanup-message
-          "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoInvalidPath "hidden")))
-        "repl: scratch file cleanup failed (invalid-path)")
-      (string.eq
-        (repl-scratch-cleanup-message
-          "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoUnsupported "hidden")))
-        "repl: scratch file cleanup failed (unsupported)")
-      (string.eq
-        (repl-scratch-cleanup-message
-          "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoInterrupted "hidden")))
-        "repl: scratch file cleanup failed (interrupted)")
-      (string.eq
-        (repl-scratch-cleanup-message
-          "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoUnknown "hidden")))
-        "repl: scratch file cleanup failed (unknown)"))))
-
-(test
-  repl-scratch-cleanup-reports
-  (if (and
-    (repl-scratch-cleanup-report-test-ok?)
-    (repl-scratch-cleanup-report-test-ok?))
-    unit
-    (io.panic "repl: scratch cleanup report mismatch")))

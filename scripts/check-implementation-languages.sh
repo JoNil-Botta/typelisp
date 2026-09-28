@@ -2,7 +2,7 @@
 set -eu
 
 # Baseline gate for the implementation language policy in CONTRIBUTING.md.
-# The Rust stage0 was removed in #795. The baseline should stay empty except
+# The baseline should stay empty except
 # for documented temporary implementation-language exceptions; new non-allowed
 # implementation-language files fail.
 
@@ -24,11 +24,6 @@ is_exception_path() {
     case "$1" in
         benchmarks/*.c | benchmarks/*.h | tools/vs-code-extension/*) return 0 ;;
         scripts/*.sh | tests/public-tools/*.sh | scripts/*.ps1) return 0 ;;
-        # Benchmark corpus exporters: one-shot capture tools that parse
-        # compiler dump output into committed corpus files. They are build-time
-        # only (never shipped, never run by CI), and each benchmark's README
-        # documents the regeneration command.
-        benchmarks/*/tools/*.py) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -79,7 +74,7 @@ if [ -s "$NEW" ]; then
     echo "implementation language gate: forbidden implementation-language files outside the baseline:" >&2
     sed 's/^/  - /' "$NEW" >&2
     echo "Allowed implementation language is TypeLisp." >&2
-    echo "Path exceptions: scripts/*.sh, tests/public-tools/*.sh, scripts/*.ps1, benchmarks/**/*.c, benchmarks/**/*.h, benchmarks/**/tools/*.py (corpus exporters), and tools/vs-code-extension/**." >&2
+    echo "Path exceptions: scripts/*.sh, tests/public-tools/*.sh, scripts/*.ps1, benchmarks/**/*.c, benchmarks/**/*.h, and tools/vs-code-extension/**." >&2
     exit 1
 fi
 

@@ -1,0 +1,282 @@
+# Backend diagnostics and the public lint command (gate
+# stage2-public-tool-surface).
+do none
+target -
+opt -
+
+file lint_bad.tl
+(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
+end-file
+
+file lint_clean.tl
+(define (classify [x : i64]) : i64
+  (if (= x 0)
+    10
+    0))
+end-file
+
+file lint_name_case.tl
+(define BadGlobal : i64 1)
+(defstruct bad-type
+  (field i64))
+(define (BadFunction [BadParam : i64]) : i64
+  BadParam)
+end-file
+
+# Lowering rejects a quoted Expr that reaches runtime.
+case backend-quote-runtime-value
+file quote_runtime_value.tl
+(define (main) : i64
+  (begin
+    '(+ 1 2)
+    0))
+end-file
+run compile "{{dir}}/quote_runtime_value.tl"
+exit nonzero
+stdout empty
+stderr contains Expr value is compile-time only
+stderr contains error: Expr value is compile-time only
+stderr contains   -->
+stderr contains 3 |     '(+ 1 2)
+stderr contains   |     ^^^^^^^
+
+case lint-nested-let
+step lint-nested-let
+run lint "{{work}}/lint_bad.tl"
+stderr empty
+stdout contains warning[nested-let]:
+stdout match -->[ ]
+stdout contains lint_bad.tl:2:3
+stdout contains 2 |   (let
+stdout contains |   ^
+stdout contains nested let
+stdout contains = help: merge the nested let bindings into one sequential let
+stdout contains lint: 1 finding(s)
+step lint-nested-let-flat
+run lint "{{work}}/lint_bad.tl" --format flat
+stderr empty
+stdout contains lint_bad.tl:2:3: nested let
+stdout contains lint: 1 finding(s)
+stdout not-contains warning[nested-let]:
+stdout not-contains = help:
+step lint-nested-let-check
+run lint "{{work}}/lint_bad.tl" --check
+exit nonzero
+stderr empty
+stdout contains lint_bad.tl:
+stdout contains nested let
+stdout contains lint: 1 finding(s)
+
+case lint-displayed-rule-id-suppresses
+file lint_bad_suppressed.tl
+(define (main) : i64
+  ;; lint-allow: nested-let
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))
+end-file
+run lint "{{dir}}/lint_bad_suppressed.tl" --check
+stderr empty
+stdout contains lint: 0 finding(s)
+stdout not-contains nested-let
+
+case lint-raw-arena-op
+file lint_raw_arena.tl
+(define (switch-arena [handle : i64]) : unit
+  (arena.tl_arena_set handle))
+end-file
+run lint "{{dir}}/lint_raw_arena.tl" --check
+exit nonzero
+stderr empty
+stdout contains warning[raw-arena-op]:
+stdout contains lint_raw_arena.tl:2:3
+stdout contains raw arena operation
+stdout contains = help: use in-arena, with-scratch, with-arena, rewind-safe!, or destroy-safe!
+stdout contains lint: 1 finding(s)
+
+case lint-format-errors
+step lint-format-invalid
+run lint "{{work}}/lint_bad.tl" --format json
+exit nonzero
+stdout empty
+stderr contains unsupported --format json (expected rich or flat)
+step lint-format-missing
+run lint "{{work}}/lint_bad.tl" --format
+exit nonzero
+stdout empty
+stderr contains --format requires a value
+
+case lint-clean
+step lint-clean
+run lint "{{work}}/lint_clean.tl"
+stderr empty
+stdout contains lint: 0 finding(s)
+step lint-clean-check
+run lint "{{work}}/lint_clean.tl" --check
+stderr empty
+stdout contains lint: 0 finding(s)
+
+case lint-stdlib-string-bare
+file bare.tl
+(import stdlib.string)
+(define (main) : i64 (string-length "abc"))
+end-file
+file bare_shadow.tl
+(import stdlib.string)
+(define (string-length) : i64 42)
+(define (main) : i64 (string-length))
+end-file
+step lint-stdlib-string-bare-check
+run lint "{{dir}}/bare.tl" --check --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains lint: 0 finding(s)
+stdout not-contains unused import
+step lint-stdlib-string-bare-shadow-check
+run lint "{{dir}}/bare_shadow.tl" --check --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr empty
+stdout contains unused import: module alias string from stdlib.string is never referenced
+stdout contains lint: 1 finding(s)
+
+case lint-cfg-windows-target
+file main.tl
+(cfg linux
+  (define platform-value : i64 40))
+(cfg windows
+  (define platform-value : i64 40))
+(cfg tooling-feature
+  (define cfg-value : i64 2))
+(define (main) : i64
+  (+ platform-value cfg-value))
+end-file
+run lint "{{dir}}/main.tl" --target windows-x86_64 --cfg tooling-feature --check
+stderr empty
+stdout contains lint: 0 finding(s)
+
+case lint-name-case
+step lint-name-case-default
+run lint "{{work}}/lint_name_case.tl" --check
+stderr empty
+stdout contains lint: 0 finding(s)
+step lint-name-case
+run lint "{{work}}/lint_name_case.tl" --name-case
+stderr empty
+stdout contains global name case
+stdout contains function name case
+stdout contains local name case
+stdout contains type name case
+stdout contains consider `bad-global`
+stdout contains consider `bad-function`
+stdout contains consider `bad-param`
+stdout contains consider `BadType`
+stdout contains lint: 4 finding(s)
+stdout not-contains :0:0:
+step lint-name-case-check
+run lint "{{work}}/lint_name_case.tl" --name-case --check
+exit nonzero
+stderr empty
+stdout contains lint: 4 finding(s)
+
+case lint-multi
+step lint-multi
+run lint "{{work}}/lint_clean.tl" "{{work}}/lint_bad.tl"
+stderr empty
+stdout contains --- {{native-work}}/lint_clean.tl
+stdout contains --- {{native-work}}/lint_bad.tl
+stdout contains lint_bad.tl:
+stdout contains lint: 0 finding(s)
+stdout contains lint: 1 finding(s)
+stdout order --- {{native-work}}/lint_clean.tl || --- {{native-work}}/lint_bad.tl
+step lint-files-manifest
+run lint "{{work}}/lint_clean.tl" "{{work}}/lint_bad.tl" --manifest-path typelisp.pkg
+exit nonzero
+stdout empty
+stderr contains cannot combine input paths with --manifest-path
+
+case lint-package-bin
+file typelisp.pkg
+(package
+  (name "lint_pkg_bin")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(define (main) : i64
+  (used))
+
+(define (used) : i64
+  42)
+
+(define (dead-bin) : i64
+  7)
+
+;; lint-allow: dead-code
+(define (suppressed-bin) : i64
+  8)
+end-file
+run lint --check --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stderr empty
+stdout contains dead-bin
+stdout contains unreachable from package entry/test roots
+stdout contains lint: 1 finding(s)
+stdout not-contains suppressed-bin
+
+case lint-package-lib
+file typelisp.pkg
+(package
+  (name "lint_pkg_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/main.tl"))
+end-file
+file src/main.tl
+(define (main) : i64
+  (used))
+
+(define (used) : i64
+  42)
+
+(define (dead-lib) : i64
+  7)
+
+(define BadGlobal : i64
+  1)
+end-file
+step lint-package-lib
+run lint --check --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+stdout contains lint: 0 finding(s)
+stdout not-contains dead-lib
+step lint-package-lib-name-case
+run lint --name-case --check --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stderr empty
+stdout contains global name case
+stdout contains consider `bad-global`
+stdout contains lint: 1 finding(s)
+
+# Outside any package (a directory with no typelisp.pkg above it).
+case lint-missing
+sh CCV_nopkg=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
+cwd {{nopkg}}
+run lint
+exit nonzero
+stdout empty
+stderr contains could not find typelisp.pkg
+sh rm -rf "{{nopkg}}"
+
+case lint-parse-error-check
+sh printf '(define (' > "{{dir}}/lint_parse_error.tl"
+run lint "{{dir}}/lint_parse_error.tl" --check
+exit nonzero
+stdout empty
+stderr not-empty

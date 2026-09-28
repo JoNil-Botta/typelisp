@@ -2,7 +2,6 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_ast_codec_core as codec)
-(import compiler_owned_view as owned_view)
 (import stdlib.test)
 
 (define (c-function-codec-session) : cis.InternStructuralSessionHandle
@@ -45,7 +44,7 @@
         (c-function-codec-bytes 17 (ast.ast-c-function-mode-key mode) true)
         (c-function-codec-session)
         (__tl_make-array i64 0))]
-    [decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    [decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
     (and
       (codec.surface-ast-reader-valid? (& reader))
       (= (codec.surface-ast-reader-offset (& reader)) 24)
@@ -64,7 +63,7 @@
         (c-function-codec-bytes signature mode complete)
         (c-function-codec-session)
         (__tl_make-array i64 0))]
-    [_decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
     (not (codec.surface-ast-reader-valid? (& reader)))))
 
 (test
@@ -103,26 +102,23 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 1)]
-    [scalar : i64
-      (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
-        ast.AstType.I64)]
+    [scalar : i64 (ast.ast-node-pool-context-type-push pools ast.AstType.I64)]
     [_function : i64
       (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (ast.AstType.Func (box (ast.ast-type-list-new)) scalar))]
     [_pointer : i64
       (ast.ast-node-pool-context-type-push
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         (ast.AstType.CFunc 1 ast.AstCFunctionMode.NonNull))]
     [reader : codec.SurfaceAstReader
       (codec.surface-ast-reader-new
         (c-function-codec-bytes signature 1 true)
         (c-function-codec-session)
         (__tl_make-array i64 0))]
-    [_decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    [_decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
     (begin
-      (codec.surface-ast-validate-c-function-signatures! (& reader) pools)
+      (codec.surface-ast-validate-c-function-signatures! (&mut reader) pools)
       (codec.surface-ast-reader-valid? (& reader)))))
 
 (test

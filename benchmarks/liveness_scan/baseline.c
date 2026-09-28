@@ -6,7 +6,7 @@
  * and use/def sets the compiler's own liveness pass consumes when it lowers
  * src/compiler_liveness.tl (2087 functions, 12172 blocks, that module plus
  * every module it imports), captured from `typelisp compile --dump-ir` by
- * benchmarks/liveness_scan/tools/export_cfgs.py. Blocks are in dump order,
+ * a since-deleted Python tool (see README.md). Blocks are in dump order,
  * which is the lowering's deterministic reverse postorder.
  *
  * Mirrored: `compiler-live-fixpoint` and `compiler-live-fixpoint-ep` (seed all

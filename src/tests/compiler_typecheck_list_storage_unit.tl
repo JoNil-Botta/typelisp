@@ -7,6 +7,12 @@
 (import stdlib.io)
 (import stdlib.string)
 
+(define (tc-string-list-len [items : tc_core.TcStringList]) : i64
+  (match items
+    [(tc_core.TcStringList.Nil) 0]
+    [(tc_core.TcStringList.One _) 1]
+    [(tc_core.TcStringList.Dense _ _ len) len]))
+
 (define (compiler-typecheck-list-storage-unit-tests-ok?) : bool
   (let
     [string-root : tc_core.TcStringList
@@ -34,9 +40,7 @@
         (tc_core.tc-name-id-list-cons tc_core.TcNameIdList.Nil 10)
         20)]
     [name-right : tc_core.TcNameIdList
-      (tc_core.tc-name-id-list-cons
-        (tc_core.tc-global-shared-view name-base)
-        30)]
+      (tc_core.tc-name-id-list-cons name-base 30)]
     [name-sibling : tc_core.TcNameIdList
       (tc_core.tc-name-id-list-cons name-base 40)]
     [set-a : tc_core.TcNameIdList
@@ -47,8 +51,7 @@
       (tc_core.tc-name-id-list-add
         (tc_core.tc-name-id-list-add tc_core.TcNameIdList.Nil 2)
         1)]
-    [set-superset : tc_core.TcNameIdList
-      (tc_core.tc-name-id-list-add (tc_core.tc-global-shared-view set-b) 3)]
+    [set-superset : tc_core.TcNameIdList (tc_core.tc-name-id-list-add set-b 3)]
     [home : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
     [scratch-child : tc_core.TcStringList tc_core.TcStringList.Nil]
@@ -89,24 +92,12 @@
             unit)
           (set! index (+ index 1))))
       (and
-        (=
-          (tc_core.tc-string-list-len
-            (tc_core.tc-global-shared-view string-root))
-          1)
-        (=
-          (tc_core.tc-string-list-len
-            (tc_core.tc-global-shared-view string-base))
-          2)
-        (=
-          (tc_core.tc-string-list-len
-            (tc_core.tc-global-shared-view string-left))
-          3)
-        (=
-          (tc_core.tc-string-list-len
-            (tc_core.tc-global-shared-view string-right))
-          3)
-        (= (tc_core.tc-string-list-len growth-sibling) 3)
-        (= (tc_core.tc-string-list-len string-deep) 258)
+        (= (tc-string-list-len string-root) 1)
+        (= (tc-string-list-len string-base) 2)
+        (= (tc-string-list-len (tc_core.tc-global-shared-view string-left)) 3)
+        (= (tc-string-list-len (tc_core.tc-global-shared-view string-right)) 3)
+        (= (tc-string-list-len growth-sibling) 3)
+        (= (tc-string-list-len string-deep) 258)
         (string.eq
           (tc_core.tc-string-list-head
             (tc_core.tc-global-shared-view string-left))
@@ -128,60 +119,33 @@
           (tc_core.tc-string-list-contains
             (tc_core.tc-global-shared-view string-left)
             "right"))
-        (tc_core.tc-name-id-list-eq
-          (tc_core.tc-global-shared-view set-a)
-          (tc_core.tc-global-shared-view set-b))
+        (tc_core.tc-name-id-list-eq set-a set-b)
         ;; Preserve the historical left-membership behavior of this predicate.
-        (tc_core.tc-name-id-list-eq
-          (tc_core.tc-global-shared-view set-a)
-          (tc_core.tc-global-shared-view set-superset))
-        (not
-          (tc_core.tc-name-id-list-eq
-            (tc_core.tc-global-shared-view set-superset)
-            (tc_core.tc-global-shared-view set-a)))
-        (not
-          (tc_core.tc-name-id-list-eq
-            tc_core.TcNameIdList.Nil
-            (tc_core.tc-global-shared-view set-a)))
+        (tc_core.tc-name-id-list-eq set-a set-superset)
+        (not (tc_core.tc-name-id-list-eq set-superset set-a))
+        (not (tc_core.tc-name-id-list-eq tc_core.TcNameIdList.Nil set-a))
         (=
-          (tc_core.tc-name-id-list-len
-            (tc_core.tc-name-id-list-add
-              (tc_core.tc-global-shared-view set-a)
-              2))
+          (tc_core.tc-name-id-list-len (tc_core.tc-name-id-list-add set-a 2))
           2)
-        (tc_core.tc-name-id-list-overlaps?
-          (tc_core.tc-global-shared-view name-right)
-          (tc_core.tc-global-shared-view name-sibling))
-        (not
-          (tc_core.tc-name-id-list-contains
-            (tc_core.tc-global-shared-view name-right)
-            40))
-        (tc_core.tc-name-id-list-contains
-          (tc_core.tc-global-shared-view name-sibling)
-          40)
+        (tc_core.tc-name-id-list-overlaps? name-right name-sibling)
+        (not (tc_core.tc-name-id-list-contains name-right 40))
+        (tc_core.tc-name-id-list-contains name-sibling 40)
+        (= (tc_core.tc-name-id-list-len deep) 4096)
+        (= (tc_core.tc-name-id-list-head deep) 4095)
         (=
-          (tc_core.tc-name-id-list-len (tc_core.tc-global-shared-view deep))
-          4096)
-        (=
-          (tc_core.tc-name-id-list-head (tc_core.tc-global-shared-view deep))
-          4095)
-        (=
-          (tc_core.tc-name-id-list-head
-            (tc_core.tc-name-id-list-rest (tc_core.tc-global-shared-view deep)))
+          (tc_core.tc-name-id-list-head (tc_core.tc-name-id-list-rest deep))
           4094)
-        (tc_core.tc-name-id-list-contains
-          (tc_core.tc-global-shared-view deep)
-          0)
-        (match (tc_core.tc-global-shared-view string-left)
+        (tc_core.tc-name-id-list-contains deep 0)
+        (match string-left
           [(tc_core.TcStringList.Dense left-address _ _)
-            (match (tc_core.tc-global-shared-view string-right)
+            (match string-right
               [(tc_core.TcStringList.Dense right-address _ _)
                 (= left-address right-address)]
               [_ false])]
           [_ false])
-        (match (tc_core.tc-global-shared-view name-right)
+        (match name-right
           [(tc_core.TcNameIdList.Dense right-address _ _)
-            (match (tc_core.tc-global-shared-view name-sibling)
+            (match name-sibling
               [(tc_core.TcNameIdList.Dense sibling-address _ _)
                 (= right-address sibling-address)]
               [_ false])]
@@ -238,8 +202,7 @@
     [(tc_core.ResultCompilerTypecheck.Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
-          (diagnostic.compiler-diagnostic-list-first
-            (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
+          (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
         (begin
           (io.print-error (diagnostic.compiler-diagnostic-message diag))
           false))]))

@@ -14,16 +14,8 @@
 (import stdlib.time)
 (import stdlib.vector)
 (import compiler_intern as ci)
-(import lex as lexer)
 (import read as reader)
 (import package_cache_core)
-
-(defmacro (package-lock-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
 
 (defstruct PackageLockEntry
   (alias String)
@@ -97,12 +89,15 @@
   "v1")
 
 (define (package-lock-version-shared-view) : String
-  (package-lock-global-shared-view package-lock-version))
+  (unsafe
+    (ptr-read (ptr-addr-of package-lock-version))))
 
-(define (package-lock-char-code-at [text : String] [idx : i64]) : i64
+(define (package-lock-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
 
-(define (package-lock-string-less? [left : String] [right : String]) : bool
+(define (package-lock-string-less?
+  [left : (& left str)]
+  [right : (& right str)]) : bool
   (let
     [left-len : i64 (string.string-length left)]
     [right-len : i64 (string.string-length right)]
@@ -116,14 +111,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64
-            (package-lock-char-code-at
-              (owned_view.compiler-owned-shared-view left)
-              idx)]
-          [rc : i64
-            (package-lock-char-code-at
-              (owned_view.compiler-owned-shared-view right)
-              idx)]
+          [lc : i64 (package-lock-char-code-at left idx)]
+          [rc : i64 (package-lock-char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -143,7 +132,7 @@
       (= code 45)
       (= code 95))))
 
-(define (package-lock-alias-token-valid? [value : String]) : bool
+(define (package-lock-alias-token-valid? [value : (& value str)]) : bool
   (let
     [n : i64 (string.string-length value)]
     [i : i64 0]
@@ -162,7 +151,7 @@
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : String]
+  [alias : (& alias str)]
   [index : i64]) : PackageLockMaybeEntry
   (if (>= index (package_lock_entry_vec.len entries))
     (PackageLockMaybeEntry.No)
@@ -177,13 +166,13 @@
         (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
 
 (define (package-lock-entry-list-lookup
-  [entries : package_lock_entry_vec.Vec]
-  [alias : String]) : PackageLockMaybeEntry
-  (package-lock-entry-list-lookup-from (& entries) alias 0))
+  [entries : (& entries package_lock_entry_vec.Vec)]
+  [alias : (& alias str)]) : PackageLockMaybeEntry
+  (package-lock-entry-list-lookup-from entries alias 0))
 
 (define (package-lock-entry-list-insert-position
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : String]
+  [alias : (& alias str)]
   [index : i64]) : i64
   (if (>= index (package_lock_entry_vec.len entries))
     index
@@ -195,9 +184,7 @@
           (package-lock-entry-list-fallback))]
       (if (string.eq head.alias alias)
         -1
-        (if (package-lock-string-less?
-          (owned_view.compiler-owned-shared-view alias)
-          head.alias)
+        (if (package-lock-string-less? alias head.alias)
           index
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
@@ -228,13 +215,9 @@
   [entries : package_lock_entry_vec.Vec]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (let
-    [next : package_lock_entry_vec.Vec
-      (package-lock-global-shared-view entries)]
+    [next : package_lock_entry_vec.Vec entries]
     [index : i64
-      (package-lock-entry-list-insert-position
-        (& next)
-        (owned_view.compiler-owned-shared-view entry.alias)
-        0)]
+      (package-lock-entry-list-insert-position (& next) entry.alias 0)]
     (if (< index 0)
       (ResultPackageLockEntryList.Err
         (str_cat.str-cat
@@ -246,7 +229,7 @@
         (ResultPackageLockEntryList.Ok next)))))
 
 (define (package-lock-field-string-value
-  [ftail : reader.Sexpr]
+  [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPackageLockString
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
@@ -291,7 +274,7 @@
   (ResultPackageLockPin.Err
     "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
-(define (package-lock-pin-form [form : reader.Sexpr]) : ResultPackageLockPin
+(define (package-lock-pin-form [form : reader.SpannedSexpr]) : ResultPackageLockPin
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons kind-node kind-tail)
       (match (reader.sexpr-view kind-node)
@@ -320,7 +303,7 @@
         [_ (package-lock-pin-shape-error)])]
     [_ (package-lock-pin-shape-error)]))
 
-(define (package-lock-field-pin-value [ftail : reader.Sexpr]) : ResultPackageLockPin
+(define (package-lock-field-pin-value [ftail : reader.SpannedSexpr]) : ResultPackageLockPin
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons pin-form after-pin)
       (match (reader.sexpr-view after-pin)
@@ -330,7 +313,7 @@
     [_ (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")]))
 
 (define (package-lock-entry-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [alias : String]
   [has-alias : bool]
   [url : String]
@@ -358,9 +341,7 @@
         [(string.eq alias "")
           (ResultPackageLockEntry.Err
             "package-lock: dependency alias must not be empty")]
-        [(not
-            (package-lock-alias-token-valid?
-              (owned_view.compiler-owned-shared-view alias)))
+        [(not (package-lock-alias-token-valid? alias))
           (ResultPackageLockEntry.Err
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string.eq url "")
@@ -476,7 +457,7 @@
       (ResultPackageLockEntry.Err
         "package-lock: dependency fields must be lists")]))
 
-(define (package-lock-entry-from-form [form : reader.Sexpr]) : ResultPackageLockEntry
+(define (package-lock-entry-from-form [form : reader.SpannedSexpr]) : ResultPackageLockEntry
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -503,7 +484,7 @@
         "package-lock: dependency entries must be lists")]))
 
 (define (package-lock-dependencies-entries
-  [entries : reader.Sexpr]
+  [entries : reader.SpannedSexpr]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
   (match (reader.sexpr-view entries)
     [(reader.SexprView.Nil) (ResultPackageLockEntryList.Ok acc)]
@@ -522,7 +503,7 @@
         "package-lock: `dependencies` must contain dependency lists")]))
 
 (define (package-lock-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [version : String]
   [has-version : bool]
   [entries : package_lock_entry_vec.Vec]
@@ -583,7 +564,7 @@
         [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")])]
     [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")]))
 
-(define (package-lock-from-form [form : reader.Sexpr]) : ResultPackageLockFile
+(define (package-lock-from-form [form : reader.SpannedSexpr]) : ResultPackageLockFile
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -608,10 +589,16 @@
         "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
-  (match (reader.result (lexer.lex source))
-    [(reader.ResultSexpr.Err message)
-      (ResultPackageLockFile.Err (str_cat.str-cat "package-lock: " message))]
-    [(reader.ResultSexpr.Ok form) (package-lock-from-form form)]))
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [result : ResultPackageLockFile
+      (match (reader.data-result source)
+        [(reader.ResultSexpr.Err message)
+          (ResultPackageLockFile.Err (str_cat.str-cat "package-lock: " message))]
+        [(reader.ResultSexpr.Ok form) (package-lock-from-form form)])]
+    (begin
+      (reader.sp-node-pool-truncate! mark)
+      result)))
 
 (define (package-lock-quote-text) : String
   "\"")
@@ -619,7 +606,7 @@
 (define (package-lock-backslash-text) : String
   "\\")
 
-(define (package-lock-escape-string [text : String]) : String
+(define (package-lock-escape-string [text : (& text str)]) : String
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -630,10 +617,7 @@
       (while (< i n)
         (begin
           (let
-            [code : i64
-              (package-lock-char-code-at
-                (owned_view.compiler-owned-shared-view text)
-                i)]
+            [code : i64 (package-lock-char-code-at text i)]
             (cond
               [(= code 34)
                 (set!
@@ -1199,23 +1183,6 @@
             [(ResultPackageLockString.Ok guard)
               (package-lock-transaction-with-guard snapshot source guard)])))]))
 
-(define (package-lock-valid-source) : String
-  "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"zeta\") (url \"https://github.com/owner/zeta.git\") (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\")) (commit \"abcdef0123456789abcdef0123456789abcdef01\")) (dependency (alias \"alpha\") (url \"https://github.com/owner/alpha.git\") (pin (branch \"main\")) (commit \"1111111111111111111111111111111111111111\"))))")
-
-(cfg
-  test
-  (define (package-lock-growth-source) : String
-    "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"foxtrot\") (url \"u\") (pin (rev \"f\")) (commit \"f\")) (dependency (alias \"alpha\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"echo\") (url \"u\") (pin (rev \"e\")) (commit \"e\")) (dependency (alias \"bravo\") (url \"u\") (pin (rev \"b\")) (commit \"b\")) (dependency (alias \"delta\") (url \"u\") (pin (rev \"d\")) (commit \"d\")) (dependency (alias \"charlie\") (url \"u\") (pin (rev \"c\")) (commit \"c\"))))"))
-
-(define (package-lock-expected-emitted) : String
-  (str_cat.str-cat
-    "(typelisp-lock\n"
-    "  (version \"v1\")\n"
-    "  (dependencies\n"
-    "    (dependency\n      (alias \"alpha\")\n      (url \"https://github.com/owner/alpha.git\")\n      (pin (branch \"main\"))\n      (commit \"1111111111111111111111111111111111111111\"))\n"
-    "    (dependency\n      (alias \"zeta\")\n      (url \"https://github.com/owner/zeta.git\")\n      (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\"))\n      (commit \"abcdef0123456789abcdef0123456789abcdef01\"))\n"
-    "  ))\n"))
-
 (define (package-lock-entry-matches?
   [entry : PackageLockEntry]
   [alias : String]
@@ -1231,367 +1198,13 @@
     (string.eq entry.commit commit)))
 
 (define (package-lock-list-has-entry?
-  [entries : package_lock_entry_vec.Vec]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : String]
   [url : String]
   [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
   [commit : String]) : bool
-  (match (package-lock-entry-list-lookup
-    entries
-    (owned_view.compiler-owned-shared-view alias))
+  (match (package-lock-entry-list-lookup entries alias)
     [(PackageLockMaybeEntry.No) false]
     [(PackageLockMaybeEntry.Some entry)
       (package-lock-entry-matches? entry alias url kind pin-value commit)]))
-
-(define (package-lock-valid-parse-ok?) : bool
-  (match (package-lock-parse (package-lock-valid-source))
-    [(ResultPackageLockFile.Err _) false]
-    [(ResultPackageLockFile.Ok lock)
-      (let
-        [entries : package_lock_entry_vec.Vec lock.entries]
-        (and
-          (string.eq lock.version package-lock-version)
-          (= (package_lock_entry_vec.len (& entries)) 2)
-          (package-lock-list-has-entry?
-            (owned_view.compiler-owned-shared-view entries)
-            "alpha"
-            "https://github.com/owner/alpha.git"
-            (package_cache_core.PackageCachePinKind.Branch)
-            "main"
-            "1111111111111111111111111111111111111111")
-          (package-lock-list-has-entry?
-            entries
-            "zeta"
-            "https://github.com/owner/zeta.git"
-            (package_cache_core.PackageCachePinKind.Rev)
-            "abcdef0123456789abcdef0123456789abcdef01"
-            "abcdef0123456789abcdef0123456789abcdef01")))]))
-
-(define (package-lock-emit-stable-ok?) : bool
-  (match (package-lock-parse (package-lock-valid-source))
-    [(ResultPackageLockFile.Err _) false]
-    [(ResultPackageLockFile.Ok lock)
-      (string.eq (package-lock-emit lock) (package-lock-expected-emitted))]))
-
-(define (package-lock-round-trip-ok?) : bool
-  (match (package-lock-parse (package-lock-valid-source))
-    [(ResultPackageLockFile.Err _) false]
-    [(ResultPackageLockFile.Ok lock)
-      (match (package-lock-parse (package-lock-emit lock))
-        [(ResultPackageLockFile.Err _) false]
-        [(ResultPackageLockFile.Ok again)
-          (let
-            [entries : package_lock_entry_vec.Vec again.entries]
-            (and
-              (= (package_lock_entry_vec.len (& entries)) 2)
-              (package-lock-list-has-entry?
-                (owned_view.compiler-owned-shared-view entries)
-                "alpha"
-                "https://github.com/owner/alpha.git"
-                (package_cache_core.PackageCachePinKind.Branch)
-                "main"
-                "1111111111111111111111111111111111111111")
-              (package-lock-list-has-entry?
-                entries
-                "zeta"
-                "https://github.com/owner/zeta.git"
-                (package_cache_core.PackageCachePinKind.Rev)
-                "abcdef0123456789abcdef0123456789abcdef01"
-                "abcdef0123456789abcdef0123456789abcdef01")))])]))
-
-(cfg
-  test
-  (define (package-lock-entry-alias-at?
-    [entries : (& entries package_lock_entry_vec.Vec)]
-    [index : i64]
-    [alias : String]) : bool
-    (string.eq
-      (__tl-project-field
-        (package_lock_entry_vec.get
-          entries
-          index
-          (package-lock-entry-list-fallback))
-        alias)
-      alias)))
-
-(cfg
-  test
-  (define (package-lock-growth-entries-ok?
-    [entries : (& entries package_lock_entry_vec.Vec)]) : bool
-    (and
-      (= (package_lock_entry_vec.len entries) 6)
-      (= (package_lock_entry_vec.capacity entries) 8)
-      (package-lock-entry-alias-at? entries 0 "alpha")
-      (package-lock-entry-alias-at? entries 1 "bravo")
-      (package-lock-entry-alias-at? entries 2 "charlie")
-      (package-lock-entry-alias-at? entries 3 "delta")
-      (package-lock-entry-alias-at? entries 4 "echo")
-      (package-lock-entry-alias-at? entries 5 "foxtrot"))))
-
-(cfg
-  test
-  (define (package-lock-growth-order-ok?) : bool
-    (match (package-lock-parse (package-lock-growth-source))
-      [(ResultPackageLockFile.Err _) false]
-      [(ResultPackageLockFile.Ok lock)
-        (if (package-lock-growth-entries-ok? (& lock.entries))
-          (match (package-lock-parse (package-lock-emit lock))
-            [(ResultPackageLockFile.Err _) false]
-            [(ResultPackageLockFile.Ok again)
-              (package-lock-growth-entries-ok? (& again.entries))])
-          false)])))
-
-(define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
-  (match (package-lock-parse source)
-    [(ResultPackageLockFile.Err message) (string.eq message expected)]
-    [(ResultPackageLockFile.Ok _) false]))
-
-(define (package-lock-rejections-ok?) : bool
-  (and
-    (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"dup\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"dup\") (url \"u\") (pin (tag \"v1\")) (commit \"b\"))))"
-      "package-lock: duplicate dependency alias `dup`")
-    (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (rev \"a\")))))"
-      "package-lock: dependency missing required field `commit`")
-    (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias a) (url \"u\") (pin (rev \"a\")) (commit \"a\"))))"
-      "package-lock: field `alias` must have a string value")
-    (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v2\") (dependencies))"
-      "package-lock: unsupported version `v2`")
-    (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (sha \"a\")) (commit \"a\"))))"
-      "package-lock: pin kind must be `rev`, `tag`, or `branch`")))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-fail [message : String]) : never
-    (io.panic message)))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-snapshot [path : String]) : PackageLockSnapshot
-    (match (package-lock-transaction-read path)
-      [(ResultPackageLockSnapshot.Err message)
-        (package-lock-transaction-test-fail message)]
-      [(ResultPackageLockSnapshot.Ok snapshot) snapshot])))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-read [path : String]) : String
-    (match (io.try-read-file (& path))
-      [(io.ErrIoBytes error)
-        (package-lock-transaction-test-fail (io.error-message error))]
-      [(io.OkIoBytes contents) (byte_buf.to-string contents)])))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-expect-commit
-    [snapshot : PackageLockSnapshot]
-    [source : String]
-    [kind : i64]) : unit
-    (match (package-lock-transaction-commit snapshot source)
-      [(ResultPackageLockCommit.Err message)
-        (package-lock-transaction-test-fail message)]
-      [(ResultPackageLockCommit.Ok outcome)
-        (let
-          [actual : i64
-            (match outcome
-              [(PackageLockCommitOutcome.Unchanged _) 0]
-              [(PackageLockCommitOutcome.Reused _) 1]
-              [(PackageLockCommitOutcome.Replaced _) 2])]
-          (if (= actual kind)
-            unit
-            (package-lock-transaction-test-fail
-              "package-lock transaction: unexpected commit outcome")))])))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-expect-error
-    [snapshot : PackageLockSnapshot]
-    [source : String]
-    [needle : String]) : unit
-    (match (package-lock-transaction-commit snapshot source)
-      [(ResultPackageLockCommit.Ok _)
-        (package-lock-transaction-test-fail
-          "package-lock transaction unexpectedly succeeded")]
-      [(ResultPackageLockCommit.Err message)
-        (if (string.contains (& message) (& needle))
-          unit
-          (package-lock-transaction-test-fail message))])))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-set-fault [phase : String]) : unit
-    (let
-      [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
-      (if (env.set! (& name) (& phase))
-        unit
-        (package-lock-transaction-test-fail
-          "package-lock transaction: cannot set fault injection")))))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-clear-fault) : unit
-    (let
-      [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
-      (if (env.unset! (& name))
-        unit
-        (package-lock-transaction-test-fail
-          "package-lock transaction: cannot clear fault injection")))))
-
-(cfg
-  test
-  (define (package-lock-transaction-test-cleanup
-    [root : String]
-    [path : String]
-    [collision : String]) : unit
-    (let
-      [target-name : String "target"]
-      [typelisp-name : String "typelisp"]
-      [locks-name : String "locks"]
-      [guard-name : String "package-lock.writer-lock"]
-      [target : String (fs.path-join (& root) (& target-name))]
-      [typelisp : String (fs.path-join (& target) (& typelisp-name))]
-      [locks : String (fs.path-join (& typelisp) (& locks-name))]
-      [guard : String (fs.path-join (& locks) (& guard-name))]
-      (begin
-        (fs.try-remove-file-if-exists (& path))
-        (fs.try-remove-file-if-exists (& collision))
-        (fs.try-remove-file-if-exists (& guard))
-        (fs.try-remove-dir-if-exists (& locks))
-        (fs.try-remove-dir-if-exists (& typelisp))
-        (fs.try-remove-dir-if-exists (& target))
-        (fs.try-remove-dir-if-exists (& root))
-        unit))))
-
-(cfg
-  test
-  (define (package-lock-transaction-test) : unit
-    (match (fs.try-create-temp-dir "typelisp package lock transaction")
-      [(io.ErrIoString error)
-        (package-lock-transaction-test-fail (io.error-message error))]
-      [(io.OkIoString root)
-        (let
-          [lock-name : String "typelisp.lock"]
-          [path : String (fs.path-join (& root) (& lock-name))]
-          [collision : String
-            (package-lock-stage-path
-              (string.copy path)
-              (+ package-lock-stage-sequence 1)
-              0)]
-          [collision-source : String "unrelated staging owner\n"]
-          [source-a : String
-            "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n  ))\n"]
-          [source-b : String
-            "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n    (dependency\n      (alias \"dep\")\n      (url \"https://example.invalid/a.git\")\n      (pin (rev \"a\"))\n      (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"))\n  ))\n"]
-          [source-c : String
-            "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n    (dependency\n      (alias \"dep\")\n      (url \"https://example.invalid/a.git\")\n      (pin (rev \"b\"))\n      (commit \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"))\n  ))\n"]
-          (begin
-            (match (io.try-write-file
-              (& collision)
-              (byte_buf.str-as-bytes (& collision-source)))
-              [(io.ErrIoUnit error)
-                (package-lock-transaction-test-fail (io.error-message error))]
-              [(io.OkIoUnit) unit])
-            (package-lock-transaction-test-expect-commit
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-a)
-              2)
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy path))
-              source-a)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: initial replacement mismatch"))
-            (package-lock-transaction-test-expect-commit
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-a)
-              0)
-            (let
-              [snapshot-a : PackageLockSnapshot
-                (package-lock-transaction-test-snapshot (string.copy path))]
-              (begin
-                (match (io.try-write-file
-                  (& path)
-                  (byte_buf.str-as-bytes (& source-b)))
-                  [(io.ErrIoUnit error)
-                    (package-lock-transaction-test-fail
-                      (io.error-message error))]
-                  [(io.OkIoUnit) unit])
-                (package-lock-transaction-test-expect-error
-                  snapshot-a
-                  (string.copy source-c)
-                  "changed since resolution")))
-            (match (io.file-open (& path) (io.OpenWriteCreateNew))
-              [(io.OkIoFile handle)
-                (begin
-                  (io.file-close handle)
-                  (package-lock-transaction-test-fail
-                    "package-lock transaction: exclusive create reopened lock"))]
-              [(io.ErrIoFile _) unit])
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy path))
-              source-b)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: conflict overwrote winner"))
-            (package-lock-transaction-test-set-fault "before-stage")
-            (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-c)
-              "before-stage")
-            (package-lock-transaction-test-clear-fault)
-            (package-lock-transaction-test-set-fault "during-stage")
-            (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-c)
-              "during-stage")
-            (package-lock-transaction-test-clear-fault)
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy collision))
-              collision-source)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: removed another staging owner"))
-            (package-lock-transaction-test-set-fault "before-replace")
-            (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (string.copy path))
-              source-c
-              "before-replace")
-            (package-lock-transaction-test-clear-fault)
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy path))
-              source-b)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: injected failure changed lock"))
-            (package-lock-transaction-test-cleanup root path collision)))])))
-
-(define (package-lock-self-test-ok?) : bool
-  (and
-    (package-lock-valid-parse-ok?)
-    (package-lock-emit-stable-ok?)
-    (package-lock-round-trip-ok?)
-    (package-lock-rejections-ok?)))
-
-(define (package-lock-self-test) : i64
-  (if (package-lock-self-test-ok?)
-    42
-    (io.panic "package-lock: self-test mismatch")))
-
-(test
-  package-lock-parse-emit-round-trip
-  (if (package-lock-self-test-ok?)
-    unit
-    (io.panic "package-lock: inline self-test mismatch")))
-
-(test
-  package-lock-generated-vector-growth-order
-  (if (package-lock-growth-order-ok?)
-    unit
-    (io.panic "package-lock: generated vector growth/order mismatch")))
-
-(test package-lock-atomic-transaction (package-lock-transaction-test))

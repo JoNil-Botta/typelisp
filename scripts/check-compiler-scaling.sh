@@ -4,7 +4,7 @@ set -eu
 #
 # The instruction-count gate pins the compiler's cost on fixed inputs. It cannot
 # see a cost that is fine at today's sizes and quadratic in the size of a
-# function, a struct or a module. This gate measures that directly (#7773).
+# function, a struct or a module. This gate measures that directly.
 #
 # For every row of perf/compiler-scaling-budgets.tsv it generates three
 # self-checking programs of sizes S < M < L along one dimension with
@@ -56,10 +56,8 @@ Environment:
 EOF
 }
 
-fail() {
-    echo "[compiler-scaling] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[compiler-scaling] '
+. "$ROOT/scripts/lib-gate.sh"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in

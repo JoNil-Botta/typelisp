@@ -4,21 +4,17 @@
 ;; images, and this module also assembles the focused dispatch proof used by
 ;; the loader smoke.
 (import stdlib.byte_buf_core)
-(import stdlib.io)
+(import stdlib.byte_le)
+(import stdlib.comptime)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
 (import compiler_intern as ci)
-(import lex as lexer)
 (import read as reader)
-(import compiler_owned_view as owned_view)
 
 (defmacro (tlci-host-callback-name-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (tlci-symbol-text [name-id : ci.InternSyntaxId]) : String
   (reader.symbol-text-for-syntax-id name-id))
@@ -83,8 +79,7 @@
   [items : TlciSpmdSpecializations]
   [item : TlciSpmdSpecialization]) : TlciSpmdSpecializations
   (let
-    [next : TlciSpmdSpecializations
-      (owned_view.compiler-owned-shared-view items)]
+    [next : TlciSpmdSpecializations items]
     (begin
       (tlci_specialization_vec.push-ref! (&mut next.items) item)
       next)))
@@ -118,7 +113,7 @@
   [items : TlciSpmdCallables]
   [item : TlciSpmdCallable]) : TlciSpmdCallables
   (let
-    [next : TlciSpmdCallables (owned_view.compiler-owned-shared-view items)]
+    [next : TlciSpmdCallables items]
     (begin
       (tlci_callable_vec.push-ref! (&mut next.items) item)
       next)))
@@ -518,586 +513,428 @@
   3)
 (define tlci-host-callback-status-bad-request : i64
   4)
-(define tlci-host-callback-name-fuel-check : String
-  "fuel-check")
-(define tlci-host-callback-name-diagnostic : String
-  "diagnostic")
-(define tlci-host-callback-name-scratch-alloc : String
-  "scratch-alloc")
-(define tlci-host-callback-name-scratch-reset : String
-  "scratch-reset")
-(define tlci-host-callback-name-expr-string : String
-  "expr-string")
-(define tlci-host-callback-name-expr-var : String
-  "expr-var")
-(define tlci-host-callback-name-expr-struct-get : String
-  "expr-struct-get")
-(define tlci-host-callback-name-expr-tuple-ref : String
-  "expr-tuple-ref")
-(define tlci-host-callback-name-expr-struct-set : String
-  "expr-struct-set")
-(define tlci-host-callback-name-string-eq : String
-  "string-eq")
-(define tlci-host-callback-name-string-append : String
-  "string-append")
-(define tlci-host-callback-name-int->string : String
-  "int->string")
-(define tlci-host-callback-name-expr-splice : String
-  "expr-splice")
-(define tlci-host-callback-name-expr-if : String
-  "expr-if")
-(define tlci-host-callback-name-pattern-wildcard : String
-  "pattern-wildcard")
-(define tlci-host-callback-name-pattern-binding : String
-  "pattern-binding")
-(define tlci-host-callback-name-pattern-variant : String
-  "pattern-variant")
-(define tlci-host-callback-name-pattern-list-empty : String
-  "pattern-list-empty")
-(define tlci-host-callback-name-pattern-list-cons : String
-  "pattern-list-cons")
-(define tlci-host-callback-name-pattern-list-cons-from-values : String
-  "pattern-list-cons-from-values")
-(define tlci-host-callback-name-match-arm : String
-  "match-arm")
-(define tlci-host-callback-name-match-arm-list-empty : String
-  "match-arm-list-empty")
-(define tlci-host-callback-name-match-arm-list-cons : String
-  "match-arm-list-cons")
-(define tlci-host-callback-name-expr-match : String
-  "expr-match")
-(define tlci-host-callback-name-expr-type : String
-  "expr-type")
-(define tlci-host-callback-name-type-expr : String
-  "type-expr")
-(define tlci-host-callback-name-module-name : String
-  "module-name")
-(define tlci-host-callback-name-module-hook : String
-  "module-hook")
-(define tlci-host-callback-name-type-kind : String
-  "type-kind")
-(define tlci-host-callback-name-type-key : String
-  "type-key")
-(define tlci-host-callback-name-struct-field-count : String
-  "struct-field-count")
-(define tlci-host-callback-name-struct-field-name : String
-  "struct-field-name")
-(define tlci-host-callback-name-struct-field-type : String
-  "struct-field-type")
-(define tlci-host-callback-name-enum-variant-count : String
-  "enum-variant-count")
-(define tlci-host-callback-name-enum-variant-name : String
-  "enum-variant-name")
-(define tlci-host-callback-name-enum-variant-payload-count : String
-  "enum-variant-payload-count")
-(define tlci-host-callback-name-enum-variant-payload-type : String
-  "enum-variant-payload-type")
-(define tlci-host-callback-name-array-element-type : String
-  "array-element-type")
-(define tlci-host-callback-name-box-element-type : String
-  "box-element-type")
-(define tlci-host-callback-name-array-length : String
-  "array-length")
-(define tlci-host-callback-name-array-dynamic? : String
-  "array-dynamic?")
-(define tlci-host-callback-name-tuple-element-count : String
-  "tuple-element-count")
-(define tlci-host-callback-name-tuple-element-type : String
-  "tuple-element-type")
-(define tlci-host-callback-name-function-param-count : String
-  "function-param-count")
-(define tlci-host-callback-name-function-return-type : String
-  "function-return-type")
-(define tlci-host-callback-name-expr-list-length : String
-  "expr-list-length")
-(define tlci-host-callback-name-expr-list-nth : String
-  "expr-list-nth")
-(define tlci-host-callback-name-expr-list-type-nth : String
-  "expr-list-type-nth")
-(define tlci-host-callback-name-expr-binding-clause-name : String
-  "expr-binding-clause-name")
-(define tlci-host-callback-name-expr-binding-clause-has-type? : String
-  "expr-binding-clause-has-type?")
-(define tlci-host-callback-name-expr-binding-clause-type : String
-  "expr-binding-clause-type")
-(define tlci-host-callback-name-expr-binding-clause-init : String
-  "expr-binding-clause-init")
-(define tlci-host-callback-name-expr-binding-clause-list-length : String
-  "expr-binding-clause-list-length")
-(define tlci-host-callback-name-expr-binding-clause-list-nth : String
-  "expr-binding-clause-list-nth")
-(define tlci-host-callback-name-pattern-list-bindings : String
-  "pattern-list-bindings")
-(define tlci-host-callback-name-type-cleanup-owning? : String
-  "type-cleanup-owning?")
-(define tlci-host-callback-name-type-cleanup-function : String
-  "type-cleanup-function")
-(define tlci-host-callback-name-module-value? : String
-  "module-value?")
-(define tlci-host-callback-name-module-value-type : String
-  "module-value-type")
-(define tlci-host-callback-name-module-value-expr : String
-  "module-value-expr")
-(define tlci-host-callback-name-function-shared-borrow-returns-string? : String
-  "function-shared-borrow-returns-string?")
-(define tlci-host-callback-name-reference-element-type : String
-  "reference-element-type")
 
-;; Construction ops for natively compiled quasiquote bodies. Values under
-;; construction live entirely on a compiler-owned session value stack, so the
-;; image never holds result handles: list-empty pushes a fresh empty
-;; expression list, list-append pops an element then a list and pushes the
-;; appended list, push-operand pushes the macro operand named by immediate
-;; `a`, expr-call pops an argument list then a callee and pushes the call
-;; expression. commit-result pops the stack top into the session result.
-;; The embedded image and its consumer are always the same source-bound binary.
-;; Refs #5212.
-(define tlci-host-callback-name-expr-list-empty : String
-  "expr-list-empty")
-(define tlci-host-callback-name-expr-list-cons : String
-  "expr-list-cons")
-(define tlci-host-callback-name-expr-list-append : String
-  "expr-list-append")
-(define tlci-host-callback-name-push-operand : String
-  "push-operand")
-(define tlci-host-callback-name-expr-call : String
-  "expr-call")
-(define tlci-host-callback-name-expr-shared-call1 : String
-  "expr-shared-call1")
-(define tlci-host-callback-name-commit-result : String
-  "commit-result")
+;; Host callback ABI table: one row per named callback a native image may
+;; import, naming the compiler host's implementation
+;; `compiler-comptime-host-callback-<name>` of the ABI callback `<name>`.
+;; `(tlci-host-callback-table collector contexts...)` expands to
+;; `(collector contexts... rows...)`, so this table is the one source of
+;; callback identity: `tlci-host-callback-name` checks each ABI name the
+;; native producer emits against it, the producer declares one
+;; `_tl_comptime_host_<name>` extern per row, and the compiler host registers
+;; every row's implementation. (Spelling the implementations here also keeps
+;; them in `typelisp test` harnesses, whose source-reachability pruning cannot
+;; see names that macros assemble.) Every row shares one native signature, the
+;; session cookie plus three i64 arguments; the abort callback has its own
+;; fixed table slot and is not a row. Row order is not ABI: images bind
+;; imports by name.
+(defmacro (tlci-host-callback-table [collector : Expr] [contexts : Expr ...]) : Expr
+  `(,collector
+    ,@contexts
+    compiler-comptime-host-callback-fuel-check
+    compiler-comptime-host-callback-diagnostic
+    compiler-comptime-host-callback-scratch-alloc
+    compiler-comptime-host-callback-scratch-reset
+    compiler-comptime-host-callback-expr-string
+    compiler-comptime-host-callback-expr-var
+    compiler-comptime-host-callback-expr-struct-get
+    compiler-comptime-host-callback-expr-tuple-ref
+    compiler-comptime-host-callback-expr-struct-set
+    compiler-comptime-host-callback-string-eq
+    compiler-comptime-host-callback-string-append
+    compiler-comptime-host-callback-int->string
+    compiler-comptime-host-callback-expr-splice
+    compiler-comptime-host-callback-expr-if
+    compiler-comptime-host-callback-pattern-wildcard
+    compiler-comptime-host-callback-pattern-binding
+    compiler-comptime-host-callback-pattern-variant
+    compiler-comptime-host-callback-pattern-list-empty
+    compiler-comptime-host-callback-pattern-list-cons
+    compiler-comptime-host-callback-pattern-list-cons-from-values
+    compiler-comptime-host-callback-match-arm
+    compiler-comptime-host-callback-match-arm-list-empty
+    compiler-comptime-host-callback-match-arm-list-cons
+    compiler-comptime-host-callback-expr-match
+    compiler-comptime-host-callback-expr-type
+    compiler-comptime-host-callback-type-expr
+    compiler-comptime-host-callback-module-name
+    compiler-comptime-host-callback-module-hook
+    compiler-comptime-host-callback-type-kind
+    compiler-comptime-host-callback-type-key
+    compiler-comptime-host-callback-struct-field-count
+    compiler-comptime-host-callback-struct-field-name
+    compiler-comptime-host-callback-struct-field-type
+    compiler-comptime-host-callback-enum-variant-count
+    compiler-comptime-host-callback-enum-variant-name
+    compiler-comptime-host-callback-enum-variant-payload-count
+    compiler-comptime-host-callback-enum-variant-payload-type
+    compiler-comptime-host-callback-array-element-type
+    compiler-comptime-host-callback-box-element-type
+    compiler-comptime-host-callback-array-length
+    compiler-comptime-host-callback-array-dynamic?
+    compiler-comptime-host-callback-tuple-element-count
+    compiler-comptime-host-callback-tuple-element-type
+    compiler-comptime-host-callback-function-param-count
+    compiler-comptime-host-callback-function-return-type
+    compiler-comptime-host-callback-expr-list-length
+    compiler-comptime-host-callback-expr-list-nth
+    compiler-comptime-host-callback-expr-list-type-nth
+    compiler-comptime-host-callback-expr-binding-clause-name
+    compiler-comptime-host-callback-expr-binding-clause-has-type?
+    compiler-comptime-host-callback-expr-binding-clause-type
+    compiler-comptime-host-callback-expr-binding-clause-init
+    compiler-comptime-host-callback-expr-binding-clause-list-length
+    compiler-comptime-host-callback-expr-binding-clause-list-nth
+    compiler-comptime-host-callback-pattern-list-bindings
+    compiler-comptime-host-callback-type-cleanup-owning?
+    compiler-comptime-host-callback-type-cleanup-function
+    compiler-comptime-host-callback-module-value?
+    compiler-comptime-host-callback-module-value-type
+    compiler-comptime-host-callback-module-value-expr
+    compiler-comptime-host-callback-function-shared-borrow-returns-string?
+    compiler-comptime-host-callback-reference-element-type
+    ;; Construction ops for natively compiled quasiquote bodies. Values under
+    ;; construction live entirely on a compiler-owned session value stack, so
+    ;; the image never holds result handles: list-empty pushes a fresh empty
+    ;; expression list, list-append pops an element then a list and pushes the
+    ;; appended list, push-operand pushes the macro operand named by immediate
+    ;; `a`, expr-call pops an argument list then a callee and pushes the call
+    ;; expression. commit-result pops the stack top into the session result. The
+    ;; embedded image and its consumer are always the same source-bound binary.
+    ;; Refs #5212.
+    compiler-comptime-host-callback-expr-list-empty
+    compiler-comptime-host-callback-expr-list-cons
+    compiler-comptime-host-callback-expr-list-append
+    compiler-comptime-host-callback-push-operand
+    compiler-comptime-host-callback-expr-call
+    compiler-comptime-host-callback-expr-shared-call1
+    compiler-comptime-host-callback-commit-result
+    ;; Template source spans. The parser wraps every expression it reads in an
+    ;; `AstExpr.Spanned`, and the interpreted quasiquote reconstructs that
+    ;; wrapper around every template node it rebuilds, so a natively produced
+    ;; expansion only matches the interpreted one when it rebuilds the wrappers
+    ;; too. Both ops re-wrap the stack top and take the span in their
+    ;; immediates: `a` is the start line, `b` the start column, `c` the end line
+    ;; and column packed `(line << 32) | column`. expr-span is the
+    ;; template-origin form and always wraps. expr-span-unquoted covers a
+    ;; template position that was an unquote: the substituted value is already
+    ;; spanned at its own call site, so the template span applies only when it
+    ;; is not, matching the interpreted quote's unquoted-origin rule. Neither op
+    ;; disturbs a stack top that carries no expression node (a type or a
+    ;; comptime scalar), which the interpreted route never spans either. Refs
+    ;; #5212.
+    compiler-comptime-host-callback-expr-span
+    compiler-comptime-host-callback-expr-span-unquoted
+    ;; Intrinsic node construction: pop two operand expressions and push the
+    ;; dedicated node the parser produces (rather than a generic call). Refs
+    ;; #5213.
+    compiler-comptime-host-callback-expr-array-ref
+    compiler-comptime-host-callback-expr-array-take
+    compiler-comptime-host-callback-expr-array-push
+    compiler-comptime-host-callback-expr-replace
+    ;; Pop a size expression and a type value and push the make-array node the
+    ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
+    compiler-comptime-host-callback-expr-make-array
+    ;; Comptime reflection and literal construction for computed transformer
+    ;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
+    ;; string of a type operand against caller bytes and returns 1/0 as data (a
+    ;; negative value reports a bad request); the literal ops push literal
+    ;; expression nodes.
+    compiler-comptime-host-callback-operand-type-kind-eq
+    compiler-comptime-host-callback-expr-bool-literal
+    compiler-comptime-host-callback-expr-int-literal
+    compiler-comptime-host-callback-expr-list-fold-if
+    compiler-comptime-host-callback-expr-clause-list-fold-if
+    compiler-comptime-host-callback-pattern-binding-typed
+    compiler-comptime-host-callback-expr-resource-scope
+    compiler-comptime-host-callback-expr-let-scope
+    compiler-comptime-host-callback-expr-shared-let-scope
+    compiler-comptime-host-callback-expr-for-owned
+    compiler-comptime-host-callback-expr-set-var
+    compiler-comptime-host-callback-expr-begin-unit
+    compiler-comptime-host-callback-expr-not
+    compiler-comptime-host-callback-expr-while
+    compiler-comptime-host-callback-syntax-name-fresh
+    ;; General quasiquote template construction (refs #5596): expr-begin pops an
+    ;; expression list and pushes the begin node the parser produces;
+    ;; expr-binary-op pops the right then the left operand expression and pushes
+    ;; a binary node for the AstBinOp ordinal in immediate `a`; expr-unary-op
+    ;; pops the operand expression and pushes a unary node for the AstUnOp
+    ;; ordinal in immediate `a`; expr-char-literal pushes a char literal node
+    ;; for the code point in immediate `a`; expr-unit-literal pushes the unit
+    ;; literal node. The embedded image and its consumer are always the same
+    ;; source-bound binary.
+    compiler-comptime-host-callback-expr-begin
+    compiler-comptime-host-callback-expr-binary-op
+    compiler-comptime-host-callback-expr-unary-op
+    compiler-comptime-host-callback-expr-char-literal
+    compiler-comptime-host-callback-expr-unit-literal
+    ;; Computed-body locals and declaration-template construction (refs #5603).
+    ;; local-set pops one value into the session local slot named by immediate
+    ;; `a`; local-get pushes the slot's value. expr-var-from-value pops a
+    ;; comptime String or Name value and pushes the variable node the
+    ;; interpreted `(comptime.)expr-var` builtin produces (syntax-name
+    ;; resolution over the source-name session included). expr-bracket-clause
+    ;; pops an expression list and pushes the bracket-clause node the parser
+    ;; produces for `[item ...]` in templates. expr-borrow pops the place
+    ;; expression and pushes a borrow node: immediate `a` is 1 for `&mut` and 0
+    ;; for `&`; the lifetime is inferred. The embedded image and its consumer
+    ;; are always the same source-bound binary.
+    compiler-comptime-host-callback-local-set
+    compiler-comptime-host-callback-local-get
+    compiler-comptime-host-callback-expr-var-from-value
+    compiler-comptime-host-callback-expr-bracket-clause
+    compiler-comptime-host-callback-expr-borrow
+    ;; Computed-body support (refs #5603): string-value pushes the comptime
+    ;; String value for caller bytes (a parsed-source string identity like the
+    ;; lexer's); diagnostic-from-value pops a comptime String into the session
+    ;; diagnostic and answers with the diagnostic status; pattern-var pushes a
+    ;; unit/variable pattern for caller bytes with the template-source mark.
+    compiler-comptime-host-callback-string-value
+    compiler-comptime-host-callback-diagnostic-from-value
+    compiler-comptime-host-callback-pattern-var
+    ;; More template construction (refs #5603): expr-array-set pops the value,
+    ;; index, and target expressions and pushes the array-set! node; let-binding
+    ;; pops the init expression and pushes a named let binding (template-source
+    ;; marked like the interpreted quote); let-binding-list-empty/cons build the
+    ;; binding list; expr-let pops the body and the binding list and pushes the
+    ;; let node.
+    compiler-comptime-host-callback-expr-array-set
+    compiler-comptime-host-callback-let-binding
+    compiler-comptime-host-callback-let-binding-list-empty
+    compiler-comptime-host-callback-let-binding-list-cons
+    compiler-comptime-host-callback-expr-let
+    ;; expr-lambda reconstructs a quasiquoted lambda from its parameter types,
+    ;; optional return type, and body. The parameter names/flags are carried in
+    ;; a compact immediate payload so the value stack remains syntax-only.
+    compiler-comptime-host-callback-expr-lambda
+    ;; Public computed one-parameter lambda builder. Unlike the template
+    ;; callback, its hygienic name, reflected parameter type, and assembled body
+    ;; are all supplied on the host value stack.
+    compiler-comptime-host-callback-expr-lambda1
+    ;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
+    ;; caller bytes (unmarked, matching the interpreted type quote);
+    ;; let-binding- typed pops the type value then the init expression and
+    ;; pushes a binding carrying both.
+    compiler-comptime-host-callback-type-var
+    compiler-comptime-host-callback-let-binding-typed
+    ;; type-scalar pushes the scalar AstType variant named by immediate ordinal
+    ;; (the primitive type constructors; refs #5603).
+    compiler-comptime-host-callback-type-scalar
+    ;; expr-int-from-data pushes an int literal expression whose value is the
+    ;; data i64 in immediate `a` (used when a computed reflection yields a
+    ;; runtime count, refs #5603).
+    compiler-comptime-host-callback-expr-int-from-data
+    ;; Expression-value destructuring for computed bodies that match on the
+    ;; shape of an operand (refs #5602). operand-expr-call? answers 1/0 as data
+    ;; for "operand `a` is a call expression" (a negative value is its
+    ;; malformed-request sentinel, like the other data-returning probes); the
+    ;; two accessors push the callee expression and the argument list the
+    ;; interpreted `(comptime.Expr.Call callee args)` pattern binds. All three
+    ;; unwrap `Spanned` and diagnostic-only macro expansion markers first,
+    ;; matching `ctfe-match-expr-variant`.
+    compiler-comptime-host-callback-operand-expr-call?
+    compiler-comptime-host-callback-operand-expr-call-callee
+    compiler-comptime-host-callback-operand-expr-call-args
+    ;; The `comptime.Expr.Int` half of the same destructuring (refs #5602).
+    ;; operand-expr-int? answers 1/0 as data with a negative malformed-request
+    ;; sentinel; operand-expr-int-value answers the literal's i64 value as data
+    ;; and is only issued after the probe, so it has no error channel of its
+    ;; own. Both unwrap `Spanned` and diagnostic-only macro expansion markers
+    ;; first. local-expr-list-length and local-expr-list-nth are the local-slot
+    ;; twins of the operand-only expr-list callbacks: a destructured `ExprList`
+    ;; payload lives in a session local, and the fold bodies index it there.
+    compiler-comptime-host-callback-operand-expr-int?
+    compiler-comptime-host-callback-operand-expr-int-value
+    compiler-comptime-host-callback-local-expr-int?
+    compiler-comptime-host-callback-local-expr-int-value
+    compiler-comptime-host-callback-local-expr-list-length
+    compiler-comptime-host-callback-local-expr-list-nth
+    compiler-comptime-host-callback-local-expr-string?
+    compiler-comptime-host-callback-local-expr-var?
+    compiler-comptime-host-callback-local-expr-var-name
+    compiler-comptime-host-callback-local-expr-begin?
+    compiler-comptime-host-callback-local-expr-begin-items
+    compiler-comptime-host-callback-local-bool-value
+    compiler-comptime-host-callback-value-bool
+    ;; Remaining binder-free template node kinds (refs #5605, #6240):
+    ;; expr-return, expr-box, expr-box-get, and expr-box-take each pop one
+    ;; expression and push the corresponding AST node; expr-float-literal pushes
+    ;; a float literal carrying the caller bytes, which are the literal's exact
+    ;; source text (the interpreted quote preserves float spelling verbatim).
+    ;; The embedded image and its consumer are always the same source-bound
+    ;; binary.
+    compiler-comptime-host-callback-expr-return
+    compiler-comptime-host-callback-expr-box
+    compiler-comptime-host-callback-expr-box-get
+    compiler-comptime-host-callback-expr-box-take
+    compiler-comptime-host-callback-expr-float-literal
+    ;; Computed-scrutinee probes and cast/init templates (refs #5604, #5606).
+    ;; The two probes share operand-type-kind-eq's shape -- operand index in
+    ;; `a`, caller bytes in `b`/`c`, 1/0 as data and a negative
+    ;; malformed-request sentinel -- so they bypass the status latch the same
+    ;; way: operand-expr-type-kind-eq compares the type-kind of an Expr
+    ;; operand's produced type, and operand-type-key-eq compares a type
+    ;; operand's canonical key. expr-cast pops the type value then the operand
+    ;; expression and pushes the cast node the parser produces. expr-init pops
+    ;; one type value and pushes the typed `(init : T)` node. The embedded image
+    ;; and its consumer are always the same source-bound binary.
+    compiler-comptime-host-callback-operand-expr-type-kind-eq
+    compiler-comptime-host-callback-operand-type-key-eq
+    compiler-comptime-host-callback-expr-cast
+    compiler-comptime-host-callback-expr-ann
+    compiler-comptime-host-callback-expr-init
+    ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe
+    ;; pops an expression list and pushes the `(unsafe ...)` node;
+    ;; expr-ptr-read, expr-ptr-addr-of, expr-ptr-to-int, and expr-string-data
+    ;; each pop one expression; expr-ptr-write, expr-ptr-offset, and
+    ;; expr-string-from-bytes pop the second then the first operand;
+    ;; expr-array-data pops one. expr-ptr-cast pops the type value then the
+    ;; pointer expression. These complete the template subset the
+    ;; `stdlib.text_buf_family` generators need.
+    compiler-comptime-host-callback-expr-unsafe
+    compiler-comptime-host-callback-expr-ptr-read
+    compiler-comptime-host-callback-expr-ptr-addr-of
+    compiler-comptime-host-callback-expr-ptr-to-int
+    compiler-comptime-host-callback-expr-int-to-ptr
+    compiler-comptime-host-callback-expr-string-data
+    compiler-comptime-host-callback-expr-ptr-write
+    compiler-comptime-host-callback-expr-ptr-offset
+    compiler-comptime-host-callback-expr-string-from-bytes
+    compiler-comptime-host-callback-expr-array-data
+    ;; expr-ptr-cast pops the type value then the pointer expression, the order
+    ;; expr-make-array uses. Refs #5605.
+    compiler-comptime-host-callback-expr-ptr-cast
+    ;; The literal text of a string-literal `Expr`, pushed as the comptime
+    ;; String value the interpreted `comptime.expr-string-value` yields -- the
+    ;; same `(CompilerCtfeValue.String (intern-str id) id)` identity, so a
+    ;; downstream `expr-var`/`string-append` sees exactly what interpretation
+    ;; gave it. The operand form reads a macro operand directly; the generic
+    ;; form pops a computed Expr from the session stack. A non-literal produces
+    ;; the interpreted diagnostic rather than silently yielding empty text.
+    compiler-comptime-host-callback-operand-expr-string-value
+    compiler-comptime-host-callback-expr-string-value
+    ;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a
+    ;; plain identifier expression", and an accessor pushing that identifier's
+    ;; spelling as a comptime String so the body can build a derived name from
+    ;; it. The serialize nested-alias shape needs exactly this pair. Both unwrap
+    ;; `Spanned` and diagnostic-only macro expansion markers first, matching
+    ;; `ctfe-match-expr-variant`. Refs #5700.
+    compiler-comptime-host-callback-operand-expr-var?
+    compiler-comptime-host-callback-operand-expr-var-name
+    ;; value-i64 pushes a comptime i64 from immediate `a`, which is what
+    ;; `comptime.int->string` consumes when its argument is a literal or a
+    ;; compile-time data local rather than a stack value. Refs #5700.
+    compiler-comptime-host-callback-value-i64
+    ;; A computed value-position unit literal must still occupy a session stack
+    ;; slot so conditional validation bindings can share the ordinary local-set
+    ;; continuation with their diagnostic alternative. Refs #5606.
+    compiler-comptime-host-callback-value-unit
+    ;; Select one of two already-computed session values from an i64 condition
+    ;; immediate. The producer only emits this for side-effect-free Var
+    ;; branches.
+    compiler-comptime-host-callback-value-select
+    ;; Comptime string scanning over a String session local (refs #5701). The
+    ;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
+    ;; `type-key` -- and then walk it, so all three read the local by slot
+    ;; instead of routing every step through a stack push. local-string-length
+    ;; answers the byte length as data and local-string-ref the byte at `b` as
+    ;; data, both with a negative malformed-request sentinel; local-string-slice
+    ;; pushes the `[b, b+c)` range as the generated comptime String
+    ;; `comptime.string-slice` yields. expr-string-from-value pops a comptime
+    ;; String and pushes the string-literal expression `comptime.expr-string`
+    ;; builds, carrying the popped value's own intern id so a template embeds
+    ;; exactly the text interpretation would. Their explicit names keep the
+    ;; local-slot semantics distinct from the stack-shaped `string-length` /
+    ;; `string-ref` callbacks.
+    compiler-comptime-host-callback-local-string-length
+    compiler-comptime-host-callback-local-string-ref
+    compiler-comptime-host-callback-local-string-slice
+    compiler-comptime-host-callback-expr-string-from-value
+    ;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
+    ;; literal expression", the `comptime.expr-string?` guard every
+    ;; literal-template macro opens with, with the same negative
+    ;; malformed-request sentinel as the other operand probes. Refs #5701.
+    compiler-comptime-host-callback-operand-expr-string?
+    ;; Composite type templates (refs #5605), for annotations such as
+    ;; `(__tl_dyn-array String)`, `(Ptr u8)`, `(MutPtr i64)`, `(& text str)` and
+    ;; `(&mut buf TextBuf)` in the `stdlib.text_buf_family` generators and
+    ;; generated vector modules. Each callback pops the element/inner type value
+    ;; and pushes the wrapper, so a nested annotation builds bottom-up like an
+    ;; expression template does. type-ptr and type-ref select mutability with immediate
+    ;; `a`; type-array takes its element count in `a`; type-ref takes the
+    ;; lifetime name in `b`/`c`. type-var-args takes a lifetime count in `a` and
+    ;; a count-validated newline-delimited nominal/lifetime payload in `b`/`c`,
+    ;; preserving the unresolved VarArgs identity and argument order. Refs
+    ;; #6551.
+    compiler-comptime-host-callback-type-ptr
+    compiler-comptime-host-callback-type-box
+    compiler-comptime-host-callback-type-dyn-array
+    compiler-comptime-host-callback-type-array
+    compiler-comptime-host-callback-type-ref
+    compiler-comptime-host-callback-type-slice
+    compiler-comptime-host-callback-type-tuple
+    compiler-comptime-host-callback-type-var-args
+    ;; A computed struct field name is a stack value rather than caller bytes:
+    ;; pop the name after the target expression and push the resulting field
+    ;; projection. Refs #5626.
+    compiler-comptime-host-callback-expr-struct-get-from-value
+    ;; A computed struct assignment has its field name on the value stack too:
+    ;; pop target, Name/String field, and value expressions, then push the
+    ;; resulting assignment. Refs #5999.
+    compiler-comptime-host-callback-expr-struct-set-from-value
+    ;; A quasiquoted `(set! ,place value)` only knows its assignment shape after
+    ;; the unquoted place has produced an Expr session value. Pop that place and
+    ;; the value expression, then reconstruct the matching variable,
+    ;; struct-field, or box assignment. Refs #6550.
+    compiler-comptime-host-callback-expr-set-from-place
+    ;; Computed enum variant names likewise retain their source-name identity as
+    ;; a session value. Pop a PatternList after the name and push the resulting
+    ;; variant pattern. Refs #5626.
+    compiler-comptime-host-callback-pattern-variant-from-value
+    ;; The computed public cons builder evaluates its head before its tail;
+    ;; consume that stack order and prepend the head to the MatchArmList. Refs
+    ;; #5626.
+    compiler-comptime-host-callback-match-arm-list-cons-from-values
+    ;; Tuple and array templates consume the ExprList assembled by the shared
+    ;; template argument/splice path and push the corresponding expression
+    ;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
+    compiler-comptime-host-callback-expr-tuple
+    compiler-comptime-host-callback-expr-array))
 
-;; Template source spans. The parser wraps every expression it reads in an
-;; `AstExpr.Spanned`, and the interpreted quasiquote reconstructs that wrapper
-;; around every template node it rebuilds, so a natively produced expansion
-;; only matches the interpreted one when it rebuilds the wrappers too. Both ops
-;; re-wrap the stack top and take the span in their immediates: `a` is the
-;; start line, `b` the start column, `c` the end line and column packed
-;; `(line << 32) | column`. expr-span is the template-origin form and always
-;; wraps. expr-span-unquoted covers a template position that was an unquote:
-;; the substituted value is already spanned at its own call site, so the
-;; template span applies only when it is not, matching the interpreted quote's
-;; unquoted-origin rule. Neither op disturbs a stack top that carries no
-;; expression node (a type or a comptime scalar), which the interpreted route
-;; never spans either. Refs #5212.
-(define tlci-host-callback-name-expr-span : String
-  "expr-span")
-(define tlci-host-callback-name-expr-span-unquoted : String
-  "expr-span-unquoted")
+;; The ABI name String of one host callback table row. A name outside the
+;; table fails to compile. (The definition-time macro checker runs the lookup
+;; with no rows; that admits every name.)
+(defmacro (tlci-host-callback-name [name : Expr]) : String
+  `(tlci-host-callback-table tlci-host-callback-name-lookup ,name))
 
-;; Intrinsic node construction: pop two operand expressions and push the
-;; dedicated node the parser produces (rather than a generic call). Refs #5213.
-(define tlci-host-callback-name-expr-array-ref : String
-  "expr-array-ref")
-(define tlci-host-callback-name-expr-array-take : String
-  "expr-array-take")
-(define tlci-host-callback-name-expr-array-push : String
-  "expr-array-push")
-(define tlci-host-callback-name-expr-replace : String
-  "expr-replace")
+(defmacro (tlci-host-callback-name-lookup [name : Expr] [rows : Expr ...]) : String
+  (match name
+    [(comptime.Expr.Var text)
+      (let
+        [row-name : String
+          (comptime.string-append "compiler-comptime-host-callback-" text)]
+        [count : i64 (expr-list-length rows)]
+        [index : i64 0]
+        [found : bool (= count 0)]
+        (begin
+          (while (< index count)
+            (begin
+              (match (expr-list-nth rows index)
+                [(comptime.Expr.Var row)
+                  (if (string.eq row row-name)
+                    (begin
+                      (set! found true)
+                      (set! index count))
+                    unit)]
+                [_ unit])
+              (set! index (+ index 1))))
+          (if found
+            (comptime.expr-string text)
+            (comptime-error
+              (comptime.string-append "tlci: unknown host callback " text)))))]
+    [_ (comptime-error "tlci-host-callback-name: expected a bare name")]))
 
-;; Pop a size expression and a type value and push the make-array node the
-;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
-(define tlci-host-callback-name-expr-make-array : String
-  "expr-make-array")
-
-;; Comptime reflection and literal construction for computed transformer
-;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
-;; string of a type operand against caller bytes and returns 1/0 as data (a
-;; negative value reports a bad request); the literal ops push literal
-;; expression nodes.
-(define tlci-host-callback-name-operand-type-kind-eq : String
-  "operand-type-kind-eq")
-(define tlci-host-callback-name-expr-bool-literal : String
-  "expr-bool-literal")
-(define tlci-host-callback-name-expr-int-literal : String
-  "expr-int-literal")
-(define tlci-host-callback-name-expr-list-fold-if : String
-  "expr-list-fold-if")
-(define tlci-host-callback-name-expr-clause-list-fold-if : String
-  "expr-clause-list-fold-if")
-(define tlci-host-callback-name-pattern-binding-typed : String
-  "pattern-binding-typed")
-(define tlci-host-callback-name-expr-resource-scope : String
-  "expr-resource-scope")
-(define tlci-host-callback-name-expr-let-scope : String
-  "expr-let-scope")
-(define tlci-host-callback-name-expr-shared-let-scope : String
-  "expr-shared-let-scope")
-(define tlci-host-callback-name-expr-for-owned : String
-  "expr-for-owned")
-(define tlci-host-callback-name-expr-set-var : String
-  "expr-set-var")
-(define tlci-host-callback-name-expr-begin-unit : String
-  "expr-begin-unit")
-(define tlci-host-callback-name-expr-not : String
-  "expr-not")
-(define tlci-host-callback-name-expr-while : String
-  "expr-while")
-(define tlci-host-callback-name-syntax-name-fresh : String
-  "syntax-name-fresh")
-
-;; General quasiquote template construction (refs #5596): expr-begin pops an
-;; expression list and pushes the begin node the parser produces; expr-binary-op
-;; pops the right then the left operand expression and pushes a binary node for
-;; the AstBinOp ordinal in immediate `a`; expr-unary-op pops the operand
-;; expression and pushes a unary node for the AstUnOp ordinal in immediate `a`;
-;; expr-char-literal pushes a char literal node for the code point in immediate
-;; `a`; expr-unit-literal pushes the unit literal node. The embedded image and
-;; its consumer are always the same source-bound binary.
-(define tlci-host-callback-name-expr-begin : String
-  "expr-begin")
-(define tlci-host-callback-name-expr-binary-op : String
-  "expr-binary-op")
-(define tlci-host-callback-name-expr-unary-op : String
-  "expr-unary-op")
-(define tlci-host-callback-name-expr-char-literal : String
-  "expr-char-literal")
-(define tlci-host-callback-name-expr-unit-literal : String
-  "expr-unit-literal")
-
-;; Computed-body locals and declaration-template construction (refs #5603).
-;; local-set pops one value into the session local slot named by immediate `a`;
-;; local-get pushes the slot's value. expr-var-from-value pops a comptime
-;; String or Name value and pushes the variable node the interpreted
-;; `(comptime.)expr-var` builtin produces (syntax-name resolution over the
-;; source-name session included). expr-bracket-clause pops an expression list
-;; and pushes the bracket-clause node the parser produces for `[item ...]` in
-;; templates. expr-borrow pops the place expression and pushes a borrow node:
-;; immediate `a` is 1 for `&mut` and 0 for `&`; the lifetime is inferred.
-;; The embedded image and its consumer are always the same source-bound binary.
-(define tlci-host-callback-name-local-set : String
-  "local-set")
-(define tlci-host-callback-name-local-get : String
-  "local-get")
-(define tlci-host-callback-name-expr-var-from-value : String
-  "expr-var-from-value")
-(define tlci-host-callback-name-expr-bracket-clause : String
-  "expr-bracket-clause")
-(define tlci-host-callback-name-expr-borrow : String
-  "expr-borrow")
-
-;; Computed-body support (refs #5603): string-value pushes the comptime String
-;; value for caller bytes (a parsed-source string identity like the lexer's);
-;; diagnostic-from-value pops a comptime String into the session diagnostic
-;; and answers with the diagnostic status; pattern-var pushes a unit/variable
-;; pattern for caller bytes with the template-source mark.
-(define tlci-host-callback-name-string-value : String
-  "string-value")
-(define tlci-host-callback-name-diagnostic-from-value : String
-  "diagnostic-from-value")
-(define tlci-host-callback-name-pattern-var : String
-  "pattern-var")
-
-;; More template construction (refs #5603): expr-array-set pops the value,
-;; index, and target expressions and pushes the array-set! node; let-binding
-;; pops the init expression and pushes a named let binding (template-source
-;; marked like the interpreted quote); let-binding-list-empty/cons build the
-;; binding list; expr-let pops the body and the binding list and pushes the
-;; let node.
-(define tlci-host-callback-name-expr-array-set : String
-  "expr-array-set")
-(define tlci-host-callback-name-let-binding : String
-  "let-binding")
-(define tlci-host-callback-name-let-binding-list-empty : String
-  "let-binding-list-empty")
-(define tlci-host-callback-name-let-binding-list-cons : String
-  "let-binding-list-cons")
-(define tlci-host-callback-name-expr-let : String
-  "expr-let")
-
-;; expr-lambda reconstructs a quasiquoted lambda from its parameter types,
-;; optional return type, and body. The parameter names/flags are carried in a
-;; compact immediate payload so the value stack remains syntax-only.
-(define tlci-host-callback-name-expr-lambda : String
-  "expr-lambda")
-
-;; Public computed one-parameter lambda builder. Unlike the template callback,
-;; its hygienic name, reflected parameter type, and assembled body are all
-;; supplied on the host value stack.
-(define tlci-host-callback-name-expr-lambda1 : String
-  "expr-lambda1")
-
-;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
-;; caller bytes (unmarked, matching the interpreted type quote); let-binding-
-;; typed pops the type value then the init expression and pushes a binding
-;; carrying both.
-(define tlci-host-callback-name-type-var : String
-  "type-var")
-(define tlci-host-callback-name-let-binding-typed : String
-  "let-binding-typed")
-
-;; type-scalar pushes the scalar AstType variant named by immediate ordinal
-;; (the primitive type constructors; refs #5603).
-(define tlci-host-callback-name-type-scalar : String
-  "type-scalar")
-
-;; expr-int-from-data pushes an int literal expression whose value is the
-;; data i64 in immediate `a` (used when a computed reflection yields a
-;; runtime count, refs #5603).
-(define tlci-host-callback-name-expr-int-from-data : String
-  "expr-int-from-data")
-
-;; Expression-value destructuring for computed bodies that match on the shape
-;; of an operand (refs #5602). operand-expr-call? answers 1/0 as data for
-;; "operand `a` is a call expression" (a negative value is its malformed-request
-;; sentinel, like the other data-returning probes); the two accessors push the
-;; callee expression and the argument list the interpreted
-;; `(comptime.Expr.Call callee args)` pattern binds. All three unwrap `Spanned`
-;; and diagnostic-only macro expansion markers first, matching
-;; `ctfe-match-expr-variant`.
-(define tlci-host-callback-name-operand-expr-call? : String
-  "operand-expr-call?")
-(define tlci-host-callback-name-operand-expr-call-callee : String
-  "operand-expr-call-callee")
-(define tlci-host-callback-name-operand-expr-call-args : String
-  "operand-expr-call-args")
-
-;; The `comptime.Expr.Int` half of the same destructuring (refs #5602).
-;; operand-expr-int? answers 1/0 as data with a negative malformed-request
-;; sentinel; operand-expr-int-value answers the literal's i64 value as data and
-;; is only issued after the probe, so it has no error channel of its own. Both
-;; unwrap `Spanned` and diagnostic-only macro expansion markers first.
-;; local-expr-list-length and local-expr-list-nth are
-;; the local-slot twins of the operand-only expr-list callbacks: a destructured
-;; `ExprList` payload lives in a session local, and the fold bodies index it
-;; there.
-(define tlci-host-callback-name-operand-expr-int? : String
-  "operand-expr-int?")
-(define tlci-host-callback-name-operand-expr-int-value : String
-  "operand-expr-int-value")
-(define tlci-host-callback-name-local-expr-int? : String
-  "local-expr-int?")
-(define tlci-host-callback-name-local-expr-int-value : String
-  "local-expr-int-value")
-(define tlci-host-callback-name-local-expr-list-length : String
-  "local-expr-list-length")
-(define tlci-host-callback-name-local-expr-list-nth : String
-  "local-expr-list-nth")
-(define tlci-host-callback-name-local-expr-string? : String
-  "local-expr-string?")
-(define tlci-host-callback-name-local-expr-var? : String
-  "local-expr-var?")
-(define tlci-host-callback-name-local-expr-var-name : String
-  "local-expr-var-name")
-(define tlci-host-callback-name-local-expr-begin? : String
-  "local-expr-begin?")
-(define tlci-host-callback-name-local-expr-begin-items : String
-  "local-expr-begin-items")
-(define tlci-host-callback-name-local-bool-value : String
-  "local-bool-value")
-(define tlci-host-callback-name-value-bool : String
-  "value-bool")
-
-;; Remaining binder-free template node kinds (refs #5605, #6240): expr-return,
-;; expr-box, expr-box-get, and expr-box-take each pop one expression and push
-;; the corresponding AST node;
-;; expr-float-literal pushes a float literal carrying the caller bytes, which
-;; are the literal's exact source text (the interpreted quote preserves float
-;; spelling verbatim). The embedded image and its consumer are always the same
-;; source-bound binary.
-(define tlci-host-callback-name-expr-return : String
-  "expr-return")
-(define tlci-host-callback-name-expr-box : String
-  "expr-box")
-(define tlci-host-callback-name-expr-box-get : String
-  "expr-box-get")
-(define tlci-host-callback-name-expr-box-take : String
-  "expr-box-take")
-(define tlci-host-callback-name-expr-float-literal : String
-  "expr-float-literal")
-
-;; Computed-scrutinee probes and cast/init templates (refs #5604, #5606). The
-;; two probes
-;; share operand-type-kind-eq's shape -- operand index in `a`, caller bytes in
-;; `b`/`c`, 1/0 as data and a negative malformed-request sentinel -- so they
-;; bypass the status latch the same way: operand-expr-type-kind-eq compares
-;; the type-kind of an Expr operand's produced type, and operand-type-key-eq
-;; compares a type operand's canonical key. expr-cast pops the type value then
-;; the operand expression and pushes the cast node the parser produces.
-;; expr-init pops one type value and pushes the typed `(init : T)` node. The
-;; embedded image and its consumer are always the same source-bound binary.
-(define tlci-host-callback-name-operand-expr-type-kind-eq : String
-  "operand-expr-type-kind-eq")
-(define tlci-host-callback-name-operand-type-key-eq : String
-  "operand-type-key-eq")
-(define tlci-host-callback-name-expr-cast : String
-  "expr-cast")
-(define tlci-host-callback-name-expr-ann : String
-  "expr-ann")
-(define tlci-host-callback-name-expr-init : String
-  "expr-init")
-
-;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe pops
-;; an expression list and pushes the `(unsafe ...)` node; expr-ptr-read,
-;; expr-ptr-addr-of, expr-ptr-to-int, and expr-string-data each pop one
-;; expression;
-;; expr-ptr-write, expr-ptr-offset, and expr-string-from-bytes pop the second
-;; then the first operand; expr-array-data pops one. expr-ptr-cast pops the type
-;; value then the pointer expression. These complete the template subset the
-;; `stdlib.text_buf_family` generators need.
-(define tlci-host-callback-name-expr-unsafe : String
-  "expr-unsafe")
-(define tlci-host-callback-name-expr-ptr-read : String
-  "expr-ptr-read")
-(define tlci-host-callback-name-expr-ptr-addr-of : String
-  "expr-ptr-addr-of")
-(define tlci-host-callback-name-expr-ptr-to-int : String
-  "expr-ptr-to-int")
-(define tlci-host-callback-name-expr-int-to-ptr : String
-  "expr-int-to-ptr")
-(define tlci-host-callback-name-expr-string-data : String
-  "expr-string-data")
-(define tlci-host-callback-name-expr-ptr-write : String
-  "expr-ptr-write")
-(define tlci-host-callback-name-expr-ptr-offset : String
-  "expr-ptr-offset")
-(define tlci-host-callback-name-expr-string-from-bytes : String
-  "expr-string-from-bytes")
-(define tlci-host-callback-name-expr-array-data : String
-  "expr-array-data")
-
-;; expr-ptr-cast pops the type value then the pointer expression, the order
-;; expr-make-array uses. Held back from #5703 because the type walker could not
-;; render `(Ptr T)`; the composite type callbacks fix that. Refs #5605.
-(define tlci-host-callback-name-expr-ptr-cast : String
-  "expr-ptr-cast")
-
-;; The literal text of a string-literal `Expr`, pushed as the comptime String
-;; value the interpreted `comptime.expr-string-value` yields -- the same
-;; `(CompilerCtfeValue.String (intern-str id) id)` identity, so a downstream
-;; `expr-var`/`string-append` sees exactly what interpretation gave it. The
-;; operand form reads a macro operand directly; the generic form pops a computed
-;; Expr from the session stack. A non-literal produces the interpreted
-;; diagnostic rather than silently yielding empty text.
-(define tlci-host-callback-name-operand-expr-string-value : String
-  "operand-expr-string-value")
-(define tlci-host-callback-name-expr-string-value : String
-  "expr-string-value")
-
-;; `comptime.Expr.Var` destructuring: a data probe for "operand `a` is a plain
-;; identifier expression", and an accessor pushing that identifier's spelling as
-;; a comptime String so the body can build a derived name from it. The serialize
-;; nested-alias shape needs exactly this pair. Both unwrap `Spanned` and
-;; diagnostic-only macro expansion markers first, matching
-;; `ctfe-match-expr-variant`. Refs #5700.
-(define tlci-host-callback-name-operand-expr-var? : String
-  "operand-expr-var?")
-(define tlci-host-callback-name-operand-expr-var-name : String
-  "operand-expr-var-name")
-
-;; value-i64 pushes a comptime i64 from immediate `a`, which is what
-;; `comptime.int->string` consumes when its argument is a literal or a
-;; compile-time data local rather than a stack value. Refs #5700.
-(define tlci-host-callback-name-value-i64 : String
-  "value-i64")
-
-;; A computed value-position unit literal must still occupy a session stack
-;; slot so conditional validation bindings can share the ordinary local-set
-;; continuation with their diagnostic alternative. Refs #5606.
-(define tlci-host-callback-name-value-unit : String
-  "value-unit")
-
-;; Select one of two already-computed session values from an i64 condition
-;; immediate. The producer only emits this for side-effect-free Var branches.
-(define tlci-host-callback-name-value-select : String
-  "value-select")
-
-;; Comptime string scanning over a String session local (refs #5701). The
-;; scanner bodies bind a String once -- from `comptime.expr-string-value` or
-;; `type-key` -- and then walk it, so all three read the local by slot instead
-;; of routing every step through a stack push. local-string-length answers the
-;; byte length as data and local-string-ref the byte at `b` as data, both with
-;; a negative malformed-request sentinel; local-string-slice pushes the
-;; `[b, b+c)` range as the generated comptime String
-;; `comptime.string-slice` yields.
-;; expr-string-from-value pops a comptime String and pushes the string-literal
-;; expression `comptime.expr-string` builds, carrying the popped value's own
-;; intern id so a template embeds exactly the text interpretation would.
-;; Their explicit names keep the local-slot semantics distinct from the
-;; stack-shaped `string-length` / `string-ref` callbacks.
-(define tlci-host-callback-name-local-string-length : String
-  "local-string-length")
-(define tlci-host-callback-name-local-string-ref : String
-  "local-string-ref")
-(define tlci-host-callback-name-local-string-slice : String
-  "local-string-slice")
-(define tlci-host-callback-name-expr-string-from-value : String
-  "expr-string-from-value")
-
-;; operand-expr-string? answers 1/0 as data for "operand `a` is a string
-;; literal expression", the `comptime.expr-string?` guard every literal-template
-;; macro opens with, with the same negative malformed-request sentinel as the
-;; other operand probes. Refs #5701.
-(define tlci-host-callback-name-operand-expr-string? : String
-  "operand-expr-string?")
-
-;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
-;; rendered only `AstType.Var` and scalars, which is what actually kept the
-;; `stdlib.text_buf_family` generators and generated vector modules on the
-;; interpreted route -- their annotations are `(__tl_dyn-array String)`, `(Ptr u8)`,
-;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
-;; expression node kind. Each callback pops the element/inner type value and
-;; pushes the wrapper, so a nested annotation builds bottom-up like an
-;; expression template does. type-ptr and type-ref select mutability with
-;; immediate `a`; type-array takes its element count in `a`; type-ref takes the
-;; lifetime name in `b`/`c`. type-var-args takes a lifetime count in `a` and a
-;; count-validated newline-delimited nominal/lifetime payload in `b`/`c`,
-;; preserving the unresolved VarArgs identity and argument order. Refs #6551.
-(define tlci-host-callback-name-type-ptr : String
-  "type-ptr")
-(define tlci-host-callback-name-type-box : String
-  "type-box")
-(define tlci-host-callback-name-type-dyn-array : String
-  "type-dyn-array")
-(define tlci-host-callback-name-type-array : String
-  "type-array")
-(define tlci-host-callback-name-type-ref : String
-  "type-ref")
-(define tlci-host-callback-name-type-slice : String
-  "type-slice")
-(define tlci-host-callback-name-type-tuple : String
-  "type-tuple")
-(define tlci-host-callback-name-type-var-args : String
-  "type-var-args")
-
-;; A computed struct field name is a stack value rather than caller bytes:
-;; pop the name after the target expression and push the resulting field
-;; projection. Refs #5626.
-(define tlci-host-callback-name-expr-struct-get-from-value : String
-  "expr-struct-get-from-value")
-
-;; A computed struct assignment has its field name on the value stack too:
-;; pop target, Name/String field, and value expressions, then push the
-;; resulting assignment. Refs #5999.
-(define tlci-host-callback-name-expr-struct-set-from-value : String
-  "expr-struct-set-from-value")
-
-;; A quasiquoted `(set! ,place value)` only knows its assignment shape after
-;; the unquoted place has produced an Expr session value. Pop that place and
-;; the value expression, then reconstruct the matching variable, struct-field,
-;; or box assignment. Refs #6550.
-(define tlci-host-callback-name-expr-set-from-place : String
-  "expr-set-from-place")
-
-;; Computed enum variant names likewise retain their source-name identity as a
-;; session value. Pop a PatternList after the name and push the resulting
-;; variant pattern. Refs #5626.
-(define tlci-host-callback-name-pattern-variant-from-value : String
-  "pattern-variant-from-value")
-
-;; The computed public cons builder evaluates its head before its tail; consume
-;; that stack order and prepend the head to the MatchArmList. Refs #5626.
-(define tlci-host-callback-name-match-arm-list-cons-from-values : String
-  "match-arm-list-cons-from-values")
-
-;; Tuple and array templates consume the ExprList assembled by the shared
-;; template argument/splice path and push the corresponding expression
-;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
-(define tlci-host-callback-name-expr-tuple : String
-  "expr-tuple")
-(define tlci-host-callback-name-expr-array : String
-  "expr-array")
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64
@@ -1264,32 +1101,17 @@
   [value : i64]) : unit
   (byte_buf_core.byte-buf-builder-push out (tlci-byte value)))
 
+;; Container integers are little-endian u64 fields (stdlib.byte_le).
 (define (tlci-push-u64!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : i64]) : unit
-  (begin
-    (tlci-push-u8! out value)
-    (tlci-push-u8! out (shr value 8))
-    (tlci-push-u8! out (shr value 16))
-    (tlci-push-u8! out (shr value 24))
-    (tlci-push-u8! out (shr value 32))
-    (tlci-push-u8! out (shr value 40))
-    (tlci-push-u8! out (shr value 48))
-    (tlci-push-u8! out (shr value 56))))
+  (byte_le.push-u64! out value))
 
 (define (tlci-set-u64!
   [out : (&mut out (__tl_dyn-array u8))]
   [offset : i64]
   [value : i64]) : unit
-  (begin
-    (set! (array-ref out offset) (tlci-byte value))
-    (set! (array-ref out (+ offset 1)) (tlci-byte (shr value 8)))
-    (set! (array-ref out (+ offset 2)) (tlci-byte (shr value 16)))
-    (set! (array-ref out (+ offset 3)) (tlci-byte (shr value 24)))
-    (set! (array-ref out (+ offset 4)) (tlci-byte (shr value 32)))
-    (set! (array-ref out (+ offset 5)) (tlci-byte (shr value 40)))
-    (set! (array-ref out (+ offset 6)) (tlci-byte (shr value 48)))
-    (set! (array-ref out (+ offset 7)) (tlci-byte (shr value 56)))))
+  (byte_le.set-u64! out offset value))
 
 (define (tlci-put-string!
   [bytes : (&mut bytes (__tl_dyn-array u8))]
@@ -1519,21 +1341,7 @@
   (cast (array-ref bytes offset) : i64))
 
 (define (tlci-read-u64 [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
-  (+
-    (tlci-byte-at bytes offset)
-    (+
-      (shl (tlci-byte-at bytes (+ offset 1)) 8)
-      (+
-        (shl (tlci-byte-at bytes (+ offset 2)) 16)
-        (+
-          (shl (tlci-byte-at bytes (+ offset 3)) 24)
-          (+
-            (shl (tlci-byte-at bytes (+ offset 4)) 32)
-            (+
-              (shl (tlci-byte-at bytes (+ offset 5)) 40)
-              (+
-                (shl (tlci-byte-at bytes (+ offset 6)) 48)
-                (shl (tlci-byte-at bytes (+ offset 7)) 56)))))))))
+  (byte_le.read-u64 bytes offset))
 
 (define (tlci-push-zeroes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1662,9 +1470,9 @@
 ;;     h = 1;  h = (h * 131 + b) mod p   for each byte b,   p = 2^31 - 1
 ;;
 ;; and are part of the format, so they must keep their exact values. Computing
-;; them a byte at a time costs a 64-bit modulo per byte, which made verifying
-;; the embedded stdlib image (16 MB) most of a hello-world compile. Eight bytes
-;; at a time is the same polynomial, reduced once:
+;; them a byte at a time costs a 64-bit modulo per byte, too slow for verifying
+;; the whole embedded stdlib image on every compile. Eight bytes at a time is
+;; the same polynomial, reduced once:
 ;;
 ;;     h' = h * 131^8 + (((b0 * 131 + b1) * 131 + ...) * 131 + b7)   (mod p)
 ;;
@@ -2145,7 +1953,7 @@
 (define (tlci-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
 
-(define (tlci-field-string-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciString
+(define (tlci-field-string-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciString
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
       (match (reader.sexpr-view vhead)
@@ -2169,7 +1977,7 @@
       (ResultTlciString.Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
-(define (tlci-field-i64-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciI64
+(define (tlci-field-i64-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciI64
   (match (reader.sexpr-view ftail)
     [(reader.SexprView.Cons vhead vrest)
       (match (reader.sexpr-view vhead)
@@ -2222,7 +2030,7 @@
             0))
         result))))
 
-(define (tlci-sexpr-list-length [items : reader.Sexpr]) : i64
+(define (tlci-sexpr-list-length [items : reader.SpannedSexpr]) : i64
   (match (reader.sexpr-view items)
     [(reader.SexprView.Nil) 0]
     [(reader.SexprView.Cons _ rest)
@@ -2234,22 +2042,28 @@
     [_ -1]))
 
 (define (tlci-signature-param-count [signature : String]) : i64
-  (match (reader.result (lexer.lex signature))
-    [(reader.ResultSexpr.Err _) -1]
-    [(reader.ResultSexpr.Ok form)
-      (match (reader.sexpr-view form)
-        [(reader.SexprView.Cons head rest)
-          (match (reader.sexpr-view head)
-            [(reader.SexprView.Sym arrow)
-              (if (string.eq (tlci-symbol-text arrow) "->")
-                (let
-                  [item-count : i64 (tlci-sexpr-list-length rest)]
-                  (if (> item-count 0)
-                    (- item-count 1)
-                    -1))
-                -1)]
-            [_ -1])]
-        [_ -1])]))
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [count : i64
+      (match (reader.data-result signature)
+        [(reader.ResultSexpr.Err _) -1]
+        [(reader.ResultSexpr.Ok form)
+          (match (reader.sexpr-view form)
+            [(reader.SexprView.Cons head rest)
+              (match (reader.sexpr-view head)
+                [(reader.SexprView.Sym arrow)
+                  (if (string.eq (tlci-symbol-text arrow) "->")
+                    (let
+                      [item-count : i64 (tlci-sexpr-list-length rest)]
+                      (if (> item-count 0)
+                        (- item-count 1)
+                        -1))
+                    -1)]
+                [_ -1])]
+            [_ -1])])]
+    (begin
+      (reader.sp-node-pool-truncate! mark)
+      count)))
 
 (define (tlci-spmd-args-valid? [args : (& args str)]) : bool
   (let
@@ -2318,7 +2132,7 @@
       [else ""])))
 
 (define (tlci-spmd-specialization-compare
-  [left : TlciSpmdSpecialization]
+  [left : (& left TlciSpmdSpecialization)]
   [right : TlciSpmdSpecialization]) : i64
   (let
     [backend : i64 (tlci-string-compare left.backend right.backend)]
@@ -2354,7 +2168,7 @@
                           0)))))))))))))
 
 (define (tlci-spmd-callable-compare
-  [left : TlciSpmdCallable]
+  [left : (& left TlciSpmdCallable)]
   [right : TlciSpmdCallable]) : i64
   (let
     [name : i64 (tlci-string-compare left.name right.name)]
@@ -2471,7 +2285,7 @@
       error)))
 
 (define (tlci-spmd-specialization-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [abi : String]
   [has-abi : bool]
   [backend : String]
@@ -2720,7 +2534,7 @@
       (ResultTlciSpmdSpecialization.Err
         "tlci metadata: specialization fields must be lists")]))
 
-(define (tlci-spmd-specialization-from-field [fields : reader.Sexpr]) : ResultTlciSpmdSpecialization
+(define (tlci-spmd-specialization-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdSpecialization
   (tlci-spmd-specialization-fields
     fields
     ""
@@ -2739,7 +2553,7 @@
     false))
 
 (define (tlci-spmd-helper-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [name : String]
   [has-name : bool]
   [signature : String]
@@ -2826,7 +2640,7 @@
     [_
       (ResultTlciSpmdCallable.Err "tlci metadata: helper fields must be lists")]))
 
-(define (tlci-spmd-helper-from-form [form : reader.Sexpr]) : ResultTlciSpmdCallable
+(define (tlci-spmd-helper-from-form [form : reader.SpannedSexpr]) : ResultTlciSpmdCallable
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -2857,7 +2671,7 @@
         "tlci metadata: spmd-callables entries must be helper lists")]))
 
 (define (tlci-spmd-callables-from-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
   (match (reader.sexpr-view fields)
     [(reader.SexprView.Nil) (ResultTlciSpmdCallables.Ok items)]
@@ -2873,7 +2687,7 @@
       (ResultTlciSpmdCallables.Err
         "tlci metadata: spmd-callables must contain helper lists")]))
 
-(define (tlci-spmd-callables-from-field [fields : reader.Sexpr]) : ResultTlciSpmdCallables
+(define (tlci-spmd-callables-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdCallables
   (let
     [field-count : i64 (tlci-sexpr-list-length (clone fields))]
     (tlci-spmd-callables-from-fields
@@ -2884,7 +2698,7 @@
           field-count)))))
 
 (define (tlci-package-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [name : String]
   [has-name : bool]
   [version : String]
@@ -2950,11 +2764,11 @@
           (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")])]
     [_ (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")]))
 
-(define (tlci-package-from-field [ftail : reader.Sexpr]) : ResultTlciMetadata
+(define (tlci-package-from-field [ftail : reader.SpannedSexpr]) : ResultTlciMetadata
   (tlci-package-fields ftail "" false "" false))
 
 (define (tlci-metadata-fields
-  [fields : reader.Sexpr]
+  [fields : reader.SpannedSexpr]
   [version : String]
   [has-version : bool]
   [package-name : String]
@@ -3060,7 +2874,7 @@
         [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")])]
     [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")]))
 
-(define (tlci-metadata-from-form [form : reader.Sexpr]) : ResultTlciMetadata
+(define (tlci-metadata-from-form [form : reader.SpannedSexpr]) : ResultTlciMetadata
   (match (reader.sexpr-view form)
     [(reader.SexprView.Cons head rest)
       (match (reader.sexpr-view head)
@@ -3088,10 +2902,16 @@
         "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
-  (match (reader.result (lexer.lex source))
-    [(reader.ResultSexpr.Err message)
-      (ResultTlciMetadata.Err (str_cat.str-cat "tlci metadata: " message))]
-    [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
+  (let
+    [mark : i64 (reader.sp-node-pool-len)]
+    [result : ResultTlciMetadata
+      (match (reader.data-result source)
+        [(reader.ResultSexpr.Err message)
+          (ResultTlciMetadata.Err (str_cat.str-cat "tlci metadata: " message))]
+        [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)])]
+    (begin
+      (reader.sp-node-pool-truncate! mark)
+      result)))
 
 (define (tlci-quote-text) : String
   "\"")
@@ -3669,1368 +3489,3 @@
                         (tlci-slice-bytes bytes entries-offset entries-len)
                         (tlci-slice-bytes bytes symbols-offset symbols-len)
                         (tlci-slice-bytes bytes imports-offset imports-len)))]))]))))))
-
-(define (tlci-test-metadata) : TlciMetadata
-  (tlci-make-metadata "v1" "demo" "0.1.0"))
-
-(define (tlci-test-v2-metadata) : TlciMetadata
-  (let
-    [avx : TlciSpmdSpecialization
-      (tlci-make-spmd-specialization
-        "spmd-call-v1"
-        "avx512"
-        8
-        "v"
-        "v"
-        0
-        "__tl_spmd_demo_alpha_v8")]
-    [scalar : TlciSpmdSpecialization
-      (tlci-make-spmd-specialization
-        "spmd-call-v1"
-        "scalar"
-        1
-        "v"
-        "v"
-        0
-        "__tl_spmd_demo_alpha_scalar")]
-    [future : TlciSpmdSpecialization
-      (tlci-make-spmd-specialization
-        "spmd-call-future"
-        "future"
-        4
-        "u"
-        "u"
-        -1
-        "__tl_spmd_demo_beta_future")]
-    [alpha : TlciSpmdCallable
-      (tlci-make-spmd-callable
-        "demo.alpha"
-        "(-> i64 i64)"
-        (tlci-spmd-specializations-push
-          (tlci-spmd-specializations-push
-            (tlci-spmd-specializations-with-capacity 2)
-            avx)
-          scalar))]
-    [beta : TlciSpmdCallable
-      (tlci-make-spmd-callable
-        "demo.beta"
-        "(-> i64 i64)"
-        (tlci-spmd-specializations-push
-          (tlci-spmd-specializations-with-capacity 1)
-          future))]
-    (tlci-make-metadata-v2
-      "demo"
-      "0.2.0"
-      (tlci-spmd-callables-push
-        (tlci-spmd-callables-push (tlci-spmd-callables-with-capacity 2) alpha)
-        beta))))
-
-(define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array u8)
-  (let
-    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (tlci-push-u8! (&mut out) a)
-      (tlci-push-u8! (&mut out) b)
-      (tlci-push-u8! (&mut out) c)
-      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
-
-(define (tlci-test-zero-records [record-size : i64] [count : i64]) : (__tl_dyn-array
-    u8)
-  (let
-    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (tlci-push-zeroes! (&mut out) (* record-size count))
-      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
-
-(define (tlci-test-metadata-only-image) : TlciImage
-  (TlciImage
-    (tlci-build-host-platform)
-    tlci-callback-abi-version
-    "abcdef0"
-    (tlci-test-metadata)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)))
-
-(define (tlci-test-v2-metadata-only-image) : TlciImage
-  (TlciImage
-    (tlci-build-host-platform)
-    tlci-callback-abi-version
-    "abcdef0"
-    (tlci-test-v2-metadata)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)))
-
-(define (tlci-test-imports-bytes) : (__tl_dyn-array u8)
-  (let
-    [name : String "fuel-check"]
-    [name-len : i64 (tlci-string-length name)]
-    [name-offset : i64
-      (+ tlci-section-import-header-size tlci-section-import-record-size)]
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ name-offset name-len))]
-    (begin
-      (tlci-set-u64! (&mut out) 0 1)
-      (tlci-set-u64! (&mut out) tlci-section-import-header-size 8)
-      (tlci-set-u64!
-        (&mut out)
-        (+ tlci-section-import-header-size 8)
-        name-offset)
-      (tlci-set-u64! (&mut out) (+ tlci-section-import-header-size 16) name-len)
-      (tlci-put-string! (&mut out) name-offset name)
-      out)))
-
-(define (tlci-test-imports-image) : TlciImage
-  (TlciImage
-    (tlci-build-host-platform)
-    tlci-callback-abi-version
-    "abcdef0"
-    (tlci-test-metadata)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-test-imports-bytes)))
-
-(define (tlci-test-code-image) : TlciImage
-  (TlciImage
-    (tlci-build-host-platform)
-    tlci-callback-abi-version
-    "abcdef0"
-    (tlci-test-metadata)
-    (tlci-test-bytes3 1 2 3)
-    (tlci-test-bytes3 195 144 144)
-    (tlci-test-zero-records tlci-section-fixup-record-size 1)
-    (tlci-test-zero-records tlci-section-entry-record-size 1)
-    (tlci-test-zero-records tlci-section-symbol-record-size 1)
-    (tlci-empty-bytes)))
-
-(define (tlci-test-malformed-fixups-image) : TlciImage
-  (TlciImage
-    (tlci-build-host-platform)
-    tlci-callback-abi-version
-    "abcdef0"
-    (tlci-test-metadata)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-test-bytes3 1 2 3)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)))
-
-(define (tlci-test-host-callback-table) : TlciHostCallbackTable
-  (TlciHostCallbackTable
-    tlci-host-callback-table-magic
-    tlci-host-abi-version
-    tlci-host-callback-table-size
-    1234
-    0
-    0
-    0
-    8192
-    (__tl_make-array String 0)
-    (__tl_make-array i64 0)
-    0))
-
-(define (tlci-test-image-registration) : TlciImageRegistration
-  (TlciImageRegistration
-    tlci-image-registration-magic
-    tlci-host-abi-version
-    tlci-image-registration-size
-    5678
-    0
-    0
-    12288
-    1))
-
-(define (tlci-test-host-abi-rejects?
-  [result : ResultTlciHostAbi]
-  [expected : String]) : bool
-  (match result
-    [(ResultTlciHostAbi.Err message) (string.eq message expected)]
-    [(ResultTlciHostAbi.Ok) false]))
-
-(define (tlci-test-host-abi-layout-ok?) : bool
-  (and
-    (= tlci-host-abi-version tlci-callback-abi-version)
-    (string.eq tlci-image-entry-symbol "tlci_image_entry")
-    (= tlci-image-entry-param-count 2)
-    (= tlci-image-entry-success 0)
-    (= tlci-host-callback-status-ok 0)
-    (= tlci-host-callback-status-diagnostic 1)
-    (= tlci-host-callback-status-fuel-exhausted 2)
-    (= tlci-host-callback-status-abort 3)
-    (= tlci-host-callback-status-bad-request 4)
-    (= tlci-host-callback-table-header-size 48)
-    (= tlci-host-callback-table-size 64)
-    (= tlci-image-registration-header-size 48)
-    (= tlci-image-registration-size 64)
-    (= tlci-host-callback-table-magic-offset 0)
-    (= tlci-host-callback-table-abi-version-offset 8)
-    (= tlci-host-callback-table-byte-size-offset 16)
-    (= tlci-host-callback-table-host-context-offset 24)
-    (= tlci-host-callback-table-reserved0-offset 32)
-    (= tlci-host-callback-table-reserved1-offset 40)
-    (= tlci-host-callback-table-reserved2-offset 48)
-    (= tlci-host-callback-table-abort-offset 56)
-    (= tlci-image-registration-magic-offset 0)
-    (= tlci-image-registration-abi-version-offset 8)
-    (= tlci-image-registration-byte-size-offset 16)
-    (= tlci-image-registration-image-context-offset 24)
-    (= tlci-image-registration-reserved0-offset 32)
-    (= tlci-image-registration-reserved1-offset 40)
-    (= tlci-image-registration-macro-entry-table-offset 48)
-    (= tlci-image-registration-macro-entry-count-offset 56)
-    (= tlci-macro-entry-record-size 32)
-    (= tlci-macro-entry-name-ptr-offset 0)
-    (= tlci-macro-entry-name-len-offset 8)
-    (= tlci-macro-entry-function-offset 16)
-    (= tlci-macro-entry-reserved0-offset 24)))
-
-(define (tlci-test-host-abi-ok?) : bool
-  (and
-    (tlci-test-host-abi-layout-ok?)
-    (match (tlci-validate-host-callback-table (tlci-test-host-callback-table))
-      [(ResultTlciHostAbi.Ok) true]
-      [(ResultTlciHostAbi.Err _) false])
-    (match (tlci-validate-image-registration (tlci-test-image-registration))
-      [(ResultTlciHostAbi.Ok) true]
-      [(ResultTlciHostAbi.Err _) false])
-    (match (tlci-validate-host-callback-table
-      (TlciHostCallbackTable
-        tlci-host-callback-table-magic
-        tlci-host-abi-version
-        (+ tlci-host-callback-table-size 16)
-        1234
-        0
-        0
-        0
-        8192
-        (__tl_make-array String 0)
-        (__tl_make-array i64 0)
-        0))
-      [(ResultTlciHostAbi.Ok) true]
-      [(ResultTlciHostAbi.Err _) false])
-    (match (tlci-validate-image-registration
-      (TlciImageRegistration
-        tlci-image-registration-magic
-        tlci-host-abi-version
-        (+ tlci-image-registration-size 16)
-        5678
-        0
-        0
-        12288
-        1))
-      [(ResultTlciHostAbi.Ok) true]
-      [(ResultTlciHostAbi.Err _) false])
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          0
-          tlci-host-abi-version
-          tlci-host-callback-table-size
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: bad host callback table magic")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          (+ tlci-host-abi-version 1)
-          tlci-host-callback-table-size
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: unsupported callback ABI version 3")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          tlci-host-abi-version
-          (- tlci-host-callback-table-size 1)
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host callback table byte-size is smaller than v2")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          tlci-host-abi-version
-          tlci-host-callback-table-size
-          0
-          1
-          0
-          0
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host callback table reserved0 must be zero")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          tlci-host-abi-version
-          tlci-host-callback-table-size
-          0
-          0
-          0
-          1
-          1
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host callback table reserved2 must be zero")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          tlci-host-abi-version
-          tlci-host-callback-table-size
-          0
-          0
-          0
-          0
-          0
-          (__tl_make-array String 0)
-          (__tl_make-array i64 0)
-          0))
-      "tlci host ABI: host abort callback must be nonzero")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          tlci-host-abi-version
-          tlci-host-callback-table-size
-          0
-          0
-          0
-          0
-          1
-          (__tl_make-array "fuel-check")
-          (__tl_make-array 0)
-          1))
-      "tlci host ABI: host callback registry address must be nonzero")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-host-callback-table
-        (TlciHostCallbackTable
-          tlci-host-callback-table-magic
-          tlci-host-abi-version
-          tlci-host-callback-table-size
-          0
-          0
-          0
-          0
-          1
-          (__tl_make-array "fuel-check" "fuel-check")
-          (__tl_make-array 1 2)
-          2))
-      "tlci host ABI: duplicate host callback registry name")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-image-registration
-        (TlciImageRegistration
-          0
-          tlci-host-abi-version
-          tlci-image-registration-size
-          0
-          0
-          0
-          0
-          0))
-      "tlci host ABI: bad image registration magic")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-image-registration
-        (TlciImageRegistration
-          tlci-image-registration-magic
-          (+ tlci-host-abi-version 1)
-          tlci-image-registration-size
-          0
-          0
-          0
-          0
-          0))
-      "tlci host ABI: unsupported callback ABI version 3")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-image-registration
-        (TlciImageRegistration
-          tlci-image-registration-magic
-          tlci-host-abi-version
-          (- tlci-image-registration-size 1)
-          0
-          0
-          0
-          0
-          0))
-      "tlci host ABI: image registration byte-size is smaller than v2")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-image-registration
-        (TlciImageRegistration
-          tlci-image-registration-magic
-          tlci-host-abi-version
-          tlci-image-registration-size
-          0
-          0
-          1
-          0
-          0))
-      "tlci host ABI: image registration reserved1 must be zero")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-image-registration
-        (TlciImageRegistration
-          tlci-image-registration-magic
-          tlci-host-abi-version
-          tlci-image-registration-size
-          0
-          0
-          0
-          0
-          1))
-      "tlci host ABI: macro entry count requires a table")
-    (tlci-test-host-abi-rejects?
-      (tlci-validate-image-registration
-        (TlciImageRegistration
-          tlci-image-registration-magic
-          tlci-host-abi-version
-          tlci-image-registration-size
-          0
-          0
-          0
-          1
-          0))
-      "tlci host ABI: macro entry table requires a count")))
-
-(define (tlci-test-parse-round-trip? [image : TlciImage]) : bool
-  (match (tlci-emit-image image)
-    [(ResultTlciBytes.Err _) false]
-    [(ResultTlciBytes.Ok bytes)
-      (match (tlci-parse-image (clone bytes))
-        [(ResultTlciImage.Err _) false]
-        [(ResultTlciImage.Ok parsed)
-          (match (tlci-emit-image parsed)
-            [(ResultTlciBytes.Err _) false]
-            [(ResultTlciBytes.Ok again) (tlci-bytes-eq? bytes again)])])]))
-
-(define (tlci-test-metadata-emit-parse?) : bool
-  (let
-    [source : String (tlci-metadata-emit (tlci-test-metadata))]
-    (match (tlci-metadata-parse (string.copy source))
-      [(ResultTlciMetadata.Err _) false]
-      [(ResultTlciMetadata.Ok parsed)
-        (and
-          (string.eq parsed.version "v1")
-          (string.eq parsed.package-name "demo")
-          (string.eq parsed.package-version "0.1.0"))])))
-
-(define (tlci-test-v2-alpha-specializations? [items : TlciSpmdSpecializations]) : bool
-  (and
-    (= (tlci-spmd-specializations-len items) 2)
-    (let
-      [first : TlciSpmdSpecialization (tlci-spmd-specializations-ref items 0)]
-      [second : TlciSpmdSpecialization (tlci-spmd-specializations-ref items 1)]
-      (and
-        (string.eq first.backend "avx512")
-        (= first.lanes 8)
-        (string.eq second.backend "scalar")))))
-
-(define (tlci-test-v2-beta-specializations? [items : TlciSpmdSpecializations]) : bool
-  (and
-    (= (tlci-spmd-specializations-len items) 1)
-    (string.eq
-      (__tl-project-field (tlci-spmd-specializations-ref items 0) abi)
-      "spmd-call-future")))
-
-(define (tlci-test-v2-callables-shape? [items : TlciSpmdCallables]) : bool
-  (and
-    (= (tlci-spmd-callables-len items) 2)
-    (let
-      [alpha : TlciSpmdCallable (tlci-spmd-callables-ref items 0)]
-      [beta : TlciSpmdCallable (tlci-spmd-callables-ref items 1)]
-      (and
-        (string.eq alpha.name "demo.alpha")
-        (tlci-test-v2-alpha-specializations? alpha.specializations)
-        (string.eq beta.name "demo.beta")
-        (tlci-test-v2-beta-specializations? beta.specializations)))))
-
-(define (tlci-test-v2-parsed-shape? [metadata : TlciMetadata]) : bool
-  (and
-    (string.eq metadata.version "v2")
-    (string.eq metadata.package-name "demo")
-    (tlci-test-v2-callables-shape? metadata.spmd-callables)))
-
-(define (tlci-test-v2-metadata-emit-parse?) : bool
-  (let
-    [source : String (tlci-metadata-emit (tlci-test-v2-metadata))]
-    (match (tlci-metadata-parse (string.copy source))
-      [(ResultTlciMetadata.Err _) false]
-      [(ResultTlciMetadata.Ok parsed)
-        (and
-          (tlci-test-v2-parsed-shape? (clone parsed))
-          (string.eq source (tlci-metadata-emit parsed)))])))
-
-(define (tlci-test-dense-spmd-sequences?) : bool
-  (let
-    [specializations : TlciSpmdSpecializations
-      (tlci-spmd-specializations-empty)]
-    [callables : TlciSpmdCallables (tlci-spmd-callables-empty)]
-    [index : i64 0]
-    [ok : bool true]
-    (begin
-      ;; Cross several vector growth boundaries for both metadata sequences.
-      (while (< index 33)
-        (begin
-          (tlci-spmd-specializations-push!
-            (&mut specializations)
-            (tlci-make-spmd-specialization
-              "spmd-call-v1"
-              "scalar"
-              (+ index 1)
-              "u"
-              "u"
-              -1
-              (str_cat.str-cat "specialization-" (string.int->string index))))
-          (tlci-spmd-callables-push!
-            (&mut callables)
-            (tlci-make-spmd-callable
-              (str_cat.str-cat "helper-" (string.int->string index))
-              "(-> i64 i64)"
-              (tlci-spmd-specializations-empty)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index 33)
-        (let
-          [specialization : TlciSpmdSpecialization
-            (tlci-spmd-specializations-ref specializations index)]
-          [callable : TlciSpmdCallable
-            (tlci-spmd-callables-ref callables index)]
-          (begin
-            (unless
-              (and
-                (= specialization.lanes (+ index 1))
-                (string.eq
-                  specialization.symbol
-                  (str_cat.str-cat "specialization-" (string.int->string index)))
-                (string.eq
-                  callable.name
-                  (str_cat.str-cat "helper-" (string.int->string index))))
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (and
-        ok
-        (= (tlci-spmd-specializations-len specializations) 33)
-        (= (tlci-spmd-callables-len callables) 33)))))
-
-(define (tlci-test-v1-emission-unchanged?) : bool
-  (string.eq
-    (tlci-metadata-emit (tlci-test-metadata))
-    (str_cat.str-cat
-      "(typelisp-tlci-metadata\n"
-      "  (version \"v1\")\n"
-      "  (package (name \"demo\") (version \"0.1.0\")))\n")))
-
-(define (tlci-test-spmd-specialization-source
-  [abi : String]
-  [backend : String]
-  [lanes : i64]
-  [args : String]
-  [result : String]
-  [index-param : i64]
-  [symbol : String]) : String
-  (str_cat.str-cat
-    "(specialization "
-    "(abi "
-    (tlci-quote-string abi)
-    ") (backend "
-    (tlci-quote-string backend)
-    ") (lanes "
-    (string.int->string lanes)
-    ") (args "
-    (tlci-quote-string args)
-    ") (result "
-    (tlci-quote-string result)
-    ") (index-param "
-    (string.int->string index-param)
-    ") (symbol "
-    (tlci-quote-string symbol)
-    "))"))
-
-(define (tlci-test-spmd-helper-source
-  [name : String]
-  [signature : String]
-  [specializations : String]) : String
-  (str_cat.str-cat
-    "(helper (name "
-    (tlci-quote-string name)
-    ") (signature "
-    (tlci-quote-string signature)
-    ") "
-    specializations
-    ")"))
-
-(define (tlci-test-v2-source [helpers : String]) : String
-  (str_cat.str-cat
-    "(typelisp-tlci-metadata "
-    "(version \"v2\") "
-    "(package (name \"demo\") (version \"0.2.0\")) "
-    "(spmd-callables "
-    helpers
-    "))"))
-
-(define (tlci-test-metadata-rejects? [source : String] [expected : String]) : bool
-  (match (tlci-metadata-parse source)
-    [(ResultTlciMetadata.Err message) (string.eq message expected)]
-    [(ResultTlciMetadata.Ok _) false]))
-
-(define (tlci-test-parse-rejects?
-  [bytes : (__tl_dyn-array u8)]
-  [expected : String]) : bool
-  (match (tlci-parse-image bytes)
-    [(ResultTlciImage.Err message) (string.eq message expected)]
-    [(ResultTlciImage.Ok _) false]))
-
-(define (tlci-test-emit-rejects? [image : TlciImage] [expected : String]) : bool
-  (match (tlci-emit-image image)
-    [(ResultTlciBytes.Err message) (string.eq message expected)]
-    [(ResultTlciBytes.Ok _) false]))
-
-(define (tlci-test-corrupt-byte
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]
-  [value : i64]) : (__tl_dyn-array u8)
-  (let
-    [out : (__tl_dyn-array u8) (tlci-copy-bytes bytes)]
-    (begin
-      (set! (array-ref out offset) (tlci-byte value))
-      out)))
-
-(define (tlci-test-rejections-ok?) : bool
-  (match (tlci-emit-image (tlci-test-metadata-only-image))
-    [(ResultTlciBytes.Err _) false]
-    [(ResultTlciBytes.Ok bytes)
-      (and
-        (tlci-test-parse-rejects?
-          (tlci-test-corrupt-byte bytes 0 0)
-          "tlci: bad magic")
-        (tlci-test-parse-rejects?
-          (tlci-test-corrupt-byte bytes 8 9)
-          "tlci: unsupported format version 9")
-        (tlci-test-parse-rejects?
-          (tlci-test-corrupt-byte bytes 16 9)
-          "tlci: unsupported host platform")
-        (tlci-test-parse-rejects?
-          (tlci-test-corrupt-byte bytes 24 9)
-          "tlci: unsupported callback ABI version")
-        (tlci-test-parse-rejects?
-          (tlci-test-corrupt-byte bytes 48 255)
-          "tlci: content hash mismatch")
-        (tlci-test-parse-rejects?
-          (tlci-slice-bytes bytes 0 20)
-          "tlci: truncated header"))]))
-
-(define (tlci-test-platform-image [platform : i64] [code-bearing : bool]) : TlciImage
-  (tlci-make-image
-    platform
-    tlci-callback-abi-version
-    "abcdef0"
-    (tlci-test-metadata)
-    (tlci-empty-bytes)
-    (if code-bearing
-      (tlci-test-bytes3 195 144 144)
-      (tlci-empty-bytes))
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)
-    (tlci-empty-bytes)))
-
-(define (tlci-test-platform-image-admission
-  [platform : i64]
-  [code-bearing : bool]
-  [host-platform : i64]) : TlciImageHostAdmission
-  (match (tlci-emit-image
-    (tlci-test-platform-image
-      (if (= platform tlci-host-platform-x86-64-legacy)
-        host-platform
-        platform)
-      code-bearing))
-    [(ResultTlciBytes.Err message) (TlciImageHostAdmission.Rejected message)]
-    [(ResultTlciBytes.Ok bytes)
-      (begin
-        (tlci-set-u64! (&mut bytes) 16 platform)
-        (tlci-set-u64!
-          (&mut bytes)
-          tlci-hash-field-offset
-          (tlci-content-hash bytes))
-        (match (tlci-parse-image bytes)
-          [(ResultTlciImage.Err message)
-            (TlciImageHostAdmission.Rejected message)]
-          [(ResultTlciImage.Ok image)
-            (tlci-image-admit-host image host-platform)]))]))
-
-(define (tlci-test-host-platform-admission-ok?) : bool
-  (let
-    [host-platform : i64 (tlci-build-host-platform)]
-    [other-platform : i64
-      (if (= host-platform tlci-host-platform-x86-64-windows)
-        tlci-host-platform-x86-64-linux
-        tlci-host-platform-x86-64-windows)]
-    (and
-      (match (tlci-test-platform-image-admission
-        other-platform
-        false
-        host-platform)
-        [(TlciImageHostAdmission.MetadataOnly) true]
-        [_ false])
-      (match (tlci-test-platform-image-admission
-        host-platform
-        true
-        host-platform)
-        [(TlciImageHostAdmission.CodeBearing) true]
-        [_ false])
-      (match (tlci-test-platform-image-admission
-        tlci-host-platform-x86-64-legacy
-        true
-        host-platform)
-        [(TlciImageHostAdmission.Rejected message)
-          (string.eq
-            message
-            "tlci: package `demo` code-bearing image uses legacy/ambiguous host platform")]
-        [_ false])
-      (match (tlci-test-platform-image-admission
-        other-platform
-        true
-        host-platform)
-        [(TlciImageHostAdmission.Rejected message)
-          (string.eq
-            message
-            (str_cat.str-cat
-              "tlci: package `demo` code-bearing image host platform mismatch: image="
-              (tlci-host-platform-name other-platform)
-              ", host="
-              (tlci-host-platform-name host-platform)))]
-        [_ false])
-      (match (tlci-image-admit-host
-        (tlci-test-platform-image 99 true)
-        host-platform)
-        [(TlciImageHostAdmission.Rejected message)
-          (string.eq
-            message
-            "tlci: package `demo` image uses unsupported host platform 99")]
-        [_ false])
-      (match (tlci-image-admit-host
-        (tlci-test-platform-image 99 false)
-        host-platform)
-        [(TlciImageHostAdmission.Rejected message)
-          (string.eq
-            message
-            "tlci: package `demo` image uses unsupported host platform 99")]
-        [_ false]))))
-
-(define (tlci-test-metadata-rejections-ok?) : bool
-  (and
-    (tlci-test-metadata-rejects?
-      (str_cat.str-cat
-        "(typelisp-tlci-metadata "
-        "(package (name \"demo\") (version \"0.1.0\")))")
-      "tlci metadata: missing required field `version`")
-    (tlci-test-metadata-rejects?
-      (str_cat.str-cat "(typelisp-tlci-metadata " "(version \"v1\"))")
-      "tlci metadata: missing required field `package`")
-    (tlci-test-metadata-rejects?
-      (str_cat.str-cat
-        "(typelisp-tlci-metadata "
-        "(version \"v9\") "
-        "(package (name \"demo\") (version \"0.1.0\")))")
-      "tlci metadata: unsupported version `v9`")
-    (tlci-test-metadata-rejects?
-      (str_cat.str-cat
-        "(typelisp-tlci-metadata "
-        "(version \"v1\") "
-        "(package (name \"demo\") (version \"0.1.0\")) "
-        "(exports (value (name \"answer\") (signature \"x\"))))")
-      "tlci metadata: unknown field `exports`")))
-
-(define (tlci-test-v2-metadata-rejections-ok?) : bool
-  (let
-    [avx : String
-      (tlci-test-spmd-specialization-source
-        "spmd-call-v1"
-        "avx512"
-        8
-        "v"
-        "v"
-        0
-        "__tl_spmd_alpha_v8")]
-    [scalar : String
-      (tlci-test-spmd-specialization-source
-        "spmd-call-v1"
-        "scalar"
-        1
-        "v"
-        "v"
-        0
-        "__tl_spmd_alpha_scalar")]
-    [alpha : String
-      (tlci-test-spmd-helper-source
-        "demo.alpha"
-        "(-> i64 i64)"
-        (string.copy avx))]
-    [beta : String
-      (tlci-test-spmd-helper-source
-        "demo.beta"
-        "(-> i64 i64)"
-        (string.copy avx))]
-    (and
-      (tlci-test-metadata-rejects?
-        (str_cat.str-cat
-          "(typelisp-tlci-metadata "
-          "(version \"v1\") "
-          "(package (name \"demo\") (version \"0.1.0\")) "
-          "(spmd-callables "
-          (string.copy alpha)
-          "))")
-        "tlci metadata: field `spmd-callables` requires version `v2`")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx2"
-              8
-              "v"
-              "v"
-              0
-              "symbol")))
-        "tlci metadata: unsupported backend `avx2` for `spmd-call-v1`")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              0
-              "v"
-              "v"
-              0
-              "symbol")))
-        "tlci metadata: specialization lanes must be positive")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "v,u"
-              "v"
-              0
-              "symbol")))
-        "tlci metadata: specialization args must contain only `u` and `v`")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64 i64)"
-            (string.copy avx)))
-        "tlci metadata: specialization args length must equal signature parameter count")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "v"
-              "v"
-              2
-              "symbol")))
-        "tlci metadata: specialization index-param is outside the signature")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "u"
-              "v"
-              0
-              "symbol")))
-        "tlci metadata: specialization index-param must name a varying argument")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source "" "(-> i64 i64)" (string.copy avx)))
-        "tlci metadata: helper name must not be empty")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source "demo.alpha" "" (string.copy avx)))
-        "tlci metadata: helper signature must not be empty")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (tlci-test-spmd-specialization-source
-              "spmd-call-v1"
-              "avx512"
-              8
-              "v"
-              "v"
-              0
-              "")))
-        "tlci metadata: specialization symbol must not be empty")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (str_cat.str-cat (string.copy avx) (string.copy avx))))
-        "tlci metadata: duplicate specialization record")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (tlci-test-spmd-helper-source
-            "demo.alpha"
-            "(-> i64 i64)"
-            (str_cat.str-cat (string.copy scalar) (string.copy avx))))
-        "tlci metadata: specialization records are not in stable order")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (str_cat.str-cat (string.copy alpha) (string.copy alpha)))
-        "tlci metadata: duplicate helper record")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          (str_cat.str-cat (string.copy beta) (string.copy alpha)))
-        "tlci metadata: helper records are not in stable order")
-      (tlci-test-metadata-rejects?
-        (tlci-test-v2-source
-          "(helper (name \"demo.alpha\") (signature \"(-> i64 i64)\") (specialization (abi \"spmd-call-v1\")))")
-        "tlci metadata: specialization missing required field `backend`"))))
-
-(define (tlci-test-emit-rejections-ok?) : bool
-  (and
-    (tlci-test-emit-rejects?
-      (tlci-test-malformed-fixups-image)
-      "tlci: malformed fixup table length")
-    (tlci-test-emit-rejects?
-      (tlci-test-platform-image tlci-host-platform-x86-64-legacy false)
-      "tlci: new images must record a non-legacy host platform")
-    (tlci-test-emit-rejects?
-      (tlci-test-platform-image 99 false)
-      "tlci: unsupported host platform")))
-
-(define (tlci-test-aux-sections-ok?) : bool
-  (let
-    [base : (__tl_dyn-array u8) (tlci-string->bytes "native")]
-    [identity : (__tl_dyn-array u8) (tlci-string->bytes "identity")]
-    [ast : (__tl_dyn-array u8) (tlci-string->bytes "ast")]
-    [sections : (__tl_dyn-array TlciAuxSection)
-      (__tl_make-array TlciAuxSection 2)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection tlci-aux-kind-package-identity 1 (clone identity)))
-      (set!
-        (array-ref sections 1)
-        (TlciAuxSection tlci-aux-kind-frontend-ast 3 (clone ast)))
-      (match (tlci-aux-pack-rodata (clone base) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (and
-            (match (tlci-aux-directory packed)
-              [(ResultTlciAuxDirectory.Ok directory)
-                (= directory.base-len (array-length base))]
-              [_ false])
-            (match (tlci-aux-find packed tlci-aux-kind-package-identity)
-              [(ResultTlciAuxLookup.Ok version payload)
-                (and (= version 1) (tlci-bytes-eq? payload identity))]
-              [_ false])
-            (match (tlci-aux-find packed tlci-aux-kind-frontend-ast)
-              [(ResultTlciAuxLookup.Ok version payload)
-                (and (= version 3) (tlci-bytes-eq? payload ast))]
-              [_ false])
-            (match (tlci-aux-find packed tlci-aux-kind-frontend-facts)
-              [(ResultTlciAuxLookup.Missing) true]
-              [_ false])
-            (match (tlci-aux-pack-rodata base sections)
-              [(ResultTlciAuxBytes.Ok again) (tlci-bytes-eq? packed again)]
-              [(ResultTlciAuxBytes.Err _) false]))]))))
-
-(define (tlci-test-aux-corruption-rejected?) : bool
-  (let
-    [sections : (__tl_dyn-array TlciAuxSection)
-      (__tl_make-array TlciAuxSection 1)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection
-          tlci-aux-kind-package-identity
-          1
-          (tlci-string->bytes "identity")))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (match (tlci-aux-directory packed)
-            [(ResultTlciAuxDirectory.Ok directory)
-              (let
-                [corrupt : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
-                [record : i64 directory.directory-offset]
-                [payload-offset : i64 (tlci-read-u64 corrupt (+ record 16))]
-                (begin
-                  (set! (array-ref corrupt payload-offset) 0)
-                  (match (tlci-aux-find corrupt tlci-aux-kind-package-identity)
-                    [(ResultTlciAuxLookup.Err _) true]
-                    [_ false])))]
-            [_ false])]))))
-
-(define (tlci-test-aux-directory-shapes-ok?) : bool
-  (let
-    [sections : (__tl_dyn-array TlciAuxSection)
-      (__tl_make-array TlciAuxSection 2)]
-    [duplicates : (__tl_dyn-array TlciAuxSection)
-      (__tl_make-array TlciAuxSection 2)]
-    [first : (__tl_dyn-array u8) (tlci-string->bytes "first")]
-    [unknown : (__tl_dyn-array u8) (tlci-string->bytes "unknown")]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection tlci-aux-kind-package-identity 1 first))
-      (set!
-        (array-ref sections 1)
-        (TlciAuxSection 99 7 (owned_view.compiler-owned-shared-view unknown)))
-      (set!
-        (array-ref duplicates 0)
-        (owned_view.compiler-owned-array-element-shared-view sections 0))
-      (set!
-        (array-ref duplicates 1)
-        (owned_view.compiler-owned-array-element-shared-view sections 0))
-      (and
-        (match (tlci-aux-pack-rodata (tlci-empty-bytes) duplicates)
-          [(ResultTlciAuxBytes.Err _) true]
-          [_ false])
-        (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-          [(ResultTlciAuxBytes.Err _) false]
-          [(ResultTlciAuxBytes.Ok packed)
-            (match (tlci-aux-directory packed)
-              [(ResultTlciAuxDirectory.Ok directory)
-                (let
-                  [duplicate-kind : (__tl_dyn-array u8)
-                    (tlci-copy-bytes packed)]
-                  [overlap : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
-                  [oversized : (__tl_dyn-array u8) (tlci-copy-bytes packed)]
-                  [truncated : (__tl_dyn-array u8)
-                    (tlci-slice-bytes packed 0 (- (array-length packed) 1))]
-                  [first-record : i64 directory.directory-offset]
-                  [second-record : i64 (+ first-record tlci-aux-record-size)]
-                  [first-offset : i64
-                    (tlci-read-u64 packed (+ first-record 16))]
-                  (begin
-                    (tlci-set-u64!
-                      (&mut duplicate-kind)
-                      second-record
-                      tlci-aux-kind-package-identity)
-                    (tlci-set-u64!
-                      (&mut overlap)
-                      (+ second-record 16)
-                      first-offset)
-                    (tlci-set-u64!
-                      (&mut oversized)
-                      (+ first-record 24)
-                      (+ directory.directory-offset 1))
-                    (and
-                      (match (tlci-aux-find packed 99)
-                        [(ResultTlciAuxLookup.Ok schema payload)
-                          (and (= schema 7) (tlci-bytes-eq? payload unknown))]
-                        [_ false])
-                      (match (tlci-aux-find
-                        duplicate-kind
-                        tlci-aux-kind-package-identity)
-                        [(ResultTlciAuxLookup.Err _) true]
-                        [_ false])
-                      (match (tlci-aux-find
-                        overlap
-                        tlci-aux-kind-package-identity)
-                        [(ResultTlciAuxLookup.Err _) true]
-                        [_ false])
-                      (match (tlci-aux-find
-                        oversized
-                        tlci-aux-kind-package-identity)
-                        [(ResultTlciAuxLookup.Err _) true]
-                        [_ false])
-                      (match (tlci-aux-directory truncated)
-                        [(ResultTlciAuxDirectory.Missing) true]
-                        [_ false]))))]
-              [_ false])])))))
-
-(define (tlci-test-producer-identity-admission-ok?) : bool
-  (let
-    [current : String "0123456789abcdef0123456789abcdef01234567"]
-    [stale : String "1123456789abcdef0123456789abcdef01234567"]
-    (and
-      (tlci-producer-identity-valid? current)
-      (not
-        (tlci-producer-identity-valid?
-          "0123456789ABCDEF0123456789ABCDEF01234567"))
-      (match (tlci-producer-identity-admit current current)
-        [(TlciProducerIdentityAdmission.ExactMatch) true]
-        [_ false])
-      (match (tlci-producer-identity-admit stale current)
-        [(TlciProducerIdentityAdmission.Mismatch) true]
-        [_ false])
-      (match (tlci-producer-identity-admit "" current)
-        [(TlciProducerIdentityAdmission.Missing) true]
-        [_ false])
-      (match (tlci-producer-identity-admit current "")
-        [(TlciProducerIdentityAdmission.Missing) true]
-        [_ false])
-      (match (tlci-producer-identity-admit "typelisp-selfhost-v1" current)
-        [(TlciProducerIdentityAdmission.Legacy) true]
-        [_ false])
-      (match (tlci-producer-identity-admit current "unknown")
-        [(TlciProducerIdentityAdmission.Legacy) true]
-        [_ false])
-      (match (tlci-producer-identity-admit "not-a-build-identity" current)
-        [(TlciProducerIdentityAdmission.Malformed) true]
-        [_ false])
-      (match (tlci-producer-identity-admit current "not-a-build-identity")
-        [(TlciProducerIdentityAdmission.Malformed) true]
-        [_ false]))))
-
-(define (tlci-test-package-source-binding-admission-ok?) : bool
-  (let
-    [sections : (__tl_dyn-array TlciAuxSection)
-      (__tl_make-array TlciAuxSection 1)]
-    [unsupported : (__tl_dyn-array u8) (tlci-string->bytes "future")]
-    [short : (__tl_dyn-array u8) (__tl_make-array u8 7)]
-    [zero : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-    [negative : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-    [limit : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-    [empty : (__tl_dyn-array u8) (tlci-empty-bytes)]
-    (begin
-      (set! (array-ref sections 0) (tlci-package-source-binding-section 12345))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (and
-            (match (tlci-package-source-binding-read packed)
-              [(TlciPackageSourceBindingRead.Bound digest) (= digest 12345)]
-              [_ false])
-            (match (tlci-package-source-binding-admit packed 12345)
-              [(TlciPackageSourceBindingAdmission.Match digest)
-                (= digest 12345)]
-              [_ false])
-            (match (tlci-package-source-binding-admit packed 54321)
-              [(TlciPackageSourceBindingAdmission.Mismatch expected actual)
-                (and (= expected 54321) (= actual 12345))]
-              [_ false])
-            (match (tlci-package-source-binding-read empty)
-              [(TlciPackageSourceBindingRead.MissingOrLegacy) true]
-              [_ false])
-            (match (tlci-package-source-binding-admit empty 12345)
-              [(TlciPackageSourceBindingAdmission.MissingOrLegacy) true]
-              [_ false]))])
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection tlci-aux-kind-package-source-binding 2 unsupported))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (and
-            (match (tlci-package-source-binding-read packed)
-              [(TlciPackageSourceBindingRead.UnsupportedSchema schema)
-                (= schema 2)]
-              [_ false])
-            (match (tlci-package-source-binding-admit packed 12345)
-              [(TlciPackageSourceBindingAdmission.UnsupportedSchema schema)
-                (= schema 2)]
-              [_ false]))])
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection
-          tlci-aux-kind-package-source-binding
-          tlci-package-source-binding-schema-version
-          short))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (match (tlci-package-source-binding-read packed)
-            [(TlciPackageSourceBindingRead.Malformed _) true]
-            [_ false])])
-      (tlci-set-u64! (&mut zero) 0 0)
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection
-          tlci-aux-kind-package-source-binding
-          tlci-package-source-binding-schema-version
-          zero))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (and
-            (match (tlci-package-source-binding-read packed)
-              [(TlciPackageSourceBindingRead.Bound digest) (= digest 0)]
-              [_ false])
-            (match (tlci-package-source-binding-admit packed 0)
-              [(TlciPackageSourceBindingAdmission.Match digest) (= digest 0)]
-              [_ false])
-            (match (tlci-package-source-binding-admit packed -1)
-              [(TlciPackageSourceBindingAdmission.Malformed _) true]
-              [_ false])
-            (match (tlci-package-source-binding-admit packed 2147483647)
-              [(TlciPackageSourceBindingAdmission.Malformed _) true]
-              [_ false]))])
-      (tlci-set-u64! (&mut negative) 0 -1)
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection
-          tlci-aux-kind-package-source-binding
-          tlci-package-source-binding-schema-version
-          negative))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (match (tlci-package-source-binding-read packed)
-            [(TlciPackageSourceBindingRead.Malformed _) true]
-            [_ false])])
-      (tlci-set-u64! (&mut limit) 0 2147483647)
-      (set!
-        (array-ref sections 0)
-        (TlciAuxSection
-          tlci-aux-kind-package-source-binding
-          tlci-package-source-binding-schema-version
-          limit))
-      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
-        [(ResultTlciAuxBytes.Err _) false]
-        [(ResultTlciAuxBytes.Ok packed)
-          (match (tlci-package-source-binding-read packed)
-            [(TlciPackageSourceBindingRead.Malformed _) true]
-            [_ false])]))))
-
-;; The block form of the digest against the byte-at-a-time definition, at
-;; every length around the digest field and the four-byte blocks, and on
-;; all-0xff bytes (the largest intermediate sums).
-(define (tlci-test-hash-bytes [n : i64] [seed : i64]) : (__tl_dyn-array u8)
-  (let
-    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
-    [state : i64 seed]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! state (+ (* state 6364136223846793005) 1442695040888963407))
-          (set!
-            (array-ref bytes i)
-            (if (< seed 0)
-              (cast 255 : u8)
-              (cast (bit-and (shr state 33) 255) : u8)))
-          (set! i (+ i 1))))
-      bytes)))
-
-(define (tlci-test-range-hash-bytewise
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]
-  [len : i64]) : i64
-  (let
-    [hash : i64 1]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (set!
-            hash
-            (% (+ (* hash 131) (tlci-byte-at bytes (+ offset i))) 2147483647))
-          (set! i (+ i 1))))
-      hash)))
-
-(define (tlci-test-hash-blocks-ok?) : bool
-  (let
-    [n : i64 0]
-    [ok : bool true]
-    (begin
-      (while (and ok (< n 140))
-        (let
-          [random : (__tl_dyn-array u8) (tlci-test-hash-bytes n (+ n 3))]
-          [ones : (__tl_dyn-array u8) (tlci-test-hash-bytes n (- 0 1))]
-          (begin
-            (set!
-              ok
-              (and
-                (=
-                  (tlci-content-hash (& random))
-                  (tlci-content-hash-bytewise (& random)))
-                (=
-                  (tlci-content-hash (& ones))
-                  (tlci-content-hash-bytewise (& ones)))
-                (or
-                  (< n 5)
-                  (=
-                    (tlci-range-hash (& random) 2 (- n 5))
-                    (tlci-test-range-hash-bytewise (& random) 2 (- n 5))))))
-            (set! n (+ n 1)))))
-      ok)))
-
-(define (tlci-core-self-test-status) : i64
-  (cond
-    [(not (tlci-test-metadata-emit-parse?)) 1]
-    [(not (tlci-test-parse-round-trip? (tlci-test-metadata-only-image))) 2]
-    [(not (tlci-test-parse-round-trip? (tlci-test-code-image))) 3]
-    [(not (tlci-test-rejections-ok?)) 4]
-    [(not (tlci-test-metadata-rejections-ok?)) 5]
-    [(not (tlci-test-emit-rejections-ok?)) 6]
-    [(not (tlci-test-host-abi-ok?)) 7]
-    [(not (tlci-test-v1-emission-unchanged?)) 9]
-    [(not (tlci-test-v2-metadata-emit-parse?)) 10]
-    [(not (tlci-test-parse-round-trip? (tlci-test-v2-metadata-only-image))) 11]
-    [(not (tlci-test-v2-metadata-rejections-ok?)) 12]
-    [(not (tlci-test-parse-round-trip? (tlci-test-imports-image))) 13]
-    [(not (tlci-test-aux-sections-ok?)) 14]
-    [(not (tlci-test-aux-corruption-rejected?)) 15]
-    [(not (tlci-test-producer-identity-admission-ok?)) 16]
-    [(not (tlci-test-dense-spmd-sequences?)) 17]
-    [(not (tlci-test-package-source-binding-admission-ok?)) 18]
-    [(not (tlci-test-host-platform-admission-ok?)) 19]
-    [(not (tlci-test-aux-directory-shapes-ok?)) 20]
-    [(not (tlci-test-hash-blocks-ok?)) 21]
-    [else 0]))
-
-(define (tlci-core-self-test) : i64
-  (if (= (tlci-core-self-test-status) 0)
-    42
-    (io.panic "tlci-core: self-test mismatch")))
-
-(test
-  tlci-core-parse-emit-round-trip
-  (if (= (tlci-core-self-test-status) 0)
-    unit
-    (io.panic "tlci-core: inline self-test mismatch")))

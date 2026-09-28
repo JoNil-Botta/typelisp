@@ -5,7 +5,6 @@
 ;; renderer emits exactly the declarations present in the extracted model.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.io)
 (import doc_extract)
 (import stdlib.string)
 (import stdlib.vector)
@@ -116,7 +115,7 @@
         (str_cat.str-cat base "::" (doc_extract.doc-item-signature item))
         base))))
 
-(define (doc-render-escape-one [text : String] [idx : i64]) : String
+(define (doc-render-escape-one [text : (& text str)] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -141,14 +140,7 @@
     (begin
       (while (< i n)
         (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (doc-render-escape-one
-                (owned_view.compiler-owned-shared-view text)
-                i)
-              ""))
+          (set! out (str_cat.str-cat out (doc-render-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -227,16 +219,12 @@
     (str_cat.str-cat
       (doc-render-module-item
         (owned_view.compiler-owned-shared-view path)
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+        (doc_extract.doc-item-list-ref items index))
       (doc-render-module-item-list-from path items (+ index 1) count))))
 
 (define (doc-render-module-items [path : String] [items : doc_item_vec.Vec]) : String
   (let
-    [count : i64
-      (doc_extract.doc-item-list-count
-        (owned_view.compiler-owned-shared-view items))]
+    [count : i64 (doc_extract.doc-item-list-count items)]
     (if (= count 0)
       "_No documented declarations._\n"
       (doc-render-module-item-list-from path items 0 count))))
@@ -248,10 +236,7 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-render-item
-        (doc_extract.doc-item-list-ref
-          (owned_view.compiler-owned-shared-view items)
-          index))
+      (doc-render-item (doc_extract.doc-item-list-ref items index))
       (doc-render-item-list-from items (+ index 1) count))))
 
 (define (doc-render-item-list [items : doc_item_vec.Vec]) : String
@@ -261,10 +246,7 @@
     (doc_extract.doc-item-list-count items)))
 
 (define (doc-render-items [items : doc_item_vec.Vec]) : String
-  (if (=
-    (doc_extract.doc-item-list-count
-      (owned_view.compiler-owned-shared-view items))
-    0)
+  (if (= (doc_extract.doc-item-list-count items) 0)
     "_No documented declarations._\n"
     (doc-render-item-list items)))
 
@@ -313,7 +295,7 @@
     [docs : doc_extract.DocExtraction (doc-module-docs module)]
     (str_cat.str-cat
       "<a id=\""
-      (doc-render-anchor (owned_view.compiler-owned-shared-view path))
+      (doc-render-anchor path)
       "\"></a>\n\n## "
       (doc-render-escape-markdown (owned_view.compiler-owned-shared-view path))
       "\n\nSource: `"
@@ -341,7 +323,7 @@
   (doc-render-module-sections-from
     (owned_view.compiler-owned-shared-view modules)
     0
-    (doc-module-list-count (owned_view.compiler-owned-shared-view modules))))
+    (doc-module-list-count modules)))
 
 (define (doc-render-module-graph-markdown [modules : doc_module_vec.Vec]) : String
   (str_cat.str-cat
@@ -350,123 +332,3 @@
     (doc-render-module-nav (owned_view.compiler-owned-shared-view modules))
     "\n"
     (doc-render-module-sections modules)))
-
-(define (doc-render-smoke-source) : String
-  ";# Module docs with `code`, [links], <tag>, & amp.
-
-;; ignored ordinary comment
-;: Global docs for answer.
-(define answer : i64 42)
-
-;: Function docs with `tick` and [arg].
-(define (add-one [x : i64]) : i64 (+ x 1))
-
-;: Extern docs for host-log.
-(extern (host-log [arg0 : String]) : unit)
-
-;: Enum docs mention variants.
-(defenum MaybeNumber
-  (No)
-  (Some i64))
-
-;: Struct docs mention fields.
-(defstruct Point
-  (x i64)
-  (y i64))")
-
-(define (doc-render-smoke-expected) : String
-  "# TypeLisp Documentation
-
-Module docs with \\`code\\`, \\[links\\], &lt;tag&gt;, &amp; amp.
-
-## Items
-
-<a id=\"tl-answer\"></a>
-
-### answer
-
-Kind: define
-
-```typelisp
-(define answer : i64 42)
-```
-
-Global docs for answer.
-
-<a id=\"tl-add-one\"></a>
-
-### add-one
-
-Kind: define-function
-
-```typelisp
-(define (add-one [x : i64]) : i64 (+ x 1))
-```
-
-Function docs with \\`tick\\` and \\[arg\\].
-
-<a id=\"tl-host-log\"></a>
-
-### host-log
-
-Kind: extern
-
-```typelisp
-(extern (host-log [arg0 : String]) : unit)
-```
-
-Extern docs for host-log.
-
-<a id=\"tl-MaybeNumber\"></a>
-
-### MaybeNumber
-
-Kind: defenum
-
-```typelisp
-(defenum MaybeNumber
-  (No)
-  (Some i64))
-```
-
-Enum docs mention variants.
-
-<a id=\"tl-Point\"></a>
-
-### Point
-
-Kind: defstruct
-
-```typelisp
-(defstruct Point
-  (x i64)
-  (y i64))
-```
-
-Struct docs mention fields.
-
-")
-
-(define (doc-render-empty-expected) : String
-  "# TypeLisp Documentation
-
-_No module docs._
-
-## Items
-
-_No documented declarations._
-")
-
-(define (doc-render-smoke) : i64
-  (let
-    [rendered : String
-      (doc-render-markdown
-        (doc_extract.doc-extract-source (doc-render-smoke-source)))]
-    [empty-rendered : String
-      (doc-render-markdown
-        (doc_extract.doc-extract-source "(define hidden : i64 1)\n"))]
-    (if (string.eq rendered (doc-render-smoke-expected))
-      (if (string.eq empty-rendered (doc-render-empty-expected))
-        42
-        (io.panic "doc-render: empty markdown smoke mismatch"))
-      (io.panic "doc-render: markdown smoke mismatch"))))

@@ -49,9 +49,6 @@ one this benchmark exists to track.
   explicit stack here. Both visit nodes in exactly the same order, so postorder,
   RPO and `tin`/`tout` are identical; only the stack lives in an array instead
   of the call frame.
-- Scratch arrays are allocated once at the corpus's maximum block count and
-  reused, instead of per function. This keeps the benchmark about the algorithm
-  rather than the allocator; both implementations do the same.
 
 ## Corpus
 
@@ -72,30 +69,14 @@ there are more records than source functions.
 
 ### Regeneration
 
-```sh
-# 1. snapshot the compiler (concurrent activity in the tree)
-cp target/bootstrap-fixpoint/stage2 /tmp/tlsnap && chmod +x /tmp/tlsnap
-
-# 2. dump the two modules
-/tmp/tlsnap compile src/compiler_load.tl --dump-ir after-ssa \
-    -o /tmp/compiler_load.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-/tmp/tlsnap compile src/compiler_regalloc.tl --dump-ir after-ssa \
-    -o /tmp/compiler_regalloc.ssa.ir \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2
-
-# 3. export (source order is part of the corpus identity)
-python3 benchmarks/cfg_domloops/tools/export_cfg_blocks.py \
-    benchmarks/cfg_domloops/data/cfg-blocks.txt \
-    /tmp/compiler_load.ssa.ir /tmp/compiler_regalloc.ssa.ir
-```
+Exported at `5fce734af` (#5989) from the snapshot compiler's `--dump-ir`
+output; function names in this README refer to that commit. The exporter's
+header documents the full corpus format; see
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).
 
 ## Design parameters
 
 | Parameter | Value | Why |
 |---|---|---|
-| corpus path | argument 1 | runtime-opaque; the corpus is fixed |
-| rounds | argument 2, `12` in `optimization.tsv` | tunes TypeLisp Ir to 1.50 G and C to 0.42 G |
-| round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order, so no round repeats an earlier accumulator and nothing can be hoisted |
-| checksum | 64-bit FNV-1a, `h = (h ^ x) * 1099511628211` | wrapping multiply and xor only — no division or `%`, so TypeLisp i64 and C `uint64_t` produce identical bits (and the #5982 `%`-on-loop-carried-dividend shape never appears) |
+| round rotation | starting function advances by one per round | each round folds the same per-function checksums in a different order |
 | folded per function | block count, reachable count, the RPO vector, the idom vector, then per loop (header, latch, body size, preheader) and the loop count | covers RPO order, the idom vector, loop count and loop-body sizes |

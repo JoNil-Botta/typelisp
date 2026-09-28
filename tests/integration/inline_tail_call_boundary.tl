@@ -1,5 +1,5 @@
 ;; Runtime twin for the multiblock inliner's DIRECT tail-call admission (the
-;; `TailCall` arm of opt-inline-multiblock-instr-ok?).
+;; `TailCall` arm of opt-inline-multiblock-instr-reason).
 ;;
 ;; `tc-absorbed` is referenced from exactly one place -- `tc-value` -- so the
 ;; multiblock gate absorbs its whole body there. One of its arms ends in

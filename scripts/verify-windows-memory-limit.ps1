@@ -144,8 +144,8 @@ Assert-Timeout $shortTimeout
 
 # Descendant cleanup needs an actual child to observe. Give this separate case
 # a bounded startup allowance, and deliberately delay child creation beyond the
-# short case's deadline. The original one-second fixture could kill a cold
-# PowerShell before it published its child PID (#7809).
+# short case's deadline. A one-second allowance can kill a cold PowerShell
+# before it publishes its child PID.
 # The child still outlives the cleanup deadline, so only job termination can
 # satisfy the subsequent liveness assertion. There are no command retries.
 $pidFile = Join-Path $Workdir 'timeout-child.pid'

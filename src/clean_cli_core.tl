@@ -9,9 +9,11 @@
 (import stdlib.fs)
 (import build_cli_core)
 (import build_run_core as build_run)
+(import cli_option_core as cli_option)
 (import compiler_backend as backend)
 (import compiler_load as load)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 
 (defenum CleanConfig
@@ -23,81 +25,17 @@
   (Ok CleanConfig)
   (Err String))
 
-(define (clean-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
-(define (clean-string-prefix-at?
-  [text : String]
-  [prefix : String]
-  [start : i64]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (< start 0)
-      false
-      (if (> (+ start prefix-len) text-len)
-        false
-        (let
-          [i : i64 0]
-          [ok : bool true]
-          (begin
-            (while (and ok (< i prefix-len))
-              (if (=
-                (string.string-ref text (+ start i))
-                (string.string-ref prefix i))
-                (set! i (+ i 1))
-                (set! ok false)))
-            ok))))))
-
-(define (clean-string-prefix? [text : String] [prefix : String]) : bool
-  (clean-string-prefix-at? text prefix 0))
-
-(define (clean-string-contains? [text : String] [needle : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (= needle-len 0)
-      true
-      (if (> needle-len text-len)
-        false
-        (let
-          [i : i64 0]
-          [found : bool false]
-          (begin
-            (while (and (not found) (<= i (- text-len needle-len)))
-              (if (clean-string-prefix-at?
-                (owned_view.compiler-owned-shared-view text)
-                (owned_view.compiler-owned-shared-view needle)
-                i)
-                (set! found true)
-                (set! i (+ i 1))))
-            found))))))
-
-(define (clean-string-suffix? [text : String] [suffix : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [suffix-len : i64 (string.string-length suffix)]
-    (if (> suffix-len text-len)
-      false
-      (string.eq
-        (string.substring text (- text-len suffix-len) suffix-len)
-        suffix))))
-
-(define (clean-vcs-metadata-path? [path : String]) : bool
+(define (clean-vcs-metadata-path? [path : (& path str)]) : bool
   (or
     (string.eq path ".git")
-    (clean-string-prefix? (owned_view.compiler-owned-shared-view path) ".git/")
-    (clean-string-prefix? (owned_view.compiler-owned-shared-view path) ".git\\")
-    (clean-string-contains?
-      (owned_view.compiler-owned-shared-view path)
-      "/.git/")
-    (clean-string-contains?
-      (owned_view.compiler-owned-shared-view path)
-      "\\.git\\")
-    (clean-string-suffix? (owned_view.compiler-owned-shared-view path) "/.git")
-    (clean-string-suffix? path "\\.git")))
+    (source_text.starts-with? path ".git/")
+    (source_text.starts-with? path ".git\\")
+    (string.contains path "/.git/")
+    (string.contains path "\\.git\\")
+    (source_text.ends-with? path "/.git")
+    (source_text.ends-with? path "\\.git")))
 
-(define (clean-dangerous-path? [path : String]) : bool
+(define (clean-dangerous-path? [path : (& path str)]) : bool
   (or
     (= (string.string-length path) 0)
     (string.eq path ".")
@@ -106,7 +44,7 @@
     (string.eq path "\\")
     (clean-vcs-metadata-path? path)))
 
-(define (clean-file-exists? [path : String]) : bool
+(define (clean-file-exists? [path : (& path str)]) : bool
   (match (build_run.source-tool-try-file-exists? path)
     [(io.OkIoBool exists) exists]
     [(io.ErrIoBool _) false]))
@@ -122,13 +60,12 @@
       "\n")))
 
 (define (clean-remove-file [dry-run : bool] [path : String]) : i64
-  (if (clean-file-exists? (owned_view.compiler-owned-shared-view path))
+  (if (clean-file-exists? path)
     (if dry-run
       (begin
         (clean-report true path)
         0)
-      (match (build_run.source-tool-try-remove-file-if-exists
-        (owned_view.compiler-owned-shared-view path))
+      (match (build_run.source-tool-try-remove-file-if-exists path)
         [(io.OkIoUnit)
           (begin
             (clean-report false path)
@@ -145,13 +82,12 @@
     0))
 
 (define (clean-remove-dir [dry-run : bool] [path : String]) : i64
-  (if (clean-file-exists? (owned_view.compiler-owned-shared-view path))
+  (if (clean-file-exists? path)
     (if dry-run
       (begin
         (clean-report true path)
         0)
-      (match (build_run.source-tool-try-remove-dir-if-exists
-        (owned_view.compiler-owned-shared-view path))
+      (match (build_run.source-tool-try-remove-dir-if-exists path)
         [(io.OkIoUnit)
           (begin
             (clean-report false path)
@@ -176,7 +112,7 @@
     1))
 
 (define (clean-remove-tree-entry [path : String]) : i64
-  (if (clean-vcs-metadata-path? (owned_view.compiler-owned-shared-view path))
+  (if (clean-vcs-metadata-path? path)
     (begin
       (io.print-error
         (str_cat.str-cat "clean: refusing VCS metadata path " path ""))
@@ -188,8 +124,7 @@
         (cond
           [(fs.file-kind-directory? kind) (clean-remove-tree-dir path)]
           [(fs.file-kind-regular? kind)
-            (match (build_run.source-tool-try-remove-file-if-exists
-              (owned_view.compiler-owned-shared-view path))
+            (match (build_run.source-tool-try-remove-file-if-exists path)
               [(io.OkIoUnit) 0]
               [(io.ErrIoUnit error)
                 (clean-report-error "clean: failed to remove file " path error)])]
@@ -203,14 +138,14 @@
               1)])])))
 
 (define (clean-remove-tree-entries
-  [root : String]
+  [root : (& root str)]
   [entries : fs.FsStringVector]
   [index : i64]) : i64
   (if (>= index (fs.string-vector-len (& entries)))
     0
     (let
       [name : String (fs.string-vector-get (& entries) index "")]
-      [path : String (fs.path-join (& root) (& name))]
+      [path : String (fs.path-join root (& name))]
       [status : i64 (clean-remove-tree-entry path)]
       (if (= status 0)
         (clean-remove-tree-entries root entries (+ index 1))
@@ -222,15 +157,10 @@
       (clean-report-error "clean: failed to read directory " path error)]
     [(fs.OkIoStringVector entries)
       (let
-        [status : i64
-          (clean-remove-tree-entries
-            (owned_view.compiler-owned-shared-view path)
-            entries
-            0)]
+        [status : i64 (clean-remove-tree-entries path entries 0)]
         (if (not (= status 0))
           status
-          (match (build_run.source-tool-try-remove-dir-if-exists
-            (owned_view.compiler-owned-shared-view path))
+          (match (build_run.source-tool-try-remove-dir-if-exists path)
             [(io.OkIoUnit) 0]
             [(io.ErrIoUnit error)
               (clean-report-error
@@ -239,7 +169,7 @@
                 error)])))]))
 
 (define (clean-remove-tree [dry-run : bool] [path : String]) : i64
-  (if (not (clean-file-exists? (owned_view.compiler-owned-shared-view path)))
+  (if (not (clean-file-exists? path))
     0
     (if dry-run
       (begin
@@ -259,19 +189,17 @@
     right
     left))
 
-(define (clean-source-artifact-safe? [source : String] [path : String]) : bool
+(define (clean-source-artifact-safe? [source : String] [path : (& path str)]) : bool
   (and
-    (not (clean-dangerous-path? (owned_view.compiler-owned-shared-view path)))
+    (not (clean-dangerous-path? path))
     (not (string.eq source path))
-    (not (clean-string-suffix? path ".tl"))))
+    (not (source_text.ends-with? path ".tl"))))
 
 (define (clean-remove-source-artifact
   [source : String]
   [dry-run : bool]
   [path : String]) : i64
-  (if (clean-source-artifact-safe?
-    source
-    (owned_view.compiler-owned-shared-view path))
+  (if (clean-source-artifact-safe? source path)
     (clean-remove-file dry-run path)
     0))
 
@@ -336,41 +264,37 @@
           (clean-remove-source-artifact
             (owned_view.compiler-owned-shared-view source)
             dry-run
-            (build_run.source-tool-replace-extension
-              (owned_view.compiler-owned-shared-view source)
-              ".exe"))))
+            (build_run.source-tool-replace-extension source ".exe"))))
       status)))
 
 (define (clean-package-name-safe? [name : String]) : bool
   (and
     (load.compiler-load-package-token-valid?
       (owned_view.compiler-owned-shared-view name))
-    (not
-      (clean-string-contains? (owned_view.compiler-owned-shared-view name) "/"))
-    (not (clean-string-contains? name "\\"))))
+    (not (string.contains name "/"))
+    (not (string.contains name "\\"))))
 
 (define (clean-package-artifact-safe?
   [manifest-dir : String]
-  [name : String]
-  [path : String]) : bool
+  [name : (& name str)]
+  [path : (& path str)]) : bool
   (let
     [output-dir : String
       (build_cli_core.build-package-output-dir manifest-dir name)]
     [output-prefix : String
       (str_cat.str-cat (owned_view.compiler-owned-shared-view output-dir) "/")]
     (and
-      (not (clean-dangerous-path? (owned_view.compiler-owned-shared-view path)))
-      (or (string.eq path output-dir) (clean-string-prefix? path output-prefix)))))
+      (not (clean-dangerous-path? path))
+      (or
+        (string.eq path output-dir)
+        (source_text.starts-with? path output-prefix)))))
 
 (define (clean-remove-package-file
   [manifest-dir : String]
-  [name : String]
+  [name : (& name str)]
   [dry-run : bool]
   [path : String]) : i64
-  (if (clean-package-artifact-safe?
-    manifest-dir
-    name
-    (owned_view.compiler-owned-shared-view path))
+  (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-file dry-run path)
     (begin
       (io.print-error
@@ -379,13 +303,13 @@
 
 (define (clean-remove-package-runtime-artifact
   [manifest-dir : String]
-  [name : String]
+  [name : (& name str)]
   [dry-run : bool]
   [path : String]) : i64
   (clean-merge-status
     (clean-remove-package-file
       (owned_view.compiler-owned-shared-view manifest-dir)
-      (owned_view.compiler-owned-shared-view name)
+      name
       dry-run
       (owned_view.compiler-owned-shared-view path))
     (clean-remove-package-file
@@ -396,13 +320,10 @@
 
 (define (clean-remove-package-dir
   [manifest-dir : String]
-  [name : String]
+  [name : (& name str)]
   [dry-run : bool]
   [path : String]) : i64
-  (if (clean-package-artifact-safe?
-    manifest-dir
-    name
-    (owned_view.compiler-owned-shared-view path))
+  (if (clean-package-artifact-safe? manifest-dir name path)
     (clean-remove-dir dry-run path)
     (begin
       (io.print-error
@@ -418,9 +339,7 @@
         1)]
     [(build_cli_core.ResultBuildManifest.Ok manifest)
       (let
-        [manifest-dir : String
-          (load.compiler-load-dirname
-            (owned_view.compiler-owned-shared-view manifest-path))]
+        [manifest-dir : String (load.compiler-load-dirname manifest-path)]
         [name : String manifest.name]
         [status : i64 0]
         (if (not
@@ -437,7 +356,7 @@
                 status
                 (clean-remove-package-file
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-asm-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -448,7 +367,7 @@
                 status
                 (clean-remove-package-file
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-obj-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -460,7 +379,7 @@
                 status
                 (clean-remove-package-file
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-obj-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -472,7 +391,7 @@
                 status
                 (clean-remove-package-runtime-artifact
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-bin-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -484,7 +403,7 @@
                 status
                 (clean-remove-package-runtime-artifact
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-bin-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -496,7 +415,7 @@
                 status
                 (clean-remove-package-runtime-artifact
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-lib-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -508,7 +427,7 @@
                 status
                 (clean-remove-package-runtime-artifact
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-lib-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -520,7 +439,7 @@
                 status
                 (clean-remove-package-file
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
                   (build_cli_core.build-package-tlci-path
                     (owned_view.compiler-owned-shared-view manifest-dir)
@@ -531,11 +450,9 @@
                 status
                 (clean-remove-package-dir
                   (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view name)
+                  name
                   dry-run
-                  (build_cli_core.build-package-output-dir
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view name)))))
+                  (build_cli_core.build-package-output-dir manifest-dir name))))
             status)))]))
 
 (define (clean-package
@@ -555,7 +472,8 @@
           1)]
       [(CompilerLoadSomePath path) (clean-package-from-path path dry-run)])))
 
-(define (clean-experiments-artifact-path [manifest-path : String]) : String
+(define (clean-experiments-artifact-path
+  [manifest-path : (& manifest-path str)]) : String
   (load.compiler-load-normalize-path
     (load.compiler-load-join-root-path
       (load.compiler-load-dirname manifest-path)
@@ -563,21 +481,17 @@
 
 (define (clean-experiments-artifact-safe?
   [manifest-path : String]
-  [path : String]) : bool
+  [path : (& path str)]) : bool
   (let
     [expected : String (clean-experiments-artifact-path manifest-path)]
     [normalized : String (load.compiler-load-normalize-path path)]
     (and
-      (not
-        (clean-dangerous-path?
-          (owned_view.compiler-owned-shared-view normalized)))
+      (not (clean-dangerous-path? normalized))
       (string.eq normalized expected)
       (or
         (string.eq expected "target/exp")
-        (clean-string-suffix?
-          (owned_view.compiler-owned-shared-view expected)
-          "/target/exp")
-        (clean-string-suffix? expected "\\target\\exp")))))
+        (source_text.ends-with? expected "/target/exp")
+        (source_text.ends-with? expected "\\target\\exp")))))
 
 (define (clean-experiments-from-path [manifest-path : String] [dry-run : bool]) : i64
   (match (build_cli_core.build-load-manifest
@@ -588,20 +502,14 @@
         1)]
     [(build_cli_core.ResultBuildManifest.Ok _)
       (let
-        [path : String
-          (clean-experiments-artifact-path
-            (owned_view.compiler-owned-shared-view manifest-path))]
-        (if (clean-experiments-artifact-safe?
-          manifest-path
-          (owned_view.compiler-owned-shared-view path))
-          (clean-remove-tree
-            dry-run
-            (owned_view.compiler-owned-shared-view path))
+        [path : String (clean-experiments-artifact-path manifest-path)]
+        (if (clean-experiments-artifact-safe? manifest-path path)
+          (clean-remove-tree dry-run path)
           (begin
             (io.print-error
               (str_cat.str-cat
                 "clean: refusing unsafe experiment artifact path "
-                (owned_view.compiler-owned-shared-view path)
+                path
                 ""))
             1)))]))
 
@@ -622,94 +530,63 @@
           1)]
       [(CompilerLoadSomePath path) (clean-experiments-from-path path dry-run)])))
 
-(define (clean-parse-options
-  [idx : i64]
-  [count : i64]
-  [source : String]
-  [has-source : bool]
-  [manifest : String]
-  [has-manifest : bool]
-  [experiments : bool]
-  [dry-run : bool]) : ResultCleanConfig
-  (if (>= idx count)
+(define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "clean"
+        "--dry-run --experiments --manifest-path <file>"
+        idx
+        count)]
+    [source : String ""]
+    [has-source : bool false]
+    [manifest : String ""]
+    [has-manifest : bool false]
+    [experiments : bool false]
+    [dry-run : bool false]
     (begin
-      (when
-        (and has-source has-manifest)
-        (return
-          (ResultCleanConfig.Err
-            "clean: cannot combine a source file with --manifest-path")))
-      (when
-        (and has-source experiments)
-        (return
-          (ResultCleanConfig.Err
-            "clean: cannot combine a source file with --experiments")))
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--dry-run") (set! dry-run true)]
+          [(string.eq args.name "--experiments")
+            (if experiments
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "clean: --experiments was provided more than once")
+              (set! experiments true))]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "clean: --manifest-path was provided more than once")
+              (begin
+                (set! manifest (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "clean: unknown flag ")]
+          [has-source
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "clean: accepts only one source file")]
+          [else
+            (begin
+              (set! source (string.copy (& args.arg)))
+              (set! has-source true))]))
       (cond
+        [args.failed (ResultCleanConfig.Err args.error)]
+        [(and has-source has-manifest)
+          (ResultCleanConfig.Err
+            "clean: cannot combine a source file with --manifest-path")]
+        [(and has-source experiments)
+          (ResultCleanConfig.Err
+            "clean: cannot combine a source file with --experiments")]
         [has-source (ResultCleanConfig.Ok (CleanConfig.Source source dry-run))]
         [experiments
           (ResultCleanConfig.Ok
             (CleanConfig.Experiments manifest has-manifest dry-run))]
         [else
           (ResultCleanConfig.Ok
-            (CleanConfig.Package manifest has-manifest dry-run))]))
-    (let
-      [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--dry-run")
-          (clean-parse-options
-            (+ idx 1)
-            count
-            source
-            has-source
-            manifest
-            has-manifest
-            experiments
-            true)]
-        [(string.eq current "--experiments")
-          (if experiments
-            (ResultCleanConfig.Err
-              "clean: --experiments was provided more than once")
-            (clean-parse-options
-              (+ idx 1)
-              count
-              source
-              has-source
-              manifest
-              has-manifest
-              true
-              dry-run))]
-        [(string.eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ResultCleanConfig.Err "clean: --manifest-path requires a value")
-            (if has-manifest
-              (ResultCleanConfig.Err
-                "clean: --manifest-path was provided more than once")
-              (clean-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                (io.arg (+ idx 1))
-                true
-                experiments
-                dry-run)))]
-        [(clean-flag? (owned_view.compiler-owned-shared-view current))
-          (ResultCleanConfig.Err
-            (str_cat.str-cat "clean: unknown flag " current))]
-        [has-source
-          (ResultCleanConfig.Err "clean: accepts only one source file")]
-        [else
-          (clean-parse-options
-            (+ idx 1)
-            count
-            current
-            true
-            manifest
-            has-manifest
-            experiments
-            dry-run)]))))
-
-(define (clean-config-from [idx : i64] [count : i64]) : ResultCleanConfig
-  (clean-parse-options idx count "" false "" false false false))
+            (CleanConfig.Package manifest has-manifest dry-run))]))))
 
 (define (clean-run-from [idx : i64] [count : i64]) : i64
   (match (clean-config-from idx count)

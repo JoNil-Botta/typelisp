@@ -3,8 +3,9 @@
 Published diagnostic codes are append-only. Never change the meaning of an
 existing number or reuse a retired number. The executable registry lives in
 `src/compiler_diagnostic.tl`; `src/explain_cli_core.tl` must provide a detailed
-entry for every row. Its registry test rejects missing prose, while
-`src/compiler_diagnostic_tests.tl` rejects empty and duplicate rows.
+entry for every row. Its registry test in `src/cli_core_tests.tl` rejects
+missing prose, while `src/compiler_diagnostic_tests.tl` rejects empty and
+duplicate rows.
 
 | Code | Category | Kind | Owner | Public construction site | Explain |
 | --- | --- | --- | --- | --- | --- |
@@ -50,3 +51,24 @@ When adding a code:
    sections in `src/explain_cli_core.tl`.
 4. Add a public CLI or safety-corpus assertion that observes the code without
    changing JSON, LSP, or other machine-output schemas.
+
+## Error results and generated code
+
+Public source-facing compiler errors are `CompilerDiagnostic` values, or pass
+through an adapter that keeps the path, span, category, code, labels, notes and
+help. Internal parser and typechecker helpers may return `String` errors when
+every caller attaches source context before the error leaves the phase.
+Operational CLI, configuration and tool failures (argv validation, host
+targets, process execution, linker discovery) may stay plain strings.
+Structured stdlib and tool errors stay domain-specific and are adapted only at
+a boundary with enough context. New source-facing package, load or tool errors
+use `CompilerDiagnostic` rather than a new public `Err... String` variant;
+migrate one public boundary at a time, with tests that prove its path and span
+survive.
+
+A diagnostic in generated or comptime code points at the nearest concrete
+source span of the generated payload. The generated origin goes into notes,
+not the message: `generated identity: <key>` when the identity is known, and
+`generated declaration: <item> from <generator>`. Without a concrete span, the
+same notes use the phase fallback span at line 1, column 1; there are no
+virtual generated file names.

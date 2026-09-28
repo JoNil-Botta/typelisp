@@ -27,6 +27,7 @@
 ;; token must be strict UTF-8.
 (import compiler_incremental_binary as binary)
 (import stdlib.byte_buf_core as bytes)
+(import stdlib.byte_reader)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.string)
 (import stdlib.vector)
@@ -640,11 +641,7 @@
           0
           0
           "directive limits must be positive"))]
-    [(not
-        (binary.compiler-incremental-binary-range-present?
-          (array-length data)
-          start
-          size))
+    [(not (byte_reader.range-present? (array-length data) start size))
       (ResultCoffDirectives.Err
         (directive-error
           section

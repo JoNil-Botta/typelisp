@@ -36,9 +36,7 @@
 
 (define (compiler-cfg-snapshot-from-env [cfgs : sym_i64_env.SymI64Env]) : CompilerCfgSnapshot
   (let
-    [count : i64
-      (compiler-cfg-env-binding-count
-        (owned_view.compiler-owned-shared-view cfgs))]
+    [count : i64 (compiler-cfg-env-binding-count cfgs)]
     [slots : (__tl_dyn-array String) (__tl_make-array String count)]
     [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (begin

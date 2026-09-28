@@ -20,11 +20,8 @@
 (import (vector.vector doc_md.MdBlock core) as doc_site_md_blocks)
 
 (defmacro (doc-site-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (defenum DocSiteModule
   (Module String String))
@@ -125,9 +122,6 @@
   [guides : (& guides doc_site_guides.Vec)]
   [index : i64]) : DocSiteGuidePage
   (doc_site_guides.get guides index (DocSiteGuidePage.GuidePage "" "" "" "")))
-
-(define (doc-site-section-list-empty) : doc_site_sections.Vec
-  (doc_site_sections.new))
 
 (define (doc-site-section-list-count
   [sections : (& sections doc_site_sections.Vec)]) : i64

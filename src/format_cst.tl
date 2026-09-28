@@ -4,7 +4,6 @@
 ;; layout: atoms keep original token spelling, comments stay as trivia nodes,
 ;; and parenthesized/bracketed lists keep their delimiter kind.
 (import compiler_owned_view as owned_view)
-(import stdlib.io)
 (import stdlib.string)
 (import format_tokens as tokens)
 
@@ -117,8 +116,10 @@
       (fmt-cst-vec-push-list! (&mut out) rest)
       (fmt-cst-list-from-vec out))))
 
-(define (fmt-cst-list-step [items : FormatCstList]) : FormatCstListStep
+(define (fmt-cst-list-step [items : (& items FormatCstList)]) : FormatCstListStep
   (let
+    [items : FormatCstList
+      (owned_view.compiler-owned-reference-shared-view items)]
     [start : i64 items.start]
     [count : i64 items.len]
     (if (<= count 0)
@@ -127,88 +128,8 @@
         (owned_view.compiler-owned-array-element-shared-view items.slots start)
         (FormatCstList items.slots (+ start 1) (- count 1))))))
 
-(define (fmt-cst-list-empty? [items : FormatCstList]) : bool
+(define (fmt-cst-list-empty? [items : (& items FormatCstList)]) : bool
   (<= items.len 0))
-
-(define (fmt-list-count [items : FormatCstList]) : i64
-  items.len)
-
-(define (fmt-cst-count [node : FormatCst]) : i64
-  (match node
-    [(FormatCst.Atom _) 1]
-    [(FormatCst.Comment _) 1]
-    [(FormatCst.Prefix _ child)
-      (+ 1 (fmt-cst-count (owned_view.compiler-owned-box-shared-view child)))]
-    [(FormatCst.Projection child _)
-      (+ 1 (fmt-cst-count (owned_view.compiler-owned-box-shared-view child)))]
-    [(FormatCst.List items)
-      (+
-        1
-        (fmt-cst-list-total (owned_view.compiler-owned-box-shared-view items)))]
-    [(FormatCst.BracketList items)
-      (+
-        1
-        (fmt-cst-list-total (owned_view.compiler-owned-box-shared-view items)))]
-    [(FormatCst.Forms items)
-      (+
-        1
-        (fmt-cst-list-total (owned_view.compiler-owned-box-shared-view items)))]))
-
-(define (fmt-cst-list-total [items : FormatCstList]) : i64
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) 0]
-    [(FormatCstListStep.Item node rest)
-      (+ (fmt-cst-count node) (fmt-cst-list-total rest))]))
-
-(define (fmt-cst-comment-count [node : FormatCst]) : i64
-  (match node
-    [(FormatCst.Atom _) 0]
-    [(FormatCst.Comment _) 1]
-    [(FormatCst.Prefix _ child)
-      (fmt-cst-comment-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.Projection child _)
-      (fmt-cst-comment-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.List items)
-      (fmt-cst-list-comment-count
-        (owned_view.compiler-owned-box-shared-view items))]
-    [(FormatCst.BracketList items)
-      (fmt-cst-list-comment-count
-        (owned_view.compiler-owned-box-shared-view items))]
-    [(FormatCst.Forms items)
-      (fmt-cst-list-comment-count
-        (owned_view.compiler-owned-box-shared-view items))]))
-
-(define (fmt-cst-list-comment-count [items : FormatCstList]) : i64
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) 0]
-    [(FormatCstListStep.Item node rest)
-      (+ (fmt-cst-comment-count node) (fmt-cst-list-comment-count rest))]))
-
-(define (fmt-cst-bracket-count [node : FormatCst]) : i64
-  (match node
-    [(FormatCst.Atom _) 0]
-    [(FormatCst.Comment _) 0]
-    [(FormatCst.Prefix _ child)
-      (fmt-cst-bracket-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.Projection child _)
-      (fmt-cst-bracket-count (owned_view.compiler-owned-box-shared-view child))]
-    [(FormatCst.List items)
-      (fmt-cst-list-bracket-count
-        (owned_view.compiler-owned-box-shared-view items))]
-    [(FormatCst.BracketList items)
-      (+
-        1
-        (fmt-cst-list-bracket-count
-          (owned_view.compiler-owned-box-shared-view items)))]
-    [(FormatCst.Forms items)
-      (fmt-cst-list-bracket-count
-        (owned_view.compiler-owned-box-shared-view items))]))
-
-(define (fmt-cst-list-bracket-count [items : FormatCstList]) : i64
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) 0]
-    [(FormatCstListStep.Item node rest)
-      (+ (fmt-cst-bracket-count node) (fmt-cst-list-bracket-count rest))]))
 
 (define (fmt-unexpected-closing [tag : i64]) : bool
   (or (= tag (tokens.fmt-tag-rparen)) (= tag (tokens.fmt-tag-rbracket))))
@@ -226,11 +147,7 @@
   [stop-tag : i64]
   [items : (&mut items FormatCstVec)]) : ResultFormatParseSeqEnd
   (let
-    [tag : i64
-      (tokens.format-token-tag
-        (tokens.format-token-at
-          (owned_view.compiler-owned-shared-view stream)
-          idx))]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
@@ -263,11 +180,7 @@
   [idx : i64]
   [stop-tag : i64]) : ResultFormatParsedCstList
   (let
-    [tag : i64
-      (tokens.format-token-tag
-        (tokens.format-token-at
-          (owned_view.compiler-owned-shared-view stream)
-          idx))]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
@@ -315,15 +228,8 @@
   [stream : tokens.FormatTokenStream]
   [idx : i64]) : ResultFormatParsedCst
   (let
-    [tok : tokens.FormatToken
-      (tokens.format-token-at
-        (owned_view.compiler-owned-shared-view stream)
-        idx)]
-    [tag : i64
-      (tokens.format-token-tag
-        (tokens.format-token-at
-          (owned_view.compiler-owned-shared-view stream)
-          idx))]
+    [tok : tokens.FormatToken (tokens.format-token-at stream idx)]
+    [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-lparen))
         (match (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rparen))
@@ -374,9 +280,7 @@
 
 (define (fmt-token-end [stream : tokens.FormatTokenStream] [idx : i64]) : i64
   (+
-    (tokens.format-token-start
-      (owned_view.compiler-owned-shared-view stream)
-      idx)
+    (tokens.format-token-start stream idx)
     (string.string-length
       (tokens.format-token-text (tokens.format-token-at stream idx)))))
 
@@ -394,10 +298,7 @@
   (match (owned_view.compiler-owned-shared-view parsed)
     [(FormatParsedCst.Parsed node next)
       (let
-        [dot : tokens.FormatToken
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            next)]
+        [dot : tokens.FormatToken (tokens.format-token-at stream next)]
         (if (and
           (> next 0)
           (= (tokens.format-token-tag dot) (tokens.fmt-tag-dot))
@@ -408,9 +309,7 @@
           (let
             [field-index : i64 (+ next 1)]
             [field : tokens.FormatToken
-              (tokens.format-token-at
-                (owned_view.compiler-owned-shared-view stream)
-                field-index)]
+              (tokens.format-token-at stream field-index)]
             (if (and
               (=
                 (tokens.format-token-tag
@@ -451,178 +350,3 @@
     [(tokens.ResultFormatTokenStream.Ok stream)
       (parse-format-tokens-result stream)]
     [(tokens.ResultFormatTokenStream.Err err) (ResultFormatCst.Err err)]))
-
-(define (parse-format-source [src : String]) : FormatCst
-  (match (parse-format-source-result src)
-    [(ResultFormatCst.Ok tree) tree]
-    [(ResultFormatCst.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
-
-(define (format-cst-fixture) : String
-  "(import std)
-; header comment
-(extern (io.emit [arg0 : i64]) : unit)
-(defenum Maybe (Some i64) (None))
-(defstruct Point (x i64) (y i64))
-(define (main [xs : (__tl_dyn-array i64)] [p : Point]) : i64
-  (let
-    [n : i64 (array-ref xs 0)]
-    [c : char ' ']
-    (match (Some n)
-      [(Some v) (+ v (cast c : i64))]
-      [None 0])))")
-
-(define (format-cst-boxed-nested-ok?) : bool
-  (let
-    [tree : FormatCst (parse-format-source "'(outer [x ; inner\n y] ,z)")]
-    (and
-      (= (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree)) 1)
-      (> (fmt-cst-bracket-count (owned_view.compiler-owned-shared-view tree)) 0)
-      (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 8))))
-
-(define (format-cst-prefixed-int-ok?) : bool
-  (let
-    [stream : tokens.FormatTokenStream (tokens.format-lex "(0x2a -0b101010)")]
-    (and
-      (=
-        (tokens.format-token-tag-count
-          (owned_view.compiler-owned-shared-view stream)
-          (tokens.fmt-tag-int))
-        2)
-      (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            1))
-        (tokens.fmt-tag-int))
-      (string.eq
-        (tokens.format-token-text
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            1))
-        "0x2a")
-      (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            2))
-        (tokens.fmt-tag-int))
-      (string.eq
-        (tokens.format-token-text
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            2))
-        "-0b101010")
-      (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            4))
-        (tokens.fmt-tag-end)))))
-
-(define (format-cst-apostrophe-char-ok?) : bool
-  (let
-    [stream : tokens.FormatTokenStream (tokens.format-lex "'a' '\"' '('")]
-    (and
-      (=
-        (tokens.format-token-tag-count
-          (owned_view.compiler-owned-shared-view stream)
-          (tokens.fmt-tag-char))
-        3)
-      (=
-        (tokens.format-token-tag
-          (tokens.format-token-at
-            (owned_view.compiler-owned-shared-view stream)
-            3))
-        (tokens.fmt-tag-end)))))
-
-(define (format-cst-error-location-ok?) : bool
-  (match (parse-format-source-result "(define x\n  ]")
-    [(ResultFormatCst.Ok _) false]
-    [(ResultFormatCst.Err err)
-      (and
-        (string.eq
-          (tokens.format-source-error-message
-            (owned_view.compiler-owned-shared-view err))
-          "format cst: unexpected closing delimiter")
-        (tokens.format-source-span-eq?
-          (tokens.format-source-error-span
-            (owned_view.compiler-owned-shared-view err))
-          2
-          3
-          2
-          3))]))
-
-(define (format-cst-legacy-char-rejected-ok?) : bool
-  (and
-    (match (parse-format-source-result "#x'")
-      [(ResultFormatCst.Ok _) false]
-      [(ResultFormatCst.Err err)
-        (string.eq
-          (tokens.format-source-error-message
-            (owned_view.compiler-owned-shared-view err))
-          "format lexer: unexpected character")])
-    (match (parse-format-source-result "#\\space'")
-      [(ResultFormatCst.Ok _) false]
-      [(ResultFormatCst.Err err)
-        (string.eq
-          (tokens.format-source-error-message
-            (owned_view.compiler-owned-shared-view err))
-          "format lexer: unexpected character")])))
-
-(define (format-cst-dense-storage-ok?) : bool
-  (match (parse-format-source "(a b c)")
-    [(FormatCst.Forms forms)
-      (and
-        (= (fmt-list-count (owned_view.compiler-owned-box-shared-view forms)) 1)
-        (match (fmt-cst-list-step
-          (owned_view.compiler-owned-box-shared-view forms))
-          [(FormatCstListStep.Item node _)
-            (match node
-              [(FormatCst.List items)
-                (=
-                  (fmt-list-count
-                    (owned_view.compiler-owned-box-shared-view items))
-                  3)]
-              [_ false])]
-          [_ false]))]
-    [_ false]))
-
-(define (format-cst-self-test) : i64
-  (let
-    [stream : tokens.FormatTokenStream (tokens.format-lex (format-cst-fixture))]
-    [tree : FormatCst (parse-format-source (format-cst-fixture))]
-    (begin
-      (unless
-        (>
-          (tokens.format-token-count
-            (owned_view.compiler-owned-shared-view stream))
-          40)
-        (return 1))
-      (unless
-        (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 40)
-        (return 2))
-      (unless
-        (=
-          (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree))
-          1)
-        (return 3))
-      (unless
-        (>
-          (fmt-cst-bracket-count (owned_view.compiler-owned-shared-view tree))
-          4)
-        (return 4))
-      (unless
-        (=
-          (tokens.format-token-tag-count
-            (owned_view.compiler-owned-shared-view stream)
-            (tokens.fmt-tag-char))
-          1)
-        (return 5))
-      (unless (format-cst-boxed-nested-ok?) (return 6))
-      (unless (format-cst-prefixed-int-ok?) (return 7))
-      (unless (format-cst-apostrophe-char-ok?) (return 8))
-      (unless (format-cst-error-location-ok?) (return 9))
-      (unless (format-cst-legacy-char-rejected-ok?) (return 10))
-      (unless (format-cst-dense-storage-ok?) (return 11))
-      42)))

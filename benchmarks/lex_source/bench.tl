@@ -4,8 +4,8 @@
 ;# the self-hosting front end's lexer and the input is REAL compiler source: the
 ;# corpus in benchmarks/lex_source/data/corpus.tl-txt is a byte-for-byte
 ;# concatenation of src/lex.tl, src/compiler_liveness.tl, src/compiler_symbols.tl
-;# and src/compiler_lower.tl, produced by
-;# benchmarks/lex_source/tools/export_corpus.py. So the byte-class dispatch here
+;# and src/compiler_lower.tl, produced by a since-deleted Python tool
+;# (see README.md). So the byte-class dispatch here
 ;# runs on exactly the text the compiler's lexer walks when it compiles itself,
 ;# with that text's real distribution of dashed symbols, keyword annotations,
 ;# numeric literals, escaped string literals, comment blocks, and nesting.

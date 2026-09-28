@@ -6,6 +6,7 @@
 (import compiler_windows_coff_core as windows)
 (import compiler_backend as backend)
 (import compiler_diagnostic as diag)
+(import compiler_diagnostic_tests as diag_tests)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -16,13 +17,13 @@
     (begin
       (if (string.eq first "")
         unit
-        (diag.compiler-advisory-list-push!
+        (diag_tests.compiler-advisory-list-push!
           (&mut items)
           (diag.CompilerAdvisoryPhase.Semantic)
           (diag.compiler-diagnostic-at-start "" first)))
       (if (string.eq second "")
         unit
-        (diag.compiler-advisory-list-push!
+        (diag_tests.compiler-advisory-list-push!
           (&mut items)
           (diag.CompilerAdvisoryPhase.Backend)
           (diag.compiler-diagnostic-at-start "" second)))

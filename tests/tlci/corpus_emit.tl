@@ -5,6 +5,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import tlci_core)
+(import tlci_core_tests)
 
 ;; These immutable fixtures predate the platform split and deliberately pin
 ;; the legacy/ambiguous host-platform value 1.
@@ -71,7 +72,7 @@
     (tlci_core.tlci-empty-bytes)
     (tlci_core.tlci-empty-bytes)
     (tlci_core.tlci-empty-bytes)
-    (tlci_core.tlci-test-imports-bytes)))
+    (tlci_core_tests.tlci-test-imports-bytes)))
 
 (define (tlci-v2-corpus-write
   [path : String]

@@ -31,10 +31,10 @@
 (import compiler_load)
 (import build_run_core)
 (import stdlib.string)
+(import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
-(import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (defenum DocTestExpectation
@@ -76,9 +76,7 @@
         (begin
           (while (< index (doc_example_vec.len (& examples)))
             (begin
-              (match (doc-test-example-list-ref
-                (owned_view.compiler-owned-shared-view examples)
-                index)
+              (match (doc-test-example-list-ref examples index)
                 [(DocTestExample.Example ordinal line expectation code)
                   (doc_example_vec.push-ref!
                     (&mut out-examples)
@@ -98,9 +96,7 @@
           (set! index 0)
           (while (< index (doc_error_vec.len (& errors)))
             (begin
-              (match (doc-test-error-list-ref
-                (owned_view.compiler-owned-shared-view errors)
-                index)
+              (match (doc-test-error-list-ref errors index)
                 [(DocTestError.Error line message)
                   (doc_error_vec.push-ref!
                     (&mut out-errors)
@@ -108,7 +104,7 @@
               (set! index (+ index 1))))
           (DocTestExtraction.Extraction out-examples out-errors)))]))
 
-;; Package discovery tolerates a path disappearing before checking, as before.
+;; Package discovery tolerates a path disappearing before checking.
 ;; The source bytes and line/fence scanner are disposable; only extracted code,
 ;; runnable output expectations and errors survive into compiler typechecking.
 (define (doc-test-extract-package-file-text [path : String]) : DocTestExtraction
@@ -126,10 +122,7 @@
           (let
             [extraction : DocTestExtraction
               (doc-test-extract-source (byte_buf.to-string contents))]
-            (in-arena
-              home
-              (doc-test-extraction-copy
-                (owned_view.compiler-owned-shared-view extraction))))]))))
+            (in-arena home (doc-test-extraction-copy extraction)))]))))
 
 (defenum DocTestMaybeString
   (No)
@@ -160,14 +153,15 @@
 (define (doc-test-example-list-empty) : doc_example_vec.Vec
   (doc_example_vec.new))
 
-(define (doc-test-example-list-count [examples : doc_example_vec.Vec]) : i64
-  (doc_example_vec.len (& examples)))
+(define (doc-test-example-list-count
+  [examples : (& examples doc_example_vec.Vec)]) : i64
+  (doc_example_vec.len examples))
 
 (define (doc-test-example-list-ref
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]) : DocTestExample
   (doc_example_vec.get
-    (& examples)
+    examples
     index
     (DocTestExample.Example 0 0 (DocTestExpectation.Pass) "")))
 
@@ -175,7 +169,7 @@
   [examples : doc_example_vec.Vec]
   [example : DocTestExample]) : doc_example_vec.Vec
   (let
-    [out : doc_example_vec.Vec (owned_view.compiler-owned-shared-view examples)]
+    [out : doc_example_vec.Vec examples]
     (begin
       (doc_example_vec.push-ref! (&mut out) example)
       out)))
@@ -183,35 +177,31 @@
 (define (doc-test-error-list-empty) : doc_error_vec.Vec
   (doc_error_vec.new))
 
-(define (doc-test-error-list-count [errors : doc_error_vec.Vec]) : i64
-  (doc_error_vec.len (& errors)))
+(define (doc-test-error-list-count [errors : (& errors doc_error_vec.Vec)]) : i64
+  (doc_error_vec.len errors))
 
-(define (doc-test-error-list-ref [errors : doc_error_vec.Vec] [index : i64]) : DocTestError
+(define (doc-test-error-list-ref
+  [errors : (& errors doc_error_vec.Vec)]
+  [index : i64]) : DocTestError
   (doc_error_vec.get (& errors) index (DocTestError.Error 0 "")))
 
 (define (doc-test-error-list-append
   [errors : doc_error_vec.Vec]
   [err : DocTestError]) : doc_error_vec.Vec
   (let
-    [out : doc_error_vec.Vec (owned_view.compiler-owned-shared-view errors)]
+    [out : doc_error_vec.Vec errors]
     (begin
       (doc_error_vec.push-ref! (&mut out) err)
       out)))
 
 (define (doc-test-error-list-append-all-from
   [errors : doc_error_vec.Vec]
-  [more : doc_error_vec.Vec]
+  [more : (& more doc_error_vec.Vec)]
   [index : i64]) : doc_error_vec.Vec
-  (if (>=
-    index
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view more)))
+  (if (>= index (doc-test-error-list-count more))
     errors
     (doc-test-error-list-append-all-from
-      (doc-test-error-list-append
-        errors
-        (doc-test-error-list-ref
-          (owned_view.compiler-owned-shared-view more)
-          index))
+      (doc-test-error-list-append errors (doc-test-error-list-ref more index))
       more
       (+ index 1))))
 
@@ -283,61 +273,6 @@
 
 (define (doc-test-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
-
-(define (doc-test-newline? [c : char]) : bool
-  (or (= c '\n') (= c '\r')))
-
-(define (doc-test-string-prefix-at?
-  [text : String]
-  [prefix : String]
-  [start : i64]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [prefix-len : i64 (string.string-length prefix)]
-    (if (< start 0)
-      false
-      (if (> (+ start prefix-len) text-len)
-        false
-        (let
-          [i : i64 0]
-          [ok : bool true]
-          (begin
-            (while ok
-              (if (< i prefix-len)
-                (if (=
-                  (string.string-ref text (+ start i))
-                  (string.string-ref prefix i))
-                  (set! i (+ i 1))
-                  (set! ok false))
-                (set! ok false)))
-            (= i prefix-len)))))))
-
-(define (doc-test-string-prefix? [text : String] [prefix : String]) : bool
-  (doc-test-string-prefix-at? text prefix 0))
-
-(define (doc-test-string-contains? [text : String] [needle : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [needle-len : i64 (string.string-length needle)]
-    (if (= needle-len 0)
-      true
-      (let
-        [i : i64 0]
-        [found : bool false]
-        [done : bool false]
-        (begin
-          (while (not done)
-            (if (<= (+ i needle-len) text-len)
-              (if (doc-test-string-prefix-at?
-                (owned_view.compiler-owned-shared-view text)
-                (owned_view.compiler-owned-shared-view needle)
-                i)
-                (begin
-                  (set! found true)
-                  (set! done true))
-                (set! i (+ i 1)))
-              (set! done true)))
-          found)))))
 
 (define (doc-test-trim-left [text : String]) : String
   (let
@@ -466,15 +401,13 @@
     [trimmed : String (doc-test-trim text)]
     (if (string.eq trimmed "-")
       (DocTestMaybeOutput.Some "")
-      (if (doc-test-string-prefix?
-        (owned_view.compiler-owned-shared-view trimmed)
-        "literal:")
+      (if (source_text.starts-with? trimmed "literal:")
         (doc-test-decode-output-literal
           (string.substring trimmed 8 (- (string.string-length trimmed) 8)))
         (DocTestMaybeOutput.No
           "doctest output metadata must be '-' or 'literal:<escaped text>'")))))
 
-(define (doc-test-string-blank? [text : String]) : bool
+(define (doc-test-string-blank? [text : (& text str)]) : bool
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
@@ -490,7 +423,7 @@
           (set! i n)))
       blank)))
 
-(define (doc-test-word-end [text : String] [start : i64]) : i64
+(define (doc-test-word-end [text : (& text str)] [start : i64]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 start]
@@ -504,39 +437,12 @@
           (set! keep false)))
       i)))
 
-(define (doc-test-line-end [src : String] [start : i64] [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [keep : bool true]
-    (begin
-      (while keep
-        (if (< i n)
-          (if (doc-test-newline? (string.string-ref src i))
-            (set! keep false)
-            (set! i (+ i 1)))
-          (set! keep false)))
-      i)))
-
-(define (doc-test-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
-  (begin
-    (unless (< line-end n) (return line-end))
-    (let
-      [c : char (string.string-ref src line-end)]
-      (begin
-        (unless (= c '\r') (return (+ line-end 1)))
-        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref src (+ line-end 1)) '\n')
-          (+ line-end 2)
-          (+ line-end 1))))))
-
 (define (doc-test-doc-comment-body-with-prefix
   [line : String]
   [prefix : String]) : DocTestMaybeString
   (let
     [trimmed : String (doc-test-trim-left line)]
-    (if (doc-test-string-prefix?
-      (owned_view.compiler-owned-shared-view trimmed)
-      (owned_view.compiler-owned-shared-view prefix))
+    (if (source_text.starts-with? trimmed prefix)
       (let
         [prefix-len : i64 (string.string-length prefix)]
         [trimmed-len : i64 (string.string-length trimmed)]
@@ -556,10 +462,8 @@
 (define (doc-test-item-doc-comment-body [line : String]) : DocTestMaybeString
   (doc-test-doc-comment-body-with-prefix line ";:"))
 
-(define (doc-test-starts-with-form-head? [text : String] [head : String]) : bool
-  (if (doc-test-string-prefix?
-    (owned_view.compiler-owned-shared-view text)
-    (owned_view.compiler-owned-shared-view head))
+(define (doc-test-starts-with-form-head? [text : (& text str)] [head : String]) : bool
+  (if (source_text.starts-with? text head)
     (let
       [head-len : i64 (string.string-length head)]
       [text-len : i64 (string.string-length text)]
@@ -580,15 +484,9 @@
             (doc-test-trim-left
               (string.substring trimmed 1 (- (string.string-length trimmed) 1)))]
           (or
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "define")
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "extern")
-            (doc-test-starts-with-form-head?
-              (owned_view.compiler-owned-shared-view rest)
-              "defenum")
+            (doc-test-starts-with-form-head? rest "define")
+            (doc-test-starts-with-form-head? rest "extern")
+            (doc-test-starts-with-form-head? rest "defenum")
             (doc-test-starts-with-form-head? rest "defstruct")))
         false)
       false)))
@@ -602,8 +500,7 @@
     (if (= (string.string-length trimmed) 0)
       (DocTestFenceInfo.TypeLisp mode)
       (let
-        [end : i64
-          (doc-test-word-end (owned_view.compiler-owned-shared-view trimmed) 0)]
+        [end : i64 (doc-test-word-end trimmed 0)]
         [option : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
@@ -647,8 +544,7 @@
     (if (= (string.string-length trimmed) 0)
       (DocTestFenceInfo.Ignore)
       (let
-        [end : i64
-          (doc-test-word-end (owned_view.compiler-owned-shared-view trimmed) 0)]
+        [end : i64 (doc-test-word-end trimmed 0)]
         [language : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
@@ -660,22 +556,21 @@
           (DocTestFenceInfo.Ignore))))))
 
 (define (doc-test-skip-ignored-fence-from
-  [lines : doc_line_vec.Vec]
+  [lines : (& lines doc_line_vec.Vec)]
   [index : i64]) : i64
   (if (>= index (doc_line_vec.len (& lines)))
     (doc_line_vec.len (& lines))
     (let
       [line : DocTestLine
         (doc_line_vec.get (& lines) index (DocTestLine.Line 0 ""))]
-      (if (doc-test-string-prefix?
-        (doc-test-trim-left
-          (doc-test-line-text (owned_view.compiler-owned-shared-view line)))
+      (if (source_text.starts-with?
+        (doc-test-trim-left (doc-test-line-text line))
         "```")
         (+ index 1)
         (doc-test-skip-ignored-fence-from lines (+ index 1))))))
 
 (define (doc-test-collect-code-inner
-  [lines : doc_line_vec.Vec]
+  [lines : (& lines doc_line_vec.Vec)]
   [index : i64]
   [code : String]
   [collected : doc_line_vec.Vec]) : DocTestCodeCollect
@@ -688,14 +583,13 @@
     (let
       [line : DocTestLine
         (doc_line_vec.get (& lines) index (DocTestLine.Line 0 ""))]
-      (if (doc-test-string-prefix?
+      (if (source_text.starts-with?
         (doc-test-trim-left
           (doc-test-line-text (owned_view.compiler-owned-shared-view line)))
         "```")
         (DocTestCodeCollect.Collect (+ index 1) code collected true)
         (let
-          [out : doc_line_vec.Vec
-            (owned_view.compiler-owned-shared-view collected)]
+          [out : doc_line_vec.Vec collected]
           (begin
             (doc_line_vec.push-ref!
               (&mut out)
@@ -706,15 +600,15 @@
               (str_cat.str-cat code (doc-test-line-text line) "\n")
               out)))))))
 
-(define (doc-test-collect-code [lines : doc_line_vec.Vec] [index : i64]) : DocTestCodeCollect
+(define (doc-test-collect-code
+  [lines : (& lines doc_line_vec.Vec)]
+  [index : i64]) : DocTestCodeCollect
   (doc-test-collect-code-inner lines index "" (doc_line_vec.new)))
 
 (define (doc-test-metadata-value [line : DocTestLine] [prefix : String]) : DocTestMaybeString
   (let
     [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
-    (if (doc-test-string-prefix?
-      (owned_view.compiler-owned-shared-view trimmed)
-      (owned_view.compiler-owned-shared-view prefix))
+    (if (source_text.starts-with? trimmed prefix)
       (DocTestMaybeString.Some
         (doc-test-trim
           (string.substring
@@ -724,14 +618,14 @@
       (DocTestMaybeString.No))))
 
 (define (doc-test-metadata-line? [line : DocTestLine]) : bool
-  (doc-test-string-prefix?
+  (source_text.starts-with?
     (doc-test-trim-left (doc-test-line-text line))
     ";; doctest-"))
 
 (define (doc-test-run-metadata-append-error
   [metadata : DocTestRunMetadata]
   [err : DocTestError]) : DocTestRunMetadata
-  (match (owned_view.compiler-owned-shared-view metadata)
+  (match metadata
     [(DocTestRunMetadata.Metadata
         has-exit
         expected-exit
@@ -891,13 +785,13 @@
                 metadata)])])]))
 
 (define (doc-test-run-metadata-parse-lines-from
-  [lines : doc_line_vec.Vec]
+  [lines : (& lines doc_line_vec.Vec)]
   [metadata : DocTestRunMetadata]
   [index : i64]) : DocTestRunMetadata
   (if (>= index (doc_line_vec.len (& lines)))
     metadata
     (doc-test-run-metadata-parse-lines-from
-      (owned_view.compiler-owned-shared-view lines)
+      lines
       (doc-test-run-metadata-parse-line
         metadata
         (doc_line_vec.get (& lines) index (DocTestLine.Line 0 "")))
@@ -938,10 +832,7 @@
               (DocTestError.Error
                 source-line
                 "runnable TypeLisp doctest requires doctest-exit metadata")))]
-        (if (=
-          (doc-test-error-list-count
-            (owned_view.compiler-owned-shared-view all-errors))
-          0)
+        (if (= (doc-test-error-list-count all-errors) 0)
           (DocTestRunMetadataParse.Ok
             (DocTestExpectation.Run
               expected-exit
@@ -950,20 +841,17 @@
           (DocTestRunMetadataParse.Err all-errors)))]))
 
 (define (doc-test-scan-type-lisp-fence
-  [lines : doc_line_vec.Vec]
+  [lines : (& lines doc_line_vec.Vec)]
   [index : i64]
   [state : DocTestScanState]
   [source-line : i64]
   [mode : DocTestFenceMode]) : DocTestScanState
-  (match (doc-test-collect-code
-    (owned_view.compiler-owned-shared-view lines)
-    index)
+  (match (doc-test-collect-code lines index)
     [(DocTestCodeCollect.Collect remaining code code-lines closed)
       (match state
         [(DocTestScanState.State examples errors next-index)
           (if closed
-            (if (doc-test-string-blank?
-              (owned_view.compiler-owned-shared-view code))
+            (if (doc-test-string-blank? code)
               (doc-test-scan-doc-block-from
                 lines
                 remaining
@@ -1020,7 +908,7 @@
               next-index))])]))
 
 (define (doc-test-scan-doc-block-from
-  [lines : doc_line_vec.Vec]
+  [lines : (& lines doc_line_vec.Vec)]
   [index : i64]
   [state : DocTestScanState]) : DocTestScanState
   (if (>= index (doc_line_vec.len (& lines)))
@@ -1031,9 +919,7 @@
       [trimmed : String
         (doc-test-trim-left
           (doc-test-line-text (owned_view.compiler-owned-shared-view line)))]
-      (if (doc-test-string-prefix?
-        (owned_view.compiler-owned-shared-view trimmed)
-        "```")
+      (if (source_text.starts-with? trimmed "```")
         (let
           [info : String
             (string.substring trimmed 3 (- (string.string-length trimmed) 3))]
@@ -1042,37 +928,30 @@
             (doc-test-line-number (owned_view.compiler-owned-shared-view line)))
             [(DocTestFenceInfo.Ignore)
               (doc-test-scan-doc-block-from
-                (owned_view.compiler-owned-shared-view lines)
-                (doc-test-skip-ignored-fence-from
-                  (owned_view.compiler-owned-shared-view lines)
-                  (+ index 1))
+                lines
+                (doc-test-skip-ignored-fence-from lines (+ index 1))
                 state)]
             [(DocTestFenceInfo.Malformed err)
               (match state
                 [(DocTestScanState.State examples errors next-index)
                   (doc-test-scan-doc-block-from
-                    (owned_view.compiler-owned-shared-view lines)
-                    (doc-test-skip-ignored-fence-from
-                      (owned_view.compiler-owned-shared-view lines)
-                      (+ index 1))
+                    lines
+                    (doc-test-skip-ignored-fence-from lines (+ index 1))
                     (DocTestScanState.State
                       examples
                       (doc-test-error-list-append errors err)
                       next-index))])]
             [(DocTestFenceInfo.TypeLisp expectation)
               (doc-test-scan-type-lisp-fence
-                (owned_view.compiler-owned-shared-view lines)
+                lines
                 (+ index 1)
                 state
                 (doc-test-line-number line)
                 expectation)]))
-        (doc-test-scan-doc-block-from
-          (owned_view.compiler-owned-shared-view lines)
-          (+ index 1)
-          state)))))
+        (doc-test-scan-doc-block-from lines (+ index 1) state)))))
 
 (define (doc-test-scan-doc-block
-  [lines : doc_line_vec.Vec]
+  [lines : (& lines doc_line_vec.Vec)]
   [state : DocTestScanState]) : DocTestScanState
   (doc-test-scan-doc-block-from lines 0 state))
 
@@ -1091,11 +970,7 @@
     (begin
       (while (< pos n)
         (let
-          [line-end : i64
-            (doc-test-line-end
-              (owned_view.compiler-owned-shared-view src)
-              pos
-              n)]
+          [line-end : i64 (source_text.line-end src pos)]
           [line : String (string.substring src pos (- line-end pos))]
           (begin
             (match (doc-test-module-doc-comment-body
@@ -1107,15 +982,10 @@
                     (&mut module-lines)
                     (DocTestLine.Line line-number body)))]
               [(DocTestMaybeString.No)
-                (if (doc-test-string-blank?
-                  (owned_view.compiler-owned-shared-view line))
+                (if (doc-test-string-blank? line)
                   unit
                   (begin
-                    (set!
-                      state
-                      (doc-test-scan-doc-block
-                        (owned_view.compiler-owned-shared-view module-lines)
-                        state))
+                    (set! state (doc-test-scan-doc-block module-lines state))
                     (set! module-lines (doc_line_vec.new))
                     (match (doc-test-item-doc-comment-body
                       (owned_view.compiler-owned-shared-view line))
@@ -1128,18 +998,10 @@
                           (begin
                             (set!
                               state
-                              (doc-test-scan-doc-block
-                                (owned_view.compiler-owned-shared-view
-                                  pending-lines)
-                                state))
+                              (doc-test-scan-doc-block pending-lines state))
                             (set! pending-lines (doc_line_vec.new)))
                           (set! pending-lines (doc_line_vec.new)))])))])
-            (set!
-              pos
-              (doc-test-next-line-start
-                (owned_view.compiler-owned-shared-view src)
-                line-end
-                n))
+            (set! pos (source_text.next-line-start src line-end))
             (set! line-number (+ line-number 1)))))
       (set! state (doc-test-scan-doc-block module-lines state))
       (match state
@@ -1164,22 +1026,6 @@
   (No)
   (Some DocTestRunFailure))
 
-(define (doc-test-run-failure-path [failure : DocTestRunFailure]) : String
-  (match failure
-    [(DocTestRunFailure.Failure path _ _ _) path]))
-
-(define (doc-test-run-failure-line [failure : DocTestRunFailure]) : i64
-  (match failure
-    [(DocTestRunFailure.Failure _ line _ _) line]))
-
-(define (doc-test-run-failure-index [failure : DocTestRunFailure]) : i64
-  (match failure
-    [(DocTestRunFailure.Failure _ _ index _) index]))
-
-(define (doc-test-run-failure-message [failure : DocTestRunFailure]) : String
-  (match failure
-    [(DocTestRunFailure.Failure _ _ _ message) message]))
-
 (define (doc-test-run-report-count [report : DocTestRunReport]) : i64
   (match report
     [(DocTestRunReport.Report count _) count]))
@@ -1191,11 +1037,12 @@
 (define (doc-test-run-failure-list-empty) : doc_run_failure_vec.Vec
   (doc_run_failure_vec.new))
 
-(define (doc-test-run-failure-list-count [failures : doc_run_failure_vec.Vec]) : i64
+(define (doc-test-run-failure-list-count
+  [failures : (& failures doc_run_failure_vec.Vec)]) : i64
   (doc_run_failure_vec.len (& failures)))
 
 (define (doc-test-run-failure-list-ref
-  [failures : doc_run_failure_vec.Vec]
+  [failures : (& failures doc_run_failure_vec.Vec)]
   [index : i64]) : DocTestRunFailure
   (doc_run_failure_vec.get
     (& failures)
@@ -1203,7 +1050,11 @@
     (DocTestRunFailure.Failure "" 0 0 "")))
 
 (define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
-  (= (doc-test-run-failure-list-count (doc-test-run-report-failures report)) 0))
+  (=
+    (let
+      [failures (doc-test-run-report-failures report)]
+      (doc-test-run-failure-list-count failures))
+    0))
 
 (define (doc-test-run-report-add-prefix-count
   [prefix-count : i64]
@@ -1218,127 +1069,14 @@
   [failures : doc_run_failure_vec.Vec]
   [failure : DocTestRunFailure]) : doc_run_failure_vec.Vec
   (let
-    [out : doc_run_failure_vec.Vec
-      (owned_view.compiler-owned-shared-view failures)]
+    [out : doc_run_failure_vec.Vec failures]
     (begin
       (doc_run_failure_vec.push-ref! (&mut out) failure)
       out)))
 
-;; Grow the generated error collection past its initial capacity while preserving
-;; source order. The extraction path uses this same helper.
-(define (doc-test-error-vector-growth-smoke-ok?) : bool
-  (let
-    [errors : doc_error_vec.Vec (doc-test-error-list-empty)]
-    [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_error_vec.push-ref!
-            (&mut errors)
-            (DocTestError.Error index (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (=
-          (doc-test-error-list-count
-            (owned_view.compiler-owned-shared-view errors))
-          5)
-        (= (doc_error_vec.capacity (& errors)) 8)
-        (= (doc-test-error-line (doc-test-error-list-ref errors 4)) 5)))))
-
-;; Grow the generated line collection past its initial capacity while preserving
-;; physical source-line order. Extraction uses this same helper.
-(define (doc-test-line-vector-growth-smoke-ok?) : bool
-  (let
-    [lines : doc_line_vec.Vec (doc_line_vec.new)]
-    [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_line_vec.push-ref!
-            (&mut lines)
-            (DocTestLine.Line index (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (= (doc_line_vec.len (& lines)) 5)
-        (= (doc_line_vec.capacity (& lines)) 8)
-        (=
-          (doc-test-line-number
-            (doc_line_vec.get (& lines) 0 (DocTestLine.Line 0 "")))
-          1)
-        (=
-          (doc-test-line-number
-            (doc_line_vec.get (& lines) 4 (DocTestLine.Line 0 "")))
-          5)))))
-
-;; The two formerly hand-written collections also contain move-only strings.
-;; Exercise canonical core growth across the initial capacity without requiring
-;; clone/pop support, and confirm that source order survives the move-based copy.
-(define (doc-test-example-vector-growth-smoke-ok?) : bool
-  (let
-    [examples : doc_example_vec.Vec (doc-test-example-list-empty)]
-    [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_example_vec.push-ref!
-            (&mut examples)
-            (DocTestExample.Example
-              index
-              (+ index 10)
-              (DocTestExpectation.Pass)
-              (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (=
-          (doc-test-example-list-count
-            (owned_view.compiler-owned-shared-view examples))
-          5)
-        (= (doc_example_vec.capacity (& examples)) 8)
-        (=
-          (doc-test-example-index
-            (doc-test-example-list-ref
-              (owned_view.compiler-owned-shared-view examples)
-              0))
-          1)
-        (string.eq
-          (doc-test-example-code (doc-test-example-list-ref examples 4))
-          "5")))))
-
-(define (doc-test-run-failure-vector-growth-smoke-ok?) : bool
-  (let
-    [failures : doc_run_failure_vec.Vec (doc-test-run-failure-list-empty)]
-    [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_run_failure_vec.push-ref!
-            (&mut failures)
-            (DocTestRunFailure.Failure
-              (string.int->string index)
-              (+ index 10)
-              index
-              (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (=
-          (doc-test-run-failure-list-count
-            (owned_view.compiler-owned-shared-view failures))
-          5)
-        (= (doc_run_failure_vec.capacity (& failures)) 8)
-        (string.eq
-          (doc-test-run-failure-path
-            (doc-test-run-failure-list-ref
-              (owned_view.compiler-owned-shared-view failures)
-              0))
-          "1")
-        (=
-          (doc-test-run-failure-index
-            (doc-test-run-failure-list-ref failures 4))
-          5)))))
-
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
-;; message so the public CLI text matches the stage0 Rust runner.
+;; message.
 (define (doc-test-run-failure-render [failure : DocTestRunFailure]) : String
   (match failure
     [(DocTestRunFailure.Failure path line index message)
@@ -1364,38 +1102,6 @@
     [CompilerDiagnosticNoString
       (str_cat.str-cat "error: " (cdiag.compiler-diagnostic-render diag))]))
 
-(define (doc-test-public-diagnostic-render-smoke-ok?) : bool
-  (let
-    [parse-diag : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-simple
-          "docs/parse.tl"
-          1
-          2
-          "missing closing paren")
-        (cdiag.compiler-diagnostic-code-parse))]
-    [typecheck-diag : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-simple "docs/type.tl" 3 4 "return mismatch")
-        (cdiag.compiler-diagnostic-code-typecheck))]
-    [uncoded : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-simple
-        "docs/plain.tl"
-        5
-        6
-        "typecheck: prefix text only")]
-    [parse-rendered : String (doc-test-public-diagnostic-render parse-diag)]
-    [typecheck-rendered : String
-      (doc-test-public-diagnostic-render typecheck-diag)]
-    [uncoded-rendered : String (doc-test-public-diagnostic-render uncoded)]
-    (and
-      (doc-test-string-contains? parse-rendered "error[E0100]:")
-      (doc-test-string-contains? typecheck-rendered "error[E0200]:")
-      (doc-test-string-contains?
-        (owned_view.compiler-owned-shared-view uncoded-rendered)
-        "error: docs/plain.tl:5:6:")
-      (not (doc-test-string-contains? uncoded-rendered "E0200")))))
-
 (define (doc-test-unexpected-error-message
   [index : i64]
   [diag : cdiag.CompilerDiagnostic]) : String
@@ -1413,10 +1119,6 @@
   (match target
     [(backend.CompilerBackendTarget.Linux) true]
     [(backend.CompilerBackendTarget.Windows) true]))
-
-(define (doc-test-runnable-supported?) : bool
-  (doc-test-runnable-target-supported?
-    (build_run_core.source-tool-default-target)))
 
 (define (doc-test-runnable-unsupported-message
   [index : i64]
@@ -1532,7 +1234,7 @@
 (define (doc-test-runnable-output-matches?
   [expectation : DocTestExpectation]
   [target : backend.CompilerBackendTarget]
-  [output : process.ProcessOutput]) : bool
+  [output : (& output process.ProcessOutput)]) : bool
   (if (=
     (doc-test-expectation-run-exit
       (owned_view.compiler-owned-shared-view expectation))
@@ -1550,18 +1252,6 @@
           (process.output-stderr output)))
       false)
     false))
-
-(define (doc-test-assemble-and-link-captured
-  [target : backend.CompilerBackendTarget]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]) : build_run_core.SourceToolCommandStatus
-  (build_run_core.source-tool-assemble-and-link
-    target
-    asm-path
-    obj-path
-    bin-path
-    (build_run_core.source-tool-link-inputs-empty)))
 
 (define (doc-test-emit-runnable-assembly
   [path : String]
@@ -1588,7 +1278,7 @@
           code
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs
-          (owned_view.compiler-owned-shared-view pools))
+          pools)
           [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools
               (owned_view.compiler-owned-shared-view virtual-path)
@@ -1596,7 +1286,7 @@
               paths
               (lower.CompilerLowerMode.Scalar)
               stdlib-roots
-              (owned_view.compiler-owned-shared-view cfgs)
+              cfgs
               (tc.tc-prefix-default-cache-scope)
               pools)
               [(lower.ResultCompilerLower.Ok program spans)
@@ -1618,16 +1308,13 @@
                     (begin
                       (driver.compiler-driver-print-advisories (& advisories))
                       (build_run_core.ResultSourceToolString.Err
-                        (cdiag.compiler-diagnostic-render
-                          (cdiag.compiler-diagnostic-box-shared-view diag))))])]
+                        (cdiag.compiler-diagnostic-render (deref diag))))])]
               [(lower.ResultCompilerLower.Err diag)
                 (build_run_core.ResultSourceToolString.Err
-                  (cdiag.compiler-diagnostic-render
-                    (cdiag.compiler-diagnostic-box-shared-view diag)))])]
+                  (cdiag.compiler-diagnostic-render (deref diag)))])]
           [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
             (build_run_core.ResultSourceToolString.Err
-              (cdiag.compiler-diagnostic-render
-                (cdiag.compiler-diagnostic-box-shared-view diag)))])]
+              (cdiag.compiler-diagnostic-render (deref diag)))])]
       (begin
         (driver.compiler-driver-state-clear-pool-backed-caches!)
         (driver.compiler-driver-reset-file-state!)
@@ -1640,132 +1327,6 @@
   [message : String]) : DocTestMaybeFailure
   (DocTestMaybeFailure.Some
     (DocTestRunFailure.Failure path source-line index message)))
-
-(define (doc-test-run-runnable-process-output
-  [path : String]
-  [source-line : i64]
-  [index : i64]
-  [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
-  [temp-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]) : DocTestMaybeFailure
-  (match (build_run_core.source-tool-run-executable
-    (owned_view.compiler-owned-shared-view bin-path)
-    target
-    (process.args-empty))
-    [(process.OkProcessOutput output)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (if (doc-test-runnable-output-matches?
-          (owned_view.compiler-owned-shared-view expectation)
-          target
-          (owned_view.compiler-owned-shared-view output))
-          (DocTestMaybeFailure.No)
-          (doc-test-runnable-failure
-            path
-            source-line
-            index
-            (doc-test-runnable-mismatch-message index expectation target output))))]
-    [(process.ErrProcessOutput error)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (doc-test-runnable-failure
-          path
-          source-line
-          index
-          (doc-test-runnable-exec-message index (process.error-message error))))]))
-
-(define (doc-test-link-and-run-runnable
-  [path : String]
-  [source-line : i64]
-  [index : i64]
-  [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
-  [temp-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]) : DocTestMaybeFailure
-  (match (doc-test-assemble-and-link-captured
-    target
-    (owned_view.compiler-owned-shared-view asm-path)
-    (owned_view.compiler-owned-shared-view obj-path)
-    (owned_view.compiler-owned-shared-view bin-path))
-    [(build_run_core.SourceToolCommandStatus.Err message)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (doc-test-runnable-failure
-          path
-          source-line
-          index
-          (doc-test-runnable-build-message index message)))]
-    [(build_run_core.SourceToolCommandStatus.Ok)
-      (doc-test-run-runnable-process-output
-        path
-        source-line
-        index
-        expectation
-        target
-        temp-dir
-        asm-path
-        obj-path
-        bin-path)]))
-
-(define (doc-test-write-link-and-run-runnable
-  [path : String]
-  [source-line : i64]
-  [index : i64]
-  [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
-  [temp-dir : String]
-  [asm-path : String]
-  [obj-path : String]
-  [bin-path : String]
-  [asm : String]) : DocTestMaybeFailure
-  (match (build_run_core.source-tool-write-file
-    (owned_view.compiler-owned-shared-view asm-path)
-    asm
-    "doctest: failed to write assembly artifact")
-    [(build_run_core.SourceToolCommandStatus.Err message)
-      (begin
-        (build_run_core.source-tool-clean-temp
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          true)
-        (doc-test-runnable-failure
-          path
-          source-line
-          index
-          (doc-test-runnable-build-message index message)))]
-    [(build_run_core.SourceToolCommandStatus.Ok)
-      (doc-test-link-and-run-runnable
-        path
-        source-line
-        index
-        expectation
-        target
-        temp-dir
-        asm-path
-        obj-path
-        bin-path)]))
 
 (define (doc-test-run-runnable-output
   [path : String]
@@ -1786,50 +1347,57 @@
       (doc-test-example-virtual-path
         (owned_view.compiler-owned-shared-view path)
         index)]
-    [asm-path : String
-      (build_run_core.source-tool-asm-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view virtual-path))]
-    [obj-path : String
-      (build_run_core.source-tool-obj-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view virtual-path)
-        target)]
-    [bin-path : String
-      (build_run_core.source-tool-temp-bin-path
-        (owned_view.compiler-owned-shared-view temp-dir)
-        (owned_view.compiler-owned-shared-view virtual-path)
-        target)]
-    (match (doc-test-emit-runnable-assembly
-      (owned_view.compiler-owned-shared-view path)
-      (owned_view.compiler-owned-shared-view example)
-      stdlib-roots
-      target)
-      [(build_run_core.ResultSourceToolString.Err message)
-        (begin
-          (build_run_core.source-tool-clean-temp
-            temp-dir
-            asm-path
-            obj-path
-            bin-path
-            true)
-          (doc-test-runnable-failure
-            path
-            source-line
-            index
-            (doc-test-runnable-compile-message index message)))]
-      [(build_run_core.ResultSourceToolString.Ok asm)
-        (doc-test-write-link-and-run-runnable
-          path
-          source-line
-          index
-          expectation
-          target
-          temp-dir
-          asm-path
-          obj-path
-          bin-path
-          asm)])))
+    [files : build_run_core.SourceToolTempFiles
+      (build_run_core.source-tool-temp-files temp-dir virtual-path target)]
+    [message : DocTestMaybeString
+      (match (doc-test-emit-runnable-assembly
+        (owned_view.compiler-owned-shared-view path)
+        example
+        stdlib-roots
+        target)
+        [(build_run_core.ResultSourceToolString.Err message)
+          (DocTestMaybeString.Some
+            (doc-test-runnable-compile-message index message))]
+        [(build_run_core.ResultSourceToolString.Ok asm)
+          (match (build_run_core.source-tool-link-and-run
+            (build_run_core.SourceToolLinkRequest
+              ""
+              (build_run_core.SourceToolProgram.Assembly asm)
+              target
+              (opt.compiler-optimize-default-level)
+              (backend.CompilerBackendMode.Scalar)
+              (build_run_core.source-tool-link-inputs-empty)
+              (owned_view.compiler-owned-shared-view files)
+              "doctest: failed to write assembly artifact")
+            (process.args-empty)
+            (process.env-empty)
+            false)
+            [(build_run_core.SourceToolRunOutcome.LinkFailed message)
+              (DocTestMaybeString.Some
+                (doc-test-runnable-build-message index message))]
+            [(build_run_core.SourceToolRunOutcome.Ran output)
+              (if (doc-test-runnable-output-matches?
+                (owned_view.compiler-owned-shared-view expectation)
+                target
+                output)
+                (DocTestMaybeString.No)
+                (DocTestMaybeString.Some
+                  (doc-test-runnable-mismatch-message
+                    index
+                    expectation
+                    target
+                    output)))]
+            [(build_run_core.SourceToolRunOutcome.SpawnFailed error)
+              (DocTestMaybeString.Some
+                (doc-test-runnable-exec-message
+                  index
+                  (process.error-message error)))])])]
+    (begin
+      (build_run_core.source-tool-clean-temp-files files true)
+      (match message
+        [(DocTestMaybeString.No) (DocTestMaybeFailure.No)]
+        [(DocTestMaybeString.Some text)
+          (doc-test-runnable-failure path source-line index text)]))))
 
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
@@ -1921,8 +1489,7 @@
                 index
                 (doc-test-unexpected-error-message
                   index
-                  (cdiag.compiler-diagnostic-list-first
-                    (cdiag.compiler-diagnostic-list-box-shared-view diag)))))))])))
+                  (cdiag.compiler-diagnostic-list-first (deref diag)))))))])))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
@@ -1984,8 +1551,7 @@
                 index
                 (doc-test-unexpected-error-message
                   index
-                  (cdiag.compiler-diagnostic-list-first
-                    (cdiag.compiler-diagnostic-list-box-shared-view diag)))))))])))
+                  (cdiag.compiler-diagnostic-list-first (deref diag)))))))])))
 
 (define (doc-test-check-example-with-roots
   [path : String]
@@ -1999,20 +1565,14 @@
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples)))
+  (if (>= index (doc-test-example-list-count examples))
     failures
     (let
-      [example : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          index)]
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-check-example-with-roots
         (owned_view.compiler-owned-shared-view path)
         example
@@ -2041,26 +1601,20 @@
 
 (define (doc-test-typecheck-examples-with-roots-from
   [path : String]
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples)))
+  (if (>= index (doc-test-example-list-count examples))
     failures
     (let
-      [example : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          index)]
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-typecheck-example-with-roots-and-cfg
         (owned_view.compiler-owned-shared-view path)
         example
         (owned_view.compiler-owned-shared-view stdlib-roots)
-        (owned_view.compiler-owned-shared-view cfgs))
+        cfgs)
         [(DocTestMaybeFailure.No)
           (doc-test-typecheck-examples-with-roots-from
             path
@@ -2094,30 +1648,24 @@
 
 (define (doc-test-typecheck-package-examples-with-roots-from
   [path : String]
-  [examples : doc_example_vec.Vec]
+  [examples : (& examples doc_example_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples)))
+  (if (>= index (doc-test-example-list-count examples))
     failures
     (let
-      [example : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          index)]
+      [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-typecheck-package-example-with-roots-and-cfg
         (owned_view.compiler-owned-shared-view path)
         example
         (owned_view.compiler-owned-shared-view stdlib-roots)
         (owned_view.compiler-owned-shared-view manifest-dir)
         (owned_view.compiler-owned-shared-view deps)
-        (owned_view.compiler-owned-shared-view cfgs))
+        cfgs)
         [(DocTestMaybeFailure.No)
           (doc-test-typecheck-package-examples-with-roots-from
             path
@@ -2161,18 +1709,13 @@
 ;; example index, so it is recorded with index `-1`.
 (define (doc-test-errors-to-failures-from
   [path : String]
-  [errors : doc_error_vec.Vec]
+  [errors : (& errors doc_error_vec.Vec)]
   [index : i64]
   [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
-  (if (>=
-    index
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view errors)))
+  (if (>= index (doc-test-error-list-count errors))
     failures
     (let
-      [err : DocTestError
-        (doc-test-error-list-ref
-          (owned_view.compiler-owned-shared-view errors)
-          index)]
+      [err : DocTestError (doc-test-error-list-ref errors index)]
       (doc-test-errors-to-failures-from
         (owned_view.compiler-owned-shared-view path)
         errors
@@ -2191,12 +1734,6 @@
   [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
   (doc-test-errors-to-failures-from path errors 0 failures))
 
-;; Extract and check every example in `source` (attributed to `path`). Extraction
-;; errors are folded in as failures first, then each example is checked. A source
-;; with no examples and no errors reports success with a zero count.
-(define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-run-source-with-roots path source (doc_svec.new)))
-
 (define (doc-test-run-source-with-roots
   [path : String]
   [source : String]
@@ -2204,13 +1741,12 @@
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
-        (doc-test-example-list-count
-          (owned_view.compiler-owned-shared-view examples))
+        (doc-test-example-list-count examples)
         (doc-test-run-examples-with-roots
           (owned_view.compiler-owned-shared-view path)
-          (owned_view.compiler-owned-shared-view examples)
+          examples
           (doc-test-errors-to-failures
-            (owned_view.compiler-owned-shared-view path)
+            path
             errors
             (doc-test-run-failure-list-empty))
           stdlib-roots))]))
@@ -2222,9 +1758,6 @@
     (owned_view.compiler-owned-shared-view path)
     (byte_buf.to-string (io.read-file path))
     stdlib-roots))
-
-(define (doc-test-typecheck-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots path source (doc_svec.new)))
 
 (define (doc-test-typecheck-source-with-roots
   [path : String]
@@ -2244,32 +1777,16 @@
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
-        (doc-test-example-list-count
-          (owned_view.compiler-owned-shared-view examples))
+        (doc-test-example-list-count examples)
         (doc-test-typecheck-examples-with-roots-and-cfg
           (owned_view.compiler-owned-shared-view path)
-          (owned_view.compiler-owned-shared-view examples)
+          examples
           (doc-test-errors-to-failures
-            (owned_view.compiler-owned-shared-view path)
+            path
             errors
             (doc-test-run-failure-list-empty))
           stdlib-roots
           cfgs))]))
-
-(define (doc-test-typecheck-package-source-with-roots-and-cfg
-  [path : String]
-  [source : String]
-  [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
-  (doc-test-typecheck-package-extraction-with-roots-and-cfg
-    path
-    (doc-test-extract-source source)
-    stdlib-roots
-    manifest-dir
-    deps
-    cfgs))
 
 (define (doc-test-typecheck-package-extraction-with-roots-and-cfg
   [path : String]
@@ -2281,13 +1798,12 @@
   (match extraction
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
-        (doc-test-example-list-count
-          (owned_view.compiler-owned-shared-view examples))
+        (doc-test-example-list-count examples)
         (doc-test-typecheck-package-examples-with-roots-and-cfg
           (owned_view.compiler-owned-shared-view path)
-          (owned_view.compiler-owned-shared-view examples)
+          examples
           (doc-test-errors-to-failures
-            (owned_view.compiler-owned-shared-view path)
+            path
             errors
             (doc-test-run-failure-list-empty))
           stdlib-roots
@@ -2305,7 +1821,7 @@
     stdlib-roots
     cfgs))
 
-(define (doc-test-path-under-root? [path : String] [root : String]) : bool
+(define (doc-test-path-under-root? [path : (& path str)] [root : (& root str)]) : bool
   (let
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [normalized-root : String (compiler_load.compiler-load-normalize-path root)]
@@ -2318,7 +1834,7 @@
           normalized-root)))))
 
 (define (doc-test-dep-list-path?
-  [path : String]
+  [path : (& path str)]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDepList]
   [index : i64]) : bool
@@ -2337,9 +1853,7 @@
               (owned_view.compiler-owned-shared-view dep-path))))]
       (if (and
         (not (compiler_load.compiler-load-github-dependency-path? dep-path))
-        (doc-test-path-under-root?
-          (owned_view.compiler-owned-shared-view path)
-          dep-root))
+        (doc-test-path-under-root? path dep-root))
         true
         (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
 
@@ -2361,9 +1875,7 @@
         [rooted : String
           (if (or
             (compiler_load.compiler-load-absolute-path? path)
-            (doc-test-path-under-root?
-              (owned_view.compiler-owned-shared-view normalized)
-              (owned_view.compiler-owned-shared-view manifest-dir)))
+            (doc-test-path-under-root? normalized manifest-dir))
             normalized
             (compiler_load.compiler-load-normalize-path
               (compiler_load.compiler-load-join-root-path
@@ -2381,29 +1893,21 @@
               (owned_view.compiler-owned-shared-view manifest-dir)
               "stdlib"))]
         [manifest-root : String
-          (compiler_load.compiler-load-normalize-path
-            (owned_view.compiler-owned-shared-view manifest-dir))]
+          (compiler_load.compiler-load-normalize-path manifest-dir)]
         [manifest-local : bool
           (if (string.eq manifest-root ".")
             (and
               (not (compiler_load.compiler-load-absolute-path? rooted))
-              (doc-test-path-under-root?
-                (owned_view.compiler-owned-shared-view rooted)
-                (owned_view.compiler-owned-shared-view manifest-dir)))
-            (doc-test-path-under-root?
-              (owned_view.compiler-owned-shared-view rooted)
-              (owned_view.compiler-owned-shared-view manifest-dir)))]
+              (doc-test-path-under-root? rooted manifest-dir))
+            (doc-test-path-under-root? rooted manifest-dir))]
         [package-local : bool
           (and
             (> (string.string-length path) 0)
             (not (compiler_load.compiler-load-stdlib-import? stdlib-path))
-            (not
-              (doc-test-path-under-root?
-                (owned_view.compiler-owned-shared-view rooted)
-                manifest-stdlib-root))
+            (not (doc-test-path-under-root? rooted manifest-stdlib-root))
             (not
               (doc-test-dep-list-path?
-                (owned_view.compiler-owned-shared-view rooted)
+                rooted
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (compiler_load.compiler-pkg-deps-list
                   (owned_view.compiler-owned-shared-view deps))
@@ -2417,13 +1921,13 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (owned_view.compiler-owned-shared-view deps)
-                (owned_view.compiler-owned-shared-view cfgs))]
+                cfgs)]
             (if (doc-test-run-report-ok?
               (owned_view.compiler-owned-shared-view report))
               (doc-test-typecheck-package-path-list-with-roots-from
                 rest
                 stdlib-roots
-                (owned_view.compiler-owned-shared-view manifest-dir)
+                manifest-dir
                 deps
                 cfgs
                 rooted
@@ -2432,7 +1936,7 @@
           (doc-test-typecheck-package-path-list-with-roots-from
             rest
             stdlib-roots
-            (owned_view.compiler-owned-shared-view manifest-dir)
+            manifest-dir
             deps
             cfgs
             last-path
@@ -2481,6 +1985,29 @@
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.
+;; The exit status of a doctest run that another command (check, compile, build,
+;; run) performs on its inputs: a failing report is printed to stderr.
+(define (doc-test-report-status [report : DocTestRunReport]) : i64
+  (if (doc-test-run-report-ok? (owned_view.compiler-owned-shared-view report))
+    0
+    (begin
+      (io.print-error (doc-test-run-report-render report))
+      1)))
+
+;; Typecheck the doctests of the source file at `path` for another command; an
+;; unreadable file has none (the command reports it).
+(define (doc-test-typecheck-file-status
+  [path : String]
+  [stdlib-roots : doc_svec.Vec]) : i64
+  (match (io.try-read-file (& path))
+    [(io.ErrIoBytes _) 0]
+    [(io.OkIoBytes contents)
+      (doc-test-report-status
+        (doc-test-typecheck-source-with-roots
+          path
+          (byte_buf.to-string contents)
+          stdlib-roots))]))
+
 (define (doc-test-run-report-status [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
     0
@@ -2490,33 +2017,25 @@
 (define (doc-test-run-failures-render-from
   [failures : doc_run_failure_vec.Vec]
   [index : i64]) : String
-  (if (>=
-    index
-    (doc-test-run-failure-list-count
-      (owned_view.compiler-owned-shared-view failures)))
+  (if (>= index (doc-test-run-failure-list-count failures))
     ""
     (str_cat.str-cat
       (doc-test-run-failure-render
-        (doc-test-run-failure-list-ref
-          (owned_view.compiler-owned-shared-view failures)
-          index))
+        (doc-test-run-failure-list-ref failures index))
       "\n"
       (doc-test-run-failures-render-from failures (+ index 1)))))
 
 (define (doc-test-run-failures-render [failures : doc_run_failure_vec.Vec]) : String
   (doc-test-run-failures-render-from failures 0))
 
-;; Human-readable report text. Success mirrors the Rust CLI's
-;; `Doc tests passed: N example(s)` line; failure mirrors its
+;; Human-readable report text. Success renders the
+;; `Doc tests passed: N example(s)` line; failure renders the
 ;; `doc tests failed: M failure(s) across N example(s)` summary followed by each
 ;; rendered failure.
 (define (doc-test-run-report-render [report : DocTestRunReport]) : String
   (match report
     [(DocTestRunReport.Report count failures)
-      (if (=
-        (doc-test-run-failure-list-count
-          (owned_view.compiler-owned-shared-view failures))
-        0)
+      (if (= (doc-test-run-failure-list-count failures) 0)
         (str_cat.str-cat
           "Doc tests passed: "
           (string.int->string count)
@@ -2524,1038 +2043,8 @@
         (str_cat.str-cat
           (str_cat.str-cat
             "doc tests failed: "
-            (string.int->string
-              (doc-test-run-failure-list-count
-                (owned_view.compiler-owned-shared-view failures)))
+            (string.int->string (doc-test-run-failure-list-count failures))
             " failure(s) across "
             (string.int->string count)
             " example(s)\n")
           (doc-test-run-failures-render failures)))]))
-
-(define (doc-test-smoke-source) : String
-  ";# Module docs
-;# ```typelisp
-
-;# (define (main) : i64 0)
-
-;# ```
-
-;: Item docs
-;: ```tl expect-error
-
-;: (define (bad) : i64 true)
-
-;: ```
-(define good : i64 1)
-
-;: Unattached docs are ignored
-")
-
-(define (doc-test-ordinary-comment-source) : String
-  "; ```typelisp
-; (define (bad) : i64 true)
-; ```
-;; ```typelisp
-;; (define (also-bad) : i64 true)
-;; ```
-")
-
-(define (doc-test-malformed-source) : String
-  ";# ```typelisp maybe
-;# (define (main) : i64 0)
-;# ```
-
-;# ```tl
-;# ```
-
-;# ```typelisp
-;# (define (open) : i64 0)
-")
-
-(define (doc-test-runnable-source) : String
-  (str_cat.str-cat
-    ";# Runnable docs\n"
-    ";# ```typelisp run\n"
-    ";# ;; doctest-exit: 0\n"
-    ";# ;; doctest-stdout: literal:hello\\n\n"
-    ";# ;; doctest-stderr: literal:error\\tline\\r\n"
-    ";# (import stdlib.io)\n"
-    ";# (import stdlib.byte_buf)\n"
-    ";# (define (main) : i64\n"
-    ";#   (begin\n"
-    ";#     (let [text : String \"hello\\n\"] (io.stdout-write (byte_buf.str-as-bytes (& text))))\n"
-    ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))\n"
-    ";#     0))\n"
-    ";# ```\n"
-    ";# ```tl run\n"
-    ";# ;; doctest-exit: 42\n"
-    ";# (define (main) : i64 42)\n"
-    ";# ```\n"))
-
-(define (doc-test-runnable-malformed-source) : String
-  ";# ```typelisp run expect-error
-;# ;; doctest-exit: 0
-;# ```
-;# ```typelisp expect-error run
-;# ;; doctest-exit: 0
-;# ```
-;# ```typelisp run
-;# ;; doctest-exit: nope
-;# ```
-;# ```typelisp run
-;# ;; doctest-exit: 0
-;# ;; doctest-stdout: nope
-;# ```
-;# ```typelisp run
-;# ;; doctest-stdout: -
-;# ```
-")
-
-(define (doc-test-example-ok?
-  [example : DocTestExample]
-  [index : i64]
-  [source-line : i64]
-  [expect-error : bool]
-  [code-fragment : String]) : bool
-  (begin
-    (unless
-      (=
-        (doc-test-example-index (owned_view.compiler-owned-shared-view example))
-        index)
-      (return false))
-    (unless
-      (=
-        (doc-test-example-source-line
-          (owned_view.compiler-owned-shared-view example))
-        source-line)
-      (return false))
-    (unless
-      (=
-        (doc-test-expectation-error?
-          (doc-test-example-expectation
-            (owned_view.compiler-owned-shared-view example)))
-        expect-error)
-      (return false))
-    (doc-test-string-contains? (doc-test-example-code example) code-fragment)))
-
-(define (doc-test-runnable-example-ok?
-  [example : DocTestExample]
-  [index : i64]
-  [source-line : i64]
-  [expected-exit : i64]
-  [expected-stdout : String]
-  [expected-stderr : String]
-  [code-fragment : String]) : bool
-  (begin
-    (unless
-      (=
-        (doc-test-example-index (owned_view.compiler-owned-shared-view example))
-        index)
-      (return false))
-    (unless
-      (=
-        (doc-test-example-source-line
-          (owned_view.compiler-owned-shared-view example))
-        source-line)
-      (return false))
-    (match (doc-test-example-expectation
-      (owned_view.compiler-owned-shared-view example))
-      [(DocTestExpectation.Run actual-exit actual-stdout actual-stderr)
-        (begin
-          (unless (= actual-exit expected-exit) (return false))
-          (unless (string.eq actual-stdout expected-stdout) (return false))
-          (unless (string.eq actual-stderr expected-stderr) (return false))
-          (doc-test-string-contains?
-            (doc-test-example-code example)
-            code-fragment))]
-      [_ false])))
-
-(define (doc-test-error-list-has-from?
-  [errors : doc_error_vec.Vec]
-  [index : i64]
-  [line : i64]
-  [message-fragment : String]) : bool
-  (if (>=
-    index
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view errors)))
-    false
-    (let
-      [err : DocTestError
-        (doc-test-error-list-ref
-          (owned_view.compiler-owned-shared-view errors)
-          index)]
-      (if (=
-        (doc-test-error-line (owned_view.compiler-owned-shared-view err))
-        line)
-        (if (doc-test-string-contains?
-          (doc-test-error-message err)
-          (owned_view.compiler-owned-shared-view message-fragment))
-          true
-          (doc-test-error-list-has-from?
-            errors
-            (+ index 1)
-            line
-            message-fragment))
-        (doc-test-error-list-has-from? errors (+ index 1) line message-fragment)))))
-
-(define (doc-test-error-list-has?
-  [errors : doc_error_vec.Vec]
-  [line : i64]
-  [message-fragment : String]) : bool
-  (doc-test-error-list-has-from? errors 0 line message-fragment))
-
-(define (doc-test-smoke-examples-ok? [examples : doc_example_vec.Vec]) : bool
-  (if (=
-    (doc-test-example-list-count
-      (owned_view.compiler-owned-shared-view examples))
-    2)
-    (let
-      [first : DocTestExample
-        (doc-test-example-list-ref
-          (owned_view.compiler-owned-shared-view examples)
-          0)]
-      [second : DocTestExample (doc-test-example-list-ref examples 1)]
-      (if (doc-test-example-ok? first 1 2 false "(define (main)")
-        (doc-test-example-ok? second 2 9 true "(define (bad)")
-        false))
-    false))
-
-(define (doc-test-malformed-errors-ok? [errors : doc_error_vec.Vec]) : bool
-  (if (=
-    (doc-test-error-list-count (owned_view.compiler-owned-shared-view errors))
-    3)
-    (let
-      [first : DocTestError
-        (doc-test-error-list-ref
-          (owned_view.compiler-owned-shared-view errors)
-          0)]
-      [second : DocTestError
-        (doc-test-error-list-ref
-          (owned_view.compiler-owned-shared-view errors)
-          1)]
-      [third : DocTestError (doc-test-error-list-ref errors 2)]
-      (begin
-        (unless
-          (=
-            (doc-test-error-line (owned_view.compiler-owned-shared-view first))
-            1)
-          (return false))
-        (unless
-          (doc-test-string-contains?
-            (doc-test-error-message first)
-            "unsupported TypeLisp doctest option")
-          (return false))
-        (unless
-          (=
-            (doc-test-error-line (owned_view.compiler-owned-shared-view second))
-            5)
-          (return false))
-        (unless
-          (doc-test-string-contains?
-            (doc-test-error-message second)
-            "empty TypeLisp doctest fence")
-          (return false))
-        (unless
-          (=
-            (doc-test-error-line (owned_view.compiler-owned-shared-view third))
-            8)
-          (return false))
-        (doc-test-string-contains?
-          (doc-test-error-message third)
-          "unterminated TypeLisp doctest fence")))
-    false))
-
-(define (doc-test-ordinary-comments-ok?) : bool
-  (match (doc-test-extract-source (doc-test-ordinary-comment-source))
-    [(DocTestExtraction.Extraction ordinary-examples ordinary-errors)
-      (if (= (doc-test-example-list-count ordinary-examples) 0)
-        (= (doc-test-error-list-count ordinary-errors) 0)
-        false)]))
-
-(define (doc-test-legacy-item-source) : String
-  ";: Legacy item docs
-;: ```typelisp
-;: (define legacy : i64 1)
-;: ```
-(define legacy : i64 1)")
-
-(define (doc-test-legacy-item-smoke-ok?) : bool
-  (match (doc-test-extract-source (doc-test-legacy-item-source))
-    [(DocTestExtraction.Extraction examples errors)
-      (begin
-        (unless (= (doc-test-error-list-count errors) 0) (return false))
-        (unless
-          (=
-            (doc-test-example-list-count
-              (owned_view.compiler-owned-shared-view examples))
-            1)
-          (return false))
-        (let
-          [example : DocTestExample (doc-test-example-list-ref examples 0)]
-          (doc-test-string-contains?
-            (doc-test-example-code example)
-            "(define legacy")))]))
-
-(define (doc-test-malformed-smoke-ok?) : bool
-  (match (doc-test-extract-source (doc-test-malformed-source))
-    [(DocTestExtraction.Extraction malformed-examples malformed-errors)
-      (if (= (doc-test-example-list-count malformed-examples) 0)
-        (if (=
-          (doc-test-error-list-count
-            (owned_view.compiler-owned-shared-view malformed-errors))
-          3)
-          (doc-test-malformed-errors-ok? malformed-errors)
-          false)
-        false)]))
-
-(define (doc-test-runnable-smoke-ok?) : bool
-  (match (doc-test-extract-source (doc-test-runnable-source))
-    [(DocTestExtraction.Extraction examples errors)
-      (begin
-        (unless (= (doc-test-error-list-count errors) 0) (return false))
-        (unless
-          (=
-            (doc-test-example-list-count
-              (owned_view.compiler-owned-shared-view examples))
-            2)
-          (return false))
-        (let
-          [first : DocTestExample
-            (doc-test-example-list-ref
-              (owned_view.compiler-owned-shared-view examples)
-              0)]
-          [second : DocTestExample (doc-test-example-list-ref examples 1)]
-          (begin
-            (unless
-              (doc-test-runnable-example-ok?
-                first
-                1
-                2
-                0
-                "hello\n"
-                "error\tline\r"
-                "(define (main)")
-              (return false))
-            (doc-test-runnable-example-ok?
-              second
-              2
-              14
-              42
-              ""
-              ""
-              "(define (main)"))))]))
-
-(define (doc-test-runnable-malformed-smoke-ok?) : bool
-  (match (doc-test-extract-source (doc-test-runnable-malformed-source))
-    [(DocTestExtraction.Extraction examples errors)
-      (begin
-        (unless (= (doc-test-example-list-count examples) 0) (return false))
-        (unless
-          (=
-            (doc-test-error-list-count
-              (owned_view.compiler-owned-shared-view errors))
-            5)
-          (return false))
-        (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            1
-            "cannot be combined")
-          (return false))
-        (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            4
-            "cannot be combined")
-          (return false))
-        (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            8
-            "must be an integer")
-          (return false))
-        (unless
-          (doc-test-error-list-has?
-            (owned_view.compiler-owned-shared-view errors)
-            12
-            "output metadata")
-          (return false))
-        (doc-test-error-list-has?
-          (owned_view.compiler-owned-shared-view errors)
-          14
-          "requires doctest-exit"))]))
-
-(define (doc-test-smoke) : i64
-  (match (doc-test-extract-source (doc-test-smoke-source))
-    [(DocTestExtraction.Extraction examples errors)
-      (begin
-        (unless
-          (=
-            (doc-test-error-list-count
-              (owned_view.compiler-owned-shared-view errors))
-            0)
-          (return (io.panic "doc-test: unexpected extraction error")))
-        (unless
-          (=
-            (doc-test-example-list-count
-              (owned_view.compiler-owned-shared-view examples))
-            2)
-          (return (io.panic "doc-test: example count mismatch")))
-        (unless
-          (doc-test-smoke-examples-ok?
-            (owned_view.compiler-owned-shared-view examples))
-          (return (io.panic "doc-test: example metadata mismatch")))
-        (unless
-          (doc-test-ordinary-comments-ok?)
-          (return (io.panic "doc-test: ordinary comment smoke mismatch")))
-        (unless
-          (doc-test-legacy-item-smoke-ok?)
-          (return (io.panic "doc-test: legacy item smoke mismatch")))
-        (unless
-          (doc-test-malformed-smoke-ok?)
-          (return (io.panic "doc-test: malformed smoke mismatch")))
-        (unless
-          (doc-test-runnable-smoke-ok?)
-          (return (io.panic "doc-test: runnable smoke mismatch")))
-        (unless
-          (doc-test-runnable-malformed-smoke-ok?)
-          (return (io.panic "doc-test: runnable malformed smoke mismatch")))
-        42)]))
-
-;; --- runner self-test -----------------------------------------------------------
-;; A normal example whose body fails to typecheck (i64 return, bool body).
-(define (doc-test-run-unexpected-error-source) : String
-  ";# ```typelisp
-;# (define (main) : i64 true)
-;# ```
-")
-
-;; An `expect-error` example that actually checks successfully.
-(define (doc-test-run-unexpected-pass-source) : String
-  ";# ```typelisp expect-error
-;# (define (main) : i64 0)
-;# ```
-")
-
-;; A file with no doctest fences at all.
-(define (doc-test-run-empty-source) : String
-  ";; just an ordinary comment, no doctest fence
-(define answer : i64 1)
-")
-
-(define (doc-test-run-smoke-stdlib-roots) : doc_svec.Vec
-  (let
-    [roots : doc_svec.Vec (doc_svec.new)]
-    (begin
-      (doc_svec.push-ref! (&mut roots) "stdlib")
-      roots)))
-
-(define (doc-test-run-runnable-wrong-exit-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# (define (main) : i64 7)
-;# ```
-")
-
-(define (doc-test-run-runnable-stdout-mismatch-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# ;; doctest-stdout: literal:expected\\n
-;# (import stdlib.io)
-;# (import stdlib.byte_buf)
-;# (define (main) : i64
-;#   (begin
-;#     (let [text : String \"actual\\n\"] (io.stdout-write (byte_buf.str-as-bytes (& text))))
-;#     0))
-;# ```
-")
-
-(define (doc-test-run-runnable-stderr-mismatch-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# ;; doctest-stderr: literal:expected-error\\n
-;# (import stdlib.io)
-;# (import stdlib.byte_buf)
-;# (define (main) : i64
-;#   (begin
-;#     (let [text : String \"actual-error\\n\"] (io.stderr-write (byte_buf.str-as-bytes (& text))))
-;#     0))
-;# ```
-")
-
-(define (doc-test-run-runnable-compile-failure-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# (define (main) : i64 true)
-;# ```
-")
-
-(define (doc-test-run-runnable-implicit-main-source) : String
-  ";# ```typelisp run
-;# ;; doctest-exit: 0
-;# (define answer : i64 1)
-;# ```
-")
-
-;; The shared smoke source has one passing and one correctly-erroring
-;; (`expect-error`) example, so it must run clean: two examples, no failures.
-(define (doc-test-run-smoke-pass-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      2)
-      (doc-test-run-report-ok? report)
-      false)))
-
-;; A normal example that fails to check yields exactly one failure carrying the
-;; fence line (1), example index (1), and the rendered diagnostic message.
-(define (doc-test-run-smoke-unexpected-error-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
-    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
-    (if (=
-      (doc-test-run-failure-list-count
-        (owned_view.compiler-owned-shared-view failures))
-      1)
-      (let
-        [failure : DocTestRunFailure (doc-test-run-failure-list-ref failures 0)]
-        (begin
-          (unless
-            (=
-              (doc-test-run-failure-index
-                (owned_view.compiler-owned-shared-view failure))
-              1)
-            (return false))
-          (unless
-            (=
-              (doc-test-run-failure-line
-                (owned_view.compiler-owned-shared-view failure))
-              1)
-            (return false))
-          (unless
-            (string.eq
-              (doc-test-run-failure-path
-                (owned_view.compiler-owned-shared-view failure))
-              "docs/bad.tl")
-            (return false))
-          (doc-test-string-contains?
-            (doc-test-run-failure-message failure)
-            "return type mismatch")))
-      false)))
-
-;; An `expect-error` example that checks successfully is a failure.
-(define (doc-test-run-smoke-unexpected-pass-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))]
-    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
-    (if (=
-      (doc-test-run-failure-list-count
-        (owned_view.compiler-owned-shared-view failures))
-      1)
-      (doc-test-string-contains?
-        (doc-test-run-failure-message
-          (doc-test-run-failure-list-ref failures 0))
-        "was expected to fail")
-      false)))
-
-;; Malformed fences (the shared malformed source's three extraction errors)
-;; become three runner failures with no examples.
-(define (doc-test-run-smoke-malformed-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source "docs/malformed.tl" (doc-test-malformed-source))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      0)
-      (=
-        (doc-test-run-failure-list-count (doc-test-run-report-failures report))
-        3)
-      false)))
-
-;; A source with no examples reports success with a zero count.
-(define (doc-test-run-smoke-empty-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source "docs/empty.tl" (doc-test-run-empty-source))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      0)
-      (doc-test-run-report-ok? report)
-      false)))
-
-(define (doc-test-run-smoke-runnable-unsupported-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source-with-roots
-        "docs/run.tl"
-        (doc-test-runnable-source)
-        (doc-test-run-smoke-stdlib-roots))]
-    [failures : doc_run_failure_vec.Vec
-      (doc-test-run-report-failures
-        (owned_view.compiler-owned-shared-view report))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      2)
-      (if (=
-        (doc-test-run-failure-list-count
-          (owned_view.compiler-owned-shared-view failures))
-        2)
-        (let
-          [first : DocTestRunFailure
-            (doc-test-run-failure-list-ref
-              (owned_view.compiler-owned-shared-view failures)
-              0)]
-          [second : DocTestRunFailure
-            (doc-test-run-failure-list-ref
-              (owned_view.compiler-owned-shared-view failures)
-              1)]
-          (if (doc-test-string-contains?
-            (doc-test-run-failure-message first)
-            "unsupported")
-            (doc-test-string-contains?
-              (doc-test-run-failure-message second)
-              "unsupported")
-            false))
-        false)
-      false)))
-
-(define (doc-test-run-smoke-runnable-exec-pass-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source-with-roots
-        "docs/run.tl"
-        (doc-test-runnable-source)
-        (doc-test-run-smoke-stdlib-roots))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      2)
-      (doc-test-run-report-ok? report)
-      false)))
-
-(define (doc-test-run-smoke-runnable-implicit-main-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source-with-roots
-        "docs/run.tl"
-        (doc-test-run-runnable-implicit-main-source)
-        (doc-test-run-smoke-stdlib-roots))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      1)
-      (doc-test-run-report-ok? report)
-      false)))
-
-(define (doc-test-run-single-failure-message-contains?
-  [source : String]
-  [fragment : String]) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-run-source-with-roots
-        "docs/run.tl"
-        source
-        (doc-test-run-smoke-stdlib-roots))]
-    [failures : doc_run_failure_vec.Vec
-      (doc-test-run-report-failures
-        (owned_view.compiler-owned-shared-view report))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      1)
-      (if (=
-        (doc-test-run-failure-list-count
-          (owned_view.compiler-owned-shared-view failures))
-        1)
-        (doc-test-string-contains?
-          (doc-test-run-failure-message
-            (doc-test-run-failure-list-ref failures 0))
-          fragment)
-        false)
-      false)))
-
-(define (doc-test-run-smoke-runnable-failures-ok?) : bool
-  (begin
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-wrong-exit-source)
-        "expected exit: 0")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-wrong-exit-source)
-        "actual exit: 7")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stdout-mismatch-source)
-        "expected stdout:")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stdout-mismatch-source)
-        "actual\n")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stderr-mismatch-source)
-        "expected stderr:")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stderr-mismatch-source)
-        "actual-error\n")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-compile-failure-source)
-        "runnable compile failed")
-      (return false))
-    true))
-
-(define (doc-test-typecheck-smoke-runnable-only-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-typecheck-source-with-roots
-        "docs/run.tl"
-        (doc-test-run-runnable-wrong-exit-source)
-        (doc-test-run-smoke-stdlib-roots))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      1)
-      (doc-test-run-report-ok? report)
-      false)))
-
-(define (doc-test-typecheck-smoke-unexpected-pass-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-typecheck-source
-        "docs/bad.tl"
-        (doc-test-run-unexpected-pass-source))]
-    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
-    (if (=
-      (doc-test-run-failure-list-count
-        (owned_view.compiler-owned-shared-view failures))
-      1)
-      (doc-test-string-contains?
-        (doc-test-run-failure-message
-          (doc-test-run-failure-list-ref failures 0))
-        "was expected to fail")
-      false)))
-
-(define (doc-test-typecheck-smoke-malformed-ok?) : bool
-  (let
-    [report : DocTestRunReport
-      (doc-test-typecheck-source
-        "docs/malformed.tl"
-        (doc-test-malformed-source))]
-    (if (=
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report))
-      0)
-      (=
-        (doc-test-run-failure-list-count (doc-test-run-report-failures report))
-        3)
-      false)))
-
-(define (doc-test-run-smoke-runnable-ok?) : bool
-  (if (doc-test-runnable-supported?)
-    (begin
-      (unless (doc-test-run-smoke-runnable-exec-pass-ok?) (return false))
-      (unless (doc-test-run-smoke-runnable-implicit-main-ok?) (return false))
-      (doc-test-run-smoke-runnable-failures-ok?))
-    (doc-test-run-smoke-runnable-unsupported-ok?)))
-
-;; The rendered failure carries the path, line, and message.
-(define (doc-test-run-smoke-render-ok?) : bool
-  (let
-    [rendered : String
-      (doc-test-run-failure-render
-        (DocTestRunFailure.Failure
-          "docs/bad.tl"
-          4
-          2
-          "doctest example 2 was expected to pass
-typecheck: return type mismatch"))]
-    (if (doc-test-string-contains?
-      (owned_view.compiler-owned-shared-view rendered)
-      "docs/bad.tl:4:")
-      (if (doc-test-string-contains?
-        (owned_view.compiler-owned-shared-view rendered)
-        "doctest example 2")
-        (doc-test-string-contains? rendered "return type mismatch")
-        false)
-      false)))
-
-;; The report-level text mirrors the Rust CLI: a clean run renders the
-;; `Doc tests passed: N example(s)` line with status 0, and a failing run renders
-;; the `doc tests failed: M failure(s) across N example(s)` summary with status 1.
-(define (doc-test-run-smoke-report-render-ok?) : bool
-  (let
-    [pass-report : DocTestRunReport
-      (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))]
-    [fail-report : DocTestRunReport
-      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
-    (begin
-      (unless
-        (=
-          (doc-test-run-report-status
-            (owned_view.compiler-owned-shared-view pass-report))
-          0)
-        (return false))
-      (unless
-        (string.eq
-          (doc-test-run-report-render pass-report)
-          "Doc tests passed: 2 example(s)")
-        (return false))
-      (unless
-        (=
-          (doc-test-run-report-status
-            (owned_view.compiler-owned-shared-view fail-report))
-          1)
-        (return false))
-      (unless
-        (doc-test-string-contains?
-          (doc-test-run-report-render
-            (owned_view.compiler-owned-shared-view fail-report))
-          "doc tests failed: 1 failure(s) across 1 example(s)")
-        (return false))
-      (doc-test-string-contains?
-        (doc-test-run-report-render fail-report)
-        "return type mismatch"))))
-
-(define (doc-test-session-cache-source) : String
-  ";# ```typelisp
-;# (import stdlib.dep)
-;# (define (main) : i64 dep.shared-value)
-;# ```
-;# ```typelisp
-;# (import stdlib.dep)
-;# (define (main) : i64 dep.shared-value)
-;# ```
-")
-
-(define (doc-test-session-cache-smoke-ok?) : bool
-  (let
-    [root : String "target/doc_test_session_cache"]
-    [dep-file : String "target/doc_test_session_cache/dep.tl"]
-    [doc-file : String "target/doc_test_session_cache/docs.tl"]
-    [roots : doc_svec.Vec
-      (let
-        [items : doc_svec.Vec (doc_svec.new)]
-        (begin
-          (doc_svec.push-ref! (&mut items) "target/doc_test_session_cache")
-          items))]
-    (begin
-      (compiler_load.compiler-load-test-mkdir "target")
-      (compiler_load.compiler-load-test-mkdir root)
-      (let
-        [contents : String "(define shared-value : i64 7)"]
-        (io.write-file dep-file (byte_buf.str-as-bytes (& contents))))
-      (compiler_load.compiler-load-session-cache-enable!)
-      (compiler_load.compiler-load-program-cache-clear!)
-      (let
-        [report : DocTestRunReport
-          (doc-test-typecheck-source-with-roots
-            doc-file
-            (doc-test-session-cache-source)
-            roots)]
-        [hits : i64 (compiler_load.compiler-load-program-cache-hit-count-value)]
-        (begin
-          (compiler_load.compiler-load-session-cache-disable-for-test!)
-          (and (doc-test-run-report-ok? report) (> hits 0)))))))
-
-(define (doc-test-package-walk-example-source [value : i64]) : String
-  (str_cat.str-cat
-    ";# ```typelisp
-;# (define (main) : i64 "
-    (string.int->string value)
-    ")
-;# ```
-"))
-
-(define (doc-test-package-walk-numbered-path
-  [root : String]
-  [prefix : String]
-  [index : i64]) : String
-  (str_cat.str-cat root "/" prefix (string.int->string index) ".tl"))
-
-(define (doc-test-package-walk-write-empty-paths
-  [root : String]
-  [count : i64]
-  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
-  (let
-    [i : i64 0]
-    [out : ast.AstDeclPathList paths]
-    (begin
-      (while (< i count)
-        (let
-          [path : String
-            (doc-test-package-walk-numbered-path
-              (owned_view.compiler-owned-shared-view root)
-              "empty_"
-              i)]
-          (begin
-            (let
-              [contents : String ";; no doctest fence
-"]
-              (io.write-file path (byte_buf.str-as-bytes (& contents))))
-            (set!
-              out
-              (ast.ast-decl-path-list-prepend-builder-with-owner-id
-                path
-                cbi.compiler-builtin-id-fix-empty
-                out))
-            (set! i (+ i 1)))))
-      out)))
-
-(define (doc-test-package-walk-long-list-smoke-ok?) : bool
-  (let
-    [root : String "target/doc_test_package_walk"]
-    [example-a : String
-      (doc-test-package-walk-numbered-path
-        (owned_view.compiler-owned-shared-view root)
-        "example_"
-        1)]
-    [example-b : String
-      (doc-test-package-walk-numbered-path
-        (owned_view.compiler-owned-shared-view root)
-        "example_"
-        2)]
-    [example-c : String
-      (doc-test-package-walk-numbered-path
-        (owned_view.compiler-owned-shared-view root)
-        "example_"
-        3)]
-    (begin
-      (compiler_load.compiler-load-test-mkdir "target")
-      (compiler_load.compiler-load-test-mkdir
-        (owned_view.compiler-owned-shared-view root))
-      (let
-        [contents-a : String (doc-test-package-walk-example-source 1)]
-        [contents-b : String (doc-test-package-walk-example-source 2)]
-        [contents-c : String (doc-test-package-walk-example-source 3)]
-        (begin
-          (io.write-file example-a (byte_buf.str-as-bytes (& contents-a)))
-          (io.write-file example-b (byte_buf.str-as-bytes (& contents-b)))
-          (io.write-file example-c (byte_buf.str-as-bytes (& contents-c)))))
-      (let
-        [paths : ast.AstDeclPathList
-          (doc-test-package-walk-write-empty-paths
-            (owned_view.compiler-owned-shared-view root)
-            128
-            (ast.ast-decl-root-path-cons
-              (owned_view.compiler-owned-shared-view example-a)
-              (ast.ast-decl-root-path-cons
-                example-a
-                (ast.ast-decl-root-path-cons
-                  example-b
-                  (ast.ast-decl-root-path-cons
-                    example-c
-                    (ast.ast-decl-path-list-new))))))]
-        [report : DocTestRunReport
-          (doc-test-typecheck-package-paths-with-roots
-            paths
-            (doc-test-run-smoke-stdlib-roots)
-            root
-            (compiler_load.compiler-pkg-deps-empty))]
-        (and
-          (doc-test-run-report-ok?
-            (owned_view.compiler-owned-shared-view report))
-          (= (doc-test-run-report-count report) 3))))))
-
-(define (doc-test-run-smoke) : i64
-  (begin
-    (unless
-      (doc-test-error-vector-growth-smoke-ok?)
-      (return (io.panic "doc-test-run: generated error vector growth mismatch")))
-    (unless
-      (doc-test-line-vector-growth-smoke-ok?)
-      (return (io.panic "doc-test-run: generated line vector growth mismatch")))
-    (unless
-      (doc-test-example-vector-growth-smoke-ok?)
-      (return
-        (io.panic "doc-test-run: generated example vector growth mismatch")))
-    (unless
-      (doc-test-run-failure-vector-growth-smoke-ok?)
-      (return
-        (io.panic "doc-test-run: generated failure vector growth mismatch")))
-    (unless
-      (doc-test-run-smoke-pass-ok?)
-      (return (io.panic "doc-test-run: pass-case mismatch")))
-    (unless
-      (doc-test-run-smoke-unexpected-error-ok?)
-      (return (io.panic "doc-test-run: unexpected-error mismatch")))
-    (unless
-      (doc-test-run-smoke-unexpected-pass-ok?)
-      (return (io.panic "doc-test-run: unexpected-pass mismatch")))
-    (unless
-      (doc-test-run-smoke-malformed-ok?)
-      (return (io.panic "doc-test-run: malformed mismatch")))
-    (unless
-      (doc-test-run-smoke-empty-ok?)
-      (return (io.panic "doc-test-run: empty-source mismatch")))
-    (unless
-      (doc-test-run-smoke-runnable-ok?)
-      (return (io.panic "doc-test-run: runnable execution mismatch")))
-    (unless
-      (doc-test-typecheck-smoke-runnable-only-ok?)
-      (return (io.panic "doc-test-typecheck: runnable typecheck mismatch")))
-    (unless
-      (doc-test-typecheck-smoke-unexpected-pass-ok?)
-      (return (io.panic "doc-test-typecheck: unexpected-pass mismatch")))
-    (unless
-      (doc-test-typecheck-smoke-malformed-ok?)
-      (return (io.panic "doc-test-typecheck: malformed mismatch")))
-    (unless
-      (doc-test-public-diagnostic-render-smoke-ok?)
-      (return (io.panic "doc-test-run: public diagnostic render mismatch")))
-    (unless
-      (doc-test-run-smoke-render-ok?)
-      (return (io.panic "doc-test-run: render mismatch")))
-    (unless
-      (doc-test-run-smoke-report-render-ok?)
-      (return (io.panic "doc-test-run: report render mismatch")))
-    (unless
-      (doc-test-session-cache-smoke-ok?)
-      (return (io.panic "doc-test-run: session cache smoke mismatch")))
-    (unless
-      (doc-test-package-walk-long-list-smoke-ok?)
-      (return (io.panic "doc-test-run: package walk long-list mismatch")))
-    42))
-
-;; Combined smoke: extraction then runner. Returns 42 iff both
-;; self-test batteries pass.
-(define (doc-test-smoke-all) : i64
-  (begin
-    (unless
-      (= (doc-test-smoke) 42)
-      (return (io.panic "doc-test: extraction smoke regressed")))
-    (unless
-      (build_run_core.source-tool-link-inputs-dedupe-smoke-ok?)
-      (return (io.panic "source-tool: link input dedupe smoke regressed")))
-    (unless
-      (build_run_core.source-tool-windows-stack-reserve-smoke-ok?)
-      (return (io.panic "source-tool: windows stack reserve smoke regressed")))
-    (unless
-      (build_run_core.source-tool-windows-system-libs-smoke-ok?)
-      (return (io.panic "source-tool: windows system libs smoke regressed")))
-    (unless
-      (build_run_core.source-tool-windows-debug-linker-smoke-ok?)
-      (return (io.panic "source-tool: windows debug linker smoke regressed")))
-    (unless
-      (build_run_core.source-tool-linux-direct-object-linkability-smoke-ok?)
-      (return (io.panic "source-tool: linux direct object smoke regressed")))
-    (unless
-      (build_run_core.source-tool-windows-direct-object-linkability-smoke-ok?)
-      (return (io.panic "source-tool: windows direct object smoke regressed")))
-    (unless
-      (build_run_core.source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
-      (return
-        (io.panic "source-tool: windows direct object fallback smoke regressed")))
-    (unless
-      (build_run_core.source-tool-windows-direct-object-relocation-gate-smoke-ok?)
-      (return
-        (io.panic
-          "source-tool: windows direct object relocation gate smoke regressed")))
-    (doc-test-run-smoke)))

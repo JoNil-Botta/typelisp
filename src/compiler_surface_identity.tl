@@ -13,6 +13,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_binary as binary)
+(import stdlib.byte_reader)
 
 (defmacro (surface-identity-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -25,12 +26,11 @@
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import stdlib.byte_le))
 
 (defstruct SurfaceIdentityKey
   (package-name String)
@@ -57,12 +57,6 @@
   (key SurfaceIdentityKey)
   (remap (__tl_dyn-array i64)))
 
-(defstruct SurfaceIdentityReader
-  (bytes (__tl_dyn-array u8))
-  (offset (__tl_dyn-array i64))
-  (ok (__tl_dyn-array bool))
-  (message (__tl_dyn-array String)))
-
 (defenum ResultSurfaceIdentityPayload
   (Ok SurfaceIdentityPayload)
   (Err String))
@@ -87,11 +81,6 @@
   4)
 (define surface-identity-max-count : i64
   1048576)
-
-(cfg
-  (any compiler-surface-producer compiler-surface-selftest)
-  (define (surface-identity-empty-bytes) : (__tl_dyn-array u8)
-    (__tl_make-array u8 0)))
 
 (define (surface-identity-string-eq?
   [left : (& left str)]
@@ -190,11 +179,7 @@
     (surface-identity-string-eq? left.configuration right.configuration)))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
     (cond
       [(and (>= id 0) (< id source-count)) id]
@@ -229,20 +214,6 @@
   ;; capacity calculation.
   8796093022208)
 
-(cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
-  (define (surface-identity-portable-module-ref
-    [stored-module-id : i64]
-    [source-count : i64]
-    [identity-count : i64]) : i64
-    (if (= stored-module-id 0)
-      identity-count
-      (surface-identity-local-ref (- stored-module-id 1) source-count))))
-
 ;; Nominal ids can be one intern id, a session-owned structural pair/triple, or
 ;; one of the compiler's syntax-identity families. Repack every component with
 ;; the image identity count as its portable stride. The appended ranges preserve
@@ -251,11 +222,7 @@
 ;; one-word AST name fields in the frontend section. At the maximum 2^17 intern
 ;; count the complete portable layout ends below 3.5e18, within signed i64.
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-portable-id
     [session : cis.InternStructuralSessionHandle]
     [id : i64]
@@ -594,72 +561,52 @@
           (set! ok false)))
       ok)))
 
-(define (surface-identity-reader-new [bytes : (__tl_dyn-array u8)]) : SurfaceIdentityReader
-  (let
-    [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [ok : (__tl_dyn-array bool) (__tl_make-array bool 1)]
-    [message : (__tl_dyn-array String) (__tl_make-array String 1)]
-    (begin
-      (set! (array-ref offset 0) 0)
-      (set! (array-ref ok 0) true)
-      (set! (array-ref message 0) "")
-      (SurfaceIdentityReader bytes offset ok message))))
-
-(define (surface-identity-reader-fail!
-  [reader : (& reader SurfaceIdentityReader)]
-  [message : String]) : unit
-  (if (array-ref reader.ok 0)
-    (begin
-      (set! (array-ref reader.ok 0) false)
-      (set! (array-ref reader.message 0) message))
-    unit))
-
 (define (surface-identity-reader-u64!
-  [reader : (& reader SurfaceIdentityReader)]) : i64
-  (let
-    [offset : i64 (array-ref reader.offset 0)]
-    (if (or
-      (not (array-ref reader.ok 0))
-      (> offset (- (array-length reader.bytes) 8)))
+  [reader : (&mut reader byte_reader.ByteReader)]) : i64
+  (if (byte_reader.available? reader 8)
+    (byte_reader.read-u64! reader)
+    (let
+      [offset : i64 reader.offset]
       (begin
-        (surface-identity-reader-fail! reader "surface identity: truncated u64")
-        -1)
-      (begin
-        (set! (array-ref reader.offset 0) (+ offset 8))
-        (binary.surface-binary-read-u64 reader.bytes offset)))))
+        (byte_reader.fail!
+          reader
+          byte_reader.error-truncated
+          offset
+          "surface identity: truncated u64")
+        -1))))
 
 (define (surface-identity-reader-string!
-  [reader : (& reader SurfaceIdentityReader)]) : String
+  [reader : (&mut reader byte_reader.ByteReader)]) : String
   (let
-    [len : i64 (surface-identity-reader-u64! reader)]
-    [offset : i64 (array-ref reader.offset 0)]
-    (if (or
-      (< len 0)
-      (> offset (array-length reader.bytes))
-      (> len (- (array-length reader.bytes) offset)))
-      (begin
-        (surface-identity-reader-fail!
-          reader
-          "surface identity: truncated string")
-        "")
+    [len : i64 (surface-identity-reader-u64! (&mut reader))]
+    [offset : i64 reader.offset]
+    (if (and (>= len 0) (byte_reader.available? reader len))
       (let
         [value : String
           (binary.surface-binary-bytes->string reader.bytes offset len)]
         (begin
-          (set! (array-ref reader.offset 0) (+ offset len))
-          value)))))
+          (byte_reader.skip! reader len)
+          value))
+      (begin
+        (byte_reader.fail!
+          reader
+          byte_reader.error-truncated
+          offset
+          "surface identity: truncated string")
+        ""))))
 
 (define (surface-identity-safe-count? [count : i64]) : bool
   (and (>= count 0) (<= count surface-identity-max-count)))
 
 (define (surface-identity-decode [bytes : (__tl_dyn-array u8)]) : ResultSurfaceIdentityPayload
   (let
-    [reader : SurfaceIdentityReader (surface-identity-reader-new bytes)]
-    [magic : i64 (surface-identity-reader-u64! reader)]
-    [schema : i64 (surface-identity-reader-u64! reader)]
-    [module-count : i64 (surface-identity-reader-u64! reader)]
-    [source-count : i64 (surface-identity-reader-u64! reader)]
-    [generated-count : i64 (surface-identity-reader-u64! reader)]
+    [reader : byte_reader.ByteReader
+      (byte_reader.new bytes byte_reader.unlimited-work)]
+    [magic : i64 (surface-identity-reader-u64! (&mut reader))]
+    [schema : i64 (surface-identity-reader-u64! (&mut reader))]
+    [module-count : i64 (surface-identity-reader-u64! (&mut reader))]
+    [source-count : i64 (surface-identity-reader-u64! (&mut reader))]
+    [generated-count : i64 (surface-identity-reader-u64! (&mut reader))]
     (if (or
       (not (= magic surface-identity-magic))
       (not (= schema surface-identity-schema-version))
@@ -669,10 +616,11 @@
       (ResultSurfaceIdentityPayload.Err
         "surface identity: bad magic, schema, or count")
       (let
-        [package-name : String (surface-identity-reader-string! reader)]
-        [source-hash : String (surface-identity-reader-string! reader)]
-        [compiler-build : String (surface-identity-reader-string! reader)]
-        [configuration : String (surface-identity-reader-string! reader)]
+        [package-name : String (surface-identity-reader-string! (&mut reader))]
+        [source-hash : String (surface-identity-reader-string! (&mut reader))]
+        [compiler-build : String
+          (surface-identity-reader-string! (&mut reader))]
+        [configuration : String (surface-identity-reader-string! (&mut reader))]
         [modules : (__tl_dyn-array String)
           (__tl_make-array String module-count)]
         [source-names : (__tl_dyn-array String)
@@ -681,32 +629,36 @@
           (__tl_make-array SurfaceGeneratedIdentity generated-count)]
         [index : i64 0]
         (begin
-          (while (and (array-ref reader.ok 0) (< index module-count))
+          (while (and reader.ok? (< index module-count))
             (begin
               (set!
                 (array-ref modules index)
-                (surface-identity-reader-string! reader))
+                (surface-identity-reader-string! (&mut reader)))
               (set! index (+ index 1))))
           (set! index 0)
-          (while (and (array-ref reader.ok 0) (< index source-count))
+          (while (and reader.ok? (< index source-count))
             (begin
               (set!
                 (array-ref source-names index)
-                (surface-identity-reader-string! reader))
+                (surface-identity-reader-string! (&mut reader)))
               (set! index (+ index 1))))
           (set! index 0)
-          (while (and (array-ref reader.ok 0) (< index generated-count))
+          (while (and reader.ok? (< index generated-count))
             (let
-              [flags : i64 (surface-identity-reader-u64! reader)]
-              [ref0 : i64 (surface-identity-reader-u64! reader)]
-              [ref1 : i64 (surface-identity-reader-u64! reader)]
-              [ref2 : i64 (surface-identity-reader-u64! reader)]
-              [name : String (surface-identity-reader-string! reader)]
+              [flags : i64 (surface-identity-reader-u64! (&mut reader))]
+              [ref0 : i64 (surface-identity-reader-u64! (&mut reader))]
+              [ref1 : i64 (surface-identity-reader-u64! (&mut reader))]
+              [ref2 : i64 (surface-identity-reader-u64! (&mut reader))]
+              [name : String (surface-identity-reader-string! (&mut reader))]
               (begin
                 (if (or (< flags 0) (> flags 7))
-                  (surface-identity-reader-fail!
-                    reader
-                    "surface identity: invalid generated identity flags")
+                  (let
+                    [offset : i64 reader.offset]
+                    (byte_reader.fail!
+                      (&mut reader)
+                      byte_reader.error-invalid
+                      offset
+                      "surface identity: invalid generated identity flags"))
                   unit)
                 (set!
                   (array-ref generated index)
@@ -733,10 +685,9 @@
             [payload : SurfaceIdentityPayload
               (SurfaceIdentityPayload key source-names generated)]
             (cond
-              [(not (array-ref reader.ok 0))
-                (ResultSurfaceIdentityPayload.Err
-                  (surface-identity-string-array-shared-view reader.message 0))]
-              [(not (= (array-ref reader.offset 0) (array-length reader.bytes)))
+              [(not reader.ok?)
+                (ResultSurfaceIdentityPayload.Err reader.error-message)]
+              [(not (= reader.offset reader.end))
                 (ResultSurfaceIdentityPayload.Err
                   "surface identity: trailing payload bytes")]
               [(not (surface-identity-payload-valid? (& payload)))
@@ -783,7 +734,7 @@
 
 (define (surface-identity-hydrate-payload
   [payload : SurfaceIdentityPayload]
-  [expected-key : SurfaceIdentityKey]) : ResultSurfaceIdentityHydration
+  [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (if (not (surface-identity-key-eq? payload.key expected-key))
     (ResultSurfaceIdentityHydration.KeyMismatch
       "surface identity: package key mismatch")
@@ -818,7 +769,7 @@
 
 (define (surface-identity-hydrate
   [bytes : (__tl_dyn-array u8)]
-  [expected-key : SurfaceIdentityKey]) : ResultSurfaceIdentityHydration
+  [expected-key : (& expected-key SurfaceIdentityKey)]) : ResultSurfaceIdentityHydration
   (match (surface-identity-decode bytes)
     [(ResultSurfaceIdentityPayload.Err message)
       (ResultSurfaceIdentityHydration.Err message)]
@@ -826,28 +777,18 @@
       (surface-identity-hydrate-payload payload expected-key)]))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (defenum ResultSurfaceIdentityBytes
     (Ok (__tl_dyn-array u8))
     (Err String)))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-push-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
     (begin
-      (binary.surface-binary-push-u64!
-        out
-        (binary.surface-binary-string-length text))
+      (byte_le.push-u64! out (binary.surface-binary-string-length text))
       (binary.surface-binary-push-string! out text))))
 
 (cfg
@@ -927,11 +868,7 @@
         (SurfaceIdentityPayload key source-names generated)))))
 
 (cfg
-  (any
-    compiler-surface-producer
-    compiler-surface-selftest
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
     (if (not (surface-identity-payload-valid? (& payload)))
       (ResultSurfaceIdentityBytes.Err
@@ -945,17 +882,11 @@
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
         (begin
-          (binary.surface-binary-push-u64! (&mut out) surface-identity-magic)
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            surface-identity-schema-version)
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            (array-length key.modules))
-          (binary.surface-binary-push-u64!
-            (&mut out)
-            (array-length source-names))
-          (binary.surface-binary-push-u64! (&mut out) (array-length generated))
+          (byte_le.push-u64! (&mut out) surface-identity-magic)
+          (byte_le.push-u64! (&mut out) surface-identity-schema-version)
+          (byte_le.push-u64! (&mut out) (array-length key.modules))
+          (byte_le.push-u64! (&mut out) (array-length source-names))
+          (byte_le.push-u64! (&mut out) (array-length generated))
           (surface-identity-push-string! (&mut out) key.package-name)
           (surface-identity-push-string! (&mut out) key.source-hash)
           (surface-identity-push-string! (&mut out) key.compiler-build)
@@ -991,306 +922,11 @@
                       surface-identity-generated-dotted
                       0)))]
               (begin
-                (binary.surface-binary-push-u64! (&mut out) flags)
-                (binary.surface-binary-push-u64! (&mut out) record.ref0)
-                (binary.surface-binary-push-u64! (&mut out) record.ref1)
-                (binary.surface-binary-push-u64! (&mut out) record.ref2)
+                (byte_le.push-u64! (&mut out) flags)
+                (byte_le.push-u64! (&mut out) record.ref0)
+                (byte_le.push-u64! (&mut out) record.ref1)
+                (byte_le.push-u64! (&mut out) record.ref2)
                 (surface-identity-push-string! (&mut out) record.name)
                 (set! index (+ index 1)))))
           (ResultSurfaceIdentityBytes.Ok
             (byte_buf_core.byte-buf-builder-finish-array (& out))))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-identity-test-macro-global-id
-    [session : cis.InternStructuralSessionHandle]
-    [module-id : i64]
-    [source-name-id : i64]
-    [legacy : bool]) : i64
-    (cis.intern-macro-global-identity-raw
-      (cis.intern-structural-session-macro-global-identity
-        session
-        (if legacy
-          cis.InternMacroGlobalRole.Legacy
-          cis.InternMacroGlobalRole.Context)
-        module-id
-        source-name-id))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-identity-test-macro-local-id
-    [session : cis.InternStructuralSessionHandle]
-    [module-id : i64]
-    [macro-name-id : i64]
-    [depth : i64]
-    [source-name-id : i64]) : i64
-    (let
-      [definition : cis.InternMacroDefinitionIdentity
-        (cis.intern-structural-session-macro-definition-identity
-          session
-          module-id
-          macro-name-id)]
-      (cis.intern-macro-local-identity-raw
-        (cis.intern-structural-session-macro-local-identity
-          session
-          definition
-          depth
-          source-name-id)))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-identity-test-copy-bytes [bytes : (__tl_dyn-array u8)]) : (__tl_dyn-array
-      u8)
-    (let
-      [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-      [index : i64 0]
-      (begin
-        (while (< index (array-length bytes))
-          (begin
-            (set! (array-ref out index) (array-ref bytes index))
-            (set! index (+ index 1))))
-        out))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-identity-test-key) : SurfaceIdentityKey
-    (let
-      [modules : (__tl_dyn-array String) (__tl_make-array String 2)]
-      (begin
-        (set! (array-ref modules 0) "pkg/a.tl")
-        (set! (array-ref modules 1) "pkg/b.tl")
-        (SurfaceIdentityKey "pkg" modules "source-hash" "compiler-build" "host")))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-identity-remap-test-ok?
-    [hydration : SurfaceIdentityHydration]
-    [source-count : i64]
-    [generated-count : i64]) : bool
-    (let
-      [remap : (__tl_dyn-array i64) hydration.remap]
-      (and
-        (= (array-length remap) (+ source-count generated-count))
-        (= generated-count 4)
-        (surface-identity-string-eq?
-          (ci.intern-str (array-ref remap 0))
-          "alpha")
-        (surface-identity-string-eq?
-          (ci.intern-str (array-ref remap 1))
-          "module")
-        (surface-identity-string-eq? (ci.intern-str (array-ref remap 2)) "base")
-        (ci.intern-qualified? (array-ref remap (+ source-count 1)))
-        (ci.intern-dotted? (array-ref remap (+ source-count 2)))
-        (ci.intern-generated-canonical-id? (array-ref remap (+ source-count 3)))))))
-
-(cfg
-  compiler-surface-selftest
-  (define (surface-identity-tests-ok?) : bool
-    (let
-      [_reset : unit (ci.intern-reset!)]
-      [alpha : i64 (ci.intern "alpha")]
-      [module-id : i64 (ci.intern "module")]
-      [base-id : i64 (ci.intern "base")]
-      [root-module-id : i64 (ci.intern "root/module")]
-      [dotted-source : i64 (ci.intern "base.Item")]
-      [_opaque : i64 (ci.intern-generated-name "opaque/local")]
-      [_qualified : i64
-        (ci.intern-generated-qualified-name "module/base" module-id base-id)]
-      [_dotted : i64
-        (ci.intern-generated-dotted-name
-          "base.Item.Next"
-          base-id
-          dotted-source
-          (ci.intern-dotted-tail-id dotted-source))]
-      [_canonical : i64 (ci.intern-generated-canonical-name "canonical")]
-      [key : SurfaceIdentityKey (surface-identity-test-key)]
-      [payload : SurfaceIdentityPayload
-        (surface-identity-capture (surface-identity-shared-view key))]
-      [source-count : i64 (array-length payload.source-names)]
-      [identity-count : i64 (+ source-count (array-length payload.generated))]
-      [intern-state : ci.InternCompatState
-        (ci.intern-compat-state-capture-active)]
-      [session : cis.InternStructuralSessionHandle
-        (cis.intern-structural-session-handle-from-source-names
-          (ci.intern-source-name-session-handle-from-state intern-state))]
-      [pair-id : i64 (ci.intern-composite-pair-id module-id base-id)]
-      [triple-id : i64 (ci.intern-composite-triple-id module-id base-id alpha)]
-      [template-id : i64
-        (cis.intern-template-source-identity-raw
-          (cis.intern-structural-session-template-source-identity session alpha))]
-      [fresh-local-id : i64
-        (cis.intern-fresh-local-identity-raw
-          (cis.intern-structural-session-fresh-local-identity session 7 alpha))]
-      [macro-global-id : i64
-        (surface-identity-test-macro-global-id session module-id alpha false)]
-      [macro-global-root-id : i64
-        (surface-identity-test-macro-global-id
-          session
-          root-module-id
-          base-id
-          true)]
-      [macro-local-id : i64
-        (surface-identity-test-macro-local-id
-          session
-          module-id
-          base-id
-          1536
-          alpha)]
-      [portable-pair : i64
-        (surface-identity-portable-id
-          session
-          pair-id
-          source-count
-          identity-count)]
-      [portable-triple : i64
-        (surface-identity-portable-id
-          session
-          triple-id
-          source-count
-          identity-count)]
-      [portable-template : i64
-        (surface-identity-portable-id
-          session
-          template-id
-          source-count
-          identity-count)]
-      [portable-fresh-local : i64
-        (surface-identity-portable-id
-          session
-          fresh-local-id
-          source-count
-          identity-count)]
-      [portable-macro-global : i64
-        (surface-identity-portable-id
-          session
-          macro-global-id
-          source-count
-          identity-count)]
-      [portable-macro-global-root : i64
-        (surface-identity-portable-id
-          session
-          macro-global-root-id
-          source-count
-          identity-count)]
-      [portable-macro-local : i64
-        (surface-identity-portable-id
-          session
-          macro-local-id
-          source-count
-          identity-count)]
-      (if (not (= alpha 0))
-        false
-        (match (surface-identity-encode (surface-identity-shared-view payload))
-          [(ResultSurfaceIdentityBytes.Err _) false]
-          [(ResultSurfaceIdentityBytes.Ok bytes)
-            (let
-              [copy : (__tl_dyn-array u8)
-                (surface-identity-test-copy-bytes
-                  (surface-identity-shared-view bytes))]
-              (begin
-                (ci.intern-reset!)
-                (let
-                  [unrelated : i64 (ci.intern "unrelated")]
-                  (match (surface-identity-hydrate
-                    bytes
-                    (surface-identity-shared-view key))
-                    [(ResultSurfaceIdentityHydration.Err _) false]
-                    [(ResultSurfaceIdentityHydration.KeyMismatch _) false]
-                    [(ResultSurfaceIdentityHydration.Ok hydration)
-                      (let
-                        [remap : (__tl_dyn-array i64)
-                          (surface-identity-shared-view hydration.remap)]
-                        [mapped-module : i64 (array-ref remap 1)]
-                        [mapped-base : i64 (array-ref remap 2)]
-                        [mapped-alpha : i64 (array-ref remap 0)]
-                        [mapped-root-module : i64 (array-ref remap 3)]
-                        [hydrated-intern-state : ci.InternCompatState
-                          (ci.intern-compat-state-capture-active)]
-                        [hydrated-session : cis.InternStructuralSessionHandle
-                          (cis.intern-structural-session-handle-from-source-names
-                            (ci.intern-source-name-session-handle-from-state
-                              hydrated-intern-state))]
-                        (and
-                          (= unrelated 0)
-                          (surface-identity-remap-test-ok?
-                            (surface-identity-shared-view hydration)
-                            source-count
-                            (array-length payload.generated))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-pair
-                              remap)
-                            (ci.intern-composite-pair-id
-                              mapped-module
-                              mapped-base))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-triple
-                              remap)
-                            (ci.intern-composite-triple-id
-                              mapped-module
-                              mapped-base
-                              mapped-alpha))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-template
-                              remap)
-                            (cis.intern-template-source-identity-raw
-                              (cis.intern-structural-session-template-source-identity
-                                hydrated-session
-                                mapped-alpha)))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-fresh-local
-                              remap)
-                            (cis.intern-fresh-local-identity-raw
-                              (cis.intern-structural-session-fresh-local-identity
-                                hydrated-session
-                                7
-                                mapped-alpha)))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-macro-global
-                              remap)
-                            (surface-identity-test-macro-global-id
-                              hydrated-session
-                              mapped-module
-                              mapped-alpha
-                              false))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-macro-global-root
-                              remap)
-                            (surface-identity-test-macro-global-id
-                              hydrated-session
-                              mapped-root-module
-                              mapped-base
-                              true))
-                          (=
-                            (surface-identity-resolve-portable-id
-                              hydrated-session
-                              portable-macro-local
-                              remap)
-                            (surface-identity-test-macro-local-id
-                              hydrated-session
-                              mapped-module
-                              mapped-base
-                              1536
-                              mapped-alpha))
-                          (match (surface-identity-decode copy)
-                            [(ResultSurfaceIdentityPayload.Err _) false]
-                            [(ResultSurfaceIdentityPayload.Ok decoded)
-                              (surface-identity-key-eq? decoded.key key)])))]))))])))))
-
-(cfg
-  compiler-surface-selftest
-  (define (main) : i64
-    (if (surface-identity-tests-ok?)
-      42
-      1)))

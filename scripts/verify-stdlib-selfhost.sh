@@ -3,10 +3,7 @@
 # accepted (or correctly rejected) by the SELFHOST compiler frontend
 # (selfhost cli `check`: parse + typecheck via the selfhost
 # parser/typechecker), complementing scripts/verify-stdlib.sh which drives the
-# same witnesses through the full self-hosted compiler. Part of #842 (prove
-# stdlib modules with the selfhost
-# compiler). This slice covers the selfhost frontend (parse + typecheck);
-# selfhost compile+run of witnesses remains future work on #842.
+# same witnesses through the full self-hosted compiler.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,14 +14,8 @@ case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
     MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
 esac
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER="$TYPELISP_BIN"
-else
-    # Local-development fallback: fetch the published self-hosted
-    # stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER="$(resolve_stage0_compiler "$ROOT")" || exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
 case "$COMPILER" in
     *.exe) ;;
     *) [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe" ;;
@@ -233,9 +224,8 @@ reject_diag() {
 }
 
 # Each witness is a separate selfhost cli `check` invocation, run exactly once.
-# The Windows build has historically SEGFAULTed mid-compile (#1204); that is a
-# real compiler bug, not a flake — do not retry it (see the no-retry policy in
-# scripts/ci-verify.sh).
+# A crash is a real compiler bug, not a flake — do not retry it (see the
+# no-retry policy in scripts/ci-verify.sh).
 
 WORKDIR="$ROOT/target/stdlib-selfhost-verify"
 rm -rf "$WORKDIR"

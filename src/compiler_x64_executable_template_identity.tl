@@ -1,7 +1,5 @@
 ;; Canonical semantic identity for compiler-owned x86-64 templates.
-(import compiler_owned_view as owned_view)
 (import compiler_x64_executable_template as x64)
-(import compiler_x64_executable_template_catalog as catalog)
 (import compiler_x64_executable_template_evidence as evidence)
 (import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
@@ -121,26 +119,3 @@
         (compiler-x64-template-field (& terminal-name))
         (compiler-x64-template-field template.events)
         (compiler-x64-template-field (& rendered-executable))))))
-
-(define (compiler-x64-template-registry-semantic-identity
-  [id : x64.CompilerX64ExecutableTemplateId]
-  [target : x64.CompilerX64TemplateTarget]
-  [render-kind : x64.CompilerX64TemplateRenderKind]
-  [rendered : String]) : String
-  (let
-    [id-name : String
-      (evidence.compiler-x64-template-id-name
-        (owned_view.compiler-owned-shared-view id))]
-    [row : evidence.CompilerX64ExecutableTemplate
-      (evidence.compiler-x64-template-registry-row id)]
-    [gate : catalog.CompilerX64ExecutableTemplateGate
-      (catalog.compiler-x64-template-registry-gate id)]
-    (begin
-      (catalog.compiler-x64-template-require-kind!
-        (owned_view.compiler-owned-shared-view gate)
-        target
-        render-kind)
-      (catalog.compiler-x64-template-require-rendered-payload!
-        (owned_view.compiler-owned-shared-view gate)
-        (& rendered))
-      (compiler-x64-template-semantic-identity row id-name rendered))))

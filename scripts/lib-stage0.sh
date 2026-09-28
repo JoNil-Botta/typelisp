@@ -1,11 +1,9 @@
 # lib-stage0.sh — shared stage0 compiler resolver for verify-*/check-* scripts.
 #
-# With the Rust compiler removed (#795), scripts that previously fell back to a
-# local `cargo build --release` when TYPELISP_BIN was unset now fall back to the
-# published self-hosted stage0 compiler instead. CI always sets TYPELISP_BIN
-# explicitly (the CI gate fetches stage0 once and threads it through every
-# gate), so this fallback only fires for local developer runs that did not set
-# TYPELISP_BIN.
+# Scripts that find TYPELISP_BIN unset fall back to the published self-hosted
+# stage0 compiler. CI always sets TYPELISP_BIN explicitly (the CI gate fetches
+# stage0 once and threads it through every gate), so this fallback only fires
+# for local developer runs that did not set TYPELISP_BIN.
 #
 # Source it (not exec): `. "$ROOT/scripts/lib-stage0.sh"`. POSIX sh only — no
 # `local`, arrays, or bashisms.

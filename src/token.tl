@@ -1,10 +1,9 @@
 ;; token.tl - The token model for a lexer of TypeLisp's OWN s-expression
 ;; syntax, factored out as a `main`-less, importable module.
 ;;
-;; This is the token vocabulary for the *self-hosting front end proper*: not the
-;; arithmetic-calculator surface (`+ - * /` as distinct operator tokens, in
-;; `token.tl`/`calc.tl`), but the surface TypeLisp source is actually written in
-;; - balanced parentheses, integer/float/char/string literals, and *symbols*. In an s-expression
+;; This is the token vocabulary for the *self-hosting front end proper*: the
+;; surface TypeLisp source is actually written in - balanced parentheses,
+;; integer/float/char/string literals, and *symbols*. In an s-expression
 ;; language an operator like `+`, a comparison like `<=`, a keyword like
 ;; `define`, and a name like `value->text` are ALL one token kind: a symbol. So
 ;; the kinds collapse to parens / int / float / symbol / end-of-stream, and the lexer's
@@ -36,51 +35,24 @@
 (import compiler_intern as ci)
 (import stdlib.string)
 
-(cfg
-  stage0-token-scalar-bootstrap
-  (defenum Token
-    (LParen)
-    (RParen)
-    (Int i64 String)
-    (Sym i64)
-    (End)
-    (Str i64)
-    (Char char)
-    (Float String)
-    (LBracket)
-    (RBracket)
-    (Quote)
-    (Backtick)
-    (Comma)
-    (CommaAt)))
+(defenum Token
+  (LParen)
+  (RParen)
+  (Int i64 String)
+  (Sym ci.InternId)
+  (End)
+  (Str ci.InternId)
+  (Char char)
+  (Float String)
+  (LBracket)
+  (RBracket)
+  (Quote)
+  (Backtick)
+  (Comma)
+  (CommaAt))
 
-(cfg
-  (not stage0-token-scalar-bootstrap)
-  (defenum Token
-    (LParen)
-    (RParen)
-    (Int i64 String)
-    (Sym ci.InternId)
-    (End)
-    (Str ci.InternId)
-    (Char char)
-    (Float String)
-    (LBracket)
-    (RBracket)
-    (Quote)
-    (Backtick)
-    (Comma)
-    (CommaAt)))
-
-(cfg
-  stage0-token-scalar-bootstrap
-  (define (token-intern-payload [id : ci.InternId]) : i64
-    (ci.intern-id-value id)))
-
-(cfg
-  (not stage0-token-scalar-bootstrap)
-  (define (token-intern-payload [id : ci.InternId]) : ci.InternId
-    id))
+(define (token-intern-payload [id : ci.InternId]) : ci.InternId
+  id)
 
 ;; Source locations are 1-based line/column pairs. The end position is
 ;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
@@ -115,18 +87,6 @@
 
 (define (span-end-col [span : SourceSpan]) : i64
   span.end-col)
-
-(define (span-eq?
-  [span : SourceSpan]
-  [start-line : i64]
-  [start-col : i64]
-  [end-line : i64]
-  [end-col : i64]) : bool
-  (and
-    (= (span-start-line span) start-line)
-    (= (span-start-col span) start-col)
-    (= (span-end-line span) end-line)
-    (= (span-end-col span) end-col)))
 
 (define (source-error-message [err : SourceError]) : String
   err.message)
@@ -181,11 +141,7 @@
 ;; a non-symbol is not represented by a raw negative name sentinel.
 (define (sym-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Token.Sym id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-id-from-renderable (deref id))
-        (deref id))]
+    [(Token.Sym id) (deref id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
@@ -195,11 +151,7 @@
     [(Token.LParen) ""]
     [(Token.RParen) ""]
     [(Token.Int _ _) ""]
-    [(Token.Sym id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-str id)
-        (ci.intern-id-str id))]
+    [(Token.Sym id) (ci.intern-id-str id)]
     [(Token.End) ""]
     [(Token.Str _) ""]
     [(Token.Char _) ""]
@@ -222,11 +174,7 @@
     [(Token.Int _ _) ""]
     [(Token.Sym _) ""]
     [(Token.End) ""]
-    [(Token.Str id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-str id)
-        (ci.intern-id-str id))]
+    [(Token.Str id) (ci.intern-id-str id)]
     [(Token.Char _) ""]
     [(Token.Float _) ""]
     [(Token.LBracket) ""]
@@ -240,11 +188,7 @@
 ;; tag before projecting, so missing remains outside the name-id type.
 (define (str-id [t : (& t Token)]) : ci.InternId
   (match t
-    [(Token.Str id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (ci.intern-id-from-renderable (deref id))
-        (deref id))]
+    [(Token.Str id) (deref id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
@@ -266,15 +210,13 @@
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins. The reader/parser recover positions from these so later
 ;; diagnostics can point at the originating source location. `Token.End` carries
-;; the position one past the last character. This is additive: the plain `Token`
-;; stream and its accessors are unchanged, so existing callers keep working.
-;; A struct, not a one-variant enum: the enum form spent a whole 8-byte
-;; discriminant word on a type with exactly one variant, and i64 line/col spent
-;; another 8 bytes describing positions that never exceed a few tens of
-;; thousands. Record width is 48 -> 32 B, so the lexer's write stream and the
-;; parser's walk pull 2 tokens per 64-byte line instead of 1.33 (packet E1).
-;; The accessors keep their i64 signatures, so no consumer changes; this is the
-;; same shape `AstSourceSpan` already uses in compiler_ast_types.tl.
+;; the position one past the last character.
+;; A struct, not a one-variant enum: the enum form spends a whole 8-byte
+;; discriminant word on a type with exactly one variant, and i64 line/col would
+;; spend another 8 bytes on positions that never exceed a few tens of
+;; thousands. The narrow record fits more tokens per cache line in the lexer's
+;; write stream and the parser's walk. The accessors keep their i64 signatures;
+;; this is the same shape `AstSourceSpan` uses in compiler_ast_types.tl.
 (defstruct SpannedToken
   (tok Token)
   (line i32)
@@ -308,9 +250,6 @@
 
 (define (spanned-token-col [s : (& s SpannedToken)]) : i64
   (cast s.col : i64))
-
-(define (spanned-token-token [s : SpannedToken]) : Token
-  (spanned-token-tok s))
 
 ;; Parser cursors borrow the stream-owned token instead of materializing a
 ;; representation copy. Callers match the borrow and copy only literal text

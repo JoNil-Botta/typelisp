@@ -4,12 +4,10 @@ set -eu
 # verify-prelude-mutation.sh - prove the prelude macro bodies actually execute.
 #
 # Every other test of the core prelude compares *output*, and a compiler-owned
-# expander produces the same output as the stdlib body. That is not hypothetical:
-# #4794/#4800 removed the compiler-owned `and`/`or`/`cond` expanders, #4896
-# silently reintroduced them while merging a pre-#4800 branch, and nothing
-# noticed, because `tests/integration/implicit_core_prelude.tl` passes
-# identically either way. #5322 closed the violation and named this gap in its
-# own acceptance criteria; this is that gate.
+# expander produces the same output as the stdlib body: a merge that silently
+# reintroduces a compiler-owned `and`/`or`/`cond` expander leaves
+# `tests/integration/implicit_core_prelude.tl` passing identically. This gate
+# catches that.
 #
 # Method: copy the checked-in stdlib to a scratch root, replace one macro's body
 # with a constant, and compile the fixture against that root. If the observable
@@ -18,8 +16,6 @@ set -eu
 #
 # The mutation is derived from the checked-in source every run, so there is no
 # second copy of `core_macros.tl` to drift.
-#
-# refs #5704, #5322, #4896, #4800.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -29,16 +25,9 @@ if [ "$#" -ne 0 ]; then
     exit 2
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
 [ -x "$COMPILER" ] || {
     echo "prelude mutation guard requires an executable compiler: $COMPILER" >&2
     exit 1

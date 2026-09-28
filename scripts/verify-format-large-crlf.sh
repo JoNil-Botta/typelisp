@@ -2,12 +2,11 @@
 set -eu
 
 # Exercise the whole-file `fmt --check` diff produced when canonical LF source
-# arrives with CRLF endings. The old immutable-string accumulator retained
-# quadratic intermediate output; a 20,000-line hunk crossed many GiB while
-# the growable render buffer stays comfortably below this gate's 1 GiB Linux
+# arrives with CRLF endings. An immutable-string accumulator retains quadratic
+# intermediate output and crosses many GiB on a 20,000-line hunk, while the
+# growable render buffer stays comfortably below this gate's 1 GiB Linux
 # process-tree limit. Windows runs the same deterministic structural probe
 # without asserting a host-specific memory number.
-# refs #6498, #6193.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -21,21 +20,11 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /* | [A-Za-z]:[/\\]*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='large CRLF formatter verification failed: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
+gate_require_compiler
 
 WORKDIR=target/format-large-crlf-verify
 LF_FIXTURE="$WORKDIR/large-lf.tl"
@@ -50,11 +39,6 @@ LINUX_LIMIT_BYTES=1073741824
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
-
-fail() {
-    echo "large CRLF formatter verification failed: $*" >&2
-    exit 1
-}
 
 show_stream() {
     _stream_label=$1

@@ -104,8 +104,8 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          # The full backend memory witnesses require MemoryMax and
-          # MemorySwapMax=0. An RSS watchdog cannot establish that contract.
+          # scripts/run-memory-bounded.sh and the Linux memory-limit helper
+          # require MemoryMax and MemorySwapMax=0 from the user systemd manager.
           bounded_uid=$(id -u)
           sudo systemctl start "user@${bounded_uid}.service"
           export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
@@ -122,13 +122,7 @@ jobs:
         shell: bash
         env:
           TYPELISP_CI_TIMING: '1'
-          TYPELISP_CI_COMPILER_ARTIFACT_TRACE: target/ci-compiler-artifacts/trace.tsv
         run: scripts/ci-verify.sh
-
-      - name: Enforce Linux CI timing budgets
-        if: runner.os == 'Linux'
-        shell: bash
-        run: scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv
 
       - name: Upload CI timing artifact
         if: always()
@@ -136,14 +130,6 @@ jobs:
         with:
           name: ci-timing-${{ runner.os }}
           path: target/ci-timing/*.tsv
-          if-no-files-found: error
-
-      - name: Upload CI compiler artifact inventory
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-compiler-artifacts-${{ runner.os }}
-          path: target/ci-compiler-artifacts/*.tsv
           if-no-files-found: error
 
       - name: Upload backend memory evidence

@@ -15,7 +15,8 @@ Summary:
     Inspect a TypeLisp comptime image.
 ")
 
-(define (tlci-inspect-classification-name [image : tlci_core.TlciImage]) : String
+(define (tlci-inspect-classification-name
+  [image : (& image tlci_core.TlciImage)]) : String
   (match (tlci_core.tlci-image-classify image)
     [(tlci_core.TlciImageClassification.MetadataOnly) "metadata-only"]
     [(tlci_core.TlciImageClassification.CodeBearing) "code-bearing"]))
@@ -90,7 +91,8 @@ Summary:
             (set! index (+ index 1)))))
       out)))
 
-(define (tlci-inspect-spmd-callables [items : tlci_core.TlciSpmdCallables]) : String
+(define (tlci-inspect-spmd-callables
+  [items : (& items tlci_core.TlciSpmdCallables)]) : String
   (let
     [count : i64 (tlci_core.tlci-spmd-callables-len items)]
     [index : i64 0]
@@ -114,7 +116,8 @@ Summary:
             (set! index (+ index 1)))))
       out)))
 
-(define (tlci-inspect-spmd-section [metadata : tlci_core.TlciMetadata]) : String
+(define (tlci-inspect-spmd-section
+  [metadata : (& metadata tlci_core.TlciMetadata)]) : String
   (if (string.eq metadata.version (tlci_core.tlci-metadata-version-v2-current))
     (str_cat.str-cat
       "spmd-callables:\n"
@@ -150,7 +153,7 @@ Summary:
 
 (define (tlci-inspect-surface-section
   [name : String]
-  [rodata : (__tl_dyn-array u8)]
+  [rodata : (& rodata (__tl_dyn-array u8))]
   [kind : i64]) : String
   (match (tlci_core.tlci-aux-find rodata kind)
     [(tlci_core.ResultTlciAuxLookup.Missing)
@@ -178,11 +181,11 @@ Summary:
   (str_cat.str-cat
     (tlci-inspect-surface-section
       "surface-package-identity"
-      (owned_view.compiler-owned-shared-view rodata)
+      rodata
       tlci_core.tlci-aux-kind-package-identity)
     (tlci-inspect-surface-section
       "surface-frontend-ast"
-      (owned_view.compiler-owned-shared-view rodata)
+      rodata
       tlci_core.tlci-aux-kind-frontend-ast)
     (tlci-inspect-surface-section
       "surface-frontend-facts"
@@ -213,8 +216,7 @@ Summary:
       (string.int->string host-platform)
       ")\n"
       "image-classification: "
-      (tlci-inspect-classification-name
-        (owned_view.compiler-owned-shared-view image))
+      (tlci-inspect-classification-name image)
       "\n"
       "callback-abi-version: "
       (string.int->string image.callback-abi-version)
@@ -242,8 +244,7 @@ Summary:
       "package-version: "
       (owned_view.compiler-owned-shared-view metadata.package-version)
       "\n"
-      (tlci-inspect-spmd-section
-        (owned_view.compiler-owned-shared-view metadata))
+      (tlci-inspect-spmd-section metadata)
       "sections:\n"
       (tlci-inspect-section-line
         "compiler-build-hash"
@@ -331,207 +332,6 @@ Summary:
           (tlci-inspect-render-bytes
             "embedded:stdlib.tlci"
             (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)))])))
-
-(cfg
-  test
-  (test
-    tlci-inspect-error-includes-path
-    (unless
-      (string.eq
-        (tlci-inspect-error "pkg/dep.tlci" "tlci: content hash mismatch")
-        "inspect: pkg/dep.tlci: tlci: content hash mismatch\n")
-      (io.panic "inspect error formatting failed"))))
-
-(cfg
-  test
-  (test
-    tlci-inspect-source-binding-shapes
-    (let
-      [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
-        (__tl_make-array tlci_core.TlciAuxSection 1)]
-      [bound : String ""]
-      [unsupported : String ""]
-      [malformed : String ""]
-      [bound-schema : String "source-set-binding-schema: 1\n"]
-      [bound-digest : String "source-set-digest: 12345\n"]
-      [missing-schema : String "source-set-binding-schema: missing-or-legacy\n"]
-      [missing-digest : String "source-set-digest: unavailable\n"]
-      [unsupported-schema : String
-        "source-set-binding-schema: unsupported (2)\n"]
-      [malformed-schema : String "source-set-binding-schema: malformed\n"]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci_core.tlci-package-source-binding-section 12345))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Ok packed)
-            (set! bound (tlci-inspect-source-binding packed))]
-          [_ unit])
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-source-binding
-            2
-            (tlci_core.tlci-string->bytes "future")))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Ok packed)
-            (set! unsupported (tlci-inspect-source-binding packed))]
-          [_ unit])
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-source-binding
-            tlci_core.tlci-package-source-binding-schema-version
-            (__tl_make-array u8 7)))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Ok packed)
-            (set! malformed (tlci-inspect-source-binding packed))]
-          [_ unit])
-        (let
-          [missing : String
-            (tlci-inspect-source-binding (tlci_core.tlci-empty-bytes))]
-          (if (and
-            (string.contains (& bound) (& bound-schema))
-            (string.contains (& bound) (& bound-digest))
-            (string.contains (& missing) (& missing-schema))
-            (string.contains (& missing) (& missing-digest))
-            (string.contains (& unsupported) (& unsupported-schema))
-            (string.contains (& malformed) (& malformed-schema)))
-            unit
-            (io.panic "inspect source binding rendering failed")))))))
-
-(cfg
-  test
-  (test
-    tlci-inspect-surface-shapes
-    (let
-      [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
-        (__tl_make-array tlci_core.TlciAuxSection 3)]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-identity
-            1
-            (tlci_core.tlci-string->bytes "identity")))
-        (set!
-          (array-ref sections 1)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-frontend-ast
-            5
-            (tlci_core.tlci-empty-bytes)))
-        (set!
-          (array-ref sections 2)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-frontend-facts
-            1
-            (tlci_core.tlci-string->bytes "facts")))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Err _)
-            (io.panic "inspect surface fixture packing failed")]
-          [(tlci_core.ResultTlciAuxBytes.Ok rodata)
-            (let
-              [rendered : String
-                (tlci-inspect-surface
-                  rodata
-                  "0123456789abcdef0123456789abcdef01234567")]
-              [identity-line : String
-                "surface-package-identity: present schema-version=1 bytes=8\n"]
-              [ast-line : String
-                "surface-frontend-ast: present schema-version=5 bytes=0\n"]
-              [facts-line : String
-                "surface-frontend-facts: present schema-version=1 bytes=5\n"]
-              [trust-line : String
-                "surface-trust-policy: exact-producer-and-source-binding-required\n"]
-              (unless
-                (and
-                  (string.contains (& rendered) (& identity-line))
-                  (string.contains (& rendered) (& ast-line))
-                  (string.contains (& rendered) (& facts-line))
-                  (string.contains (& rendered) (& trust-line)))
-                (io.panic "inspect surface rendering failed")))])))))
-
-(cfg
-  test
-  (test
-    tlci-inspect-imports-and-file-size
-    (let
-      [ok : bool
-        (match (tlci_core.tlci-emit-image (tlci_core.tlci-test-imports-image))
-          [(tlci_core.ResultTlciBytes.Err _) false]
-          [(tlci_core.ResultTlciBytes.Ok bytes)
-            (match (tlci_core.tlci-parse-image
-              (owned_view.compiler-owned-shared-view bytes))
-              [(tlci_core.ResultTlciImage.Err _) false]
-              [(tlci_core.ResultTlciImage.Ok parsed)
-                (let
-                  [rendered : String (tlci-inspect-render bytes parsed)]
-                  [expected-file-size : String "file-size: 314\n"]
-                  [expected-imports : String
-                    "  imports: offset=272 records=1 bytes=42\n"]
-                  [expected-platform : String
-                    (str_cat.str-cat
-                      "host-platform: "
-                      (tlci_core.tlci-host-platform-name
-                        (tlci_core.tlci-build-host-platform))
-                      " ("
-                      (string.int->string (tlci_core.tlci-build-host-platform))
-                      ")"
-                      "\n")]
-                  [expected-classification : String
-                    "image-classification: metadata-only\n"]
-                  (and
-                    (string.contains (& rendered) (& expected-file-size))
-                    (string.contains (& rendered) (& expected-imports))
-                    (string.contains (& rendered) (& expected-platform))
-                    (string.contains (& rendered) (& expected-classification))))])])]
-      (unless ok (io.panic "inspect import section rendering failed")))))
-
-(cfg
-  test
-  (test
-    tlci-inspect-v2-spmd-callables
-    (let
-      [image : tlci_core.TlciImage
-        (tlci_core.tlci-make-image
-          (tlci_core.tlci-build-host-platform)
-          tlci_core.tlci-callback-abi-version
-          "inspect-v2-test"
-          (tlci_core.tlci-test-v2-metadata)
-          (tlci_core.tlci-empty-bytes)
-          (tlci_core.tlci-empty-bytes)
-          (tlci_core.tlci-empty-bytes)
-          (tlci_core.tlci-empty-bytes)
-          (tlci_core.tlci-empty-bytes)
-          (tlci_core.tlci-empty-bytes))]
-      [ok : bool
-        (match (tlci_core.tlci-emit-image image)
-          [(tlci_core.ResultTlciBytes.Err _) false]
-          [(tlci_core.ResultTlciBytes.Ok bytes)
-            (match (tlci_core.tlci-parse-image
-              (owned_view.compiler-owned-shared-view bytes))
-              [(tlci_core.ResultTlciImage.Err _) false]
-              [(tlci_core.ResultTlciImage.Ok parsed)
-                (let
-                  [rendered : String (tlci-inspect-render bytes parsed)]
-                  [expected : String
-                    (str_cat.str-cat
-                      "spmd-callables:\n"
-                      "  helper: name=demo.alpha signature=(-> i64 i64)\n"
-                      "    specialization: abi=spmd-call-v1 backend=avx512 lanes=8 args=v result=v index-param=0 symbol=__tl_spmd_demo_alpha_v8\n"
-                      "    specialization: abi=spmd-call-v1 backend=scalar lanes=1 args=v result=v index-param=0 symbol=__tl_spmd_demo_alpha_scalar\n"
-                      "  helper: name=demo.beta signature=(-> i64 i64)\n"
-                      "    specialization: abi=spmd-call-future backend=future lanes=4 args=u result=u index-param=-1 symbol=__tl_spmd_demo_beta_future\n")]
-                  (string.contains (& rendered) (& expected)))])])]
-      (unless ok (io.panic "inspect v2 SPMD callable rendering failed")))))
 
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))

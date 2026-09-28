@@ -29,10 +29,8 @@ set -eu
 # chasing on, VEX extends a superblock through unconditional jumps and the Ir
 # attributed to a block is charged even when a conditional exit inside the
 # chased superblock is taken, so the count includes instructions that never
-# executed; the size of the error depends on branch layout (measured on
-# peephole_lines: 514,849,010 with chasing vs 511,910,822 without for one
-# binary, 529,354,525 vs 498,771,841 for another, while callgrind and
-# exp-bbv agree with the chase-free figures to within a few instructions).
+# executed; the size of the error depends on branch layout (callgrind and
+# exp-bbv agree with the chase-free figures).
 # Without chasing every superblock ends at a branch and Ir is the number of
 # instructions the process actually retired, which is what this metric is for.
 #
@@ -225,10 +223,9 @@ if [ "$SELF_TEST" -eq 0 ] && [ "$MEASURE_BENCHMARKS" -eq 0 ] && [ "$MEASURE_SELF
     exit 2
 fi
 
-fail() {
-    echo "[ir-count] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[ir-count] '
+. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
 
 case "$(uname -s)" in
     Linux*) ;;
@@ -269,22 +266,12 @@ BUILD_STAGE2_FROM_SEED=0
 if [ "$SELF_TEST" -eq 1 ]; then
     [ -z "$SEED_ARG" ] || fail "--self-test does not accept a TypeLisp compiler"
     COMPILER=/bin/true
-elif [ -n "$SEED_ARG" ]; then
-    COMPILER=$SEED_ARG
-elif [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
 else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-    if [ "$SELF_STAGE2" = 1 ]; then
+    bench_compiler "$SEED_ARG"
+    if [ -z "$SEED_ARG" ] && [ -z "${TYPELISP_BIN:-}" ] && [ "$SELF_STAGE2" = 1 ]; then
         BUILD_STAGE2_FROM_SEED=1
     fi
 fi
-
-[ -x "$COMPILER" ] || {
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-}
 
 if [ "$SELF_TEST" -eq 0 ] &&
     [ "$MEASURE_SELF_COMPILE" -eq 1 ] &&
@@ -312,53 +299,6 @@ SUMMARY_TSV="$WORKDIR/summary.tsv"
 RATIOS_TSV="$WORKDIR/ratios.tsv"
 printf 'kind\tname\trun\tir_count\texit_status\n' > "$RUNS_TSV"
 printf 'kind\tname\tir_count\tmin_ir\tmax_ir\truns\tstable\n' > "$SUMMARY_TSV"
-CR=$(printf '\r')
-
-safe_name() {
-    printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
-}
-
-benchmark_args_for_dir() {
-    _dir=$1
-    _metadata="$_dir/optimization.tsv"
-    BENCHMARK_ARGS=
-    [ -f "$_metadata" ] || return 0
-
-    _line=
-    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
-        case "$_candidate" in
-            *"$CR") _candidate=${_candidate%"$CR"} ;;
-        esac
-        case "$_candidate" in
-            "" | \#*) continue ;;
-        esac
-        if [ -n "$_line" ]; then
-            fail "multiple metadata rows in $_metadata"
-        fi
-        _line=$_candidate
-    done < "$_metadata"
-
-    [ -n "$_line" ] || fail "missing metadata row in $_metadata"
-    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-    [ "$_fields" -eq 2 ] || fail "metadata line must have 2 fields: $_metadata: $_line"
-
-    IFS='|' read -r _category BENCHMARK_ARGS <<EOF
-$_line
-EOF
-}
-
-show_logs() {
-    stdout=$1
-    stderr=$2
-    if [ -s "$stdout" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$stdout" >&2 || true
-    fi
-    if [ -s "$stderr" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$stderr" >&2 || true
-    fi
-}
 
 observable_outputs_match() {
     _oom_left_status=$1
@@ -390,70 +330,20 @@ assert_observable_outputs_match() {
     exit 1
 }
 
-cachegrind_ir() {
-    awk '
-        /^events:/ {
-            ir_col = 0
-            for (i = 2; i <= NF; i++) {
-                if ($i == "Ir") {
-                    ir_col = i - 1
-                }
-            }
-        }
-        /^summary:/ && ir_col > 0 {
-            value = $(ir_col + 1)
-            gsub(/,/, "", value)
-            print value
-            found = 1
-            exit
-        }
-        END {
-            if (!found) {
-                exit 1
-            }
-        }
-    ' "$1"
-}
-
 run_cachegrind() {
     kind=$1
     name=$2
     run=$3
     instr_at_start=$4
     shift 4
-
-    safe=$(safe_name "$kind-$name-$run")
-    cgout="$WORKDIR/logs/$safe.cachegrind.out"
-    stdout="$WORKDIR/logs/$safe.stdout"
-    stderr="$WORKDIR/logs/$safe.stderr"
-
-    set +e
-    env -i LC_ALL=C "$VALGRIND" \
+    safe="$WORKDIR/logs/$(bench_safe_name "$kind-$name-$run")"
+    bench_cachegrind "$kind/$name run $run" "$safe.cachegrind.out" "$safe.stdout" "$safe.stderr" \
+        env -i LC_ALL=C "$VALGRIND" \
         --quiet --tool=cachegrind --instr-at-start="$instr_at_start" \
         --vex-guest-chase=no \
-        --cachegrind-out-file="$cgout" \
-        "$@" >"$stdout" 2>"$stderr"
-    status=$?
-    set -e
-
-    [ -s "$cgout" ] || {
-        show_logs "$stdout" "$stderr"
-        fail "cachegrind did not write output for $kind/$name run $run"
-    }
-
-    ir=$(cachegrind_ir "$cgout") || {
-        show_logs "$stdout" "$stderr"
-        fail "could not parse Ir from $cgout"
-    }
-    case "$ir" in
-        "" | *[!0-9]*)
-            fail "parsed non-numeric Ir for $kind/$name run $run: $ir"
-            ;;
-    esac
-
-    printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$name" "$run" "$ir" "$status" >> "$RUNS_TSV"
-    LAST_IR=$ir
-    LAST_STATUS=$status
+        --cachegrind-out-file="$safe.cachegrind.out" \
+        "$@"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$name" "$run" "$BENCH_IR" "$BENCH_STATUS" >> "$RUNS_TSV"
 }
 
 measure_repeated() {
@@ -474,28 +364,27 @@ measure_repeated() {
     while [ "$run" -le "$RUNS" ]; do
         echo "[ir-count] $kind/$name run $run"
         run_cachegrind "$kind" "$name" "$run" "$instr_at_start" "$@"
-        safe=$(safe_name "$kind-$name-$run")
-        current_stdout="$WORKDIR/logs/$safe.stdout"
-        current_stderr="$WORKDIR/logs/$safe.stderr"
-        if [ "$require_zero" -eq 1 ] && [ "$LAST_STATUS" -ne 0 ]; then
-            show_logs "$current_stdout" "$current_stderr"
-            fail "$kind/$name run $run exited $LAST_STATUS"
+        current_stdout="$safe.stdout"
+        current_stderr="$safe.stderr"
+        if [ "$require_zero" -eq 1 ] && [ "$BENCH_STATUS" -ne 0 ]; then
+            bench_show_logs "$current_stdout" "$current_stderr"
+            fail "$kind/$name run $run exited $BENCH_STATUS"
         fi
         if [ -z "$first" ]; then
-            first=$LAST_IR
-            min=$LAST_IR
-            max=$LAST_IR
-            first_status=$LAST_STATUS
+            first=$BENCH_IR
+            min=$BENCH_IR
+            max=$BENCH_IR
+            first_status=$BENCH_STATUS
             first_stdout=$current_stdout
             first_stderr=$current_stderr
         else
             assert_observable_outputs_match \
                 "$kind/$name run 1 vs run $run" \
                 "$first_status" "$first_stdout" "$first_stderr" \
-                "$LAST_STATUS" "$current_stdout" "$current_stderr"
-            if [ "$LAST_IR" -lt "$min" ]; then min=$LAST_IR; fi
-            if [ "$LAST_IR" -gt "$max" ]; then max=$LAST_IR; fi
-            if [ "$LAST_STATUS" != "$first_status" ]; then status_stable=0; fi
+                "$BENCH_STATUS" "$current_stdout" "$current_stderr"
+            if [ "$BENCH_IR" -lt "$min" ]; then min=$BENCH_IR; fi
+            if [ "$BENCH_IR" -gt "$max" ]; then max=$BENCH_IR; fi
+            if [ "$BENCH_STATUS" != "$first_status" ]; then status_stable=0; fi
         fi
         run=$((run + 1))
     done
@@ -517,21 +406,14 @@ measure_repeated() {
 }
 
 build_c_region_self_test() {
-    startup_iterations=$1
-    name=$2
-    bin="$WORKDIR/bin/c-region-$name"
-    stdout="$WORKDIR/logs/c-region-$name.build.stdout"
-    stderr="$WORKDIR/logs/c-region-$name.build.stderr"
-
-    if ! clang "$C_OPT" \
-        "-DTYPELISP_IR_STARTUP_ITERATIONS=$startup_iterations" \
+    bin="$WORKDIR/bin/c-region-$2"
+    bench_build "$bin" "$WORKDIR/logs/c-region-$2.build.stdout" "$WORKDIR/logs/c-region-$2.build.stderr" \
+        "unsupported C measured-region toolchain: clang must find valgrind/cachegrind.h" \
+        clang "$C_OPT" \
+        "-DTYPELISP_IR_STARTUP_ITERATIONS=$1" \
         "-Dmain=$C_REGION_MAIN" \
         "$C_REGION_SELF_TEST" "$C_REGION_WRAPPER" \
-        -o "$bin" >"$stdout" 2>"$stderr"; then
-        show_logs "$stdout" "$stderr"
-        fail "unsupported C measured-region toolchain: clang must find valgrind/cachegrind.h"
-    fi
-    [ -x "$bin" ] || fail "C measured-region self-test did not write executable: $bin"
+        -o "$bin"
     C_REGION_SELF_TEST_BIN=$bin
 }
 
@@ -544,11 +426,11 @@ run_c_region_self_test() {
     long_bin=$C_REGION_SELF_TEST_BIN
 
     run_cachegrind "self-test/c-region" short-startup 1 no "$short_bin"
-    short_ir=$LAST_IR
+    short_ir=$BENCH_IR
     run_cachegrind "self-test/c-region" long-startup 1 no "$long_bin"
-    long_ir=$LAST_IR
+    long_ir=$BENCH_IR
     run_cachegrind "self-test/c-region" long-startup-repeat 1 no "$long_bin"
-    repeat_ir=$LAST_IR
+    repeat_ir=$BENCH_IR
 
     [ "$short_ir" -gt 0 ] || {
         fail "unsupported Cachegrind measured-region environment: start instrumentation request recorded zero instructions"
@@ -562,78 +444,21 @@ run_c_region_self_test() {
     echo "[ir-count] C measured-region self-test passed: Ir=$short_ir"
 }
 
-build_typelisp_benchmark() {
-    bench_tl=$1
-    name=$2
-    bin="$WORKDIR/bin/$name.typelisp"
-    safe=$(safe_name "benchmark-typelisp-$name")
-    stdout="$WORKDIR/logs/$safe.build.stdout"
-    stderr="$WORKDIR/logs/$safe.build.stderr"
-
-    echo "[ir-count] build benchmark/typelisp $name (opt-level $BENCH_OPT_LEVEL)"
-    if ! "$COMPILER" build "$bench_tl" -o "$bin" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        --opt-level "$BENCH_OPT_LEVEL" \
-        --stdlib-root stdlib \
-        --stdlib-root src \
-        >"$stdout" 2>"$stderr"; then
-        show_logs "$stdout" "$stderr"
-        fail "failed to build benchmark $name"
-    fi
-    [ -x "$bin" ] || fail "benchmark build did not write executable: $bin"
+# build_measured IMPL INSTR_AT_START NAME BIN MESSAGE COMMAND...: build BIN
+# with COMMAND (failing with MESSAGE), then measure it as benchmark/IMPL/NAME
+# with the benchmark's arguments.
+build_measured() {
+    impl=$1
+    instr_at_start=$2
+    name=$3
+    bin=$4
+    msg=$5
+    shift 5
+    safe="$WORKDIR/logs/$(bench_safe_name "benchmark-$impl-$name")"
+    echo "[ir-count] build benchmark/$impl $name"
+    bench_build "$bin" "$safe.build.stdout" "$safe.build.stderr" "$msg" "$@"
     # shellcheck disable=SC2086
-    measure_repeated "benchmark/typelisp" "$name" 0 yes "$bin" $bench_args
-    TL_STATUS=$LAST_SUMMARY_STATUS
-    TL_STDOUT=$LAST_SUMMARY_STDOUT
-    TL_STDERR=$LAST_SUMMARY_STDERR
-}
-
-build_c_benchmark() {
-    baseline_c=$1
-    name=$2
-    bin="$WORKDIR/bin/$name.c"
-    safe=$(safe_name "benchmark-c-$name")
-    stdout="$WORKDIR/logs/$safe.build.stdout"
-    stderr="$WORKDIR/logs/$safe.build.stderr"
-
-    echo "[ir-count] build benchmark/c $name"
-    if ! clang "$C_OPT" \
-        "-Dmain=$C_REGION_MAIN" \
-        "$baseline_c" "$C_REGION_WRAPPER" \
-        -o "$bin" >"$stdout" 2>"$stderr"; then
-        show_logs "$stdout" "$stderr"
-        fail "failed to build C benchmark $name (the measured-region wrapper requires valgrind/cachegrind.h)"
-    fi
-    [ -x "$bin" ] || fail "C benchmark build did not write executable: $bin"
-    # shellcheck disable=SC2086
-    measure_repeated "benchmark/c" "$name" 0 no "$bin" $bench_args
-    C_STATUS=$LAST_SUMMARY_STATUS
-    C_STDOUT=$LAST_SUMMARY_STDOUT
-    C_STDERR=$LAST_SUMMARY_STDERR
-}
-
-build_c_scalar_benchmark() {
-    baseline_c=$1
-    name=$2
-    bin="$WORKDIR/bin/$name.c-scalar"
-    safe=$(safe_name "benchmark-c-scalar-$name")
-    stdout="$WORKDIR/logs/$safe.build.stdout"
-    stderr="$WORKDIR/logs/$safe.build.stderr"
-
-    echo "[ir-count] build benchmark/c-scalar $name"
-    if ! clang "$C_OPT" -fno-vectorize -fno-slp-vectorize \
-        "-Dmain=$C_REGION_MAIN" \
-        "$baseline_c" "$C_REGION_WRAPPER" \
-        -o "$bin" >"$stdout" 2>"$stderr"; then
-        show_logs "$stdout" "$stderr"
-        fail "failed to build scalar C benchmark $name (the measured-region wrapper requires valgrind/cachegrind.h)"
-    fi
-    [ -x "$bin" ] || fail "scalar C benchmark build did not write executable: $bin"
-    # shellcheck disable=SC2086
-    measure_repeated "benchmark/c-scalar" "$name" 0 no "$bin" $bench_args
-    C_SCALAR_STATUS=$LAST_SUMMARY_STATUS
-    C_SCALAR_STDOUT=$LAST_SUMMARY_STDOUT
-    C_SCALAR_STDERR=$LAST_SUMMARY_STDERR
+    measure_repeated "benchmark/$impl" "$name" 0 "$instr_at_start" "$bin" $bench_args
 }
 
 build_benchmark_pair() {
@@ -641,23 +466,41 @@ build_benchmark_pair() {
     name=$2
     dir=$(dirname "$bench_tl")
     baseline_c="$dir/baseline.c"
+    out="$WORKDIR/bin/$name"
+    wrapper="(the measured-region wrapper requires valgrind/cachegrind.h)"
 
     [ -f "$baseline_c" ] || fail "selected benchmark $name has bench.tl but no baseline.c"
-    benchmark_args_for_dir "$dir"
-    bench_args=$BENCHMARK_ARGS
+    bench_metadata "$dir/optimization.tsv"
+    bench_args=$BENCH_ARGS
 
-    build_typelisp_benchmark "$bench_tl" "$name"
-    build_c_benchmark "$baseline_c" "$name"
+    build_measured typelisp yes "$name" "$out.typelisp" "failed to build benchmark $name" \
+        "$COMPILER" build "$bench_tl" -o "$out.typelisp" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        --opt-level "$BENCH_OPT_LEVEL" \
+        --stdlib-root stdlib \
+        --stdlib-root src
+    TL_STATUS=$LAST_SUMMARY_STATUS
+    TL_STDOUT=$LAST_SUMMARY_STDOUT
+    TL_STDERR=$LAST_SUMMARY_STDERR
+    build_measured c no "$name" "$out.c" "failed to build C benchmark $name $wrapper" \
+        clang "$C_OPT" \
+        "-Dmain=$C_REGION_MAIN" \
+        "$baseline_c" "$C_REGION_WRAPPER" \
+        -o "$out.c"
     assert_observable_outputs_match \
         "benchmark $name TypeLisp vs auto-vectorized C" \
         "$TL_STATUS" "$TL_STDOUT" "$TL_STDERR" \
-        "$C_STATUS" "$C_STDOUT" "$C_STDERR"
+        "$LAST_SUMMARY_STATUS" "$LAST_SUMMARY_STDOUT" "$LAST_SUMMARY_STDERR"
     if [ "$C_SCALAR" -eq 1 ]; then
-        build_c_scalar_benchmark "$baseline_c" "$name"
+        build_measured c-scalar no "$name" "$out.c-scalar" "failed to build scalar C benchmark $name $wrapper" \
+            clang "$C_OPT" -fno-vectorize -fno-slp-vectorize \
+            "-Dmain=$C_REGION_MAIN" \
+            "$baseline_c" "$C_REGION_WRAPPER" \
+            -o "$out.c-scalar"
         assert_observable_outputs_match \
             "benchmark $name TypeLisp vs scalar C" \
             "$TL_STATUS" "$TL_STDOUT" "$TL_STDERR" \
-            "$C_SCALAR_STATUS" "$C_SCALAR_STDOUT" "$C_SCALAR_STDERR"
+            "$LAST_SUMMARY_STATUS" "$LAST_SUMMARY_STDOUT" "$LAST_SUMMARY_STDERR"
         echo "[ir-count] benchmark $name observable output matches across TypeLisp, C, and scalar C"
     else
         echo "[ir-count] benchmark $name observable output matches across TypeLisp and C"
@@ -862,6 +705,7 @@ fi
 
 echo "[ir-count] compiler: $COMPILER"
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+    echo "[ir-count] TypeLisp benchmark opt-level: $BENCH_OPT_LEVEL"
     echo "[ir-count] C benchmark compiler: clang $C_OPT"
     echo "[ir-count] C benchmark region: Cachegrind starts at C main"
     if [ "$C_SCALAR" -eq 1 ]; then

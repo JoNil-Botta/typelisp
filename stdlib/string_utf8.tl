@@ -36,6 +36,11 @@
 ;: Byte offsets in the original input. `failure-offset` identifies the first
 ;: byte proving invalidity, or input length for a missing byte. Invalid caller
 ;: offsets are preserved in both fields without reading the input.
+;: `InvalidLead` and `UnexpectedContinuation` use the current byte for both;
+;: `Truncated` fails at input length and `InvalidContinuation` at the offending
+;: byte; `Overlong` (E0/F0), `Surrogate` (ED) and `OutOfRange` (F4) point at the
+;: second byte. Bytes are checked in order, so a conclusive earlier error wins
+;: over later truncation.
 (defstruct DecodeError
   (kind ErrorKind)
   (sequence-start i64)

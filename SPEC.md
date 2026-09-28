@@ -1385,23 +1385,7 @@ Constraint processing has two distinct times:
    compile-time `type` value as an unconstrained operand. A failing operand
    does not run the transformer and does not create or reuse generated output.
 
-Concrete transformer CTFE remains mandatory, and the first concrete
-instantiation of every generated-module family receives the normal full-body
-post-expansion typecheck. That check includes declarations that are unused or
-later removed by reachability; there is no demand pruning before this first
-check. A second-or-later distinct generated-module identity T1 may reuse a
-concrete declaration verdict from the already-checked identity T0 only when
-all of the following hold:
-
-1. The persisted abstract proof covers the parameter's concrete kind and every
-   fixed `type` operand.
-2. The declaration passes the tightened invariant/dependency scan.
-3. The declaration is the exact T0-to-T1 substitution of the checked T0
-   declaration, including nested generated-import identities.
-4. Every literal fits T1, and no width/kind-family, ownership/cleanup,
-   equality/clone, reflection/fixed-shape semantics change.
-
-Kind constraints move
+The normal post-expansion typecheck remains mandatory. Kind constraints move
 unsupported top-level shapes to the operand site; they do not by themselves
 prove a generated body correct for all nested concrete types. They are also
 the fact vocabulary used by the definition-time abstract macro-body checker.
@@ -1410,13 +1394,10 @@ reflection uses once over the declared kind set. A `type-kind` equality branch
 refines that set for its then/else bodies, and direct `let` aliases preserve
 the operand's facts; shape-specific reflection is accepted only when every
 remaining kind supports it. The checker does not infer unrelated capabilities.
-Concrete transformer CTFE and the first identity's full-body typecheck remain
-the safeguards for fixed-array lengths, reflection indexes, nested-type
-properties, cleanup ownership, and final substitutions. If any proof, family,
-identity, lookup, or structural check is absent or mismatched, the compiler
-fails closed to normal concrete checking. The first identity is always checked
-concretely, and `:kind` alone never proves arbitrary generated-body safety.
-Unconstrained `type` operands retain the existing concrete-only behavior.
+Concrete transformer CTFE and the normal post-expansion typecheck remain the
+safeguards for fixed-array lengths, reflection indexes, nested-type
+properties, cleanup ownership, and final substitutions. Unconstrained `type`
+operands retain the existing concrete-only behavior.
 
 A failed satisfaction diagnostic must point at the concrete type operand and
 name the canonical macro, parameter, rendered concrete type, and allowed kind
@@ -2544,7 +2525,7 @@ UTF-8 validation is explicit: `stdlib.string_utf8.decode-at` decodes one
 Unicode scalar at a checked byte offset, and `validate` checks the complete
 input through that same decoder. Both borrow `str`, allocate no storage, and
 return structured failures without replacement. The exact error kinds and
-byte-offset contract are documented in [stdlib/README.md](stdlib/README.md).
+byte-offset contract are documented in [stdlib/string_utf8.tl](stdlib/string_utf8.tl).
 This does not change the byte-sized `char`, byte indexing, or arbitrary-byte
 `String`/`ByteBuf.to-string` contract.
 
@@ -2658,9 +2639,9 @@ runtime bounds discipline as arrays and strings: negative or out-of-range
 indices and invalid `[start, start + len)` slices trap through the ordinary
 out-of-bounds path unless an API is explicitly named as checked/try-style.
 
-The stdlib module `stdlib/byte_buf.tl` provides `byte-buf-*` helper names for
-owned-buffer operations and `bytes-*` helper names for borrowed-slice
-operations. The semantic operations are:
+The stdlib module `stdlib/byte_buf.tl` provides owned-buffer operations
+(`byte_buf.push`, `byte_buf.to-string`, ...) and `bytes-*` helper names for
+borrowed-slice operations. The semantic operations are:
 
 - create an empty buffer or a buffer with capacity;
 - inspect length/capacity and read initialized bytes;
@@ -2691,7 +2672,7 @@ Conversions are explicit:
   (bytes-set! view 0 value))
 
 (define (render-owned [buf : ByteBuf]) : String
-  (byte-buf-to-string buf))
+  (to-string buf))
 ```
 
 FFI and IO boundaries are explicit. Borrowed byte views are pointer/length
@@ -2703,7 +2684,7 @@ while the owner is not grown, moved into an invalidating context, or invalidated
 by arena reset/destroy.
 
 C APIs that require NUL-terminated strings require an explicit NUL-terminated
-copy such as the `ffi-c-string-*`/`ffi-cstr` family; neither `ByteBuf` nor
+copy such as the `ffi.c-string-*`/`ffi.cstr` family; neither `ByteBuf` nor
 `bytes` implies trailing NUL, forbids interior NUL, or coerces to a C string
 pointer. Binary IO helpers accept `(& r bytes)` for non-consuming writes,
 return owned `ByteBuf` for allocated reads, and fill caller-provided
@@ -3032,9 +3013,8 @@ resolved independently of an entry module's source tree. Explicit
 `--stdlib-root` entries take precedence, followed by `TYPELISP_STDLIB_ROOT` and
 the embedded stdlib payload. The fixed `stdlib/<name>.tl` disk spelling is only
 a compatibility fallback when the embedded payload does not contain that
-prelude (for example, during a seed bootstrap). Regardless of the physical
-source selected, these preludes retain their canonical `stdlib.*` module and
-path identities.
+prelude. Regardless of the physical source selected, these preludes retain
+their canonical `stdlib.*` module and path identities.
 
 #### 4.4.2 Default visibility
 
@@ -3279,8 +3259,11 @@ compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
 uncompressed byte length and a newline, followed by the token stream. Like
 `include-bin`, and unlike `include-str`, the input is never decoded or
 validated as text, so binary payloads round-trip exactly. This form exists for
-compiler-owned payload tables: the compiler embeds both its stdlib source
-table and its stdlib comptime image through it.
+compiler-owned payload tables: the compiler embeds its stdlib source table
+through it. The stdlib comptime image is embedded with `include-bin` instead,
+as a compiler-owned TLCH envelope that carries the image's LZSS token stream
+in canonical Huffman form and is expanded back to the exact `.tlci` bytes on
+demand.
 
 #### 4.4.8 `(include-str-comptime name "path")` - compile-time text input
 
@@ -4208,10 +4191,9 @@ An ordinary move-only local can be replaced without an implicit cleanup:
 ```
 
 The old box storage is reclaimed with its arena. The compiler's
-[`compiler-typecheck-move-ordinary-overwrite-source` and
-`compiler-typecheck-move-cleanup-overwrite-source` regression fixtures](src/compiler_typecheck.tl)
+[`compiler-typecheck-move-tests-ok?` regression fixtures](src/tests/compiler_typecheck_tests.tl)
 check ordinary field replacement and rejection of initialized cleanup-owning
-replacement, respectively. The right-hand-side move checks and live-borrow
+replacement. The right-hand-side move checks and live-borrow
 restrictions still apply to either kind of assignment.
 
 ```lisp test=check name=move-copyable-scalar-reuse
@@ -6141,7 +6123,7 @@ The embedded-stdlib catalog has a checked, source-derived identity inventory.
 For every entry it records the canonical identity, declared parameter count and
 variadic shape, result kind, a reviewed semantic fixture, expected status and
 fuel policy, and comparison policy. The host operand capacity must cover the
-largest declared entry (currently the nine-parameter format expansion helper);
+largest declared entry (currently a `stdlib.format` expansion helper);
 a registration-only entry or an executor-side arity cap does not count as
 native coverage. Required Linux and Windows verification executes every
 inventory identity in its assigned fixture through both the trusted native
@@ -6469,14 +6451,14 @@ The unsafe operation set:
 | `(syscall number arg0 ... arg5)` | Unsafe | integer operands -> `i64` | Issues a raw Linux x86_64 host syscall. The number plus up to six arguments are passed directly to the kernel ABI; argument validity, pointer lifetimes, platform availability, and side effects are caller obligations. |
 
 `stdlib.ffi` provides caller-owned C string marshalling helpers on top of
-this raw-pointer surface. `ffi-c-bytes-required-bytes` computes
-`bytes-length + 1`, `ffi-c-bytes-interior-nul?` rejects byte slices that cannot
-be passed to ordinary NUL-terminated C APIs, and `ffi-c-bytes-copy!` copies into
+this raw-pointer surface. `ffi.c-bytes-required-bytes` computes
+`bytes-length + 1`, `ffi.c-bytes-interior-nul?` rejects byte slices that cannot
+be passed to ordinary NUL-terminated C APIs, and `ffi.c-bytes-copy!` copies into
 a caller-provided `(MutPtr u8)` with an explicit capacity before writing the
 trailing NUL byte. The helper returns a structured result for success,
 interior-NUL input, or too-small buffers; it does not allocate, does not create
 implicit `String -> Ptr` or `bytes -> Ptr` coercions, and does not extend the
-input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
+input slice's lifetime. The `ffi.c-string-*` compatibility wrappers borrow their
 `String` input as `(& r bytes)` and delegate to the byte-slice implementation.
 
 `ptr-addr-of` addressable places are:
@@ -8251,9 +8233,9 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
-| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
+| `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
-| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `scripts/verify-spmd-lane-identity.sh` |
+| `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `tests/spmd/gang-width.cases` (lane-identity cases) |
 | Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
 | `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
 
@@ -8276,7 +8258,7 @@ scalarized extensions.
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Implemented: unsized `(Array T)` is rejected; private compiler/runtime buffers use `__tl_dyn-array`. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Compiled comptime execution from embedded/package `tlci` images | Implemented for trusted local/source-built images on Linux and Windows. Published compilers use trusted embedded-stdlib and dependency-package catalogs; exact embedded or byte-identical source provenance admits stdlib entries, while dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Required two-host differential, sustained reset/remap stress, bootstrap fixpoint, focused stale-source/rebuild, and package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The embedded tier additionally derives an inventory-exact 107-entry declaration census and requires reviewed native/forced-source fixture evidence for every identity and result kind with byte-identical assembly. The package differential uses three directly declared dependency-free libraries to prove package-qualified catalog selection, one canonical mapping per package, native `Expr`/`Module`/`Decls` results, shell reuse, ordered/repeated generated output, zero-map forced-source parity, and authored/fuel diagnostic attribution. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; stale source stands down before mapping, invalidates old capabilities, and resumes changed native execution only after rebuild. Content and exact-source hashes are deterministic integrity/rebuild identities, not publisher signatures; distributed/prebuilt authenticity remains a separate future trust layer. |
+| Compiled comptime execution from embedded/package `tlci` images | Implemented for trusted local/source-built images on Linux and Windows. Published compilers use trusted embedded-stdlib and dependency-package catalogs; exact embedded or byte-identical source provenance admits stdlib entries, while dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Required two-host differential, sustained reset/remap stress, bootstrap fixpoint, focused stale-source/rebuild, and package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The embedded tier additionally derives an inventory-exact declaration census and requires reviewed native/forced-source fixture evidence for every identity and result kind with byte-identical assembly. The package differential uses three directly declared dependency-free libraries to prove package-qualified catalog selection, one canonical mapping per package, native `Expr`/`Module`/`Decls` results, shell reuse, ordered/repeated generated output, zero-map forced-source parity, and authored/fuel diagnostic attribution. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; stale source stands down before mapping, invalidates old capabilities, and resumes changed native execution only after rebuild. Content and exact-source hashes are deterministic integrity/rebuild identities, not publisher signatures; distributed/prebuilt authenticity remains a separate future trust layer. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, standard semantic workspace references, safe workspace-wide `prepareRename`/`rename`, and full-document semantic tokens are implemented. Binding-aware read/write document highlights and hierarchical document symbols (members, variants, locals, and macro-generated declarations) remain pending. Range-scoped and incremental semantic-token requests are optional follow-ups. |
 
@@ -8500,6 +8482,7 @@ Commands:
   typelisp clean          Remove build artifacts
   typelisp compile        Generate assembly or IR
   typelisp doc            Generate documentation or run doc tests
+  typelisp explain        Explain a diagnostic code
   typelisp fmt            Format source files or a package
   typelisp init           Scaffold a package in the current directory
   typelisp inspect        Inspect a TypeLisp comptime image
@@ -8593,9 +8576,10 @@ The same build emits `compile-profile-lifetime` rows for `load.complete`,
 `load.handoff`, `macro.pre-detach`, and `macro.lower-handoff`. Each row has
 `boundary|owner|lifetime|cumulative_alloc_bytes|retained_live_bytes|peak_delta_bytes`.
 Load owners distinguish input payload detail, frontend/read/parse transfer,
-token and reader scan scratch, parsed AST pools, loader-session surface state,
-and intern storage. Macro owners distinguish the enclosing session, job-owned
-registries/caches, the scoped-environment index, lower-handoff AST pools, live
+token scan scratch, reader origin storage, parsed AST pools, loader-session
+surface state, and intern storage. Macro owners distinguish the enclosing
+session, job-owned registries/caches, the scoped-environment index,
+lower-handoff AST pools, live
 and retired symbol registries, expansion scratch, and active/retired generation
 pools. Owner rows are exclusive except `input-bytes`, whose `payload-detail`
 lifetime identifies it as a logical subset of frontend storage. Exclusive

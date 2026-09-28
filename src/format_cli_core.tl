@@ -1,8 +1,7 @@
 ;; format_cli_core.tl - Self-hosted `fmt` command logic.
 ;;
-;; The formatter CLI logic, factored out of `format.tl` so both the retained
-;; formatter compatibility/coverage driver and the unified `cli.tl` dispatcher
-;; can run the `fmt` command without duplicating a `main`.
+;; The formatter CLI logic, main-free so the unified `main.tl` dispatcher and
+;; the formatter tests can run the `fmt` command without duplicating a `main`.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -28,9 +27,6 @@
 (defenum ResultFmtWrite
   (Ok)
   (Err String))
-
-(define fmt-cli-has-target : bool
-  false)
 
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
   (str_cat.str-cat "fmt: failed to write " path ": " (io.error-message error)))
@@ -65,159 +61,62 @@
       ": "
       (tokens.format-source-error-message err))))
 
-(test
-  fmt-write-failure-diagnostic-includes-path-and-reason
-  (match (fmt-try-write-formatted-file "" "(define x 1)\n")
-    [(ResultFmtWrite.Ok) (io.panic "fmt write unexpectedly succeeded")]
-    [(ResultFmtWrite.Err message)
-      (if (string.eq message "fmt: failed to write : io: invalid path: ")
-        unit
-        (io.panic (string.copy message)))]))
-
-(test
-  fmt-parse-diagnostic-includes-path-line-and-column
-  (match (format_rules.format-rules-render-source-width-result
-    "(define x\n  ]"
-    80)
-    [(format_rules.ResultFormatString.Ok _)
-      (io.panic "fmt parse unexpectedly succeeded")]
-    [(format_rules.ResultFormatString.Err err)
-      (let
-        [message : String (fmt-source-error-message "bad.tl" err)]
-        (if (string.eq
-          message
-          "bad.tl:2:3: format cst: unexpected closing delimiter")
-          unit
-          (io.panic message)))]))
-
-(define (fmt-malformed-int-error? [source : String]) : bool
-  (match (format_rules.format-rules-render-source-width-result source 80)
-    [(format_rules.ResultFormatString.Ok _) false]
-    [(format_rules.ResultFormatString.Err err)
-      (string.eq
-        (tokens.format-source-error-message err)
-        "format lexer: malformed integer literal")]))
-
-(test
-  fmt-number-literal-diagnostics-preserved
-  (if (and
-    (fmt-malformed-int-error? "(define x 0x)")
-    (fmt-malformed-int-error? "(define x 0xg)")
-    (fmt-malformed-int-error? "(define x 0b)")
-    (fmt-malformed-int-error? "(define x 0b2)"))
-    unit
-    (io.panic "fmt number literal diagnostics changed")))
-
-(define (fmt-flag? [value : String]) : bool
-  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
-
-(define (fmt-config-finish
-  [check : bool]
-  [paths : fmt_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]) : ResultFmtConfig
-  (if (fmt_svec.is-empty? (& paths))
-    (ResultFmtConfig.Ok (FmtConfig.Package check manifest-path has-manifest))
-    (if has-manifest
-      (ResultFmtConfig.Err
-        "fmt: cannot combine input paths with --manifest-path")
-      (ResultFmtConfig.Ok (FmtConfig.File check paths)))))
-
-(define (fmt-parse-args
-  [idx : i64]
-  [count : i64]
-  [check : bool]
-  [paths : fmt_svec.Vec]
-  [manifest-path : String]
-  [has-manifest : bool]) : ResultFmtConfig
-  (if (>= idx count)
-    (fmt-config-finish check paths manifest-path has-manifest)
-    (let
-      [current : String (io.arg idx)]
-      (match (cli_option.cli-common-option-parse
-        (owned_view.compiler-owned-shared-view current)
-        idx
-        count
-        (bit-or
-          cli_option.cli-common-option-stdlib-root
-          (bit-or
-            cli_option.cli-common-option-cfg
-            cli_option.cli-common-option-target)))
-        [(cli_option.CliCommonOption.Missing kind)
-          (ResultFmtConfig.Err
-            (cli_option.cli-common-option-missing-message "fmt" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (match kind
-            [(cli_option.CliCommonOptionKind.Target)
-              (if fmt-cli-has-target
-                (ResultFmtConfig.Err
-                  "fmt: --target was provided more than once")
-                (match (target_cfg.compiler-target-cfg-parse value)
-                  [(target_cfg.ResultCompilerTargetCfg.Ok _)
-                    (begin
-                      (set! fmt-cli-has-target true)
-                      (fmt-parse-args
-                        next-idx
-                        count
-                        check
-                        paths
-                        manifest-path
-                        has-manifest))]
-                  [(target_cfg.ResultCompilerTargetCfg.Err message)
-                    (ResultFmtConfig.Err (str_cat.str-cat "fmt: " message))]))]
-            [_
-              ;; Formatting is CST-based and intentionally retains every cfg
-              ;; branch; these options are accepted for source-tool CLI parity.
-              (fmt-parse-args
-                next-idx
-                count
-                check
-                paths
-                manifest-path
-                has-manifest)])]
-        [(cli_option.CliCommonOption.NotCommon)
-          (cond
-            [(string.eq current "--check")
-              (fmt-parse-args
-                (+ idx 1)
-                count
-                true
-                paths
-                manifest-path
-                has-manifest)]
-            [(string.eq current "--manifest-path")
-              (if (>= (+ idx 1) count)
-                (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
-                (if has-manifest
-                  (ResultFmtConfig.Err "fmt: duplicate --manifest-path")
-                  (fmt-parse-args
-                    (+ idx 2)
-                    count
-                    check
-                    paths
-                    (io.arg (+ idx 1))
-                    true)))]
-            [(fmt-flag? (owned_view.compiler-owned-shared-view current))
-              (ResultFmtConfig.Err
-                (str_cat.str-cat "fmt: unknown flag " current))]
-            [else
-              (let
-                [out : fmt_svec.Vec
-                  (owned_view.compiler-owned-shared-view paths)]
-                (begin
-                  (fmt_svec.push-ref! (&mut out) current)
-                  (fmt-parse-args
-                    (+ idx 1)
-                    count
-                    check
-                    out
-                    manifest-path
-                    has-manifest)))])]))))
-
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (begin
-    (set! fmt-cli-has-target false)
-    (fmt-parse-args start count false (fmt_svec.new) "" false)))
+  (let
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "fmt"
+        "--stdlib-root <dir> --cfg <name> --target <target> --check --manifest-path <file>"
+        start
+        count)]
+    [check : bool false]
+    [paths : fmt_svec.Vec (fmt_svec.new)]
+    [manifest-path : String ""]
+    [has-manifest : bool false]
+    [has-target : bool false]
+    (begin
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--target")
+            (if has-target
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "fmt: --target was provided more than once")
+              (match (target_cfg.compiler-target-cfg-parse
+                (cli_option.cli-args-value (& args)))
+                [(target_cfg.ResultCompilerTargetCfg.Ok _)
+                  (set! has-target true)]
+                [(target_cfg.ResultCompilerTargetCfg.Err message)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    (str_cat.str-cat "fmt: " message))]))]
+          ;; Formatting is CST-based and intentionally retains every cfg
+          ;; branch; these options are accepted for source-tool CLI parity.
+          [(or
+              (string.eq args.name "--stdlib-root")
+              (string.eq args.name "--cfg"))
+            unit]
+          [(string.eq args.name "--check") (set! check true)]
+          [(string.eq args.name "--manifest-path")
+            (if has-manifest
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "fmt: duplicate --manifest-path")
+              (begin
+                (set! manifest-path (cli_option.cli-args-value (& args)))
+                (set! has-manifest true)))]
+          [(cli_option.cli-flag? args.arg)
+            (cli_option.cli-args-fail-arg! (&mut args) "fmt: unknown flag ")]
+          [else (fmt_svec.push-ref! (&mut paths) (string.copy (& args.arg)))]))
+      (cond
+        [args.failed (ResultFmtConfig.Err args.error)]
+        [(fmt_svec.is-empty? (& paths))
+          (ResultFmtConfig.Ok
+            (FmtConfig.Package check manifest-path has-manifest))]
+        [has-manifest
+          (ResultFmtConfig.Err
+            "fmt: cannot combine input paths with --manifest-path")]
+        [else (ResultFmtConfig.Ok (FmtConfig.File check paths))]))))
 
 ;; `io.stderr-write` exits 134 when stderr fails, as `io.print-error` does, so
 ;; this unbounded rendering either completes or ends the process.
@@ -246,9 +145,7 @@
       80)
       [(format_rules.ResultFormatString.Ok formatted)
         (if check
-          (if (string.eq
-            (owned_view.compiler-owned-shared-view source)
-            formatted)
+          (if (string.eq source formatted)
             0
             (begin
               (io.print-error
@@ -257,9 +154,7 @@
                   (owned_view.compiler-owned-shared-view path)
                   "\n"))
               (fmt-check-diff path source formatted)))
-          (if (string.eq
-            (owned_view.compiler-owned-shared-view source)
-            formatted)
+          (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
       [(format_rules.ResultFormatString.Err err)
@@ -268,7 +163,7 @@
             (str_cat.str-cat (fmt-source-error-message path err) "\n"))
           1)])))
 
-;; Parsing and rendering retain a complete CST and document tree. Reclaim that
+;; Parsing and rendering retain a complete token stream and CST. Reclaim that
 ;; scratch state after each file so multi-file formatter invocations do not grow
 ;; the process-lifetime arena with the size of the whole corpus.
 (define (fmt-format-file-scoped [check : bool] [path : String]) : i64

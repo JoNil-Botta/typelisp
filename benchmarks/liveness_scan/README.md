@@ -15,18 +15,18 @@ is deliberately out of scope.
 
 One deliberate departure: the checksum's population count clears the lowest set
 bit instead of testing all thirty-two bit positions the way
-`compiler-live-set-word-count-bits` does. Both spell the same value, but with
-the compiler's spelling the checksum alone is 78% of the TypeLisp row (1,164.6M
-of which only 254.4M is the fixpoint), which would make this row a measurement
-of the checksum rather than of the dataflow. The per-bit cost is worth knowing
-on its own -- see the shift-count trap-check note in the delivery report.
+`compiler-live-set-word-count-bits` does. Both spell the same value, but the
+compiler's spelling would make the checksum dominate the row, turning it into a
+measurement of the checksum rather than of the dataflow.
+
+Each round runs both entries over every function of the corpus.
 
 ## Input
 
 `data/cfgs.txt` is captured from the compiler compiling itself, without
 modifying the compiler: `typelisp compile src/compiler_liveness.tl --dump-ir`
 writes the final optimized IR -- the same IR the liveness pass consumes -- and
-`tools/export_cfgs.py` converts it into a compact all-integer corpus.
+a Python exporter converted it into a compact all-integer corpus.
 
 | property                          | value        |
 |-----------------------------------|--------------|
@@ -63,27 +63,8 @@ repeated F times:
     nphi   var...      compiler-live-phi-out-add-inputs!
 ```
 
-## Arguments
-
-```
-bench <cfgs-path> <rounds>
-```
-
-`optimization.tsv` ships `benchmarks/liveness_scan/data/cfgs.txt 5`, which is
-about 1.18G retired instructions for the TypeLisp build. Each round runs both
-entries over all 2,087 functions.
-
 ## Regenerating the corpus
 
-From the repository root, with any working compiler binary:
-
-```sh
-python3 benchmarks/liveness_scan/tools/export_cfgs.py \
-    --typelisp target/bootstrap-fixpoint/stage2
-```
-
-Add `--module <path>` (repeatable) to capture a different or a wider set of
-modules; the default is `src/compiler_liveness.tl`. The intermediate IR dump
-goes to a temporary directory and is not kept. Regeneration is deterministic for
-a given compiler and module set; a compiler change that alters the emitted IR
-alters the corpus and therefore the benchmark checksum.
+Exported at `5fce734af` (#5989) from the compiler's `--dump-ir` output; function
+names in this README refer to that commit. See
+[Compiler-derived kernels](../README.md#compiler-derived-kernels).

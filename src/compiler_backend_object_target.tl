@@ -5,8 +5,8 @@
 ;; fragments and finishes the image.
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
-(import stdlib.string)
 (import compiler_object as cobj)
+(import compiler_object_layout as layout)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
 
@@ -186,7 +186,7 @@
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
   (if (cobj.compiler-object-symbol-builder-contains?
     parts.symbols
-    (owned_view.compiler-owned-shared-view name)
+    name
     (cobj.CompilerObjectSymbolBinding.Extern)
     kind)
     parts
@@ -243,30 +243,11 @@
     kind
     target))
 
-(define (compiler-backend-object-hex-value [c : char]) : i64
-  (cond
-    [(and (>= c '0') (<= c '9')) (- (cast c : i64) (cast '0' : i64))]
-    [(and (>= c 'a') (<= c 'f')) (+ 10 (- (cast c : i64) (cast 'a' : i64)))]
-    [(and (>= c 'A') (<= c 'F')) (+ 10 (- (cast c : i64) (cast 'A' : i64)))]
-    [else 0]))
-
 (define (compiler-backend-object-bytes-from-hex [hex : String]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    [i : i64 0]
-    [n : i64 (string.string-length hex)]
     (begin
-      (while (< (+ i 1) n)
-        (let
-          [hi : i64
-            (compiler-backend-object-hex-value (string.string-ref hex i))]
-          [lo : i64
-            (compiler-backend-object-hex-value (string.string-ref hex (+ i 1)))]
-          (begin
-            (byte_buf_core.byte-buf-builder-push
-              (&mut out)
-              (cast (+ (* hi 16) lo) : u8))
-            (set! i (+ i 2)))))
+      (layout.compiler-object-layout-push-hex! (&mut out) hex)
       (byte_buf_core.byte-buf-builder-finish-string (& out)))))
 
 (define (compiler-backend-object-add-text-bytes

@@ -2,7 +2,6 @@
 set -eu
 
 # verify-stdlib.sh - verify canonical stdlib modules through --stdlib-root.
-# refs #285, #814, #863
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -50,7 +49,7 @@ fi
 # Linux verifies through the GNU `as`/`ld` pipeline with libc linked for stdlib
 # host FFI bindings; Windows (Git Bash / MSYS / Cygwin on the CI runner)
 # verifies through the host-default native toolchain (`typelisp build` ->
-# `clang`/`lld-link`), mirroring tests/windows_native.rs.
+# `clang`/`lld-link`).
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -112,20 +111,11 @@ stdlib_run_fixture_binary() {
     )
 }
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_require_compiler
 
-TYPELISP_BIN="$COMPILER" scripts/verify-for-source-macro.sh
+TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh tests/codegen/for-source-macro.cases
 
 # The generated `(hashmap K V)` modules are the only supported scalar hashmap
 # surface. Keep the removed flat family spellings from returning in source,
@@ -204,6 +194,8 @@ atomic.tl
 args.tl
 byte_buf.tl
 byte_buf_core.tl
+byte_le.tl
+byte_reader.tl
 clone.tl
 checked_size.tl
 comptime.tl

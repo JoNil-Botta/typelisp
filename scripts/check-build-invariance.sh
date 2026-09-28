@@ -16,7 +16,6 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-build-invariance-batch.sh"
 BOUNDED_POOL_LABEL=build-invariance
 . "$ROOT/scripts/lib-bounded-pool.sh"
-. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -27,7 +26,7 @@ compiler. Builds one opt1 compiler from src/main.tl, then compares emitted
 assembly for a fixed corpus. The same fresh opt1 compiler must also compile
 the complete codegen smoke and build backend-tests at opt2 within 8 GiB.
 
-The four selfhost compiles whose wall time CI budgets run alone. Every other
+The four selfhost compiles run alone. Every other
 compile and the backend-tests build run in a pool of
 TYPELISP_BUILD_INVARIANCE_WORKERS processes (1-3, default 2), each under a
 kernel-enforced memory cap, with at most 12288 MiB of caps running at once.
@@ -249,7 +248,6 @@ check_backend_memory() {
         run_with_heartbeat_capture \
         "bounded opt2 backend-tests build" \
         "$memory_dir/backend-tests.stdout" "$memory_dir/backend-tests.stderr" \
-        env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
         "$ROOT/scripts/run-memory-bounded.sh" \
         --limit-mib "$POOL_FULL_CAP_MIB" --report "$memory_dir/backend-tests.memory" \
         --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- \
@@ -274,14 +272,15 @@ write_corpus() {
     {
         printf '%s\n' "selfhost_main_opt1|src/main.tl|1"
         printf '%s\n' "selfhost_main_opt2|src/main.tl|2"
-        awk -F'|' '
-            /^[[:space:]]*#/ { next }
-            NF < 2 { next }
-            $1 == "" || $2 == "" { next }
-            {
-                print "integration_" $1 "|" $2 "|2"
-            }
-        ' tests/integration/native-linux.manifest
+        awk -v host=linux -f scripts/expand-integration-manifest.awk \
+            tests/integration/native.manifest |
+            awk -F'|' '
+                NF < 2 { next }
+                $1 == "" || $2 == "" { next }
+                {
+                    print "integration_" $1 "|" $2 "|2"
+                }
+            '
     } > "$corpus_file"
 }
 
@@ -463,8 +462,8 @@ run_batch_chunk() {
         batch_single_name=$(awk -F'|' 'NR == 1 { print $1; exit }' "$batch_case_chunk")
         case "$batch_single_name" in
             selfhost_main_opt1 | selfhost_main_opt2)
-                # Preserve the timing-budget contract and self-build ratio rows
-                # while compiling the selfhost cases through singleton batches.
+                # Keep the stable selfhost timing rows while compiling the
+                # selfhost cases through singleton batches.
                 batch_timing_label="$batch_compiler_label:$batch_single_name"
                 ;;
         esac
@@ -494,8 +493,7 @@ run_batch_chunk() {
             echo "[build-invariance] memory report exists before compile: $batch_memory_report" >&2
             exit 1
         fi
-        set -- env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
-            "$ROOT/scripts/run-memory-bounded.sh" \
+        set -- "$ROOT/scripts/run-memory-bounded.sh" \
             --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
             --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- "$@"
     fi
@@ -777,7 +775,7 @@ run_batched_comparison() {
             batch_index=$((batch_index + 1))
             if chunk_is_timed_selfhost "$left_cases"; then
                 # CI budgets the wall time of these four compiles, so they run
-                # alone, before the pool starts, exactly as they always have.
+                # alone, before the pool starts.
                 run_batch_chunk "opt1-built" "$OPT1_COMPILER" "$opt_level" "$left_chunk" "$left_cases" "$batch_index/$left_chunk_count" "$left_entries" ""
                 run_batch_chunk "opt2-built" "$OPT2_STAGE4" "$opt_level" "$right_chunk" "$right_cases" "$batch_index/$left_chunk_count" "$right_entries" ""
                 compare_batch_cases "$left_cases" "$LEFT_DIR" "$RIGHT_DIR"
@@ -853,15 +851,33 @@ print_top_chunks() {
         }'
 }
 
+# One digest over the named files and directory trees, so a source or compiler
+# change while the comparison runs fails the gate instead of passing it.
+build_invariance_digest() {
+    for _digest_input in "$@"; do
+        [ -e "$_digest_input" ] || {
+            echo "[build-invariance] digest input is missing: $_digest_input" >&2
+            return 1
+        }
+    done
+    find "$@" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
+}
+
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
-SOURCE_INPUTS=src,stdlib,tests,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-bounded-pool.sh,scripts/lib-native-link.sh
-SOURCE_DIGEST=$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")
-COMPILER_DIGEST=$(ci_compiler_artifact_sha256_file "$COMPILER")
+# wide_struct_literal imports the generated #7921 declarations. Generate them
+# before the source digest, so a fresh checkout does not see tests/ change
+# during the comparison.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
+SOURCE_INPUTS='src stdlib tests scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/lib-native-link.sh'
+# shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
+SOURCE_DIGEST=$(build_invariance_digest $SOURCE_INPUTS)
+COMPILER_DIGEST=$(build_invariance_digest "$COMPILER")
 construction_start=$(date +%s)
 build_opt1_compiler
 OPT1_COMPILER="$WORKDIR/opt1/opt1$NL_BIN_EXT"
 OPT2_STAGE4="$COMPILER"
-OPT1_DIGEST=$(ci_compiler_artifact_sha256_file "$OPT1_COMPILER")
+OPT1_DIGEST=$(build_invariance_digest "$OPT1_COMPILER")
 construction_end=$(date +%s)
 construction_seconds=$((construction_end - construction_start))
 echo "[build-invariance] compiler construction: ${construction_seconds}s"
@@ -905,9 +921,10 @@ sentinel_end=$(date +%s)
 corpus_end=$(date +%s)
 corpus_seconds=$((corpus_end - corpus_start))
 
-if [ "$SOURCE_DIGEST" != "$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")" ] ||
-    [ "$COMPILER_DIGEST" != "$(ci_compiler_artifact_sha256_file "$COMPILER")" ] ||
-    [ "$OPT1_DIGEST" != "$(ci_compiler_artifact_sha256_file "$OPT1_COMPILER")" ]; then
+# shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
+if [ "$SOURCE_DIGEST" != "$(build_invariance_digest $SOURCE_INPUTS)" ] ||
+    [ "$COMPILER_DIGEST" != "$(build_invariance_digest "$COMPILER")" ] ||
+    [ "$OPT1_DIGEST" != "$(build_invariance_digest "$OPT1_COMPILER")" ]; then
     echo "[build-invariance] source or compiler changed during comparison" >&2
     exit 1
 fi

@@ -31,21 +31,11 @@
 (defmacro (intern-template-source-identity-raw [identity : Expr]) : i64
   `(__tl-project-field-name ,identity "value"))
 
-(cfg
-  test
-  (define (intern-template-source-identity-size) : i64
-    (comptime (size-of (type InternTemplateSourceIdentity)))))
-
 (defstruct InternFreshLocalIdentity
   (value i64))
 
 (defmacro (intern-fresh-local-identity-raw [identity : Expr]) : i64
   `(__tl-project-field-name ,identity "value"))
-
-(cfg
-  test
-  (define (intern-fresh-local-identity-size) : i64
-    (comptime (size-of (type InternFreshLocalIdentity)))))
 
 (defstruct InternMacroDefinitionIdentity
   (value i64))
@@ -509,13 +499,6 @@
                         (ptr-cast (__tl_array-data rights) : (Ptr i64))
                         index))))))))))))
 
-(define (intern-structural-session-record
-  [handle : InternStructuralSessionHandle]
-  [key : InternStructuralKey]) : InternMaybeStructuralRecord
-  (intern-structural-session-record-for-raw
-    handle
-    (intern-structural-key-raw key)))
-
 ;; The caller has just decoded `raw` through the explicit session and checked
 ;; that its record is a pair or triple. These cache projections deliberately do
 ;; not repeat ownership/kind validation; keeping that proof adjacent in the
@@ -655,34 +638,6 @@
                         (- encoded-index 1))))
                   : i64)))))))))
 
-;; Total mixed-id adapter for callers that have not already classified the raw
-;; identity. Hot compiler name paths use the proven form above so they do not
-;; repeat the structural-range branch for every lookup.
-(define (intern-structural-session-record-kind-or
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]
-  [fallback : i64]) : i64
-  (if (< raw (ci.intern-structural-key-base))
-    fallback
-    (intern-structural-session-record-kind-for-structural-or
-      handle
-      raw
-      fallback)))
-
-(define (intern-structural-session-key-middle
-  [handle : InternStructuralSessionHandle]
-  [key : InternStructuralKey]) : i64
-  (if (intern-structural-session-key-owned? handle key)
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      (array-ref table.middles (intern-structural-session-key-index key)))
-    (ci.tl_oob_abort)))
-
 ;; Measurement/test boundary: report exact retained records by structural kind
 ;; without exposing table storage or making callers classify raw handles.
 (define (intern-structural-session-kind-count
@@ -709,38 +664,6 @@
               unit)
             (set! index (+ index 1))))
         count))))
-
-(define (intern-structural-session-record-count
-  [handle : InternStructuralSessionHandle]) : i64
-  (if (not (intern-structural-session-valid? handle))
-    0
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      table.len)))
-
-(define (intern-structural-session-record-capacity
-  [handle : InternStructuralSessionHandle]) : i64
-  (if (not (intern-structural-session-valid? handle))
-    0
-    (let
-      [session : ci.InternSourceNameSession
-        (intern-structural-session-handle-session handle)]
-      [table : ci.InternStructuralTable
-        (owned_view.compiler-owned-array-element-shared-view
-          session.structural-table-cell
-          0)]
-      (array-length table.kinds))))
-
-(define (intern-structural-session-record-reserved-bytes
-  [handle : InternStructuralSessionHandle]) : i64
-  (*
-    (intern-structural-session-record-capacity handle)
-    (ci.intern-structural-record-slot-bytes)))
 
 (define (intern-structural-session-source-name-component-valid?
   [handle : InternStructuralSessionHandle]
@@ -882,14 +805,6 @@
     [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
     [(InternMaybeFreshLocalRecord.No) fallback]))
 
-(define (intern-structural-session-fresh-local-ordinal-or
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]
-  [fallback : i64]) : i64
-  (match (intern-structural-session-fresh-local-record-for-raw handle raw)
-    [(InternMaybeFreshLocalRecord.Some record) record.ordinal]
-    [(InternMaybeFreshLocalRecord.No) fallback]))
-
 (define (intern-structural-session-macro-definition-identity
   [handle : InternStructuralSessionHandle]
   [definition-module-id : i64]
@@ -915,15 +830,6 @@
         (InternMaybeMacroDefinitionRecord.Some
           (InternMacroDefinitionRecord record.left-id record.right-id))
         InternMaybeMacroDefinitionRecord.No)]))
-
-(define (intern-structural-session-macro-definition-record-for-raw
-  [handle : InternStructuralSessionHandle]
-  [raw : i64]) : InternMaybeMacroDefinitionRecord
-  (if (< raw (ci.intern-structural-key-base))
-    InternMaybeMacroDefinitionRecord.No
-    (intern-structural-session-macro-definition-record
-      handle
-      (InternMacroDefinitionIdentity raw))))
 
 (define (intern-macro-global-role-code [role : InternMacroGlobalRole]) : i64
   (match role

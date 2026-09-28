@@ -3,8 +3,8 @@ set -eu
 
 # run-optimization-benchmarks.sh - local optimizer progress benchmarks.
 #
-# The harness compares paired TypeLisp and C programs from top-level
-# benchmarks/opt_*/ directories that carry optimization.tsv metadata. The
+# The harness compares paired TypeLisp and C programs from every top-level
+# benchmarks/*/ directory that carries optimization.tsv metadata. The
 # default timing report is a local Linux tool. `--correctness` is the
 # required-CI gate and performs no timing work. Linux CI passes positive suite
 # membership from perf/benchmark-ci-cases.tsv.
@@ -35,7 +35,6 @@ Options:
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --tl-opt-level N  In correctness mode, compile TypeLisp cases with --opt-level N
   --selfhost       In timing mode, compile through src/main.tl `compile` (default)
-  --rust-stage0    In timing mode, compile through typelisp compile
   -h, --help       Show this help
 EOF
 }
@@ -88,10 +87,6 @@ while [ "$#" -gt 0 ]; do
             ;;
         --selfhost)
             USE_SELFHOST=1
-            shift
-            ;;
-        --rust-stage0)
-            USE_SELFHOST=0
             shift
             ;;
         -h | --help)
@@ -174,19 +169,11 @@ if [ "$CORRECTNESS" -eq 0 ]; then
     esac
 fi
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    # Local-development fallback: fetch the published
-    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-if [ ! -x "$COMPILER" ]; then
-    echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-fi
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+. "$ROOT/scripts/lib-benchmark.sh"
+gate_compiler
+gate_require_compiler
 
 if [ "$CORRECTNESS" -eq 1 ]; then
     _tools="clang awk tr"
@@ -226,7 +213,6 @@ if [ "$CORRECTNESS" -eq 1 ]; then
 fi
 
 WORKDIR="$ROOT/target/optimization-bench"
-CR=$(printf '\r')
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -257,11 +243,6 @@ if [ -n "$CASES" ]; then
     done < "$REQUESTED_CASES"
 fi
 
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
-
 now_ns() {
     date +%s%N
 }
@@ -277,37 +258,15 @@ file_bytes() {
 }
 
 read_optimization_metadata() {
-    _metadata=$1
-    _case_name=$2
-    _line=
-
-    while IFS= read -r _candidate || [ -n "$_candidate" ]; do
-        case "$_candidate" in
-            *"$CR") _candidate=${_candidate%"$CR"} ;;
-        esac
-        case "$_candidate" in
-            "" | \#*) continue ;;
-        esac
-        if [ -n "$_line" ]; then
-            fail "multiple metadata rows in $_metadata"
-        fi
-        _line=$_candidate
-    done < "$_metadata"
-
-    [ -n "$_line" ] || fail "missing metadata row in $_metadata"
-    _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-    [ "$_fields" -eq 2 ] || fail "metadata line must have 2 fields: $_metadata: $_line"
-
-    IFS='|' read -r CASE_CATEGORY CASE_ARGS <<EOF
-$_line
-EOF
-
+    bench_metadata "$1"
+    CASE_CATEGORY=$BENCH_CATEGORY
+    CASE_ARGS=$BENCH_ARGS
     case "$CASE_CATEGORY" in
         "" | *[!A-Za-z0-9_-]*)
-            fail "invalid category for $_case_name: $CASE_CATEGORY"
+            fail "invalid category for $2: $CASE_CATEGORY"
             ;;
     esac
-    [ -n "$CASE_ARGS" ] || fail "missing args for $_case_name"
+    [ -n "$CASE_ARGS" ] || fail "missing args for $2"
 }
 
 case_matches_filter() {

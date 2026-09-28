@@ -1,7 +1,9 @@
 ;; compiler_parse_smoke.tl - Runnable structural smoke for compiler_parse_core.
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_parse_core)
+(import compiler_parse_core as parser)
+(import compiler_parse_core_tests as parse_tests)
 (import compiler_ast_types as ast)
+(import compiler_ast_types_tests as ast_tests)
 (import read as reader)
 (import stdlib.string)
 (import compiler_diagnostic as diagnostic)
@@ -12,60 +14,50 @@
 (import stdlib.io)
 
 (define (compiler-parse-test-decl-origin-start-ok?
-  [origin : compiler_parse_core.CompilerParseMaybeDeclSpan]
+  [origin : parser.CompilerParseMaybeDeclSpan]
   [line : i64]
   [col : i64]) : bool
   (match origin
-    [(compiler_parse_core.CompilerParseMaybeDeclSpan.Some span)
+    [(parser.CompilerParseMaybeDeclSpan.Some span)
       (and
         (= (ast.ast-source-span-start-line span) line)
         (= (ast.ast-source-span-start-col span) col))]
-    [(compiler_parse_core.CompilerParseMaybeDeclSpan.None) false]))
+    [(parser.CompilerParseMaybeDeclSpan.None) false]))
 
 (define (compiler-parse-test-decl-origin-records-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
     (begin
-      (match (compiler_parse_core.parse-ast-source
+      (match (parser.parse-ast-source
         "(module alpha)
 (unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))
 (defstruct RefBox (:lifetimes a a) (value (& a i64)))")
-        [(compiler_parse_core.ResultAstProgram.Ok
-            (ast.AstProgram.Program decls-box))
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
-            [tail1 : ast.AstDeclList
-              (ast.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view decls))]
-            [tail2 : ast.AstDeclList
-              (ast.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view tail1))]
+            [decls : ast.AstDeclList (deref decls-box)]
+            [tail1 : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
+            [tail2 : ast.AstDeclList (ast_tests.ast-decl-list-tail tail1)]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             (begin
               (ast.ast-decl-list-append-from (&mut replacement) (& decls) 0)
-              (compiler_parse_core.compiler-parse-decl-origin-register-maybe!
+              (parser.compiler-parse-decl-origin-register-maybe!
                 (& replacement)
                 0
-                (compiler_parse_core.compiler-parse-decl-origin-span
-                  (& decls)
-                  0))
-              (compiler_parse_core.compiler-parse-decl-origin-register-maybe!
+                (parser.compiler-parse-decl-origin-span (& decls) 0))
+              (parser.compiler-parse-decl-origin-register-maybe!
                 (& replacement)
                 2
-                (compiler_parse_core.compiler-parse-decl-origin-span
-                  (& tail2)
-                  0))
+                (parser.compiler-parse-decl-origin-span (& tail2) 0))
               (ast.ast-decl-list-append-from (&mut alias1) (& replacement) 0)
-              (compiler_parse_core.compiler-parse-decl-origin-register-list-aliases!
+              (parser.compiler-parse-decl-origin-register-list-aliases!
                 (& alias1)
                 0
                 (owned_view.compiler-owned-shared-view replacement))
               (ast.ast-decl-list-append-from (&mut alias2) (& alias1) 0)
-              (compiler_parse_core.compiler-parse-decl-origin-register-list-aliases!
+              (parser.compiler-parse-decl-origin-register-list-aliases!
                 (& alias2)
                 0
                 alias1)
@@ -73,70 +65,51 @@
                 ok
                 (and
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& decls)
-                      0)
+                    (parser.compiler-parse-decl-origin-span (& decls) 0)
                     1
                     1)
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& tail1)
-                      0)
+                    (parser.compiler-parse-decl-origin-span (& tail1) 0)
                     2
                     9)
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& tail2)
-                      0)
+                    (parser.compiler-parse-decl-origin-span (& tail2) 0)
                     3
                     1)
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& replacement)
-                      0)
+                    (parser.compiler-parse-decl-origin-span (& replacement) 0)
                     1
                     1)
-                  (match (compiler_parse_core.compiler-parse-decl-origin-span
+                  (match (parser.compiler-parse-decl-origin-span
                     (& replacement)
                     1)
-                    [(compiler_parse_core.CompilerParseMaybeDeclSpan.None) true]
+                    [(parser.CompilerParseMaybeDeclSpan.None) true]
                     [_ false])
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& replacement)
-                      2)
+                    (parser.compiler-parse-decl-origin-span (& replacement) 2)
                     3
                     1)
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& alias2)
-                      0)
+                    (parser.compiler-parse-decl-origin-span (& alias2) 0)
                     1
                     1)
-                  (match (compiler_parse_core.compiler-parse-decl-origin-span
-                    (& alias2)
-                    1)
-                    [(compiler_parse_core.CompilerParseMaybeDeclSpan.None) true]
+                  (match (parser.compiler-parse-decl-origin-span (& alias2) 1)
+                    [(parser.CompilerParseMaybeDeclSpan.None) true]
                     [_ false])
                   (compiler-parse-test-decl-origin-start-ok?
-                    (compiler_parse_core.compiler-parse-decl-origin-span
-                      (& alias2)
-                      2)
+                    (parser.compiler-parse-decl-origin-span (& alias2) 2)
                     3
                     1)))
               (reader.sp-node-pool-truncate! mark)
-              (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+              (parser.compiler-parse-decl-origin-cache-reset!)
               (set!
                 ok
                 (and
                   ok
-                  (match (compiler_parse_core.compiler-parse-decl-origin-span
-                    (& decls)
-                    0)
-                    [(compiler_parse_core.CompilerParseMaybeDeclSpan.None) true]
+                  (match (parser.compiler-parse-decl-origin-span (& decls) 0)
+                    [(parser.CompilerParseMaybeDeclSpan.None) true]
                     [_ false])))))]
-        [(compiler_parse_core.ResultAstProgram.Err _)
-          (reader.sp-node-pool-truncate! mark)])
+        [(parser.ResultAstProgram.Err _) (reader.sp-node-pool-truncate! mark)])
       ok)))
 
 (define (compiler-parse-test-semantic-origin-inner-ok?
@@ -150,30 +123,29 @@
   [start-col : i64]
   [end-line : i64]
   [end-col : i64]) : bool
-  (match (compiler_parse_core.compiler-parse-semantic-origin-run decls slot)
-    [(compiler_parse_core.CompilerParseMaybeSemanticOriginRun.Some run)
+  (match (parser.compiler-parse-semantic-origin-run decls slot)
+    [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
       (let
-        [origin : compiler_parse_core.CompilerParseSemanticOrigin
-          (compiler_parse_core.compiler-parse-semantic-origin-run-get
+        [origin : parser.CompilerParseSemanticOrigin
+          (parser.compiler-parse-semantic-origin-run-get
             (& run)
             index
-            (compiler_parse_core.compiler-parse-semantic-origin-fallback))]
+            (parser.compiler-parse-semantic-origin-fallback))]
         [span : ast.AstSourceSpan origin.span]
         (and
           (=
-            (compiler_parse_core.compiler-parse-semantic-origin-run-len (& run))
+            (parser.compiler-parse-semantic-origin-run-len (& run))
             expected-count)
           (= origin.ordinal index)
           (string.eq
-            (compiler_parse_core.compiler-parse-semantic-origin-kind-marker
-              origin.kind)
+            (parser.compiler-parse-semantic-origin-kind-marker origin.kind)
             expected-kind)
           (compiler-parse-test-name-id? origin.written-name expected-name)
           (= (ast.ast-source-span-start-line span) start-line)
           (= (ast.ast-source-span-start-col span) start-col)
           (= (ast.ast-source-span-end-line span) end-line)
           (= (ast.ast-source-span-end-col span) end-col)))]
-    [(compiler_parse_core.CompilerParseMaybeSemanticOriginRun.None) false]))
+    [(parser.CompilerParseMaybeSemanticOriginRun.None) false]))
 
 (define (compiler-parse-test-semantic-origin-ok?
   [decls : (& decls ast.AstDeclList)]
@@ -202,16 +174,14 @@
     (begin
       (if ok
         unit
-        (match (compiler_parse_core.compiler-parse-semantic-origin-run
-          decls
-          slot)
-          [(compiler_parse_core.CompilerParseMaybeSemanticOriginRun.Some run)
+        (match (parser.compiler-parse-semantic-origin-run decls slot)
+          [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
             (let
-              [origin : compiler_parse_core.CompilerParseSemanticOrigin
-                (compiler_parse_core.compiler-parse-semantic-origin-run-get
+              [origin : parser.CompilerParseSemanticOrigin
+                (parser.compiler-parse-semantic-origin-run-get
                   (& run)
                   index
-                  (compiler_parse_core.compiler-parse-semantic-origin-fallback))]
+                  (parser.compiler-parse-semantic-origin-fallback))]
               [span : ast.AstSourceSpan origin.span]
               (io.print-error
                 (str_cat.str-cat
@@ -221,10 +191,9 @@
                   (ci.intern-str origin.written-name)
                   ", count "
                   (string.int->string
-                    (compiler_parse_core.compiler-parse-semantic-origin-run-len
-                      (& run)))
+                    (parser.compiler-parse-semantic-origin-run-len (& run)))
                   ", kind "
-                  (compiler_parse_core.compiler-parse-semantic-origin-kind-marker
+                  (parser.compiler-parse-semantic-origin-kind-marker
                     origin.kind)
                   ", span "
                   (string.int->string (ast.ast-source-span-start-line span))
@@ -235,7 +204,7 @@
                   ":"
                   (string.int->string (ast.ast-source-span-end-col span))
                   "\n")))]
-          [(compiler_parse_core.CompilerParseMaybeSemanticOriginRun.None)
+          [(parser.CompilerParseMaybeSemanticOriginRun.None)
             (io.print-error
               (str_cat.str-cat
                 "semantic origin mismatch: missing run for "
@@ -246,16 +215,16 @@
 (define (compiler-parse-test-semantic-origin-none?
   [decls : (& decls ast.AstDeclList)]
   [slot : i64]) : bool
-  (match (compiler_parse_core.compiler-parse-semantic-origin-run decls slot)
-    [(compiler_parse_core.CompilerParseMaybeSemanticOriginRun.Some _) false]
-    [(compiler_parse_core.CompilerParseMaybeSemanticOriginRun.None) true]))
+  (match (parser.compiler-parse-semantic-origin-run decls slot)
+    [(parser.CompilerParseMaybeSemanticOriginRun.Some _) false]
+    [(parser.CompilerParseMaybeSemanticOriginRun.None) true]))
 
 (define (compiler-parse-semantic-origin-categories-ok?) : bool
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
     (begin
-      (match (compiler_parse_core.parse-ast-source
+      (match (parser.parse-ast-source
         "(module pkg.inner)
 (import foo.bar)
 (import foo.bar as dep)
@@ -276,11 +245,9 @@
       (set! (__tl_struct-get p left) y)
       (match (Some y)
         [(Some (None)) p]))))")
-        [(compiler_parse_core.ResultAstProgram.Ok
-            (ast.AstProgram.Program decls-box))
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (set!
               ok
               (and
@@ -596,11 +563,11 @@
                   17
                   20
                   21))))]
-        [(compiler_parse_core.ResultAstProgram.Err message)
+        [(parser.ResultAstProgram.Err message)
           (io.print-error
             (str_cat.str-cat "semantic origin parse failed: " message "\n"))])
       (reader.sp-node-pool-truncate! mark)
-      (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+      (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
 (define (compiler-parse-semantic-origin-quote-depth-ok?) : bool
@@ -608,16 +575,14 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
     (begin
-      (match (compiler_parse_core.parse-ast-source
+      (match (parser.parse-ast-source
         "(define q
   (quasiquote
     (ignored.field
       (unquote live.field))))")
-        [(compiler_parse_core.ResultAstProgram.Ok
-            (ast.AstProgram.Program decls-box))
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (set!
               ok
               (and
@@ -656,14 +621,14 @@
                   21
                   4
                   26))))]
-        [(compiler_parse_core.ResultAstProgram.Err message)
+        [(parser.ResultAstProgram.Err message)
           (io.print-error
             (str_cat.str-cat
               "semantic origin quote-depth parse failed: "
               message
               "\n"))])
       (reader.sp-node-pool-truncate! mark)
-      (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+      (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
 (define (compiler-parse-semantic-origin-aliases-ok?) : bool
@@ -671,17 +636,13 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
     (begin
-      (match (compiler_parse_core.parse-ast-source
+      (match (parser.parse-ast-source
         "(module alias.test)
 (defstruct Pair (field dep.Thing))")
-        [(compiler_parse_core.ResultAstProgram.Ok
-            (ast.AstProgram.Program decls-box))
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
-            [tail : ast.AstDeclList
-              (ast.ast-decl-list-tail
-                (owned_view.compiler-owned-shared-view decls))]
+            [decls : ast.AstDeclList (deref decls-box)]
+            [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
             [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
             [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
             (begin
@@ -689,12 +650,11 @@
                 (&mut alias)
                 (& decls.slots)
                 (+ decls.offset 1))
-              (compiler_parse_core.compiler-parse-decl-origin-register-alias-record!
+              (parser.compiler-parse-decl-origin-register-alias-record!
                 (& alias)
                 0
                 1
-                (compiler_parse_core.compiler-parse-decl-list-storage-key
-                  (& decls))
+                (parser.compiler-parse-decl-list-storage-key (& decls))
                 (+ decls.offset 1)
                 false)
               (ast.ast-decl-list-push-from
@@ -705,12 +665,11 @@
                 (&mut generated)
                 (& decls.slots)
                 (+ decls.offset 1))
-              (compiler_parse_core.compiler-parse-decl-origin-register-alias-record!
+              (parser.compiler-parse-decl-origin-register-alias-record!
                 (& generated)
                 0
                 2
-                (compiler_parse_core.compiler-parse-decl-list-storage-key
-                  (& decls))
+                (parser.compiler-parse-decl-list-storage-key (& decls))
                 (+ decls.offset 1)
                 true)
               (set!
@@ -742,9 +701,9 @@
                   ;; A one-to-many generated rewrite has no editable origins.
                   (compiler-parse-test-semantic-origin-none? (& generated) 0)
                   (compiler-parse-test-semantic-origin-none? (& generated) 1)))))]
-        [(compiler_parse_core.ResultAstProgram.Err _) unit])
+        [(parser.ResultAstProgram.Err _) unit])
       (reader.sp-node-pool-truncate! mark)
-      (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+      (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
 (define (compiler-parse-semantic-origin-nested-module-ok?) : bool
@@ -752,18 +711,15 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
     (begin
-      (match (compiler_parse_core.parse-ast-source
+      (match (parser.parse-ast-source
         "(module outer.inner (defstruct Inside (field dep.Type)))")
-        [(compiler_parse_core.ResultAstProgram.Ok
-            (ast.AstProgram.Program decls-box))
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
               [(ast.AstDecl.ModuleBody _ body-box)
                 (let
-                  [body : ast.AstDeclList
-                    (ast.ast-decl-list-box-shared-view body-box)]
+                  [body : ast.AstDeclList (deref body-box)]
                   (set!
                     ok
                     (and
@@ -812,9 +768,9 @@
                         1
                         54))))]
               [_ unit]))]
-        [(compiler_parse_core.ResultAstProgram.Err _) unit])
+        [(parser.ResultAstProgram.Err _) unit])
       (reader.sp-node-pool-truncate! mark)
-      (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+      (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
 (define (compiler-parse-semantic-origin-growth-reset-ok?) : bool
@@ -822,7 +778,7 @@
     [mark : i64 (reader.sp-node-pool-len)]
     [ok : bool false]
     (begin
-      (match (compiler_parse_core.parse-ast-source
+      (match (parser.parse-ast-source
         "(module m00)
 (module m01)
 (module m02)
@@ -843,11 +799,9 @@
 (module m17)
 (module m18)
 (module m19)")
-        [(compiler_parse_core.ResultAstProgram.Ok
-            (ast.AstProgram.Program decls-box))
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
+            [decls : ast.AstDeclList (deref decls-box)]
             (begin
               (set!
                 ok
@@ -863,32 +817,31 @@
                   20
                   12))
               (reader.sp-node-pool-truncate! mark)
-              (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+              (parser.compiler-parse-decl-origin-cache-reset!)
               (set!
                 ok
                 (and
                   ok
                   (compiler-parse-test-semantic-origin-none? (& decls) 19)))))]
-        [(compiler_parse_core.ResultAstProgram.Err _) unit])
+        [(parser.ResultAstProgram.Err _) unit])
       (if (> (reader.sp-node-pool-len) mark)
         (reader.sp-node-pool-truncate! mark)
         unit)
-      (compiler_parse_core.compiler-parse-decl-origin-cache-reset!)
+      (parser.compiler-parse-decl-origin-cache-reset!)
       ok)))
 
 (define (compiler-parse-member-origin-boundary-ok?) : bool
-  (match (compiler_parse_core.parse-ast-source
+  (match (parser.parse-ast-source
     "(defstruct First (x i64))
 (defstruct Second (y i64))")
-    [(compiler_parse_core.ResultAstProgram.Ok
-        (ast.AstProgram.Program decls-box))
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
               [span : ast.AstSourceSpan
-                (compiler_parse_core.compiler-parse-field-def-list-span-get
+                (parser.compiler-parse-field-def-list-span-get
                   (& fields)
                   1
                   (ast.ast-decl-span-fallback))]
@@ -896,7 +849,7 @@
                 (= (ast.ast-source-span-start-line span) 1)
                 (= (ast.ast-source-span-start-col span) 12)))]
           [_ false]))]
-    [(compiler_parse_core.ResultAstProgram.Err _) false]))
+    [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-test-name-id? [name-id : i64] [text : String]) : bool
   (match (ci.intern-lookup text)
@@ -906,7 +859,7 @@
 (define (compiler-parse-name-id-provenance-ok?) : bool
   ;; Keep the inline-test discovery marker split: this source is parser input,
   ;; not an inline test declaration in this file.
-  (match (compiler_parse_core.parse-ast-source
+  (match (parser.parse-ast-source
     (str_cat.str-cat
       "(module parsed.module)
 (defstruct ParsedType (parsed-field i64))
@@ -914,10 +867,9 @@
 "
       "("
       "test parsed-test unit)"))
-    [(compiler_parse_core.ResultAstProgram.Ok
-        (ast.AstProgram.Program decls-box))
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.Module name)
@@ -960,37 +912,35 @@
             [(ast.AstDecl.Test name _ _ _)
               (compiler-parse-test-name-id? name "parsed-test")]
             [_ false])))]
-    [(compiler_parse_core.ResultAstProgram.Err _) false]))
+    [(parser.ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-removed-declaration-errors-ok?) : bool
   (and
-    (compiler_parse_core.compiler-parse-error-ok?
+    (parse_tests.compiler-parse-error-ok?
       "(comptime-decl (define value : i64 1))"
-      (compiler_parse_core.parse-ast-removed-declaration-message))
-    (compiler_parse_core.compiler-parse-error-ok?
+      (parser.parse-ast-removed-declaration-message))
+    (parse_tests.compiler-parse-error-ok?
       "(comptime-decls (define value : i64 1))"
-      (compiler_parse_core.parse-ast-removed-declaration-message))
-    (compiler_parse_core.compiler-parse-error-ok?
+      (parser.parse-ast-removed-declaration-message))
+    (parse_tests.compiler-parse-error-ok?
       "(define (main) : i64 (comptime-decl (define value : i64 1)))"
-      (compiler_parse_core.parse-ast-removed-declaration-message))
-    (compiler_parse_core.compiler-parse-error-ok?
+      (parser.parse-ast-removed-declaration-message))
+    (parse_tests.compiler-parse-error-ok?
       "(define (main) : i64 (comptime-decls (define value : i64 1)))"
-      (compiler_parse_core.parse-ast-removed-declaration-message))))
+      (parser.parse-ast-removed-declaration-message))))
 
 (define (compiler-parse-state-diagnostic-message
   [path : String]
   [source : String]
-  [parse-state : compiler_parse_core.CompilerParseState]
+  [parse-state : parser.CompilerParseState]
   [pools : ast.AstNodePoolContext]) : String
-  (match (compiler_parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+  (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
     path
     source
-    (compiler_parse_core.compiler-parse-state-cfgs
-      parse-state
-      (compiler_parse_core.compiler-cfg-empty))
+    (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
     pools)
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok _) "parse succeeded"]
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Err diag)
+    [(parser.ResultAstProgramDiagnostic.Ok _) "parse succeeded"]
+    [(parser.ResultAstProgramDiagnostic.Err diag)
       (diagnostic.compiler-diagnostic-message (__tl-box-place diag))]))
 
 (define (compiler-parse-state-import-ok?
@@ -998,20 +948,17 @@
   [expected-path : String]
   [expected-alias : String]
   [intern-state : ci.InternCompatState]
-  [parse-state : compiler_parse_core.CompilerParseState]
+  [parse-state : parser.CompilerParseState]
   [pools : ast.AstNodePoolContext]) : bool
-  (match (compiler_parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+  (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
     "owner-import.tl"
     source
-    (compiler_parse_core.compiler-parse-state-cfgs
-      parse-state
-      (compiler_parse_core.compiler-cfg-empty))
+    (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
     pools)
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Err _) false]
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok
-        (ast.AstProgram.Program decls-box))
+    [(parser.ResultAstProgramDiagnostic.Err _) false]
+    [(parser.ResultAstProgramDiagnostic.Ok (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -1032,28 +979,26 @@
                 (ci.intern-compat-state-str intern-state alias)
                 expected-alias))]
           [_ false]))]
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok _) false]))
+    [(parser.ResultAstProgramDiagnostic.Ok _) false]))
 
 (define (compiler-parse-state-source-ok?
   [source : String]
-  [parse-state : compiler_parse_core.CompilerParseState]
+  [parse-state : parser.CompilerParseState]
   [pools : ast.AstNodePoolContext]) : bool
-  (match (compiler_parse_core.parse-ast-source-diagnostic-with-cfg-and-pools
+  (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
     "installed-owner.tl"
     source
-    (compiler_parse_core.compiler-parse-state-cfgs
-      parse-state
-      (compiler_parse_core.compiler-cfg-empty))
+    (parser.compiler-parse-state-cfgs parse-state (parser.compiler-cfg-empty))
     pools)
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Ok _) true]
-    [(compiler_parse_core.ResultAstProgramDiagnostic.Err _) false]))
+    [(parser.ResultAstProgramDiagnostic.Ok _) true]
+    [(parser.ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-parse-installed-owner-lex-sync-ok?) : bool
   (let
     [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [parse-state : compiler_parse_core.CompilerParseState
-      (compiler_parse_core.compiler-parse-state-new-with-intern-state
+    [parse-state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
         (owned_view.compiler-owned-shared-view intern-state))]
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 64 32)]
@@ -1064,8 +1009,7 @@
       ;; The temporary driver bridge seeds builtins through the installed
       ;; globals. Explicit lexing must capture that scalar advance, then publish
       ;; each file's new count so the next file cannot rewind the same owner.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view intern-state))
+      (ci.intern-compat-state-install! intern-state)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
@@ -1073,7 +1017,7 @@
         (compiler-parse-state-source-ok?
           "(define (first-owner-fn [first-owner-param : i64]) : i64 first-owner-param)"
           (owned_view.compiler-owned-shared-view parse-state)
-          (owned_view.compiler-owned-shared-view pools)))
+          pools))
       (set! first-len (ci.intern-compat-state-pool-len intern-state))
       (set!
         ok
@@ -1082,8 +1026,8 @@
           (= first-len (ci.intern-pool-len))
           (compiler-parse-state-source-ok?
             "(define (second-owner-fn [second-owner-param : i64]) : i64 (+ second-owner-param 1))"
-            (owned_view.compiler-owned-shared-view parse-state)
-            (owned_view.compiler-owned-shared-view pools))))
+            parse-state
+            pools)))
       (set! second-len (ci.intern-compat-state-pool-len intern-state))
       (set!
         ok
@@ -1105,13 +1049,11 @@
     (begin
       ;; Seed fixed builtin IDs identically in both inactive owners, then leave
       ;; the active table as a decoy while lexing and parsing through A and B.
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-a))
+      (ci.intern-compat-state-install! state-a)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (ci.intern-compat-state-capture-from-globals! (&mut state-a))
-      (ci.intern-compat-state-install!
-        (owned_view.compiler-owned-shared-view state-b))
+      (ci.intern-compat-state-install! state-b)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (ci.intern-compat-state-capture-from-globals! (&mut state-b))
@@ -1122,11 +1064,11 @@
         [active-table-before : i64 (ci.intern-active-table-id)]
         [active-generation-before : i64 (ci.intern-generation)]
         [active-len-before : i64 (ci.intern-pool-len)]
-        [parse-state-a : compiler_parse_core.CompilerParseState
-          (compiler_parse_core.compiler-parse-state-new-with-intern-state
+        [parse-state-a : parser.CompilerParseState
+          (parser.compiler-parse-state-new-with-intern-state
             (owned_view.compiler-owned-shared-view state-a))]
-        [parse-state-b : compiler_parse_core.CompilerParseState
-          (compiler_parse_core.compiler-parse-state-new-with-intern-state
+        [parse-state-b : parser.CompilerParseState
+          (parser.compiler-parse-state-new-with-intern-state
             (owned_view.compiler-owned-shared-view state-b))]
         [pools-a : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 64 32)]
@@ -1139,14 +1081,14 @@
               "owner-a.tl"
               "(defmacro (bad [T : type (:owner-a)]) : Module unit)"
               (owned_view.compiler-owned-shared-view parse-state-a)
-              (owned_view.compiler-owned-shared-view pools-a)))
+              pools-a))
           (set!
             message-b
             (compiler-parse-state-diagnostic-message
               "owner-b.tl"
               "(defmacro (bad [T : type (:owner-b)]) : Module unit)"
               (owned_view.compiler-owned-shared-view parse-state-b)
-              (owned_view.compiler-owned-shared-view pools-b)))
+              pools-b))
           (set!
             ok
             (and
@@ -1379,5 +1321,5 @@
       (compiler-diagnostic-fix-model-ok?)
       (compiler-diagnostic-invalid-fixes-rejected-ok?)
       (compiler-diagnostic-unicode-byte-edit-ok?))
-      (compiler_parse_core.compiler-parse-smoke)
+      (parse_tests.compiler-parse-smoke)
       1)))

@@ -5,6 +5,8 @@
 (import compiler_incremental_identity)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
+(import stdlib.byte_reader)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 (import stdlib.vector)
@@ -48,8 +50,6 @@
   8)
 (define compiler-trace-miss-child : i64
   9)
-(define compiler-trace-miss-corrupt : i64
-  10)
 (define compiler-trace-miss-schema : i64
   11)
 (define compiler-trace-miss-limit : i64
@@ -599,10 +599,8 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& sequence))
-            (binary.compiler-incremental-binary-push-u64! (&mut out) ordinal)
-            (binary.compiler-incremental-binary-push-u32!
-              (&mut out)
-              (array-length child.transcript))
+            (byte_le.push-u64! (&mut out) ordinal)
+            (byte_le.push-u32! (&mut out) (array-length child.transcript))
             (binary.compiler-incremental-binary-push-array!
               (&mut out)
               (& child.transcript)))])
@@ -945,16 +943,14 @@
             (binary.compiler-incremental-binary-push-string!
               (&mut out)
               (& compiler-incremental-trace-domain))
-            (binary.compiler-incremental-binary-push-u32!
-              (&mut out)
-              compiler-incremental-trace-schema)
-            (binary.compiler-incremental-binary-push-u32!
+            (byte_le.push-u32! (&mut out) compiler-incremental-trace-schema)
+            (byte_le.push-u32!
               (&mut out)
               (array-length builder.parent.transcript))
             (binary.compiler-incremental-binary-push-array!
               (&mut out)
               (& builder.parent.transcript))
-            (binary.compiler-incremental-binary-push-u32! (&mut out) count)
+            (byte_le.push-u32! (&mut out) count)
             (set! index 0)
             (set! last "")
             (while (< index (trace_record_vec.len (& records)))
@@ -1004,21 +1000,21 @@
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
   [ceiling : i64]) : String
   (let
-    [length : i64 (binary.compiler-incremental-binary-read-u32! reader)]
+    [length : i64 (byte_reader.read-u32! (&mut reader.cursor))]
     (if (or
-      (not reader.ok?)
+      (not reader.cursor.ok?)
       (> length ceiling)
       (not
-        (binary.compiler-incremental-binary-range-present?
-          reader.end
-          reader.offset
+        (byte_reader.range-present?
+          reader.cursor.end
+          reader.cursor.offset
           length))
       (> length (- reader.max-owned-bytes reader.owned-bytes)))
       (begin
         (binary.compiler-incremental-binary-fail!
           reader
           7
-          reader.offset
+          reader.cursor.offset
           "invalid bounded trace frame")
         "")
       (let
@@ -1030,7 +1026,7 @@
             (begin
               (byte_buf_core.byte-buf-builder-push
                 (&mut out)
-                (cast (binary.compiler-incremental-binary-read-u8! reader) : u8))
+                (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
               (set! index (+ index 1))))
           (set! reader.owned-bytes (+ reader.owned-bytes length))
           (byte_buf_core.byte-buf-builder-finish-string (& out)))))))
@@ -1072,7 +1068,7 @@
         limits.max-edge-bytes)]
     [id-limits : compiler_incremental_identity.CompilerIncrementalIdentityLimits
       (compiler-trace-identity-limits limits)]
-    [tag : i64 (binary.compiler-incremental-binary-read-u8! (&mut key-reader))]
+    [tag : i64 (byte_reader.read-u8! (&mut key-reader.cursor))]
     [key-ok? : bool false]
     [value-ok? : bool false]
     (begin
@@ -1146,8 +1142,7 @@
                 (binary.compiler-incremental-binary-read-string!
                   (&mut key-reader)
                   false)]
-              [ordinal : i64
-                (binary.compiler-incremental-binary-read-u64! (&mut key-reader))]
+              [ordinal : i64 (byte_reader.read-u64! (&mut key-reader.cursor))]
               [child-raw : String
                 (compiler-trace-read-raw!
                   (&mut key-reader)
@@ -1176,14 +1171,11 @@
         (cond
           [(or (= tag 1) (= tag 2) (= tag 3) (= tag 8))
             (let
-              [present : i64
-                (binary.compiler-incremental-binary-read-u8!
-                  (&mut value-reader))]
+              [present : i64 (byte_reader.read-u8! (&mut value-reader.cursor))]
               (cond
                 [(= present 2)
                   (compiler-trace-reason-valid?
-                    (binary.compiler-incremental-binary-read-u8!
-                      (&mut value-reader)))]
+                    (byte_reader.read-u8! (&mut value-reader.cursor)))]
                 [(= present 1)
                   (cond
                     [(= tag 1)
@@ -1239,13 +1231,13 @@
                   "typelisp.package-content")))]
           [else false]))
       (and
-        key-reader.ok?
-        value-reader.ok?
+        key-reader.cursor.ok?
+        value-reader.cursor.ok?
         key-ok?
         value-ok?
         (= record.kind tag)
-        (= key-reader.offset key-reader.end)
-        (= value-reader.offset value-reader.end)))))
+        (= key-reader.cursor.offset key-reader.cursor.end)
+        (= value-reader.cursor.offset value-reader.cursor.end)))))
 
 ;; All published traces are revalidated before comparison. Hashes detect
 ;; corruption, while the strict frame parser also rejects a correctly hashed
@@ -1284,21 +1276,19 @@
             limits.max-edge-bytes)]
         [domain : String
           (binary.compiler-incremental-binary-read-string! (&mut reader) false)]
-        [schema : i64
-          (binary.compiler-incremental-binary-read-u32! (&mut reader))]
+        [schema : i64 (byte_reader.read-u32! (&mut reader.cursor))]
         [parent-raw : String
           (compiler-trace-read-raw! (&mut reader) limits.max-edge-bytes)]
         [parent-bytes : (__tl_dyn-array u8)
           (compiler-trace-raw-bytes (& parent-raw))]
-        [count : i64
-          (binary.compiler-incremental-binary-read-u32! (&mut reader))]
+        [count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
         [records : trace_record_vec.Vec (trace_record_vec.with-capacity 0)]
         [index : i64 0]
         [last-key : String ""]
         (begin
           (when
             (or
-              (not reader.ok?)
+              (not reader.cursor.ok?)
               (not
                 (compiler_incremental_identity.compiler-incremental-string-eq?
                   (& domain)
@@ -1317,7 +1307,7 @@
                   (& parent-bytes)
                   (& trace.parent.transcript)))
               (!= count trace.edge-count)
-              (> count (- reader.end reader.offset)))
+              (> count (- reader.cursor.end reader.cursor.offset)))
             (return
               (ResultCompilerIncrementalTraceRecords.Err
                 (compiler-trace-error
@@ -1345,7 +1335,7 @@
               (begin
                 (when
                   (or
-                    (not reader.ok?)
+                    (not reader.cursor.ok?)
                     (= (string.string-length record.key) 0)
                     (>
                       (string.string-length record.observation)
@@ -1371,7 +1361,9 @@
                 (set! last-key (string.copy (& record.key)))
                 (trace_record_vec.push-ref! (&mut records) record)
                 (set! index (+ index 1)))))
-          (if (or (not reader.ok?) (!= reader.offset reader.end))
+          (if (or
+            (not reader.cursor.ok?)
+            (!= reader.cursor.offset reader.cursor.end))
             (ResultCompilerIncrementalTraceRecords.Err
               (compiler-trace-error
                 compiler-trace-error-corrupt

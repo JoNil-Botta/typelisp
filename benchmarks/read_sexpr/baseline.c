@@ -95,7 +95,7 @@
 #define SYM_UNQUOTE 1000000003
 #define SYM_UNQUOTE_SPLICING 1000000004
 
-/* The values tools/export_tokens.py computes by replaying the same descent
+/* The values the corpus exporter computed by replaying the same descent
  * over data/tokens.txt. */
 #define EXPECT_FORMS 3002
 #define EXPECT_NODES 270063

@@ -1,35 +1,46 @@
 # Public Tools Test Fixtures
 
-This directory contains REPL transcript fixtures and LSP JSON-RPC protocol fixtures
-that replace the corresponding Rust test cases in `tests/cli.rs`.
+This directory holds the REPL transcript and LSP JSON-RPC fixtures that
+`run-corpus.sh` runs against `typelisp repl` and `typelisp lsp`.
 
 ## Fixture Format
 
-REPL fixtures use a `.in` transcript and a `.spec.json` expectation file.
-LSP fixtures use a `.in.json` array of request objects (one object per line),
-which the runner wraps in byte-counted `Content-Length` frames, and a
-`.spec.json` expectation file. A matching `.prep.sh` may prepare the fixture
-workspace. Linux-only fixtures live under `selfhost-lsp` or use `.linux.in`.
+Every fixture is an input file plus a `.spec.json` expectation with the same
+stem. A `.linux.` infix (`name.linux.in`, `name.linux.spec.json`) limits the
+fixture to Linux hosts.
 
-The line-oriented expectation format supports:
+- `repl/*.in` is sent to `typelisp repl` on stdin.
+- `lsp/*.in.json` is an array of JSON-RPC messages, one per line; the runner
+  adds the byte-counted `Content-Length` framing. An optional `name.prep.sh`
+  runs first with `FIXTURE_TMP` and `FIXTURE_TMP_URI` set to the case's
+  temporary directory.
+- `selfhost-lsp/*.linux.in.json` are framed the same way; `*.linux.in` files
+  are raw protocol bytes, for malformed-frame cases.
 
-- `exit` (defaults to zero).
-- `stdout_contains`, `stdout_not_contains`, `stderr_contains` and
-  `stderr_not_contains`: arrays of fixed strings, split into separate patterns
-  by decoded newlines; empty patterns are ignored.
-- `stdout_exact` and `stderr_exact`: exact bytes, including final newlines.
-  On Windows only these exact comparisons strip carriage returns.
-- `message_count`: the number of newline-terminated extracted message lines.
-- `message_checks`: one object per line. A matching message must satisfy its
-  `jsonpath_id`, optional `jsonpath_result: null`, every `raw_contains` and
-  `json_contains` needle, and every `raw_not_contains` exclusion. Repeated keys
-  intentionally express multiple checks; do not parse them into an object map.
-  Needles substitute `${{TMP}}` and `${{TMP_URI}}` with the fixture workspace.
+Inputs and `message_checks` strings may use `${{TMP}}` and `${{TMP_URI}}` for
+the case's temporary directory.
 
-`lib-result-checks.sh` evaluates a case in one process, shared by REPL and LSP.
-`test-result-checks.sh` checks passing and failing assertions, ordered error
-text, repeated keys, path substitutions and byte/newline boundaries. The
-existing public-tool gate runs it before the corpus.
+A `.spec.json` is read line by line and may contain:
+
+- `exit`: the expected exit code (default 0);
+- `stdout_exact`, `stderr_exact`: the whole stream, byte for byte including
+  the final newline; on Windows only these two comparisons ignore carriage
+  returns;
+- `stdout_contains`, `stdout_not_contains`, `stderr_contains`,
+  `stderr_not_contains`: fixed substrings; a decoded newline splits a string
+  into separate substrings, and empty ones are ignored;
+- LSP only: `message_count`, the number of newline-terminated parsed JSON-RPC
+  messages, and `message_checks`, one object per line, each of which some
+  message must pass: an optional `jsonpath_id` (the message's `id`), an
+  optional `"jsonpath_result": null`, and `raw_contains`, `raw_not_contains`
+  and `json_contains` strings. A key may repeat within one check and every
+  occurrence applies, so a check is not read as a JSON object.
+
+`lib-result-checks.sh` checks a case's exit code, streams and messages in one
+awk process, for both corpora. `test-result-checks.sh` is its self-test
+(passing and failing checks, the order of the failure lines, repeated keys,
+path substitution, byte and final-newline edges); `verify-public-tools.sh`
+runs it before the corpora.
 
 ## Running
 
@@ -37,17 +48,16 @@ From the repository root:
 
 ```bash
 # Set TYPELISP_BIN, or the script fetches the published stage0 automatically.
-scripts/fetch-stage0.sh
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-public-tools.sh
+TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh lsp fresh
 ```
 
-The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by
-`verify-public-tools.sh`. Run `tests/public-tools/run-corpus.sh lsp
-fresh|batch|differential` to select LSP execution. Linux defaults to differential
-(fresh sessions compared with one batch process); Windows defaults to batch.
-All modes use the same expectations and result checker.
+`verify-public-tools.sh` calls `run-corpus.sh` for both corpora.
+`run-corpus.sh [repl|lsp] [fresh|batch|differential]` runs one corpus; LSP cases
+run one process per case (`fresh`), all cases through one batch process
+(`batch`, the Windows default), or both with their results compared
+(`differential`, the Linux default). Every mode checks results with the same
+expectations and checker.
 
-`cli-command-surface.txt` is the explicit command-surface manifest for the
-freshly built `src/main.tl` binary in the CI gate. Each row is
-`status|command|issue`, where `active` commands must have a smoke assertion in
-`scripts/verify-selfhost-cli-build-run.sh`.
+The command-surface list of the freshly built `src/main.tl` binary, with one
+smoke case per command, is `tests/cli/selfhost-surface.cases`.

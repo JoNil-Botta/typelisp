@@ -2,8 +2,7 @@
 set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
-# rooted staging, publication, and reusable-read backend. refs #7221, #7409,
-# #7550, #7653, #7662
+# rooted staging, publication, and reusable-read backend.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -16,17 +15,10 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
-    COMPILER=$TYPELISP_BIN
-else
-    . "$ROOT/scripts/lib-stage0.sh"
-    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
-fi
-
-case "$COMPILER" in
-    /*) ;;
-    *) COMPILER="$ROOT/$COMPILER" ;;
-esac
+GATE_FAIL_PREFIX='FAIL: '
+. "$ROOT/scripts/lib-gate.sh"
+gate_compiler
+gate_compiler_absolute
 
 [ -x "$COMPILER" ] || {
     echo "rooted filesystem compiler is not executable: $COMPILER" >&2
@@ -61,11 +53,6 @@ cleanup_mount_race() {
     fi
 }
 trap cleanup_mount_race EXIT
-
-fail() {
-    echo "FAIL: $*" >&2
-    exit 1
-}
 
 run_expect() {
     _label=$1

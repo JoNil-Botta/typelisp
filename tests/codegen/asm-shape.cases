@@ -1,0 +1,1186 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). The native integration manifest
+# proves these fixtures still run correctly; these rows prove the optimizing
+# shapes still fire, because a slow-but-correct fallback keeps every exit code
+# green. Function bodies (`in fn`) end at the next column-0 .globl or the
+# function's .size, so the hand-written runtime prelude is never part of one.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+# SROA-2: the four-word enum of the lattice join lives in registers -- no frame,
+# no wide copy, no frame-slot store or compare; JT-2 threads the equality match
+# away, leaving the three payload-word compares against memory.
+case lattice-join-split
+source tests/integration/lattice_join_split.tl
+in fn _tl_lattice_join_split_lat_bind
+not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-contains movups
+not-match ^[[:space:]]+movq %[a-z0-9]+, -?[0-9]+\(%rsp\)$
+not-match ^[[:space:]]+cmpq -?[0-9]+\(%rsp\), %
+not-match ^[[:space:]]+cmpq \$1, %[a-z0-9]+$
+count >= 3 ^[[:space:]]+cmpq [0-9]+\(%r[a-z0-9]+\), %r[a-z0-9]+$
+
+# UNR-1: the word-then-tail piece copy inlined into copy-fill!: the unsigned
+# `n / 8` is one shift, the word loop's guard is `lea; test; jg`, and the byte
+# tail is not versioned (one guard, one byte copy).
+case short-trip-copy
+source tests/integration/short_trip_copy.tl
+in fn _tl_short_trip_copy_copy_fill_bang
+match ^[[:space:]]+shrq \$3, %r
+not-match ^[[:space:]]+sarq \$63, %r
+after ^[[:space:]]+leaq -4[(]%r[a-z0-9]+[)], %r
+next-line ^[[:space:]]+testq %r[a-z0-9]+, %r
+not-match ^[[:space:]]+leaq -2\(%r[a-z0-9]+\), %r
+count = 1 __unroll_guard:$
+count = 1 ^[[:space:]]+movzbq[ ]
+
+# Divisor magic hoisting: constant multiplies fold into imm32 imuls; the /7
+# quotient reads the live dividend through %rax (one irreducible copy chain).
+case divmagic-hoist
+source tests/integration/divmagic_hoist.tl
+in fn _tl_divmagic_hoist_modsum
+not-contains movabsq $1000000007
+count >= 1 ^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_divmagic_hoist_digitsum
+count-fixed = 1 movabsq $7378697629483820647
+not-contains movabsq $10
+count >= 1 ^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_divmagic_hoist_dividend_copy_pair
+metric copy-chains-to-rax = 1
+
+# A36 hoist priority: registers are awarded by site count (the three-site magic
+# beats six one-site literals); ties fall back to program order.
+case hoist-priority
+source tests/integration/hoist_priority.tl
+in fn _tl_hoist_priority_spread
+count-fixed = 1 movabsq $-8543223828751151131
+count >= 3 ^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$
+count >= 1 ^[[:space:]]+movq \$26544357[0-9]+, %r
+in fn _tl_hoist_priority_tie
+count-fixed = 1 movabsq $3141592653589
+count-fixed = 2 movabsq $-8543223828751151131
+
+# LFTR retires the index counter: `walk` is absorbed into main, the loop steps
+# a 16-byte pointer with one compare, and the end address is scaled once.
+case lftr-counter-retire
+source tests/integration/lftr_counter_retire.tl
+not-contains _tl_lftr_counter_retire_walk:
+in fn main
+not-match ^[[:space:]]+addq \$1, %r[a-z0-9]+$
+count = 1 ^[[:space:]]+leaq 16\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
+match ^[[:space:]]+(shlq \$4, %r[a-z0-9]+|imulq \$16, %r[a-z0-9]+, %r[a-z0-9]+)$
+not-contains call tl_oob_abort
+
+# No jmp may target a label reached by falling through label definitions only;
+# a then-only branch loses its merge jump, a two-armed one keeps it, and the
+# tail-recursive loop keeps its backward branch.
+case fallthrough-jmp-chain
+source tests/integration/fallthrough_jmp_chain.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_fallthrough_jmp_chain_chain_drop_probe
+metric fallthrough-jmps = 0
+in fn _tl_fallthrough_jmp_chain_chain_keep_probe
+metric fallthrough-jmps = 0
+in fn main
+metric fallthrough-jmps = 0
+in fn _tl_fallthrough_jmp_chain_chain_drop_probe
+match ^\.L[^ ]*_if_then\.[0-9.]+:$
+match ^\.L[^ ]*_if_else\.[0-9.]+:$
+match ^\.L[^ ]*_if_merge\.[0-9.]+:$
+count = 0 ^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$
+metric backward-branches >= 1
+in fn _tl_fallthrough_jmp_chain_chain_keep_probe
+count = 1 ^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$
+metric backward-branches >= 1
+
+# Backend block layout: a cold arm sinks behind the body, a small exit block is
+# duplicated into the arm that jumps to it, and a register compare keeps IR order.
+case block-layout
+source tests/integration/block_layout.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_block_layout_sink_probe
+metric fallthrough-jmps = 0
+in fn _tl_block_layout_dup_probe
+metric fallthrough-jmps = 0
+in fn _tl_block_layout_keep_probe
+metric fallthrough-jmps = 0
+in fn _tl_block_layout_sink_probe
+after ^[[:space:]]+movzbq .*, %r[a-z0-9]+$
+next-line ^[.]L.*_if_merge[.][0-9.]+
+after ^[[:space:]]+movq [$]-1, %r[a-z0-9]+$
+next-line ^[[:space:]]+jmp [.]L.*_if_merge[.][0-9]
+count >= 2 ^[[:space:]]+j[a-z]+ \.L[^ ]*_if_else\.[0-9.]+$
+in fn _tl_block_layout_dup_probe
+count = 0 ^[[:space:]]+jmp \.L[^ ]*_while_exit\.[0-9.]+$
+match ^\.L[^ ]*_while_exit\.[0-9.]+:$
+count = 2 ^[[:space:]]+leaq \(,%r[a-z0-9]+,2\), %r[a-z0-9]+$
+in fn _tl_block_layout_keep_probe
+count = 1 ^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$
+match ^\.L[^ ]*_if_else\.[0-9.]+:$
+
+# A wide constant is hoisted once in a leaf; across a call it stays in place.
+case wide-const-hoist
+source tests/integration/wide_const_hoist.tl
+in fn _tl_wide_const_hoist_wide_leaf
+count-fixed = 1 movabsq $2654435761
+count >= 2 ^[[:space:]]+(imulq|xorq) %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_wide_const_hoist_wide_call
+count-fixed = 2 movq $2654435761
+
+# A two-word call result lands directly in a caller-saved register pair.
+case group-pair-home
+source tests/integration/group_pair_home.tl
+in fn _tl_group_pair_home_probe
+contains call _tl_group_pair_home_mk
+match ^[[:space:]]+movq %rax, %(r8|r9)$
+match ^[[:space:]]+movq %rdx, %(r8|r9)$
+not-match \(%rsp\)|\(%rbp\)
+
+# ...also when the pair is a loop phi: no frame slots, no callee-saved copy
+# (the segment-precise clobber test sees the phi is dead across the call).
+case group-pair-phi-home
+source tests/integration/group_pair_phi_home.tl
+in fn _tl_group_pair_phi_home_probe
+contains call _tl_group_pair_phi_home_mk
+match ^[[:space:]]+movq %rax, %(r8|r9)$
+match ^[[:space:]]+movq %rdx, %(r8|r9)$
+count >= 2 ^[[:space:]]+movq %(r8|r9), %rax$
+not-match ^[[:space:]]+movq [0-9]+\(%rsp\), %r(ax|dx)$
+
+# Push-mode frames: callee-saves are pushed (never stored to slots) and a frame
+# that names no slot reserves none -- only the alignment pad an even push run
+# needs (analyzer dead-slot-region).
+case csr-push-prologue
+source tests/integration/csr_push_prologue.tl
+in fn _tl_csr_push_prologue_churn3
+metric csr-pushes >= 3
+metric dead-slot-region = ok
+not-match ^[[:space:]]+movq %r(12|13|14|15|bx|bp), -?[0-9]+\(%rsp\)$
+in fn _tl_csr_push_prologue_deeprec
+metric csr-pushes >= 3
+metric dead-slot-region = ok
+not-match ^[[:space:]]+movq %r(12|13|14|15|bx|bp), -?[0-9]+\(%rsp\)$
+
+# RG-1 fix B: every callee-saved register the prologue pushes is named by the
+# body at some width (a pushed-and-popped-only register is two wasted
+# instructions per call).
+case csr-unused-save
+source tests/integration/csr_unused_save.tl
+in fn _tl_csr_unused_save_insert_bang
+metric prologue-csrs >= 1
+metric unnamed-pushed-csrs = 0
+in fn _tl_csr_unused_save_lookup
+metric prologue-csrs >= 1
+metric unnamed-pushed-csrs = 0
+
+# ...on a call-carrying census loop, whose prologue must still keep the body's
+# calls 16-byte aligned after the trim.
+case csr-census-loop
+source tests/integration/csr_census_loop.tl
+in fn _tl_csr_census_loop_ccl_census_blocks
+metric prologue-csrs >= 4
+metric unnamed-pushed-csrs = 0
+metric call-alignment:prologue = ok
+contains call _tl_csr_census_loop_ccl_probe
+
+# W1-frame: the frame adjust follows what the function needs -- a tail-jump
+# forwarder owes nothing, an abort-only caller keeps its even push run but no
+# pad, a returning caller keeps both and stays aligned.
+case dead-frame-boundary
+source tests/integration/dead_frame_boundary.tl
+in fn tl_dfb_forward
+contains jmp _tl_dead_frame_boundary_dfb_sink
+not-match ^[[:space:]]+call[ ]
+count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
+count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
+in fn tl_dfb_abort_only
+metric csr-pushes >= 2
+metric csr-pushes-parity = even
+contains call tl_oob_abort
+count = 1 ^[[:space:]]+call[ ]
+count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
+count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
+in fn _tl_dead_frame_boundary_dfb_returning
+contains call _tl_dead_frame_boundary_dfb_probe
+metric call-alignment:pushes = ok
+
+# The frameless abort-only shape at opt2, and its located abort splitter really
+# firing from an %rsp that is 0 mod 16 (the safety corpus only runs opt0).
+case dead-frame-abort-only-trap
+source tests/safety/dead_frame_abort_only_trap.tl
+in fn _tl_dead_frame_abort_only_trap_probe
+metric csr-pushes >= 2
+metric csr-pushes-parity = even
+contains call tl_oob_abort_at
+count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
+count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
+
+case dead-frame-abort-only-trap-run
+source tests/safety/dead_frame_abort_only_trap.tl
+do build-run
+exit 134
+in stderr
+contains array index out of bounds: index=7 length=4
+
+# Win64 reserves shadow space for every call-shaped instruction, so none of the
+# three may lose its stack adjustment there, and callers stay aligned.
+case dead-frame-boundary-win64
+source tests/integration/dead_frame_boundary.tl
+target windows-x86_64
+in fn tl_dfb_forward
+contains jmp _tl_dead_frame_boundary_dfb_sink
+metric call-alignment:0 = ok
+match \.seh_stackalloc[ ]
+in fn tl_dfb_abort_only
+contains call tl_oob_abort
+match \.seh_stackalloc[ ]
+in fn _tl_dead_frame_boundary_dfb_returning
+contains call _tl_dead_frame_boundary_dfb_probe
+metric call-alignment:pushes = ok
+
+# Red zone: a call-free leaf with a small frame uses the 128 bytes below %rsp
+# instead of adjusting it; a big frame, a call or Win64 still adjust.
+case red-zone-leaf
+source tests/integration/red_zone_leaf.tl
+in fn tl_rzl_slots
+count = 0 ^[[:space:]]+call[ ]
+count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
+count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
+metric distinct:-[0-9]+\(%rsp\) >= 3
+match [-]8\(%rsp\)
+not-match [-](1[3-9][0-9]|[2-9][0-9][0-9])\(%rsp\)
+not-match \(%rbp\)
+in fn tl_rzl_big
+count = 0 ^[[:space:]]+call[ ]
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-match [-][0-9]+\(%rsp\)
+in fn tl_rzl_call
+count >= 1 ^[[:space:]]+call[ ]
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-match [-][0-9]+\(%rsp\)
+in fn tl_rzl_abort
+contains call tl_oob_abort_at
+count = 1 ^[[:space:]]+call[ ]
+count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
+count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
+metric distinct:-[0-9]+\(%rsp\) >= 1
+match [-]8\(%rsp\)
+metric abort-staging-push-from-memory = 0
+not-match [-](1[3-9][0-9]|[2-9][0-9][0-9])\(%rsp\)
+
+case red-zone-leaf-win64
+source tests/integration/red_zone_leaf.tl
+target windows-x86_64
+in fn tl_rzl_slots
+count >= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-match [-][0-9]+\(%rsp\)
+in fn tl_rzl_big
+count >= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-match [-][0-9]+\(%rsp\)
+in fn tl_rzl_abort
+count >= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-match [-][0-9]+\(%rsp\)
+
+# A value saved across a call is not reloaded from its spill slot.
+case save-reload-elide
+source tests/integration/save_reload_elide.tl
+in fn _tl_save_reload_elide_relay
+contains call _tl_save_reload_elide_src
+contains xorl %r8d, %r8d
+contains movq %rax, %r9
+contains call _tl_save_reload_elide_sink7
+not-match ^[[:space:]]+movq -?[0-9]+\(%rsp\), %r9$
+
+# The global array handle is loaded once.
+case global-handle-cse
+source tests/integration/global_handle_cse.tl
+in fn _tl_global_handle_cse_probe
+count-fixed = 1 _tl_global_handle_cse_gtab(%rip)
+contains call tl_oob_abort
+
+# GAP4: one length load and one data load survive the interleaved stores, and
+# the store goes through the forwarded data register.
+case loadcse-forward
+source tests/integration/loadcse_forward.tl
+in fn _tl_loadcse_forward_poke_sum
+count = 1 ^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
+capture data_reg ^[[:space:]]*movq \(%rdi\), (%r[a-z0-9]*)$
+count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\({{data_reg}}\)$
+
+# Non-PIC Linux switch dispatch uses the absolute indexed form; no table
+# register is borrowed under pressure.
+case switch-dispatch-scavenge
+source tests/integration/switch_dispatch_scavenge.tl
+in fn _tl_switch_dispatch_scavenge_run_switch
+count = 1 ^[[:space:]]+jmp \*\.Lf.*_switch_table\(,%r[a-z0-9]+,8\)$
+not-match ^[[:space:]]+jmp \*%r
+
+# The length compare reads memory directly and the check is eliminated.
+case cmp-fold-load
+source tests/integration/cmp_fold_load.tl
+in fn _tl_cmp_fold_load_check
+contains cmpq %rsi, 8(%rdi)
+not-match ^[[:space:]]+movq .*\(%r[^)]*\), %r
+not-contains call tl_oob_abort
+
+# M6-I: a scalar global read folds into the compare's rip-relative operand, on
+# either side, with the unfolded branch sense; a twice-read local refuses.
+case global-cmp-mem-fold
+source tests/integration/global_cmp_mem_fold.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_global_cmp_mem_fold_probe_lhs
+count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, _tl_global_cmp_mem_fold_gcmp_gen\(%rip\)$
+not-match ^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_gen\(%rip\), %r
+after cmpq %r[a-z0-9]+, _tl_global_cmp_mem_fold_gcmp_gen[(]%rip[)]
+next-line ^[[:space:]]+jne[ ]
+in fn _tl_global_cmp_mem_fold_probe_rhs
+count = 1 ^[[:space:]]+cmpq _tl_global_cmp_mem_fold_gcmp_limit\(%rip\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_limit\(%rip\), %r
+after cmpq _tl_global_cmp_mem_fold_gcmp_limit[(]%rip[)], %r[a-z0-9]+
+next-line ^[[:space:]]+jge[ ]
+in fn _tl_global_cmp_mem_fold_probe_refused
+match ^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_gen\(%rip\), %r
+not-match ^[[:space:]]+cmpq .*_tl_global_cmp_mem_fold_gcmp_gen\(%rip\)
+
+# BE-6 / CANON-G: a global read on either side of an add folds into its
+# rip-relative source operand; a twice-read local refuses.
+case global-add-mem-fold
+source tests/integration/global_add_mem_fold.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_global_add_mem_fold_probe_rhs
+count = 1 ^[[:space:]]+addq _tl_global_add_mem_fold_gadd_k\(%rip\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq _tl_global_add_mem_fold_gadd_k\(%rip\), %r
+in fn _tl_global_add_mem_fold_probe_lhs
+count = 1 ^[[:space:]]+addq _tl_global_add_mem_fold_gadd_m\(%rip\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq _tl_global_add_mem_fold_gadd_m\(%rip\), %r
+in fn _tl_global_add_mem_fold_probe_refused
+match ^[[:space:]]+movq _tl_global_add_mem_fold_gadd_k\(%rip\), %r
+not-match ^[[:space:]]+addq _tl_global_add_mem_fold_gadd_k\(%rip\), %r
+
+# BE-3: the bounds check compares the length through the handle register the
+# line before loaded, reads the data word through the same register, and still
+# has its located abort tail.
+case global-len-fold
+source tests/integration/global_len_fold.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_global_len_fold_probe_sum
+count = 1 ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$
+after movq _tl_global_len_fold_glf_items[(]%rip[)], %r[a-z0-9]+$
+next-line ^[[:space:]]+cmpq 8[(]%r[a-z0-9]+[)], %r[a-z0-9]+$
+capture handle ^[[:space:]]+cmpq 8\((%r[a-z0-9]+)\), %r.*$
+match ^[[:space:]]+movq \({{handle}}\), %r
+match ^[[:space:]]+pushq 8\(%r[a-z0-9]+\)$
+
+# RMW-2 / INL-6: each `g = g op k` update of a global cell is one
+# memory-operand instruction with no staging load before or store after it,
+# and a read after the write reloads the cell.
+case rmw-mem-operand-fold
+source tests/integration/rmw_mem_operand_fold.tl
+target linux-x86_64 windows-x86_64
+count = 1 ^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_add\(%rip\)$
+count = 1 ^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_sub\(%rip\)$
+count = 1 ^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_or\(%rip\)$
+count = 1 ^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_and\(%rip\)$
+count = 1 ^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_xor\(%rip\)$
+metric rmw-fold-staging:_tl_rmw_mem_operand_fold_rmw_add = 0
+metric rmw-fold-staging:_tl_rmw_mem_operand_fold_rmw_sub = 0
+metric rmw-fold-staging:_tl_rmw_mem_operand_fold_rmw_or = 0
+metric rmw-fold-staging:_tl_rmw_mem_operand_fold_rmw_and = 0
+metric rmw-fold-staging:_tl_rmw_mem_operand_fold_rmw_xor = 0
+count = 1 ^[[:space:]]+addq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_hits\(%rip\)$
+after addq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_hits[(]%rip[)]
+next-line ^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_hits[(]%rip[)], %r
+
+# GAP8-C: commutative ops tie their destination to the accumulator, so every
+# element load folds into a memory-operand ALU line in both loop clones.
+case alu-mem-operand-tie
+source tests/integration/alu_mem_operand_tie.tl
+in fn _tl_alu_mem_operand_tie_fold_words
+count = 8 ^[[:space:]]+(andq|orq|xorq|addq) \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r
+count = 4 ^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$
+
+# ...and load sinking gets the same fold for one nested expression.
+case alu-mem-operand-sink
+source tests/integration/alu_mem_operand_tie.tl
+in fn _tl_alu_mem_operand_tie_fold_nested
+count = 8 ^[[:space:]]+(andq|orq|xorq) \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r
+count = 4 ^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$
+
+# #5238: an immutable global mask reaches the same BCE-versioned x16 unrolled
+# fast path as the literal spelling.
+case const-global-mask-unroll
+source tests/integration/const_global_mask_unroll.tl
+in fn _tl_const_global_mask_unroll_mask_sum
+contains __bce_fast__unroll_body
+contains __bce_fast__unroll_guard
+in fn _tl_const_global_mask_unroll_mask_sum_literal
+contains __bce_fast__unroll_body
+
+# CB-2(c): the measured tier copies the hash leaf into its loop-depth-0 site;
+# the cold second reference still calls it.
+case checked-depth0-site
+source tests/integration/checked_depth0_site.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_depth0_site_probe
+not-match ^[[:space:]]+call _tl_checked_depth0_site_hash_words$
+match ^[[:space:]]+movq \$2166136261, %r
+match ^\.L[A-Za-z0-9_]+_inl\.
+in asm
+match ^_tl_checked_depth0_site_hash_words:$
+count = 1 ^[[:space:]]+call _tl_checked_depth0_site_hash_words$
+
+# A seven-parameter setup builder at a hot caller's entry is offered to the
+# verdict and kept; its cold second reference still calls it.
+case checked-setup-helper
+source tests/integration/checked_setup_helper.tl
+target linux-x86_64 windows-x86_64
+not-match ^_tl_checked_setup_helper_run:$
+in fn main
+match ^\.L[A-Za-z0-9_]+_inl\.
+in asm
+match ^_tl_checked_setup_helper_build_csr:$
+count = 1 ^[[:space:]]+call _tl_checked_setup_helper_build_csr$
+
+# CB-2b: the relaxed depth floor claims `hash-words` at probe's entry without
+# taking the free tiny-leaf inlines away; the claimed callee is copied.
+case checked-cheap-tier-claim
+source tests/integration/checked_cheap_tier_claim.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_cheap_tier_claim_probe
+not-match ^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$
+match ^[[:space:]]+movq \$2166136261, %r
+not-match ^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$
+in asm
+count = 0 ^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$
+not-match ^_tl_checked_cheap_tier_claim_mix:$
+match ^_tl_checked_cheap_tier_claim_hash_words:$
+count = 1 ^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$
+
+# INL-5/6: a helper advancing a global cursor (a global-cell Store) inlines at
+# all five sites, leaving no out-of-line body; the copies live in main.
+case global-cursor-helper
+source tests/integration/global_cursor_helper.tl
+target linux-x86_64 windows-x86_64
+count = 0 ^[[:space:]]+call _tl_global_cursor_helper_gc_next$
+not-match ^_tl_global_cursor_helper_gc_next:$
+in fn main
+count = 5 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$
+count = 5 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$
+count = 2 ^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r
+count = 5 ^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$
+count = 3 ^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r
+
+# ...and the multiblock guarded variant inlines into its three loop sites.
+case global-cursor-guarded
+source tests/integration/global_cursor_guarded.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_global_cursor_guarded_gcg_run
+count = 0 ^[[:space:]]+call _tl_global_cursor_guarded_gcg_step$
+in asm
+match ^_tl_global_cursor_guarded_gcg_step:$
+in fn _tl_global_cursor_guarded_gcg_run
+count = 3 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$
+count = 3 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$
+count = 3 ^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_guarded_gcg_cursor\(%rip\)$
+count = 3 ^[[:space:]]+movq _tl_global_cursor_guarded_gcg_cursor\(%rip\), %r
+count = 1 ^[[:space:]]+movq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r
+
+# The asm_render benchmark's fold accumulator is never homed in a frame slot.
+case asm-render-fold-accumulator
+source benchmarks/asm_render/bench.tl
+target linux-x86_64 windows-x86_64
+metric frame-homed-fold-accumulators = 0
+
+# INL-7: sccp_lattice's rewrite-phi is not imported into rewrite-rows, whose
+# frame traffic stays under an upper bound (per target).
+case sccp-rewrite-phi-import-linux
+source benchmarks/sccp_lattice/bench.tl
+match ^_tl_bench_sccp_rewrite_phi:$
+in fn _tl_bench_sccp_rewrite_rows
+count = 1 ^[[:space:]]+call _tl_bench_sccp_rewrite_phi$
+count <= 27 [-0-9]+\(%rsp\)
+
+case sccp-rewrite-phi-import-windows
+source benchmarks/sccp_lattice/bench.tl
+target windows-x86_64
+match ^_tl_bench_sccp_rewrite_phi:$
+in fn _tl_bench_sccp_rewrite_rows
+count = 1 ^[[:space:]]+call _tl_bench_sccp_rewrite_phi$
+count <= 38 [-0-9]+\(%rsp\)
+
+# A loop-bearing recursive helper is imported into both callers.
+case recursive-loop-import
+source tests/integration/recursive_loop_import.tl
+target linux-x86_64 windows-x86_64
+not-match ^_tl_recursive_loop_import_rli_scan:$
+in fn _tl_recursive_loop_import_rli_rows
+count = 0 ^[[:space:]]+call _tl_recursive_loop_import_rli_scan$
+count >= 1 1099511628211
+in fn _tl_recursive_loop_import_rli_peek
+count = 0 ^[[:space:]]+call _tl_recursive_loop_import_rli_scan$
+count >= 1 1099511628211
+
+# Synthesized-wrapper probes: the checked probe inlines into get-or while its
+# out-of-line body stays for the other site, and the abort variants keep three
+# located bounds tails whose staging pushes never read memory.
+case synth-wrapped-probe
+source tests/integration/synth_wrapped_probe.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_wrapped_probe_sp_get_or
+not-match ^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$
+match 2654435761
+in asm
+match ^_tl_synth_wrapped_probe_sp_probe:$
+count = 1 ^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$
+in fn _tl_synth_wrapped_probe_sp_get_or
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+case synth-wrapped-probe-abort
+source tests/integration/synth_wrapped_probe_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_wrapped_probe_abort_sp_get_or
+not-match ^[[:space:]]+call _tl_synth_wrapped_probe_abort_sp_probe$
+count >= 1 ^[[:space:]]+call tl_oob_abort
+count = 3 ^[[:space:]]+call tl_oob_abort_at$
+count = 0 ^[[:space:]]+call tl_oob_abort$
+in asm
+count >= 3 ^\.L_tl_abort_site_[0-9]+_bounds:$
+in fn _tl_synth_wrapped_probe_abort_sp_get_or
+count = 9 ^[[:space:]]+cmpq[ ]
+count = 3 ^[[:space:]]+jae [.A-Za-z0-9_]+\.cold$
+count = 0 ^[[:space:]]+jb[ ]
+metric abort-staging-push-from-memory = 0
+
+case synth-tail-wrapper
+source tests/integration/synth_tail_wrapper.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_tail_wrapper_sp_slot_id
+not-match ^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$
+not-match ^[[:space:]]+jmp _tl_synth_tail_wrapper_sp_get_or$
+match 2654435761
+not-match ^[[:space:]]+call _tl_synth_tail_wrapper_sp_probe$
+in asm
+match ^_tl_synth_tail_wrapper_sp_get_or:$
+count = 1 ^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$
+in fn _tl_synth_tail_wrapper_sp_slot_id
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+case synth-tail-wrapper-abort
+source tests/integration/synth_tail_wrapper_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_tail_wrapper_abort_sp_slot_id
+not-match ^[[:space:]]+call _tl_synth_tail_wrapper_abort_sp_get_or$
+not-match ^[[:space:]]+jmp _tl_synth_tail_wrapper_abort_sp_get_or$
+count >= 1 ^[[:space:]]+call tl_oob_abort
+count = 3 ^[[:space:]]+call tl_oob_abort_at$
+count = 0 ^[[:space:]]+call tl_oob_abort$
+in asm
+count >= 3 ^\.L_tl_abort_site_[0-9]+_bounds:$
+in fn _tl_synth_tail_wrapper_abort_sp_slot_id
+count = 9 ^[[:space:]]+cmpq[ ]
+count = 3 ^[[:space:]]+jae [.A-Za-z0-9_]+\.cold$
+count = 0 ^[[:space:]]+jb[ ]
+metric abort-staging-push-from-memory = 0
+
+case synth-struct-accessor
+source tests/integration/synth_struct_accessor.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_struct_accessor_sa_value
+not-match ^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$
+count >= 1 ^[[:space:]]+call tl_oob_abort
+in asm
+match ^_tl_synth_struct_accessor_sa_lookup_in:$
+count = 1 ^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$
+
+case synth-struct-accessor-abort
+source tests/integration/synth_struct_accessor_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_struct_accessor_abort_sa_value
+not-match ^[[:space:]]+call _tl_synth_struct_accessor_abort_sa_lookup_in$
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+# Checked match-arm wrappers, post-multi-call lookups and dispatch arms inline
+# their checked callee while it stays reachable elsewhere.
+case checked-arm-wrapper
+source tests/integration/checked_arm_wrapper.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_arm_wrapper_aw_slot_id
+not-match ^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$
+not-match ^[[:space:]]+jmp _tl_checked_arm_wrapper_aw_get_or$
+match 2654435761
+not-match ^[[:space:]]+call _tl_checked_arm_wrapper_aw_probe$
+in asm
+match ^_tl_checked_arm_wrapper_aw_get_or:$
+count = 1 ^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$
+in fn _tl_checked_arm_wrapper_aw_slot_id
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+case checked-arm-wrapper-abort
+source tests/integration/checked_arm_wrapper_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_arm_wrapper_abort_aw_slot_id
+not-match ^[[:space:]]+call _tl_checked_arm_wrapper_abort_aw_get_or$
+not-match ^[[:space:]]+jmp _tl_checked_arm_wrapper_abort_aw_get_or$
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+case checked-post-multi-call
+source tests/integration/checked_post_multi_call.tl
+target linux-x86_64 windows-x86_64
+match ^_tl_checked_post_multi_call_pm_lookup:$
+in fn _tl_checked_post_multi_call_pm_lookup
+not-match ^[[:space:]]+call _tl_checked_post_multi_call_pm_probe$
+not-match ^[[:space:]]+jmp _tl_checked_post_multi_call_pm_probe$
+match 2654435761
+in asm
+match ^_tl_checked_post_multi_call_pm_probe:$
+in fn _tl_checked_post_multi_call_pm_lookup
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+case checked-post-multi-call-abort
+source tests/integration/checked_post_multi_call_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_post_multi_call_abort_pm_lookup
+not-match ^[[:space:]]+call _tl_checked_post_multi_call_abort_pm_probe$
+count >= 1 ^[[:space:]]+call tl_oob_abort
+
+case checked-dispatch-arm
+source tests/integration/checked_dispatch_arm.tl
+target linux-x86_64 windows-x86_64
+match ^_tl_checked_dispatch_arm_da_dispatch:$
+in fn _tl_checked_dispatch_arm_da_dispatch
+not-match ^[[:space:]]+call _tl_checked_dispatch_arm_da_fold$
+not-match ^[[:space:]]+jmp _tl_checked_dispatch_arm_da_fold$
+count >= 8 ^[[:space:]]+call tl_oob_abort_at
+in asm
+match ^_tl_checked_dispatch_arm_da_fold:$
+
+case checked-dispatch-arm-abort
+source tests/integration/checked_dispatch_arm_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_dispatch_arm_abort_da_dispatch
+not-match ^[[:space:]]+call _tl_checked_dispatch_arm_abort_da_fold$
+count >= 8 ^[[:space:]]+call tl_oob_abort_at
+
+# A constant index's bounds check compares an immediate.
+case const-index-bounds
+source tests/integration/const_index_bounds.tl
+in fn _tl_const_index_bounds_get2
+contains cmpq $2, %rax
+not-match ^[[:space:]]+mov[lq][[:space:]]+\$2,
+contains call tl_oob_abort
+
+# %rbp is the sixth callee-saved register, used as a value (never a frame base).
+case rbp-sixth-csr
+source tests/integration/rbp_sixth_csr.tl
+in fn _tl_rbp_sixth_csr_churn6
+contains pushq %rbp
+contains popq %rbp
+match ^[[:space:]]+leaq 31\(,%rbp,1\), %r[a-z0-9]+$
+not-contains leaq 31(%rsp)
+not-match \(%rbp\)
+
+# ...and the eighth on Win64, with SEH unwind info but no frame pointer.
+case win64-rbp-eighth-csr
+source tests/integration/win64_rbp_eighth_csr.tl
+target windows-x86_64
+in fn _tl_win64_rbp_eighth_csr_churn8
+contains pushq %rbp
+contains .seh_pushreg %rbp
+match \.seh_stackalloc[ ]
+contains .seh_endprologue
+contains popq %rbp
+not-contains .seh_setframe
+not-contains movq %rsp, %rbp
+not-match \(%rbp\)
+
+# LICM hoists the array descriptor loads out of the loop.
+case licm-desc-hoist
+source tests/integration/licm_desc_hoist.tl
+in fn _tl_licm_desc_hoist_sum_loop
+count = 1 ^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
+contains call tl_oob_abort
+
+# A global cell read across a memory-clean call is promoted to a register;
+# under register pressure, or with a writing callee, it is not.
+case licm-memclean-promote
+source tests/integration/licm_memclean_global_promote.tl
+in fn _tl_licm_memclean_global_promote_promoted_scan
+count-fixed = 1 _tl_licm_memclean_global_promote_gcell_a(%rip)
+contains call _tl_licm_memclean_global_promote_mix
+in fn _tl_licm_memclean_global_promote_pressured_scan
+count-fixed = 2 _tl_licm_memclean_global_promote_gcell_b(%rip)
+contains call _tl_licm_memclean_global_promote_mix
+in fn _tl_licm_memclean_global_promote_writer_scan
+count-fixed = 2 _tl_licm_memclean_global_promote_gcell_c(%rip)
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, _tl_licm_memclean_global_promote_gcell_c\(%rip\)$
+contains call _tl_licm_memclean_global_promote_mix_writing
+
+# A global cell written by a callee is re-read after each call.
+case global-cell-writer-loop-reads
+source tests/integration/global_cell_writer_loop_reads.tl
+in fn _tl_global_cell_writer_loop_reads_bumped_records
+contains call _tl_global_cell_writer_loop_reads_bump_cursor
+count = 2 ^[[:space:]]+movq _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+[a-z]+ _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
+
+# A 24-byte group copy moves straight from source to destination registers.
+case group-copy-direct
+source tests/integration/group_copy_direct.tl
+in fn _tl_group_copy_direct_wrap
+capture xmm ^[[:space:]]*movups[[:space:]]+\(%rdi\),[[:space:]]+(%xmm([0-9]|1[0-5]))([[:space:]].*)?$
+contains movups {{xmm}}, 8(%rdx)
+capture gp ^[[:space:]]*movq[[:space:]]+16\(%rdi\),[[:space:]]+(%r[a-z0-9]+)([[:space:]].*)?$
+contains movq {{gp}}, 24(%rdx)
+not-match ^[[:space:]]+movq %r(di|dx), %r(9|10|11)$
+
+# A dead call result is not stored.
+case dead-result-store
+source tests/integration/dead_result_store.tl
+in fn main
+contains call _tl_dead_result_store_poke
+not-match ^[[:space:]]+movq %rax, -?[0-9]+\(%rsp\)$
+not-match ^[[:space:]]+movq %rax, -?[0-9]+\(%rbp\)$
+
+# A parameter live across calls is homed in a callee-saved register, not a slot.
+case param-csr-home
+source tests/integration/param_csr_home.tl
+in fn _tl_param_csr_home_param_loop
+contains call _tl_param_csr_home_bump
+match ^[[:space:]]+movq %rsi, %r(12|13|14|15|bx|bp)$
+not-match \(%rsp\)|\(%rbp\)
+
+# ...a handle argument too, and neither it nor %rdi is reloaded from a slot.
+case handle-arg-csr
+source tests/integration/handle_arg_csr.tl
+in fn _tl_handle_arg_csr_sum_args
+contains call _tl_handle_arg_csr_probe
+match ^[[:space:]]+movq %rdi, %r(12|13|14|15|bx|bp)$
+capture home ^[[:space:]]*movq %rdi, %(r1[2-5]|rbx|rbp)$
+not-match ^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %{{home}}$
+not-match ^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %rdi$
+
+# A shift-count parameter pinned to %rcx needs no callee-saved save or slot.
+case shift-pin
+source tests/integration/param_shift_pin.tl
+in fn _tl_param_shift_pin_shift_mix
+contains shlq $2
+not-match ^[[:space:]]+pushq %r(12|13|14|15|bx|bp)$
+not-match ^[[:space:]]+popq %r(12|13|14|15|bx|bp)$
+not-match \(%rsp\)|\(%rbp\)
+
+# hashmap_get's get-value-or leaf inlines into main using caller-saved registers.
+case hashmap-get-leaf-caller-saved
+source benchmarks/hashmap_get/bench.tl
+not-contains _tl_bench_stdlib_hashmap_generated_i64_i64_get_value_or
+in fn main
+count = 2 ^[[:space:]]+leaq \(%r8,
+not-contains call _tl_bench_stdlib_hashmap_generated_i64_i64_get_value_or
+
+# Updating an occupied hashmap slot writes only its value word, at the slot's
+# scaled address, without cloning the key.
+case hashmap-slot-value-update
+source tests/integration/hashmap_slot_update_shape.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_i64_i64_set_occupied_value_bang
+count = 1 ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+contains cmpq $2, (%rax)
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$
+not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$
+in fn _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_String_i64_set_occupied_value_bang
+contains shlq $5
+contains cmpq $2, (%rax)
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$
+not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$
+not-contains string_copy
+
+# Parameter pin intervals end at the last use, so neither function spills.
+case param-pin-interval
+source tests/integration/param_pin_interval.tl
+in fn _tl_param_pin_interval_dead_early
+contains call _tl_param_pin_interval_bump
+not-match \(%rsp\)|\(%rbp\)
+in fn _tl_param_pin_interval_div_arm
+contains cqto
+contains idivq
+not-match \(%rsp\)|\(%rbp\)
+
+# Frame slots are repacked: at most one stack allocation of at most 24 bytes,
+# identical on both targets.
+case frame-slot-repacking-linux
+source tests/integration/early_return.tl
+in fn _tl_early_return_choose
+count <= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+metric frame-size <= 24
+
+case frame-slot-repacking-windows
+source tests/integration/early_return.tl
+target windows-x86_64
+in fn _tl_early_return_choose
+count <= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+metric frame-size <= 24
+check same-metric {{work}}/frame-slot-repacking-linux/linux-x86_64-o2/out.s _tl_early_return_choose stack-frame
+
+# string.append addresses its destination with one scaled lea, no add.
+case gep-value-direct
+source tests/integration/gep_value_direct.tl
+capture append ^(_tl_.*stdlib_string_append):$
+in fn {{append}}
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %rdi$
+not-match ^[[:space:]]+addq .*%rdi$
+count-fixed = 2 call tl_memcpy
+
+# 32-byte element copies use SIB-addressed movups chunks: no address lea and
+# no staged frame address; constant indexes fold into the displacement.
+case gep-copy-sib
+source tests/integration/gep_copy_sib_shape.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_gep_copy_sib_shape_take
+contains shlq $5
+count = 2 ^[[:space:]]+movups (16)?\(%r[a-z0-9]+,%r[a-z0-9]+,1\), %xmm[0-9]+$
+not-match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+not-match ^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$
+in fn _tl_gep_copy_sib_shape_put
+contains shlq $5
+count = 2 ^[[:space:]]+movups %xmm[0-9]+, (16)?\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$
+not-match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+not-match ^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$
+in fn _tl_gep_copy_sib_shape_take_const
+count = 2 ^[[:space:]]+movups (96|112)\(%r[a-z0-9]+\), %xmm[0-9]+$
+not-match ^[[:space:]]+leaq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$
+
+# A widening cast of a loaded byte folds into the load; a stored byte refuses.
+case load-widen-cast-fold
+source tests/integration/load_widen_cast_fold.tl
+in fn _tl_load_widen_cast_fold_classify
+count = 1 ^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movzbq %[a-z0-9]+l, %r
+in fn _tl_load_widen_cast_fold_refused
+match ^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+match movb[ ]
+
+# Single-bit and matching-mask tests become `test` + the right jcc sense;
+# multi-bit, mismatched, ordered and dynamic masks keep and/cmp.
+case mask-test-admission
+source tests/integration/bit_test_mask_admission.tl
+in fn _tl_bit_test_mask_admission_parity_set
+count = 1 ^[[:space:]]+testq [$]1, %r[a-z0-9]+$
+after ^[[:space:]]+testq [$]1, %r[a-z0-9]+$
+next-line ^[[:space:]]+je[ ]
+not-match ^[[:space:]]+andq [$]1, %r
+not-match ^[[:space:]]+cmpq [$]1, %r
+in fn _tl_bit_test_mask_admission_bit3_clear
+count = 1 ^[[:space:]]+testq [$]8, %r[a-z0-9]+$
+after ^[[:space:]]+testq [$]8, %r[a-z0-9]+$
+next-line ^[[:space:]]+jne[ ]
+not-match ^[[:space:]]+andq [$]8, %r
+in fn _tl_bit_test_mask_admission_pair_both_set
+match ^[[:space:]]+andq [$]3, %r
+match ^[[:space:]]+cmpq [$]3, %r
+not-match ^[[:space:]]+testq [$]3, %r
+in fn _tl_bit_test_mask_admission_mismatched_const
+match ^[[:space:]]+andq [$]4, %r
+match ^[[:space:]]+cmpq [$]1, %r
+not-match ^[[:space:]]+testq [$]4, %r
+in fn _tl_bit_test_mask_admission_mask_le
+match ^[[:space:]]+andq [$]1, %r
+match ^[[:space:]]+cmpq [$]1, %r
+in fn _tl_bit_test_mask_admission_dynamic_mask
+match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_bit_test_mask_admission_bit63_set
+match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$
+match ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
+
+# sqrt lowers to sqrtsd/sqrtss with no call and no private helper.
+case stdlib-math-sqrt
+source tests/integration/stdlib_math_ieee.tl
+target linux-x86_64 windows-x86_64
+in fn tl_test_math_sqrt_f64
+contains sqrtsd
+not-match ^[[:space:]]+call[ ]
+in fn tl_test_math_sqrt_f32
+contains sqrtss
+not-match ^[[:space:]]+call[ ]
+in asm
+not-contains __tl_float_sqrt
+
+# Inlined allocation sites get unique labels: the whole backend test driver
+# links as one opt2 executable.
+case inline-alloc-unique-labels-link
+source src/compiler_backend_tests.tl
+do build
+exit 0
+
+# A spilled gep load folds into its compare instead of a store/reload pair.
+case gep-load-cmp-spilled-stage
+source tests/integration/gep_load_cmp_spilled_stage.tl
+in fn _tl_gep_load_cmp_spilled_stage_changed_question
+count >= 4 ^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+metric store-then-cmp-same-slot = 0
+in fn _tl_gep_load_cmp_spilled_stage_refused
+count = 0 ^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+match ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+
+# A signed range check with a non-negative lower bound merges into one
+# unsigned compare; a paired or global window keeps the right shape.
+case range-merge-unsigned
+source tests/integration/range_merge_unsigned.tl
+in fn _tl_range_merge_unsigned_literal_window
+match ^[[:space:]]+cmpq \$16, %r[a-z0-9]+$
+match ^[[:space:]]+jae[ ]
+not-match ^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$
+not-match ^[[:space:]]+j(l|ge)[ ]
+in fn _tl_range_merge_unsigned_paired_window
+count = 1 ^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$
+count = 1 ^[[:space:]]+jae[ ]
+count = 2 ^[[:space:]]+j(l|ge)[ ]
+count = 2 ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_range_merge_unsigned_global_window
+match ^[[:space:]]+cmpq _tl_range_merge_unsigned_rm_len\(%rip\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+jae[ ]
+not-match ^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$
+not-match ^[[:space:]]+j(l|ge)[ ]
+
+# DCE-2: no branch on a literal and no dead literal move reaches the backend.
+case dce-late-flag-loop
+source tests/integration/dce_late_flag_loop.tl
+in fn main
+metric literal-then-test = 0
+metric literal-then-redef = 0
+not-match ^[[:space:]]+movq \$-1, %[a-z0-9]+$
+
+case dce-late-flag-loop-win64
+source tests/integration/dce_late_flag_loop.tl
+target windows-x86_64
+in fn main
+narrow seh-endproc
+metric literal-then-test = 0
+metric literal-then-redef = 0
+not-match ^[[:space:]]+movq \$-1, %[a-z0-9]+$
+
+# Backend jump forwarding retargets branches into jmp-only blocks, never
+# through a self-loop, and leaves no fallthrough jmp.
+case jump-only-forward
+source tests/integration/jump_only_forward.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_jump_only_forward_forward_probe
+metric jumps-into-jump-only-blocks = 0
+metric fallthrough-jmps = 0
+in fn _tl_jump_only_forward_diamond_probe
+metric jumps-into-jump-only-blocks = 0
+metric fallthrough-jmps = 0
+in fn main
+metric jumps-into-jump-only-blocks = 0
+metric fallthrough-jmps = 0
+in fn _tl_jump_only_forward_forward_probe
+count >= 4 ^\.L[^ ]*_if_merge\.[0-9.]+:$
+count >= 4 ^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$
+metric backward-branches >= 1
+in fn _tl_jump_only_forward_diamond_probe
+count >= 3 ^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$
+in fn main
+metric self-loop-jmps >= 1
+
+# Selects read the compare's flags directly (cmov under its cmp, no setcc/
+# movzb/cmovne); gep indexes are not staged through copies; scaled leas.
+case select-flags-lea
+source tests/integration/select_flags_lea.tl
+in fn tl_sfl_min_scan
+count = 0 ^[[:space:]]+set[a-z]+[ ]
+count = 0 ^[[:space:]]+movzbq %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+cmovne[ ]
+count = 2 ^[[:space:]]+cmovl[ ]
+count = 2 ^[[:space:]]+cmov
+metric cmov-under-cmp = ok
+in fn tl_sfl_max_scan
+count = 0 ^[[:space:]]+set[a-z]+[ ]
+count = 0 ^[[:space:]]+movzbq %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+cmovne[ ]
+count = 2 ^[[:space:]]+cmovg[ ]
+count = 2 ^[[:space:]]+cmov
+metric cmov-under-cmp = ok
+in fn tl_sfl_umin_scan
+count = 0 ^[[:space:]]+set[a-z]+[ ]
+count = 0 ^[[:space:]]+movzbq %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+cmovne[ ]
+count = 2 ^[[:space:]]+cmovb[ ]
+count = 2 ^[[:space:]]+cmov
+metric cmov-under-cmp = ok
+in asm
+metric staged-index-copies = 0
+in fn tl_sfl_scales
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\),[ ]
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,4\),[ ]
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\),[ ]
+in fn tl_sfl_copy
+match ^[[:space:]]+addq %r[a-z0-9]+, %r[a-z0-9]+$
+
+# Read-modify-write of array words folds into memory-destination ALU ops;
+# shifted, reused, interposed and byte forms refuse.
+case mem-dest-rmw-fold
+source tests/integration/mem_dest_rmw_fold.tl
+in fn _tl_mem_dest_rmw_fold_merge_or
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_and
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_add
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_reg
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r
+in fn _tl_mem_dest_rmw_fold_merge_shifted
+count = 0 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 6 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_reused
+count = 0 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 6 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_interposed
+count = 0 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 6 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_bytes
+count = 0 ^[[:space:]]+(orq|orb) (%r[a-z0-9]+b?|%[a-d]l|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$
+match ^[[:space:]]+orb[ ]
+
+# The same kernels unroll: x4 word groups, x2 byte and mixed groups.
+case word-merge-unroll
+source tests/integration/mem_dest_rmw_fold.tl
+in fn _tl_mem_dest_rmw_fold_merge_or
+narrow unroll-body
+count = 4 ^[[:space:]]+orq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains addq $4,
+in fn _tl_mem_dest_rmw_fold_merge_bytes
+narrow unroll-body
+count = 2 ^[[:space:]]+orb[ ]
+contains addq $2,
+in fn _tl_mem_dest_rmw_fold_merge_mixed
+narrow unroll-body
+contains addq $2,
+count = 2 ^[[:space:]]+orq \$1, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+
+# A descending shift loop unrolls x4 with loads before stores (LSLSLSLS), one
+# latch, an adding guard and a scalar remainder.
+case descending-shift-unroll
+source tests/integration/unroll_descending_shift.tl
+in fn _tl_unroll_descending_shift_ud_shift_words_bang
+narrow unroll-body
+count = 4 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 4 ^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+contains addq $-4,
+count = 1 ^[[:space:]]+jge[ ]
+metric memory-order = LSLSLSLS
+in fn _tl_unroll_descending_shift_ud_shift_words_bang
+narrow labeled-block:__unroll_guard:
+match leaq 4\(%r
+not-match subq \$4,
+in fn _tl_unroll_descending_shift_ud_shift_words_bang
+contains subq $1,
+
+# Word copies become one call of the word-copy helper (after the checked
+# store); fixed counts pass the count; short or halfword copies refuse; byte
+# copies use the byte tier; the helper has a scalar and a wide arm.
+case copy-call-word
+source tests/integration/copy_call_word.tl
+in fn _tl_copy_call_word_copy_words
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_shift_up
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_shift_down
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_copy_fixed8
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains movl $8, %edx
+in fn _tl_copy_call_word_copy_fixed4
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_copy_fixed3
+not-contains call tl_mem_copy8_fwd
+not-contains call tl_mem_copy_fwd
+in fn _tl_copy_call_word_copy_halfwords
+not-contains call tl_mem_copy8_fwd
+not-contains call tl_mem_copy_fwd
+in fn _tl_copy_call_word_copy_bytes
+count-fixed = 1 call tl_mem_copy_fwd
+not-contains call tl_mem_copy8_fwd
+in asm
+contains .Ltl_mem_copy8_fwd_loop:
+match [ ]{4}rep movsq
+
+case copy-call-word-peephole
+source benchmarks/peephole_lines/bench.tl
+in fn _tl_bench_pl_run_chunk
+count-fixed = 2 call tl_mem_copy8_fwd
+count-fixed = 2 movl $25, %edx
+
+# Alias rows: a global read that overflows the alias table stays out of the
+# loop body, which still calls the predicate.
+case alias-row-overflow
+source tests/integration/alias_row_overflow.tl
+in fn _tl_alias_row_overflow_aro_scan
+count-fixed = 1 _tl_alias_row_overflow_aro_edge(%rip)
+count-fixed = 1 _tl_alias_row_overflow_aro_mark(%rip)
+narrow after:^\.L[A-Za-z0-9_.]*while_body\.1[A-Za-z0-9_.]*:$
+not-contains _tl_alias_row_overflow_aro_edge(%rip)
+not-contains _tl_alias_row_overflow_aro_mark(%rip)
+contains call _tl_alias_row_overflow_aro_marked_question
+
+# Typed-word alias analysis hoists the descriptor loads into the preheader.
+case alias-typed-word
+source tests/integration/alias_typed_word.tl
+in fn _tl_alias_typed_word_atw_scan_ints
+narrow block-after:^\.L[A-Za-z0-9_.]*while_header\.0__rotate_land:$
+count = 3 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
+in fn _tl_alias_typed_word_atw_scan_ints
+narrow after:^\.L[A-Za-z0-9_.]*while_body\.1:$
+count = 0 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains call tl_oob_abort_at
+
+# The versioned global shift loop's fast self-loop is check-free with a folded
+# +24 store and no global reload.
+case alias-global-shift
+source tests/integration/alias_global_shift.tl
+in fn main
+narrow fast-self-loop:, 24(
+not-contains _tl_alias_global_shift_al_vec(%rip)
+not-contains call tl_oob_abort
+count = 0 ^[[:space:]]+j(ae|b)[ ]
+count = 1 ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 24\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+leaq[ ]
+match ^[[:space:]]+subq \$1, %r[a-z0-9]+$
+
+# Value-tracked offsets and derived strides version their loops check-free.
+case vt-offset-copy
+source tests/integration/vt_offset_copy.tl
+in fn main
+narrow fast-region:,8), %r
+not-contains call tl_oob_abort
+count = 0 ^[[:space:]]+j(ae|b)[ ]
+count = 1 ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn main
+match ^[[:space:]]+subq %r[a-z0-9]+, %r[a-z0-9]+$
+
+case vt-derived-stride
+source tests/integration/vt_derived_stride.tl
+in fn main
+narrow fast-region:movq 8(%r
+not-contains call tl_oob_abort
+count = 0 ^[[:space:]]+j(ae|b)[ ]
+count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+match ^[[:space:]]+addq \$3, %r[a-z0-9]+$
+count = 0 ^[[:space:]]+addq \$1, %r[a-z0-9]+$

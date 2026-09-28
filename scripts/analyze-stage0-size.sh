@@ -365,8 +365,8 @@ expected_payload_streams=$(wc -l < "$payload_paths" | tr -d ' ')
 expected_lzss_streams=$(awk '/^\(include-str-lzss([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
 expected_tlch_streams=$(awk '/^\(include-bin([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
 
-# Recover each bounded static LZSS stream directly from the linked binary.
-# This keeps the report useful now that no base64/generated source exists.
+# Recover each bounded static LZSS stream directly from the linked binary;
+# there is no base64/generated source to read instead.
 set -- $(od -An -v -tu1 "$BINARY" | awk '
 BEGIN {
     split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 108 122 115 115 95 118 49 95 95", prefix)

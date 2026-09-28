@@ -7,11 +7,8 @@
 (import compiler_x64_executable_template_catalog as x64_catalog)
 
 (defmacro (compiler-backend-object-global-shared-view [place : Expr]) : Expr
-  (cfg
-    stage0-seed-bootstrap
-    place
-    `(unsafe
-      (ptr-read (ptr-addr-of ,place)))))
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
 
 (define (compiler-backend-object-registered-bytes
   [id : x64_template.CompilerX64ExecutableTemplateId]
@@ -601,8 +598,7 @@
     [with-converted-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-convert-branch
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view converted)))]
+        (cobj.CompilerObjectX64Instr.Label converted))]
     [with-create-args : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text-bytes
         with-converted-label
@@ -633,8 +629,7 @@
     [with-created-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-create-branch
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view created)))]
+        (cobj.CompilerObjectX64Instr.Label created))]
     [with-fiber-argument : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-created-label
@@ -656,8 +651,7 @@
     [with-failed-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-switch-failed
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view failed)))]
+        (cobj.CompilerObjectX64Instr.Label failed))]
     [with-stderr-args : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text-bytes
         with-failed-label
@@ -703,13 +697,12 @@
     [with-failure-exit : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-exit-args
-        (owned_view.compiler-owned-shared-view entry)
+        entry
         "ExitProcess")]
     [with-entry-end : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-failure-exit
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view entry-end)))]
+        (cobj.CompilerObjectX64Instr.Label entry-end))]
     [with-fiber-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-entry-end
@@ -754,13 +747,12 @@
     [with-exit-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-move-exit-code
-        (owned_view.compiler-owned-shared-view fiber)
+        fiber
         "ExitProcess")]
     [with-fiber-end : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-exit-call
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view fiber-end)))]
+        (cobj.CompilerObjectX64Instr.Label fiber-end))]
     [with-overflow-filter-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-fiber-end
@@ -783,8 +775,7 @@
     [with-overflow-write-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-overflow-filter-branch
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view overflow-write)))]
+        (cobj.CompilerObjectX64Instr.Label overflow-write))]
     [with-overflow-stderr-args : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text-bytes
         with-overflow-write-label
@@ -830,21 +821,19 @@
     [with-overflow-exit : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-overflow-exit-args
-        (owned_view.compiler-owned-shared-view overflow-filter)
+        overflow-filter
         "ExitProcess")]
     [with-overflow-continue-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-overflow-exit
-        (cobj.CompilerObjectX64Instr.Label
-          (owned_view.compiler-owned-shared-view overflow-continue)))]
+        (cobj.CompilerObjectX64Instr.Label overflow-continue))]
     [with-overflow-return : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text-bytes
         with-overflow-continue-label
         (compiler-backend-object-overflow-filter-return-bytes))]
     (object_target.compiler-backend-object-add-text
       with-overflow-return
-      (cobj.CompilerObjectX64Instr.Label
-        (owned_view.compiler-owned-shared-view overflow-filter-end)))))
+      (cobj.CompilerObjectX64Instr.Label overflow-filter-end))))
 
 (define (compiler-backend-object-add-entry-unwind
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts

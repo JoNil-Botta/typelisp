@@ -1,7 +1,7 @@
 # run-bounded-process.ps1 - run a command under a hard Windows Job Object cap.
 #
 # The command is created suspended, assigned to the capped Job Object, and only
-# then resumed. This closes the old start/assign race: no child code can run
+# then resumed. This closes the start/assign race: no child code can run
 # unbounded when Job Object setup or assignment fails. The job is configured to
 # kill the complete process tree if this wrapper exits.
 #

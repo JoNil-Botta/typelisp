@@ -1,7 +1,7 @@
 (import stdlib.io)
 
 ;; FORCING TEST for T1-6 (a) (System V red-zone leaf frames), pinned by
-;; scripts/verify-asm-shape-gates.sh:check_red_zone_leaf. Four shapes:
+;; tests/codegen/asm-shape.cases case red-zone-leaf. Four shapes:
 ;;
 ;;   rzl-slots  -- a call-free leaf under enough register pressure to keep
 ;;                 several values in FRAME SLOTS, with a frame inside the

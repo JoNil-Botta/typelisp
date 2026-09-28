@@ -15,9 +15,9 @@ the precise model.
 `String` values are immutable at the source level; borrowing a `String`
 place produces a borrowed `(& lifetime str)` view, and typed calls
 auto-borrow borrowable places for immutable reference parameters.
-`substring`/`string-slice` return fresh owned copies;
-`substring-view`/`string-slice-view` return bounds-checked borrowed slices
-without copying. Mutable binary storage is the owned `ByteBuf` plus
+`string.substring`/`string.slice` return fresh owned copies;
+`string.substring-view`/`string.slice-view` return bounds-checked borrowed
+slices without copying. Mutable binary storage is the owned `ByteBuf` plus
 `(& lifetime bytes)` / `(&mut lifetime bytes)` borrowed views; conversions
 between text, arrays, and byte buffers are explicit copy or borrow
 boundaries.

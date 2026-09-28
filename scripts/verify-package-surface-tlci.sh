@@ -14,16 +14,10 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
-# Target-conditioned prefix declarations change the skip totals. The explicit
-# compiler-owned-view import from the by-value ownership cutover contributes
-# one declaration on both hosts. Explicit clone generation contributes seven
-# public declaration macros. Test declaration metadata contributes two more
-# source-visible declarations. Windows builds dependency nodes serially in one
-# process, which still changes prefix skip totals. All three library nodes are
-# dependency-free, however, so forced-source fallback happens only for the
-# root consumer on both hosts. Removing the generic shared-view bridge
-# subtracts one prelude declaration from both trusted and failure totals.
-# The checked C function-pointer null abort adds one runtime declaration.
+# Target-conditioned prefix declarations change the skip totals. Windows builds
+# dependency nodes serially in one process, which still changes prefix skip
+# totals. All three library nodes are dependency-free, however, so
+# forced-source fallback happens only for the root consumer on both hosts.
 case "$NL_HOST_OS" in
     windows)
         TRUSTED_PREFIX_SKIPPED=229
@@ -63,10 +57,8 @@ RIGHT_TLCI="$RIGHT/target/release/surface_right.tlci"
 NATIVE_ASM="$WORKDIR/surface_consumer.native.s"
 SUCCESS_SOURCE="$WORKDIR/surface_consumer.success.tl"
 
-fail() {
-    echo "[package-surface-tlci] $*" >&2
-    exit 1
-}
+GATE_FAIL_PREFIX='[package-surface-tlci] '
+. "$ROOT/scripts/lib-gate.sh"
 
 profile_sum() {
     phase=$1
@@ -477,9 +469,8 @@ fi
 assert_catalog_state trusted "$WORKDIR/native.err" 0 3
 assert_surface_route trusted "$WORKDIR/native.err" 1 3 0 \
     "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED" 21
-# The runtime is prepared once, including its side assembly. The prior second
-# lowering duplicated these dispatches and catalog hits. One preparation has
-# nine catalog lookups, eight native dispatches (including the first shell
+# The runtime is prepared once, including its side assembly. One preparation
+# has nine catalog lookups, eight native dispatches (including the first shell
 # probe), and two interpreted shell calls with one learned-cache hit. Exact
 # per-macro rows and native/source artifact/diagnostic parity remain checked.
 assert_profile_eq dependency_tlci_catalog_hits 9 "$WORKDIR/native.err"

@@ -65,7 +65,7 @@
 #define SCCP_CLASS_CHAR 3
 #define SCCP_CLASS_BOOL 4
 
-/* Pre-interned type ids (see tools/export_sccp_tape.py). */
+/* Pre-interned type ids (assigned by the corpus exporter; see README.md). */
 #define SCCP_TY_I64 0
 #define SCCP_TY_BOOL 1
 #define SCCP_TY_CHAR 2

@@ -6,11 +6,7 @@ set -eu
 #
 # Help text and the option parser live in different files -- the text in
 # `src/main.tl`, the parsing in `src/<name>_cli_core.tl` -- so a flag can be
-# added, or a feature landed, without the text moving. That has now happened
-# three times: #5160 landed the REPL's `.load` without updating `src/main.tl`,
-# and #5692 found `typelisp test` documenting `--batch` as `--check`-only while
-# `scripts/verify-inline-tests.sh` depended on the undocumented run mode, plus
-# `--backend-mode` missing entirely.
+# added, or a feature landed, without the text moving.
 #
 # The existing CLI gates cannot catch this. `verify-public-tools.sh` asserts
 # that help output *exists* and contains `Usage:`/`Summary:`; nothing compares
@@ -47,9 +43,11 @@ repl repl
 run run
 test test'
 
-# Print every "--flag" literal a parser source mentions, one per line.
+# Print every --flag a parser source's code mentions, one per line: quoted
+# literals, and the entries of its cli_option spec tables (strings such as
+# "--debug|-g|--backtrace --target <target>"). Comment lines are skipped.
 parsed_flags() {
-    grep -o '"--[a-z][a-z0-9-]*"' "$1" 2>/dev/null | tr -d '"' | sort -u
+    grep -v '^[[:space:]]*;' "$1" 2>/dev/null | grep -o '[" |]--[a-z][a-z0-9-]*' | cut -c2- | sort -u
 }
 
 # Print the help block body for cli-<name>-help-text out of a main.tl-shaped
@@ -103,8 +101,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
     rm -rf "$WORKDIR"
     mkdir -p "$WORKDIR"
     # An undocumented, unlisted flag must fail. Drop --backend-mode from the
-    # test help block while the parser keeps accepting it: exactly the #5692
-    # shape.
+    # test help block while the parser keeps accepting it.
     BAD="$WORKDIR/main-missing-flag.tl"
     awk '
         $0 == "(define (cli-test-help-text) : String" { inside = 1 }

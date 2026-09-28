@@ -2,7 +2,6 @@
 ;; assembly. This is a cheap side-artifact path for direct object emission: it
 ;; preserves the already-selected instruction bytes and relocatable operations
 ;; without running lowering, optimization, or instruction selection again.
-(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
@@ -262,9 +261,7 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [instrs : cobj.CompilerObjectX64InstrList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-instr-list-count
-        (owned_view.compiler-owned-shared-view instrs))]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -274,9 +271,7 @@
             ok
             (compiler-object-asm-render-instr!
               out
-              (cobj.compiler-object-instr-list-ref
-                (owned_view.compiler-owned-shared-view instrs)
-                index)))
+              (cobj.compiler-object-instr-list-ref instrs index)))
           (set! index (+ index 1))))
       ok)))
 
@@ -332,18 +327,14 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [records : cobj.CompilerObjectDataRecordList]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-data-record-list-count
-        (owned_view.compiler-owned-shared-view records))]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (compiler-object-asm-render-data-record!
             out
-            (cobj.compiler-object-data-record-list-ref
-              (owned_view.compiler-owned-shared-view records)
-              index))
+            (cobj.compiler-object-data-record-list-ref records index))
           (set! index (+ index 1))))
       unit)))
 
@@ -366,16 +357,12 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [symbols : cobj.CompilerObjectSymbolList]) : unit
   (let
-    [count : i64
-      (cobj.compiler-object-symbol-list-count
-        (owned_view.compiler-owned-shared-view symbols))]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (cobj.compiler-object-symbol-list-ref
-            (owned_view.compiler-owned-shared-view symbols)
-            index)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
             [(cobj.CompilerObjectSymbol.Symbol name binding _ _)
               (match binding
                 [(cobj.CompilerObjectSymbolBinding.Export)
@@ -391,17 +378,13 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [sections : cobj.CompilerObjectSectionList]) : bool
   (let
-    [count : i64
-      (cobj.compiler-object-section-list-count
-        (owned_view.compiler-owned-shared-view sections))]
+    [count : i64 (cobj.compiler-object-section-list-count sections)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
         (begin
-          (match (cobj.compiler-object-section-list-ref
-            (owned_view.compiler-owned-shared-view sections)
-            index)
+          (match (cobj.compiler-object-section-list-ref sections index)
             [(cobj.CompilerObjectSection.Section kind records instrs)
               (begin
                 (compiler-object-asm-append!

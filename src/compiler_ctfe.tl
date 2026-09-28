@@ -2869,14 +2869,18 @@
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  "comptime: non-finite f64 literal is not supported"))))]
+                  (cdiag.compiler-diagnostic-typecheck-tagged
+                    (cdiag.CompilerTypecheckKind.TypeMismatch)
+                    "comptime: non-finite f64 literal is not supported")))))]
         [(CompilerFloatNoF64)
           (if (cfloat.compiler-float-decimal-syntax? text)
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  "comptime: non-finite f64 literal is not supported")))
+                  (cdiag.compiler-diagnostic-typecheck-tagged
+                    (cdiag.CompilerTypecheckKind.TypeMismatch)
+                    "comptime: non-finite f64 literal is not supported"))))
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))))])]
@@ -2941,7 +2945,9 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          "comptime: non-finite f64 result is not supported")))))
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.TypeMismatch)
+            "comptime: non-finite f64 result is not supported"))))))
 
 (define (ctfe-f32-result [value : f64] [expr : ast.AstExpr] [fuel : i64]) : ResultCtfe
   (let
@@ -2952,7 +2958,9 @@
         (box
           (ctfe-diagnostic-at-expr
             expr
-            "comptime: non-finite f32 result is not supported"))))))
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (cdiag.CompilerTypecheckKind.TypeMismatch)
+              "comptime: non-finite f32 result is not supported")))))))
 
 ;; Finite f64 arithmetic and comparisons. Non-finite results are rejected until
 ;; TypeLisp specifies NaN payload and infinity serialization across backends.
@@ -4987,7 +4995,12 @@
               (ctfe-diagnostic-at-expr expr "offset-of expects a field name")))])]
     [_
       (ResultCtfe.Err
-        (box (ctfe-diagnostic-at-expr expr "offset-of expects a type argument")))]))
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (cdiag.CompilerTypecheckKind.ArityMismatch)
+              "offset-of expects a type argument"))))]))
 
 (define (ctfe-eval-offset-query
   [args : ast.AstExprList]
@@ -5006,7 +5019,9 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          "offset-of expects exactly one type argument and one field name")))))
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "offset-of expects exactly one type argument and one field name"))))))
 
 (define (ctfe-reflection-requires [name : String] [kind : String]) : CtfeBuilt
   (CtfeBuilt.Err (str_cat.str-cat name " requires " kind)))
@@ -5700,7 +5715,11 @@
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
       (box
-        (ctfe-diagnostic-at-expr expr "comptime-error expects exactly one arg")))))
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "comptime-error expects exactly one arg"))))))
 
 (define (ctfe-eval-expr-bool-call
   [args : ast.AstExprList]
@@ -5725,7 +5744,12 @@
                 (box (ctfe-diagnostic-at-expr expr "expr-bool expects bool")))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-bool expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-bool expects exactly one arg"))))))
 
 (define (ctfe-eval-expr-splice-call
   [args : ast.AstExprList]
@@ -5749,7 +5773,12 @@
                 (box (ctfe-diagnostic-at-expr expr "expr-splice expects Expr")))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-splice expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-splice expects exactly one arg"))))))
 
 ;; `(expr-int n)` builds an i64 literal Expr from a comptime integer, letting a
 ;; macro splice a computed count or index as a literal (unquote requires an Expr,
@@ -5777,7 +5806,12 @@
                 (box (ctfe-diagnostic-at-expr expr "expr-int expects i64")))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-int expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-int expects exactly one arg"))))))
 
 ;; `(expr-string text)` builds a String literal Expr from a comptime string.
 (define (ctfe-eval-expr-string-call
@@ -5804,7 +5838,12 @@
                   (ctfe-diagnostic-at-expr expr "expr-string expects String")))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-string expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-string expects exactly one arg"))))))
 
 ;; Compiler-build-only LZSS compression for explicit embedded stdlib inputs.
 ;; The loader performs this transform at the declaration boundary so macro
@@ -6139,7 +6178,9 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          "expr-binary-data expects exactly one arg")))))
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-binary-data expects exactly one arg"))))))
 
 ;; String-literal inspection intentionally uses helpers instead of growing the
 ;; verified public `Expr` enum. This keeps older stage0 compilers able to read
@@ -6197,7 +6238,9 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          "expr-string inspector expects exactly one arg")))))
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-string inspector expects exactly one arg"))))))
 
 ;; `(expr-var name)` builds a variable-reference Expr from a comptime string.
 (define (ctfe-eval-expr-var-call
@@ -6223,7 +6266,12 @@
                 (box (ctfe-diagnostic-at-expr expr "expr-var expects String")))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-var expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-var expects exactly one arg"))))))
 
 (define (ctfe-eval-module-name-call
   [args : ast.AstExprList]
@@ -6238,7 +6286,12 @@
           (ResultCtfe.Ok (CompilerCtfeValue.String module module-id) next-fuel)]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "module-name expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "module-name expects exactly one arg"))))))
 
 (define (ctfe-eval-module-export-macro-call
   [args : ast.AstExprList]
@@ -7219,7 +7272,12 @@
                   (box (ctfe-diagnostic-at-expr expr "expr-type expects Expr")))]))]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-type expects exactly one arg"))))))
 
 ;; Convert one already-resolved reflected type value back into opaque type-
 ;; literal syntax. The new expression and its type node are allocated together
@@ -7255,13 +7313,17 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
-                    "type-expr expects a type argument")))])]
+                    (cdiag.compiler-diagnostic-typecheck-tagged
+                      (cdiag.CompilerTypecheckKind.ArityMismatch)
+                      "type-expr expects a type argument"))))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
-          "type-expr expects exactly one type argument")))))
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "type-expr expects exactly one type argument"))))))
 
 (define (ctfe-eval-expr-clause-list-inspector-call
   [name : String]
@@ -8217,7 +8279,11 @@
         [(ResultCtfeNameArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
       (box
-        (ctfe-diagnostic-at-expr expr "pattern-binding expects exactly one arg")))))
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "pattern-binding expects exactly one arg"))))))
 
 (define (ctfe-pattern-binding-type-value
   [value : CompilerCtfeValue]
@@ -8733,7 +8799,9 @@
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
-                                        "expr-resource-scope init, cleanup, and body expect Expr")))
+                                        (cdiag.compiler-diagnostic-typecheck-tagged
+                                          (cdiag.CompilerTypecheckKind.TypeMismatch)
+                                          "expr-resource-scope init, cleanup, and body expect Expr"))))
                                   (ResultCtfe.Ok
                                     (ctfe-syntax-expr-value
                                       env
@@ -9057,7 +9125,11 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-begin-unit expects exactly one arg")))))
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-begin-unit expects exactly one arg"))))))
 
 (define (ctfe-eval-expr-not-call
   [args : ast.AstExprList]
@@ -9085,7 +9157,12 @@
                 (box (ctfe-diagnostic-at-expr expr "expr-not expects Expr")))))]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
-      (box (ctfe-diagnostic-at-expr expr "expr-not expects exactly one arg")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "expr-not expects exactly one arg"))))))
 
 (define (ctfe-eval-expr-while-call
   [args : ast.AstExprList]
@@ -9154,7 +9231,9 @@
       (box
         (ctfe-diagnostic-at-expr
           expr
-          "syntax-name-fresh expects exactly one arg")))))
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "syntax-name-fresh expects exactly one arg"))))))
 
 (define (ctfe-direct-inspector-expr-result
   [node : i64]
@@ -10306,13 +10385,17 @@
                   (box
                     (ctfe-diagnostic-at-expr
                       origin
-                      "comptime replace! requires a mutable local let binding"))))]
+                      (cdiag.compiler-diagnostic-typecheck-tagged
+                        (cdiag.CompilerTypecheckKind.Place)
+                        "comptime replace! requires a mutable local let binding")))))]
             [(CtfeMaybeValue.None)
               (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     origin
-                    "comptime replace! requires a mutable local let binding")))])]
+                    (cdiag.compiler-diagnostic-typecheck-tagged
+                      (cdiag.CompilerTypecheckKind.Place)
+                      "comptime replace! requires a mutable local let binding"))))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
     [_
       (ResultCtfe.Err
@@ -11543,7 +11626,9 @@
                 (box
                   (ctfe-diagnostic-at-expr
                     origin
-                    "type unquote expects a type value")))])]
+                    (cdiag.compiler-diagnostic-typecheck-tagged
+                      (cdiag.CompilerTypecheckKind.TypeMismatch)
+                      "type unquote expects a type value"))))])]
         [(CtfeMaybeValue.None)
           (ResultCtfeQuoteType.Err
             (box
@@ -11556,7 +11641,9 @@
         (box
           (ctfe-diagnostic-at-expr
             origin
-            "type unquote expects exactly one type parameter"))))))
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (cdiag.CompilerTypecheckKind.ArityMismatch)
+              "type unquote expects exactly one type parameter")))))))
 
 (define (ctfe-quote-type-var [name : i64] [env : (& env CtfeEnv)] [fuel : i64]) : ResultCtfeQuoteType
   (match (ctfe-env-lookup-id env name)

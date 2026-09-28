@@ -506,6 +506,7 @@ tlci_identity_public_gaps|all|-|tests/integration/tlci_identity_public_gaps.tl|4
 tlci_native_computed_scrutinee|all|-|tests/integration/tlci_native_computed_scrutinee.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
 macro_import_order_json_first|all|-|tests/integration/macro_import_order_repro.tl|42|-|-|stdlib/json.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
 macro_import_order_format_first|all|-|tests/integration/macro_import_order_format_first.tl|42|-|-|stdlib/json.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
+macro_untaken_comptime_error|all|-|tests/integration/macro_untaken_comptime_error.tl|42|-|-|stdlib/comptime.tl|-
 stdlib_serialize|all|-|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl stdlib/option.tl stdlib/result.tl stdlib/serialize.tl stdlib/string.tl serialize_toy_format.tl serialize_enum_fixture.tl|-
 stdlib_byte_copy|all|-|tests/integration/stdlib_byte_copy.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/io.tl|-
 stdlib_text_buf|all|-|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl|-

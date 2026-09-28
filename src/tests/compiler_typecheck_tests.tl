@@ -6470,6 +6470,28 @@
 (define (main) : i64 0)"
       "typecheck: unquote-splicing expects ExprList: expected ExprList, found i64")))
 
+;; The definition-time body probe binds a `Var` per ordinary operand and an
+;; empty list per variadic, so it takes both error arms below. Only a call that
+;; takes one may report it, with the macro author's message.
+(define (compiler-typecheck-defmacro-probe-error-source
+  [int-operand : String]
+  [first-operands : String]) : String
+  (str_cat.str-cat
+    "(import stdlib.comptime)
+(defmacro (int-only [x : comptime.Expr]) : comptime.Expr
+  (match x
+    [(comptime.Expr.Var _) (comptime.comptime-error \"int-only: identifier\")]
+    [_ x]))
+(defmacro (first-of [xs : i64 ...]) : i64
+  (if (= (comptime.expr-list-length xs) 0)
+    (comptime.comptime-error \"first-of: no operand\")
+    (comptime.expr-list-nth xs 0)))
+(define (main) : i64 (+ (int-only "
+    int-operand
+    ") (first-of"
+    first-operands
+    ")))"))
+
 (define (compiler-typecheck-defmacro-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -6567,6 +6589,14 @@
       "(defmacro (bad [x : bool]) : bool (expr-bool? x))
 (define (main) : i64 0)"
       "typecheck: macro body must return Expr: expected Expr, found bool")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defmacro-probe-error-source "1" " 2 3"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-probe-error-source "main" " 2 3")
+      "int-only: identifier")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-probe-error-source "1" "")
+      "first-of: no operand")
     (compiler-typecheck-error-ok?
       "(defmacro (bad) : bool (unsafe (expr-bool true)))
 (define (main) : i64 0)"

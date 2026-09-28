@@ -83,9 +83,10 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   preservation of separate trailer field spelling/value/order.
 - `local_ipc_api.tl` is the conformance matrix for `stdlib.local_ipc`, driven
   by `stdlib.local_ipc_fake`: endpoint validation boundaries (including pipe
-  names Win32 would rewrite) and no dispatch for an invalid endpoint; connect
-  success with the exact name bytes, retry, timeout slices, cancellation
-  between attempts, cancel-over-timeout and expired-deadline precedence, clock
+  names Win32 would rewrite and non-canonical Unix paths) and no dispatch for
+  an invalid endpoint; connect success with the exact name bytes, retry,
+  timeout slices, a failed pause between attempts, cancellation between
+  attempts, cancel-over-timeout and expired-deadline precedence, clock
   unavailable, budget exhaustion, host failure, policy rejection, peer failure,
   corrupt peer facts and corrupt handles with exact close counts, and a name
   buffer handed back zeroed or empty; explicit close, close failure, double

@@ -88,7 +88,9 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+# The selection self-test runs as its own gate, so it keeps its own directory.
 WORKDIR="$ROOT/target/tl-format-check"
+[ "$SELF_TEST_CURRENT_COMPILER_MODE" -eq 0 ] || WORKDIR="$WORKDIR-self-test"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 

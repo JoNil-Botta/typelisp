@@ -838,8 +838,11 @@ single compiler build of the flow: the stage1->stage2->stage3 bootstrap
 fixpoint of `scripts/check-bootstrap-fixpoint.sh` over `src/main.tl`. Every
 remaining gate runs on that branch-built stage2 compiler after a fail-closed
 probe confirms it can compile, assemble, link, and run a native program on the
-host. Standalone `verify-*`/`check-*` runs also fetch the published stage0 when
-`TYPELISP_BIN` is unset; CI always passes it explicitly. The gate table and
+host. `--jobs N --memory-mib MIB` runs up to N gates at once, as hosted CI does
+with `--jobs 4 --memory-mib 14336`, within MIB of the gates' measured memory
+reservations. The largest single gate, the CLI smoke's root package build,
+peaks near 8 GiB. Standalone `verify-*`/`check-*` runs also fetch the published
+stage0 when `TYPELISP_BIN` is unset; CI always passes it explicitly. The gate table and
 the rules for adding a gate are in
 [`../scripts/README.md`](../scripts/README.md#what-is-a-ci-gate).
 
@@ -1286,8 +1289,9 @@ this backend before running the gates. Reports and command logs are retained in
 `target/build-invariance/backend-memory/` and uploaded by Linux CI; large
 assembly/executable outputs remain local.
 
-The four selfhost compiles run alone, before anything else, so concurrency
-never enters their timing rows. Every other chunk of both producers and the
+The four selfhost compiles run alone within the gate, before its pool starts;
+under `ci-verify.sh --jobs` other gates may run beside them, so their timing
+rows are evidence, not budgets. Every other chunk of both producers and the
 backend-tests build are jobs of one worker pool
 (`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 reproduces the serial
 order). Each pooled job runs through `scripts/run-memory-bounded.sh` with swap

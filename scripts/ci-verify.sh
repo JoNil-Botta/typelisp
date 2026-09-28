@@ -12,6 +12,10 @@ set -eu
 # --gates runs a dependency-closed subset of the same table: the named gates
 # plus every gate their needs reach, in table order. A subset is a partial
 # result, never a verification success.
+#
+# --jobs N runs up to N gates at once: a gate starts once every gate it needs
+# passed and while the memory reservations of the running gates fit
+# --memory-mib. One job, the default, runs the table in order.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -19,7 +23,7 @@ GATES_FILE="$ROOT/scripts/ci-gates.tsv"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/ci-verify.sh [--gates ID[,ID...]]
+usage: scripts/ci-verify.sh [--gates ID[,ID...]] [--jobs N --memory-mib MIB]
        scripts/ci-verify.sh --list-gates linux|windows [--gates ID[,ID...]]
 
 Runs the repository's CI verification gate: every gate of scripts/ci-gates.tsv
@@ -33,6 +37,12 @@ bootstrapped compiler.
 --gates runs only the named host gates plus the closure of their needs, in
 table order. Unless that closure is the whole host inventory the result is
 partial: no verification-complete timing row and no success message.
+
+--jobs N (1-16, default 1) runs up to N gates at once. A gate starts once every
+gate it needs passed and while the memory column of the running gates, plus
+its own, fits --memory-mib, which --jobs above 1 requires. Each gate's output is
+printed whole when it finishes. Every gate still runs, and the first failure
+stops further starts.
 
 --list-gates prints the host inventory, or with --gates the dependency-closed
 selection, without running CI.
@@ -54,8 +64,8 @@ EOF
 
 # ci_gates_plan HOST [ID,...]
 #   Validate the whole table, then print the HOST rows (id, hosts, label,
-#   needs projected onto HOST, compiler, command), or only the requested gates
-#   plus the closure of their needs, in table order.
+#   needs projected onto HOST, compiler, memory, locks, command), or only the
+#   requested gates plus the closure of their needs, in table order.
 ci_gates_plan() {
     awk -F '\t' -v host="$1" -v request="${2:-}" '
         function fail(message) {
@@ -66,18 +76,20 @@ ci_gates_plan() {
         { sub(/\r$/, "") }
         /^#/ { next }
         !header {
-            if ($0 != "id\thosts\tlabel\tneeds\tcompiler\tcommand")
-                fail("line " NR ": expected the id/hosts/label/needs/compiler/command header")
+            if ($0 != "id\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand")
+                fail("line " NR ": expected the id/hosts/label/needs/compiler/memory/locks/command header")
             header = 1
             next
         }
         {
-            if (NF != 6 || $1 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
-                fail("line " NR ": expected six fields and a lowercase kebab-case ID")
+            if (NF != 8 || $1 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
+                fail("line " NR ": expected eight fields and a lowercase kebab-case ID")
             if ($2 != "all" && $2 != "linux" && $2 != "windows") fail("line " NR ": invalid hosts: " $2)
             if ($3 == "") fail("line " NR ": empty label")
             if ($5 != "-" && $5 != "stage2" && $5 != "profile") fail("line " NR ": invalid compiler: " $5)
-            if ($6 == "") fail("line " NR ": empty command")
+            if ($6 !~ /^[1-9][0-9]*$/) fail("line " NR ": memory must be a positive MiB count: " $6)
+            if ($7 != "-" && $7 !~ /^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$/) fail("line " NR ": invalid locks: " $7)
+            if ($8 == "") fail("line " NR ": empty command")
             if ($1 in gate_hosts) fail("line " NR ": duplicate gate ID: " $1)
             gate_hosts[$1] = $2
             # A need names an earlier gate that runs wherever this one does,
@@ -99,11 +111,18 @@ ci_gates_plan() {
                     if (gate_hosts[need] != "all" && gate_hosts[need] != covered)
                         fail("line " NR ": " $1 " needs a gate that does not run on its hosts: " need)
                     if (need_host == "" || need_host == host) projected = (projected == "" ? need : projected "," need)
+                    if (need_host == "") direct[need] = 1
                 }
             }
+            # A gate receives a produced compiler only from a gate it needs.
+            if ($5 == "stage2" && !direct["bootstrap-fixpoint"])
+                fail("line " NR ": " $1 " runs the stage2 compiler without needing bootstrap-fixpoint")
+            if ($5 == "profile" && !direct["stage2-compile-profile-verifier"])
+                fail("line " NR ": " $1 " runs the profile compiler without needing stage2-compile-profile-verifier")
+            delete direct
             if ($2 != "all" && $2 != host) next
             rows++
-            row[rows] = $1 "\t" $2 "\t" $3 "\t" (projected == "" ? "-" : projected) "\t" $5 "\t" $6
+            row[rows] = $1 "\t" $2 "\t" $3 "\t" (projected == "" ? "-" : projected) "\t" $5 "\t" $6 "\t" $7 "\t" $8
             needs[rows] = projected
             position[$1] = rows
         }
@@ -140,7 +159,7 @@ ci_gates_plan() {
 # and the gate_* functions defined in this file.
 ci_gates_check_commands() {
     _ci_missing=0
-    for _ci_word in $(awk -F '\t' '!/^#/ && NF == 6 && $1 != "id" { print $6 }' "$GATES_FILE" |
+    for _ci_word in $(awk -F '\t' '!/^#/ && NF == 8 && $1 != "id" { print $8 }' "$GATES_FILE" |
         tr -d '\r"' | tr ' ' '\n' |
         grep -E '^(gate_[a-z0-9_]+|scripts/[A-Za-z0-9._/-]+)$' | sort -u); do
         case "$_ci_word" in
@@ -192,7 +211,54 @@ read_handoff() {
         ci_verify_error "$1 did not write its handoff path: $2"
         return 1
     fi
-    CI_VERIFY_HANDOFF=$(sed -n '1p' "$2")
+    read -r CI_VERIFY_HANDOFF < "$2" || true
+}
+
+# Producer gates hand their artifacts to later gates through these path files,
+# because gates may run in different pool workers.
+CI_VERIFY_STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
+CI_VERIFY_STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
+CI_VERIFY_OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
+CI_VERIFY_PROFILE_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
+
+# ci_verify_load_handoffs NEEDS
+#   Set the produced compilers and artifact paths a gate may use. A gate
+#   receives an artifact only from a producer among its needs, which passed in
+#   this run before the gate started; every other one names a path that cannot
+#   exist, so a gate that uses an artifact without needing its producer fails
+#   whatever order the gates ran in.
+ci_verify_load_handoffs() {
+    STAGE1_BIN="$CI_VERIFY_UNPRODUCED/previous-stage-compiler"
+    STAGE2_BIN="$CI_VERIFY_UNPRODUCED/converged-compiler"
+    COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
+    OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
+    case ",$1," in
+        *,bootstrap-fixpoint,*)
+            read_handoff "bootstrap previous-stage compiler capture" "$CI_VERIFY_STAGE1_PATH_FILE" || return 1
+            STAGE1_BIN=$CI_VERIFY_HANDOFF
+            ensure_executable "previous-stage" "$STAGE1_BIN"
+            read_handoff "bootstrap fixpoint compiler capture" "$CI_VERIFY_STAGE2_PATH_FILE" || return 1
+            STAGE2_BIN=$CI_VERIFY_HANDOFF
+            ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
+            ;;
+    esac
+    case ",$1," in
+        *,stage2-opt1-opt2-build-invariance,*)
+            read_handoff "build-invariance opt1 reference handoff" "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" || return 1
+            OPT2_REFERENCE_ASM=$CI_VERIFY_HANDOFF
+            if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
+                ci_verify_error "build-invariance published a missing or empty assembly: $OPT2_REFERENCE_ASM"
+                return 1
+            fi
+            ;;
+    esac
+    case ",$1," in
+        *,stage2-compile-profile-verifier,*)
+            read_handoff "compile-profile verifier" "$CI_VERIFY_PROFILE_PATH_FILE" || return 1
+            COMPILE_PROFILE_BIN=$CI_VERIFY_HANDOFF
+            ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
+            ;;
+    esac
 }
 
 # Gates whose setup or handoff does not fit one command line. A gate runs with
@@ -205,19 +271,11 @@ read_handoff() {
 # the compatibility-named stage2 path file - so the artifact under test is the
 # one the bootstrap just produced. Do not add per-gate compiler rebuilds.
 gate_bootstrap_fixpoint() {
-    _ci_stage1_path_file="$ROOT/target/ci-verify-stage1.path"
-    _ci_stage2_path_file="$ROOT/target/ci-verify-stage2.path"
-    rm -f "$_ci_stage1_path_file" "$_ci_stage2_path_file"
-    TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$_ci_stage1_path_file \
-        TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$_ci_stage2_path_file \
+    TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
+        TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$CI_VERIFY_STAGE2_PATH_FILE \
         scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
     # The cross-mode differential also runs the previous-stage compiler.
-    read_handoff "bootstrap previous-stage compiler capture" "$_ci_stage1_path_file" || return 1
-    STAGE1_BIN=$CI_VERIFY_HANDOFF
-    ensure_executable "previous-stage" "$STAGE1_BIN"
-    read_handoff "bootstrap fixpoint compiler capture" "$_ci_stage2_path_file" || return 1
-    STAGE2_BIN=$CI_VERIFY_HANDOFF
-    ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
+    ci_verify_load_handoffs bootstrap-fixpoint || return 1
     echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
     # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
@@ -336,16 +394,9 @@ stage2_can_compile_native_windows() {
 # again. Windows has no build-invariance gate, so the opt2 gate retains its
 # standalone reference compile there.
 gate_build_invariance() {
-    _ci_reference_path_file="$ROOT/target/ci-verify-opt2-reference.path"
-    rm -f "$_ci_reference_path_file"
-    TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$_ci_reference_path_file \
+    TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$CI_VERIFY_OPT2_REFERENCE_PATH_FILE \
         scripts/check-build-invariance.sh || return $?
-    read_handoff "build-invariance opt1 reference handoff" "$_ci_reference_path_file" || return 1
-    OPT2_REFERENCE_ASM=$CI_VERIFY_HANDOFF
-    if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
-        ci_verify_error "build-invariance published a missing or empty assembly: $OPT2_REFERENCE_ASM"
-        return 1
-    fi
+    ci_verify_load_handoffs stage2-opt1-opt2-build-invariance
 }
 
 gate_opt2_cli_regression() {
@@ -361,14 +412,10 @@ gate_opt2_cli_regression() {
 # built and publishes its profile-enabled CLI, which the TLCI stress and
 # package gates run instead of paying for another full self-compile.
 gate_compile_profile() {
-    _ci_profile_path_file="$ROOT/target/ci-verify-compile-profile-cli.path"
-    rm -f "$_ci_profile_path_file"
-    TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$_ci_profile_path_file \
+    TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$CI_VERIFY_PROFILE_PATH_FILE \
         TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE=1 \
         scripts/verify-compile-profile.sh || return $?
-    read_handoff "compile-profile verifier" "$_ci_profile_path_file" || return 1
-    COMPILE_PROFILE_BIN=$CI_VERIFY_HANDOFF
-    ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
+    ci_verify_load_handoffs stage2-compile-profile-verifier
 }
 
 # On Linux the benchmark suites run the cases perf/benchmark-ci-cases.tsv
@@ -419,6 +466,8 @@ gate_heavy_instruction_counts() {
 # Arguments and listing are read-only and must be handled before any runtime
 # initialization.
 CI_VERIFY_GATES=
+CI_VERIFY_JOBS=1
+CI_VERIFY_MEMORY_MIB=
 case "${1:-}" in
     -h | --help)
         usage
@@ -433,28 +482,55 @@ case "${1:-}" in
         # Validate the whole table before printing anything.
         ci_gates_check_commands
         CI_VERIFY_PLAN=$(ci_gates_plan "$2" "${4:-}")
-        printf 'id\thosts\tlabel\tneeds\n'
-        printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1-4
+        printf 'id\thosts\tlabel\tneeds\tmemory\tlocks\n'
+        printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1-4,6,7
         exit 0
         ;;
-    --gates)
-        if [ "$#" -ne 2 ] || [ -z "$2" ]; then
+esac
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --gates | --jobs | --memory-mib)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                usage
+                exit 2
+            fi
+            case "$1" in
+                --gates) CI_VERIFY_GATES=$2 ;;
+                --jobs) CI_VERIFY_JOBS=$2 ;;
+                --memory-mib) CI_VERIFY_MEMORY_MIB=$2 ;;
+            esac
+            shift 2
+            ;;
+        *)
             usage
             exit 2
-        fi
-        CI_VERIFY_GATES=$2
-        ;;
+            ;;
+    esac
+done
+case "$CI_VERIFY_JOBS" in
+    [1-9] | 1[0-6]) ;;
     *)
-        if [ "$#" -ne 0 ]; then
-            usage
-            exit 2
-        fi
+        echo "--jobs must be an integer from 1 to 16: $CI_VERIFY_JOBS" >&2
+        exit 2
         ;;
 esac
+case "$CI_VERIFY_MEMORY_MIB" in
+    "") ;;
+    *[!0-9]* | 0*)
+        echo "--memory-mib must be a positive MiB count: $CI_VERIFY_MEMORY_MIB" >&2
+        exit 2
+        ;;
+esac
+if [ "$CI_VERIFY_JOBS" -gt 1 ] && [ -z "$CI_VERIFY_MEMORY_MIB" ]; then
+    echo "--jobs $CI_VERIFY_JOBS needs --memory-mib: the memory the running gates may reserve at once" >&2
+    exit 2
+fi
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
 . "$ROOT/scripts/lib-benchmark.sh"
+BOUNDED_POOL_LABEL=ci-verify
+. "$ROOT/scripts/lib-bounded-pool.sh"
 
 HOST_OS=linux
 case "$(uname -s)" in
@@ -510,25 +586,21 @@ case ",$(printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1 | tr '\n' ',')" in
 esac
 
 # Produced compilers and artifact paths are set only by the gate that produces
-# them. Until that gate runs they name a path that cannot exist, so a missing
+# them. Until that gate passes they name a path that cannot exist, so a missing
 # need fails its consumer instead of falling back to some other compiler. A gate
 # whose compiler column is `-` sees such a path as TYPELISP_BIN, so a gate that
 # uses a compiler without naming one fails instead of falling back to the seed.
 CI_VERIFY_UNPRODUCED="$ROOT/target/ci-verify-unproduced"
 rm -rf "$CI_VERIFY_UNPRODUCED"
-STAGE1_BIN="$CI_VERIFY_UNPRODUCED/previous-stage-compiler"
-STAGE2_BIN="$CI_VERIFY_UNPRODUCED/converged-compiler"
-COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
-OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
 CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
+mkdir -p "$ROOT/target"
+rm -f "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" \
+    "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" "$CI_VERIFY_PROFILE_PATH_FILE"
 
-# run_gate LABEL COMPILER COMMAND
+# run_gate LABEL NEEDS COMPILER COMMAND
+#   Run one gate in a subshell, so nothing it sets or exits reaches the next
+#   gate of its worker, and set GATE_STATUS and GATE_ELAPSED (seconds).
 run_gate() {
-    case "$2" in
-        stage2) gate_bin=$STAGE2_BIN ;;
-        profile) gate_bin=$COMPILE_PROFILE_BIN ;;
-        *) gate_bin=$CI_VERIFY_NO_COMPILER ;;
-    esac
     TYPELISP_CI_TIMING_GATE=$1
     export TYPELISP_CI_TIMING_GATE
     if ci_timing_enabled; then
@@ -537,47 +609,180 @@ run_gate() {
     else
         start=$(date +%s)
     fi
-    echo
-    echo "[ci-verify] START $1"
     set +e
-    if [ "$2" != - ] && [ ! -x "$gate_bin" ]; then
-        ci_verify_error "$1 compiler was not produced by this run: $gate_bin"
-        status=126
-    else
+    (
+        ci_verify_load_handoffs "$2" || exit 1
+        case "$3" in
+            stage2) gate_bin=$STAGE2_BIN ;;
+            profile) gate_bin=$COMPILE_PROFILE_BIN ;;
+            *) gate_bin=$CI_VERIFY_NO_COMPILER ;;
+        esac
+        if [ "$3" != - ] && [ ! -x "$gate_bin" ]; then
+            ci_verify_error "$1 compiler was not produced by this run: $gate_bin"
+            exit 126
+        fi
         TYPELISP_BIN=$gate_bin
         export TYPELISP_BIN
-        eval "$3"
-        status=$?
-    fi
+        eval "$4"
+    )
+    GATE_STATUS=$?
     set -e
     if ci_timing_enabled; then
         ci_timing_set_now_ms
         end=$CI_TIMING_NOW_MS
         elapsed_ms=$((end - start))
-        elapsed=$((elapsed_ms / 1000))
-        ci_timing_record_elapsed all gate "$elapsed_ms" "$status"
+        GATE_ELAPSED=$((elapsed_ms / 1000))
+        ci_timing_record_elapsed all gate "$elapsed_ms" "$GATE_STATUS"
     else
         end=$(date +%s)
-        elapsed=$((end - start))
+        GATE_ELAPSED=$((end - start))
     fi
-    if [ "$status" -eq 0 ]; then
-        echo "[ci-verify] PASS $1 (${elapsed}s)"
+}
+
+gate_verdict() {
+    if [ "$2" -eq 0 ]; then
+        echo "[ci-verify] PASS $1 (${3}s)"
     else
-        echo "[ci-verify] FAIL $1 (${elapsed}s, exit $status)" >&2
+        echo "[ci-verify] FAIL $1 (${3}s, exit $2)"
     fi
-    return "$status"
 }
 
 echo "[ci-verify] host=$HOST_OS seed=${SEED_TYPELISP_BIN:-<unused by this selection>}"
 
-# Gates may read standard input, so the plan is read from descriptor 3.
+# Gates are the jobs of one bounded pool (scripts/lib-bounded-pool.sh), queued
+# in table order with their needs, their memory column as the reservation and
+# their locks. The memory column is a gate's measured process-tree peak with
+# headroom; the pool admits a gate while the reservations of the running gates,
+# plus its own, fit --memory-mib, but it does not enforce them. Pools inside
+# gates still run every chunk under its enforced cap. Gates that share a lock
+# write or read the same checkout paths, so they never run at once. One job
+# runs the table in order and streams each gate's output. With more, a gate
+# writes its output and timing rows to its own files; this shell prints each
+# gate's output whole when it finishes, and merges the timing rows in table
+# order.
 CI_VERIFY_PLAN_FILE="$ROOT/target/ci-verify-plan.tsv"
-mkdir -p "$ROOT/target"
+CI_VERIFY_POOL="$ROOT/target/ci-verify-pool"
 printf '%s\n' "$CI_VERIFY_PLAN" > "$CI_VERIFY_PLAN_FILE"
 TAB=$(printf '\t')
-while IFS=$TAB read -r gate_id gate_hosts gate_label gate_needs gate_compiler_kind gate_command <&3; do
-    run_gate "$gate_label" "$gate_compiler_kind" "$gate_command" || exit $?
-done 3< "$CI_VERIFY_PLAN_FILE"
+CI_VERIFY_QUEUE="$ROOT/target/ci-verify-queue.txt"
+CI_VERIFY_BUDGET_MIB=0
+: > "$CI_VERIFY_QUEUE"
+while IFS=$TAB read -r gate_id gate_hosts gate_label gate_needs gate_compiler_kind gate_memory gate_locks gate_command; do
+    if [ "$gate_locks" = - ]; then
+        printf '%s|%s|%s\n' "$gate_id" "$gate_memory" "$gate_needs" >> "$CI_VERIFY_QUEUE"
+    else
+        printf '%s|%s|%s|%s\n' "$gate_id" "$gate_memory" "$gate_needs" "$gate_locks" >> "$CI_VERIFY_QUEUE"
+    fi
+    [ "$gate_memory" -le "$CI_VERIFY_BUDGET_MIB" ] || CI_VERIFY_BUDGET_MIB=$gate_memory
+done < "$CI_VERIFY_PLAN_FILE"
+# One job needs no memory budget: each gate runs alone.
+if [ "$CI_VERIFY_JOBS" -gt 1 ]; then
+    CI_VERIFY_BUDGET_MIB=$CI_VERIFY_MEMORY_MIB
+    echo "[ci-verify] $CI_VERIFY_SELECTED_COUNT gates, up to $CI_VERIFY_JOBS at once within $CI_VERIFY_BUDGET_MIB MiB of reservations"
+fi
+bounded_pool_init "$CI_VERIFY_POOL" "$CI_VERIFY_BUDGET_MIB" "$CI_VERIFY_QUEUE" || exit 1
+mkdir -p "$CI_VERIFY_POOL/logs" "$CI_VERIFY_POOL/timing" "$CI_VERIFY_POOL/elapsed"
+CI_VERIFY_TIMING_FILE=${TYPELISP_CI_TIMING_FILE:-}
+
+# The pool's job callback. Workers are background subshells, so gates read
+# standard input from /dev/null.
+bounded_pool_run_job() {
+    while IFS=$TAB read -r job_id job_hosts job_label job_needs job_compiler_kind job_memory job_locks job_command; do
+        [ "$job_id" != "$1" ] || break
+    done < "$CI_VERIFY_PLAN_FILE"
+    if [ "$job_id" != "$1" ]; then
+        ci_verify_error "pool job names no planned gate: $1"
+        return 1
+    fi
+    if ci_timing_enabled; then
+        TYPELISP_CI_TIMING_FILE="$CI_VERIFY_POOL/timing/$1.tsv"
+        export TYPELISP_CI_TIMING_FILE
+    fi
+    if [ "$CI_VERIFY_JOBS" -eq 1 ]; then
+        echo
+        echo "[ci-verify] START $job_label"
+        run_gate "$job_label" "$job_needs" "$job_compiler_kind" "$job_command"
+        gate_verdict "$job_label" "$GATE_STATUS" "$GATE_ELAPSED"
+    else
+        run_gate "$job_label" "$job_needs" "$job_compiler_kind" "$job_command" \
+            > "$CI_VERIFY_POOL/logs/$1.log" 2>&1
+    fi
+    printf '%s\n' "$GATE_ELAPSED" > "$CI_VERIFY_POOL/elapsed/$1"
+    return "$GATE_STATUS"
+}
+
+# Print a START line for each newly claimed gate and the whole output of each
+# newly finished one, in table order.
+CI_VERIFY_STARTED=,
+CI_VERIFY_REPORTED=,
+ci_verify_report() {
+    while IFS=$TAB read -r report_id report_hosts report_label report_rest; do
+        case "$CI_VERIFY_STARTED" in *",$report_id,"*) ;; *)
+            [ -d "$CI_VERIFY_POOL/claims/$report_id" ] || continue
+            CI_VERIFY_STARTED="$CI_VERIFY_STARTED$report_id,"
+            echo "[ci-verify] START $report_label"
+            ;;
+        esac
+        case "$CI_VERIFY_REPORTED" in *",$report_id,"*) continue ;; esac
+        [ -f "$CI_VERIFY_POOL/results/$report_id" ] || continue
+        CI_VERIFY_REPORTED="$CI_VERIFY_REPORTED$report_id,"
+        read -r report_status < "$CI_VERIFY_POOL/results/$report_id"
+        report_elapsed=?
+        [ ! -f "$CI_VERIFY_POOL/elapsed/$report_id" ] ||
+            read -r report_elapsed < "$CI_VERIFY_POOL/elapsed/$report_id"
+        echo
+        echo "[ci-verify] OUTPUT $report_label"
+        cat "$CI_VERIFY_POOL/logs/$report_id.log" 2>/dev/null || true
+        gate_verdict "$report_label" "$report_status" "$report_elapsed"
+    done < "$CI_VERIFY_PLAN_FILE"
+}
+
+bounded_pool_start "$CI_VERIFY_POOL" "$CI_VERIFY_JOBS"
+if [ "$CI_VERIFY_JOBS" -gt 1 ]; then
+    while :; do
+        ci_verify_report
+        ci_verify_alive=0
+        for ci_verify_pid in $BOUNDED_POOL_PIDS; do
+            if kill -0 "$ci_verify_pid" 2>/dev/null; then
+                ci_verify_alive=1
+            fi
+        done
+        [ "$ci_verify_alive" -eq 1 ] || break
+        sleep 2
+    done
+    ci_verify_report
+fi
+ci_verify_status=0
+bounded_pool_join "$CI_VERIFY_POOL" || ci_verify_status=1
+
+# Timing rows follow the table order whatever order the gates finished in.
+if ci_timing_enabled; then
+    TYPELISP_CI_TIMING_FILE=$CI_VERIFY_TIMING_FILE
+    export TYPELISP_CI_TIMING_FILE
+    while IFS=$TAB read -r merge_id merge_rest; do
+        [ ! -s "$CI_VERIFY_POOL/timing/$merge_id.tsv" ] ||
+            cat "$CI_VERIFY_POOL/timing/$merge_id.tsv" >> "$TYPELISP_CI_TIMING_FILE"
+    done < "$CI_VERIFY_PLAN_FILE"
+fi
+
+if [ "$ci_verify_status" -ne 0 ]; then
+    echo >&2
+    ci_verify_error "CI verification failed; no further gate started after the first failure:"
+    ci_verify_first_failure=
+    while IFS=$TAB read -r failed_id failed_hosts failed_label failed_rest; do
+        if [ -f "$CI_VERIFY_POOL/results/$failed_id" ]; then
+            read -r failed_status < "$CI_VERIFY_POOL/results/$failed_id"
+            [ "$failed_status" != 0 ] || continue
+            echo "[ci-verify]   FAIL $failed_label (exit $failed_status)" >&2
+            [ -n "$ci_verify_first_failure" ] || ci_verify_first_failure=$failed_status
+        elif [ -d "$CI_VERIFY_POOL/claims/$failed_id" ]; then
+            echo "[ci-verify]   UNFINISHED $failed_label" >&2
+        else
+            echo "[ci-verify]   NOT STARTED $failed_label" >&2
+        fi
+    done < "$CI_VERIFY_PLAN_FILE"
+    exit "${ci_verify_first_failure:-1}"
+fi
 
 # A selection that does not close over the whole inventory proves only its own
 # gates: it must not look like a verification to timing or log consumers.

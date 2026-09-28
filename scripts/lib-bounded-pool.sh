@@ -1,21 +1,25 @@
 #!/usr/bin/env sh
 
-# Bounded worker pool shared by CI gates that run independent jobs at once
-# (build-invariance chunks, integration batch chunks).
+# Bounded worker pool shared by CI work that runs independent jobs at once
+# (ci-verify.sh gates, build-invariance chunks, integration batch chunks).
 #
 # Callers set BOUNDED_POOL_LABEL (the `[label]` prefix of every diagnostic) and
-# define `bounded_pool_run_job JOB CAP_MIB`, which runs one job under its cap and
-# returns its status. The pool itself enforces no memory limit: it only admits
-# a job while the caps of all running jobs fit the budget, so the caller's job
-# must run under the cap it was admitted with.
+# define `bounded_pool_run_job JOB CAP_MIB`, which runs one job and returns its
+# status. The pool itself enforces no memory limit: it only admits a job while
+# the caps of all running jobs fit the budget, so a caller that promises a hard
+# bound runs each job under the cap it was admitted with.
 BOUNDED_POOL_LABEL=${BOUNDED_POOL_LABEL:-pool}
 
-# Worker pool. A queue lists every job once as `job|cap_mib`; workers claim jobs
-# in queue order and a job starts only while the caps of all running jobs stay
-# within the pool budget. Every job runs under its cap, so concurrent memory is
-# bounded by the budget instead of by what the host happens to tolerate. State
-# lives in directories whose creation is atomic: `claims/` (one per started
-# job), `running/` (its cap while it runs) and `results/` (its exit status).
+# Worker pool. A queue lists every job once as `job|cap_mib`, optionally
+# followed by `|need,...` (earlier jobs that must succeed before it starts, or
+# `-`) and `|lock,...` (shared resources no two running jobs may hold at once).
+# Workers claim the first job in queue order whose needs have succeeded, whose
+# locks are free, and whose cap fits the pool budget beside the caps of all
+# running jobs. Needs name earlier jobs only, so the first unclaimed job always
+# becomes claimable once the running jobs finish, and one worker runs the queue
+# in order. State lives in directories whose creation is atomic: `claims/` (one
+# per started job), `running/` (its cap and locks while it runs), `held/` (one
+# per held lock) and `results/` (its exit status).
 BOUNDED_POOL_LOCK_TRIES=${BOUNDED_POOL_LOCK_TRIES:-600}
 
 bounded_pool_lock() {
@@ -57,11 +61,26 @@ bounded_pool_require_queue() {
             exit 2
         }
         {
-            if (NF != 2 || $1 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+            if (NF < 2 || NF > 4 || $1 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
                 fail("malformed job record")
             if ($2 !~ /^[1-9][0-9]*$/) fail("malformed cap for " $1)
             if ($2 + 0 > budget + 0) fail("cap of " $1 " exceeds the pool budget")
             if (seen[$1]++) fail("duplicate job " $1)
+            if (NF >= 3 && $3 != "-") {
+                needs = split($3, list, ",")
+                if (needs == 0) fail("empty needs for " $1)
+                for (n = 1; n <= needs; n++)
+                    if (!(list[n] in seen) || list[n] == $1)
+                        fail($1 " needs an unknown or later job: " list[n])
+            }
+            if (NF == 4) {
+                locks = split($4, list, ",")
+                if (locks == 0) fail("empty locks for " $1)
+                delete lock_seen
+                for (n = 1; n <= locks; n++)
+                    if (list[n] !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ || lock_seen[list[n]]++)
+                        fail("malformed or duplicate lock for " $1 ": " list[n])
+            }
             count++
         }
         END { if (!failed && count == 0) fail("empty queue") }
@@ -74,14 +93,60 @@ bounded_pool_init() {
     _bp_pool_queue=$3
     bounded_pool_require_queue "$_bp_pool_budget" "$_bp_pool_queue" || return 2
     rm -rf "$_bp_pool"
-    mkdir -p "$_bp_pool/claims" "$_bp_pool/running" "$_bp_pool/results"
+    mkdir -p "$_bp_pool/claims" "$_bp_pool/running" "$_bp_pool/held" "$_bp_pool/results"
     printf '%s\n' "$_bp_pool_budget" > "$_bp_pool/budget"
     cp "$_bp_pool_queue" "$_bp_pool/queue"
 }
 
-# Prints `job|cap_mib` for the first unclaimed job that fits the budget.
-# Returns 1 once every job is claimed and 3 while unclaimed jobs must wait for
-# running ones; 2 reports a broken pool.
+# Succeeds when every job of the comma-separated list succeeded.
+bounded_pool_needs_met() {
+    _bp_needs_results=$1/results
+    _bp_needs_ifs=$IFS
+    IFS=,
+    # shellcheck disable=SC2086
+    set -- $2
+    IFS=$_bp_needs_ifs
+    for _bp_needs_job in "$@"; do
+        [ -f "$_bp_needs_results/$_bp_needs_job" ] || return 1
+        read -r _bp_needs_status < "$_bp_needs_results/$_bp_needs_job" || return 1
+        [ "$_bp_needs_status" = 0 ] || return 1
+    done
+}
+
+# Succeeds when no running job holds a lock of the comma-separated list.
+bounded_pool_locks_free() {
+    _bp_free_held=$1/held
+    _bp_free_ifs=$IFS
+    IFS=,
+    # shellcheck disable=SC2086
+    set -- $2
+    IFS=$_bp_free_ifs
+    for _bp_free_lock in "$@"; do
+        [ ! -d "$_bp_free_held/$_bp_free_lock" ] || return 1
+    done
+}
+
+# Creates (take) or removes (release) the held entry of each listed lock.
+bounded_pool_locks_update() {
+    _bp_update_held=$1/held
+    _bp_update_action=$2
+    _bp_update_ifs=$IFS
+    IFS=,
+    # shellcheck disable=SC2086
+    set -- $3
+    IFS=$_bp_update_ifs
+    for _bp_update_lock in "$@"; do
+        case "$_bp_update_action" in
+            take) mkdir "$_bp_update_held/$_bp_update_lock" || return 1 ;;
+            release) rmdir "$_bp_update_held/$_bp_update_lock" || return 1 ;;
+        esac
+    done
+}
+
+# Prints `job|cap_mib` for the first unclaimed job whose needs succeeded, whose
+# locks are free and that fits the budget. Returns 1 once every job is claimed
+# and 3 while unclaimed jobs must wait for running ones; 2 reports a broken
+# pool.
 bounded_pool_claim() {
     _bp_claim_pool=$1
     if [ -e "$_bp_claim_pool/abort" ]; then
@@ -89,19 +154,26 @@ bounded_pool_claim() {
         return 2
     fi
     bounded_pool_lock "$_bp_claim_pool" || return 2
-    _bp_claim_budget=$(cat "$_bp_claim_pool/budget")
+    read -r _bp_claim_budget < "$_bp_claim_pool/budget"
     _bp_claim_used=0
     for _bp_claim_running in "$_bp_claim_pool/running"/*; do
         [ -f "$_bp_claim_running" ] || continue
-        _bp_claim_used=$((_bp_claim_used + $(cat "$_bp_claim_running")))
+        read -r _bp_claim_running_cap < "$_bp_claim_running"
+        _bp_claim_used=$((_bp_claim_used + _bp_claim_running_cap))
     done
     _bp_claim_status=1
-    while IFS='|' read -r _bp_claim_job _bp_claim_cap; do
+    while IFS='|' read -r _bp_claim_job _bp_claim_cap _bp_claim_needs _bp_claim_locks; do
         [ ! -d "$_bp_claim_pool/claims/$_bp_claim_job" ] || continue
         _bp_claim_status=3
+        [ -z "$_bp_claim_needs" ] || [ "$_bp_claim_needs" = - ] ||
+            bounded_pool_needs_met "$_bp_claim_pool" "$_bp_claim_needs" || continue
         [ $((_bp_claim_used + _bp_claim_cap)) -le "$_bp_claim_budget" ] || continue
+        [ -z "$_bp_claim_locks" ] ||
+            bounded_pool_locks_free "$_bp_claim_pool" "$_bp_claim_locks" || continue
         if ! mkdir "$_bp_claim_pool/claims/$_bp_claim_job" ||
-            ! printf '%s\n' "$_bp_claim_cap" > "$_bp_claim_pool/running/$_bp_claim_job"; then
+            ! printf '%s\n%s\n' "$_bp_claim_cap" "$_bp_claim_locks" \
+                > "$_bp_claim_pool/running/$_bp_claim_job" ||
+            ! bounded_pool_locks_update "$_bp_claim_pool" take "$_bp_claim_locks"; then
             _bp_claim_status=2
             break
         fi
@@ -128,6 +200,11 @@ bounded_pool_finish() {
         printf '%s\n' "$_bp_finish_status" > "$_bp_finish_pool/result.$_bp_finish_job.tmp"
         mv "$_bp_finish_pool/result.$_bp_finish_job.tmp" \
             "$_bp_finish_pool/results/$_bp_finish_job"
+        _bp_finish_locks=
+        { read -r _bp_finish_cap && read -r _bp_finish_locks; } \
+            < "$_bp_finish_pool/running/$_bp_finish_job" || true
+        bounded_pool_locks_update "$_bp_finish_pool" release "$_bp_finish_locks" ||
+            _bp_finish_result=2
         rm -f "$_bp_finish_pool/running/$_bp_finish_job"
     fi
     bounded_pool_unlock "$_bp_finish_pool" || return 2
@@ -145,6 +222,11 @@ bounded_pool_require_complete() {
     for _bp_complete_running in "$_bp_complete_pool/running"/*; do
         [ -e "$_bp_complete_running" ] || continue
         echo "[$BOUNDED_POOL_LABEL] pool job never finished: ${_bp_complete_running##*/}" >&2
+        return 1
+    done
+    for _bp_complete_held in "$_bp_complete_pool/held"/*; do
+        [ -e "$_bp_complete_held" ] || continue
+        echo "[$BOUNDED_POOL_LABEL] pool lock was never released: ${_bp_complete_held##*/}" >&2
         return 1
     done
     while IFS='|' read -r _bp_complete_job _bp_complete_cap; do

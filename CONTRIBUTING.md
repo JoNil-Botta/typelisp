@@ -127,7 +127,8 @@ Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
 
 - `$TYPELISP_BIN fmt --check <files>` — format your TypeLisp source
 - `TYPELISP_BIN=$TYPELISP_BIN scripts/check-tl-lint.sh` — fix lint findings
-- `scripts/ci-verify.sh` — run the full verification gate CI uses
+- `scripts/ci-verify.sh` — run the full verification gate CI uses; add
+  `--jobs 4 --memory-mib 14336` to run four gates at a time as CI does
 - `scripts/ci-verify.sh --gates <id>` — rerun one failing gate with only the
   gates it needs (IDs from `scripts/ci-verify.sh --list-gates linux`); the
   result is partial, so finish with the full gate

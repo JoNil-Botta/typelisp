@@ -44,6 +44,9 @@ SELF_TEST_PATH_NORMALIZATION=0
 SELF_TEST_WITHOUT_COMPILER=0
 VALIDATE_MANIFEST_ONLY=0
 BACKEND_CMP_MEM_FOLD_PARITY_ONLY=0
+# Each self-test runs as its own gate beside the corpus, so it keeps its own
+# work root; the corpus root holds artifacts later gates reuse.
+WORK_SUFFIX=
 case "${1:-}" in
     "")
         ;;
@@ -54,21 +57,25 @@ case "${1:-}" in
     --self-test-batch-observability)
         SELF_TEST_BATCH_OBSERVABILITY=1
         SELF_TEST_WITHOUT_COMPILER=1
+        WORK_SUFFIX=-self-test-batch-observability
         shift
         ;;
     --self-test-empty-compile-diagnostic)
         SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=1
         SELF_TEST_WITHOUT_COMPILER=1
+        WORK_SUFFIX=-self-test-empty-compile-diagnostic
         shift
         ;;
     --self-test-signal-notice-capture)
         SELF_TEST_SIGNAL_NOTICE_CAPTURE=1
         SELF_TEST_WITHOUT_COMPILER=1
+        WORK_SUFFIX=-self-test-signal-notice-capture
         shift
         ;;
     --self-test-path-normalization)
         SELF_TEST_PATH_NORMALIZATION=1
         SELF_TEST_WITHOUT_COMPILER=1
+        WORK_SUFFIX=-self-test-path-normalization
         shift
         ;;
     --validate-manifest-only)
@@ -217,7 +224,7 @@ if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
 fi
 
 MANIFEST="$ROOT/tests/integration/native.manifest"
-WORKDIR="$ROOT/target/integration-verify/$HOST_OS"
+WORKDIR="$ROOT/target/integration-verify/$HOST_OS$WORK_SUFFIX"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 # This host's rows of the shared manifest, one per name and opt level.

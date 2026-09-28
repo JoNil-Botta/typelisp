@@ -4529,7 +4529,8 @@
 
 ;; A diagnostic for an error with no expression to locate it at. An encoded
 ;; transport still decodes to its own spans and frames; only a plain message
-;; sits at 1:1.
+;; sits at 1:1. The macro-frame decoder reaches this only with a non-framed
+;; inner message, so the dispatch does not recurse.
 (define (tc-diag-at-start [message : String]) : cdiag.CompilerDiagnostic
   (cond
     [(tc-macro-framed-error? message) (tc-macro-framed-error-diag message)]
@@ -4939,13 +4940,7 @@
     [inner-decoded : TcMacroDecodedDiagnostic
       (if (tc-macro-framed-error? inner)
         (tc-macro-framed-error-decode inner)
-        (TcMacroDecodedDiagnostic
-          (if (tc-rich-error? inner)
-            (tc-rich-error-diag inner)
-            (if (tc-located-error? inner)
-              (tc-located-error-diag inner)
-              (tc-diag-at-start inner)))
-          false))]
+        (TcMacroDecodedDiagnostic (tc-diag-at-start inner) false))]
     [inner-diag : cdiag.CompilerDiagnostic inner-decoded.diagnostic]
     [path-id : i64
       (string.>int (tc-located-error-field message prefix-len path-end))]

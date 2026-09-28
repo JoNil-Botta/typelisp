@@ -14,8 +14,10 @@ if [ -z "${TYPELISP_BIN:-}" ]; then
     exit 2
 fi
 
-# A short work root: Windows file calls stop at 260 characters, and the
-# remote-package cases nest the package cache's staging paths below it.
-CODEGEN_CASES_WORKDIR=${CODEGEN_CASES_WORKDIR:-$ROOT/target/cc}
+# A short work root: the remote-package cases nest the package cache's git
+# staging checkout below it, and on Windows git refuses a $GIT_DIR longer than
+# PATH_MAX - 40 (220) characters. With target/selfhost-build-run/ghc/... the
+# longest is 215 on the CI runner (D:/a/typelisp/typelisp).
+CODEGEN_CASES_WORKDIR=${CODEGEN_CASES_WORKDIR:-$ROOT/target}
 export CODEGEN_CASES_WORKDIR
 exec scripts/verify-codegen-cases.sh tests/cli/selfhost-surface.cases tests/cli/selfhost-build-run.cases

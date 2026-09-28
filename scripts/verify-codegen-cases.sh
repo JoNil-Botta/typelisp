@@ -510,7 +510,10 @@ cc_variant() {
     CV_OPT=$3
     CV_MODE=$4
     CV_EACH=$5
-    CV_DIR="$CC_WORK/$CC_CASE/$(cc_variant_name)"
+    # A single-variant case runs in its own directory: Windows path budgets
+    # (git's PATH_MAX - 40 for $GIT_DIR) leave no room for a `default` level.
+    CV_DIR="$CC_WORK/$CC_CASE"
+    [ "$(cc_variant_name)" = default ] || CV_DIR="$CV_DIR/$(cc_variant_name)"
     rm -rf "$CV_DIR"
     mkdir -p "$CV_DIR"
     CCV_target=$CV_TARGET

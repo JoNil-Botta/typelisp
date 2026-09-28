@@ -244,10 +244,10 @@ stderr empty
 # The package cache: a first fetch fills it, an offline rebuild hits it, a
 # cache entry is confined to its locked checkout, and a corrupt entry is
 # preserved and refetched. The git remote is local, through insteadOf.
-# Windows: the package cache nests a long staging path under the case
-# directory and the runtime file calls stop at 260 characters, so the
-# three remote-package cases keep short ids (the runner uses them as
-# directory names).
+# Windows: the package cache nests its git staging checkout under the case
+# directory and git refuses a $GIT_DIR over 220 characters, so the three
+# remote-package cases keep short ids (the runner uses them as directory
+# names; see verify-selfhost-cli-build-run.sh).
 case ghc
 file remote/typelisp.pkg
 (package

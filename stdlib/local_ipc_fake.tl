@@ -181,6 +181,10 @@
 (define slot-last-poll-request : i64
   33)
 
+;: Error kind code returned by delay, or 0 for success.
+(define slot-delay-kind : i64
+  34)
+
 ;: Queue bases. Each queue is `[length, position, entries...]`.
 (define queue-connect : i64
   40)
@@ -542,11 +546,15 @@
             (fake-error context (- code 100) 333))]))))
 
 ;: Adapter `delay`.
-(define (fake-delay [context : i64] [ms : i64]) : unit
+(define (fake-delay [context : i64] [ms : i64]) : local_ipc.LocalIpcStatus
   (begin
     (note-call! context)
     (bump! context slot-delay-calls)
-    (spend-slice! context ms)))
+    (spend-slice! context ms)
+    (if (= (get context slot-delay-kind) 0)
+      (local_ipc.LocalIpcStatus.Ok)
+      (local_ipc.LocalIpcStatus.Err
+        (fake-error context (get context slot-delay-kind) 555)))))
 
 ;: Adapter `close`. Closing ends any pending operation.
 (define (fake-close [context : i64] [handle : i64]) : local_ipc.LocalIpcStatus

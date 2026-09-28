@@ -187,29 +187,63 @@
 (define family-windows-pipe : i64
   1)
 
-;: True when `text` holds a NUL byte.
-(define (text-has-nul? [text : (& text str)]) : bool
+;: True when `path[start..end]` is a canonical path component: non-empty and
+;: neither `.` nor `..`.
+(define (unix-component-valid?
+  [path : (& path bytes)]
+  [start : i64]
+  [end : i64]) : bool
   (let
-    [length : i64 (string.string-length text)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index length))
-        (begin
-          (set! found (= (cast (string.string-ref text index) : i64) 0))
-          (set! index (+ index 1))))
-      found)))
+    [length : i64 (- end start)]
+    (cond
+      [(= length 0) false]
+      [(= (cast (byte_buf.bytes-ref path start) : i64) 46)
+        (not
+          (or
+            (= length 1)
+            (and
+              (= length 2)
+              (= (cast (byte_buf.bytes-ref path (+ start 1)) : i64) 46))))]
+      [else true])))
 
-;: A Unix endpoint is an absolute filesystem path of 1..`unix-path-max` bytes
-;: without NUL. A leading NUL (the abstract namespace) is therefore rejected.
-(define (unix-path-valid? [path : (& path str)]) : bool
+;: A Unix endpoint is an absolute, lexically canonical filesystem path of
+;: 2..`unix-path-max` bytes: it starts with `/`, holds no NUL, and every
+;: `/`-separated component is non-empty and neither `.` nor `..`, so there is
+;: no repeated or trailing separator. The kernel resolves such a name the same
+;: way from every working directory, and it always names a final component.
+;: A leading NUL (the abstract namespace) and an empty name (an unnamed socket)
+;: are rejected. The bytes are opaque, not UTF-8 text. Adapters receive names
+;: as plain bytes and re-check them with this.
+(define (unix-path-bytes-valid? [path : (& path bytes)]) : bool
   (let
-    [length : i64 (string.string-length path)]
-    (and
-      (> length 0)
-      (<= length unix-path-max)
-      (= (cast (string.string-ref path 0) : i64) 47)
-      (not (text-has-nul? path)))))
+    [length : i64 (byte_buf.bytes-length path)]
+    (if (or
+      (< length 2)
+      (> length unix-path-max)
+      (not (= (cast (byte_buf.bytes-ref path 0) : i64) 47)))
+      false
+      (let
+        [index : i64 1]
+        [start : i64 1]
+        [ok : bool true]
+        (begin
+          (while (and ok (< index length))
+            (let
+              [value : i64 (cast (byte_buf.bytes-ref path index) : i64)]
+              (begin
+                (cond
+                  [(= value 0) (set! ok false)]
+                  [(= value 47)
+                    (begin
+                      (set! ok (unix-component-valid? path start index))
+                      (set! start (+ index 1)))]
+                  [else unit])
+                (set! index (+ index 1)))))
+          (and ok (unix-component-valid? path start length)))))))
+
+;: `unix-path-bytes-valid?` for endpoint text.
+(define (unix-path-valid? [path : (& path str)]) : bool
+  (unix-path-bytes-valid? (byte_buf.str-as-bytes path)))
 
 ;: True when byte `index` of `text` equals `lower` ignoring ASCII case.
 (define (text-byte-is-letter? [text : (& text str)] [index : i64] [lower : i64]) : bool
@@ -366,7 +400,8 @@
 ;: - `cancel-pending context handle`: request cancellation. It is not
 ;:   completion: the operation stays in flight until a terminal poll.
 ;: - `wait-ready context handle interest slice-ms`
-;: - `delay context ms`: one bounded pause between connect attempts.
+;: - `delay context ms`: one bounded pause between connect attempts. An error
+;:   ends the connect with that error.
 ;: - `close context handle`: called exactly once per published handle.
 ;:
 ;: An adapter never keeps a buffer, or its storage, after the call that handed
@@ -382,7 +417,7 @@
   (poll-pending (-> i64 i64 byte_buf.ByteBuf i64 LocalIpcIoReply))
   (cancel-pending (-> i64 i64 unit))
   (wait-ready (-> i64 i64 i64 i64 LocalIpcWaitStep))
-  (delay (-> i64 i64 unit))
+  (delay (-> i64 i64 LocalIpcStatus))
   (close (-> i64 i64 LocalIpcStatus)))
 
 ;: Private connection state. `handle` is -1 once closed or never connected;
@@ -725,7 +760,8 @@
 ;: Connect to `endpoint`. The endpoint is validated first; an invalid one never
 ;: reaches the adapter. Each attempt consumes one unit of `work-budget`. After
 ;: `RetryConnect` the helper re-checks cancellation, deadline and budget, pauses
-;: for one bounded slice and makes a fresh attempt. A connected handle is
+;: for one bounded slice and makes a fresh attempt; a pause the adapter reports
+;: failed ends the connect with that error. A connected handle is
 ;: published only after its bounded peer facts pass `policy`; otherwise it is
 ;: closed exactly once and the connection reports the failure.
 ;:
@@ -795,12 +831,17 @@
                           deadline-ms
                           cancel-check
                           work-left)]
-                      (if (status-ok? again)
-                        (adapter.delay
-                          adapter.context
-                          (next-slice-ms (& adapter) deadline-ms))
+                      [paused : LocalIpcStatus
+                        (if (status-ok? again)
+                          (adapter-status
+                            (adapter.delay
+                              adapter.context
+                              (next-slice-ms (& adapter) deadline-ms)))
+                          again)]
+                      (if (status-ok? paused)
+                        unit
                         (begin
-                          (set! outcome again)
+                          (set! outcome paused)
                           (set! running false))))]
                   [(LocalIpcConnectStep.ConnectFailed failure)
                     (begin

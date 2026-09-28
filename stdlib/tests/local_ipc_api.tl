@@ -131,6 +131,8 @@
   (local_ipc.LocalIpcEndpoint.WindowsPipe "\\\\.\\pipe\\agent"))
 (define remote-pipe : local_ipc.LocalIpcEndpoint
   (local_ipc.LocalIpcEndpoint.WindowsPipe "\\\\server\\pipe\\agent"))
+(define dotted-socket : local_ipc.LocalIpcEndpoint
+  (local_ipc.LocalIpcEndpoint.UnixPath "/run/../agent.sock"))
 
 ;; Connect on `context`; cleanup-owning values live in a `with` scope.
 (define (open [context : i64]) : local_ipc.LocalIpcConnection
@@ -369,6 +371,62 @@
           (local_ipc.windows-pipe-valid? "\\\\.\\pipe\\.agent")
           28))
       failed)))
+
+(define (unix-path-row
+  [failed : i64]
+  [path : (& path str)]
+  [want : bool]
+  [id : i64]) : i64
+  (first-failure failed (= (local_ipc.unix-path-valid? path) want) id))
+
+;; A Unix endpoint is lexically canonical, so it names the same socket from
+;; every working directory: no empty, `.` or `..` component, which also rules
+;; out repeated and trailing separators. Other dots are ordinary name bytes. A
+;; non-canonical endpoint never reaches the adapter.
+(define (case-unix-canonical) : i64
+  (let
+    [context : i64 (fake.new)]
+    [failed : i64 0]
+    (with
+      ([connection
+          (local_ipc.connect
+            (fake.adapter context)
+            (& dotted-socket)
+            local_ipc.accept-any-peer
+            far-deadline
+            local_ipc.never-canceled
+            16)
+          local_ipc.cleanup-local-ipc-connection])
+      (begin
+        (set! failed (unix-path-row failed "/" false 250))
+        (set! failed (unix-path-row failed "//run/agent.sock" false 251))
+        (set! failed (unix-path-row failed "/run//agent.sock" false 252))
+        (set! failed (unix-path-row failed "/run/agent.sock/" false 253))
+        (set! failed (unix-path-row failed "/run/./agent.sock" false 254))
+        (set! failed (unix-path-row failed "/run/../agent.sock" false 255))
+        (set! failed (unix-path-row failed "/run/agent.sock/." false 256))
+        (set! failed (unix-path-row failed "/run/agent.sock/.." false 257))
+        (set! failed (unix-path-row failed "/." false 258))
+        (set! failed (unix-path-row failed "/.." false 259))
+        (set! failed (unix-path-row failed "/a" true 260))
+        (set! failed (unix-path-row failed "/run/.agent" true 261))
+        (set! failed (unix-path-row failed "/run/..agent" true 262))
+        (set! failed (unix-path-row failed "/run/agent." true 263))
+        (set! failed (unix-path-row failed "/..." true 264))
+        (set! failed (unix-path-row failed "/run/a..b/c.d" true 265))
+        (set!
+          failed
+          (first-failure
+            failed
+            (= (kind-of (local_ipc.connection-result (& connection))) 1)
+            266))
+        (set!
+          failed
+          (first-failure
+            failed
+            (= (fake.get context fake.slot-connect-calls) 0)
+            267))
+        failed))))
 
 ;; An invalid endpoint never reaches the adapter.
 (define (case-invalid-endpoint-no-dispatch) : i64
@@ -822,6 +880,46 @@
           (= (fake.get bad-handle fake.slot-close-calls) 0)
           110))
       (set! failed (first-failure failed (= sixth 0) 111))
+      failed)))
+
+;; A pause the adapter reports failed ends the connect with that error,
+;; re-bounded, after one attempt and one pause and with nothing to close.
+(define (case-connect-delay-failure) : i64
+  (let
+    [context : i64 (fake.new)]
+    [_a : unit (fake.push! context fake.queue-connect 1)]
+    [_b : unit (fake.put! context fake.slot-delay-kind 10)]
+    [kind : i64 (connect-kind context far-deadline 16)]
+    [big : i64 (fake.new)]
+    [_c : unit (fake.push! big fake.queue-connect 1)]
+    [_d : unit (fake.put! big fake.slot-delay-kind 15)]
+    [_e : unit (fake.put! big fake.slot-host-code 70000)]
+    [code : i64 (connect-host-code big)]
+    [failed : i64 0]
+    (begin
+      (set! failed (first-failure failed (= kind 10) 270))
+      (set!
+        failed
+        (first-failure
+          failed
+          (= (fake.get context fake.slot-connect-calls) 1)
+          271))
+      (set!
+        failed
+        (first-failure
+          failed
+          (= (fake.get context fake.slot-delay-calls) 1)
+          272))
+      (set!
+        failed
+        (first-failure
+          failed
+          (= (fake.get context fake.slot-close-calls) 0)
+          273))
+      (set! failed (first-failure failed (= code 0) 274))
+      (set!
+        failed
+        (first-failure failed (= (fake.get big fake.slot-connect-calls) 1) 275))
       failed)))
 
 (define (case-primitive-read) : i64
@@ -1872,6 +1970,7 @@
     [failed : i64 0]
     (begin
       (set! failed (first-nonzero failed (case-endpoints)))
+      (set! failed (first-nonzero failed (case-unix-canonical)))
       (set! failed (first-nonzero failed (case-invalid-endpoint-no-dispatch)))
       (set! failed (first-nonzero failed (case-connect-and-close)))
       (set! failed (first-nonzero failed (case-close-failure)))
@@ -1885,6 +1984,7 @@
       (set! failed (first-nonzero failed (case-connect-precedence)))
       (set! failed (first-nonzero failed (case-connect-budget)))
       (set! failed (first-nonzero failed (case-connect-rejections)))
+      (set! failed (first-nonzero failed (case-connect-delay-failure)))
       (set! failed (first-nonzero failed (case-primitive-read)))
       (set! failed (first-nonzero failed (case-primitive-write)))
       (set! failed (first-nonzero failed (case-pending)))

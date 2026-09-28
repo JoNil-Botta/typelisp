@@ -11,6 +11,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import compiler_regalloc_interval_sort as interval_sort)
+(import compiler_regalloc_dense_seq as dense_seq)
 
 ;; Block labels are interned ids, so their maps are integer-keyed.
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
@@ -460,35 +461,11 @@
 (define (compiler-reg-call-evict-kind-restore) : i64
   1)
 
-(define (compiler-reg-call-evict-seq-empty) : CompilerRegCallEvictSeq
-  (CompilerRegCallEvictSeq (__tl_make-array CompilerRegCallEvict 0) 0))
-
-(define (compiler-reg-call-evict-seq-push
-  [seq : CompilerRegCallEvictSeq]
-  [item : CompilerRegCallEvict]) : CompilerRegCallEvictSeq
-  (let
-    [slots : (__tl_dyn-array CompilerRegCallEvict) seq.slots]
-    [len : i64 seq.len]
-    [cap : i64 (array-length slots)]
-    (if (< len cap)
-      (begin
-        (set! (array-ref slots len) item)
-        (CompilerRegCallEvictSeq slots (+ len 1)))
-      (let
-        [grown : (__tl_dyn-array CompilerRegCallEvict)
-          (__tl_make-array
-            CompilerRegCallEvict
-            (if (< cap 4)
-              4
-              (* cap 2)))]
-        [i : i64 0]
-        (begin
-          (while (< i len)
-            (begin
-              (set! (array-ref grown i) (array-ref slots i))
-              (set! i (+ i 1))))
-          (set! (array-ref grown len) item)
-          (CompilerRegCallEvictSeq grown (+ len 1)))))))
+(dense_seq.compiler-reg-dense-seq
+  CompilerRegCallEvict
+  CompilerRegCallEvictSeq
+  compiler-reg-call-evict-seq-empty
+  compiler-reg-call-evict-seq-push)
 
 ;; Call-spanning split result: the shadow (split) var set, a per-var map
 ;; (var-id -> caller-saved register ID for its call-free regions, -1 = none),
@@ -520,8 +497,11 @@
   (match s
     [(CompilerRegCallSplit _ _ _ evictions) evictions]))
 
-(define (compiler-reg-call-region-seq-empty) : CompilerRegCallRegionSeq
-  (CompilerRegCallRegionSeq (__tl_make-array CompilerRegCallRegion 0) 0))
+(dense_seq.compiler-reg-dense-seq
+  CompilerRegCallRegion
+  CompilerRegCallRegionSeq
+  compiler-reg-call-region-seq-empty
+  compiler-reg-call-region-seq-push)
 
 (define (compiler-reg-call-split-empty) : CompilerRegCallSplit
   (CompilerRegCallSplit
@@ -626,8 +606,11 @@
 (defstruct CompilerRegCoalesceMap
   (parents (__tl_dyn-array i64)))
 
-(define (compiler-reg-id-seq-empty) : CompilerRegIdSeq
-  (CompilerRegIdSeq (__tl_make-array i64 0) 0))
+(dense_seq.compiler-reg-dense-seq
+  i64
+  CompilerRegIdSeq
+  compiler-reg-id-seq-empty
+  compiler-reg-id-seq-push)
 
 (define (compiler-reg-id-seq-with-capacity [capacity : i64]) : CompilerRegIdSeq
   (CompilerRegIdSeq (__tl_make-array i64 capacity) 0))
@@ -637,30 +620,6 @@
 
 (defmacro (compiler-reg-id-seq-ref [items : CompilerRegIdSeq] [index : i64]) : i64
   `(array-ref (__tl-project-field-name ,items "slots") ,index))
-
-(define (compiler-reg-id-seq-push [items : CompilerRegIdSeq] [item : i64]) : CompilerRegIdSeq
-  (let
-    [slots : (__tl_dyn-array i64) items.slots]
-    [len : i64 items.len]
-    (begin
-      (if (< len (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array i64)
-            (__tl_make-array
-              i64
-              (if (< (array-length slots) 4)
-                4
-                (* (array-length slots) 2)))]
-          [index : i64 0]
-          (begin
-            (while (< index len)
-              (begin
-                (set! (array-ref bigger index) (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (set! (array-ref slots len) item)
-      (CompilerRegIdSeq slots (+ len 1)))))
 
 ;; Persistent prepend for cold one/few-element constraint extension. Retained
 ;; parent sequences remain exact; bulk producers use a capacity-sized builder
@@ -705,13 +664,6 @@
   ;; ownership contract by copying before overriding `head.var`; production
   ;; allocator mutations use compiler-reg-assignment-table-insert directly.
   (compiler-reg-assignment-insert rest head.var head.location))
-
-;; Capacity for a seq that must hold `len + 1` elements; the caller copies the
-;; live prefix into a fresh array of this size when the current one is full.
-(define (compiler-reg-seq-grown-capacity [cap : i64]) : i64
-  (if (< cap 4)
-    4
-    (* cap 2)))
 
 (define (compiler-reg-interval-seq-empty) : CompilerRegIntervalSeq
   (CompilerRegIntervalSeq (__tl_make-array CompilerRegInterval 0) 0))
@@ -811,83 +763,11 @@
 (define (compiler-reg-active-seq-empty) : CompilerRegActiveSeq
   (CompilerRegActiveSeq (__tl_make-array CompilerRegActive 0) 0))
 
-(define (compiler-reg-move-seq-empty) : CompilerRegMoveSeq
-  (CompilerRegMoveSeq (__tl_make-array CompilerRegMove 0) 0))
-
-(define (compiler-reg-move-seq-push
-  [moves : CompilerRegMoveSeq]
-  [item : CompilerRegMove]) : CompilerRegMoveSeq
-  (let
-    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
-    [len : i64 moves.len]
-    (begin
-      (if (< len (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array CompilerRegMove)
-            (__tl_make-array
-              CompilerRegMove
-              (compiler-reg-seq-grown-capacity (array-length slots)))]
-          [i : i64 0]
-          (begin
-            (while (< i len)
-              (begin
-                (set! (array-ref bigger i) (array-ref slots i))
-                (set! i (+ i 1))))
-            (set! slots bigger))))
-      (set! (array-ref slots len) item)
-      (CompilerRegMoveSeq slots (+ len 1)))))
-
-(define (compiler-reg-call-region-seq-push
-  [regions : CompilerRegCallRegionSeq]
-  [item : CompilerRegCallRegion]) : CompilerRegCallRegionSeq
-  (let
-    [slots : (__tl_dyn-array CompilerRegCallRegion) regions.slots]
-    [len : i64 regions.len]
-    (begin
-      (if (< len (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array CompilerRegCallRegion)
-            (__tl_make-array
-              CompilerRegCallRegion
-              (compiler-reg-seq-grown-capacity (array-length slots)))]
-          [i : i64 0]
-          (begin
-            (while (< i len)
-              (begin
-                (set! (array-ref bigger i) (array-ref slots i))
-                (set! i (+ i 1))))
-            (set! slots bigger))))
-      (set! (array-ref slots len) item)
-      (CompilerRegCallRegionSeq slots (+ len 1)))))
-
-(define (compiler-reg-call-region-stat-seq-empty) : CompilerRegCallRegionStatSeq
-  (CompilerRegCallRegionStatSeq (__tl_make-array CompilerRegCallRegionStat 0) 0))
-
-(define (compiler-reg-call-region-stat-seq-push
-  [rows : CompilerRegCallRegionStatSeq]
-  [item : CompilerRegCallRegionStat]) : CompilerRegCallRegionStatSeq
-  (let
-    [slots : (__tl_dyn-array CompilerRegCallRegionStat) rows.slots]
-    [len : i64 rows.len]
-    (begin
-      (if (< len (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array CompilerRegCallRegionStat)
-            (__tl_make-array
-              CompilerRegCallRegionStat
-              (compiler-reg-seq-grown-capacity (array-length slots)))]
-          [i : i64 0]
-          (begin
-            (while (< i len)
-              (begin
-                (set! (array-ref bigger i) (array-ref slots i))
-                (set! i (+ i 1))))
-            (set! slots bigger))))
-      (set! (array-ref slots len) item)
-      (CompilerRegCallRegionStatSeq slots (+ len 1)))))
+(dense_seq.compiler-reg-dense-seq
+  CompilerRegMove
+  CompilerRegMoveSeq
+  compiler-reg-move-seq-empty
+  compiler-reg-move-seq-push)
 
 (define (compiler-reg-max [a : i64] [b : i64]) : i64
   (if (> a b)
@@ -7823,7 +7703,7 @@
           [bigger : (__tl_dyn-array CompilerRegActive)
             (__tl_make-array
               CompilerRegActive
-              (compiler-reg-seq-grown-capacity (array-length slots)))]
+              (dense_seq.compiler-reg-seq-grown-capacity (array-length slots)))]
           [i : i64 0]
           (begin
             (while (< i len)
@@ -13824,6 +13704,12 @@
 (defstruct CompilerRegCallRegionStatSeq
   (slots (__tl_dyn-array CompilerRegCallRegionStat))
   (len i64))
+
+(dense_seq.compiler-reg-dense-seq
+  CompilerRegCallRegionStat
+  CompilerRegCallRegionStatSeq
+  compiler-reg-call-region-stat-seq-empty
+  compiler-reg-call-region-stat-seq-push)
 
 (defenum CompilerRegCallRegionMaybeStat
   (CompilerRegCallRegionNoStat)

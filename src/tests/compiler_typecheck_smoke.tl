@@ -1061,6 +1061,83 @@
   Interval before copy shared sift sort full-array unknown-order)\n")
       "compiler-reg-interval-heapsort: ordering must be `candidate-start-end-var` or `color-start-var`")))
 
+(define (compiler-typecheck-smoke-regalloc-dense-seq-macro-source
+  [declarations : String]) : String
+  (str_cat.str-cat
+    (byte_buf.to-string (io.read-file "src/compiler_regalloc_dense_seq.tl"))
+    "\n(defstruct IdSeq (slots (__tl_dyn-array i64)) (len i64))\n
+(defstruct Row (a i64) (b bool))\n
+(defstruct RowSeq (slots (__tl_dyn-array Row)) (len i64))\n
+(defenum Pick (Left i64) (Right))\n
+(defstruct PickSeq (slots (__tl_dyn-array Pick)) (len i64))\n"
+    declarations
+    "\n(define (main) : i64 42)"))
+
+(define (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+  [declarations : String]
+  [want : String]) : bool
+  (tc_tests.compiler-typecheck-error-ok?
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-source declarations)
+    want))
+
+(define (compiler-typecheck-smoke-regalloc-dense-seq-layout-error) : String
+  "compiler-reg-dense-seq: sequence type must have exactly the fields `(slots (__tl_dyn-array T))` and `(len i64)`")
+
+(define (compiler-typecheck-smoke-regalloc-dense-seq-macro-tests-ok?) : bool
+  (and
+    (tc_tests.compiler-typecheck-ok?
+      (compiler-typecheck-smoke-regalloc-dense-seq-macro-source
+        "(compiler-reg-dense-seq i64 IdSeq id-empty id-push)\n
+(compiler-reg-dense-seq Row RowSeq row-empty row-push)\n
+(compiler-reg-dense-seq Pick PickSeq pick-empty pick-push)\n
+(define (use) : i64\n
+  (let\n
+    [ids : IdSeq (id-push (id-empty) -7)]\n
+    [rows : RowSeq (row-push (row-empty) (Row 1 true))]\n
+    [picks : PickSeq (pick-push (pick-push (pick-empty) (Pick.Left 3)) Pick.Right)]\n
+    [first : i64 (array-ref ids.slots 0)]\n
+    (+ first (+ ids.len (+ rows.len picks.len)))))"))
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(compiler-reg-dense-seq i64 IdSeq (bad-empty) id-push)"
+      "compiler-reg-dense-seq: empty declaration must be a bare name")
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(compiler-reg-dense-seq i64 IdSeq id-empty 42)"
+      "compiler-reg-dense-seq: push declaration must be a bare name")
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(defstruct Swapped (len i64) (slots (__tl_dyn-array i64)))\n
+(compiler-reg-dense-seq i64 Swapped e p)"
+      (compiler-typecheck-smoke-regalloc-dense-seq-layout-error))
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(defstruct Extra (slots (__tl_dyn-array i64)) (len i64) (cap i64))\n
+(compiler-reg-dense-seq i64 Extra e p)"
+      (compiler-typecheck-smoke-regalloc-dense-seq-layout-error))
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(compiler-reg-dense-seq Row IdSeq e p)"
+      (compiler-typecheck-smoke-regalloc-dense-seq-layout-error))
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(defstruct Fixed (slots (Array i64 4)) (len i64))\n
+(compiler-reg-dense-seq i64 Fixed e p)"
+      (compiler-typecheck-smoke-regalloc-dense-seq-layout-error))
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(defstruct Wide (slots (__tl_dyn-array i64)) (len u64))\n
+(compiler-reg-dense-seq i64 Wide e p)"
+      (compiler-typecheck-smoke-regalloc-dense-seq-layout-error))
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(defstruct Strings (slots (__tl_dyn-array String)) (len i64))\n
+(compiler-reg-dense-seq String Strings e p)"
+      "typecheck: macro compiler-reg-dense-seq type operand T rejects String: expected one of :kind i64, struct, enum")
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(compiler-reg-dense-seq i64 Pick e p)"
+      "typecheck: macro compiler-reg-dense-seq type operand seq-type rejects Pick: expected one of :kind struct")
+    ;; `push` consumes its sequence: reusing the pre-push value is a move
+    ;; error, not a persistent sequence.
+    (compiler-typecheck-smoke-regalloc-dense-seq-macro-error-ok?
+      "(compiler-reg-dense-seq i64 IdSeq id-empty id-push)\n
+(define (reuse) : i64\n
+  (let [ids : IdSeq (id-empty)] [one : IdSeq (id-push ids 1)] [two : IdSeq (id-push ids 2)]\n
+    (+ one.len two.len)))"
+      "typecheck: use of moved value `ids`")))
+
 (define (compiler-typecheck-smoke-require [ok : bool] [name : String]) : bool
   (if ok
     true
@@ -5534,6 +5611,9 @@
     (unless
       (compiler-typecheck-smoke-regalloc-heapsort-macro-tests-ok?)
       (io.panic "typecheck: regalloc heapsort declaration macro smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-regalloc-dense-seq-macro-tests-ok?)
+      (io.panic "typecheck: regalloc dense-seq declaration macro smoke failed"))
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
       (io.panic "typecheck: declaration macro body smoke failed"))

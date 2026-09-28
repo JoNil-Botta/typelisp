@@ -546,7 +546,7 @@ generated_module_fixed_field_access_reject|check-fail|tests/safety/generated_mod
 generated_module_substituted_condition_reject|check-fail|tests/safety/generated_module_substituted_condition_reject.tl|-|typecheck: if condition must be bool: expected bool, found u8
 generated_module_fixed_constructor_argument_reject|check-fail|tests/safety/generated_module_fixed_constructor_argument_reject.tl|-|typecheck: call `Box` argument 1 (parameter `fixed`) type mismatch: expected i64, found u8
 generated_module_partial_catalog_ok|check-ok|tests/safety/generated_module_partial_catalog_ok.tl|-|-
-generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|typecheck: integer operator expects matching integer operands
+generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|generated_module_sibling_value_dependency_reject.tl:27:11
 
 serialize_unsupported_char_root_reject|check-fail|tests/safety/serialize_unsupported_char_root_reject.tl|-|serialize: unsupported root type
 serialize_unsupported_tuple_element_reject|check-fail|tests/safety/serialize_unsupported_tuple_element_reject.tl|-|serialize: unsupported type char

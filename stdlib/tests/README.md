@@ -118,6 +118,26 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - `local_ipc_fake_forged_context.tl` traps (status 134, array bounds
   diagnostic): a fake context no `fake.new` returned is checked, never used as
   an address.
+- `local_ipc_linux_api.tl` holds inline `typelisp test` cases for
+  `stdlib.local_ipc_linux` (a `check` row here; `verify-inline-tests.sh` runs
+  them on both hosts). Everywhere: the native layouts and ABI constants, and
+  tables for every raw read/write/poll/SO_PEERCRED/errno classification,
+  pathname-policy check and slice clamp, plus forged tokens and unsound
+  buffers that never reach a host call. On Linux, hermetic sockets whose
+  listener is the test process in a private /tmp directory: connect with real
+  peer facts, partial progress both ways, would-block, tail bytes before EOF,
+  EPIPE without SIGPIPE, missing/refused/regular-file/directory/symlink/mode/
+  owner/group/invalid pathname policies, peer-policy rejection, delayed
+  readiness, timeout and cancellation, a write that keeps partial progress at
+  its deadline, stale tokens across slot and descriptor reuse, and the real
+  saturated backlog (EAGAIN, false POLLOUT|POLLHUP, SO_ERROR 0, ENOTCONN, the
+  discarded attempt closed, one bounded pause, a fresh attempt connecting, and
+  a bounded number of attempts to a timeout). Scripted syscalls cover
+  impossible connect results and descriptors, EINTR retry, a corrupt pause, a
+  full descriptor table, malformed stat/ucred/pollfd output, poisoning, and a
+  lost descriptor that is never closed. Every case checks each adapter
+  descriptor closes exactly once. A warmed adapter readiness loop allocates
+  nothing. On Windows the adapter reports `UnsupportedTarget`.
 - `net_ip_api.tl` covers network-order constructors, exact borrowed byte
   lengths, family-sensitive equality/order/hash behavior, strict IPv4 and IPv6
   positive and negative text tables with byte offsets, RFC 5952 formatting,

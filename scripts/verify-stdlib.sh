@@ -232,6 +232,7 @@ ssh_known_hosts_parse.tl
 json.tl
 local_ipc.tl
 local_ipc_fake.tl
+local_ipc_linux.tl
 math.tl
 msvc.tl
 option.tl
@@ -353,6 +354,7 @@ stdlib/tests/env_api.tl|pass|-
 stdlib/tests/local_ipc_forged_connection_reject.tl|fail|int->ptr requires unsafe context
 stdlib/tests/local_ipc_connection_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
 stdlib/tests/local_ipc_raw_helper_reject.tl|fail|local_ipc/io-once requires unsafe context
+stdlib/tests/local_ipc_linux_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_println_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_eprintln_nonliteral_template_reject.tl|fail|format: template must be a string literal

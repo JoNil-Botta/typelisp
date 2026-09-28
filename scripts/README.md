@@ -63,9 +63,10 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 `ci-gates.tsv` is the gate table: one row per gate, in run order, with its
 stable `id`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
 ci-timing name), `needs`, `compiler`, `memory`, `locks` and `command`.
-`ci-verify.sh` runs the rows for its host in order and stops at the first
-failure. List either host without a compiler or side effects, optionally
-narrowed to a dependency-closed selection:
+`ci-verify.sh` runs the rows for its host in table order (under `--jobs`, the
+order in which ready gates start) and starts no gate after the first failure.
+List either host without a compiler or side effects, optionally narrowed to a
+dependency-closed selection:
 
 ```sh
 sh scripts/ci-verify.sh --list-gates linux

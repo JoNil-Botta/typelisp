@@ -4215,6 +4215,10 @@
   aggregate-split
   (smoke-require-42 (ot.compiler-optimize-aggregate-split-self-test)))
 
+(test
+  group-split
+  (smoke-require-42 (ot.compiler-optimize-group-split-self-test)))
+
 (test spans (smoke-require-42 (ot.compiler-optimize-spans-self-test)))
 
 (test gvn (smoke-require-42 (ot.compiler-optimize-gvn-self-test)))

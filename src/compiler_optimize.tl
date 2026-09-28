@@ -13059,6 +13059,750 @@
       unit)
     (owned_view.compiler-owned-reference-shared-view program)))
 
+;; --- register-group word split (pre-SSA) -------------------------------------
+;;
+;; SSA renames one value per variable, so a register-group variable (a small
+;; struct or enum the lowering carries in several registers) is never an SSA
+;; candidate: see opt-ssa-register-value-type-with-representations?. One such
+;; variable with more than one definition used to leave its whole function
+;; multi-def, and every verifier-gated pass then refused the function.
+;;
+;; This pass gives each such variable `%g` of k words k fresh one-word
+;; variables, which are ordinary scalar SSA candidates:
+;;   - a definition `%g = mov %s` becomes `%g.i = word %s, i`; any other
+;;     definition `%g = e` (pack, call, load, phi) becomes `%t = e` followed by
+;;     `%g.i = word %t, i`, the words of a phi following the block's phis;
+;;   - a parameter keeps its definition and its words start the entry block,
+;;     which has no predecessors (tail recursion adds the explicit preheader
+;;     before this pass runs; SSA refuses an entry with predecessors anyway);
+;;   - every other use reads `%u = pack [%g.0 .. %g.k-1]` built right before the
+;;     using instruction, or at the end of the predecessor for a phi input.
+;; Each word keeps the value it had in the group, so the program is unchanged;
+;; copy propagation and GVN fold the `word (pack ...)` pairs afterwards. Word i
+;; is f64 when the representation index marks it SSE and i64 otherwise, the
+;; register classes the backend homes the group's words in.
+;;
+;; A variable is left alone when its address is taken, a definition is not a
+;; mov/pack/call/load/phi of one group type, its representation is not a known
+;; register group, or it has more than opt-aggregate-split-word-limit words.
+(defstruct OptGroupSplitPlan
+  ;; Per var: first word var of an accepted group (-1 if none), its word
+  ;; count, its SSE word mask and its group type.
+  (words (__tl_dyn-array i64))
+  (counts (__tl_dyn-array i64))
+  (masks (__tl_dyn-array i64))
+  (types OptSsaVarTypes)
+  ;; Phi-input packs: the predecessor label, the group var, and the pack var
+  ;; built at the end of that predecessor.
+  (edge-labels opt_dense_i64_vec.Vec)
+  (edge-vars opt_dense_i64_vec.Vec)
+  (edge-packs opt_dense_i64_vec.Vec))
+
+;; The group type a definition gives its var, or No for a definition this pass
+;; cannot split.
+(define (opt-group-split-def-type [instr : ir.CompilerIrInstr]) : OptMaybeAstType
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Pack _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Call _ _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Load _ _ ty) (OptMaybeAstType.Some ty)]
+    [(ir.CompilerIrInstr.Phi _ _ ty) (OptMaybeAstType.Some ty)]
+    [_ (OptMaybeAstType.No)]))
+
+(define (opt-group-split-word-type [mask : i64] [index : i64]) : ast.AstType
+  (if (= (bit-and mask (shl 1 index)) 0)
+    (ast.AstType.I64)
+    (ast.AstType.F64)))
+
+;; `%g.i = word value, i` for every word of accepted var `var`.
+(define (opt-group-split-emit-words!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [var : i64]
+  [value : ir.CompilerIrValue]) : unit
+  (let
+    [base : i64 (array-ref plan.words var)]
+    [count : i64 (array-ref plan.counts var)]
+    [mask : i64 (array-ref plan.masks var)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          builder
+          (ir.CompilerIrInstr.Word
+            (+ base index)
+            (compiler-opt-global-shared-view value)
+            index
+            (opt-group-split-word-type mask index)))
+        (set! index (+ index 1))))))
+
+;; `%u = pack [%g.0 .. %g.k-1] : G` for accepted var `var`.
+(define (opt-group-split-emit-pack!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [dst : i64]
+  [var : i64]) : unit
+  (let
+    [base : i64 (array-ref plan.words var)]
+    [count : i64 (array-ref plan.counts var)]
+    [slots : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref slots index) (ir.CompilerIrValue.Var (+ base index)))
+          (set! index (+ index 1))))
+      (match (opt-ssa-var-types-lookup (& plan.types) var)
+        [(OptMaybeAstType.Some ty)
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.Pack dst (ir.CompilerIrValueSeq slots count) ty))]
+        [(OptMaybeAstType.No) unit]))))
+
+(define (opt-group-split-accepted?
+  [plan : (& plan OptGroupSplitPlan)]
+  [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length plan.words))
+    (>= (array-ref plan.words var) 0)))
+
+(define (opt-group-split-note-use
+  [plan : (& plan OptGroupSplitPlan)]
+  [_role : ir.CompilerIrOperandRole]
+  [acc : opt_dense_i64_vec.Vec]
+  [value : ir.CompilerIrValue]) : opt_dense_i64_vec.Vec
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (opt-group-split-accepted? plan var)
+        (let
+          [out : opt_dense_i64_vec.Vec acc]
+          (begin
+            (opt_dense_i64_vec.push-ref! (&mut out) var)
+            out))
+        acc)]
+    [_ acc]))
+
+;; The pack var built at the end of `label` for accepted var `var`, or -1.
+(define (opt-group-split-edge-pack
+  [plan : (& plan OptGroupSplitPlan)]
+  [label : i64]
+  [var : i64]) : i64
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& plan.edge-labels))]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< index count))
+        (begin
+          (if (and
+            (= (opt_dense_i64_vec.get (& plan.edge-labels) index -1) label)
+            (= (opt_dense_i64_vec.get (& plan.edge-vars) index -1) var))
+            (set! found (opt_dense_i64_vec.get (& plan.edge-packs) index -1))
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-group-split-phi-inputs
+  [plan : (& plan OptGroupSplitPlan)]
+  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
+  (let
+    [count : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+    [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
+      (__tl_make-array ir.CompilerIrPhiInput count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [input : ir.CompilerIrPhiInput
+            (ir.compiler-ir-phi-input-seq-ref inputs index)]
+          (begin
+            (set!
+              (array-ref slots index)
+              (match (compiler-opt-global-shared-view input.value)
+                [(ir.CompilerIrValue.Var var)
+                  (if (opt-group-split-accepted? plan var)
+                    (ir.CompilerIrPhiInput
+                      (ir.CompilerIrValue.Var
+                        (opt-group-split-edge-pack plan input.label var))
+                      input.label)
+                    input)]
+                [_ input]))
+            (set! index (+ index 1)))))
+      (ir.CompilerIrPhiInputSeq slots 0 count))))
+
+;; A group already read through a pack built for the current instruction.
+(define (opt-group-split-remapped?
+  [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
+  [var : i64]) : bool
+  (match (array-ref remap var)
+    [(ir.CompilerIrValue.Var id) (>= id 0)]
+    [_ true]))
+
+;; A use of a group read through this instruction's pack.
+(define (opt-group-split-map-use
+  [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var var)
+      (if (and
+        (>= var 0)
+        (< var (array-length remap))
+        (opt-group-split-remapped? remap var))
+        (array-ref remap var)
+        value)]
+    [_ value]))
+
+;; Rewrite one non-phi instruction: packs for the groups it reads, then the
+;; instruction with those uses substituted, then the words of a group it
+;; defines. `remap` is all `Var -1` between calls.
+(define (opt-group-split-rewrite-instr!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [remap : (&mut remap (__tl_dyn-array ir.CompilerIrValue))]
+  [cursor : (&mut cursor (__tl_dyn-array i64))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [used : opt_dense_i64_vec.Vec
+      (ir.compiler-ir-instr-fold-uses
+        (compiler-opt-global-shared-view instr)
+        (opt_dense_i64_vec.new)
+        opt-group-split-note-use
+        plan)]
+    [used-count : i64 (opt_dense_i64_vec.len (& used))]
+    [index : i64 0]
+    (begin
+      (while (< index used-count)
+        (let
+          [var : i64 (opt_dense_i64_vec.get (& used) index -1)]
+          (begin
+            (if (opt-group-split-remapped? remap var)
+              unit
+              (let
+                [dst : i64 (array-ref cursor 0)]
+                (begin
+                  (set! (array-ref cursor 0) (+ dst 1))
+                  (opt-group-split-emit-pack! plan builder dst var)
+                  (set! (array-ref remap var) (ir.CompilerIrValue.Var dst)))))
+            (set! index (+ index 1)))))
+      (let
+        [rewritten : ir.CompilerIrInstr
+          (if (= used-count 0)
+            instr
+            (ir.compiler-ir-instr-map instr opt-group-split-map-use _ _ _ remap))]
+        (begin
+          (set! index 0)
+          (while (< index used-count)
+            (begin
+              (set!
+                (array-ref remap (opt_dense_i64_vec.get (& used) index -1))
+                (ir.CompilerIrValue.Var -1))
+              (set! index (+ index 1))))
+          (match (opt-instr-def-var (compiler-opt-global-shared-view rewritten))
+            [(option_i64.Some dst)
+              (if (opt-group-split-accepted? plan dst)
+                (match (compiler-opt-global-shared-view rewritten)
+                  [(ir.CompilerIrInstr.Mov _ src _)
+                    (opt-group-split-emit-words! plan builder dst src)]
+                  [_
+                    (let
+                      [temp : i64 (array-ref cursor 0)]
+                      (begin
+                        (set! (array-ref cursor 0) (+ temp 1))
+                        (ir.compiler-ir-instr-builder-push!
+                          builder
+                          (opt-group-split-redefine rewritten temp))
+                        (opt-group-split-emit-words!
+                          plan
+                          builder
+                          dst
+                          (ir.CompilerIrValue.Var temp))))])
+                (ir.compiler-ir-instr-builder-push! builder rewritten))]
+            [(option_i64.None)
+              (ir.compiler-ir-instr-builder-push! builder rewritten)]))))))
+
+;; `instr` defining `dst` instead (only the forms opt-group-split-def-type
+;; accepts other than Mov reach here).
+(define (opt-group-split-redefine [instr : ir.CompilerIrInstr] [dst : i64]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Pack _ words ty)
+      (ir.CompilerIrInstr.Pack dst words ty)]
+    [(ir.CompilerIrInstr.Call _ func args ty)
+      (ir.CompilerIrInstr.Call dst func args ty)]
+    [(ir.CompilerIrInstr.Load _ src ty) (ir.CompilerIrInstr.Load dst src ty)]
+    [(ir.CompilerIrInstr.Phi _ inputs ty)
+      (ir.CompilerIrInstr.Phi dst inputs ty)]
+    [_ instr]))
+
+;; Rewrite one block: its phis (inputs read through the edge packs, a split
+;; group's phi defining a temp), the words those phis and, in the entry block,
+;; the split parameters define, the remaining instructions, and the edge packs
+;; its successors' phis read, placed before its terminator.
+(define (opt-group-split-rewrite-block
+  [plan : (& plan OptGroupSplitPlan)]
+  [remap : (&mut remap (__tl_dyn-array ir.CompilerIrValue))]
+  [cursor : (&mut cursor (__tl_dyn-array i64))]
+  [params : (& params ir.CompilerIrParamSeq)]
+  [entry? : bool]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 8))]
+    [phi-vars : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [phi-temps : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [index : i64 0]
+    [phis-done : bool false]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (begin
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Phi dst inputs ty)
+                (let
+                  [mapped : ir.CompilerIrPhiInputSeq
+                    (opt-group-split-phi-inputs plan inputs)]
+                  (if (opt-group-split-accepted? plan dst)
+                    (let
+                      [temp : i64 (array-ref cursor 0)]
+                      (begin
+                        (set! (array-ref cursor 0) (+ temp 1))
+                        (opt_dense_i64_vec.push-ref! (&mut phi-vars) dst)
+                        (opt_dense_i64_vec.push-ref! (&mut phi-temps) temp)
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut builder)
+                          (ir.CompilerIrInstr.Phi temp mapped ty))))
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.Phi dst mapped ty))))]
+              [_
+                (begin
+                  (if phis-done
+                    unit
+                    (begin
+                      (set! phis-done true)
+                      (opt-group-split-emit-block-head!
+                        plan
+                        (&mut builder)
+                        params
+                        entry?
+                        (& phi-vars)
+                        (& phi-temps))))
+                  (if (= index (- count 1))
+                    (opt-group-split-emit-edge-packs! plan (&mut builder) label)
+                    unit)
+                  (opt-group-split-rewrite-instr!
+                    plan
+                    (&mut builder)
+                    remap
+                    cursor
+                    instr))])
+            (set! index (+ index 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-group-split-emit-block-head!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [params : (& params ir.CompilerIrParamSeq)]
+  [entry? : bool]
+  [phi-vars : (& phi-vars opt_dense_i64_vec.Vec)]
+  [phi-temps : (& phi-temps opt_dense_i64_vec.Vec)]) : unit
+  (let
+    [count : i64 (opt_dense_i64_vec.len phi-vars)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (opt-group-split-emit-words!
+            plan
+            builder
+            (opt_dense_i64_vec.get phi-vars index -1)
+            (ir.CompilerIrValue.Var (opt_dense_i64_vec.get phi-temps index -1)))
+          (set! index (+ index 1))))
+      (if entry?
+        (begin
+          (set! index 0)
+          (while (< index params.len)
+            (begin
+              (match (ir.compiler-ir-param-seq-ref params index)
+                [(ir.CompilerIrParam.Param _ _ var)
+                  (if (opt-group-split-accepted? plan var)
+                    (opt-group-split-emit-words!
+                      plan
+                      builder
+                      var
+                      (ir.CompilerIrValue.Var var))
+                    unit)])
+              (set! index (+ index 1)))))
+        unit))))
+
+(define (opt-group-split-emit-edge-packs!
+  [plan : (& plan OptGroupSplitPlan)]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [label : i64]) : unit
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& plan.edge-labels))]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (if (= (opt_dense_i64_vec.get (& plan.edge-labels) index -1) label)
+          (opt-group-split-emit-pack!
+            plan
+            builder
+            (opt_dense_i64_vec.get (& plan.edge-packs) index -1)
+            (opt_dense_i64_vec.get (& plan.edge-vars) index -1))
+          unit)
+        (set! index (+ index 1))))))
+
+;; One definition of `var` of type `ty`, or of no splittable type.
+(define (opt-group-split-note-def!
+  [type-segment-bases : i64]
+  [defs : (&mut defs (__tl_dyn-array i64))]
+  [bad : (&mut bad (__tl_dyn-array i64))]
+  [types : OptSsaVarTypes]
+  [var : i64]
+  [ty : OptMaybeAstType]) : OptSsaVarTypes
+  (begin
+    (set! (array-ref defs var) (+ (array-ref defs var) 1))
+    (match ty
+      [(OptMaybeAstType.No)
+        (begin
+          (set! (array-ref bad var) (opt-group-split-refused-definition))
+          types)]
+      [(OptMaybeAstType.Some next)
+        (match (opt-ssa-var-types-lookup (& types) var)
+          [(OptMaybeAstType.No) (opt-ssa-var-types-set types var next)]
+          [(OptMaybeAstType.Some old)
+            (begin
+              (if (opt-type-eq type-segment-bases (& old) next)
+                unit
+                (set! (array-ref bad var) (opt-group-split-refused-type)))
+              types)])])))
+
+;; Why a multi-def register-group var keeps its group, for the
+;; `group-split|<function>|%<var>|<reason>|words=<n>` tracer; 0 is accepted.
+(define (opt-group-split-refused-address) : i64
+  1)
+
+(define (opt-group-split-refused-definition) : i64
+  2)
+
+(define (opt-group-split-refused-type) : i64
+  3)
+
+(define (opt-group-split-refused-words) : i64
+  4)
+
+(define (opt-group-split-reason-text [reason : i64]) : String
+  (cond
+    [(= reason 0) "ok"]
+    [(= reason (opt-group-split-refused-address)) "address"]
+    [(= reason (opt-group-split-refused-definition)) "definition"]
+    [(= reason (opt-group-split-refused-type)) "type"]
+    [else "words"]))
+
+;; Accept every multi-def var whose definitions all give it one known register
+;; group type of at most opt-aggregate-split-word-limit words, assigning its
+;; word vars from `next-var`. Returns the next free var.
+(define (opt-group-split-assign!
+  [type-segment-bases : i64]
+  [representations : (& representations ir.CompilerIrRepresentationIndex)]
+  [plan : (& plan OptGroupSplitPlan)]
+  [defs : (& defs (__tl_dyn-array i64))]
+  [bad : (& bad (__tl_dyn-array i64))]
+  [name : i64]
+  [frame : i64]
+  [next-var : i64]) : i64
+  (let
+    [var : i64 0]
+    [next : i64 next-var]
+    (begin
+      (while (< var frame)
+        (begin
+          (if (>= (array-ref defs var) 2)
+            (match (opt-ssa-var-types-lookup (& plan.types) var)
+              [(OptMaybeAstType.Some ty)
+                (match (ir.compiler-ir-representation-index-kind
+                  type-segment-bases
+                  representations
+                  ty)
+                  [(ir.CompilerIrRepresentationKind.RegisterGroup count mask)
+                    (let
+                      [reason : i64
+                        (cond
+                          [(not (= (array-ref bad var) 0)) (array-ref bad var)]
+                          [(> count (opt-aggregate-split-word-limit))
+                            (opt-group-split-refused-words)]
+                          [else 0])]
+                      (begin
+                        (if (= reason 0)
+                          (begin
+                            (set! (array-ref plan.words var) next)
+                            (set! (array-ref plan.counts var) count)
+                            (set! (array-ref plan.masks var) mask)
+                            (set! next (+ next count)))
+                          unit)
+                        (if (and
+                          compiler-opt-debug-trace-passes
+                          (not compiler-opt-debug-suppressed?))
+                          (io.print-error
+                            (str_cat.str-cat
+                              "group-split|"
+                              (ir.compiler-ir-symbol-text name)
+                              "|%"
+                              (string.int->string var)
+                              "|"
+                              (opt-group-split-reason-text reason)
+                              "|words="
+                              (string.int->string count)
+                              "\n"))
+                          unit)))]
+                  [_ unit])]
+              [(OptMaybeAstType.No) unit])
+            unit)
+          (set! var (+ var 1))))
+      next)))
+
+;; Give every (predecessor, accepted var) pair a phi reads its pack var.
+(define (opt-group-split-plan-edges!
+  [plan : (&mut plan OptGroupSplitPlan)]
+  [flat : (& flat OptSplitFlat)]
+  [next-var : i64]) : i64
+  (let
+    [next : i64 next-var]
+    [index : i64 0]
+    (begin
+      (while (< index flat.count)
+        (begin
+          (match (opt-aggregate-split-at flat index)
+            [(ir.CompilerIrInstr.Phi _ inputs _)
+              (let
+                [count : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                [position : i64 0]
+                (while (< position count)
+                  (let
+                    [input : ir.CompilerIrPhiInput
+                      (ir.compiler-ir-phi-input-seq-ref inputs position)]
+                    (begin
+                      (match input.value
+                        [(ir.CompilerIrValue.Var var)
+                          (if (and
+                            (opt-group-split-accepted? plan var)
+                            (<
+                              (opt-group-split-edge-pack plan input.label var)
+                              0))
+                            (begin
+                              (opt_dense_i64_vec.push-ref!
+                                (&mut plan.edge-labels)
+                                input.label)
+                              (opt_dense_i64_vec.push-ref!
+                                (&mut plan.edge-vars)
+                                var)
+                              (opt_dense_i64_vec.push-ref!
+                                (&mut plan.edge-packs)
+                                next)
+                              (set! next (+ next 1)))
+                            unit)]
+                        [_ unit])
+                      (set! position (+ position 1))))))]
+            [_ unit])
+          (set! index (+ index 1))))
+      next)))
+
+(define (opt-group-split-function
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function
+        name
+        params
+        ret-ty
+        frame
+        blocks
+        function-abi)
+      (if (< frame 1)
+        func
+        (let
+          [flat : OptSplitFlat
+            (opt-aggregate-split-flatten
+              (compiler-opt-global-shared-view blocks))]
+          [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [bad : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [types : OptSsaVarTypes (opt-ssa-var-types-new)]
+          [index : i64 0]
+          (begin
+            (while (< index params.len)
+              (begin
+                (match (ir.compiler-ir-param-seq-ref params index)
+                  [(ir.CompilerIrParam.Param _ ty var)
+                    (set!
+                      types
+                      (opt-group-split-note-def!
+                        type-segment-bases
+                        (&mut defs)
+                        (&mut bad)
+                        types
+                        var
+                        (OptMaybeAstType.Some ty)))])
+                (set! index (+ index 1))))
+            (set! index 0)
+            (while (< index flat.count)
+              (let
+                [instr : ir.CompilerIrInstr (opt-aggregate-split-at flat index)]
+                (begin
+                  (match (compiler-opt-global-shared-view instr)
+                    ;; The raw slot of an address-of is the var itself.
+                    [(ir.CompilerIrInstr.AddrOf _ src)
+                      (set!
+                        (array-ref bad src)
+                        (opt-group-split-refused-address))]
+                    [_
+                      (match (opt-instr-def-var
+                        (compiler-opt-global-shared-view instr))
+                        [(option_i64.Some dst)
+                          (set!
+                            types
+                            (opt-group-split-note-def!
+                              type-segment-bases
+                              (&mut defs)
+                              (&mut bad)
+                              types
+                              dst
+                              (opt-group-split-def-type
+                                (compiler-opt-global-shared-view instr))))]
+                        [(option_i64.None) unit])])
+                  (set! index (+ index 1)))))
+            (let
+              [plan : OptGroupSplitPlan
+                (OptGroupSplitPlan
+                  (opt-group-split-filled frame -1)
+                  (__tl_make-array i64 frame)
+                  (__tl_make-array i64 frame)
+                  types
+                  (opt_dense_i64_vec.new)
+                  (opt_dense_i64_vec.new)
+                  (opt_dense_i64_vec.new))]
+              [after-words : i64
+                (opt-group-split-assign!
+                  type-segment-bases
+                  (& representations)
+                  (& plan)
+                  (& defs)
+                  (& bad)
+                  name
+                  frame
+                  frame)]
+              (if (= after-words frame)
+                func
+                (let
+                  [after-edges : i64
+                    (opt-group-split-plan-edges!
+                      (&mut plan)
+                      (& flat)
+                      after-words)]
+                  [cursor : (__tl_dyn-array i64)
+                    (opt-group-split-filled 1 after-edges)]
+                  [remap : (__tl_dyn-array ir.CompilerIrValue)
+                    (__tl_make-array ir.CompilerIrValue frame)]
+                  (begin
+                    (set! index 0)
+                    (while (< index frame)
+                      (begin
+                        (set!
+                          (array-ref remap index)
+                          (ir.CompilerIrValue.Var -1))
+                        (set! index (+ index 1))))
+                    (let
+                      [rewritten : ir.CompilerIrBlockList
+                        (opt-group-split-rewrite-blocks
+                          (& plan)
+                          (&mut remap)
+                          (&mut cursor)
+                          (& params)
+                          true
+                          blocks)]
+                      (ir.CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        (array-ref cursor 0)
+                        rewritten
+                        function-abi)))))))))]))
+
+(define (opt-group-split-filled [count : i64] [value : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref out index) value)
+          (set! index (+ index 1))))
+      out)))
+
+(define (opt-group-split-rewrite-blocks
+  [plan : (& plan OptGroupSplitPlan)]
+  [remap : (&mut remap (__tl_dyn-array ir.CompilerIrValue))]
+  [cursor : (&mut cursor (__tl_dyn-array i64))]
+  [params : (& params ir.CompilerIrParamSeq)]
+  [entry? : bool]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-group-split-rewrite-block
+                plan
+                remap
+                cursor
+                params
+                entry?
+                label
+                instrs))])
+        (opt-group-split-rewrite-blocks
+          plan
+          remap
+          cursor
+          params
+          false
+          (deref rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [out : (__tl_dyn-array ir.CompilerIrBlock)
+          (__tl_make-array ir.CompilerIrBlock count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref out index)
+                (match (ir.compiler-ir-block-seq-ref seq index)
+                  [(ir.CompilerIrBlock.Block label instrs)
+                    (ir.CompilerIrBlock.Block
+                      label
+                      (opt-group-split-rewrite-block
+                        plan
+                        remap
+                        cursor
+                        params
+                        (and entry? (= index 0))
+                        label
+                        instrs))]))
+              (set! index (+ index 1))))
+          (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out count))))]))
+
 ;; --- standalone register-value SSA construction / mem2reg -----------------
 ;;
 ;; This constructor rewrites repeated register-value definitions into
@@ -13483,7 +14227,8 @@
         facts
         (compiler-opt-box-field-shared-view payload-box dst))]
     [(ir.CompilerIrInstr.Pack _ _ _) facts]
-    [(ir.CompilerIrInstr.Word _ _ _ _) facts]
+    ;; A Word def is an ordinary def of its word type: the register-group split
+    ;; (opt-group-split-function) defines a group's word vars with it.
     ;; Every other def has the type it states, or is bad without one.
     [_
       (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
@@ -100667,6 +101412,26 @@
     ;; admission decisions are loop-local, so an unrelated block elsewhere in
     ;; the enclosing function must not turn the loop pipeline off.
     [s (opt-stage "rotation" (opt-pass-rotation pools s))]
+    ;; A multi-def register-group var becomes one word var per word, which the
+    ;; SSA below renames (opt-group-split-function). A split hands SSA a stale
+    ;; context, since the CFG index holds the block values; an untouched
+    ;; function keeps the rotation's.
+    [s
+      (opt-stage
+        "group_split"
+        (opt-live-only
+          s
+          (let
+            [split : ir.CompilerIrFunction
+              (opt-group-split-function
+                type-segment-bases
+                (compiler-opt-global-shared-view summaries.representations)
+                (opt-pass-func s))]
+            (match (compiler-opt-global-shared-view split)
+              [(ir.CompilerIrFunction.Function _ _ _ frame _ _)
+                (if (= frame (opt-pass-frame s))
+                  s
+                  (opt-pass-with-cfg-func split s))]))))]
     ;; Register-value SSA construction feeds the verifier-gated dominator
     ;; passes below. Unsupported cases fall back to the original function, so
     ;; the optimization path remains safe.

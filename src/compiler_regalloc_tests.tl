@@ -14394,6 +14394,257 @@
 
 (cfg
   test
+  (define (compiler-reg-dense-seq-expected-capacity [len : i64]) : i64
+    (cond
+      [(= len 0) 0]
+      [(<= len 4) 4]
+      [(<= len 8) 8]
+      [(<= len 16) 16]
+      [else 32])))
+
+;; Every field of a generated element depends on its index and differs from
+;; its sibling fields, so a copy that drops, swaps or reorders data fails.
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-id [index : i64]) : i64
+    (cond
+      [(= index 0) (- 0 9223372036854775807)]
+      [(= index 1) 0]
+      [(= index 2) 9223372036854775807]
+      [(= index 3) -1]
+      [else (- (* index 1000003) 9)])))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-id-same? [left : i64] [right : i64]) : bool
+    (= left right)))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-move [index : i64]) : reg.CompilerRegMove
+    (reg.CompilerRegMove index (+ index 1000) (= (% index 3) 1))))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-move-same?
+    [left : reg.CompilerRegMove]
+    [right : reg.CompilerRegMove]) : bool
+    (and
+      (= left.src right.src)
+      (= left.dst right.dst)
+      (= left.strict right.strict))))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-evict [index : i64]) : reg.CompilerRegCallEvict
+    (reg.CompilerRegCallEvict index (+ index 1000) (- -1 index))))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-evict-same?
+    [left : reg.CompilerRegCallEvict]
+    [right : reg.CompilerRegCallEvict]) : bool
+    (match left
+      [(reg.CompilerRegCallEvict a b c)
+        (match right
+          [(reg.CompilerRegCallEvict x y z) (and (= a x) (= b y) (= c z))])])))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-region [index : i64]) : reg.CompilerRegCallRegion
+    (reg.CompilerRegCallRegion
+      index
+      (+ index 1000)
+      (+ index 2000)
+      (+ index 3000)
+      (- -1 index))))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-region-same?
+    [left : reg.CompilerRegCallRegion]
+    [right : reg.CompilerRegCallRegion]) : bool
+    (match left
+      [(reg.CompilerRegCallRegion a b c d e)
+        (match right
+          [(reg.CompilerRegCallRegion v w x y z)
+            (and (= a v) (= b w) (= c x) (= d y) (= e z))])])))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-stat [index : i64]) : reg.CompilerRegCallRegionStat
+    (reg.CompilerRegCallRegionStat
+      index
+      (+ index 1000)
+      (+ index 2000)
+      (+ index 3000)
+      (+ index 4000)
+      (+ index 5000)
+      (+ index 6000)
+      (- -1 index))))
+
+(cfg
+  test
+  (define (compiler-reg-dense-seq-test-stat-same?
+    [left : reg.CompilerRegCallRegionStat]
+    [right : reg.CompilerRegCallRegionStat]) : bool
+    (match left
+      [(reg.CompilerRegCallRegionStat a b c d e f g h)
+        (match right
+          [(reg.CompilerRegCallRegionStat s t u v w x y z)
+            (and
+              (= a s)
+              (= b t)
+              (= c u)
+              (= d v)
+              (= e w)
+              (= f x)
+              (= g y)
+              (= h z))])])))
+
+;; Drives one generated family through lengths 0..17, which crosses the 0->4
+;; first growth and the 4->8, 8->16 and 16->32 doublings, checking length,
+;; backing capacity and the whole live prefix after every push. `push`
+;; consumes its sequence, so a pre-push value survives only as an unchecked
+;; shared view, and the contract for a view is not persistence: the view keeps
+;; its own prefix, a second push onto it with spare capacity overwrites the
+;; slot the first push wrote, and a push onto a full sequence copies into
+;; fresh storage. A push with spare capacity allocates nothing.
+(cfg
+  test
+  (defmacro (compiler-reg-dense-seq-contract-ok?
+    [seq-type : type]
+    [empty : Expr]
+    [push : Expr]
+    [item : Expr]
+    [same? : Expr]) : bool
+    `(let
+      [seq : ,seq-type (,empty)]
+      [ok : bool (and (= seq.len 0) (= (array-length seq.slots) 0))]
+      [count : i64 0]
+      [index : i64 0]
+      (begin
+        (while (< count 17)
+          (begin
+            (set! seq (,push seq (,item count)))
+            (set! count (+ count 1))
+            (set!
+              ok
+              (and
+                ok
+                (= seq.len count)
+                (=
+                  (array-length seq.slots)
+                  (compiler-reg-dense-seq-expected-capacity count))))
+            (set! index 0)
+            (while (< index count)
+              (begin
+                (set!
+                  ok
+                  (and ok (,same? (array-ref seq.slots index) (,item index))))
+                (set! index (+ index 1))))))
+        (let
+          [five : ,seq-type (,empty)]
+          [full : ,seq-type (,empty)]
+          [spare-item (,item 102)]
+          (begin
+            (set! index 0)
+            (while (< index 8)
+              (begin
+                (if (< index 5)
+                  (set! five (,push five (,item index)))
+                  unit)
+                (set! full (,push full (,item index)))
+                (set! index (+ index 1))))
+            (let
+              [view : ,seq-type (reg.compiler-reg-global-shared-view five)]
+              [full-view : ,seq-type (reg.compiler-reg-global-shared-view full)]
+              [first : ,seq-type (,push five (,item 100))]
+              [view-intact : bool
+                (and
+                  (= view.len 5)
+                  (,same? (array-ref view.slots 0) (,item 0))
+                  (,same? (array-ref view.slots 4) (,item 4)))]
+              [second : ,seq-type (,push view (,item 101))]
+              [grown-a : ,seq-type (,push full (,item 200))]
+              [grown-b : ,seq-type (,push full-view (,item 201))]
+              [before : i64 (profile.alloc-total)]
+              [extra : ,seq-type (,push second spare-item)]
+              [after : i64 (profile.alloc-total)]
+              (begin
+                (set! index 0)
+                (while (< index 5)
+                  (begin
+                    (set!
+                      ok
+                      (and
+                        ok
+                        (,same? (array-ref first.slots index) (,item index))))
+                    (set! index (+ index 1))))
+                (and
+                  ok
+                  view-intact
+                  (= first.len 6)
+                  (= (array-length first.slots) 8)
+                  (,same? (array-ref first.slots 5) (,item 101))
+                  (= grown-a.len 9)
+                  (= (array-length grown-a.slots) 16)
+                  (,same? (array-ref grown-a.slots 7) (,item 7))
+                  (,same? (array-ref grown-a.slots 8) (,item 200))
+                  (= grown-b.len 9)
+                  (,same? (array-ref grown-b.slots 8) (,item 201))
+                  (= extra.len 7)
+                  (,same? (array-ref extra.slots 6) spare-item)
+                  (= after before))))))))))
+
+(cfg
+  test
+  (test
+    regalloc-generated-dense-seq-contract
+    (begin
+      (test.assert-true
+        (compiler-reg-dense-seq-contract-ok?
+          reg.CompilerRegIdSeq
+          reg.compiler-reg-id-seq-empty
+          reg.compiler-reg-id-seq-push
+          compiler-reg-dense-seq-test-id
+          compiler-reg-dense-seq-test-id-same?)
+        "id sequence")
+      (test.assert-true
+        (compiler-reg-dense-seq-contract-ok?
+          reg.CompilerRegMoveSeq
+          reg.compiler-reg-move-seq-empty
+          reg.compiler-reg-move-seq-push
+          compiler-reg-dense-seq-test-move
+          compiler-reg-dense-seq-test-move-same?)
+        "move sequence")
+      (test.assert-true
+        (compiler-reg-dense-seq-contract-ok?
+          reg.CompilerRegCallEvictSeq
+          reg.compiler-reg-call-evict-seq-empty
+          reg.compiler-reg-call-evict-seq-push
+          compiler-reg-dense-seq-test-evict
+          compiler-reg-dense-seq-test-evict-same?)
+        "call-evict sequence")
+      (test.assert-true
+        (compiler-reg-dense-seq-contract-ok?
+          reg.CompilerRegCallRegionSeq
+          reg.compiler-reg-call-region-seq-empty
+          reg.compiler-reg-call-region-seq-push
+          compiler-reg-dense-seq-test-region
+          compiler-reg-dense-seq-test-region-same?)
+        "call-region sequence")
+      (test.assert-true
+        (compiler-reg-dense-seq-contract-ok?
+          reg.CompilerRegCallRegionStatSeq
+          reg.compiler-reg-call-region-stat-seq-empty
+          reg.compiler-reg-call-region-stat-seq-push
+          compiler-reg-dense-seq-test-stat
+          compiler-reg-dense-seq-test-stat-same?)
+        "call-region-stat sequence"))))
+
+(cfg
+  test
   (test
     regalloc-root-conflict-absorbs-replay
     (let

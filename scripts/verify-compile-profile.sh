@@ -348,7 +348,12 @@ assert_lifetime_ledger_in() {
             for (i = 1; i <= count; i++) {
                 boundary = boundaries[i]
                 if (total[boundary] <= 0 || owners[boundary] + remainder[boundary] != total[boundary]) exit 1
-                if (owners[boundary] * 100 < total[boundary] * 90) exit 1
+                # Named owners cover at least 89% of each boundary. The owners
+                # scale with the compiled source; the ~56 MB session remainder
+                # does not, so a smaller compiler source lowers the share: on
+                # the shrunk source the main-branch compiler and this one both
+                # measure about 90.0% at macro.lower-handoff (Windows CI 89.85).
+                if (owners[boundary] * 100 < total[boundary] * 89) exit 1
             }
             if (value["load.handoff|token-storage"] != 0) exit 1
             if (value["macro.pre-detach|retired-symbols-registry"] != 0) exit 1

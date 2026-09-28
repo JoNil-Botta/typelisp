@@ -522,26 +522,49 @@
   19)
 
 ;; `message` tagged with `kind`.
+;; The tag for `kind`, as a literal: tagging a message is then one
+;; concatenation, and a raise site that builds its message with `str-cat`
+;; passes the tag as the first piece of that same concatenation.
+(define (compiler-diagnostic-typecheck-tag [kind : CompilerTypecheckKind]) : String
+  (match kind
+    [(CompilerTypecheckKind.Unclassified) "__tl_tc_kind:E0200:"]
+    [(CompilerTypecheckKind.UnboundName) "__tl_tc_kind:E0201:"]
+    [(CompilerTypecheckKind.ArityMismatch) "__tl_tc_kind:E0202:"]
+    [(CompilerTypecheckKind.NonExhaustiveMatch) "__tl_tc_kind:E0203:"]
+    [(CompilerTypecheckKind.UnknownStructField) "__tl_tc_kind:E0204:"]
+    [(CompilerTypecheckKind.RegionEscape) "__tl_tc_kind:E0205:"]
+    [(CompilerTypecheckKind.TypeMismatch) "__tl_tc_kind:E0206:"]
+    [(CompilerTypecheckKind.BorrowViolation) "__tl_tc_kind:E0207:"]
+    [(CompilerTypecheckKind.MoveViolation) "__tl_tc_kind:E0208:"]
+    [(CompilerTypecheckKind.UnsafeContext) "__tl_tc_kind:E0209:"]
+    [(CompilerTypecheckKind.LifetimeMismatch) "__tl_tc_kind:E0210:"]
+    [(CompilerTypecheckKind.ResourceOwnership) "__tl_tc_kind:E0211:"]
+    [(CompilerTypecheckKind.ArenaOwnership) "__tl_tc_kind:E0212:"]
+    [(CompilerTypecheckKind.Pattern) "__tl_tc_kind:E0213:"]
+    [(CompilerTypecheckKind.Spmd) "__tl_tc_kind:E0214:"]
+    [(CompilerTypecheckKind.Place) "__tl_tc_kind:E0215:"]
+    [(CompilerTypecheckKind.ControlFlow) "__tl_tc_kind:E0216:"]
+    [(CompilerTypecheckKind.ThreadSafety) "__tl_tc_kind:E0217:"]
+    [(CompilerTypecheckKind.ComptimeConstraint) "__tl_tc_kind:E0218:"]
+    [(CompilerTypecheckKind.UnsafeCallableEffect) "__tl_tc_kind:E0219:"]
+    [(CompilerTypecheckKind.ForeignGlobalWrite) "__tl_tc_kind:E0220:"]))
+
+;; `message` tagged with `kind`.
 (define (compiler-diagnostic-typecheck-tagged
   [kind : CompilerTypecheckKind]
   [message : String]) : String
-  (str_cat.str-cat
-    (compiler-diagnostic-typecheck-tag-prefix)
-    (compiler-diagnostic-code-for-typecheck-kind kind)
-    ":"
-    message))
+  (str_cat.str-cat (compiler-diagnostic-typecheck-tag kind) message))
 
+;; Tests run on every diagnostic built, so they read the message in place.
 (define (compiler-diagnostic-typecheck-tagged? [message : (& message str)]) : bool
   (and
     (>=
       (string.string-length message)
       (compiler-diagnostic-typecheck-tag-length))
-    (string.eq
-      (string.substring
-        message
-        0
-        (string.string-length (compiler-diagnostic-typecheck-tag-prefix)))
-      (compiler-diagnostic-typecheck-tag-prefix))
+    (string.is-string-prefix-at
+      message
+      (compiler-diagnostic-typecheck-tag-prefix)
+      0)
     (=
       (cast
         (string.string-ref
@@ -550,12 +573,24 @@
         : i64)
       58)))
 
-;; The code a tagged message carries.
+;; The code a tagged message carries: the registry's own code string when the
+;; tag names a typecheck code (registry row = code number + 1), else a copy of
+;; the five tag characters.
 (define (compiler-diagnostic-typecheck-tag-code [message : (& message str)]) : String
-  (string.substring
-    message
-    (string.string-length (compiler-diagnostic-typecheck-tag-prefix))
-    5))
+  (let
+    [start : i64
+      (string.string-length (compiler-diagnostic-typecheck-tag-prefix))]
+    [tens : i64 (- (cast (string.string-ref message (+ start 3)) : i64) 48)]
+    [ones : i64 (- (cast (string.string-ref message (+ start 4)) : i64) 48)]
+    [code : String
+      (if (and (>= tens 0) (<= tens 2) (>= ones 0) (<= ones 9))
+        (compiler-diagnostic-code-registry-code (+ (+ (* tens 10) ones) 1))
+        "")]
+    (if (and
+      (= (string.string-length code) 5)
+      (string.is-string-prefix-at message code start))
+      code
+      (string.substring message start 5))))
 
 ;; The message of `diag` as typecheck error text, tagged with its code when
 ;; that is a typecheck code, so the kind survives a trip back through a
@@ -687,18 +722,6 @@
 (define (compiler-diagnostic-fix-edits [fix : CompilerDiagnosticFix]) : CompilerDiagnosticTextEditSeq
   fix.edits)
 
-;; `code`, or the code a kind-tagged `message` carries when `code` is absent.
-(define (compiler-diagnostic-code-or-tag
-  [code : CompilerDiagnosticMaybeString]
-  [message : (& message str)]) : CompilerDiagnosticMaybeString
-  (match code
-    [CompilerDiagnosticNoString
-      (if (compiler-diagnostic-typecheck-tagged? message)
-        (CompilerDiagnosticSomeString
-          (compiler-diagnostic-typecheck-tag-code message))
-        CompilerDiagnosticNoString)]
-    [(CompilerDiagnosticSomeString text) (CompilerDiagnosticSomeString text)]))
-
 ;; A kind tag on `message` becomes the code unless `code` is given, and is
 ;; removed from the text.
 (define (compiler-diagnostic-new
@@ -710,11 +733,28 @@
   [help : CompilerDiagnosticMaybeString]
   [secondary : CompilerDiagnosticLabelList]
   [notes : CompilerDiagnosticNoteList]) : CompilerDiagnostic
+  ;; One tag test per diagnostic: a leading kind tag becomes the code (unless
+  ;; `code` is given) and is removed from the text.
   (let
+    [tagged : bool (compiler-diagnostic-typecheck-tagged? (& message))]
     [resolved : CompilerDiagnosticMaybeString
-      (compiler-diagnostic-code-or-tag code (& message))]
+      (match code
+        [CompilerDiagnosticNoString
+          (if tagged
+            (CompilerDiagnosticSomeString
+              (compiler-diagnostic-typecheck-tag-code (& message)))
+            CompilerDiagnosticNoString)]
+        [(CompilerDiagnosticSomeString text)
+          (CompilerDiagnosticSomeString text)])]
     (CompilerDiagnostic
-      (compiler-diagnostic-untagged-message message)
+      (if tagged
+        (string.substring
+          (& message)
+          (compiler-diagnostic-typecheck-tag-length)
+          (-
+            (string.string-length (& message))
+            (compiler-diagnostic-typecheck-tag-length)))
+        message)
       level
       resolved
       category
@@ -1459,11 +1499,9 @@
   [diag : CompilerDiagnostic]
   [message : String]) : CompilerDiagnostic
   (CompilerDiagnostic
-    (compiler-diagnostic-untagged-message (string.copy (& message)))
+    message
     (compiler-diagnostic-level diag)
-    (compiler-diagnostic-code-or-tag
-      (compiler-diagnostic-code diag)
-      (& message))
+    (compiler-diagnostic-code diag)
     (compiler-diagnostic-category diag)
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)

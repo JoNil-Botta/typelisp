@@ -11,6 +11,7 @@
 (import compiler_diagnostic as cdiag)
 (import token)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
 
 (define (compiler-diagnostic-string-eq? [left : String] [right : String]) : bool
@@ -321,9 +322,16 @@
 (define (compiler-diagnostic-typecheck-kind-row-is?
   [kind : cdiag.CompilerTypecheckKind]
   [index : i64]) : bool
-  (string.eq
-    (cdiag.compiler-diagnostic-code-for-typecheck-kind kind)
-    (cdiag.compiler-diagnostic-code-registry-code index)))
+  (and
+    (string.eq
+      (cdiag.compiler-diagnostic-code-for-typecheck-kind kind)
+      (cdiag.compiler-diagnostic-code-registry-code index))
+    (string.eq
+      (cdiag.compiler-diagnostic-typecheck-tag kind)
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag-prefix)
+        (cdiag.compiler-diagnostic-code-registry-code index)
+        ":"))))
 
 (define (compiler-diagnostic-typecheck-kind-rows-ok?) : bool
   (and
@@ -415,10 +423,6 @@
         (string.copy (& decoy)))]
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-at-start "" (string.copy (& tagged)))]
-    [renamed : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-message
-        (cdiag.compiler-diagnostic-at-start "" "old")
-        (string.copy (& tagged)))]
     [explicit : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-new
         (string.copy (& tagged))
@@ -451,6 +455,12 @@
         "")
       (string.eq (compiler-diagnostic-built-code "__tl_tc_kind:E0206") "")
       (string.eq
+        (compiler-diagnostic-built-code "__tl_tc_kind:E0299:typecheck: x")
+        "E0299")
+      (string.eq
+        (compiler-diagnostic-built-code "__tl_tc_kind:E0106:typecheck: x")
+        "E0106")
+      (string.eq
         (compiler-diagnostic-built-code "__tl_tc_kind:E0206-typecheck: x")
         "")
       (not (string.contains (& tagged) "|"))
@@ -466,8 +476,7 @@
         decoy)
       (string.eq
         (cdiag.compiler-diagnostic-untagged-message (string.copy (& decoy)))
-        decoy)
-      (string.eq (cdiag.compiler-diagnostic-message renamed) decoy))))
+        decoy))))
 
 (define (compiler-diagnostic-code-registry-ok?) : bool
   (let

@@ -285,4 +285,125 @@ test "$(count_entries "$POOL/results")" -eq "$pool_started_jobs"
 sleep 0.2
 test "$(count_entries "$WORKDIR/ran")" -eq "$pool_started_jobs"
 reject bounded_pool_require_complete "$POOL"
+
+# Needs name earlier queued jobs and locks are distinct names; a self, later,
+# unknown or empty need, and an empty, duplicate or malformed lock, rejects the
+# queue.
+for bad_queue in 'a|4096|a' 'a|4096|b
+b|4096' 'a|4096
+b|4096|a,c' 'a|4096|' 'a|4096|-|' 'a|4096|-|x,x' 'a|4096|-|../x' \
+    'a|4096|-|x|y'; do
+    printf '%s\n' "$bad_queue" > "$QUEUE"
+    reject bounded_pool_init "$POOL.bad" 12288 "$QUEUE"
+    test ! -e "$POOL.bad"
+done
+
+# A job starts only after each of its needs succeeded, and a job blocked on its
+# needs does not hold back independent jobs queued behind it: `slow` finishes
+# only once `free` has run beside it.
+POOL_NEEDS_FAIL_JOB=
+bounded_pool_run_job() {
+    needs_record=$(awk -F '|' -v job="$1" '$1 == job { print $3 }' "$QUEUE")
+    [ -z "$needs_record" ] || bounded_pool_needs_met "$POOL" "$needs_record" || exit 9
+    printf '%s\n' "$1" >> "$WORKDIR/order"
+    if [ "$1" = slow ]; then
+        needs_waits=0
+        until [ -e "$WORKDIR/ran/free" ]; do
+            needs_waits=$((needs_waits + 1))
+            [ "$needs_waits" -lt 100 ] || exit 8
+            sleep 0.1
+        done
+    fi
+    [ "$1" != "$POOL_NEEDS_FAIL_JOB" ] || exit 7
+    mkdir "$WORKDIR/ran/$1"
+}
+cat > "$QUEUE" <<'EOF'
+slow|4096
+after-slow|4096|slow
+free|4096
+join|8192|after-slow,free
+tail|4096|join
+EOF
+rm -rf "$WORKDIR/ran" "$WORKDIR/order"
+mkdir "$WORKDIR/ran"
+bounded_pool_init "$POOL" 12288 "$QUEUE"
+bounded_pool_start "$POOL" 3
+bounded_pool_join "$POOL"
+test "$(count_entries "$WORKDIR/ran")" -eq 5
+test "$(sed -n '$p' "$WORKDIR/order")" = tail
+
+# One worker runs a dependency-ordered queue exactly in queue order.
+cat > "$QUEUE" <<'EOF'
+a|4096
+b|4096|a
+c|4096
+d|4096|b,c
+EOF
+rm -rf "$WORKDIR/ran" "$WORKDIR/order"
+mkdir "$WORKDIR/ran"
+bounded_pool_init "$POOL" 12288 "$QUEUE"
+bounded_pool_start "$POOL" 1
+bounded_pool_join "$POOL"
+test "$(tr '\n' ' ' < "$WORKDIR/order")" = 'a b c d '
+
+# A failed need aborts the pool; nothing that needs it starts.
+rm -rf "$WORKDIR/ran" "$WORKDIR/order"
+mkdir "$WORKDIR/ran"
+bounded_pool_init "$POOL" 12288 "$QUEUE"
+POOL_NEEDS_FAIL_JOB=a
+bounded_pool_start "$POOL" 3 2>> "$WORKDIR/workers.log"
+reject bounded_pool_join "$POOL"
+POOL_NEEDS_FAIL_JOB=
+test "$(cat "$POOL/results/a")" -eq 7
+test ! -e "$POOL/claims/b"
+test ! -e "$POOL/claims/d"
+reject bounded_pool_require_complete "$POOL"
+
+# Jobs that share a lock never run at once, whatever their needs, and every
+# lock is released when its job finishes or fails.
+POOL_LOCK_FAIL_JOB=
+bounded_pool_run_job() {
+    lock_record=$(awk -F '|' -v job="$1" '$1 == job { print $4 }' "$QUEUE")
+    for lock_name in $(printf '%s\n' "$lock_record" | tr ',' ' '); do
+        mkdir "$WORKDIR/in-$lock_name" || exit 9
+    done
+    sleep 0.2
+    for lock_name in $(printf '%s\n' "$lock_record" | tr ',' ' '); do
+        rmdir "$WORKDIR/in-$lock_name"
+    done
+    [ "$1" != "$POOL_LOCK_FAIL_JOB" ] || exit 7
+    mkdir "$WORKDIR/ran/$1"
+}
+cat > "$QUEUE" <<'EOF'
+stamp-a|4096|-|stamp
+both|4096|-|stamp,release
+release-a|4096|-|release
+free|4096
+stamp-b|4096|free|stamp
+release-b|4096|stamp-a|release
+EOF
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+bounded_pool_init "$POOL" 12288 "$QUEUE"
+bounded_pool_start "$POOL" 3
+bounded_pool_join "$POOL"
+test "$(count_entries "$WORKDIR/ran")" -eq 6
+test "$(count_entries "$POOL/held")" -eq 0
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+bounded_pool_init "$POOL" 12288 "$QUEUE"
+POOL_LOCK_FAIL_JOB=stamp-a
+bounded_pool_start "$POOL" 3 2>> "$WORKDIR/workers.log"
+reject bounded_pool_join "$POOL"
+POOL_LOCK_FAIL_JOB=
+test "$(cat "$POOL/results/stamp-a")" -eq 7
+test "$(count_entries "$POOL/held")" -eq 0
+# A lock left held is incomplete even when every job succeeded.
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+bounded_pool_init "$POOL" 12288 "$QUEUE"
+bounded_pool_start "$POOL" 3
+bounded_pool_join "$POOL"
+mkdir "$POOL/held/stamp"
+reject bounded_pool_require_complete "$POOL"
 echo 'build-invariance batch reuse and worker pool checks passed'

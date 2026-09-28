@@ -1,110 +1,116 @@
 # CI gates, one row per gate in execution order; scripts/ci-verify.sh runs them.
+# Under ci-verify.sh --jobs the order is the start priority, so gates on the
+# critical path (the bootstrap and the long gates after it) come first.
 # hosts: all, linux or windows. label: the display and ci-timing gate name.
 # needs: - or earlier gate IDs whose outputs this gate uses (id@host limits an
 # edge to one host); ci-verify.sh --gates runs the closure of these edges.
 # compiler: the TYPELISP_BIN the command sees: - (a path that cannot exist),
 # stage2 (the converged bootstrap compiler) or profile (the compile-profile CLI).
+# memory: MiB reserved while the gate runs, its measured Linux process-tree peak
+# plus about a quarter, rounded up to 256; ci-verify.sh --jobs admits by it.
+# locks: - or shared checkout paths (scripts/README.md) no two running gates
+# may hold at once.
 # command: shell text evaluated in the checkout root; gate_* names a function in
 # ci-verify.sh.
-id	hosts	label	needs	compiler	command
-x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	scripts/check-x64-executable-template-registry.sh
-cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	scripts/verify-cross-mode-differential.sh --self-test
-linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-	-	scripts/verify-linux-memory-limit.sh
-windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1
-embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
-build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-	-	scripts/verify-build-invariance-batch.sh
-selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
-cli-help-surface	all	CLI help surface	-	-	scripts/check-cli-help-surface.sh --self-test
-tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	scripts/check-tlci-native-route-size.sh --self-test
-zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	scripts/check-zero-cons.sh --self-test
-zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-	-	scripts/check-zero-cons.sh --fixtures
-spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
-c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
-instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-	-	scripts/check-instruction-counts.sh --self-test
-compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-	-	scripts/check-compiler-scaling.sh --self-test
-cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-	-	sh scripts/benchmark-cli-tools.sh --self-test
-stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-	-	scripts/verify-stage0-release.sh --self-test
-stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-	-	scripts/publish-stage0-latest.sh --self-test
-bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-	-	scripts/verify-bootstrap-fixpoint-control.sh
-bootstrap-fixpoint	all	bootstrap fixpoint	-	-	gate_bootstrap_fixpoint
-tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	bootstrap-fixpoint	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$STAGE2_BIN"
-stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint	stage2	env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
-embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint	stage2	scripts/verify-embedded-stdlib-payload.sh
-embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint	stage2	scripts/verify-embedded-stdlib-tlci.sh
-stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoint,stage2-selfhost-compile-manifest	stage2	env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
-typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	-	-	scripts/check-tl-format.sh --self-test-current-compiler-mode
-typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-fixpoint	stage2	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
-large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint	stage2	scripts/verify-format-large-crlf.sh
-typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint	stage2	scripts/check-tl-lint.sh
-no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint	stage2	scripts/verify-no-libc.sh
-stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	scripts/verify-selfhost-cli-build-run.sh
-stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	stage2	scripts/verify-public-tools.sh
-ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	scripts/verify-ir-observability.sh
-compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	scripts/verify-compiler-arena-debug.sh
-tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint	stage2	scripts/verify-tlci-corpus.sh
-stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint	stage2	gate_build_invariance
-stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	gate_opt2_cli_regression
-stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint	stage2	scripts/verify-spmd-runtime-dispatch.sh
-stage2-spmd-package-calls	all	stage2 SPMD package calls	bootstrap-fixpoint	stage2	scripts/verify-spmd-package-calls.sh
-ispc-perfbench-loads-corpus-contract	all	ISPC perfbench loads corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'perfbench_loads-*' tests/codegen/ispc.cases
-ispc-perfbench-stores-corpus-contract	all	ISPC perfbench stores corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
-ispc-perfbench-gathers-corpus-contract	all	ISPC perfbench gathers corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
-ispc-mandelbrot-corpus-contract	all	ISPC Mandelbrot corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
-ispc-point-transform-corpus-contract	all	ISPC point-transform corpus contract	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
-stage2-repository-doctests	all	stage2 repository doctests	bootstrap-fixpoint	stage2	scripts/verify-doc-tests.sh
-stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	scripts/verify-inline-tests.sh
-stage2-prelude-macro-mutation-guard	all	stage2 prelude macro mutation guard	bootstrap-fixpoint	stage2	scripts/verify-prelude-mutation.sh
-stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fixpoint,embedded-stdlib-tlci-image	stage2	gate_compile_profile
-embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	scripts/verify-embedded-stdlib-tlci-resources.sh
-tlci-native-route-sustained-stress	all	TLCI native route sustained stress	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	scripts/verify-tlci-native-route-stress.sh
-package-metadata-only-tlci-dependency-catalogs	all	package metadata-only TLCI dependency catalogs	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	scripts/verify-package-metadata-tlci.sh
-package-native-tlci-dependency-macros	all	package native TLCI dependency macros	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	scripts/verify-package-native-tlci.sh
-package-dependency-tlci-frontend-surfaces	all	package dependency TLCI frontend surfaces	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	scripts/verify-package-surface-tlci.sh
-stage2-compile-startup-profile-verifier	all	stage2 compile-startup-profile verifier	bootstrap-fixpoint	stage2	scripts/verify-compile-startup-profile.sh
-stage2-allocation-profile-verifier	all	stage2 allocation-profile verifier	bootstrap-fixpoint	stage2	scripts/verify-allocation-profile.sh
-stage2-math-exp-codegen-verifier	all	stage2 math exp codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only exp tests/codegen/math.cases
-stage2-math-log-codegen-verifier	all	stage2 math log codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only log tests/codegen/math.cases
-stage2-math-pow-codegen-verifier	all	stage2 math pow codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only pow tests/codegen/math.cases
-stage2-math-trig-codegen-verifier	all	stage2 math trig codegen verifier	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only trig tests/codegen/math.cases
-stage2-codegen-target-parity	all	stage2 codegen target parity	bootstrap-fixpoint	stage2	scripts/check-codegen-target-parity.sh
-stage2-backend-target-assembly-parity	all	stage2 backend target assembly parity	bootstrap-fixpoint	stage2	scripts/check-backend-target-asm-parity.sh
-stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-fixpoint	stage2	scripts/verify-compile-batch-windows-coff.sh
-stage2-pic-relocation-verifier	all	stage2 PIC relocation verifier	bootstrap-fixpoint	stage2	scripts/verify-pic-relocations.sh
-stage2-coff-relocation-overflow-verifier	all	stage2 COFF relocation-overflow verifier	bootstrap-fixpoint	stage2	scripts/verify-coff-relocation-overflow.sh
-stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint	stage2	scripts/verify-safety-corpus.sh
-integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-	-	scripts/verify-integration-manifest-validator.sh
-windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	-	-	scripts/verify-windows-coff-plan-validator.sh
-docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	-	-	scripts/verify-doc-site.sh --self-test-search-manifests
-integration-batch-observability	all	integration batch observability	-	-	scripts/verify-integration.sh --self-test-batch-observability
-integration-windows-path-normalization	all	integration Windows path normalization	-	-	scripts/verify-integration.sh --self-test-path-normalization
-integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint	stage2	scripts/verify-integration.sh --self-test-empty-compile-diagnostic
-integration-signal-notice-capture	linux	integration signal notice capture	-	-	scripts/verify-integration.sh --self-test-signal-notice-capture
-windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	-	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-integration-linker-self-test.ps1
-stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	scripts/verify-integration.sh
-stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh tests/codegen/must-use-abi.cases
-stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.cases
-stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux	stage2 Git SHA-1 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases
-stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
-stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
-stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases
-stage2-examples	all	stage2 examples	bootstrap-fixpoint	stage2	scripts/verify-examples.sh
-benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-fixpoint	stage2	scripts/bench.sh --self-test
-stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-fixpoint	stage2	gate_benchmark_correctness
-stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctness	bootstrap-fixpoint	stage2	scripts/run-optimization-benchmarks.sh --correctness
-stage2-optimization-corpus-opt2-runtime-correctness	all	stage2 optimization corpus opt2 runtime correctness	bootstrap-fixpoint	stage2	gate_optimization_opt2_correctness
-stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint	stage2	scripts/verify-stdlib.sh
-stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint	stage2	scripts/verify-stdlib-selfhost.sh
-stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint	stage2	scripts/verify-spmd-simd.sh
-stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint,stage2-compile-profile-verifier,stage2-windows-coff-batch-plan@windows,stage2-native-integration-corpus,stage2-spmd-simd-comparison	stage2	env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" scripts/verify-cross-mode-differential.sh
-stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'lane-identity-*' tests/spmd/gang-width.cases
-stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint	stage2	scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases
-stage2-docs-pages-build-path	all	stage2 docs Pages build path	bootstrap-fixpoint	stage2	env DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site" scripts/verify-doc-site.sh
-stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-fixpoint	stage2	scripts/check-stage1-wrapper.sh
-stage2-stdlib-documentation	linux	stage2 stdlib documentation	bootstrap-fixpoint	stage2	scripts/verify-stdlib-docs.sh
-linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	gate_instruction_counts
-linux-heavy-instruction-count-baseline	linux	Linux heavy instruction-count baseline	bootstrap-fixpoint	stage2	gate_heavy_instruction_counts
-linux-compiler-scaling-budgets	linux	Linux compiler scaling budgets	bootstrap-fixpoint	stage2	scripts/check-compiler-scaling.sh "$STAGE2_BIN"
-stage2-native-link-generated-programs	linux	stage2 native link generated programs	bootstrap-fixpoint	stage2	scripts/verify-native-link-linux.sh
-stage2-rooted-linux-filesystem-boundary	linux	stage2 rooted Linux filesystem boundary	bootstrap-fixpoint	stage2	scripts/verify-fs-rooted-linux.sh
-stage2-linux-process-failure-boundary	linux	stage2 Linux process failure boundary	bootstrap-fixpoint	stage2	scripts/verify-process-runtime-linux.sh
-windows-native-link-build-run	windows	windows native link build/run	bootstrap-fixpoint	stage2	scripts/verify-native-link-windows.sh
+id	hosts	label	needs	compiler	memory	locks	command
+x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	256	-	scripts/check-x64-executable-template-registry.sh
+cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	256	-	scripts/verify-cross-mode-differential.sh --self-test
+linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-	-	256	-	scripts/verify-linux-memory-limit.sh
+windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1
+embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-	-	256	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
+build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-	-	256	-	scripts/verify-build-invariance-batch.sh
+selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	256	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
+cli-help-surface	all	CLI help surface	-	-	256	-	scripts/check-cli-help-surface.sh --self-test
+tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	256	-	scripts/check-tlci-native-route-size.sh --self-test
+zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	256	-	scripts/check-zero-cons.sh --self-test
+zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-	-	512	-	scripts/check-zero-cons.sh --fixtures
+spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
+c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
+instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-	-	256	-	scripts/check-instruction-counts.sh --self-test
+compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-	-	256	-	scripts/check-compiler-scaling.sh --self-test
+cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-	-	256	-	sh scripts/benchmark-cli-tools.sh --self-test
+stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-	-	256	-	scripts/verify-stage0-release.sh --self-test
+stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-	-	256	-	scripts/publish-stage0-latest.sh --self-test
+bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-	-	256	-	scripts/verify-bootstrap-fixpoint-control.sh
+bootstrap-fixpoint	all	bootstrap fixpoint	-	-	6400	-	gate_bootstrap_fixpoint
+stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint	stage2	5632	-	gate_build_invariance
+embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint	stage2	6144	embedded-image	scripts/verify-embedded-stdlib-tlci.sh
+stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression
+stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fixpoint,embedded-stdlib-tlci-image	stage2	2304	build-stamp,embedded-image	gate_compile_profile
+stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	9984	build-stamp,root-release	scripts/verify-selfhost-cli-build-run.sh
+embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh
+stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh
+linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	-	gate_instruction_counts
+tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	bootstrap-fixpoint	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$STAGE2_BIN"
+stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	6144	-	scripts/verify-inline-tests.sh
+stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint	stage2	3328	-	env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint	stage2	512	-	scripts/verify-embedded-stdlib-payload.sh
+stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoint,stage2-selfhost-compile-manifest	stage2	512	-	env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
+typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	-	-	256	-	scripts/check-tl-format.sh --self-test-current-compiler-mode
+typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-fixpoint	stage2	256	-	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
+large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint	stage2	256	-	scripts/verify-format-large-crlf.sh
+typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint	stage2	2048	-	scripts/check-tl-lint.sh
+no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint	stage2	256	-	scripts/verify-no-libc.sh
+stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	stage2	4352	-	scripts/verify-public-tools.sh
+ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	2304	-	scripts/verify-ir-observability.sh
+compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	2048	-	scripts/verify-compiler-arena-debug.sh
+tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint	stage2	256	-	scripts/verify-tlci-corpus.sh
+stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint	stage2	256	-	scripts/verify-spmd-runtime-dispatch.sh
+stage2-spmd-package-calls	all	stage2 SPMD package calls	bootstrap-fixpoint	stage2	256	spmd-package	scripts/verify-spmd-package-calls.sh
+ispc-perfbench-loads-corpus-contract	all	ISPC perfbench loads corpus contract	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'perfbench_loads-*' tests/codegen/ispc.cases
+ispc-perfbench-stores-corpus-contract	all	ISPC perfbench stores corpus contract	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'perfbench_stores-*' tests/codegen/ispc.cases
+ispc-perfbench-gathers-corpus-contract	all	ISPC perfbench gathers corpus contract	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'perfbench_gathers-*' tests/codegen/ispc.cases
+ispc-mandelbrot-corpus-contract	all	ISPC Mandelbrot corpus contract	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases
+ispc-point-transform-corpus-contract	all	ISPC point-transform corpus contract	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
+stage2-repository-doctests	all	stage2 repository doctests	bootstrap-fixpoint	stage2	1024	-	scripts/verify-doc-tests.sh
+stage2-prelude-macro-mutation-guard	all	stage2 prelude macro mutation guard	bootstrap-fixpoint	stage2	256	-	scripts/verify-prelude-mutation.sh
+tlci-native-route-sustained-stress	all	TLCI native route sustained stress	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	4096	embedded-image	scripts/verify-tlci-native-route-stress.sh
+package-metadata-only-tlci-dependency-catalogs	all	package metadata-only TLCI dependency catalogs	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	512	-	scripts/verify-package-metadata-tlci.sh
+package-native-tlci-dependency-macros	all	package native TLCI dependency macros	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	1024	spmd-package	scripts/verify-package-native-tlci.sh
+package-dependency-tlci-frontend-surfaces	all	package dependency TLCI frontend surfaces	bootstrap-fixpoint,stage2-compile-profile-verifier	profile	768	-	scripts/verify-package-surface-tlci.sh
+stage2-compile-startup-profile-verifier	all	stage2 compile-startup-profile verifier	bootstrap-fixpoint	stage2	1792	-	scripts/verify-compile-startup-profile.sh
+stage2-allocation-profile-verifier	all	stage2 allocation-profile verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-allocation-profile.sh
+stage2-math-exp-codegen-verifier	all	stage2 math exp codegen verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only exp tests/codegen/math.cases
+stage2-math-log-codegen-verifier	all	stage2 math log codegen verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only log tests/codegen/math.cases
+stage2-math-pow-codegen-verifier	all	stage2 math pow codegen verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only pow tests/codegen/math.cases
+stage2-math-trig-codegen-verifier	all	stage2 math trig codegen verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only trig tests/codegen/math.cases
+stage2-codegen-target-parity	all	stage2 codegen target parity	bootstrap-fixpoint	stage2	256	-	scripts/check-codegen-target-parity.sh
+stage2-backend-target-assembly-parity	all	stage2 backend target assembly parity	bootstrap-fixpoint	stage2	256	-	scripts/check-backend-target-asm-parity.sh
+stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-fixpoint	stage2	512	-	scripts/verify-compile-batch-windows-coff.sh
+stage2-pic-relocation-verifier	all	stage2 PIC relocation verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-pic-relocations.sh
+stage2-coff-relocation-overflow-verifier	all	stage2 COFF relocation-overflow verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-coff-relocation-overflow.sh
+stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint	stage2	1792	-	scripts/verify-safety-corpus.sh
+integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-	-	256	-	scripts/verify-integration-manifest-validator.sh
+windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	-	-	256	-	scripts/verify-windows-coff-plan-validator.sh
+docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	-	-	256	-	scripts/verify-doc-site.sh --self-test-search-manifests
+integration-batch-observability	all	integration batch observability	-	-	256	-	scripts/verify-integration.sh --self-test-batch-observability
+integration-windows-path-normalization	all	integration Windows path normalization	-	-	256	-	scripts/verify-integration.sh --self-test-path-normalization
+integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint	stage2	256	-	scripts/verify-integration.sh --self-test-empty-compile-diagnostic
+integration-signal-notice-capture	linux	integration signal notice capture	-	-	256	-	scripts/verify-integration.sh --self-test-signal-notice-capture
+windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-integration-linker-self-test.ps1
+stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh tests/codegen/must-use-abi.cases
+stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint	stage2	5120	-	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.cases
+stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux	stage2 Git SHA-1 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases
+stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
+stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
+stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases
+stage2-examples	all	stage2 examples	bootstrap-fixpoint	stage2	512	-	scripts/verify-examples.sh
+benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-fixpoint	stage2	256	-	scripts/bench.sh --self-test
+stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-fixpoint	stage2	256	-	gate_benchmark_correctness
+stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctness	bootstrap-fixpoint	stage2	512	-	scripts/run-optimization-benchmarks.sh --correctness
+stage2-optimization-corpus-opt2-runtime-correctness	all	stage2 optimization corpus opt2 runtime correctness	bootstrap-fixpoint	stage2	512	-	gate_optimization_opt2_correctness
+stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint	stage2	512	-	scripts/verify-stdlib.sh
+stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint	stage2	3584	-	scripts/verify-stdlib-selfhost.sh
+stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint	stage2	512	-	scripts/verify-spmd-simd.sh
+stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint,stage2-compile-profile-verifier,stage2-windows-coff-batch-plan@windows,stage2-native-integration-corpus,stage2-spmd-simd-comparison	stage2	256	-	env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" scripts/verify-cross-mode-differential.sh
+stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'lane-identity-*' tests/spmd/gang-width.cases
+stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases
+stage2-docs-pages-build-path	all	stage2 docs Pages build path	bootstrap-fixpoint	stage2	1280	-	env DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site" scripts/verify-doc-site.sh
+stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-fixpoint	stage2	4352	-	scripts/check-stage1-wrapper.sh
+stage2-stdlib-documentation	linux	stage2 stdlib documentation	bootstrap-fixpoint	stage2	768	-	scripts/verify-stdlib-docs.sh
+linux-heavy-instruction-count-baseline	linux	Linux heavy instruction-count baseline	bootstrap-fixpoint	stage2	256	-	gate_heavy_instruction_counts
+linux-compiler-scaling-budgets	linux	Linux compiler scaling budgets	bootstrap-fixpoint	stage2	1024	-	scripts/check-compiler-scaling.sh "$STAGE2_BIN"
+stage2-native-link-generated-programs	linux	stage2 native link generated programs	bootstrap-fixpoint	stage2	2048	build-stamp	scripts/verify-native-link-linux.sh
+stage2-rooted-linux-filesystem-boundary	linux	stage2 rooted Linux filesystem boundary	bootstrap-fixpoint	stage2	512	-	scripts/verify-fs-rooted-linux.sh
+stage2-linux-process-failure-boundary	linux	stage2 Linux process failure boundary	bootstrap-fixpoint	stage2	512	-	scripts/verify-process-runtime-linux.sh
+windows-native-link-build-run	windows	windows native link build/run	bootstrap-fixpoint	stage2	2048	-	scripts/verify-native-link-windows.sh

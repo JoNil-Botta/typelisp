@@ -852,26 +852,38 @@ print_top_chunks() {
 }
 
 # One digest over the named files and directory trees, so a source or compiler
-# change while the comparison runs fails the gate instead of passing it.
+# change while the comparison runs fails the gate instead of passing it. With
+# --sources it covers the source files only, tracked or new but not ignored,
+# because gates running beside this one write ignored outputs under tests/
+# (package target/ directories, tests/scratch/).
 build_invariance_digest() {
+    _digest_sources=0
+    if [ "$1" = --sources ]; then
+        _digest_sources=1
+        shift
+    fi
     for _digest_input in "$@"; do
         [ -e "$_digest_input" ] || {
             echo "[build-invariance] digest input is missing: $_digest_input" >&2
             return 1
         }
     done
-    find "$@" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
+    if [ "$_digest_sources" -eq 1 ]; then
+        git ls-files -z --cached --others --exclude-standard -- "$@" |
+            xargs -0 sh -c 'for f do [ ! -f "$f" ] || printf "%s\0" "$f"; done' sh
+    else
+        find "$@" -type f -print0
+    fi | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
 }
 
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
-# wide_struct_literal imports the generated #7921 declarations. Generate them
-# before the source digest, so a fresh checkout does not see tests/ change
-# during the comparison.
+# wide_struct_literal imports the generated #7921 declarations. The generated
+# file is ignored, so the source digest covers its awk source instead.
 awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
 mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 SOURCE_INPUTS='src stdlib tests scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/lib-native-link.sh'
 # shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
-SOURCE_DIGEST=$(build_invariance_digest $SOURCE_INPUTS)
+SOURCE_DIGEST=$(build_invariance_digest --sources $SOURCE_INPUTS)
 COMPILER_DIGEST=$(build_invariance_digest "$COMPILER")
 construction_start=$(date +%s)
 build_opt1_compiler
@@ -922,7 +934,7 @@ corpus_end=$(date +%s)
 corpus_seconds=$((corpus_end - corpus_start))
 
 # shellcheck disable=SC2086 # SOURCE_INPUTS is a fixed list of repository paths.
-if [ "$SOURCE_DIGEST" != "$(build_invariance_digest $SOURCE_INPUTS)" ] ||
+if [ "$SOURCE_DIGEST" != "$(build_invariance_digest --sources $SOURCE_INPUTS)" ] ||
     [ "$COMPILER_DIGEST" != "$(build_invariance_digest "$COMPILER")" ] ||
     [ "$OPT1_DIGEST" != "$(build_invariance_digest "$OPT1_COMPILER")" ]; then
     echo "[build-invariance] source or compiler changed during comparison" >&2

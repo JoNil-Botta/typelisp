@@ -18,7 +18,9 @@ jobs:
   # fallback when needed), and then runs every gate on the converged compiler.
   # The gate is fail-closed: Linux and Windows must run every applicable gate.
   # Do not add skip flags; compiler/runtime capability changes should land first,
-  # then a follow-up PR can use the new capability.
+  # then a follow-up PR can use the new capability. Gates run four at a time on
+  # the runners' 4 vCPUs, within 14 GiB of their 16 GiB of memory
+  # (scripts/README.md, `memory` and `locks`).
   ci:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -122,7 +124,7 @@ jobs:
         shell: bash
         env:
           TYPELISP_CI_TIMING: '1'
-        run: scripts/ci-verify.sh
+        run: scripts/ci-verify.sh --jobs 4 --memory-mib 14336
 
       - name: Upload CI timing artifact
         if: always()

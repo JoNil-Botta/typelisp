@@ -62,10 +62,10 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 
 `ci-gates.tsv` is the gate table: one row per gate, in run order, with its
 stable `id`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
-ci-timing name), `needs`, `compiler` and `command`. `ci-verify.sh` runs the
-rows for its host in order and stops at the first failure. List either host
-without a compiler or side effects, optionally narrowed to a
-dependency-closed selection:
+ci-timing name), `needs`, `compiler`, `memory`, `locks` and `command`.
+`ci-verify.sh` runs the rows for its host in order and stops at the first
+failure. List either host without a compiler or side effects, optionally
+narrowed to a dependency-closed selection:
 
 ```sh
 sh scripts/ci-verify.sh --list-gates linux
@@ -73,9 +73,10 @@ sh scripts/ci-verify.sh --list-gates windows
 sh scripts/ci-verify.sh --list-gates linux --gates stage2-deterministic-assembly
 ```
 
-The listing has `id`, `hosts`, `label` and `needs` columns, and checks the
-whole table first: the header, field count, unique IDs, hosts, compiler kinds,
-needs, and that every command's `scripts/` files and `gate_*` functions exist.
+The listing has `id`, `hosts`, `label`, `needs`, `memory` and `locks` columns,
+and checks the whole table first: the header, field count, unique IDs, hosts,
+compiler kinds, needs, memory, locks, and that every command's `scripts/` files
+and `gate_*` functions exist.
 
 `--gates ID[,ID...]` runs a dependency-closed subset of the same table: the
 named gates of this host plus every gate their `needs` reach, in table order.
@@ -110,9 +111,50 @@ row, plus a function only when it needs one.
 
 Producers hand their outputs to later gates through plain path files under
 `target/` (the bootstrap compilers, build-invariance's opt1 reference
-assembly, the compile-profile CLI). Consumers check that what they reuse
-exists and fail otherwise. Hosted CI runs the complete inventory in one job
-per host.
+assembly, the compile-profile CLI). A gate receives an output only from a
+producer among its own `needs`; any other names a path that cannot exist, so a
+gate that uses an output without needing its producer fails in every run
+order. A `stage2` gate must need `bootstrap-fixpoint` and a `profile` gate
+`stage2-compile-profile-verifier`. Consumers check that what they reuse exists
+and fail otherwise.
+
+`--jobs N --memory-mib MIB` runs up to N gates at once, each in its own
+subshell, through the bounded pool of `lib-bounded-pool.sh`. A gate starts
+once every gate it needs passed, while no running gate holds one of its
+`locks`, and while the `memory` of the running gates plus its own fits MIB;
+among the gates that may start, the earliest in the table starts first. Each
+gate's output is kept in `target/ci-verify-pool/logs/` and printed whole when
+it finishes; timing rows are merged in table order. After the first failure
+the running gates finish and no further gate starts, and the run lists every
+failed, unfinished and not-started gate. `--jobs 1` (the default) runs and
+streams the table in order. Hosted CI runs the complete inventory in one job
+per host with `--jobs 4 --memory-mib 14336`.
+
+`memory` is the MiB a gate reserves while it runs: its measured process-tree
+peak on Linux with about a quarter of headroom, rounded up to 256 MiB. The pool
+admits by these reservations but does not enforce them; pools inside a gate
+still run every chunk under its own enforced cap, and the reservation covers
+those caps' measured use, not their sum. The peak is the largest sum of
+resident memory over every process whose working directory or executable lies
+in the checkout, sampled while the gate runs alone under `--jobs 1`; that
+includes the transient services of its bounded jobs. A gate whose peak grows
+past its reservation needs a new measured value in the same change.
+
+`locks` is `-` or a comma-separated list of shared checkout paths the gate
+writes, or reads while another gate may write them. Gates that share a lock
+never run at once:
+
+| Lock | Shared path |
+| --- | --- |
+| `build-stamp` | `target/build-stage0/git-hash.txt`, which compiles with `compiler-build-identity` include and root package builds rewrite (the CLI smoke poisons it on purpose) |
+| `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
+| `root-release` | `target/release/`, the root package build's output |
+| `spmd-package` | `tests/spmd/package_callable/target/` and `tests/spmd/package_consumer/target/` |
+
+A gate whose work files are private to it needs no lock. Two gates that run
+the same `.cases` file with different `--only` selections use separate work
+directories, and a generated input that several gates write whole through a
+temporary file and `mv` is safe to share.
 
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).

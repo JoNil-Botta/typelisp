@@ -9,7 +9,8 @@ set -eu
 # The compiler under test is $TYPELISP_BIN (the published stage0 otherwise).
 # It is only ever the program being tested: every expectation is evaluated here
 # with POSIX sh, grep, sed and awk. Work files go to
-# ${CODEGEN_CASES_WORKDIR:-target/codegen-cases}/<file-name>/.
+# ${CODEGEN_CASES_WORKDIR:-target/codegen-cases}/<file-name>/, or
+# <file-name>.only-<glob>/ for an --only selection.
 #
 # Case file format (see tests/codegen/*.cases, tests/cli/*.cases). One directive
 # per line; blank lines and lines starting with `#` are ignored; leading
@@ -1118,6 +1119,12 @@ cc_translate() {
 # ---------------------------------------------------------------- main
 
 CC_WORK_ROOT=${CODEGEN_CASES_WORKDIR:-$ROOT/target/codegen-cases}
+# Each --only selection gets its own work directory, so gates that select
+# different cases of one file can run at once.
+CC_WORK_SUFFIX=
+if [ "$CC_ONLY" != '*' ]; then
+    CC_WORK_SUFFIX=.only-$(printf '%s' "$CC_ONLY" | tr -c 'A-Za-z0-9._-' '_')
+fi
 
 for CC_FILE do
     [ -f "$CC_FILE" ] || {
@@ -1125,7 +1132,7 @@ for CC_FILE do
         exit 2
     }
     CC_NAME=$(basename "$CC_FILE" .cases)
-    CC_WORK="$CC_WORK_ROOT/$CC_NAME"
+    CC_WORK="$CC_WORK_ROOT/$CC_NAME$CC_WORK_SUFFIX"
     CCV_work=$CC_WORK
     CCV_native_work=$(cc_native_path "$CC_WORK")
     rm -rf "$CC_WORK"

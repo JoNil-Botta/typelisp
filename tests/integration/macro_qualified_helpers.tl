@@ -1,5 +1,7 @@
 ;; Macro-expanded qualified calls reach the named module's functions, not the
 ;; string helpers or builtins their bare spelling names (#8129).
+;; The import makes the string helpers visible where the macros expand.
+;; lint-allow: unused-import
 (import stdlib.string)
 (import macro_qualified_helper_defs as defs)
 (import macro_qualified_helper_macros.*)

@@ -8,28 +8,29 @@
   (a i64)
   (b i64))
 
-(define (string-length [text : String]) : i64
+(define (string-length [_text : String]) : i64
   99)
 
-(define (string-ref [text : String] [index : i64]) : char
+(define (string-ref [_text : String] [_index : i64]) : char
   'z')
 
-(define (char-at [text : String] [index : i64]) : char
+(define (char-at [_text : String] [_index : i64]) : char
   'u')
 
-(define (eq [left : String] [right : String]) : bool
+(define (eq [_left : String] [_right : String]) : bool
   true)
 
-(define (string-eq [left : String] [right : String]) : bool
+(define (string-eq [_left : String] [_right : String]) : bool
   true)
 
-(define (string=? [left : String] [right : String]) : bool
+;; lint-allow: function-name-case -- the helper spelling under test
+(define (string=? [_left : String] [_right : String]) : bool
   true)
 
-(define (string-append [left : String] [right : String]) : String
+(define (string-append [_left : String] [_right : String]) : String
   "user")
 
-(define (string-concat [left : String] [right : String]) : String
+(define (string-concat [_left : String] [_right : String]) : String
   "user")
 
 (define (clone [cell : (& cell Cell)]) : Pair

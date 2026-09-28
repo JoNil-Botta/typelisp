@@ -39,12 +39,12 @@ stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CL
 stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fixpoint,embedded-stdlib-tlci-image	stage2	2304	build-stamp,embedded-image	gate_compile_profile
 stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	9984	build-stamp,root-release	scripts/verify-selfhost-cli-build-run.sh
 embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh
-stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh
+stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	integration-verify	scripts/verify-integration.sh
 linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	-	gate_instruction_counts
 tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	bootstrap-fixpoint	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$STAGE2_BIN"
 stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	6144	-	scripts/verify-inline-tests.sh
 stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint	stage2	3328	-	env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
-embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint	stage2	512	-	scripts/verify-embedded-stdlib-payload.sh
+embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint	stage2	512	embedded-payload	scripts/verify-embedded-stdlib-payload.sh
 stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-fixpoint,stage2-selfhost-compile-manifest	stage2	512	-	env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
 typelisp-format-compiler-selection-control	all	TypeLisp format compiler selection control	-	-	256	-	scripts/check-tl-format.sh --self-test-current-compiler-mode
 typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-fixpoint	stage2	256	-	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
@@ -83,10 +83,10 @@ stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint	stage2	1792	-	s
 integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-	-	256	-	scripts/verify-integration-manifest-validator.sh
 windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	-	-	256	-	scripts/verify-windows-coff-plan-validator.sh
 docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	-	-	256	-	scripts/verify-doc-site.sh --self-test-search-manifests
-integration-batch-observability	all	integration batch observability	-	-	256	-	scripts/verify-integration.sh --self-test-batch-observability
-integration-windows-path-normalization	all	integration Windows path normalization	-	-	256	-	scripts/verify-integration.sh --self-test-path-normalization
-integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint	stage2	256	-	scripts/verify-integration.sh --self-test-empty-compile-diagnostic
-integration-signal-notice-capture	linux	integration signal notice capture	-	-	256	-	scripts/verify-integration.sh --self-test-signal-notice-capture
+integration-batch-observability	all	integration batch observability	-	-	256	integration-verify	scripts/verify-integration.sh --self-test-batch-observability
+integration-windows-path-normalization	all	integration Windows path normalization	-	-	256	integration-verify	scripts/verify-integration.sh --self-test-path-normalization
+integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint	stage2	256	integration-verify	scripts/verify-integration.sh --self-test-empty-compile-diagnostic
+integration-signal-notice-capture	linux	integration signal notice capture	-	-	256	integration-verify	scripts/verify-integration.sh --self-test-signal-notice-capture
 windows-integration-linker-queue-self-test	windows	Windows integration linker queue self-test	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-integration-linker-self-test.ps1
 stage2-must-use-metadata-and-abi-codegen	all	stage2 must-use metadata and ABI/codegen	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh tests/codegen/must-use-abi.cases
 stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-fixpoint	stage2	5120	-	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.cases
@@ -99,7 +99,7 @@ benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-te
 stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-fixpoint	stage2	256	-	gate_benchmark_correctness
 stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctness	bootstrap-fixpoint	stage2	512	-	scripts/run-optimization-benchmarks.sh --correctness
 stage2-optimization-corpus-opt2-runtime-correctness	all	stage2 optimization corpus opt2 runtime correctness	bootstrap-fixpoint	stage2	512	-	gate_optimization_opt2_correctness
-stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint	stage2	512	-	scripts/verify-stdlib.sh
+stage2-stdlib-modules-and-fixtures	all	stage2 stdlib modules and fixtures	bootstrap-fixpoint	stage2	512	embedded-payload	scripts/verify-stdlib.sh
 stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-fixpoint	stage2	3584	-	scripts/verify-stdlib-selfhost.sh
 stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint	stage2	512	-	scripts/verify-spmd-simd.sh
 stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint,stage2-compile-profile-verifier,stage2-windows-coff-batch-plan@windows,stage2-native-integration-corpus,stage2-spmd-simd-comparison	stage2	256	-	env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" scripts/verify-cross-mode-differential.sh

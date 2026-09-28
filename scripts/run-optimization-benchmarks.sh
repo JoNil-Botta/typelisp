@@ -212,7 +212,8 @@ if [ "$CORRECTNESS" -eq 1 ]; then
     configure_toolchain
 fi
 
-WORKDIR="$ROOT/target/optimization-bench"
+# Each --tl-opt-level runs as its own gate, so it keeps its own directory.
+WORKDIR="$ROOT/target/optimization-bench${TL_CORRECTNESS_OPT_LEVEL:+-opt$TL_CORRECTNESS_OPT_LEVEL}"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 

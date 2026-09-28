@@ -546,7 +546,8 @@ compare_observations() {
 }
 
 self_test_oracle() {
-    _cm_self_root="$WORKDIR/self-test"
+    # Beside WORKDIR, which the corpus gate removes, not inside it.
+    _cm_self_root="$WORKDIR-self-test"
     rm -rf "$_cm_self_root"
     mkdir -p "$_cm_self_root"
     _cm_self_rows=0

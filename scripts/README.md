@@ -149,13 +149,17 @@ never run at once:
 | --- | --- |
 | `build-stamp` | `target/build-stage0/git-hash.txt`, which compiles with `compiler-build-identity` include and root package builds rewrite (the CLI smoke poisons it on purpose) |
 | `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
+| `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
+| `integration-verify` | `target/integration-verify/<host>/`, which every `verify-integration.sh` mode resets |
 | `root-release` | `target/release/`, the root package build's output |
 | `spmd-package` | `tests/spmd/package_callable/target/` and `tests/spmd/package_consumer/target/` |
 
-A gate whose work files are private to it needs no lock. Two gates that run
-the same `.cases` file with different `--only` selections use separate work
-directories, and a generated input that several gates write whole through a
-temporary file and `mv` is safe to share.
+A gate whose work files are private to it needs no lock. When one script
+serves several gates, each mode keeps its own work directory where it can:
+`verify-codegen-cases.sh --only`, `run-optimization-benchmarks.sh
+--tl-opt-level`, and the `check-tl-format.sh` and
+`verify-cross-mode-differential.sh` self-tests. A generated input that several
+gates write whole through a temporary file and `mv` is safe to share.
 
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).

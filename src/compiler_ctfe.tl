@@ -160,19 +160,23 @@
   unit)
 
 (defstruct CompilerCtfeMacroStateData
+  ;; The module the macro call being evaluated expands into, as an intern ID
+  ;; (`current-module`); negative before any expansion has set it. It is the
+  ;; first field so its accessors address it at the record's base (fields are
+  ;; stored in declaration order).
+  (expansion-module-id i64)
   (result-hygiene-free-node i64)
+  ;; The two flags share one word; the record is copied whole on every state
+  ;; update, so it stays as small as its fields allow.
   (result-may-contain-macro bool)
+  (module-value-reflection-enabled bool)
   (visible-macro-name-set ctfe_key_map.Map)
   (module-macro-export-keys ctfe_key_map.Map)
   (module-value-type-ids ctfe_key_map.Map)
-  (module-value-reflection-enabled bool)
   (source-names ci.InternSourceNameSessionHandle)
   ;; Hash-table backing arrays outlive per-file scratch arenas. Growth switches
   ;; to this owning compiler-job arena before publishing a replacement array.
-  (map-storage-arena i64)
-  ;; The module the macro call being evaluated expands into, as an intern ID
-  ;; (`current-module`); negative before any expansion has set it.
-  (expansion-module-id i64))
+  (map-storage-arena i64))
 
 (defstruct CompilerCtfeMacroState
   (address i64))
@@ -186,14 +190,14 @@
         (array-ref cell 0)
         (CompilerCtfeMacroStateData
           -1
+          -1
+          false
           false
           (ctfe_key_map.with-capacity 1)
           (ctfe_key_map.with-capacity 1)
           (ctfe_key_map.with-capacity 1)
-          false
           (ci.InternSourceNameSessionHandle 0)
-          (arena.tl_arena_current)
-          -1))
+          (arena.tl_arena_current)))
       (CompilerCtfeMacroState
         (cast
           (unsafe
@@ -218,19 +222,17 @@
         : (MutPtr CompilerCtfeMacroStateData))
       data)))
 
+;; Every transformer evaluation sets the expansion module, so these touch only
+;; that first field rather than copying the whole state record in and out.
 (define (ctfe-expansion-module-id-for-state [state : CompilerCtfeMacroState]) : i64
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    data.expansion-module-id))
+  (unsafe
+    (ptr-read (int->ptr (cast state.address : u64) : (Ptr i64)))))
 
 (define (ctfe-expansion-module-set-for-state!
   [state : CompilerCtfeMacroState]
   [module-id : i64]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.expansion-module-id module-id)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (ptr-write! (int->ptr (cast state.address : u64) : (MutPtr i64)) module-id)))
 
 (define (compiler-ctfe-macro-state-bind-source-names!
   [state : CompilerCtfeMacroState]

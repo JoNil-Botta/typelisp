@@ -797,10 +797,8 @@
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
-(define compiler-builtin-ctfe-id-capacity : i64
-  301)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 compiler-builtin-ctfe-id-capacity))
+  (__tl_make-array i64 301))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -812,8 +810,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 323)]
-    [ctfe-ids : (__tl_dyn-array i64)
-      (__tl_make-array i64 compiler-builtin-ctfe-id-capacity)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 301)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -825,7 +822,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i compiler-builtin-ctfe-id-capacity)
+      (while (< i 301)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -900,7 +897,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i compiler-builtin-ctfe-id-capacity)
+    (while (< i 301)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -908,7 +905,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i compiler-builtin-ctfe-id-capacity)
+    (while (< i 301)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1756,7 +1753,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index compiler-builtin-ctfe-id-capacity)
+    (while (< index 301)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))

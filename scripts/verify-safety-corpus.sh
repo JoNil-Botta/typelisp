@@ -312,6 +312,9 @@ run_manifest_case() {
             if grep -Fq 'error[E0200]' "$err"; then
                 fail "$case_id regressed to generic E0200; assign a specific code or update the taxonomy"
             fi
+            if grep -Fq '__tl_tc_' "$err"; then
+                fail "$case_id rendered an internal typecheck error transport instead of decoding it"
+            fi
             ;;
         run-exit)
             echo "[safety-corpus] run-exit $case_id"

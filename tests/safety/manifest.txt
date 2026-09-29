@@ -248,7 +248,7 @@ composite_arg_loan_unselected_match_scrutinee_ok|check-ok|tests/safety/composite
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
-auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|source lifetime `right-life` does not outlive required lifetime `left-life`
+auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|error[E0210]: typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& left-life str), found (& right-life str); source lifetime `right-life` does not outlive required lifetime `left-life`
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
@@ -257,7 +257,7 @@ two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_c
 two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|typecheck: cannot assign to borrowed place `items`
 lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_iterator_escape_reject.tl|-|reference value would escape lexical scope
 lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
-signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`
+signature_lifetime_alias_unknown_reject|check-fail|tests/safety/signature_lifetime_alias_unknown_reject.tl|-|error[E0210]: typecheck: let binding `copy` type mismatch: expected (& missing i64), found (& source i64); source lifetime `source` does not outlive required lifetime `missing`
 signature_lifetime_alias_local_return_reject|check-fail|tests/safety/signature_lifetime_alias_local_return_reject.tl|-|typecheck: borrow lifetime mismatch
 lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
@@ -579,15 +579,15 @@ thread_spawn_i64_non_direct_reject|check-fail|tests/safety/thread_spawn_i64_non_
 thread_spawn_i64_scoped_arena_reject|check-fail|tests/safety/thread_spawn_i64_scoped_arena_reject.tl|-|thread_i64.spawn cannot spawn from scoped arena
 thread_spawn_unrelated_dotted_spawn_ok|check-ok|tests/safety/thread_spawn_unrelated_dotted_spawn_ok.tl|tests/safety/thread_spawn_unrelated_dotted_spawn_lib.tl|-
 thread_join_i64_double_reject|check-fail|tests/safety/thread_join_i64_double_reject.tl|-|use of moved value `worker`
-thread_spawn_bool_string_capture_reject|check-fail|tests/safety/thread_spawn_bool_string_capture_reject.tl|-|thread_bool.spawn cannot capture `text` of type String
+thread_spawn_bool_string_capture_reject|check-fail|tests/safety/thread_spawn_bool_string_capture_reject.tl|-|error[E0217]: typecheck: thread_bool.spawn cannot capture `text` of type String
 thread_join_bool_double_reject|check-fail|tests/safety/thread_join_bool_double_reject.tl|-|use of moved value `worker`
-thread_spawn_string_capture_reject|check-fail|tests/safety/thread_spawn_string_capture_reject.tl|-|thread.spawn-string cannot capture `text` of type String
+thread_spawn_string_capture_reject|check-fail|tests/safety/thread_spawn_string_capture_reject.tl|-|error[E0217]: typecheck: thread.spawn-string cannot capture `text` of type String
 thread_join_string_double_reject|check-fail|tests/safety/thread_join_string_double_reject.tl|-|use of moved value `worker`
-thread_spawn_i64_vec_capture_reject|check-fail|tests/safety/thread_spawn_i64_vec_capture_reject.tl|-|thread.spawn-i64-vec cannot capture `items`
+thread_spawn_i64_vec_capture_reject|check-fail|tests/safety/thread_spawn_i64_vec_capture_reject.tl|-|error[E0217]: typecheck: thread.spawn-i64-vec cannot capture `items`
 thread_spawn_i64_vec_atomic_capture_ok|check-ok|tests/safety/thread_spawn_i64_vec_atomic_capture_ok.tl|-|-
 thread_spawn_i64_vec_use_after_move_reject|check-fail|tests/safety/thread_spawn_i64_vec_use_after_move_reject.tl|-|use of moved value `items`
 thread_join_i64_vec_double_reject|check-fail|tests/safety/thread_join_i64_vec_double_reject.tl|-|use of moved value `worker`
-thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64_capture_reject.tl|-|thread.spawn-box-i64 cannot capture `cell` of type (Box i64)
+thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64_capture_reject.tl|-|error[E0217]: typecheck: thread.spawn-box-i64 cannot capture `cell` of type (Box i64)
 thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_double_reject.tl|-|use of moved value `worker`
 thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
 arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
@@ -897,3 +897,7 @@ foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_define
 
 # JSON live-prefix validation and checked arithmetic, including strategy hooks.
 json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-
+
+# A typecheck code follows the raise site's kind, not words in the message.
+typecheck_kind_ignores_binding_name_reject|check-fail|tests/safety/typecheck_kind_ignores_binding_name_reject.tl|-|error[E0206]: typecheck: let binding `cleanup` type mismatch: expected i64, found bool
+typecheck_kind_ignores_spmd_word_reject|check-fail|tests/safety/typecheck_kind_ignores_spmd_word_reject.tl|-|error[E0206]: typecheck: let binding `foreach-total` type mismatch: expected i64, found bool

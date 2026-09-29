@@ -4513,19 +4513,65 @@
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
-;; Every typecheck error becomes a diagnostic through here, so this is where the
-;; per-kind code is decided (refs #5668). The kind is not available at the raise
-;; site -- errors travel as `ResultTcType.Err <String>` -- so the code is derived
-;; from the canonical message; see the registry in `compiler_diagnostic.tl`. A
-;; kind that is not classified yet keeps `E0200`.
+;; Every typecheck error becomes a diagnostic through here. A raise site states
+;; its kind by tagging the message (`tc-kind-message`), and the diagnostic
+;; constructor already turned that tag into the code; the wording never decides
+;; it. A message without a kind is `Unclassified`, `E0200`.
 (define (tc-canonical-diagnostic [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (let
     [code : String
-      (cdiag.compiler-diagnostic-code-for-typecheck-message
-        (cdiag.compiler-diagnostic-message diag))]
+      (match (cdiag.compiler-diagnostic-code (& diag))
+        [(CompilerDiagnosticSomeString tagged) tagged]
+        [CompilerDiagnosticNoString
+          (cdiag.compiler-diagnostic-code-for-typecheck-kind
+            (cdiag.CompilerTypecheckKind.Unclassified))])]
     (cdiag.compiler-diagnostic-with-category
       (cdiag.compiler-diagnostic-with-code diag code)
       "typecheck")))
+
+;; The text of a typecheck error message without its kind tag, for code that
+;; inspects the wording.
+(define (tc-message-text [message : (& message str)]) : String
+  (cdiag.compiler-diagnostic-untagged-message (string.copy message)))
+
+;; True when the untagged text of `message` starts with `prefix`.
+(define (tc-message-text-prefix? [message : (& message str)] [prefix : String]) : bool
+  (let
+    [text : String (tc-message-text message)]
+    (tc-diag-string-prefix? (& text) prefix)))
+
+;; True when the untagged text of `message` is `expected`.
+(define (tc-message-text-is? [message : (& message str)] [expected : String]) : bool
+  (let
+    [text : String (tc-message-text message)]
+    (string.eq text expected)))
+
+;; `prefix` put in front of the text of `message`, keeping its kind tag first.
+(define (tc-message-with-prefix [prefix : String] [message : String]) : String
+  (if (cdiag.compiler-diagnostic-typecheck-tagged? (& message))
+    (let
+      [tag : String
+        (string.substring
+          (& message)
+          0
+          (cdiag.compiler-diagnostic-typecheck-tag-length))]
+      (str_cat.str-cat
+        tag
+        prefix
+        (cdiag.compiler-diagnostic-untagged-message message)))
+    (str_cat.str-cat prefix message)))
+
+;; `text` with the kind tag of `source` in place of its own.
+(define (tc-message-with-tag-of [source : (& source str)] [text : String]) : String
+  (str_cat.str-cat
+    (string.substring source 0 (cdiag.compiler-diagnostic-typecheck-tag-length))
+    (cdiag.compiler-diagnostic-untagged-message text)))
+
+;; `message` tagged with the kind its code follows.
+(define (tc-kind-message
+  [kind : cdiag.CompilerTypecheckKind]
+  [message : String]) : String
+  (cdiag.compiler-diagnostic-typecheck-tagged kind message))
 
 ;; A diagnostic for an error with no expression to locate it at. An encoded
 ;; transport still decodes to its own spans and frames; only a plain message
@@ -6816,7 +6862,9 @@
   "return an owned clone, keep the reference inside its scope, or tie the returned reference lifetime to a parameter")
 
 (define (tc-borrow-place-error-message) : String
-  "typecheck: borrow requires a local, parameter, or aggregate place")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: borrow requires a local, parameter, or aggregate place"))
 
 (define (tc-borrow-place-error-message? [message : (& message str)]) : bool
   (string.eq message (tc-borrow-place-error-message)))
@@ -6847,53 +6895,59 @@
   "pass an owned clone, keep the call inside the value's arena/scope, or use with-escape to clone out a supported arena result before passing it")
 
 (define (tc-reference-escape-message? [message : (& message str)]) : bool
-  (or
-    (string.eq message "typecheck: reference value would escape lexical scope")
-    (tc-diag-string-prefix?
-      message
-      "typecheck: cannot store reference into longer-lived")
-    (tc-diag-string-prefix?
-      message
-      "typecheck: cannot store reference into non-place")
-    (string.eq
-      message
-      "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")
-    (string.eq
-      message
-      "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
-    (string.eq
-      message
-      "typecheck: reference-capturing closure value would escape lexical scope")))
+  (let
+    [text : String (tc-message-text message)]
+    (or
+      (string.eq text "typecheck: reference value would escape lexical scope")
+      (tc-diag-string-prefix?
+        (& text)
+        "typecheck: cannot store reference into longer-lived")
+      (tc-diag-string-prefix?
+        (& text)
+        "typecheck: cannot store reference into non-place")
+      (string.eq
+        text
+        "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")
+      (string.eq
+        text
+        "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
+      (string.eq
+        text
+        "typecheck: reference-capturing closure value would escape lexical scope"))))
 
 (define (tc-region-escape-message? [message : (& message str)]) : bool
-  (or
-    (tc-diag-string-prefix?
-      message
-      "typecheck: region-tagged value cannot escape with-arena '")
-    (tc-diag-string-prefix?
-      message
-      "typecheck: cannot store region-tagged value into ")
-    (string.eq
-      message
-      "typecheck: lambda cannot capture region-tagged value; region value would escape")
-    (string.eq
-      message
-      "typecheck: lambda return value has region-tagged type; region value would escape")
-    (string.eq
-      message
-      "typecheck: cannot pass region-tagged value to function parameter; region value would escape")))
+  (let
+    [text : String (tc-message-text message)]
+    (or
+      (tc-diag-string-prefix?
+        (& text)
+        "typecheck: region-tagged value cannot escape with-arena '")
+      (tc-diag-string-prefix?
+        (& text)
+        "typecheck: cannot store region-tagged value into ")
+      (string.eq
+        text
+        "typecheck: lambda cannot capture region-tagged value; region value would escape")
+      (string.eq
+        text
+        "typecheck: lambda return value has region-tagged type; region value would escape")
+      (string.eq
+        text
+        "typecheck: cannot pass region-tagged value to function parameter; region value would escape"))))
 
 (define (tc-cleanup-escape-message? [message : (& message str)]) : bool
-  (or
-    (string.eq
-      message
-      "typecheck: cleanup-required resource would escape with scope")
-    (string.eq
-      message
-      "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
-    (string.eq
-      message
-      "typecheck: cannot store cleanup-required resource in longer-lived binding")))
+  (let
+    [text : String (tc-message-text message)]
+    (or
+      (string.eq
+        text
+        "typecheck: cleanup-required resource would escape with scope")
+      (string.eq
+        text
+        "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
+      (string.eq
+        text
+        "typecheck: cannot store cleanup-required resource in longer-lived binding"))))
 
 (define (tc-escape-message? [message : (& message str)]) : bool
   (or
@@ -6966,7 +7020,9 @@
 (define (tc-region-call-arg-error [expr-bases : i64] [arg : ast.AstExpr]) : String
   (let
     [message : String
-      "typecheck: cannot pass region-tagged value to function parameter; region value would escape"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.RegionEscape)
+        "typecheck: cannot pass region-tagged value to function parameter; region value would escape")]
     (match (tc-vector-ref-rvalue-source-span
       expr-bases
       (tc-global-shared-view arg))
@@ -7015,8 +7071,8 @@
     (TcMaybeString.No)
     (match inner
       [(ast.AstExpr.WithRegion region body)
-        (if (tc-diag-string-prefix?
-          message
+        (if (tc-message-text-prefix?
+          (& message)
           "typecheck: region-tagged value cannot escape with-arena '")
           (match (tc-expr-list-last-maybe-span expr-bases body)
             [(TcMaybeAstSourceSpan.Some value-span)
@@ -11612,7 +11668,12 @@
   (if (tc-in-loop-target? env)
     (ResultTcType.Ok (ast.AstType.Never))
     (ResultTcType.Err
-      (str_cat.str-cat "typecheck: " form " requires enclosing scalar while"))))
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.ControlFlow))
+        "typecheck: "
+        form
+        " requires enclosing scalar while"))))
 
 (define (tc-type-list1 [a : ast.AstType]) : ast.AstTypeList
   (ast.ast-type-cons a (ast.ast-type-list-new)))
@@ -11810,16 +11871,24 @@
         (tc-nominal-name-id-display name)
         (ast.ast-lifetime-list-box-shared-view lifetimes))]))
 
+;; A type mismatch unless `message`, the context, already carries a kind.
 (define (tc-type-mismatch-message
   [actual : ast.AstType]
   [expected : ast.AstType]
   [message : String]) : String
-  (str_cat.str-cat
-    message
-    ": expected "
-    (tc-type-render (tc-type-without-regions expected))
-    ", found "
-    (tc-type-render (tc-type-without-regions actual))))
+  (let
+    [context-kind : bool
+      (cdiag.compiler-diagnostic-typecheck-tagged? (& message))]
+    [text : String
+      (str_cat.str-cat
+        message
+        ": expected "
+        (tc-type-render (tc-type-without-regions expected))
+        ", found "
+        (tc-type-render (tc-type-without-regions actual)))]
+    (if context-kind
+      text
+      (tc-kind-message (cdiag.CompilerTypecheckKind.TypeMismatch) text))))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-bind-id (tc-default-env-base) (tc-default-boundary-id) (ast.AstType.Unit)))
@@ -12184,6 +12253,8 @@
 (define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
   (ResultTcUnit.Err
     (str_cat.str-cat
+      (cdiag.compiler-diagnostic-typecheck-tag
+        (cdiag.CompilerTypecheckKind.TypeMismatch))
       "typecheck: stdlib well-known type mismatch for "
       (tc-stdlib-comptime-type-display-name type-name)
       ": "
@@ -14226,6 +14297,8 @@
             (ResultTcType.Ok found-ty))
           (ResultTcType.Err
             (str_cat.str-cat
+              (cdiag.compiler-diagnostic-typecheck-tag
+                (cdiag.CompilerTypecheckKind.UnboundName))
               "typecheck: unbound name "
               (tc-env-key-display
                 (tc-type-env-structural-session env)
@@ -14452,6 +14525,8 @@
             (ResultTcTypeUnsafe.Ok found-ty found-unsafe))
           (ResultTcTypeUnsafe.Err
             (str_cat.str-cat
+              (cdiag.compiler-diagnostic-typecheck-tag
+                (cdiag.CompilerTypecheckKind.UnboundName))
               "typecheck: unbound name "
               (tc-env-key-display
                 (tc-type-env-structural-session env)
@@ -14924,6 +14999,8 @@
         (ResultTcType.Ok ty)
         (ResultTcType.Err
           (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag
+              (cdiag.CompilerTypecheckKind.UnsafeCallableEffect))
             "typecheck: "
             name
             " is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")))]
@@ -16139,7 +16216,10 @@
     [(TcMaybeNameId.Some existing)
       (if (= existing to)
         (ResultTcLifetimeSubst.Ok subst)
-        (ResultTcLifetimeSubst.Err "typecheck: constructor lifetime mismatch"))]
+        (ResultTcLifetimeSubst.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+            "typecheck: constructor lifetime mismatch")))]
     [(TcMaybeNameId.No)
       (ResultTcLifetimeSubst.Ok (tc-lifetime-subst-push subst from to))]))
 
@@ -16793,7 +16873,10 @@
     [lifetimes : TcNameIdList (tc-type-collect-regions value-ty)]
     (if (tc-reference-lifetimes-visible? env lifetimes)
       ResultTcUnit.Ok
-      (ResultTcUnit.Err "typecheck: reference value would escape lexical scope"))))
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.RegionEscape)
+          "typecheck: reference value would escape lexical scope")))))
 
 (define (tc-ensure-reference-value-can-assign
   [env : TcTypeEnv]
@@ -16804,13 +16887,18 @@
     (if (tc-reference-lifetimes-outlive-binding-id? env lifetimes target-id)
       ResultTcUnit.Ok
       (ResultTcUnit.Err
-        "typecheck: cannot store reference into longer-lived binding; reference value would escape lexical scope"))))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.RegionEscape)
+          "typecheck: cannot store reference into longer-lived binding; reference value would escape lexical scope")))))
 
 (define (tc-ensure-reference-type-does-not-escape-names
   [ty : ast.AstType]
   [names : TcNameIdList]) : ResultTcUnit
   (if (tc-name-id-list-overlaps? (tc-type-collect-regions ty) names)
-    (ResultTcUnit.Err "typecheck: reference value would escape lexical scope")
+    (ResultTcUnit.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.RegionEscape)
+        "typecheck: reference value would escape lexical scope"))
     ResultTcUnit.Ok))
 
 (define (tc-type-strip-region [ty : ast.AstType]) : ast.AstType
@@ -17587,7 +17675,9 @@
         [(TcMaybeNameId.No)
           (if (tc-elided-lifetime? name)
             (ResultTcElidedType.Err
-              "typecheck: elided reference return is ambiguous; write an explicit lifetime")
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+                "typecheck: elided reference return is ambiguous; write an explicit lifetime"))
             (let
               [inner : TcElidedType
                 (try
@@ -17618,7 +17708,9 @@
         [(TcMaybeNameId.No)
           (if (tc-elided-lifetime? name)
             (ResultTcElidedType.Err
-              "typecheck: elided reference return is ambiguous; write an explicit lifetime")
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+                "typecheck: elided reference return is ambiguous; write an explicit lifetime"))
             (let
               [inner : TcElidedType
                 (try
@@ -17813,7 +17905,9 @@
     (if (tc-reference-return-lifetimes-allowed? ctx params ret)
       ResultTcUnit.Ok
       (ResultTcUnit.Err
-        "typecheck: returned reference lifetime must be tied to a parameter"))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+          "typecheck: returned reference lifetime must be tied to a parameter")))
     ResultTcUnit.Ok))
 
 (define (tc-type-list-collect-regions
@@ -18100,6 +18194,8 @@
             ResultTcUnit.Ok
             (ResultTcUnit.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.RegionEscape))
                 "typecheck: cannot store region-tagged value into "
                 context
                 "; region value would escape"))))])))
@@ -18704,6 +18800,8 @@
 
 (define (tc-dotted-field-index-message [name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.Place))
     "typecheck: dotted field access "
     name
     " cannot use numeric field segments; use tuple-ref or array-ref"))
@@ -21088,15 +21186,22 @@
   [source-name-id : i64]
   [lookup-name : String]
   [message : String]) : String
-  (let
-    [lookup-unbound : String
-      (str_cat.str-cat "typecheck: unbound name " lookup-name)]
-    (match (tc-source-alias-display-key ctx source-name source-name-id)
-      [(TcMaybeString.Some display-name)
-        (if (string.eq message lookup-unbound)
-          (str_cat.str-cat "typecheck: unbound name " display-name)
-          message)]
-      [(TcMaybeString.No) message])))
+  (match (tc-source-alias-display-key ctx source-name source-name-id)
+    [(TcMaybeString.Some display-name)
+      (if (string.eq
+        message
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.UnboundName))
+          "typecheck: unbound name "
+          lookup-name))
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.UnboundName))
+          "typecheck: unbound name "
+          display-name)
+        message)]
+    [(TcMaybeString.No) message]))
 
 (define (tc-dotted-prefix-depth [name-id : i64]) : i64
   (let
@@ -23112,30 +23217,48 @@
         lifetimes))))
 
 (define (tc-source-str-value-policy-message) : String
-  "typecheck: str is a borrowed string-slice referent; use (& lifetime str)")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: str is a borrowed string-slice referent; use (& lifetime str)"))
 
 (define (tc-source-str-mut-ref-policy-message) : String
   "typecheck: mutable references to str are reserved; use immutable (& lifetime str)")
 
 (define (tc-source-bytes-value-policy-message) : String
-  "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: bytes is a borrowed byte-slice referent; use (& lifetime bytes) or (&mut lifetime bytes)"))
 
 (define (tc-source-type-policy-message [name : String]) : String
   (cond
     [(string.eq name "varying")
-      "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach")]
     [(string.eq name "Varying")
-      "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: public SPMD varying source types are deferred; varying is inferred inside foreach")]
     [(string.eq name "Vector")
-      "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal")]
     [(string.eq name "vector")
-      "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: public SPMD vector source types are deferred; vector values remain compiler-internal")]
     [(string.eq name "Mask")
-      "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal")]
     [(string.eq name "mask")
-      "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: public SPMD mask source types are deferred; masks remain compiler-internal")]
     [else
       (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.UnboundName))
         "typecheck: unknown type "
         name
         "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")]))
@@ -23150,7 +23273,11 @@
       (ResultTcLifetimeList.Ok (ast.ast-lifetime-list-new))]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ lifetimes _ _ _)
       (ResultTcLifetimeList.Ok lifetimes)]
-    [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
+    [_
+      (ResultTcLifetimeList.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.UnboundName)
+          "typecheck: nominal type not found"))]))
 
 (define (tc-nominal-decl-name-id-matches?
   [session : cis.InternStructuralSessionHandle]
@@ -23173,26 +23300,42 @@
     [(ast.AstDecl.DefEnum decl-meta name _ _)
       (if (tc-nominal-decl-name-id-matches? session lookup-id module-id name)
         (ResultTcLifetimeList.Ok (ast.ast-lifetime-list-new))
-        (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
+        (ResultTcLifetimeList.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            "typecheck: nominal type not found")))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes _ _)
       (if (tc-nominal-decl-name-id-matches? session lookup-id module-id name)
         (ResultTcLifetimeList.Ok lifetimes)
-        (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
+        (ResultTcLifetimeList.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            "typecheck: nominal type not found")))]
     [(ast.AstDecl.DefStruct decl-meta name _ _ _)
       (if (tc-nominal-decl-name-id-matches? session lookup-id module-id name)
         (ResultTcLifetimeList.Ok (ast.ast-lifetime-list-new))
-        (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
+        (ResultTcLifetimeList.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            "typecheck: nominal type not found")))]
     [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ _)
       (if (tc-nominal-decl-name-id-matches? session lookup-id module-id name)
         (ResultTcLifetimeList.Ok lifetimes)
-        (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
+        (ResultTcLifetimeList.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            "typecheck: nominal type not found")))]
     [(ast.AstDecl.Unsafe inner-box)
       (tc-program-nominal-lifetimes-from-decl
         session
         (ast.ast-decl-box-shared-view inner-box)
         lookup-id
         module-id)]
-    [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
+    [_
+      (ResultTcLifetimeList.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.UnboundName)
+          "typecheck: nominal type not found"))]))
 
 (define (tc-program-nominal-lifetimes-in-module
   [session : cis.InternStructuralSessionHandle]
@@ -23201,7 +23344,10 @@
   [module-id : i64]) : ResultTcLifetimeList
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil)
-      (ResultTcLifetimeList.Err "typecheck: nominal type not found")]
+      (ResultTcLifetimeList.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.UnboundName)
+          "typecheck: nominal type not found"))]
     [(ast.AstDeclListStep.Cons decl rest)
       (match (tc-global-shared-view decl)
         [(ast.AstDecl.Module next-module)
@@ -23295,7 +23441,10 @@
           (tc-arena-nominal-name-id? name-id)
           (= (tc-lifetime-list-count lifetimes) 1)))
         ResultTcUnit.Ok
-        (ResultTcUnit.Err "typecheck: nominal lifetime argument arity mismatch"))]
+        (ResultTcUnit.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "typecheck: nominal lifetime argument arity mismatch")))]
     [(ResultTcLifetimeList.Err message)
       (ResultTcUnit.Err
         (str_cat.str-cat
@@ -23335,7 +23484,9 @@
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-source-elided-reference-policy-message) : String
-  "typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+    "typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime"))
 
 (define (tc-source-function-type-policy-ok
   [ctx : TcContext]
@@ -23353,7 +23504,9 @@
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [_
           (ResultTcUnit.Err
-            "typecheck: internal lifetime-elision function type mismatch")])]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.TypeMismatch)
+              "typecheck: internal lifetime-elision function type mismatch"))])]
     [(ResultTcElidedType.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-source-type-policy-ok [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
@@ -23402,7 +23555,9 @@
               (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
             [(ast.AstType.Slice _)
               (ResultTcUnit.Err
-                "typecheck: bare Slice type is unsized; borrow it")]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.TypeMismatch)
+                  "typecheck: bare Slice type is unsized; borrow it"))]
             [(ast.AstType.Box elem)
               (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
             [(ast.AstType.Ptr elem)
@@ -23591,6 +23746,8 @@
 
 (define (tc-struct-cleanup-repr-c-message [struct-name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: cleanup-owning struct "
     struct-name
     " cannot use repr c"))
@@ -23948,14 +24105,18 @@
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-spmd-broadcast-scope-message) : String
-  "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body"))
 
 (define (tc-spmd-shuffle-scope-message) : String
-  "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body"))
 
 (define (tc-spmd-lane-scope-message [name : String]) : String
   (str_cat.str-cat
-    "typecheck: "
+    (tc-kind-message (cdiag.CompilerTypecheckKind.Spmd) "typecheck: ")
     name
     " is only valid inside a foreach body or spmd-reduce value expression"))
 
@@ -25414,13 +25575,15 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (tc-source-decl-shape-origin-message? [message : (& message str)]) : bool
-  (or
-    (string.eq
-      message
-      "typecheck: defdispatch requires exactly one scalar variant")
-    (string.eq message "typecheck: duplicate defdispatch ISA variant")
-    (string.eq message "typecheck: duplicate lifetime parameter")
-    (string.contains message " cannot use repr c")))
+  (let
+    [text : String (tc-message-text message)]
+    (or
+      (string.eq
+        text
+        "typecheck: defdispatch requires exactly one scalar variant")
+      (string.eq text "typecheck: duplicate defdispatch ISA variant")
+      (string.eq text "typecheck: duplicate lifetime parameter")
+      (string.contains (& text) " cannot use repr c"))))
 
 (define (tc-source-decl-list-policy-diagnostic-in-module
   [ctx : TcContext]
@@ -26411,8 +26574,11 @@
       ;; pointers, references, or nominal aggregates.
       (tc-f32-to-f64-compatible? expected actual))))
 
+;; A lifetime failure: it carries its kind to `tc-type-mismatch-message-in-context`.
 (define (tc-lifetime-coercion-outlives-detail [source : i64] [required : i64]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.LifetimeMismatch))
     "; source lifetime `"
     (ci.intern-str source)
     "` does not outlive required lifetime `"
@@ -26500,6 +26666,8 @@
             (if (tc-lifetime-outlives-lifetime-id? env required source)
               ""
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.LifetimeMismatch))
                 "; required lifetime `"
                 (ci.intern-str required)
                 "` does not outlive source lifetime `"
@@ -26615,18 +26783,37 @@
           [_ ""])]
       [_ ""])))
 
+;; A type mismatch with the coercion failure detail appended. A context kind
+;; other than a plain type mismatch wins, then a lifetime failure in the detail.
 (define (tc-type-mismatch-message-in-context
   [ctx : TcContext]
   [env : TcTypeEnv]
   [actual : ast.AstType]
   [expected : ast.AstType]
   [message : String]) : String
-  (str_cat.str-cat
-    (tc-type-mismatch-message
-      (tc-global-shared-view actual)
-      (tc-global-shared-view expected)
-      message)
-    (tc-type-coercion-failure-detail ctx env expected actual)))
+  (let
+    [context-kind : bool
+      (and
+        (cdiag.compiler-diagnostic-typecheck-tagged? (& message))
+        (not
+          (string.eq
+            (cdiag.compiler-diagnostic-typecheck-tag-code (& message))
+            (cdiag.compiler-diagnostic-code-typecheck-type-mismatch))))]
+    [base : String
+      (tc-type-mismatch-message
+        (tc-global-shared-view actual)
+        (tc-global-shared-view expected)
+        message)]
+    [detail : String (tc-type-coercion-failure-detail ctx env expected actual)]
+    [text : String
+      (str_cat.str-cat
+        base
+        (cdiag.compiler-diagnostic-untagged-message (string.copy (& detail))))]
+    (if (and
+      (not context-kind)
+      (cdiag.compiler-diagnostic-typecheck-tagged? (& detail)))
+      (tc-message-with-tag-of (& detail) text)
+      text)))
 
 (define (tc-type-compatible? [expected : ast.AstType] [actual : ast.AstType]) : bool
   (if (tc-never-type? (tc-global-shared-view actual))
@@ -26718,7 +26905,11 @@
             [_
               (match b-regions
                 [(TcNameIdList.Nil) (ResultTcType.Ok a)]
-                [_ (ResultTcType.Err "typecheck: if branches must match")])])))]
+                [_
+                  (ResultTcType.Err
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.TypeMismatch)
+                      "typecheck: if branches must match"))])])))]
     [(tc-type-coercible?
         ctx
         env
@@ -26727,7 +26918,11 @@
       (ResultTcType.Ok a)]
     [(tc-type-coercible? ctx env (tc-global-shared-view b) a)
       (ResultTcType.Ok b)]
-    [else (ResultTcType.Err "typecheck: if branches must match")]))
+    [else
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.TypeMismatch)
+          "typecheck: if branches must match"))]))
 
 (define (tc-merge-branch-type
   [ctx : TcContext]
@@ -26900,6 +27095,8 @@
   [text : String]
   [expected : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
     "typecheck: integer literal "
     (ast.ast-lit-int-text (ast.AstLiteral.Int value text))
     " does not fit expected type "
@@ -27345,11 +27542,18 @@
 
 (define (tc-atomic-value-mismatch-message [name : String]) : String
   (if (tc-atomic-kind-volatile? name)
-    "typecheck: volatile value type mismatch"
-    "typecheck: atomic value type mismatch"))
+    (tc-kind-message
+      (cdiag.CompilerTypecheckKind.TypeMismatch)
+      "typecheck: volatile value type mismatch")
+    (tc-kind-message
+      (cdiag.CompilerTypecheckKind.TypeMismatch)
+      "typecheck: atomic value type mismatch")))
 
 (define (tc-atomic-load-arity-message [name : String]) : String
-  (str_cat.str-cat "typecheck: " name " expects exactly one argument"))
+  (str_cat.str-cat
+    (tc-kind-message (cdiag.CompilerTypecheckKind.ArityMismatch) "typecheck: ")
+    name
+    " expects exactly one argument"))
 
 (define (tc-atomic-update-arity-message [name : String]) : String
   (if (tc-atomic-kind-volatile? name)
@@ -27427,14 +27631,18 @@
         env
         expected
         (tc-global-shared-view elem)
-        "typecheck: atomic expected value type mismatch")
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.TypeMismatch)
+          "typecheck: atomic expected value type mismatch"))
         [(ResultTcUnit.Ok)
           (match (tc-atomic-check-value
             ctx
             env
             new-value
             (tc-global-shared-view elem)
-            "typecheck: atomic new value type mismatch")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.TypeMismatch)
+              "typecheck: atomic new value type mismatch"))
             [(ResultTcUnit.Ok) (ResultTcType.Ok elem)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
@@ -27578,7 +27786,12 @@
         (tc-job-state-unused-unsafe (tc-context-job-state ctx)))
       ResultTcUnit.Ok)
     (ResultTcUnit.Err
-      (str_cat.str-cat "typecheck: " name " requires unsafe context"))))
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.UnsafeContext))
+        "typecheck: "
+        name
+        " requires unsafe context"))))
 
 (define (tc-dyn-array-elem-list-supported?
   [env : TcTypeEnv]
@@ -27693,10 +27906,14 @@
     [_ false]))
 
 (define (tc-spmd-broadcast-type-message) : String
-  "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred"))
 
 (define (tc-spmd-shuffle-type-message) : String
-  "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred"))
 
 (define (tc-spmd-broadcast-finish
   [ctx : TcContext]
@@ -27709,12 +27926,16 @@
     (tc-resolve-type ctx (tc-global-shared-view expr-ty)))
     (match (tc-spmd-require-uniform
       lane-class
-      "typecheck: spmd-broadcast lane must be uniform")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-broadcast lane must be uniform"))
       [(ResultTcUnit.Ok)
         (match (tc-expect
           (tc-resolve-type ctx lane-ty)
           (ast.AstType.I64)
-          "typecheck: spmd-broadcast lane must have type i64")
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: spmd-broadcast lane must have type i64"))
           [(ResultTcUnit.Ok) (tc-spmd-finish expr-ty value-class lane-env)]
           [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])]
       [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])
@@ -27731,7 +27952,9 @@
     (match (tc-expect
       (tc-resolve-type ctx lane-ty)
       (ast.AstType.I64)
-      "typecheck: spmd-shuffle lane must have type i64")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-shuffle lane must have type i64"))
       [(ResultTcUnit.Ok) (tc-spmd-finish expr-ty value-class lane-env)]
       [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])
     (ResultTcSpmdExprInfo.Err (tc-spmd-shuffle-type-message))))
@@ -27745,6 +27968,8 @@
     (not (tc-spmd-varying-expr-type-supported? (tc-global-shared-view ty))))
     (ResultTcSpmdExprInfo.Err
       (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.Spmd))
         "typecheck: foreach varying value type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))
     (ResultTcSpmdExprInfo.Ok (TcSpmdExprInfo ty class env))))
@@ -27781,6 +28006,8 @@
       (not supported-enum))
       (ResultTcSpmdExprInfo.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.Spmd))
           "typecheck: foreach varying array lane type is not supported: "
           (tc-type-render (tc-type-strip-region resolved))))
       (if (and (tc-spmd-varying? class) supported-enum)
@@ -30696,7 +30923,12 @@
     expected))
 
 (define (tc-float-literal-non-finite-message [ty-name : String]) : String
-  (str_cat.str-cat "typecheck: non-finite " ty-name " literal is not supported"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
+    "typecheck: non-finite "
+    ty-name
+    " literal is not supported"))
 
 (define (tc-float-literal-f64-type [text : String]) : ResultTcType
   (match (cfloat.compiler-float-parse-f64 (string.copy (& text)))
@@ -31162,7 +31394,9 @@
   (if (tc-dyn-array-elem-supported? env elem-ty)
     ResultTcUnit.Ok
     (ResultTcUnit.Err
-      "typecheck: dynamic array literal element type is not supported")))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.TypeMismatch)
+        "typecheck: dynamic array literal element type is not supported"))))
 
 (define (tc-expr-dyn-array-literal-with-elem
   [ctx : TcContext]
@@ -31320,9 +31554,15 @@
   (if (>= index exprs.len)
     (if (>= index (ast.ast-type-list-len types))
       ResultTcUnit.Ok
-      (ResultTcUnit.Err "typecheck: tuple element type mismatch"))
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.TypeMismatch)
+          "typecheck: tuple element type mismatch")))
     (if (>= index (ast.ast-type-list-len types))
-      (ResultTcUnit.Err "typecheck: tuple element type mismatch")
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.TypeMismatch)
+          "typecheck: tuple element type mismatch"))
       (let
         [expr-id : i64 (ast.ast-expr-list-get exprs index 0)]
         [want : ast.AstType
@@ -31420,9 +31660,15 @@
     [(ctfe_support.CompilerCtfeValue.Char _)
       (ResultTcType.Ok (ast.AstType.Char))]
     [(ctfe_support.CompilerCtfeValue.String _ _)
-      (ResultTcType.Err "String value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "String value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.Name _ _)
-      (ResultTcType.Err "String value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "String value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.Unit) (ResultTcType.Ok (ast.AstType.Unit))]
     [(ctfe_support.CompilerCtfeValue.Expr _ _)
       (ResultTcType.Ok (ast.AstType.Expr))]
@@ -31431,6 +31677,8 @@
     [(ctfe_support.CompilerCtfeValue.Type ty)
       (ResultTcType.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.ComptimeConstraint))
           "type value "
           (tc-type-render (tc-resolve-type ctx ty))
           " is compile-time only"))]
@@ -31459,27 +31707,60 @@
     [(ctfe_support.CompilerCtfeValue.MatchArmList _)
       (ResultTcType.Ok (tc-macro-match-arm-list-type))]
     [(ctfe_support.CompilerCtfeValue.LetBinding _)
-      (ResultTcType.Err "LetBinding value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "LetBinding value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.LetBindingList _)
-      (ResultTcType.Err "LetBindingList value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "LetBindingList value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeInfo _)
-      (ResultTcType.Err "TypeInfo value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeInfo value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeInfoBox _)
-      (ResultTcType.Err "TypeInfo box value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeInfo box value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeInfoList _)
-      (ResultTcType.Err "TypeInfoList value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeInfoList value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeField _ _)
-      (ResultTcType.Err "TypeField value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeField value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeFieldList _)
-      (ResultTcType.Err "TypeFieldList value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeFieldList value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeVariantPayload _)
-      (ResultTcType.Err "TypeVariantPayload value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeVariantPayload value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeVariantPayloadList _)
-      (ResultTcType.Err "TypeVariantPayloadList value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeVariantPayloadList value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeVariant _ _)
-      (ResultTcType.Err "TypeVariant value is compile-time only")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeVariant value is compile-time only"))]
     [(ctfe_support.CompilerCtfeValue.TypeVariantList _)
-      (ResultTcType.Err "TypeVariantList value is compile-time only")]))
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+          "TypeVariantList value is compile-time only"))]))
 
 (define (tc-ctfe-float-value? [value : ctfe_support.CompilerCtfeValue]) : bool
   (match value
@@ -31793,7 +32074,7 @@
               [diag-view : cdiag.CompilerDiagnostic
                 (cdiag.compiler-diagnostic-box-shared-view diag)]
               (ResultTcType.Err
-                (cdiag.compiler-diagnostic-message (& diag-view))))]))]
+                (cdiag.compiler-diagnostic-typecheck-error-text (& diag-view))))]))]
     [(ast.AstExpr.Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(ast.AstMaybeType.No) (tc-init-expr ctx env expected)]
@@ -32289,7 +32570,9 @@
     (tc-type-eq (tc-global-shared-view left) right))
     (ResultTcType.Ok left)
     (ResultTcType.Err
-      "typecheck: integer operator expects matching integer operands")))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.TypeMismatch)
+        "typecheck: integer operator expects matching integer operands"))))
 
 (define (tc-arithmetic-binop-type [left : ast.AstType] [right : ast.AstType]) : ResultTcType
   (if (and
@@ -32650,7 +32933,9 @@
     [_ -1]))
 
 (define (tc-call-arity-message-prefix) : String
-  "typecheck: call arity mismatch: ")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ArityMismatch)
+    "typecheck: call arity mismatch: "))
 
 (define (tc-call-arity-message? [message : (& message str)]) : bool
   (tc-diag-string-prefix? message (tc-call-arity-message-prefix)))
@@ -32689,7 +32974,9 @@
       [(TcMaybeString.No) (tc-locate-call-arity-error inner span message)])))
 
 (define (tc-unbound-name-message-prefix) : String
-  "typecheck: unbound name ")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.UnboundName)
+    "typecheck: unbound name "))
 
 (define (tc-unbound-name-message? [message : (& message str)]) : bool
   (tc-diag-string-prefix? message (tc-unbound-name-message-prefix)))
@@ -33458,8 +33745,8 @@
             span
             message)])]
     [(and
-        (string.eq
-          message
+        (tc-message-text-is?
+          (& message)
           "typecheck: integer operator expects matching integer operands")
         (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
@@ -33473,7 +33760,7 @@
             span
             message)])]
     [(and
-        (tc-diag-string-prefix? message "typecheck: unknown struct field ")
+        (tc-message-text-prefix? (& message) "typecheck: unknown struct field ")
         (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(ast.AstExpr.Set _ _)
@@ -33636,6 +33923,8 @@
   [func : ast.AstExpr]
   [index : i64]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
     "typecheck: call `"
     (tc-call-arity-callee-name (tc-global-shared-view func))
     "` argument "
@@ -36645,7 +36934,7 @@
   [ty : ast.AstType]
   [reason : String]) : String
   (str_cat.str-cat
-    "typecheck: "
+    (tc-kind-message (cdiag.CompilerTypecheckKind.ThreadSafety) "typecheck: ")
     spawn-name
     " cannot capture `"
     name
@@ -36720,12 +37009,16 @@
               (tc-global-shared-view bound))
             (ResultTcUnit.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.ThreadSafety))
                 "typecheck: "
                 spawn-name
                 " lambda cannot assign captured binding"))]
           [(tc-ordinary-arena-owner-active-id? root key)
             (ResultTcUnit.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.ThreadSafety))
                 "typecheck: "
                 spawn-name
                 " cannot capture ordinary arena handle `"
@@ -36734,6 +37027,8 @@
           [(tc-cleanup-owner-active-id? root key)
             (ResultTcUnit.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.ThreadSafety))
                 "typecheck: "
                 spawn-name
                 " cannot capture cleanup-required resource"))]
@@ -36891,12 +37186,16 @@
               (tc-context-expr-get ctx body-box))
             (ResultTcUnit.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.ThreadSafety))
                 "typecheck: "
                 spawn-name
                 " requires a direct nullary lambda argument so captures can be checked")))])]
     [_
       (ResultTcUnit.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.ThreadSafety))
           "typecheck: "
           spawn-name
           " requires a direct nullary lambda argument so captures can be checked"))]))
@@ -36912,6 +37211,8 @@
         (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)
         (ResultTcUnit.Err
           (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag
+              (cdiag.CompilerTypecheckKind.ThreadSafety))
             "typecheck: "
             spawn-name
             " cannot spawn from scoped arena; closure storage would not outlive the worker")))]
@@ -36963,6 +37264,8 @@
                 [(ResultTcUnit.Err message) (ResultTcNameIdList.Err message)]))
             (ResultTcNameIdList.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.ArityMismatch))
                 "typecheck: "
                 source-name
                 " expects one argument")))
@@ -36981,6 +37284,8 @@
     [(TcThreadTransferClass.Rejected reason)
       (ResultTcUnit.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.ThreadSafety))
           "typecheck: "
           send-name
           " cannot send value of type "
@@ -37670,19 +37975,28 @@
                     (tc-locate-error-at-expr
                       (tc-context-expr-bases ctx)
                       owner-expr
-                      "typecheck: arena.phase requires a direct arena owner")))
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                        "typecheck: arena.phase requires a direct arena owner"))))
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
                     (tc-context-expr-bases ctx)
                     owner-expr
-                    "typecheck: arena.phase requires a direct arena owner"))))
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                      "typecheck: arena.phase requires a direct arena owner")))))
             (ResultTcType.Err
               (tc-locate-error-at-expr
                 (tc-context-expr-bases ctx)
                 owner-expr
-                "typecheck: arena.phase arena must be Arena")))]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                  "typecheck: arena.phase arena must be Arena"))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arena.phase expects exactly one argument")))
+    (ResultTcType.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: arena.phase expects exactly one argument"))))
 
 (define (tc-rewind-safe-call
   [ctx : TcContext]
@@ -37708,7 +38022,9 @@
                             (tc-locate-error-at-expr
                               (tc-context-expr-bases ctx)
                               phase-expr
-                              "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds"))
+                              (tc-kind-message
+                                (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                                "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds")))
                           (ResultTcType.Ok (ast.AstType.Unit)))]
                       [(TcMaybeNameId.No) (ResultTcType.Ok (ast.AstType.Unit))])]
                   [(TcMaybeNameId.No)
@@ -37729,7 +38045,9 @@
                 "typecheck: arena.rewind-safe! phase must be ArenaPhase")))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err
-      "typecheck: arena.rewind-safe! expects exactly one argument")))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: arena.rewind-safe! expects exactly one argument"))))
 
 ;; Safe destroy has two identities to preserve. The normalized expression is
 ;; the exact place consumed by the move checker, while a branded Arena's
@@ -37767,7 +38085,9 @@
     (= args.len 1)
     (return
       (ResultTcType.Err
-        "typecheck: arena.destroy-safe! expects exactly one argument")))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ArityMismatch)
+          "typecheck: arena.destroy-safe! expects exactly one argument"))))
   (let
     [owner-expr : ast.AstExpr
       (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
@@ -37781,7 +38101,9 @@
                 (tc-locate-error-at-expr
                   (tc-context-expr-bases ctx)
                   owner-expr
-                  "typecheck: arena.destroy-safe! arena must be Arena"))))
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                    "typecheck: arena.destroy-safe! arena must be Arena")))))
           (let
             [owner-id : TcMaybeNameId
               (tc-destroy-safe-owner-place-id
@@ -37796,14 +38118,18 @@
                     (tc-locate-error-at-expr
                       (tc-context-expr-bases ctx)
                       owner-expr
-                      "typecheck: arena.destroy-safe! cannot run inside the arena it destroys"))
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                        "typecheck: arena.destroy-safe! cannot run inside the arena it destroys")))
                   (ResultTcType.Ok (ast.AstType.Unit)))]
               [(TcMaybeNameId.No)
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
                     (tc-context-expr-bases ctx)
                     owner-expr
-                    "typecheck: arena.destroy-safe! requires a direct arena owner or branded local owner place"))])))]
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                      "typecheck: arena.destroy-safe! requires a direct arena owner or branded local owner place")))])))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-call-expr-ordinary-id
@@ -38392,18 +38718,29 @@
   (if (= args.len 1)
     (ResultTcType.Err
       (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.ComptimeConstraint))
         "typecheck: "
         name
         " is compile-time only; wrap it in (comptime ...)"))
     (ResultTcType.Err
-      (str_cat.str-cat "typecheck: " name " expects exactly one type argument"))))
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.ArityMismatch))
+        "typecheck: "
+        name
+        " expects exactly one type argument"))))
 
 (define (tc-offset-layout-query-runtime-call [args : ast.AstExprList]) : ResultTcType
   (if (= args.len 2)
     (ResultTcType.Err
-      "typecheck: offset-of is compile-time only; wrap it in (comptime ...)")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+        "typecheck: offset-of is compile-time only; wrap it in (comptime ...)"))
     (ResultTcType.Err
-      "typecheck: offset-of expects exactly one type argument and one field name")))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: offset-of expects exactly one type argument and one field name"))))
 
 (define (tc-layout-query-runtime-call [name : String] [args : ast.AstExprList]) : ResultTcType
   (if (string.eq name "offset-of")
@@ -38413,6 +38750,8 @@
 (define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
   (ResultTcType.Err
     (str_cat.str-cat
+      (cdiag.compiler-diagnostic-typecheck-tag
+        (cdiag.CompilerTypecheckKind.ComptimeConstraint))
       "typecheck: "
       name
       " is compile-time only; wrap it in (comptime ...)")))
@@ -39247,7 +39586,10 @@
             (ResultTcType.Err
               "typecheck: c-fn-check requires a typed C function pointer")])]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
-    (ResultTcType.Err "typecheck: c-fn-check expects exactly one argument")))
+    (ResultTcType.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: c-fn-check expects exactly one argument"))))
 
 (define (tc-clone-call
   [ctx : TcContext]
@@ -39270,12 +39612,17 @@
                 (ResultTcType.Ok clone-ty))
               (ResultTcType.Err
                 (str_cat.str-cat
+                  (cdiag.compiler-diagnostic-typecheck-tag
+                    (cdiag.CompilerTypecheckKind.TypeMismatch))
                   "typecheck: clone unsupported type "
                   (tc-type-render
                     (tc-type-without-regions (tc-resolve-type ctx arg-ty)))
                   (tc-clone-unsupported-detail ctx clone-ty)))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: clone expects exactly one argument")))
+    (ResultTcType.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: clone expects exactly one argument"))))
 
 (define (tc-float-sqrt-call
   [ctx : TcContext]
@@ -39297,7 +39644,10 @@
                   arg
                   "typecheck: __tl_float_sqrt expects f64 or f32"))])]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: __tl_float_sqrt expects exactly one argument")))
+    (ResultTcType.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: __tl_float_sqrt expects exactly one argument"))))
 
 (define (tc-float-bitcast-call
   [ctx : TcContext]
@@ -39330,7 +39680,10 @@
                     arg
                     "typecheck: __tl_float_from_bits expects u64 or u32"))]))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: float bitcast expects exactly one argument")))
+    (ResultTcType.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ArityMismatch)
+        "typecheck: float bitcast expects exactly one argument"))))
 
 (define (tc-tls-current-arena-read-call [args : ast.AstExprList]) : ResultTcType
   (if (ast.ast-expr-list-empty? (& args))
@@ -39352,11 +39705,15 @@
             env
             value
             (ast.AstType.I64)
-            "typecheck: tls-current-arena-set! value type mismatch")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.TypeMismatch)
+              "typecheck: tls-current-arena-set! value type mismatch"))
             [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
         (ResultTcType.Err
-          "typecheck: tls-current-arena-set! expects exactly one argument"))]
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.ArityMismatch)
+            "typecheck: tls-current-arena-set! expects exactly one argument")))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-tls-current-arena-call
@@ -39537,7 +39894,9 @@
           (tc-locate-error-at-expr
             (tc-context-expr-bases ctx)
             source
-            "typecheck: slice-view source must be a fixed array, dynamic array, or borrowed reference to one"))]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.TypeMismatch)
+              "typecheck: slice-view source must be a fixed array, dynamic array, or borrowed reference to one")))]
       [(TcSliceViewSourceInfo.Direct _)
         (begin
           (when
@@ -39588,7 +39947,9 @@
             (tc-locate-error-at-expr
               (tc-context-expr-bases ctx)
               source
-              "typecheck: slice-mut-view requires a mutable borrowed source"))
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.BorrowViolation)
+                "typecheck: slice-mut-view requires a mutable borrowed source")))
           (ResultTcType.Ok
             (if (tc-slice-call-mutable? kind)
               (ast.ast-ty-mut-ref-with-pools
@@ -39619,7 +39980,9 @@
               (tc-locate-error-at-expr
                 (tc-context-expr-bases ctx)
                 source
-                "typecheck: slice-split-at-mut requires a mutable borrowed Slice"))
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.BorrowViolation)
+                  "typecheck: slice-split-at-mut requires a mutable borrowed Slice")))
             (begin
               (when
                 (tc-slice-call-mutable? kind)
@@ -39653,13 +40016,17 @@
             (tc-locate-error-at-expr
               (tc-context-expr-bases ctx)
               source
-              "typecheck: slice-split-at source must be a borrowed Slice"))])]
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.TypeMismatch)
+                "typecheck: slice-split-at source must be a borrowed Slice")))])]
     [_
       (ResultTcType.Err
         (tc-locate-error-at-expr
           (tc-context-expr-bases ctx)
           source
-          "typecheck: slice-split-at source must be a borrowed Slice"))]))
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.TypeMismatch)
+            "typecheck: slice-split-at source must be a borrowed Slice")))]))
 
 (define (tc-slice-split-call
   [ctx : TcContext]
@@ -40711,13 +41078,19 @@
         bound)]))
 
 (define (tc-reference-closure-escape-message) : String
-  "typecheck: reference-capturing closure value would escape lexical scope")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.RegionEscape)
+    "typecheck: reference-capturing closure value would escape lexical scope"))
 
 (define (tc-capability-closure-escape-message) : String
-  "typecheck: closure capability would be erased by escaping the direct local binding")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+    "typecheck: closure capability would be erased by escaping the direct local binding"))
 
 (define (tc-move-closure-escape-message) : String
-  "typecheck: non-Copy closure ownership would be erased by escaping the direct local binding")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+    "typecheck: non-Copy closure ownership would be erased by escaping the direct local binding"))
 
 (define (tc-let-binding-ref-closure-scope-ok-at
   [expr-bases : i64]
@@ -41248,7 +41621,9 @@
     [(ast.AstExpr.Var _) ResultTcUnit.Ok]
     [_
       (ResultTcUnit.Err
-        "typecheck: with cleanup must be a direct function name")]))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ResourceOwnership)
+          "typecheck: with cleanup must be a direct function name"))]))
 
 (define (tc-resource-cleanup-resource-type
   [ctx : TcContext]
@@ -41274,11 +41649,18 @@
                   (if (tc-type-eq ret-ty (ast.AstType.Unit))
                     (ResultTcType.Ok arg-ty)
                     (ResultTcType.Err
-                      "typecheck: with cleanup function type mismatch")))
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                        "typecheck: with cleanup function type mismatch"))))
                 (ResultTcType.Err
-                  "typecheck: with cleanup function type mismatch")))]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                    "typecheck: with cleanup function type mismatch"))))]
           [_
-            (ResultTcType.Err "typecheck: with cleanup function type mismatch")]))]
+            (ResultTcType.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                "typecheck: with cleanup function type mismatch"))]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-resource-cleanup-ok
@@ -41291,7 +41673,9 @@
       (tc-expect
         cleanup-resource-ty
         (tc-type-without-regions resource-ty)
-        "typecheck: with cleanup function type mismatch")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ResourceOwnership)
+          "typecheck: with cleanup function type mismatch"))]
     [(ResultTcType.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-resource-bindings
@@ -41437,7 +41821,9 @@
     (tc-job-state-spmd-traversal job-state)))
 
 (define (tc-spmd-inline-helper-recursive-message) : String
-  "typecheck: recursive SPMD helper call is not supported")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    "typecheck: recursive SPMD helper call is not supported"))
 
 (define (tc-spmd-inline-helper-resolve-name
   [ctx : TcContext]
@@ -41674,6 +42060,8 @@
                             (tc-global-shared-view bound-ty))))
                         (ResultTcSpmdInlineCallState.Err
                           (str_cat.str-cat
+                            (cdiag.compiler-diagnostic-typecheck-tag
+                              (cdiag.CompilerTypecheckKind.Spmd))
                             "typecheck: SPMD helper varying parameter type is not supported: "
                             (tc-type-render (tc-type-strip-region bound-ty))))
                         (tc-spmd-inline-helper-bind-args-at
@@ -41743,7 +42131,9 @@
                 [(TcSpmdExprListInfo args-class args-env)
                   (match (tc-spmd-require-uniform
                     args-class
-                    "typecheck: foreach calls with varying arguments are not supported")
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.Spmd)
+                      "typecheck: foreach calls with varying arguments are not supported"))
                     [(ResultTcUnit.Ok)
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
                     [(ResultTcUnit.Err message)
@@ -42334,7 +42724,11 @@
 
 (define (tc-spmd-masked-if-unsupported [detail : String]) : ResultTcUnit
   (ResultTcUnit.Err
-    (str_cat.str-cat "typecheck: SPMD masked if does not support " detail)))
+    (str_cat.str-cat
+      (cdiag.compiler-diagnostic-typecheck-tag
+        (cdiag.CompilerTypecheckKind.Spmd))
+      "typecheck: SPMD masked if does not support "
+      detail)))
 
 (define (tc-spmd-masked-if-result-type-supported? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-global-shared-view ty))
@@ -42346,6 +42740,8 @@
     ResultTcUnit.Ok
     (ResultTcUnit.Err
       (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.Spmd))
         "typecheck: SPMD masked if result type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))))
 
@@ -42404,9 +42800,13 @@
 (define (tc-spmd-foreach-index-unsupported [spmd-env : TcSpmdEnv]) : ResultTcUnit
   (if (tc-spmd-env-has-compact-slot? spmd-env)
     (ResultTcUnit.Err
-      "typecheck: spmd-compact varying array destination indexes must use the compact slot plus a uniform offset")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-compact varying array destination indexes must use the compact slot plus a uniform offset"))
     (ResultTcUnit.Err
-      "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset")))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset"))))
 
 (define (tc-spmd-foreach-uniform-offset
   [ctx : TcContext]
@@ -42624,6 +43024,8 @@
     ResultTcUnit.Ok
     (ResultTcUnit.Err
       (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.Spmd))
         "typecheck: SPMD masked if lane type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))))
 
@@ -43164,6 +43566,7 @@
 
 (define (tc-spmd-match-pattern-binding-diagnostic [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (cdiag.CompilerTypecheckKind.Spmd))
     "typecheck: foreach varying match pattern binding type is not supported: "
     (tc-type-render (tc-type-strip-region ty))))
 
@@ -43477,22 +43880,34 @@
         (ast.ast-expr-segment-bases-get expr-bases index-box))]
     [(ast.AstExpr.Foreach _)
       (ResultTcUnit.Err
-        "typecheck: nested foreach inside spmd-scan is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: nested foreach inside spmd-scan is not supported"))]
     [(ast.AstExpr.SpmdReduce _)
       (ResultTcUnit.Err
-        "typecheck: nested spmd-reduce inside spmd-scan is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: nested spmd-reduce inside spmd-scan is not supported"))]
     [(ast.AstExpr.SpmdScan _)
       (ResultTcUnit.Err
-        "typecheck: nested spmd-scan inside spmd-scan is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: nested spmd-scan inside spmd-scan is not supported"))]
     [(ast.AstExpr.SpmdCompact _)
       (ResultTcUnit.Err
-        "typecheck: nested spmd-compact inside spmd-scan is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: nested spmd-compact inside spmd-scan is not supported"))]
     [(ast.AstExpr.SpmdProgramIndex)
       (ResultTcUnit.Err
-        "typecheck: program-index is not supported inside spmd-scan body")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: program-index is not supported inside spmd-scan body"))]
     [(ast.AstExpr.SpmdProgramCount)
       (ResultTcUnit.Err
-        "typecheck: program-count is not supported inside spmd-scan body")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: program-count is not supported inside spmd-scan body"))]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote _) ResultTcUnit.Ok]
     [(ast.AstExpr.PtrAddrOf _) ResultTcUnit.Ok]
@@ -44396,6 +44811,8 @@
                                             (ast.ty-node-get elem-ty))))
                                         (ResultTcSpmdExprInfo.Err
                                           (str_cat.str-cat
+                                            (cdiag.compiler-diagnostic-typecheck-tag
+                                              (cdiag.CompilerTypecheckKind.Spmd))
                                             "typecheck: foreach varying array lane type is not supported: "
                                             (tc-type-render
                                               (tc-type-strip-region
@@ -44412,6 +44829,8 @@
                                             (ast.ty-node-get elem-ty))))
                                         (ResultTcSpmdExprInfo.Err
                                           (str_cat.str-cat
+                                            (cdiag.compiler-diagnostic-typecheck-tag
+                                              (cdiag.CompilerTypecheckKind.Spmd))
                                             "typecheck: foreach varying array lane type is not supported: "
                                             (tc-type-render
                                               (tc-type-strip-region
@@ -44433,9 +44852,14 @@
                 (ResultTcSpmdExprInfo.Err message)])]))]
     [(ast.AstExpr.ArrayTake _ _ _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: __tl_array-take! is not supported in SPMD")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: __tl_array-take! is not supported in SPMD"))]
     [(ast.AstExpr.Replace _ _)
-      (ResultTcSpmdExprInfo.Err "typecheck: replace! is not supported in SPMD")]
+      (ResultTcSpmdExprInfo.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: replace! is not supported in SPMD"))]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr
@@ -44464,6 +44888,8 @@
                             (tc-global-shared-view field-ty)))))
                       (ResultTcSpmdExprInfo.Err
                         (str_cat.str-cat
+                          (cdiag.compiler-diagnostic-typecheck-tag
+                            (cdiag.CompilerTypecheckKind.Spmd))
                           "typecheck: foreach varying struct field type is not supported: "
                           (tc-type-render (tc-type-strip-region field-ty))))
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))]))]))]
@@ -44494,6 +44920,8 @@
                               (ast.ty-node-get elem-ty))))
                           (ResultTcSpmdExprInfo.Err
                             (str_cat.str-cat
+                              (cdiag.compiler-diagnostic-typecheck-tag
+                                (cdiag.CompilerTypecheckKind.Spmd))
                               "typecheck: foreach varying array lane type is not supported: "
                               (tc-type-render
                                 (tc-type-strip-region (ast.ty-node-get elem-ty)))))
@@ -44575,7 +45003,9 @@
       (match (tc-spmd-env-lookup-id spmd-env name)
         [(TcSpmdLookup.Found _ _ _ (TcSpmdRole.CompactSlot))
           (ResultTcSpmdExprInfo.Err
-            "typecheck: spmd-compact slot binding is read-only")]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: spmd-compact slot binding is read-only"))]
         [_
           (let
             [value : ast.AstExpr
@@ -44610,7 +45040,9 @@
                           value-class))
                       (if (tc-spmd-env-has-outer-id? value-env name)
                         (ResultTcSpmdExprInfo.Err
-                          "typecheck: foreach cannot set binding declared outside foreach")
+                          (tc-kind-message
+                            (cdiag.CompilerTypecheckKind.Spmd)
+                            "typecheck: foreach cannot set binding declared outside foreach"))
                         (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))]))))])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
@@ -44658,7 +45090,9 @@
               [(TcSpmdExprInfo _ start-class start-env)
                 (match (tc-spmd-require-uniform
                   start-class
-                  "typecheck: foreach bounds must be uniform")
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: foreach bounds must be uniform"))
                   [(ResultTcUnit.Ok)
                     (let
                       [end-info : TcSpmdExprInfo
@@ -44667,7 +45101,9 @@
                         [(TcSpmdExprInfo _ end-class end-env)
                           (match (tc-spmd-require-uniform
                             end-class
-                            "typecheck: foreach bounds must be uniform")
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.Spmd)
+                              "typecheck: foreach bounds must be uniform"))
                             [(ResultTcUnit.Ok)
                               (match (tc-spmd-check-foreach-body-with-env
                                 ctx
@@ -44690,13 +45126,19 @@
                     (ResultTcSpmdExprInfo.Err message)])]))])]
     [(ast.AstExpr.SpmdReduce _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: spmd-reduce inside foreach is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: spmd-reduce inside foreach is not supported"))]
     [(ast.AstExpr.SpmdScan _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: spmd-scan inside foreach is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: spmd-scan inside foreach is not supported"))]
     [(ast.AstExpr.SpmdCompact _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: spmd-compact inside SPMD is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: spmd-compact inside SPMD is not supported"))]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -44785,16 +45227,24 @@
         "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(ast.AstExpr.Try _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: try inside foreach is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: try inside foreach is not supported"))]
     [(ast.AstExpr.Return _)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: return inside foreach is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: return inside foreach is not supported"))]
     [(ast.AstExpr.Break)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: break inside foreach is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: break inside foreach is not supported"))]
     [(ast.AstExpr.Continue)
       (ResultTcSpmdExprInfo.Err
-        "typecheck: continue inside foreach is not supported")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: continue inside foreach is not supported"))]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -44831,7 +45281,9 @@
           [(TcSpmdExprListInfo args-class args-env)
             (match (tc-spmd-require-uniform
               args-class
-              "typecheck: foreach calls with varying arguments are not supported")
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.Spmd)
+                "typecheck: foreach calls with varying arguments are not supported"))
               [(ResultTcUnit.Ok)
                 (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
               [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])]))]
@@ -46768,7 +47220,9 @@
     (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (tc-cleanup-owning-aggregate-type? ctx ty))
     (ResultTcUnit.Err
-      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+        "typecheck: ordinary let cannot own cleanup-required resource; use with"))
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-transferred
@@ -46777,7 +47231,9 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (if (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (ResultTcUnit.Err
-      "typecheck: cleanup-required resource already has a cleanup owner")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+        "typecheck: cleanup-required resource already has a cleanup owner"))
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-stored-expr
@@ -46786,7 +47242,9 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (if (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (ResultTcUnit.Err
-      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+        "typecheck: cannot store cleanup-required resource in ordinary aggregate"))
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-stored-list
@@ -46795,7 +47253,9 @@
   [exprs : ast.AstExprList]) : ResultTcUnit
   (if (tc-expr-list-any-result-uses-active-cleanup-owner? ctx env exprs)
     (ResultTcUnit.Err
-      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+        "typecheck: cannot store cleanup-required resource in ordinary aggregate"))
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-assigned
@@ -46804,7 +47264,9 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (if (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (ResultTcUnit.Err
-      "typecheck: cannot store cleanup-required resource in longer-lived binding")
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.ResourceOwnership)
+        "typecheck: cannot store cleanup-required resource in longer-lived binding"))
     ResultTcUnit.Ok))
 
 (define (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
@@ -46861,7 +47323,9 @@
               (tc-global-shared-view carrier)
               key)
             (ResultTcUnit.Err
-              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                "typecheck: lambda cannot capture cleanup-required resource; resource value would escape"))]
           [(tc-type-contains-mut-reference? (tc-global-shared-view ty))
             (if allow-immutable-reference-captures
               (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
@@ -46872,7 +47336,9 @@
                 body
                 allow-immutable-reference-captures)
               (ResultTcUnit.Err
-                "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope"))]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.RegionEscape)
+                  "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")))]
           [(tc-type-contains-reference? (tc-global-shared-view ty))
             (if (or
               allow-immutable-reference-captures
@@ -46891,7 +47357,9 @@
                 body
                 allow-immutable-reference-captures)
               (ResultTcUnit.Err
-                "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.RegionEscape)
+                  "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")))]
           [(tc-type-contains-any-region (tc-global-shared-view ty))
             (if (tc-type-regions-all-atomic-arena-owners?
               (tc-type-env-scoped-carrier-env carrier)
@@ -46904,7 +47372,9 @@
                 body
                 allow-immutable-reference-captures)
               (ResultTcUnit.Err
-                "typecheck: lambda cannot capture region-tagged value; region value would escape"))]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.RegionEscape)
+                  "typecheck: lambda cannot capture region-tagged value; region value would escape")))]
           [else
             (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
               expr-bases
@@ -49918,7 +50388,9 @@
         return-residual
         "typecheck: try error type mismatch")]
     [(TcTryEarlyExitForbidden _)
-      "typecheck: try inside foreach is not supported"]))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: try inside foreach is not supported")]))
 
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
@@ -49953,7 +50425,9 @@
             [(ResultTcUnit.Ok)
               (if (tc-expr-result-uses-active-cleanup-owner? ctx env value)
                 (ResultTcType.Err
-                  "typecheck: cleanup-required resource would escape with scope")
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                    "typecheck: cleanup-required resource would escape with scope"))
                 (ResultTcType.Ok (ast.AstType.Never)))]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
@@ -50090,6 +50564,8 @@
   (let
     [base : String
       (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.UnknownStructField))
         "typecheck: unknown struct field "
         (csym.compiler-struct-field-key
           (tc-nominal-name-id-display struct-name-id)
@@ -50184,6 +50660,8 @@
 (define (tc-comptime-unknown-field-id [owner : String] [field-id : i64]) : ResultTcType
   (ResultTcType.Err
     (str_cat.str-cat
+      (cdiag.compiler-diagnostic-typecheck-tag
+        (cdiag.CompilerTypecheckKind.UnknownStructField))
       "typecheck: unknown struct field "
       (csym.compiler-struct-field-key owner (ci.intern-str field-id)))))
 
@@ -50297,6 +50775,8 @@
         [else
           (ResultTcType.Err
             (str_cat.str-cat
+              (cdiag.compiler-diagnostic-typecheck-tag
+                (cdiag.CompilerTypecheckKind.TypeMismatch))
               "typecheck: field projection ."
               (ci.intern-str field-id)
               " requires struct, got "
@@ -50305,6 +50785,8 @@
     [_
       (ResultTcType.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.TypeMismatch))
           "typecheck: field projection ."
           (ci.intern-str field-id)
           " requires struct, got "
@@ -50406,7 +50888,9 @@
               (tc-borrow-place-projected-type lifetime field-ty)))]
         [_
           (ResultTcBorrowPlace.Err
-            "typecheck: field projection borrow requires struct place")])]))
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.BorrowViolation)
+              "typecheck: field projection borrow requires struct place"))])]))
 
 (define (tc-borrow-place-tuple-field
   [ctx : TcContext]
@@ -50426,7 +50910,9 @@
               (tc-borrow-place-projected-type lifetime elem-ty)))]
         [_
           (ResultTcBorrowPlace.Err
-            "typecheck: tuple-ref borrow requires tuple place")])]))
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.BorrowViolation)
+              "typecheck: tuple-ref borrow requires tuple place"))])]))
 
 (define (tc-borrow-place-array-element
   [ctx : TcContext]
@@ -50453,6 +50939,8 @@
         [_
           (ResultTcBorrowPlace.Err
             (str_cat.str-cat
+              (cdiag.compiler-diagnostic-typecheck-tag
+                (cdiag.CompilerTypecheckKind.BorrowViolation))
               "typecheck: array-ref borrow requires array place, got "
               (tc-type-render
                 (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
@@ -50467,7 +50955,10 @@
               lifetime
               (tc-borrow-referent-type (ast.ty-node-get inner-ty))))]
         [_
-          (ResultTcBorrowPlace.Err "typecheck: deref borrow requires Box place")])]))
+          (ResultTcBorrowPlace.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.BorrowViolation)
+              "typecheck: deref borrow requires Box place"))])]))
 
 (define (tc-borrow-place-deref
   [ctx : TcContext]
@@ -50486,7 +50977,9 @@
         [(ast.AstType.MutRef _ _) (tc-borrow-place ctx expr-bases env receiver)]
         [_
           (ResultTcBorrowPlace.Err
-            "typecheck: deref borrow requires Box or reference place")])]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.BorrowViolation)
+              "typecheck: deref borrow requires Box or reference place"))])]
     [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))
 
 (define (tc-borrow-place
@@ -50567,7 +51060,9 @@
     [_ (ResultTcBorrowPlace.Err (tc-borrow-place-error-message))]))
 
 (define (tc-mut-borrow-by-value-place-message) : String
-  "typecheck: mutable borrow of by-value place is only supported as an immediate call argument")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: mutable borrow of by-value place is only supported as an immediate call argument"))
 
 (define (tc-mut-borrow-storage-backed-type?
   [ctx : TcContext]
@@ -50708,7 +51203,11 @@
                   [_ (tc-store-place-lifetime ctx env receiver)])]
               [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
-    [_ (ResultTcNameId.Err "typecheck: expression is not a storage place")]))
+    [_
+      (ResultTcNameId.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Place)
+          "typecheck: expression is not a storage place"))]))
 
 (define (tc-ensure-reference-value-can-store-in-place
   [ctx : TcContext]
@@ -50730,12 +51229,16 @@
               ResultTcUnit.Ok
               (ResultTcUnit.Err
                 (str_cat.str-cat
+                  (cdiag.compiler-diagnostic-typecheck-tag
+                    (cdiag.CompilerTypecheckKind.RegionEscape))
                   "typecheck: cannot store reference into longer-lived "
                   context
                   "; reference value would escape lexical scope")))]
           [(ResultTcNameId.Err _)
             (ResultTcUnit.Err
               (str_cat.str-cat
+                (cdiag.compiler-diagnostic-typecheck-tag
+                  (cdiag.CompilerTypecheckKind.RegionEscape))
                 "typecheck: cannot store reference into non-place "
                 context
                 "; reference value would escape lexical scope"))])])))
@@ -50758,7 +51261,10 @@
               (if mutable
                 (ast.ast-ty-mut-ref inferred referent-ty)
                 (ast.ast-ty-ref inferred referent-ty)))
-            (ResultTcType.Err "typecheck: borrow lifetime mismatch"))])]))
+            (ResultTcType.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+                "typecheck: borrow lifetime mismatch")))])]))
 
 (define (tc-borrow-expr-with-policy
   [ctx : TcContext]
@@ -50811,7 +51317,10 @@
     [(ResultTcType.Ok _)
       (if (tc-literal-pattern-compatible? lit scrut-ty)
         (ResultTcEnv.Ok env)
-        (ResultTcEnv.Err "typecheck: literal pattern type mismatch"))]
+        (ResultTcEnv.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.TypeMismatch)
+            "typecheck: literal pattern type mismatch")))]
     [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
 (define (tc-bind-scalar-match-pattern
@@ -50825,7 +51334,10 @@
     [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit scrut-ty)]
     [(ast.AstPattern.Variant name _)
       (if (tc-box-pattern-name? name)
-        (ResultTcEnv.Err "typecheck: box pattern requires Box scrutinee")
+        (ResultTcEnv.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Pattern)
+            "typecheck: box pattern requires Box scrutinee"))
         (ResultTcEnv.Err
           "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
     [_
@@ -50868,6 +51380,8 @@
 
 (define (tc-pattern-arity-message [expected : i64] [found : i64]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ArityMismatch))
     "typecheck: pattern arity mismatch: expected "
     (string.int->string expected)
     ", found "
@@ -50913,7 +51427,10 @@
           tuple-ty
           (ast.ast-type-list-box-shared-view elem-types-box)))]
     [_
-      (ResultTcTypeList.Err "typecheck: tuple pattern requires Tuple scrutinee")]))
+      (ResultTcTypeList.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Pattern)
+          "typecheck: tuple pattern requires Tuple scrutinee"))]))
 
 (defenum ResultTcArrayPatternInfo
   (Ok ast.AstType i64)
@@ -50930,7 +51447,9 @@
         count)]
     [_
       (ResultTcArrayPatternInfo.Err
-        "typecheck: array pattern requires fixed Array scrutinee")]))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Pattern)
+          "typecheck: array pattern requires fixed Array scrutinee"))]))
 
 (define (tc-bind-array-pattern-list-at
   [ctx : TcContext]
@@ -51020,13 +51539,19 @@
           (if (tc-box-pattern-name? name)
             (tc-bind-sub-pattern ctx env pattern elem-ty)
             (ResultTcEnv.Err
-              "typecheck: tuple element pattern requires an irrefutable aggregate pattern"))]
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.Pattern)
+                "typecheck: tuple element pattern requires an irrefutable aggregate pattern")))]
         [_
           (ResultTcEnv.Err
-            "typecheck: tuple element pattern requires an irrefutable aggregate pattern")])]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Pattern)
+              "typecheck: tuple element pattern requires an irrefutable aggregate pattern"))])]
     [_
       (ResultTcEnv.Err
-        "typecheck: tuple element pattern requires binding, wildcard, or nested tuple, struct, or box pattern")]))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Pattern)
+          "typecheck: tuple element pattern requires binding, wildcard, or nested tuple, struct, or box pattern"))]))
 
 (defenum ResultTcVariantPayloadTypes
   (Ok ast.AstTypeList)
@@ -51201,9 +51726,13 @@
           (tc-global-shared-view inner-ty))
           (tc-bind-sub-pattern ctx env inner inner-ty)
           (ResultTcEnv.Err
-            "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns")))
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Pattern)
+              "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns"))))
       (ResultTcEnv.Err
-        "typecheck: box pattern expects exactly one inner pattern"))))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ArityMismatch)
+          "typecheck: box pattern expects exactly one inner pattern")))))
 
 (define (tc-struct-pattern-name-in-scrut-module
   [session : cis.InternStructuralSessionHandle]
@@ -51262,6 +51791,8 @@
   [pattern-name : String]
   [struct-name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
     "typecheck: struct pattern head "
     pattern-name
     " does not match struct "
@@ -51396,10 +51927,14 @@
                 args)]
             [_
               (ResultTcEnv.Err
-                "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns")]))]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.Pattern)
+                  "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns"))]))]
       [_
         (ResultTcEnv.Err
-          "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns")])))
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Pattern)
+            "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns"))])))
 
 (define (tc-bind-sub-pattern
   [ctx : TcContext]
@@ -51492,12 +52027,19 @@
               (if (tc-box-pattern-name? name)
                 (tc-bind-box-pattern ctx env args (ast.ty-node-get inner-ty))
                 (ResultTcEnv.Err
-                  "typecheck: nested variant pattern requires enum field"))]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: nested variant pattern requires enum field")))]
             [_
               (if (tc-box-pattern-name? name)
-                (ResultTcEnv.Err "typecheck: box pattern requires Box field")
                 (ResultTcEnv.Err
-                  "typecheck: nested variant pattern requires enum field"))]))]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: box pattern requires Box field"))
+                (ResultTcEnv.Err
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: nested variant pattern requires enum field")))]))]
       [_ (ResultTcEnv.Err "typecheck: unsupported nested match pattern")])))
 
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
@@ -51597,10 +52139,14 @@
             (ast.ast-pattern-list-box-shared-view args-box))]
         [_
           (ResultTcEnv.Err
-            "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")])]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Pattern)
+              "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern"))])]
     [_
       (ResultTcEnv.Err
-        "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern")]))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Pattern)
+          "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern"))]))
 
 (define (tc-bind-borrowed-variant-pattern
   [ctx : TcContext]
@@ -51720,9 +52266,13 @@
             [(ast.AstType.Box _)
               (if (tc-box-pattern-name? name)
                 (ResultTcEnv.Err
-                  "typecheck: borrowed box patterns are not supported")
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.BorrowViolation)
+                    "typecheck: borrowed box patterns are not supported"))
                 (ResultTcEnv.Err
-                  "typecheck: nested variant pattern requires enum field"))]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: nested variant pattern requires enum field")))]
             [(ast.AstType.Struct struct-name)
               (tc-bind-borrowed-struct-pattern
                 ctx
@@ -51747,9 +52297,14 @@
                 args)]
             [_
               (if (tc-box-pattern-name? name)
-                (ResultTcEnv.Err "typecheck: box pattern requires Box field")
                 (ResultTcEnv.Err
-                  "typecheck: nested variant pattern requires enum field"))]))]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: box pattern requires Box field"))
+                (ResultTcEnv.Err
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: nested variant pattern requires enum field")))]))]
       [_ (ResultTcEnv.Err "typecheck: unsupported nested match pattern")])))
 
 (define (tc-bind-borrowed-enum-match-pattern
@@ -51854,7 +52409,9 @@
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
               [_
                 (ResultTcEnv.Err
-                  "typecheck: borrowed tuple match requires (tuple ...), binding, or wildcard pattern")])]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: borrowed tuple match requires (tuple ...), binding, or wildcard pattern"))])]
           [(ast.AstType.Array _ _)
             (match pattern
               [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -51869,7 +52426,9 @@
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
               [_
                 (ResultTcEnv.Err
-                  "typecheck: borrowed fixed-array match requires (array ...), binding, or wildcard pattern")])]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Pattern)
+                    "typecheck: borrowed fixed-array match requires (array ...), binding, or wildcard pattern"))])]
           [(ast.AstType.Box _)
             (match pattern
               [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -51880,7 +52439,9 @@
               [(ast.AstPattern.Variant name _)
                 (if (tc-box-pattern-name? name)
                   (ResultTcEnv.Err
-                    "typecheck: borrowed box patterns are not supported")
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.BorrowViolation)
+                      "typecheck: borrowed box patterns are not supported"))
                   (ResultTcEnv.Err
                     "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
               [_
@@ -51987,7 +52548,9 @@
             (ast.ast-pattern-list-box-shared-view patterns-box))]
         [_
           (ResultTcEnv.Err
-            "typecheck: tuple match requires (tuple ...), binding, or wildcard pattern")])]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Pattern)
+              "typecheck: tuple match requires (tuple ...), binding, or wildcard pattern"))])]
     [(ast.AstType.Array _ _)
       (match pattern
         [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -52002,7 +52565,9 @@
             (ast.ast-pattern-list-box-shared-view patterns-box))]
         [_
           (ResultTcEnv.Err
-            "typecheck: fixed-array match requires (array ...), binding, or wildcard pattern")])]
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Pattern)
+              "typecheck: fixed-array match requires (array ...), binding, or wildcard pattern"))])]
     [(ast.AstType.Expr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(ast.AstType.Var name)
       (if (= name cbi.compiler-builtin-id-fix-ExprClause)
@@ -53547,7 +54112,11 @@
             (+ index 1)))])))
 
 (define (tc-match-missing-variant-message [variant-name : String]) : String
-  (str_cat.str-cat "typecheck: match missing arm for variant " variant-name))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.NonExhaustiveMatch))
+    "typecheck: match missing arm for variant "
+    variant-name))
 
 (define (tc-pattern-mentions-variant?
   [ctx : TcContext]
@@ -53638,7 +54207,10 @@
             arm-names
             (+ index 1))
           (if (tc-match-arms-mention-variant? ctx arms enum-id name)
-            (ResultTcUnit.Err "typecheck: non-exhaustive match")
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+                "typecheck: non-exhaustive match"))
             (ResultTcUnit.Err
               (tc-match-missing-variant-message (tc-env-key-name-text name)))))])))
 
@@ -53834,7 +54406,10 @@
   (if (>= index arms.len)
     ResultTcUnit.Ok
     (if seen-catchall
-      (ResultTcUnit.Err "typecheck: unreachable match arm after wildcard `_`")
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Pattern)
+          "typecheck: unreachable match arm after wildcard `_`"))
       (match (ast.ast-match-arm-list-get
         arms
         index
@@ -53873,8 +54448,14 @@
     (if (tc-match-arms-cover-bool? arms true)
       (if (tc-match-arms-cover-bool? arms false)
         ResultTcUnit.Ok
-        (ResultTcUnit.Err "typecheck: match missing arm for false"))
-      (ResultTcUnit.Err "typecheck: match missing arm for true"))))
+        (ResultTcUnit.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+            "typecheck: match missing arm for false")))
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+          "typecheck: match missing arm for true")))))
 
 (define (tc-match-exhaustiveness-ok
   [ctx : TcContext]
@@ -53893,7 +54474,10 @@
               variants
               arms)]
           [(parser.ResultAstVariantDefList.Err _)
-            (ResultTcUnit.Err "typecheck: non-exhaustive match")]))]
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+                "typecheck: non-exhaustive match"))]))]
     [(ast.AstType.EnumArgs enum-name lifetimes)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
@@ -53906,12 +54490,18 @@
               variants
               arms)]
           [(parser.ResultAstVariantDefList.Err _)
-            (ResultTcUnit.Err "typecheck: non-exhaustive match")]))]
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+                "typecheck: non-exhaustive match"))]))]
     [(ast.AstType.Bool) (tc-match-bool-exhaustive-ok arms)]
     [_
       (if (tc-match-arms-have-catchall-for-type? ctx scrut-ty arms)
         ResultTcUnit.Ok
-        (ResultTcUnit.Err "typecheck: non-exhaustive match"))]))
+        (ResultTcUnit.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+            "typecheck: non-exhaustive match")))]))
 
 (define (tc-match-expr
   [ctx : TcContext]
@@ -53979,13 +54569,25 @@
 (define (tc-reduce-op-type-msg [op : ast.AstReduceOp]) : String
   (match op
     [(ast.AstReduceOp.Sum)
-      "typecheck: spmd-reduce sum requires an i32, i64, f32, or f64 type"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-reduce sum requires an i32, i64, f32, or f64 type")]
     [(ast.AstReduceOp.Min)
-      "typecheck: spmd-reduce min requires an i32 or i64 type"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-reduce min requires an i32 or i64 type")]
     [(ast.AstReduceOp.Max)
-      "typecheck: spmd-reduce max requires an i32 or i64 type"]
-    [(ast.AstReduceOp.All) "typecheck: spmd-reduce all requires a bool type"]
-    [(ast.AstReduceOp.Any) "typecheck: spmd-reduce any requires a bool type"]))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-reduce max requires an i32 or i64 type")]
+    [(ast.AstReduceOp.All)
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-reduce all requires a bool type")]
+    [(ast.AstReduceOp.Any)
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-reduce any requires a bool type")]))
 
 (define (tc-scan-op-type-ok? [op : ast.AstReduceOp] [ty : (& ty ast.AstType)]) : bool
   (match op
@@ -54016,13 +54618,25 @@
 (define (tc-scan-op-type-msg [op : ast.AstReduceOp]) : String
   (match op
     [(ast.AstReduceOp.Sum)
-      "typecheck: spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred")]
     [(ast.AstReduceOp.Min)
-      "typecheck: spmd-scan min requires an i32 or i64 type; floating-point scan ordering is deferred"]
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-scan min requires an i32 or i64 type; floating-point scan ordering is deferred")]
     [(ast.AstReduceOp.Max)
-      "typecheck: spmd-scan max requires an i32 or i64 type; floating-point scan ordering is deferred"]
-    [(ast.AstReduceOp.All) "typecheck: spmd-scan all requires a bool type"]
-    [(ast.AstReduceOp.Any) "typecheck: spmd-scan any requires a bool type"]))
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-scan max requires an i32 or i64 type; floating-point scan ordering is deferred")]
+    [(ast.AstReduceOp.All)
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-scan all requires a bool type")]
+    [(ast.AstReduceOp.Any)
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: spmd-scan any requires a bool type")]))
 
 ;; spmd-reduce purity/effect rules (SPEC.md 5.15). The first reduction slice
 ;; accepts a narrow, clearly-pure surface and rejects everything else with a focused
@@ -54098,41 +54712,65 @@
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Set _ _)
       (ResultTcUnit.Err
-        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md 5.15)"))]
     [(ast.AstExpr.ArraySet _ _ _)
       (ResultTcUnit.Err
-        "array element assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "array element assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)"))]
     [(ast.AstExpr.ArrayTake _ _ _)
       (ResultTcUnit.Err
-        "`__tl_array-take!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "`__tl_array-take!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)"))]
     [(ast.AstExpr.Replace _ _)
       (ResultTcUnit.Err
-        "`replace!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "`replace!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)"))]
     [(ast.AstExpr.StructSet _ _ _)
       (ResultTcUnit.Err
-        "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)"))]
     [(ast.AstExpr.ArrayPush _ _)
       (ResultTcUnit.Err
-        "`__tl_array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "`__tl_array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)"))]
     [(ast.AstExpr.Call _ _)
       (ResultTcUnit.Err
-        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)"))]
     [(ast.AstExpr.Foreach _)
       (ResultTcUnit.Err
-        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)"))]
     [(ast.AstExpr.SpmdReduce _)
       (ResultTcUnit.Err
-        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)"))]
     [(ast.AstExpr.SpmdScan _)
       (ResultTcUnit.Err
-        "a nested spmd-scan is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "a nested spmd-scan is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)"))]
     [(ast.AstExpr.SpmdCompact _)
       (ResultTcUnit.Err
-        "a nested spmd-compact is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "a nested spmd-compact is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)"))]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (if in-index
         (ResultTcUnit.Err
-          "spmd-broadcast is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)")
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "spmd-broadcast is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)"))
         (let
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
@@ -54144,7 +54782,9 @@
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
       (if in-index
         (ResultTcUnit.Err
-          "spmd-shuffle is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)")
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "spmd-shuffle is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)"))
         (let
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
@@ -54155,16 +54795,24 @@
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))]
     [(ast.AstExpr.If _ _ _)
       (ResultTcUnit.Err
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)"))]
     [(ast.AstExpr.While _ _)
       (ResultTcUnit.Err
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)"))]
     [(ast.AstExpr.Match _)
       (ResultTcUnit.Err
-        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)"))]
     [_
       (ResultTcUnit.Err
-        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md 5.15)")]))
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md 5.15)"))]))
 
 (define (tc-spmd-value-let-bindings-pure-at
   [expr-bases : i64]
@@ -54217,7 +54865,9 @@
           (match (tc-expect
             init-ty
             (tc-global-shared-view value-ty)
-            "typecheck: spmd-reduce init and value type mismatch")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: spmd-reduce init and value type mismatch"))
             [(ResultTcUnit.Ok) (ResultTcType.Ok value-ty)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])
@@ -54259,7 +54909,9 @@
                 (match (tc-expect
                   value-ty
                   (tc-global-shared-view init-ty)
-                  "typecheck: spmd-reduce init and value type mismatch")
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: spmd-reduce init and value type mismatch"))
                   [(ResultTcUnit.Ok) (ResultTcType.Ok init-ty)]
                   [(ResultTcUnit.Err message)
                     (tc-spmd-reduce-type-from-value-or-message
@@ -54304,7 +54956,9 @@
           (match (tc-expect
             (tc-resolve-type ctx init-ty)
             (tc-global-shared-view resolved-prefix-ty)
-            "typecheck: spmd-scan prefix init type mismatch")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: spmd-scan prefix init type mismatch"))
             [(ResultTcUnit.Ok)
               (match (tc-spmd-value-pure
                 expr-bases
@@ -54319,7 +54973,9 @@
                       (match (tc-expect
                         (tc-resolve-type ctx value-ty)
                         (tc-global-shared-view resolved-prefix-ty)
-                        "typecheck: spmd-scan value type mismatch")
+                        (tc-kind-message
+                          (cdiag.CompilerTypecheckKind.Spmd)
+                          "typecheck: spmd-scan value type mismatch"))
                         [(ResultTcUnit.Ok) (ResultTcType.Ok resolved-prefix-ty)]
                         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                     [(ResultTcType.Err message) (ResultTcType.Err message)])]
@@ -54345,16 +55001,22 @@
     [resolved-slot-ty : ast.AstType (tc-resolve-type ctx slot-ty)]
     (if (= index slot)
       (ResultTcType.Err
-        "typecheck: spmd-compact index and slot bindings must have distinct names")
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: spmd-compact index and slot bindings must have distinct names"))
       (match (tc-expect
         (tc-global-shared-view resolved-index-ty)
         (ast.AstType.I64)
-        "typecheck: spmd-compact index type must be i64")
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: spmd-compact index type must be i64"))
         [(ResultTcUnit.Ok)
           (match (tc-expect
             (tc-global-shared-view resolved-slot-ty)
             (ast.AstType.I64)
-            "typecheck: spmd-compact slot type must be i64")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: spmd-compact slot type must be i64"))
             [(ResultTcUnit.Ok)
               (let
                 [start-ty : ast.AstType
@@ -54367,7 +55029,9 @@
                 (match (tc-expect
                   (tc-resolve-type ctx start-ty)
                   (ast.AstType.I64)
-                  "typecheck: spmd-compact start expression must have type i64")
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: spmd-compact start expression must have type i64"))
                   [(ResultTcUnit.Ok)
                     (let
                       [end-ty : ast.AstType
@@ -54380,7 +55044,9 @@
                       (match (tc-expect
                         (tc-resolve-type ctx end-ty)
                         (ast.AstType.I64)
-                        "typecheck: spmd-compact end expression must have type i64")
+                        (tc-kind-message
+                          (cdiag.CompilerTypecheckKind.Spmd)
+                          "typecheck: spmd-compact end expression must have type i64"))
                         [(ResultTcUnit.Ok)
                           (let
                             [init-ty : ast.AstType
@@ -54393,7 +55059,9 @@
                             (match (tc-expect
                               (tc-resolve-type ctx init-ty)
                               (ast.AstType.I64)
-                              "typecheck: spmd-compact initial slot must have type i64")
+                              (tc-kind-message
+                                (cdiag.CompilerTypecheckKind.Spmd)
+                                "typecheck: spmd-compact initial slot must have type i64"))
                               [(ResultTcUnit.Ok)
                                 (let
                                   [index-env : TcTypeEnv
@@ -54420,7 +55088,9 @@
                                   (match (tc-expect
                                     (tc-resolve-type ctx keep-ty)
                                     (ast.AstType.Bool)
-                                    "typecheck: spmd-compact predicate must have type bool")
+                                    (tc-kind-message
+                                      (cdiag.CompilerTypecheckKind.Spmd)
+                                      "typecheck: spmd-compact predicate must have type bool"))
                                     [(ResultTcUnit.Ok)
                                       (let
                                         [body-ty : ast.AstType
@@ -54429,7 +55099,9 @@
                                         (match (tc-expect
                                           body-ty
                                           (ast.AstType.Unit)
-                                          "typecheck: spmd-compact body must be unit")
+                                          (tc-kind-message
+                                            (cdiag.CompilerTypecheckKind.Spmd)
+                                            "typecheck: spmd-compact body must be unit"))
                                           [(ResultTcUnit.Ok)
                                             (match (tc-spmd-check-compact
                                               ctx
@@ -54800,7 +55472,11 @@
       [(ast.AstType.Box inner-ty)
         (ResultTcType.Ok
           (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
-      [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")])))
+      [_
+        (ResultTcType.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.TypeMismatch)
+            "typecheck: deref requires Box or reference type"))])))
 
 (define (tc-box-get-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -54826,7 +55502,11 @@
               (tc-global-shared-view projected))
               (ResultTcType.Ok (tc-contextual-result-type expected projected))
               (ResultTcType.Ok projected)))]
-        [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")])]
+        [_
+          (ResultTcType.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.TypeMismatch)
+              "typecheck: deref requires Box or reference type"))])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-deref-result-type [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcType
@@ -54841,7 +55521,11 @@
       (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
     [(ast.AstType.MutRef lifetime referent-ty)
       (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
-    [_ (ResultTcType.Err "typecheck: deref requires Box or reference type")]))
+    [_
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.TypeMismatch)
+          "typecheck: deref requires Box or reference type"))]))
 
 (define (tc-deref-expr
   [ctx : TcContext]
@@ -54884,7 +55568,10 @@
     [(ast.AstType.MutRef _ referent-ty)
       (ResultTcType.Ok (ast.ty-node-get referent-ty))]
     [(ast.AstType.Ref _ _)
-      (ResultTcType.Err "typecheck: set! deref requires mutable access")]
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.BorrowViolation)
+          "typecheck: set! deref requires mutable access"))]
     [_
       (ResultTcType.Err
         "typecheck: set! deref requires Box or mutable reference")]))
@@ -54945,11 +55632,15 @@
 
 (define (tc-init-unsupported-message [ctx : TcContext] [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
     "typecheck: init unsupported type "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
 (define (tc-init-cleanup-owning-message [ctx : TcContext] [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: init does not support cleanup-owning aggregate "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
@@ -55183,7 +55874,9 @@
             (if (tc-dyn-array-elem-supported? env elem-ty)
               ResultTcUnit.Ok
               (ResultTcUnit.Err
-                "typecheck: init dynamic array element type is not supported")))]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.TypeMismatch)
+                  "typecheck: init dynamic array element type is not supported"))))]
         [(ast.AstType.Box elem)
           (tc-init-type-supported ctx env (ast.ty-node-get elem))]
         [(ast.AstType.Tuple elems)
@@ -55247,14 +55940,20 @@
           [(ctfe_support.CompilerCtfeValue.I64 count)
             (if (< count 0)
               (ResultTcType.Err
-                "typecheck: make-array length must be a non-negative compile-time integer")
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+                  "typecheck: make-array length must be a non-negative compile-time integer"))
               (tc-init-expr ctx env (ast.ast-ty-array elem count)))]
           [_
             (ResultTcType.Err
-              "typecheck: make-array length must be a non-negative compile-time integer")])]
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+                "typecheck: make-array length must be a non-negative compile-time integer"))])]
       [(ctfe_support.ResultCtfe.Err _)
         (ResultTcType.Err
-          "typecheck: make-array length must be a non-negative compile-time integer")])))
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+            "typecheck: make-array length must be a non-negative compile-time integer"))])))
 
 ;; An unquote recursively enters ordinary typechecking, which may install a
 ;; different node-pool context during macro expansion. Re-project every child
@@ -55395,7 +56094,7 @@
   [form : String]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
-    "typecheck: "
+    (tc-kind-message (cdiag.CompilerTypecheckKind.TypeMismatch) "typecheck: ")
     form
     " result type is not clone-supported: "
     (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
@@ -55423,6 +56122,8 @@
     (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
       (ResultTcType.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.RegionEscape))
           "typecheck: region-tagged value cannot escape with-arena '"
           (tc-lifetime-name-render region)
           "'"))
@@ -55452,7 +56153,10 @@
                 (tc-global-shared-view clone-ty))
               (ResultTcType.Ok clone-ty)))
           (ResultTcType.Err (tc-with-escape-unsupported-message ctx body-ty))))
-      (ResultTcType.Err "typecheck: with-escape arena must be Arena"))))
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ArenaOwnership)
+          "typecheck: with-escape arena must be Arena")))))
 
 (define (tc-with-scratch-expr
   [ctx : TcContext]
@@ -55552,7 +56256,10 @@
             (ResultTcType.Ok
               (tc-in-arena-body-result ctx env arena arena-ty body-ty))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
-        (ResultTcType.Err "typecheck: in-arena arena must be Arena"))]
+        (ResultTcType.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.ArenaOwnership)
+            "typecheck: in-arena arena must be Arena")))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-with-resource-expr
@@ -55571,7 +56278,9 @@
       (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
       TcStringList.Nil)
       (ResultTcType.Err
-        "typecheck: cleanup-required resource would escape with scope")
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ResourceOwnership)
+          "typecheck: cleanup-required resource would escape with scope"))
       (ResultTcType.Ok body-ty))))
 
 (define (tc-unsafe-begin-list-scoped
@@ -55676,7 +56385,9 @@
                     (tc-type-contains-reference? ret)]
                   [(ast.AstMaybeType.No) false])))
               (ResultTcType.Err
-                "typecheck: lambda return value has region-tagged type; region value would escape")
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.RegionEscape)
+                  "typecheck: lambda return value has region-tagged type; region value would escape"))
               (match maybe-ret
                 [(ast.AstMaybeType.Some ret)
                   (match (tc-expect
@@ -55842,7 +56553,9 @@
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.Slice _)
       (ResultTcArrayReceiver.Err
-        "typecheck: set! array element requires mutable array access")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.BorrowViolation)
+          "typecheck: set! array element requires mutable array access"))]
     [(ast.AstType.MutRef _ referent-ty)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
@@ -55854,7 +56567,9 @@
       ;; Shared borrows, including shared Slice borrows, are readable but
       ;; never writable.  Preserve the focused mutable-access diagnostic.
       (ResultTcArrayReceiver.Err
-        "typecheck: set! array element requires mutable array access")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.BorrowViolation)
+          "typecheck: set! array element requires mutable array access"))]
     [_
       (ResultTcArrayReceiver.Err
         "typecheck: set! array element requires array type")]))
@@ -55916,7 +56631,9 @@
               (ResultTcType.Ok (tc-context-type-get ctx referent-id))]
             [(ast.AstType.Ref _ _)
               (ResultTcType.Err
-                "typecheck: replace! requires mutable place access")]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.BorrowViolation)
+                  "typecheck: replace! requires mutable place access"))]
             [_ (ResultTcType.Ok (tc-resolve-type ctx ty))])))]
     [(ast.AstExpr.StructGet receiver-box field)
       (let
@@ -55976,7 +56693,9 @@
     [(ResultTcNameId.Ok _)
       (if (tc-active-cleanup-owner-place? ctx env (tc-global-shared-view place))
         (ResultTcType.Err
-          "typecheck: replace! cannot replace an active cleanup owner")
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.ResourceOwnership)
+            "typecheck: replace! cannot replace an active cleanup owner"))
         (match (tc-replace-place-value-type
           ctx
           env
@@ -55986,7 +56705,9 @@
               ctx
               (tc-global-shared-view place-ty))
               (ResultTcType.Err
-                "typecheck: replace! does not support cleanup-owning places")
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                  "typecheck: replace! does not support cleanup-owning places"))
               (let
                 [replacement : ast.AstExpr
                   (tc-context-expr-get ctx replacement-id)]
@@ -56031,7 +56752,10 @@
                   [(ResultTcType.Err message) (ResultTcType.Err message)])))]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ResultTcNameId.Err _)
-      (ResultTcType.Err "typecheck: replace! target must be a storage place")]))
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Place)
+          "typecheck: replace! target must be a storage place"))]))
 
 (define (tc-array-push-receiver [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcArrayReceiver
   (match (tc-type-strip-region
@@ -56046,7 +56770,9 @@
       (tc-array-push-receiver ctx (ast.ty-node-get referent-ty))]
     [(ast.AstType.Ref _ _)
       (ResultTcArrayReceiver.Err
-        "typecheck: __tl_array-push! requires mutable dynamic array access")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.BorrowViolation)
+          "typecheck: __tl_array-push! requires mutable dynamic array access"))]
     [_
       (ResultTcArrayReceiver.Err
         "typecheck: __tl_array-push! requires dynamic array type")]))
@@ -56114,7 +56840,9 @@
               "typecheck: set! tuple element mutable reference requires tuple")]))]
     [(ast.AstType.Ref _ _)
       (ResultTcType.Err
-        "typecheck: set! tuple element requires mutable tuple access")]
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.BorrowViolation)
+          "typecheck: set! tuple element requires mutable tuple access"))]
     [_ (ResultTcType.Err "typecheck: set! tuple element requires tuple")]))
 
 (define (tc-struct-set-field-type-id
@@ -56136,7 +56864,9 @@
         (tc-struct-get-result-type-id ctx receiver-ty field-id)]
       [(ast.AstType.Ref _ _)
         (ResultTcType.Err
-          "typecheck: set! struct field requires mutable struct access")]
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.BorrowViolation)
+            "typecheck: set! struct field requires mutable struct access"))]
       [_ (ResultTcType.Err "typecheck: set! struct field requires struct")])))
 
 (define (tc-struct-field-mutation-value-id
@@ -56162,8 +56892,12 @@
                   (tc-global-shared-view value-ty)
                   (tc-global-shared-view field-ty)
                   (if (ast.ast-tuple-set-field-id? field-id)
-                    "typecheck: tuple element assignment type mismatch"
-                    "typecheck: struct field assignment type mismatch"))
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.TypeMismatch)
+                      "typecheck: tuple element assignment type mismatch")
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.TypeMismatch)
+                      "typecheck: struct field assignment type mismatch")))
                   [(ResultTcUnit.Ok)
                     (match (tc-ensure-cleanup-resource-not-stored-expr
                       ctx
@@ -56458,7 +57192,8 @@
         (let
           [diagnostic : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-box-shared-view diag)]
-          (ResultTcType.Err (cdiag.compiler-diagnostic-message (& diagnostic))))])))
+          (ResultTcType.Err
+            (cdiag.compiler-diagnostic-typecheck-error-text (& diagnostic))))])))
 
 (define (tc-for-owned-body-unit
   [ctx : TcContext]
@@ -56646,6 +57381,8 @@
     [(ast.AstExpr.TypeLiteral ty-id)
       (ResultTcType.Err
         (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag
+            (cdiag.CompilerTypecheckKind.ComptimeConstraint))
           "type value "
           (tc-type-render (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
           " is compile-time only"))]
@@ -56779,7 +57516,9 @@
                     env
                     (tc-global-shared-view elem)))
                 (ResultTcType.Err
-                  "typecheck: __tl_make-array element type is not supported")]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.TypeMismatch)
+                    "typecheck: __tl_make-array element type is not supported"))]
               [(not
                   (tc-make-array-requires-element-init?
                     (tc-global-shared-view elem)
@@ -56843,7 +57582,9 @@
                             container-ty
                             elem-ty
                             value
-                            "typecheck: array assignment value type mismatch")])]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.TypeMismatch)
+                              "typecheck: array assignment value type mismatch"))])]
                     [(ResultTcArrayReceiver.Err message)
                       (ResultTcType.Err message)])
                   (ResultTcType.Err "typecheck: array index must be integer"))]
@@ -56900,7 +57641,9 @@
                         [(ResultTcType.Err message) (ResultTcType.Err message)])]
                     [_
                       (ResultTcType.Err
-                        "typecheck: __tl_array-take! source must be dynamic array")])])]
+                        (tc-kind-message
+                          (cdiag.CompilerTypecheckKind.TypeMismatch)
+                          "typecheck: __tl_array-take! source must be dynamic array"))])])]
             [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Replace place-box replacement-box)
@@ -56926,7 +57669,9 @@
                       container-ty
                       elem-ty
                       value
-                      "typecheck: __tl_array-push! value type mismatch")])]
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.TypeMismatch)
+                        "typecheck: __tl_array-push! value type mismatch"))])]
               [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.StringRef str-box index-box)
@@ -57002,7 +57747,9 @@
                   [(ResultTcUnit.Ok) (ResultTcType.Ok target-ty)]
                   [(ResultTcUnit.Err message) (ResultTcType.Err message)])
                 (ResultTcType.Err
-                  "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.TypeMismatch)
+                    "typecheck: cast requires scalar numeric (integer/char/float) source and target")))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Borrow mutable lifetime-id place-box)
       (match (tc-normalize-dotted-local-field-node! ctx env place-box)
@@ -57084,7 +57831,9 @@
                                 (match (tc-expect
                                   body-ty
                                   (ast.AstType.Unit)
-                                  "typecheck: foreach body must be unit")
+                                  (tc-kind-message
+                                    (cdiag.CompilerTypecheckKind.Spmd)
+                                    "typecheck: foreach body must be unit"))
                                   [(ResultTcUnit.Ok)
                                     (match (tc-spmd-check-foreach-body
                                       ctx
@@ -57102,12 +57851,19 @@
                               [(ResultTcType.Err message)
                                 (ResultTcType.Err message)]))
                           (ResultTcType.Err
-                            "typecheck: foreach end expression must be integer"))]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.Spmd)
+                              "typecheck: foreach end expression must be integer")))]
                       [(ResultTcType.Err message) (ResultTcType.Err message)])
                     (ResultTcType.Err
-                      "typecheck: foreach start expression must be integer"))]
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.Spmd)
+                        "typecheck: foreach start expression must be integer")))]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])
-              (ResultTcType.Err "typecheck: foreach index type must be integer")))])]
+              (ResultTcType.Err
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.Spmd)
+                  "typecheck: foreach index type must be integer"))))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
         [(ast.AstSpmdReduce.Reduce
@@ -57158,13 +57914,19 @@
                               [(ResultTcType.Err message)
                                 (ResultTcType.Err message)]))
                           (ResultTcType.Err
-                            "typecheck: spmd-reduce end expression must be integer"))]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.Spmd)
+                              "typecheck: spmd-reduce end expression must be integer")))]
                       [(ResultTcType.Err message) (ResultTcType.Err message)])
                     (ResultTcType.Err
-                      "typecheck: spmd-reduce start expression must be integer"))]
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.Spmd)
+                        "typecheck: spmd-reduce start expression must be integer")))]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])
               (ResultTcType.Err
-                "typecheck: spmd-reduce index type must be integer")))])]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.Spmd)
+                  "typecheck: spmd-reduce index type must be integer"))))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (ast.ast-spmd-scan-box-shared-view scan-box)
         [(ast.AstSpmdScan.Scan
@@ -57225,7 +57987,9 @@
                                     (match (tc-expect
                                       body-ty
                                       (ast.AstType.Unit)
-                                      "typecheck: spmd-scan body must be unit")
+                                      (tc-kind-message
+                                        (cdiag.CompilerTypecheckKind.Spmd)
+                                        "typecheck: spmd-scan body must be unit"))
                                       [(ResultTcUnit.Ok)
                                         (match (tc-spmd-check-scan-body
                                           ctx
@@ -57247,13 +58011,19 @@
                               [(ResultTcType.Err message)
                                 (ResultTcType.Err message)]))
                           (ResultTcType.Err
-                            "typecheck: spmd-scan end expression must be integer"))]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.Spmd)
+                              "typecheck: spmd-scan end expression must be integer")))]
                       [(ResultTcType.Err message) (ResultTcType.Err message)])
                     (ResultTcType.Err
-                      "typecheck: spmd-scan start expression must be integer"))]
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.Spmd)
+                        "typecheck: spmd-scan start expression must be integer")))]
                 [(ResultTcType.Err message) (ResultTcType.Err message)])
               (ResultTcType.Err
-                "typecheck: spmd-scan index type must be integer")))])]
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.Spmd)
+                  "typecheck: spmd-scan index type must be integer"))))])]
     [(ast.AstExpr.SpmdCompact compact-box)
       (match (ast.ast-spmd-compact-box-shared-view compact-box)
         [(ast.AstSpmdCompact.Compact
@@ -57288,7 +58058,9 @@
           (match (tc-expect
             (tc-resolve-type ctx lane-ty)
             (ast.AstType.I64)
-            "typecheck: spmd-broadcast lane must have type i64")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: spmd-broadcast lane must have type i64"))
             [(ResultTcUnit.Ok)
               (match (tc-expr-id ctx env value-box)
                 [(ResultTcType.Ok value-ty)
@@ -57309,7 +58081,9 @@
           (match (tc-expect
             (tc-resolve-type ctx lane-ty)
             (ast.AstType.I64)
-            "typecheck: spmd-shuffle lane must have type i64")
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: spmd-shuffle lane must have type i64"))
             [(ResultTcUnit.Ok)
               (match (tc-expr-id ctx env value-box)
                 [(ResultTcType.Ok value-ty)
@@ -57385,7 +58159,8 @@
             (let
               [diagnostic : cdiag.CompilerDiagnostic
                 (cdiag.compiler-diagnostic-box-shared-view diag)]
-              (ResultTcType.Err (cdiag.compiler-diagnostic-message diagnostic)))]))]
+              (ResultTcType.Err
+                (cdiag.compiler-diagnostic-typecheck-error-text (& diagnostic))))]))]
     [(ast.AstExpr.Quote _) (ResultTcType.Ok (ast.AstType.Expr))]
     [(ast.AstExpr.Quasiquote template-box)
       (let
@@ -57642,7 +58417,9 @@
     [_ false]))
 
 (define (tc-extern-native-slice-ref-unsupported-message) : String
-  "typecheck: extern/native Slice references are unsupported; use pointer+length")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.TypeMismatch)
+    "typecheck: extern/native Slice references are unsupported; use pointer+length"))
 
 (define (tc-check-extern-native-value-type [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (let
@@ -59916,19 +60693,27 @@
                 (tc-hygiene-name-text-id-for-session
                   (tc-macro-state-structural-session state)
                   name-id))]
+            [text : String
+              (str_cat.str-cat
+                "typecheck: macro "
+                (tc-name-slashes-to-dots abstract.macro-name)
+                " constrained type operand "
+                abstract.param-name
+                " cannot use "
+                call-name
+                "; requires "
+                (tc-macro-abstract-required call-id))]
             (ResultTcUnit.Err
               (tc-locate-error-at-expr
                 expr-bases
                 expr
-                (str_cat.str-cat
-                  "typecheck: macro "
-                  (tc-name-slashes-to-dots abstract.macro-name)
-                  " constrained type operand "
-                  abstract.param-name
-                  " cannot use "
-                  call-name
-                  "; requires "
-                  (tc-macro-abstract-required call-id)))))
+                (if (=
+                  call-id
+                  (cbi.compiler-builtin-ctfe "type-cleanup-function"))
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                    text)
+                  text))))
           ResultTcUnit.Ok)))))
 
 (define (tc-macro-abstract-kind-literal [expr : ast.AstExpr]) : TcMacroAbstractGuard
@@ -61030,13 +61815,25 @@
       [(tc_i64_i64_map.LookupMissing) TcMoveConflict.No])))
 
 (define (tc-move-use-message [name : String]) : String
-  (str_cat.str-cat "typecheck: use of moved value `" name "`"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.MoveViolation))
+    "typecheck: use of moved value `"
+    name
+    "`"))
 
 (define (tc-move-loop-carried-message [name : String]) : String
-  (str_cat.str-cat "typecheck: cannot move loop-carried owner value `" name "`"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
+    "typecheck: cannot move loop-carried owner value `"
+    name
+    "`"))
 
 (define (tc-move-cleanup-owner-exit-message [name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: cleanup owner `"
     name
     "` moved before with scope exit"))
@@ -62296,13 +63093,19 @@
     [_ (TcMaybeNameId.No)]))
 
 (define (tc-move-dynamic-array-element-message) : String
-  "typecheck: cannot move owner-consuming value out of dynamic array element")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+    "typecheck: cannot move owner-consuming value out of dynamic array element"))
 
 (define (tc-move-box-projection-message) : String
-  "typecheck: cannot move owner-consuming value out of box")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+    "typecheck: cannot move owner-consuming value out of box"))
 
 (define (tc-move-aggregate-path-message) : String
-  "typecheck: cannot move owner-consuming value out of aggregate path")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+    "typecheck: cannot move owner-consuming value out of aggregate path"))
 
 (define (tc-move-aggregate-path-projection?
   [expr-bases : i64]
@@ -62934,6 +63737,8 @@
   [operation : String]
   [parameter-id : i64]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.BorrowViolation))
     "typecheck: cannot "
     operation
     " storage derived from by-value memory-aggregate parameter `"
@@ -63103,6 +63908,8 @@
 
 (define (tc-move-global-source-message [name-id : i64]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.MoveViolation))
     "typecheck: cannot move out of global `"
     (tc-move-global-source-name name-id)
     "`; borrow the global instead"))
@@ -64077,6 +64884,8 @@
 
 (define (tc-move-atomic-arena-hidden-user-message [owner : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ArenaOwnership))
     "typecheck: arena.destroy-safe!/rewind-safe! cannot prove atomic arena `"
     owner
     "` is released after an owner-tagged value was sent to a channel"))
@@ -64093,6 +64902,8 @@
   [owner : String]
   [name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ArenaOwnership))
     "typecheck: arena.destroy-safe!/rewind-safe! requires atomic arena user `"
     name
     "` to be joined or released before invalidating `"
@@ -66095,7 +66906,9 @@
     (tc-move-borrow-place-read-expr-id expr-bases place)))
 
 (define (tc-move-cleanup-overwrite-message) : String
-  "typecheck: cannot overwrite initialized cleanup-owning place; move or clean up the old value first")
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+    "typecheck: cannot overwrite initialized cleanup-owning place; move or clean up the old value first"))
 
 (define (tc-move-place-definitely-uninitialized?
   [expr-bases : i64]
@@ -67075,6 +67888,8 @@
         (ci.intern-str decl-name-id)
         (tc-move-global-source-name root-id))]
     (str_cat.str-cat
+      (cdiag.compiler-diagnostic-typecheck-tag
+        (cdiag.CompilerTypecheckKind.ForeignGlobalWrite))
       "typecheck: cannot "
       operation
       " global `"
@@ -68855,10 +69670,14 @@
                             receiver-ty)]
                         [(ast.AstType.Ref _ _)
                           (TcMoveResult.Err
-                            "typecheck: cannot move non-Copy value through shared reference")]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.MoveViolation)
+                              "typecheck: cannot move non-Copy value through shared reference"))]
                         [(ast.AstType.MutRef _ _)
                           (TcMoveResult.Err
-                            "typecheck: cannot move non-Copy value through mutable reference without replacement")]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.MoveViolation)
+                              "typecheck: cannot move non-Copy value through mutable reference without replacement"))]
                         [_ (TcMoveResult.Ok moved1)])]
                     [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])
                   (TcMoveResult.Ok moved1))]
@@ -70702,22 +71521,44 @@
   (Some i64))
 
 (define (tc-borrow-check-move-message [path : String]) : String
-  (str_cat.str-cat "typecheck: cannot move borrowed place `" path "`"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.BorrowViolation))
+    "typecheck: cannot move borrowed place `"
+    path
+    "`"))
 
 (define (tc-borrow-check-assign-message [path : String]) : String
-  (str_cat.str-cat "typecheck: cannot assign to borrowed place `" path "`"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.BorrowViolation))
+    "typecheck: cannot assign to borrowed place `"
+    path
+    "`"))
 
 (define (tc-borrow-check-mutably-borrow-message [path : String]) : String
-  (str_cat.str-cat "typecheck: cannot mutably borrow borrowed place `" path "`"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.BorrowViolation))
+    "typecheck: cannot mutably borrow borrowed place `"
+    path
+    "`"))
 
 (define (tc-borrow-check-immutably-borrow-message [path : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.BorrowViolation))
     "typecheck: cannot immutably borrow mutably borrowed place `"
     path
     "`"))
 
 (define (tc-borrow-check-read-message [path : String]) : String
-  (str_cat.str-cat "typecheck: cannot read mutably borrowed place `" path "`"))
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.BorrowViolation))
+    "typecheck: cannot read mutably borrowed place `"
+    path
+    "`"))
 
 (define (tc-borrow-check-help) : String
   "let the last reference use occur before this operation, shorten the borrow with a narrower lexical scope, clone the owner before borrowing when ownership must move later, or use an immutable borrow for non-mutating access")
@@ -78919,10 +79760,14 @@
                             receiver-ty)]
                         [(ast.AstType.Ref _ _)
                           (TcBorrowCheckResult.Err
-                            "typecheck: cannot move non-Copy value through shared reference")]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.MoveViolation)
+                              "typecheck: cannot move non-Copy value through shared reference"))]
                         [(ast.AstType.MutRef _ _)
                           (TcBorrowCheckResult.Err
-                            "typecheck: cannot move non-Copy value through mutable reference without replacement")]
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.MoveViolation)
+                              "typecheck: cannot move non-Copy value through mutable reference without replacement"))]
                         [_ (TcBorrowCheckResult.Ok borrowed1)])]
                     [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])
                   (tc-borrow-check-place-read-conflict
@@ -81213,7 +82058,7 @@
           [diagnostic : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-box-shared-view diag)]
           (csym.ResultCompilerSymbols.Err
-            (cdiag.compiler-diagnostic-message (& diagnostic))))])))
+            (cdiag.compiler-diagnostic-typecheck-error-text (& diagnostic))))])))
 
 (define (macro-live-symbols-build-fresh
   [state : TcMacroState]
@@ -85690,7 +86535,7 @@
               (tc-expr-diag
                 expr-bases
                 call-expr
-                (cdiag.compiler-diagnostic-message diag))]
+                (cdiag.compiler-diagnostic-typecheck-error-text (& diag)))]
             (box
               (cdiag.compiler-diagnostic-with-primary-span
                 diag
@@ -94305,6 +95150,8 @@
   [expected : ast.AstType]
   [actual : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
     "typecheck: macro operand type mismatch: expected "
     (tc-type-render expected)
     ", got "
@@ -94318,6 +95165,8 @@
 
 (define (macro-clause-operand-mismatch-message [expected : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.TypeMismatch))
     "typecheck: macro operand type mismatch: expected "
     (tc-type-render expected)
     ", got bracket clause"))
@@ -94932,7 +95781,7 @@
                     arg
                     (if (tc-encoded-error? message)
                       message
-                      (str_cat.str-cat
+                      (tc-message-with-prefix
                         "typecheck: macro operand typecheck failed: "
                         message))))))])]
       (begin
@@ -105629,6 +106478,8 @@
   [struct-name : String]
   [field-name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: struct "
     struct-name
     " field "
@@ -105640,6 +106491,8 @@
   [field-name : String]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: struct "
     struct-name
     " field "
@@ -105653,6 +106506,8 @@
   [field-name : String]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: struct "
     struct-name
     " field "
@@ -105666,6 +106521,8 @@
   [field-name : String]
   [cleanup-name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: struct "
     struct-name
     " field "
@@ -105867,6 +106724,8 @@
   [enum-name : String]
   [variant-name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: enum "
     enum-name
     " variant "
@@ -105878,6 +106737,8 @@
   [variant-name : String]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: enum "
     enum-name
     " variant "
@@ -105891,6 +106752,8 @@
   [variant-name : String]
   [ty : ast.AstType]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: enum "
     enum-name
     " variant "
@@ -105904,6 +106767,8 @@
   [variant-name : String]
   [cleanup-name : String]) : String
   (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag
+      (cdiag.CompilerTypecheckKind.ResourceOwnership))
     "typecheck: enum "
     enum-name
     " variant "
@@ -105970,11 +106835,17 @@
       cleanup-index
       (ast.ast-variant-payload-cleanup-list-len payload-cleanups))
       ResultTcUnit.Ok
-      (ResultTcUnit.Err "typecheck: malformed enum payload cleanup metadata"))
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ResourceOwnership)
+          "typecheck: malformed enum payload cleanup metadata")))
     (if (>=
       cleanup-index
       (ast.ast-variant-payload-cleanup-list-len payload-cleanups))
-      (ResultTcUnit.Err "typecheck: malformed enum payload cleanup metadata")
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.ResourceOwnership)
+          "typecheck: malformed enum payload cleanup metadata"))
       (let
         [payload-cleanup : ast.AstVariantPayloadCleanup
           (ast.ast-variant-payload-cleanup-list-get
@@ -107341,7 +108212,7 @@
   [message : (& message str)]) : bool
   (and
     (tc-diag-string-prefix? module "stdlib.hashmap.generated.")
-    (tc-diag-string-prefix? message "typecheck: clone unsupported type ")))
+    (tc-message-text-prefix? message "typecheck: clone unsupported type ")))
 
 ;; Direct declaration typechecking stays below the self-build memory budget and
 ;; avoids the per-declaration scratch arena overhead.

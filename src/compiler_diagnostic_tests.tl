@@ -11,6 +11,7 @@
 (import compiler_diagnostic as cdiag)
 (import token)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
 
 (define (compiler-diagnostic-string-eq? [left : String] [right : String]) : bool
@@ -315,137 +316,167 @@
             (cdiag.compiler-diagnostic-list-ref (& diagnostics) 2))
           3)))))
 
-;; Pin every classifier row against a real message from the typechecker, using
-;; the exact wording the compiler emits. The classifier keys on message text, so
-;; without this a reword or a message added to the wrong family silently falls
-;; back to `E0200` and the code stops distinguishing anything -- a regression no
-;; other test would see. Also pins that an unrecognised kind still gets `E0200`,
-;; because losing a code entirely would be worse than an imprecise one.
-(define (compiler-diagnostic-typecheck-code-kind-is?
-  [message : String]
-  [expected : String]) : bool
-  (string.eq
-    (cdiag.compiler-diagnostic-code-for-typecheck-message message)
-    expected))
-
-(define (compiler-diagnostic-typecheck-code-kinds-ok?) : bool
+;; A typecheck error states its kind where it is raised and the code follows
+;; the kind, never the wording (#7139). Kinds map one-to-one onto the
+;; typecheck rows of the registry, in registry order.
+(define (compiler-diagnostic-typecheck-kind-row-is?
+  [kind : cdiag.CompilerTypecheckKind]
+  [index : i64]) : bool
   (and
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: unbound name io/print-line"
-      (cdiag.compiler-diagnostic-code-typecheck-unbound-name))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: unknown type MissingType"
-      (cdiag.compiler-diagnostic-code-typecheck-unbound-name))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments"
-      (cdiag.compiler-diagnostic-code-typecheck-arity-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: slice-view expected 3 arguments"
-      (cdiag.compiler-diagnostic-code-typecheck-arity-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: pattern arity mismatch"
-      (cdiag.compiler-diagnostic-code-typecheck-arity-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: annotation type mismatch: expected i64, found bool"
-      (cdiag.compiler-diagnostic-code-typecheck-type-mismatch))
-    ;; The wording the exhaustiveness check actually emits. Pinning the other
-    ;; spelling alone let that rule pass while never firing on a real compile,
-    ;; which is how the first version of this shipped E0200 for a missing arm.
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: match missing arm for variant Err"
-      (cdiag.compiler-diagnostic-code-typecheck-non-exhaustive-match))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: non-exhaustive match"
-      (cdiag.compiler-diagnostic-code-typecheck-non-exhaustive-match))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: unknown struct field len"
-      (cdiag.compiler-diagnostic-code-typecheck-unknown-struct-field))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: region-tagged value cannot escape its arena"
-      (cdiag.compiler-diagnostic-code-typecheck-region-escape))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cannot pass region-tagged value to function parameter; region value would escape; borrow slots from a vector place"
-      (cdiag.compiler-diagnostic-code-typecheck-region-escape))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: borrow requires a local, parameter, or aggregate place"
-      (cdiag.compiler-diagnostic-code-typecheck-borrow-violation))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cannot mutably borrow borrowed place `items[0]`"
-      (cdiag.compiler-diagnostic-code-typecheck-borrow-violation))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cannot move borrowed place `handle`"
-      (cdiag.compiler-diagnostic-code-typecheck-borrow-violation))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: use of moved value `ticket`"
-      (cdiag.compiler-diagnostic-code-typecheck-move-violation))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cannot move out of global `items`; borrow the global instead"
-      (cdiag.compiler-diagnostic-code-typecheck-move-violation))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: ptr-read requires unsafe context"
-      (cdiag.compiler-diagnostic-code-typecheck-unsafe-context))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe"
-      (cdiag.compiler-diagnostic-code-typecheck-unsafe-callable-effect))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cannot assign to global `counter` owned by module `dep` from module `main`; only its defining module may write it, so call a function that `dep` defines instead"
-      (cdiag.compiler-diagnostic-code-typecheck-foreign-global-write))
-    ;; The `mutably borrow` wording must not fall into the borrow rule.
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cannot mutably borrow global `counter` owned by module `dep` from module `main`; only its defining module may write it, so call a function that `dep` defines instead"
-      (cdiag.compiler-diagnostic-code-typecheck-foreign-global-write))
-    ;; A lifetime cause appended to a type-mismatch prefix must win over E0206.
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: call argument type mismatch; source lifetime `short` does not outlive required lifetime `long`"
-      (cdiag.compiler-diagnostic-code-typecheck-lifetime-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: cleanup owner `handle` moved before with scope exit"
-      (cdiag.compiler-diagnostic-code-typecheck-resource-ownership))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: arena.destroy-safe! requires a direct arena owner"
-      (cdiag.compiler-diagnostic-code-typecheck-arena-ownership))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: elided reference return is ambiguous; write an explicit lifetime"
-      (cdiag.compiler-diagnostic-code-typecheck-lifetime-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: integer operator expects matching integer operands"
-      (cdiag.compiler-diagnostic-code-typecheck-type-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: arithmetic operator requires numeric types"
-      (cdiag.compiler-diagnostic-code-typecheck-type-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: integer literal 256 does not fit expected type u8"
-      (cdiag.compiler-diagnostic-code-typecheck-type-mismatch))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: unreachable match arm after wildcard `_`"
-      (cdiag.compiler-diagnostic-code-typecheck-pattern))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: SPMD masked if does not support nested foreach"
-      (cdiag.compiler-diagnostic-code-typecheck-spmd))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: expression is not a storage place"
-      (cdiag.compiler-diagnostic-code-typecheck-place))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: break requires enclosing scalar while"
-      (cdiag.compiler-diagnostic-code-typecheck-control-flow))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: raw pointers cannot cross thread boundaries in safe code"
-      (cdiag.compiler-diagnostic-code-typecheck-thread-safety))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: make-array length must be a non-negative compile-time integer"
-      (cdiag.compiler-diagnostic-code-typecheck-comptime-constraint))
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: if branches must match"
-      (cdiag.compiler-diagnostic-code-typecheck-type-mismatch))
-    ;; an unclassified kind keeps the generic code
-    (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: internal unclassified fixture"
-      (cdiag.compiler-diagnostic-code-typecheck))
-    ;; the codes must actually differ from one another
-    (not
+    (string.eq
+      (cdiag.compiler-diagnostic-code-for-typecheck-kind kind)
+      (cdiag.compiler-diagnostic-code-registry-code index))
+    (string.eq
+      (cdiag.compiler-diagnostic-typecheck-tag kind)
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag-prefix)
+        (cdiag.compiler-diagnostic-code-registry-code index)
+        ":"))))
+
+(define (compiler-diagnostic-typecheck-kind-rows-ok?) : bool
+  (and
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.Unclassified)
+      1)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.UnboundName)
+      2)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ArityMismatch)
+      3)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+      4)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.UnknownStructField)
+      5)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.RegionEscape)
+      6)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.TypeMismatch)
+      7)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.BorrowViolation)
+      8)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.MoveViolation)
+      9)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.UnsafeContext)
+      10)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+      11)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ResourceOwnership)
+      12)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ArenaOwnership)
+      13)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.Pattern)
+      14)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.Spmd)
+      15)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.Place)
+      16)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ControlFlow)
+      17)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ThreadSafety)
+      18)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ComptimeConstraint)
+      19)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.UnsafeCallableEffect)
+      20)
+    (compiler-diagnostic-typecheck-kind-row-is?
+      (cdiag.CompilerTypecheckKind.ForeignGlobalWrite)
+      21)))
+
+;; The code a diagnostic built from `message` carries, or "" for none.
+(define (compiler-diagnostic-built-code [message : String]) : String
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-at-start "" message)]
+    (match (cdiag.compiler-diagnostic-code (& diag))
+      [(CompilerDiagnosticSomeString code) code]
+      [CompilerDiagnosticNoString ""])))
+
+;; The wording of a tagged message never changes its code: text full of other
+;; families' words keeps the kind it was raised with, and a reworded message
+;; keeps its code. The tag never reaches the rendered text, an explicit code
+;; wins over it, and it survives a round trip through error text only for a
+;; typecheck code.
+(define (compiler-diagnostic-typecheck-kind-transport-ok?) : bool
+  (let
+    [decoy : String
+      "typecheck: cleanup foreach SPMD arity mismatch unbound name cannot escape borrow requires"]
+    [tagged : String
+      (cdiag.compiler-diagnostic-typecheck-tagged
+        (cdiag.CompilerTypecheckKind.TypeMismatch)
+        (string.copy (& decoy)))]
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-at-start "" (string.copy (& tagged)))]
+    [explicit : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-new
+        (string.copy (& tagged))
+        CompilerDiagnosticError
+        (CompilerDiagnosticSomeString "E0100")
+        CompilerDiagnosticNoString
+        (cdiag.CompilerDiagnosticSpan "" 1 1 1 1)
+        CompilerDiagnosticNoString
+        (cdiag.compiler-diagnostic-label-list-empty)
+        (cdiag.compiler-diagnostic-note-list-empty))]
+    (and
       (string.eq
-        (cdiag.compiler-diagnostic-code-typecheck-arity-mismatch)
-        (cdiag.compiler-diagnostic-code-typecheck-type-mismatch)))))
+        (compiler-diagnostic-built-code (string.copy (& tagged)))
+        "E0206")
+      (string.eq (cdiag.compiler-diagnostic-message diag) decoy)
+      (string.eq
+        (compiler-diagnostic-built-code
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            "typecheck: no binding called `x` is visible here"))
+        "E0201")
+      (string.eq
+        (compiler-diagnostic-built-code
+          (cdiag.compiler-diagnostic-typecheck-tagged
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            "typecheck: unbound name x"))
+        "E0201")
+      (string.eq
+        (compiler-diagnostic-built-code "typecheck: unbound name x")
+        "")
+      (string.eq (compiler-diagnostic-built-code "__tl_tc_kind:E0206") "")
+      (string.eq
+        (compiler-diagnostic-built-code "__tl_tc_kind:E0299:typecheck: x")
+        "E0299")
+      (string.eq
+        (compiler-diagnostic-built-code "__tl_tc_kind:E0106:typecheck: x")
+        "E0106")
+      (string.eq
+        (compiler-diagnostic-built-code "__tl_tc_kind:E0206-typecheck: x")
+        "")
+      (not (string.contains (& tagged) "|"))
+      (match (cdiag.compiler-diagnostic-code (& explicit))
+        [(CompilerDiagnosticSomeString code) (string.eq code "E0100")]
+        [CompilerDiagnosticNoString false])
+      (string.eq (cdiag.compiler-diagnostic-message explicit) decoy)
+      (string.eq
+        (cdiag.compiler-diagnostic-typecheck-error-text (& diag))
+        tagged)
+      (string.eq
+        (cdiag.compiler-diagnostic-typecheck-error-text (& explicit))
+        decoy)
+      (string.eq
+        (cdiag.compiler-diagnostic-untagged-message (string.copy (& decoy)))
+        decoy))))
 
 (define (compiler-diagnostic-code-registry-ok?) : bool
   (let
@@ -700,7 +731,8 @@
     (unless (compiler-diagnostic-dense-sequences-ok?) (return 4))
     (unless (compiler-diagnostic-code-registry-ok?) (return 4))
     (unless (compiler-diagnostic-advisory-sink-ok?) (return 4))
-    (unless (compiler-diagnostic-typecheck-code-kinds-ok?) (return 5))
+    (unless (compiler-diagnostic-typecheck-kind-rows-ok?) (return 5))
+    (unless (compiler-diagnostic-typecheck-kind-transport-ok?) (return 5))
     42))
 
 (define (compiler-advisory-sink-generation [sink : cdiag.CompilerAdvisorySink]) : i64

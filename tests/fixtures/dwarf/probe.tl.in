@@ -1,0 +1,6 @@
+;; DWARF inventory fixture for TypeLisp #7763.
+(define (add [a : i64] [b : i64]) : i64
+  (+ a b))
+
+(define (main) : i64
+  (add 40 2))

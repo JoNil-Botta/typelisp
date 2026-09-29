@@ -1,0 +1,24 @@
+/* DWARF inventory fixture for TypeLisp #7763. */
+struct pair {
+    long left;
+    long right;
+};
+
+static long scale = 3;
+
+static inline long twice(long value) {
+    return value * 2;
+}
+
+long sum_pair(const struct pair *pair) {
+    long total = pair->left + pair->right;
+    for (int index = 0; index < 3; index++) {
+        total += twice(index) * scale;
+    }
+    return total;
+}
+
+int main(void) {
+    struct pair pair = {40, 2};
+    return (int)(sum_pair(&pair) & 255);
+}

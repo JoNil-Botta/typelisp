@@ -1,0 +1,8 @@
+2	.debug_loclists	30	yes	02.debug_loclists.bin	6258ef8dd8c641a2c1412510a963bf93dcb6fea2973e8663bdcb308c19bc4021
+3	.debug_abbrev	172	yes	03.debug_abbrev.bin	56680e98b6572c17705b436f4f833c81b36b618632b4740f6538ccd16b3c12a7
+4	.debug_info	165	yes	04.debug_info.bin	320510e4b29ac26602f72c9af879f7d7d8f198ab779b3e4ce9e5eabc9a7e1aff
+6	.debug_str_offsets	60	yes	06.debug_str_offsets.bin	5fb40db18575c60c48b6d3c22ec158d57050b0c9bbd84cc4d1f64eb62fdc3f8d
+8	.debug_str	96	yes	08.debug_str.bin	46dd52a5bc9b1854ae13a0560def98e11bc32b5f8d677b35571b795466e8e040
+9	.debug_addr	32	yes	09.debug_addr.bin	9a6e62682d66f59c09f375e9bf3a53dea0552b0ba4d5372f5d0d0c977eed8093
+15	.debug_line	102	yes	15.debug_line.bin	812a24598c065f279e2fb9b8721a4201b4e466a3a7884e8bb16ec088e4a57292
+17	.debug_line_str	18	yes	17.debug_line_str.bin	bb8ce93cc48e029bffb7782c42b5dd81493b694ce54be7c7819e02a24eea63d4

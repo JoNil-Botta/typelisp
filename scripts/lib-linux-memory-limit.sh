@@ -13,7 +13,9 @@
 # terminating the group if observed RSS crosses the same ceiling. A launch gate
 # keeps user code suspended until process-group isolation and the first
 # successful memory sample are established. It never caps virtual address
-# space, which avoids the mmap-reservation failures RLIMIT_AS causes.
+# space, which avoids the mmap-reservation failures RLIMIT_AS causes. Under
+# linux_memory_limit_run_sampled a kernel OOM kill takes only a workload task,
+# so the sampler survives it and reports the cgroup's exact peak.
 
 LINUX_MEMORY_LIMIT_BACKEND=${LINUX_MEMORY_LIMIT_BACKEND:-}
 
@@ -122,7 +124,7 @@ linux_memory_limit_run_systemd() {
         --property=MemoryAccounting=yes \
         --property="MemoryMax=$_linux_memory_limit_bytes" \
         --property=MemorySwapMax=0 \
-        --property=OOMPolicy=kill \
+        --property="OOMPolicy=${_linux_memory_limit_oom_policy:-kill}" \
         --setenv=TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE \
         "--property=ExecStopPost=:/bin/sh -c '$_linux_memory_limit_record_peak'" \
         "$@" 2> "$_linux_memory_limit_systemd_stderr" ||
@@ -214,6 +216,52 @@ linux_memory_limit_select_backend() {
     LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
 }
 
+# The cgroup v2 directory of the calling process, in
+# _linux_memory_limit_cgroup. Shell builtins only, like the two readers below:
+# they run in a cgroup where the kernel may just have OOM-killed a task.
+linux_memory_limit_own_cgroup() {
+    _linux_memory_limit_cgroup=
+    while read -r _linux_memory_limit_line; do
+        case $_linux_memory_limit_line in
+            0::*) _linux_memory_limit_cgroup="/sys/fs/cgroup${_linux_memory_limit_line#0::}" ;;
+        esac
+    done < /proc/self/cgroup
+    [ -n "$_linux_memory_limit_cgroup" ]
+}
+
+# The oom_kill count of cgroup $1, in _linux_memory_limit_oom_kills.
+linux_memory_limit_read_oom_kills() {
+    _linux_memory_limit_oom_kills=
+    [ -r "$1/memory.events" ] || return 1
+    while read -r _linux_memory_limit_key _linux_memory_limit_value; do
+        if [ "$_linux_memory_limit_key" = oom_kill ]; then
+            _linux_memory_limit_oom_kills=$_linux_memory_limit_value
+        fi
+    done < "$1/memory.events"
+    [ -n "$_linux_memory_limit_oom_kills" ]
+}
+
+# The larger of the sampled peak and cgroup $1's memory.peak, in bytes, into
+# the metrics file, after an OOM kill in that cgroup.
+linux_memory_limit_record_oom_peak() {
+    _linux_memory_limit_cgroup_peak_bytes=0
+    if [ -r "$1/memory.peak" ]; then
+        read -r _linux_memory_limit_cgroup_peak_bytes < "$1/memory.peak" ||
+            _linux_memory_limit_cgroup_peak_bytes=0
+    fi
+    case "$_linux_memory_limit_cgroup_peak_bytes" in
+        "" | *[!0-9]*) _linux_memory_limit_cgroup_peak_bytes=0 ;;
+    esac
+    _linux_memory_limit_oom_peak_bytes=$((_linux_memory_limit_peak_rss * 1024))
+    if [ "$_linux_memory_limit_cgroup_peak_bytes" -gt "$_linux_memory_limit_oom_peak_bytes" ]; then
+        _linux_memory_limit_oom_peak_bytes=$_linux_memory_limit_cgroup_peak_bytes
+    fi
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        printf '%s\n' "$_linux_memory_limit_oom_peak_bytes" \
+            > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+    fi
+}
+
 linux_memory_limit_process_group_rss_kib() {
     _linux_memory_limit_group=$1
     ps -e -o pid= -o pgid= -o rss= | awk \
@@ -230,6 +278,18 @@ linux_memory_limit_sample_process_group() {
     _linux_memory_limit_poll=${TYPELISP_LINUX_MEMORY_LIMIT_POLL_SECONDS:-0.05}
     _linux_memory_limit_peak_rss=0
 
+    # Under linux_memory_limit_run_sampled the kernel kills only the task it
+    # chooses on an OOM. The workload raises its own oom_score_adj to 1000 so
+    # the choice is always a workload task, never this sampler. The sampler
+    # then sees the cgroup's oom_kill count rise, ends the rest of the process
+    # group, records the cgroup's exact memory.peak and reports exit 137.
+    linux_memory_limit_own_cgroup &&
+        linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" || {
+        echo "process-group sampler cannot read its cgroup's memory.events" >&2
+        return 1
+    }
+    _linux_memory_limit_oom_kills_before=$_linux_memory_limit_oom_kills
+
     # Keep the requested command behind a filesystem gate. The waiting shell
     # gives the parent time to verify the new process group and take a positive
     # RSS sample before any user code can execute, including commands which
@@ -245,6 +305,7 @@ linux_memory_limit_sample_process_group() {
         shift
         while [ ! -e "$gate" ]; do sleep 0.01; done
         unset TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
+        echo 1000 > /proc/self/oom_score_adj
         exec "$@"
     ' sh "$_linux_memory_limit_gate" "$@" &
     _linux_memory_limit_pid=$!
@@ -327,6 +388,15 @@ linux_memory_limit_sample_process_group() {
     : > "$_linux_memory_limit_gate"
 
     while :; do
+        if linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" &&
+            [ "$_linux_memory_limit_oom_kills" -gt "$_linux_memory_limit_oom_kills_before" ]; then
+            kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
+            wait "$_linux_memory_limit_pid" 2>/dev/null || true
+            rm -f "$_linux_memory_limit_gate"
+            rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+            linux_memory_limit_record_oom_peak "$_linux_memory_limit_cgroup"
+            return 137
+        fi
         _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
             "$_linux_memory_limit_pid") || {
                 kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
@@ -366,6 +436,12 @@ linux_memory_limit_sample_process_group() {
     fi
     rm -f "$_linux_memory_limit_gate"
     rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+    # The group can empty between two polls because of an OOM kill.
+    if linux_memory_limit_read_oom_kills "$_linux_memory_limit_cgroup" &&
+        [ "$_linux_memory_limit_oom_kills" -gt "$_linux_memory_limit_oom_kills_before" ]; then
+        linux_memory_limit_record_oom_peak "$_linux_memory_limit_cgroup"
+        return 137
+    fi
     if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
         printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
             > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
@@ -384,4 +460,19 @@ linux_memory_limit_run() {
     linux_memory_limit_select_backend || return $?
 
     linux_memory_limit_run_systemd "$_linux_memory_limit_bytes" "$@"
+}
+
+# linux_memory_limit_run for a command that runs
+# linux_memory_limit_sample_process_group (run-memory-bounded.sh
+# --linux-rss-measure). Its unit uses OOMPolicy=continue: the kernel kills only
+# the task it chooses, which the sampler makes a workload task, so the sampler
+# survives an OOM kill to record the cgroup's exact peak and to end the rest of
+# the workload itself. OOMPolicy=kill would kill the sampler with the workload
+# (memory.oom.group), leaving the peak to evidence written after the kill.
+linux_memory_limit_run_sampled() {
+    _linux_memory_limit_oom_policy=continue
+    _linux_memory_limit_sampled_status=0
+    linux_memory_limit_run "$@" || _linux_memory_limit_sampled_status=$?
+    _linux_memory_limit_oom_policy=
+    return "$_linux_memory_limit_sampled_status"
 }

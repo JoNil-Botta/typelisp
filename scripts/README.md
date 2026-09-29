@@ -186,7 +186,13 @@ virtual reservations as resident memory.
 
 `run-memory-bounded.sh` gives gates one fail-closed interface to that Linux
 backend and the Windows Job Object wrapper. On Linux it samples the process
-group's RSS inside the cgroup to report a trustworthy peak. The Windows helper tests retain a
+group's RSS inside the cgroup to report a trustworthy peak. Its unit uses
+`OOMPolicy=continue` and the workload raises its `oom_score_adj` to 1000, so a
+cgroup OOM kill takes a workload task and never the sampler. The sampler then
+sees the cgroup's `oom_kill` count rise, ends the rest of the workload, records
+the cgroup's exact `memory.peak` and reports exit 137. Direct
+`lib-linux-memory-limit.sh` callers keep `OOMPolicy=kill`, and an
+`ExecStopPost` hook records their peak. The Windows helper tests retain a
 one-second timeout classification case and separately check descendant cleanup
 with delayed child creation and a ten-second bounded startup/cleanup deadline.
 Its stable key/value record

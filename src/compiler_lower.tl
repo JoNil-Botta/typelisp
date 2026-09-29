@@ -27085,7 +27085,11 @@
             name)]
         (if (and
           (cbi.compiler-builtin-lower-clone-id? source-id)
-          (= args.len 1))
+          (= args.len 1)
+          (not
+            (tc_core.macro-hygiene-global-user-binding-id?
+              (tc_core.tc-context-structural-session ctx)
+              name)))
           (lower-expr-result-type-fast
             ctx
             env
@@ -37087,6 +37091,44 @@
         [(ResultLowerSpmdInlineHelper.Err message)
           (LowerMaybeSpmdCall.Err message)])]))
 
+;; A call of a named function that no builtin claims: an SPMD scalar call, or
+;; a direct call of `lowered-name`.
+(define (lower-call-ordinary
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [func : ast.AstExpr]
+  [lowered-name : String]
+  [raw-name : i64]
+  [lookup-name-id : i64]
+  [args : ast.AstExprList]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-spmd-scalar-call-maybe
+    ctx
+    state
+    env
+    type-env
+    func
+    args
+    (lower-global-shared-view result-ty)
+    (lower-global-shared-view origin))
+    [(LowerMaybeSpmdCall.Some lowered) (ResultLowerExpr.Ok lowered)]
+    [(LowerMaybeSpmdCall.Err message) (ResultLowerExpr.Err message)]
+    [(LowerMaybeSpmdCall.No)
+      (lower-call-non-builtin
+        ctx
+        state
+        env
+        type-env
+        lowered-name
+        raw-name
+        lookup-name-id
+        args
+        result-ty
+        origin)]))
+
 (define (lower-call
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -37308,6 +37350,26 @@
                             env
                             type-env
                             atomic-symbol
+                            args
+                            result-ty
+                            origin)]
+                        ;; Typecheck gives such a call no builtin spelling
+                        ;; (`tc-builtin-call-name-id`), so none of the
+                        ;; spelling-based arms below may claim it.
+                        [(and
+                            hygiene-global
+                            (tc_core.macro-hygiene-global-user-binding-id?
+                              (tc_core.tc-context-structural-session ctx)
+                              raw-name))
+                          (lower-call-ordinary
+                            ctx
+                            state
+                            env
+                            type-env
+                            func
+                            lowered-name
+                            raw-name
+                            lookup-name-id
                             args
                             result-ty
                             origin)]
@@ -37590,31 +37652,18 @@
                                 origin
                                 "lower: comptime-error is compile-time only")))]
                         [else
-                          (match (lower-spmd-scalar-call-maybe
+                          (lower-call-ordinary
                             ctx
                             state
                             env
                             type-env
                             func
+                            lowered-name
+                            raw-name
+                            lookup-name-id
                             args
-                            (lower-global-shared-view result-ty)
-                            (lower-global-shared-view origin))
-                            [(LowerMaybeSpmdCall.Some lowered)
-                              (ResultLowerExpr.Ok lowered)]
-                            [(LowerMaybeSpmdCall.Err message)
-                              (ResultLowerExpr.Err message)]
-                            [(LowerMaybeSpmdCall.No)
-                              (lower-call-non-builtin
-                                ctx
-                                state
-                                env
-                                type-env
-                                lowered-name
-                                raw-name
-                                lookup-name-id
-                                args
-                                result-ty
-                                origin)])]))]
+                            result-ty
+                            origin)]))]
                   [(tc_core.TcNameLookup.Err message)
                     (ResultLowerExpr.Err
                       (box (lower-diagnostic-at-expr ctx origin message)))]))))))]
@@ -38508,7 +38557,11 @@
         [name : String (tc_core.tc-env-key-name-text name-id)]
         (and
           (lower-atomic-pointer-name? name)
-          (not (tc_core.tc-name-bound-id? type-env name-id))))]
+          (not (tc_core.tc-name-bound-id? type-env name-id))
+          (not
+            (tc_core.macro-hygiene-global-user-binding-id?
+              (tc_core.tc-type-env-structural-session type-env)
+              raw-name))))]
     [_ false]))
 
 (define (lower-atomic-pointer-load-name? [name : (& name str)]) : bool

@@ -7532,24 +7532,22 @@
   [session : cis.InternStructuralSessionHandle]
   [raw-name-id : i64]
   [hygiene-global : bool]) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (if hygiene-global
-      (macro-hygiene-global-source-name-id-or session raw-name-id -1)
-      raw-name-id)))
+  (tc-builtin-call-name-id session raw-name-id hygiene-global))
 
+;; The spelling builtin and string-helper dispatch sees for a call head, or -1
+;; for none. A macro-hygiene global that names another module's own binding
+;; (`macro-hygiene-global-user-binding-id?`) is an ordinary call of that
+;; binding, as the same `m.f` written directly is, so it names no builtin.
 (define (tc-builtin-call-name-id
   [session : cis.InternStructuralSessionHandle]
   [raw-name-id : i64]
   [hygiene-global : bool]) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
-    (if hygiene-global
-      (let
-        [source-id : i64
-          (macro-hygiene-global-source-name-id-or session raw-name-id -1)]
-        source-id)
-      raw-name-id)))
+    (cond
+      [(not hygiene-global) raw-name-id]
+      [(macro-hygiene-global-user-binding-id? session raw-name-id) -1]
+      [else (macro-hygiene-global-source-name-id-or session raw-name-id -1)])))
 
 ;; --- top-env build membership side table ------------------------------------
 ;; The whole-program top-level env is an UNCACHED spine of every top bind. The
@@ -88712,6 +88710,34 @@
         (match record.role
           [(cis.InternMacroGlobalRole.Legacy) true]
           [(cis.InternMacroGlobalRole.Context) false])])))
+
+;; Does the macro-hygiene global `name-id` name a binding the macro's
+;; definition site resolved into a module other than the runtime prelude and
+;; stdlib.string? Hygiene records `m.f`, and a bare `f` bound at the definition
+;; site, as (owner module, `f`), so the bare spelling alone would read as a
+;; builtin or string helper. Only those two modules own the definitions that
+;; builtin spellings name; any other owner's `f` is that module's function.
+(define (macro-hygiene-global-user-binding-id?
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : bool
+  (if (< name-id (ci.intern-structural-key-base))
+    false
+    (match (cis.intern-structural-session-macro-global-record-for-raw
+      session
+      name-id)
+      [(cis.InternMaybeMacroGlobalRecord.No) false]
+      [(cis.InternMaybeMacroGlobalRecord.Some record)
+        (match record.role
+          [(cis.InternMacroGlobalRole.Legacy) false]
+          [(cis.InternMacroGlobalRole.Context)
+            (not
+              (or
+                (=
+                  record.definition-module-id
+                  cbi.compiler-builtin-id-runtime-module)
+                (=
+                  record.definition-module-id
+                  cbi.compiler-builtin-id-fix-stdlib_dot_string)))])])))
 
 (define (macro-hygiene-global-module-id
   [session : cis.InternStructuralSessionHandle]

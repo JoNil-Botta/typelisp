@@ -971,7 +971,21 @@ scripts/check-tlci-native-route-size.sh \
   target/tlci-native-route-stress/<host>/evidence.tsv
 ```
 
-The same gate checks the ordered intern storage schema on a source compile and
+The required `stage0-size-ratchet` gate holds #6260's published-stage0 target.
+It measures the converged bootstrap compiler, which comes from the same compile
+and native-link route as the published stage0 (a stripped copy on Linux, the
+linked executable on Windows), against the host's ceiling in
+`scripts/stage0-size-policy.tsv`. That file is an append-only ledger per host:
+the last row is the ceiling, an ordinary `ceiling` row may only lower it, only
+a `raise` row naming its authorizing change may raise it, and no ceiling may
+sit below the 10,000,000-byte target. When a change shrinks the binary well
+under its ceiling the checker prints the lower value to append. Reproduce with:
+
+```sh
+scripts/check-stage0-size.sh target/bootstrap-fixpoint/stage3 linux
+```
+
+The TLCI stress gate also checks the ordered intern storage schema on a source compile and
 requires two complete copies in the two-entry batch route. It pins equal source
 record/map occupancy, fixed capacities, zero resize observations, non-zero
 reserved payload bytes, and bounded total/maximum probe accounting. The inline

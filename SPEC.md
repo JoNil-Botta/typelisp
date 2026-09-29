@@ -4052,6 +4052,15 @@ destructuring is available through `(array p1 ... pn)`, and
 `(replace! (array-ref items index) replacement)` (§5.10.1) moves one element
 out by installing a caller-supplied replacement.
 
+**Moves through value forms.** A consuming position (a by-value argument, a
+`let` or `with` initializer, an aggregate element, a `return` operand) whose
+value comes out of an `if`, `match`, `cond`, `begin`, `unsafe` or `let` moves
+the place named at each of that form's value tails, except a tail naming a
+binding the form introduces itself. This applies when the value carries a
+cleanup obligation: its type is a cleanup-owning struct or enum, or holds one
+through a `Box`, an array or a tuple, or the place is an active `with` owner.
+Other move-only values are not yet moved through these forms (#8269).
+
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in
 section 3.10.4. Calling a consuming closure is a move site for the closure

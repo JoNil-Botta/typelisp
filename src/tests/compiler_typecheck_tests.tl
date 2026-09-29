@@ -9523,6 +9523,39 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-with-cleanup-owner-whole-source)
       "typecheck: cleanup owner `h` moved before with scope exit")
+    ;; A consumed `if` / `begin` value moves the cleanup-obligated places at
+    ;; its tails (#8268).
+    (compiler-typecheck-error-ok?
+      "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : i64 (begin (cleanup-file-handle h) 0))
+(define (bad-if-tail-reuse [c : bool] [x : FileHandle] [z : FileHandle]) : i64
+  (+ (take-handle (if c x z)) (take-handle x)))"
+      "typecheck: use of moved value `x`")
+    (compiler-typecheck-error-ok?
+      "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : i64 (begin (cleanup-file-handle h) 0))
+(define (bad-with-owner-begin-tail) : i64
+  (with ([h (FileHandle 3) cleanup-file-handle])
+    (begin
+      (take-handle (begin 0 h))
+      7)))"
+      "typecheck: cleanup owner `h` moved before with scope exit")
+    (compiler-typecheck-ok?
+      "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : i64 (begin (cleanup-file-handle h) 0))
+(define (diverging-tail [c : bool] [x : FileHandle]) : i64
+  (begin
+    (if c (return (take-handle (begin 0 x))) unit)
+    (take-handle x)))")
     ;; A diverging arm leaves the join, but not the enclosing with scope's
     ;; fallthrough-only owner check.
     (compiler-typecheck-ok?

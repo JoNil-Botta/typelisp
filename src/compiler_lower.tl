@@ -11280,6 +11280,12 @@
     [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (arena.tl_arena_make)]
     (begin
+      ;; The live symbols and registries describe the macro walk's program, not
+      ;; the checked program this expansion splices into: rebuild on first use.
+      (tc_core.macro-live-symbols-invalidate!
+        (tc_core.tc-job-state-macro-state (tc_core.tc-context-job-state ctx)))
+      (tc_core.macro-live-registries-invalidate!
+        (tc_core.tc-job-state-macro-state (tc_core.tc-context-job-state ctx)))
       (unsafe
         (arena.tl_arena_set scratch))
       (let

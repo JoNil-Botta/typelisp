@@ -94,43 +94,48 @@ ci_timing_record_elapsed() {
         "$_ci_timing_host" >> "$TYPELISP_CI_TIMING_FILE"
 }
 
+# ci_timing_run CASE PHASE COMMAND [ARG ...]
+#   Run COMMAND and record its row. A timed command may itself call
+#   ci_timing_run: this call's case, phase, start and errexit flag live in its
+#   own positional parameters, which no nested call can change, so each call
+#   records exactly its own row.
 ci_timing_run() {
-    _ci_timing_case=$1
-    _ci_timing_phase=$2
-    shift 2
     if ! ci_timing_enabled; then
+        shift 2
         "$@"
         return $?
     fi
 
     ci_timing_set_now_ms
-    _ci_timing_started=$CI_TIMING_NOW_MS
     case $- in
-        *e*) _ci_timing_had_errexit=1 ;;
-        *) _ci_timing_had_errexit=0 ;;
+        *e*) set -- 1 "$CI_TIMING_NOW_MS" "$@" ;;
+        *) set -- 0 "$CI_TIMING_NOW_MS" "$@" ;;
     esac
+    # $1 errexit, $2 start, $3 case, $4 phase, then the command.
     set +e
-    "$@"
-    _ci_timing_status=$?
-    if [ "$_ci_timing_had_errexit" -eq 1 ]; then
+    ci_timing_run_command "$@"
+    set -- "$?" "$@"
+    # $1 status, $2 errexit, $3 start, $4 case, $5 phase.
+    if [ "$2" -eq 1 ]; then
         set -e
     fi
     ci_timing_set_now_ms
-    _ci_timing_finished=$CI_TIMING_NOW_MS
-    _ci_timing_elapsed=$((_ci_timing_finished - _ci_timing_started))
-    if ci_timing_record_elapsed \
-        "$_ci_timing_case" \
-        "$_ci_timing_phase" \
-        "$_ci_timing_elapsed" \
-        "$_ci_timing_status"; then
+    if ci_timing_record_elapsed "$4" "$5" "$((CI_TIMING_NOW_MS - $3))" "$1"; then
         _ci_timing_record_status=0
     else
         _ci_timing_record_status=$?
     fi
-    if [ "$_ci_timing_status" -ne 0 ]; then
-        return "$_ci_timing_status"
+    if [ "$1" -ne 0 ]; then
+        return "$1"
     fi
     return "$_ci_timing_record_status"
+}
+
+# Run the command of a ci_timing_run parameter list (errexit, start, case,
+# phase, command...), leaving the caller's parameters intact.
+ci_timing_run_command() {
+    shift 4
+    "$@"
 }
 
 ci_timing_record_verification_complete() {

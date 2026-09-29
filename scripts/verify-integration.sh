@@ -1884,6 +1884,48 @@ EOF
         fi
     fi
 
+    # ci_timing_run is reentrant (#7956): the batch precompile is timed around
+    # its per-chunk rows. Each call records exactly its own row, with its own
+    # label, start and status, however the calls nest.
+    _nested="$_dir/nested-timing.tsv"
+    ci_timing_init "$_nested" "$HOST_OS"
+    nested_timing_inner_pair() {
+        ci_timing_run nested-inner-a sleep sleep 0.1 &&
+            ci_timing_run nested-inner-b sleep sleep 0.1
+    }
+    nested_timing_ignored_failure() {
+        ci_timing_run nested-inner-ignored check false || true
+    }
+    nested_timing_propagated_failure() {
+        ci_timing_run nested-inner-propagated check false
+    }
+    ci_timing_run nested-outer compile nested_timing_inner_pair
+    ci_timing_run nested-outer-ignored compile nested_timing_ignored_failure
+    if ci_timing_run nested-outer-propagated compile \
+            nested_timing_propagated_failure; then
+        echo "FAIL: an outer ci_timing_run lost its command's failure" >&2
+        exit 1
+    fi
+    if ! awk -F '\t' '
+        NR > 1 { seen[$2 ":" $3 ":" $5]++; elapsed[$2] = $4; rows++ }
+        END {
+            exit !(rows == 7 &&
+                seen["nested-inner-a:sleep:0"] == 1 &&
+                seen["nested-inner-b:sleep:0"] == 1 &&
+                seen["nested-outer:compile:0"] == 1 &&
+                seen["nested-inner-ignored:check:1"] == 1 &&
+                seen["nested-outer-ignored:compile:0"] == 1 &&
+                seen["nested-inner-propagated:check:1"] == 1 &&
+                seen["nested-outer-propagated:compile:1"] == 1 &&
+                elapsed["nested-outer"] >= \
+                    elapsed["nested-inner-a"] + elapsed["nested-inner-b"])
+        }
+    ' "$_nested"; then
+        echo "FAIL: nested ci_timing_run rows lost, mislabelled or mistimed" >&2
+        cat "$_nested" >&2
+        exit 1
+    fi
+
     printf '%s\n' "verify-integration batch observability self-test passed"
 }
 

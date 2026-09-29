@@ -296,6 +296,14 @@ compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
 still await migration are tracked in #4960.
 
+The comptime evaluator has no import scope. Before a source `(comptime ...)`
+fold or a fixed `make-array` length is evaluated, typechecking and lowering
+resolve each type literal of the expression in the current module
+(`tc-ctfe-env-for-comptime`) and pass the resolutions with that one evaluation's
+environment. Layout and reflection queries therefore see the declaration an
+annotation would name, not the spelling: `(type other.Point)` through an import
+alias reaches the layout of its defining module's `Point` (#8112).
+
 
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own

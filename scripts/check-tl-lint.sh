@@ -181,7 +181,7 @@ for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
         case "$lint_source" in src/*) src_rules=1 ;; esac
     done < "$lint_chunk"
     if [ "$src_rules" -eq 1 ]; then
-        set -- --deprecated-string-concat --stdlib-root "$ROOT/stdlib" "$@"
+        set -- --deprecated-string-concat --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
         src_concat_chunk_index=$((src_concat_chunk_index + 1))
     fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then

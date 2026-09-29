@@ -4,9 +4,11 @@
 ;# `(channel i64)` for copyable scalar ownership transfer,
 ;# `ChannelI64PairChannel` for a move-based two-field aggregate channel,
 ;# `ChannelString` for atomic arena-owned text messages, and `(mutex i64)` for
-;# shared scalar mutation through a lexical cleanup guard. Handles are small
-;# copyable values; shared state lives in runtime-owned OS memory and is
-;# serialized with semaphore-backed synchronization.
+;# shared scalar mutation through a lexical cleanup guard. Channel handles are
+;# small copyable values; a mutex handle is a move-only checked registry
+;# authority (`stdlib.concurrency_registry`) that `share` duplicates. Shared
+;# state lives in runtime-owned OS memory and is serialized with
+;# semaphore-backed synchronization.
 ;#
 ;# `ChannelString` accepts heap-backed messages only when their storage is owned
 ;# by a spanning atomic arena. `(mutex i64)` makes the protected scalar race-free
@@ -17,10 +19,13 @@
 ;# discharge those effects only for their own live runtime-owned cells:
 ;# i64 slots are eight-byte aligned, semaphore release/acquire publishes ring
 ;# entries, and close succeeds only under each type's live-user protocol.
-;# Public record construction is not a capability check; callers that forge
-;# typed records are outside this proof and need checked capabilities.
-;# The direct `SyncI64Channel`/`SyncI64Mutex` operations are raw-record
-;# adapters; generated `(channel i64)`/`(mutex i64)` own the safe i64 surface.
+;# Public channel record construction is not a capability check; callers that
+;# forge channel records are outside this proof and need checked capabilities.
+;# A mutex handle or guard constructed in safe code is harmless: every mutex
+;# operation validates its registry authority, and guard access and cleanup act
+;# only for the registered holder.
+;# The direct `SyncI64Channel` operations are raw-record adapters; generated
+;# `(channel i64)`/`(mutex i64)` own the safe i64 surface.
 ;# Pair and String channels remain handwritten safe typed APIs until #7718
 ;# supplies sealed checked capabilities for every channel family.
 ;#
@@ -40,6 +45,7 @@
 ;#         true)]))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.concurrency_registry as registry)
 (import stdlib.thread)
 
 ;: Emit a generated bounded channel module for copyable scalar messages.
@@ -175,11 +181,13 @@
 
 ;: Emit a generated mutex module for protected scalar values.
 ;:
-;: The first generated surface supports `i64` and wraps the three-field
-;: `SyncI64Mutex` runtime handle plus its close-safe control protocol.
-;: Raw load/store and address/handle projections are unsafe. Guard access
-;: assumes `lock` retained a live user and acquired the semaphore; close
-;: uses the control-cell counter to avoid freeing an active value cell.
+;: The `i64` surface is a checked resource: a `Mutex` owns one issued registry
+;: authority, `share` issues another for the same mutex, and every operation
+;: validates its handle before touching the cell or semaphore, so a forged,
+;: stale or closed handle fails closed. `lock` returns a `Guard` whose single
+;: grant token is registered as the holder; guard access and cleanup act only
+;: for the current holder, so a guard constructed in safe code cannot unlock or
+;: read anything. Raw word transfer (`store-raw!`/`load-raw`) is unsafe.
 (defmacro (mutex [T : type]) : Module
   (let
     [module-name : comptime.Expr
@@ -191,168 +199,91 @@
         `(begin
           (module ,module-name)
           (import stdlib.sync as sync)
+          (import stdlib.concurrency_registry as registry)
           (defstruct Mutex
-            (value-addr i64)
-            (mutex-handle i64)
-            (control-addr i64))
-          (unsafe
-            (define (unlock-handle [handle : i64]) : unit
-              (unsafe
-                (sync.i64-mutex-unlock-handle handle))))
-          (unsafe
-            (define (untrack-user [control-addr : i64]) : unit
-              (unsafe
-                (sync.i64-mutex-untrack-user control-addr))))
+            (:cleanup release)
+            (authority registry.ConcurrencyAuthority (:owned)))
+          (define (unlock-grant [grant : (Box i64)]) : unit
+            (sync.i64-mutex-unlock-grant grant))
           (defstruct Guard
             (:cleanup unlock)
-            (control-addr i64 (:cleanup untrack-user))
-            (mutex-handle i64 (:cleanup unlock-handle))
-            (value-addr i64))
+            (grant (Box i64) (:cleanup unlock-grant)))
           (defenum CreateResult
-            (CreateOk Mutex)
+            (:cleanup cleanup-create-result)
+            (CreateOk Mutex (:owned))
             (CreateErr i64))
+          (defenum ShareResult
+            (:cleanup cleanup-share-result)
+            (Shared Mutex (:owned))
+            (ShareErr))
           (define (raw-field-count) : i64
             sync.i64-mutex-raw-field-count)
-          (define (empty-raw) : sync.SyncI64Mutex
-            (sync.SyncI64Mutex 0 0 0))
           (define (empty) : Mutex
-            (Mutex 0 0 0))
-          (unsafe
-            (define (to-raw [mutex : Mutex]) : sync.SyncI64Mutex
-              (sync.SyncI64Mutex
-                mutex.value-addr
-                mutex.mutex-handle
-                mutex.control-addr)))
-          (unsafe
-            (define (from-raw [raw : sync.SyncI64Mutex]) : Mutex
-              (Mutex raw.value-addr raw.mutex-handle raw.control-addr)))
+            (Mutex (registry.ConcurrencyAuthority (box 0))))
           (define (create [initial : i64]) : CreateResult
-            (let
-              [raw : sync.SyncI64Mutex
-                (unsafe
-                  (sync.i64-mutex-create-initial-or initial (empty-raw)))]
-              (if (= raw.mutex-handle 0)
-                (CreateErr 1)
-                (CreateOk
-                  (unsafe
-                    (from-raw raw))))))
+            (match (unsafe
+              (sync.i64-mutex-register initial))
+              [(registry.ConcurrencyShareErr) (CreateErr 1)]
+              [(registry.ConcurrencyShared authority)
+                (CreateOk (Mutex authority))]))
           (define (create-initial-or [initial : i64] [fallback : Mutex]) : Mutex
-            (unsafe
-              (from-raw
-                (unsafe
-                  (sync.i64-mutex-create-initial-or
-                    initial
-                    (unsafe
-                      (to-raw fallback)))))))
+            (match (unsafe
+              (sync.i64-mutex-register initial))
+              [(registry.ConcurrencyShareErr) fallback]
+              [(registry.ConcurrencyShared authority)
+                (begin
+                  (release fallback)
+                  (Mutex authority))]))
           (define (create-initial-ok? [initial : i64]) : bool
             (match (create initial)
               [(CreateErr _) false]
-              [(CreateOk mutex)
-                (begin
-                  (close mutex)
-                  true)]))
-          (define (lock [mutex : Mutex]) : Guard
-            (let
-              [control-addr : i64 mutex.control-addr]
-              [mutex-handle : i64 mutex.mutex-handle]
-              [value-addr : i64 mutex.value-addr]
-              (if (unsafe
-                (sync.i64-mutex-closed? control-addr))
-                (sync.abort 134)
-                (let
-                  [previous-users : i64
-                    (unsafe
-                      (sync.i64-mutex-track-user control-addr))]
-                  (if (< previous-users 0)
-                    (begin
-                      (unsafe
-                        (sync.i64-mutex-untrack-user control-addr))
-                      (lock mutex))
-                    (if (unsafe
-                      (sync.semaphore-wait mutex-handle))
-                      (Guard control-addr mutex-handle value-addr)
-                      (unsafe
-                        (sync.i64-mutex-lock-abort control-addr))))))))
-          (unsafe
-            (define (guard-control-addr [guard : (& guard Guard)]) : i64
-              guard.control-addr))
-          (unsafe
-            (define (guard-mutex-handle [guard : (& guard Guard)]) : i64
-              guard.mutex-handle))
-          (unsafe
-            (define (guard-value-addr [guard : (& guard Guard)]) : i64
-              guard.value-addr))
+              [(CreateOk mutex) (close (& mutex))]))
+          (define (share [mutex : (& mutex Mutex)]) : ShareResult
+            (match (registry.concurrency-share
+              (& mutex.authority)
+              registry.concurrency-family-mutex-i64)
+              [(registry.ConcurrencyShareErr) (ShareErr)]
+              [(registry.ConcurrencyShared authority)
+                (Shared (Mutex authority))]))
+          (define (lock [mutex : (& mutex Mutex)]) : Guard
+            (Guard
+              (unsafe
+                (sync.i64-mutex-lock-grant (& mutex.authority)))))
           (define (get [guard : (& guard Guard)]) : i64
-            (unsafe
-              (sync.read-i64 guard.value-addr 0)))
+            (sync.i64-mutex-guard-apply (& guard.grant) 0 0))
           (define (,set-name [guard : (& guard Guard)] [value : i64]) : unit
-            (unsafe
-              (sync.write-i64! guard.value-addr 0 value)))
+            (let
+              [_stored : i64
+                (sync.i64-mutex-guard-apply (& guard.grant) 1 value)]
+              unit))
           (define (add! [guard : (& guard Guard)] [delta : i64]) : i64
-            (let
-              [next : i64 (+ (get guard) delta)]
-              (begin
-                (unsafe
-                  (sync.write-i64! guard.value-addr 0 next))
-                next)))
-          (define (close [mutex : Mutex]) : bool
-            (let
-              [control-addr : i64 mutex.control-addr]
-              (if (unsafe
-                (sync.i64-mutex-closed? control-addr))
-                false
-                (if (=
-                  (unsafe
-                    (sync.atomic-i64-fetch-add!
-                      control-addr
-                      sync.i64-mutex-control-users-slot
-                      sync.i64-mutex-users-closing-delta))
-                  0)
-                  (let
-                    [ok : bool true]
-                    (begin
-                      (unsafe
-                        (sync.atomic-i64-store!
-                          control-addr
-                          sync.i64-mutex-control-closed-slot
-                          1))
-                      (set!
-                        ok
-                        (if (unsafe
-                          (sync.semaphore-close mutex.mutex-handle))
-                          ok
-                          false))
-                      (set!
-                        ok
-                        (if (unsafe
-                          (sync.runtime-free mutex.value-addr 8))
-                          ok
-                          false))
-                      ok))
-                  (begin
-                    (unsafe
-                      (sync.atomic-i64-fetch-add!
-                        control-addr
-                        sync.i64-mutex-control-users-slot
-                        sync.i64-mutex-users-closing-undo))
-                    false)))))
+            (sync.i64-mutex-guard-apply (& guard.grant) 2 delta))
+          (define (close [mutex : (& mutex Mutex)]) : bool
+            (sync.i64-mutex-close (& mutex.authority)))
           (unsafe
             (define (store-raw!
-              [mutex : Mutex]
+              [mutex : (& mutex Mutex)]
               [dst : (&mut dst (__tl_dyn-array i64))]
-              [offset : i64]) : unit
-              (begin
-                (set! (array-ref dst offset) mutex.value-addr)
-                (set! (array-ref dst (+ offset 1)) mutex.mutex-handle)
-                (set! (array-ref dst (+ offset 2)) mutex.control-addr))))
+              [offset : i64]) : bool
+              (match (unsafe
+                (registry.concurrency-share-token
+                  (& mutex.authority)
+                  registry.concurrency-family-mutex-i64))
+                [(registry.ConcurrencyTokenErr) false]
+                [(registry.ConcurrencyToken token)
+                  (begin
+                    (set!
+                      (array-ref dst offset)
+                      (registry.concurrency-token-address (& token)))
+                    true)])))
           (unsafe
             (define (load-raw
               [src : (& src (__tl_dyn-array i64))]
               [offset : i64]) : Mutex
               (Mutex
-                (array-ref src offset)
-                (array-ref src (+ offset 1))
-                (array-ref src (+ offset 2))))))]
+                (registry.ConcurrencyAuthority
+                  (unsafe
+                    (sync.i64-mutex-token-at (array-ref src offset))))))))]
       [_
         `(begin
           (module ,module-name))])))
@@ -373,35 +304,32 @@
 (define channel-string-raw-field-count : i64
   7)
 
-;: Number of raw `i64` fields needed to serialize a `SyncI64Mutex` handle.
+;: Raw words in a transferred `(mutex i64)` handle: its issued token's Box
+;: address (see the generated `store-raw!`/`load-raw`).
 (define i64-mutex-raw-field-count : i64
-  3)
-
-;: Runtime-owned bytes for the close-state/live-user control cell.
-(define i64-mutex-control-byte-count : i64
-  16)
-
-;: Control slot set to nonzero after a mutex has been permanently closed.
-(define i64-mutex-control-closed-slot : i64
-  0)
-
-;: Control slot tracking live lock attempts and cleanup-owned guards.
-(define i64-mutex-control-users-slot : i64
   1)
 
-;: Negative live-user delta used to claim close without a compare-exchange.
-(define i64-mutex-users-closing-delta : i64
-  -1073741824)
+;: Registry fields of one `i64` mutex: its runtime-owned cell and semaphore.
+(define i64-mutex-registry-field-count : i64
+  2)
 
-;: Positive inverse of `i64-mutex-users-closing-delta`.
-(define i64-mutex-users-closing-undo : i64
-  1073741824)
+;: Bytes of an `i64` mutex cell: the protected value, the holder word and the
+;: grant address.
+(define i64-mutex-cell-byte-count : i64
+  24)
 
-;: Runtime-owned mutex-protected `i64` slot.
-(defstruct SyncI64Mutex
-  (value-addr i64)
-  (mutex-handle i64)
-  (control-addr i64))
+;: Cell slot holding the protected value.
+(define i64-mutex-cell-value-slot : i64
+  0)
+
+;: Cell slot holding the grant address while a guard holds the lock, or 0.
+(define i64-mutex-cell-holder-slot : i64
+  1)
+
+;: Cell slot holding the Box address of the mutex's grant: the registry
+;: authority issued at create that every guard of this mutex carries.
+(define i64-mutex-cell-grant-slot : i64
+  2)
 
 ;: Runtime-owned bounded channel handle for `i64` messages.
 (defstruct SyncI64Channel
@@ -452,11 +380,6 @@
 (defenum ChannelStringCreateResult
   (ChannelStringCreateOk ChannelString)
   (ChannelStringCreateErr i64))
-
-;: Result returned by `i64-mutex-create`.
-(defenum SyncI64MutexCreateResult
-  (SyncI64MutexCreateOk SyncI64Mutex)
-  (SyncI64MutexCreateErr i64))
 
 ;: Result returned by `i64-channel-send`.
 (defenum SyncI64ChannelSendResult
@@ -555,14 +478,6 @@
 ;: Construct a failed `channel-string-create` result.
 (define (channel-string-create-err-result [_message : String]) : ChannelStringCreateResult
   (ChannelStringCreateErr 1))
-
-;: Construct a successful `i64-mutex-create` result.
-(define (i64-mutex-create-ok-result [value : SyncI64Mutex]) : SyncI64MutexCreateResult
-  (SyncI64MutexCreateOk value))
-
-;: Construct a failed `i64-mutex-create` result.
-(define (i64-mutex-create-err-result [_message : String]) : SyncI64MutexCreateResult
-  (SyncI64MutexCreateErr 1))
 
 ;: Windows kernel32 `VirtualAlloc` for runtime-owned channel storage.
 (cfg
@@ -814,229 +729,292 @@
         (unsafe
           (semaphore handle))))))
 
-;: Unlock a mutex guard field during cleanup.
+;: Create one registered `i64` mutex whose cell holds `initial`, and issue its
+;: grant: a second registry authority, unowned and revoked only by close, whose
+;: Box address every guard of this mutex carries. A failure leaves no cell,
+;: semaphore, registry row or authority behind.
 (unsafe
-  (define (i64-mutex-unlock-handle [handle : i64]) : unit
-    (begin
-      (unsafe
-        (semaphore-post handle))
-      unit)))
-
-;: Stop tracking one live lock attempt or guard during cleanup.
-(unsafe
-  (define (i64-mutex-untrack-user [control-addr : i64]) : unit
-    (begin
-      (unsafe
-        (atomic-i64-fetch-add! control-addr i64-mutex-control-users-slot -1))
-      unit)))
-
-;: Track one live lock attempt before touching the semaphore/value fields.
-(unsafe
-  (define (i64-mutex-track-user [control-addr : i64]) : i64
-    (unsafe
-      (atomic-i64-fetch-add! control-addr i64-mutex-control-users-slot 1))))
-
-;: Return true once `mutex` has permanently closed its semaphore/value fields.
-(unsafe
-  (define (i64-mutex-closed? [control-addr : i64]) : bool
-    (not
-      (=
-        (unsafe
-          (atomic-i64-load control-addr i64-mutex-control-closed-slot))
-        0))))
-
-;: Abort a failed lock attempt after removing its live-user claim.
-(unsafe
-  (define (i64-mutex-lock-abort [control-addr : i64]) : never
-    (begin
-      (unsafe
-        (i64-mutex-untrack-user control-addr))
-      (abort 134))))
-
-;: Lexical guard returned by `i64-mutex-lock`.
-(defstruct SyncI64MutexGuard
-  (:cleanup i64-mutex-unlock)
-  ; Field cleanups run in reverse declaration order, so post before untrack.
-  (control-addr i64 (:cleanup i64-mutex-untrack-user))
-  (mutex-handle i64 (:cleanup i64-mutex-unlock-handle))
-  (value-addr i64))
-
-;: Finish mutex creation after storage allocation.
-(unsafe
-  (define (i64-mutex-create-semaphore [value-addr : i64] [control-addr : i64]) : SyncI64MutexCreateResult
+  (define (i64-mutex-register [initial : i64]) : registry.ConcurrencyShareResult
     (let
-      [mutex-handle : i64
+      [cell : i64
         (unsafe
-          (thread.semaphore-create-handle-or 1 -1))]
-      (if (= mutex-handle -1)
+          (runtime-alloc i64-mutex-cell-byte-count))]
+      (if (= cell 0)
+        (registry.ConcurrencyShareErr)
         (begin
           (unsafe
-            (runtime-free value-addr 8))
+            (write-i64! cell i64-mutex-cell-value-slot initial))
           (unsafe
-            (runtime-free control-addr i64-mutex-control-byte-count))
-          (i64-mutex-create-err-result "sync: semaphore create failed"))
-        (i64-mutex-create-ok-result
-          (SyncI64Mutex value-addr mutex-handle control-addr))))))
-
-;: Create a mutex-protected `i64` initialized to `initial`.
-(unsafe
-  (define (i64-mutex-create [initial : i64]) : SyncI64MutexCreateResult
-    (let
-      [value-addr : i64
-        (unsafe
-          (runtime-alloc 8))]
-      (if (= value-addr 0)
-        (i64-mutex-create-err-result "sync: mutex allocation failed")
-        (let
-          [control-addr : i64
-            (unsafe
-              (runtime-alloc i64-mutex-control-byte-count))]
-          (if (= control-addr 0)
-            (begin
-              (unsafe
-                (runtime-free value-addr 8))
-              (i64-mutex-create-err-result "sync: mutex allocation failed"))
-            (begin
-              (unsafe
-                (write-i64! value-addr 0 initial))
-              (unsafe
-                (write-i64! control-addr i64-mutex-control-closed-slot 0))
-              (unsafe
-                (write-i64! control-addr i64-mutex-control-users-slot 0))
-              (unsafe
-                (i64-mutex-create-semaphore value-addr control-addr)))))))))
-
-;: Lock `mutex`, blocking until the protected value is available.
-(unsafe
-  (define (i64-mutex-lock [mutex : SyncI64Mutex]) : SyncI64MutexGuard
-    (let
-      [control-addr : i64 mutex.control-addr]
-      [mutex-handle : i64 mutex.mutex-handle]
-      [value-addr : i64 mutex.value-addr]
-      (if (unsafe
-        (i64-mutex-closed? control-addr))
-        (abort 134)
-        (let
-          [previous-users : i64
-            (unsafe
-              (i64-mutex-track-user control-addr))]
-          (if (< previous-users 0)
-            (begin
-              (unsafe
-                (i64-mutex-untrack-user control-addr))
-              (unsafe
-                (i64-mutex-lock mutex)))
-            (if (unsafe
-              (semaphore-wait mutex-handle))
-              (SyncI64MutexGuard control-addr mutex-handle value-addr)
-              (unsafe
-                (i64-mutex-lock-abort control-addr)))))))))
-
-;: Return the control cell address from a mutex guard.
-(unsafe
-  (define (i64-mutex-guard-control-addr [guard : (& guard SyncI64MutexGuard)]) : i64
-    guard.control-addr))
-
-;: Return the semaphore handle from a mutex guard.
-(unsafe
-  (define (i64-mutex-guard-mutex-handle [guard : (& guard SyncI64MutexGuard)]) : i64
-    guard.mutex-handle))
-
-;: Return the protected value address from a mutex guard.
-(unsafe
-  (define (i64-mutex-guard-value-addr [guard : (& guard SyncI64MutexGuard)]) : i64
-    guard.value-addr))
-
-;: Read the protected value while holding `guard`.
-(unsafe
-  (define (i64-mutex-get [guard : (& guard SyncI64MutexGuard)]) : i64
-    (unsafe
-      (read-i64 guard.value-addr 0))))
-
-;: Write the protected value while holding `guard`.
-(unsafe
-  (define (i64-mutex-set! [guard : (& guard SyncI64MutexGuard)] [value : i64]) : unit
-    (unsafe
-      (write-i64! guard.value-addr 0 value))))
-
-;: Add `delta` to the protected value and return the new value.
-(unsafe
-  (define (i64-mutex-add! [guard : (& guard SyncI64MutexGuard)] [delta : i64]) : i64
-    (let
-      [next : i64
-        (+
+            (write-i64! cell i64-mutex-cell-holder-slot 0))
           (unsafe
-            (i64-mutex-get guard))
-          delta)]
-      (begin
-        (unsafe
-          (i64-mutex-set! guard next))
-        next))))
-
-;: Close mutex resources if no users or guards are live.
-;:
-;: The small control cell is retained so copied handles can fail closed instead
-;: of touching freed semaphore/value storage after a successful close.
-(unsafe
-  (define (i64-mutex-close [mutex : SyncI64Mutex]) : bool
-    (let
-      [control-addr : i64 mutex.control-addr]
-      (if (unsafe
-        (i64-mutex-closed? control-addr))
-        false
-        (if (=
-          (unsafe
-            (atomic-i64-fetch-add!
-              control-addr
-              i64-mutex-control-users-slot
-              i64-mutex-users-closing-delta))
-          0)
+            (write-i64! cell i64-mutex-cell-grant-slot 0))
           (let
-            [ok : bool true]
+            [handle : i64
+              (unsafe
+                (thread.semaphore-create-handle-or 1 -1))]
+            (if (= handle -1)
+              (let
+                [_freed : bool
+                  (unsafe
+                    (runtime-free cell i64-mutex-cell-byte-count))]
+                (registry.ConcurrencyShareErr))
+              (match (unsafe
+                (registry.concurrency-register
+                  registry.concurrency-family-mutex-i64
+                  i64-mutex-registry-field-count
+                  cell
+                  handle
+                  0
+                  0
+                  0
+                  0
+                  0))
+                [(registry.ConcurrencyShareErr)
+                  (let
+                    [_closed : bool
+                      (unsafe
+                        (semaphore-close handle))]
+                    [_freed : bool
+                      (unsafe
+                        (runtime-free cell i64-mutex-cell-byte-count))]
+                    (registry.ConcurrencyShareErr))]
+                [(registry.ConcurrencyShared authority)
+                  (match (unsafe
+                    (registry.concurrency-share-token
+                      (& authority)
+                      registry.concurrency-family-mutex-i64))
+                    [(registry.ConcurrencyTokenErr)
+                      (let
+                        [_closed : bool (i64-mutex-close (& authority))]
+                        (registry.ConcurrencyShareErr))]
+                    [(registry.ConcurrencyToken grant)
+                      (begin
+                        (unsafe
+                          (write-i64!
+                            cell
+                            i64-mutex-cell-grant-slot
+                            (registry.concurrency-token-address (& grant))))
+                        (registry.ConcurrencyShared authority))])]))))))))
+
+;: Lock the mutex `authority` names and return its grant for the guard. The
+;: lease taken first lasts through the wait and the guard's lifetime, so close
+;: fails until `i64-mutex-unlock-grant` releases it. Once the semaphore is
+;: held the grant address becomes the holder, and the guard receives the one
+;: live Box at that address: the semaphore admits one holder, a Box is
+;: move-only, and cleanup consumes it, so no other copy exists. A forged,
+;: stale or closed authority aborts before the cell or the semaphore is touched.
+(unsafe
+  (define (i64-mutex-lock-grant
+    [authority : (& authority registry.ConcurrencyAuthority)]) : (Box i64)
+    (let
+      [lease : registry.ConcurrencyLease
+        (unsafe
+          (registry.concurrency-acquire
+            authority
+            registry.concurrency-family-mutex-i64
+            i64-mutex-registry-field-count))]
+      (if (not lease.ok)
+        (abort 134)
+        (if (not
+          (unsafe
+            (semaphore-wait lease.field1)))
+          (let
+            [_released : bool
+              (unsafe
+                (registry.concurrency-release lease))]
+            (abort 134))
+          (let
+            [grant : i64
+              (unsafe
+                (read-i64 lease.field0 i64-mutex-cell-grant-slot))]
             (begin
               (unsafe
-                (atomic-i64-store! control-addr i64-mutex-control-closed-slot 1))
-              (set!
-                ok
-                (if (unsafe
-                  (semaphore-close mutex.mutex-handle))
-                  ok
-                  false))
-              (set!
-                ok
-                (if (unsafe
-                  (runtime-free mutex.value-addr 8))
-                  ok
-                  false))
-              ok))
+                (atomic-i64-store!
+                  lease.field0
+                  i64-mutex-cell-holder-slot
+                  grant))
+              (unsafe
+                (i64-mutex-token-at grant)))))))))
+
+;: While the caller holds the registry lock, the cell of the mutex whose
+;: current holder is the grant identity (`token`, `address`), or 0. Close
+;: detaches rows under the same lock, so the cell stays live until the caller
+;: releases it; no lease is needed.
+(unsafe
+  (define (i64-mutex-holder-cell-locked [token : i64] [address : i64]) : i64
+    (let
+      [slot : i64
+        (unsafe
+          (registry.concurrency-locked-resource
+            token
+            address
+            registry.concurrency-family-mutex-i64
+            i64-mutex-registry-field-count))]
+      (if (< slot 0)
+        0
+        (let
+          [cell : i64
+            (unsafe
+              (registry.concurrency-locked-field slot 0))]
+          (if (=
+            (unsafe
+              (atomic-i64-load cell i64-mutex-cell-holder-slot))
+            address)
+            cell
+            0))))))
+
+;: Guard access through a borrowed grant: read the protected value (mode 0),
+;: store `operand` (mode 1) or add it (mode 2), and return the resulting value.
+;: The grant must be the current holder, checked in the same registry critical
+;: section as the access; any other grant aborts before the value is touched.
+(define (i64-mutex-guard-apply
+  [grant : (& grant (Box i64))]
+  [mode : i64]
+  [operand : i64]) : i64
+  (let
+    [address : i64 (registry.concurrency-token-address grant)]
+    [token : i64
+      (unsafe
+        (read-i64 address 0))]
+    (begin
+      (unsafe
+        (registry.concurrency-lock!))
+      (let
+        [cell : i64
+          (unsafe
+            (i64-mutex-holder-cell-locked token address))]
+        (if (= cell 0)
           (begin
             (unsafe
-              (atomic-i64-fetch-add!
-                control-addr
-                i64-mutex-control-users-slot
-                i64-mutex-users-closing-undo))
-            false))))))
+              (registry.concurrency-unlock!))
+            (abort 134))
+          (let
+            [value : i64
+              (cond
+                [(= mode 1) operand]
+                [(= mode 2)
+                  (+
+                    (unsafe
+                      (read-i64 cell i64-mutex-cell-value-slot))
+                    operand)]
+                [else
+                  (unsafe
+                    (read-i64 cell i64-mutex-cell-value-slot))])]
+            (begin
+              (if (= mode 0)
+                unit
+                (unsafe
+                  (write-i64! cell i64-mutex-cell-value-slot value)))
+              (unsafe
+                (registry.concurrency-unlock!))
+              value)))))))
 
-;: Store a mutex handle into a raw `i64` array at `offset`.
-(unsafe
-  (define (i64-mutex-store-raw!
-    [mutex : SyncI64Mutex]
-    [dst : (&mut dst (__tl_dyn-array i64))]
-    [offset : i64]) : unit
+;: Guard cleanup: when `grant` is the current holder, clear the holder under
+;: the registry lock, then post the semaphore and release the lease `lock`
+;: took; any other Box touches nothing. The grant authority itself stays
+;: registered until close. Exactly one live guard holds the grant, so this
+;: unlocks exactly once.
+(define (i64-mutex-unlock-grant [grant : (Box i64)]) : unit
+  (let
+    [identity : registry.ConcurrencyBoxIdentity
+      (registry.concurrency-owned-box-identity grant)]
     (begin
-      (set! (array-ref dst offset) mutex.value-addr)
-      (set! (array-ref dst (+ offset 1)) mutex.mutex-handle)
-      (set! (array-ref dst (+ offset 2)) mutex.control-addr))))
+      (unsafe
+        (registry.concurrency-lock!))
+      (let
+        [slot : i64
+          (unsafe
+            (registry.concurrency-locked-resource
+              identity.token
+              identity.address
+              registry.concurrency-family-mutex-i64
+              i64-mutex-registry-field-count))]
+        [cell : i64
+          (if (< slot 0)
+            0
+            (let
+              [candidate : i64
+                (unsafe
+                  (registry.concurrency-locked-field slot 0))]
+              (if (=
+                (unsafe
+                  (atomic-i64-load candidate i64-mutex-cell-holder-slot))
+                identity.address)
+                candidate
+                0)))]
+        [handle : i64
+          (if (= cell 0)
+            0
+            (unsafe
+              (registry.concurrency-locked-field slot 1)))]
+        [generation : i64
+          (if (= cell 0)
+            0
+            (unsafe
+              (registry.concurrency-locked-generation slot)))]
+        (begin
+          (if (= cell 0)
+            unit
+            (unsafe
+              (atomic-i64-store! cell i64-mutex-cell-holder-slot 0)))
+          (unsafe
+            (registry.concurrency-unlock!))
+          (if (= cell 0)
+            unit
+            (let
+              [_posted : bool
+                (unsafe
+                  (semaphore-post handle))]
+              [_released : bool
+                (unsafe
+                  (registry.concurrency-release
+                    (registry.ConcurrencyLease
+                      true
+                      slot
+                      generation
+                      registry.concurrency-family-mutex-i64
+                      i64-mutex-registry-field-count
+                      0
+                      0
+                      0
+                      0
+                      0
+                      0
+                      0
+                      "")))]
+              unit)))))))
 
-;: Rebuild a mutex handle from a raw `i64` array at `offset`.
+;: Close the mutex `authority` names: detach it from the registry, which
+;: revokes every handle, then close its semaphore and free its cell. Fails
+;: while any lock attempt or guard holds a lease, or for a forged, stale or
+;: already-closed handle.
+(define (i64-mutex-close
+  [authority : (& authority registry.ConcurrencyAuthority)]) : bool
+  (let
+    [claim : registry.ConcurrencyClaim
+      (unsafe
+        (registry.concurrency-close
+          authority
+          registry.concurrency-family-mutex-i64
+          i64-mutex-registry-field-count))]
+    (if claim.ok
+      (let
+        [closed : bool
+          (unsafe
+            (semaphore-close claim.field1))]
+        [freed : bool
+          (unsafe
+            (runtime-free claim.field0 i64-mutex-cell-byte-count))]
+        (and closed freed))
+      false)))
+
+;: Rebuild the token Box stored at `address` by the generated `store-raw!`.
 (unsafe
-  (define (i64-mutex-load-raw
-    [src : (& src (__tl_dyn-array i64))]
-    [offset : i64]) : SyncI64Mutex
-    (SyncI64Mutex
-      (array-ref src offset)
-      (array-ref src (+ offset 1))
-      (array-ref src (+ offset 2)))))
+  (define (i64-mutex-token-at [address : i64]) : (Box i64)
+    (let
+      [word : i64 address]
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of word) : (Ptr (Box i64))))))))
 
 ;: Return the next ring index for a channel with `capacity`.
 (define (i64-channel-next-index [capacity : i64] [index : i64]) : i64
@@ -2283,62 +2261,6 @@
               value
               fallback)))))))
 
-;: Return true when creating a mutex with `initial` succeeds.
-(define (i64-mutex-create-initial-ok? [initial : i64]) : bool
-  (let
-    [mutex : SyncI64Mutex
-      (unsafe
-        (i64-mutex-create-initial-or initial (SyncI64Mutex 0 0 0)))]
-    [ok : bool (not (= mutex.mutex-handle 0))]
-    (begin
-      (if ok
-        (begin
-          (unsafe
-            (i64-mutex-close mutex))
-          unit)
-        unit)
-      ok)))
-
-;: Create a mutex with `initial`, or return `fallback` on error.
-(unsafe
-  (define (i64-mutex-create-initial-or
-    [initial : i64]
-    [fallback : SyncI64Mutex]) : SyncI64Mutex
-    (let
-      [value-addr : i64
-        (unsafe
-          (runtime-alloc 8))]
-      (if (= value-addr 0)
-        fallback
-        (let
-          [control-addr : i64
-            (unsafe
-              (runtime-alloc i64-mutex-control-byte-count))]
-          (if (= control-addr 0)
-            (begin
-              (unsafe
-                (runtime-free value-addr 8))
-              fallback)
-            (let
-              [mutex-handle : i64
-                (unsafe
-                  (thread.semaphore-create-handle-or 1 -1))]
-              (if (= mutex-handle -1)
-                (begin
-                  (unsafe
-                    (runtime-free value-addr 8))
-                  (unsafe
-                    (runtime-free control-addr i64-mutex-control-byte-count))
-                  fallback)
-                (begin
-                  (unsafe
-                    (write-i64! value-addr 0 initial))
-                  (unsafe
-                    (write-i64! control-addr i64-mutex-control-closed-slot 0))
-                  (unsafe
-                    (write-i64! control-addr i64-mutex-control-users-slot 0))
-                  (SyncI64Mutex value-addr mutex-handle control-addr))))))))))
-
 ;: Inline test failure helper.
 (define (test-fail) : unit
   (begin
@@ -2357,7 +2279,8 @@
     (test-assert (= i64-channel-raw-field-count 7))
     (test-assert (= channel-i64-pair-raw-field-count 7))
     (test-assert (= channel-string-raw-field-count 7))
-    (test-assert (= i64-mutex-raw-field-count 3))
+    (test-assert (= i64-mutex-raw-field-count 1))
+    (test-assert (= i64-mutex-registry-field-count 2))
     (test-assert (not (i64-channel-create-capacity-ok? 0)))
     (test-assert
       (not (i64-channel-create-capacity-ok? (+ channel-max-capacity 1))))

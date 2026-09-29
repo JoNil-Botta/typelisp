@@ -324,6 +324,8 @@ stdlib/tests/profile_concurrent_api.tl|42|-|-|-
 stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/result_api.tl|42|-|-|-
 stdlib/tests/sync_api.tl|42|-|-
+stdlib/tests/sync_mutex_authority.tl|42|-|-
+stdlib/tests/sync_mutex_exhaustion.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message: expected 2, found 1
 stdlib/tests/vector_api.tl|42|-|-|-

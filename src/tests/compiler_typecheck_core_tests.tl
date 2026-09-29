@@ -1508,6 +1508,43 @@
       unit
       (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
 
+;; The storage of the parameter list eliding a `count`-parameter signature, or
+;; -1 when elision fails or changes the count.
+(define (tc-elided-signature-param-capacity [count : i64]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
+    [params : ast.AstParamList (ast.ast-param-list-with-capacity 0)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast.ast-param-list-push
+            (&mut params)
+            (ast.ast-param-id (ci.intern "elided") (ast.AstType.I64) false))
+          (set! index (+ index 1))))
+      (match (tc_core.tc-elide-function-signature
+        (ast.ast-node-pool-context-type-segment-bases pools)
+        params
+        (ast.AstType.I64))
+        [(tc_core.ResultTcElidedSignature.Ok signature)
+          (if (= (ast.ast-param-list-len (& signature.params)) count)
+            (array-length signature.params.slots)
+            -1)]
+        [(tc_core.ResultTcElidedSignature.Err _) -1]))))
+
+;; Elision reserves the elided list at its final length, so it leaves no
+;; outgrown storage behind (#7943).
+(test
+  tc-elided-signature-params-reserve-exactly
+  (if (and
+    (= (tc-elided-signature-param-capacity 0) 0)
+    (= (tc-elided-signature-param-capacity 1) 1)
+    (= (tc-elided-signature-param-capacity 3) 3)
+    (= (tc-elided-signature-param-capacity 9) 9))
+    unit
+    (io.panic
+      "typecheck: an elided parameter list should reserve exactly its length")))
+
 (define (tc-resolve-type-list-with-pools
   [ctx : tc_core.TcContext]
   [pools : ast.AstNodePoolContext]

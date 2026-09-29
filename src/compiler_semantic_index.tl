@@ -4335,12 +4335,11 @@
     [_ (tc.tc-borrow-check-pattern-bound-names ctx scrutinee-ty pattern)]))
 
 (define (compiler-semantic-match-body-source-expr-id [body : i64]) : i64
-  (match (ast.ast-node-get body)
-    [(ast.AstExpr.Spanned inner _)
-      (match (ast.ast-node-get inner)
-        [(ast.AstExpr.Spanned _ _) inner]
-        [_ body])]
-    [_ body]))
+  (let
+    [inner : i64 (ast.ast-expr-span-wrapper-inner body)]
+    (if (and (>= inner 0) (>= (ast.ast-expr-span-wrapper-inner inner) 0))
+      inner
+      body)))
 
 (define (compiler-semantic-walk-match-arms!
   [state : CompilerSemanticWalkState]
@@ -4881,192 +4880,204 @@
   [env : tc.TcTypeEnv]
   [node-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
-  ;; The arms below resolve names, scopes and fields; every other variant's
-  ;; children are walked through the AstExpr child schema.
-  (match (ast.ast-node-get node-id)
-    [(ast.AstExpr.Spanned inner-id span)
+  ;; A source-span wrapper hands its span to the wrapped node. The arms below
+  ;; resolve names, scopes and fields; every other variant's children are
+  ;; walked through the AstExpr child schema.
+  (let
+    [spanned : i64 (ast.ast-expr-span-wrapper-inner node-id)]
+    (if (>= spanned 0)
       (compiler-semantic-walk-node-with-span!
         state
         scope
         env
-        inner-id
-        (CompilerSemanticMaybeSpan.Some span))]
-    [(ast.AstExpr.MacroExpansion inner-id _ _)
-      (compiler-semantic-walk-node-with-span!
-        state
-        scope
-        env
-        inner-id
-        maybe-span)]
-    [(ast.AstExpr.Var name)
-      (if (compiler-semantic-record-dotted-local-use!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        name
-        maybe-span
-        CompilerSemanticAccess.Read)
-        unit
-        (compiler-semantic-record-name-use! state scope name maybe-span))]
-    [(ast.AstExpr.Let payload)
-      (match (__tl-box-place payload)
-        [(ast.AstLet.Let bindings body)
-          (compiler-semantic-walk-let! state scope env bindings body maybe-span)])]
-    [(ast.AstExpr.Lambda payload)
-      (match (__tl-box-place payload)
-        [(ast.AstLambda.Lambda params maybe-ret body)
-          (compiler-semantic-walk-lambda!
+        spanned
+        (match (ast.ast-expr-view-span node-id)
+          [(ast.AstMaybeSourceSpan.Some span)
+            (CompilerSemanticMaybeSpan.Some span)]
+          [(ast.AstMaybeSourceSpan.No) maybe-span]))
+      (match (ast.ast-node-get node-id)
+        [(ast.AstExpr.MacroExpansion inner-id _ _)
+          (compiler-semantic-walk-node-with-span!
             state
             scope
             env
-            params
-            maybe-ret
-            body
-            maybe-span)])]
-    [(ast.AstExpr.Set name value)
-      (compiler-semantic-walk-set! state scope env name value maybe-span)]
-    [(ast.AstExpr.Match payload)
-      (match (__tl-box-place payload)
-        [(ast.AstMatch.Match scrutinee arms)
-          (begin
-            (compiler-semantic-walk-node! state scope env scrutinee)
-            (compiler-semantic-walk-match-arms!
-              (owned_view.compiler-owned-shared-view state)
-              scope
-              env
-              (match (tc.tc-expr-id state.ctx env scrutinee)
-                [(tc.ResultTcType.Ok ty) (ast.AstMaybeType.Some ty)]
-                [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
-              arms
-              (compiler-semantic-expr-end-offset
-                (owned_view.compiler-owned-shared-view state)
-                scrutinee
-                (compiler-semantic-maybe-span-start state maybe-span 0))))])]
-    [(ast.AstExpr.Foreach payload)
-      (match (__tl-box-place payload)
-        [(ast.AstForeach.Foreach name index-ty start end body)
-          (compiler-semantic-walk-foreach!
-            state
+            inner-id
+            maybe-span)]
+        [(ast.AstExpr.Var name)
+          (if (compiler-semantic-record-dotted-local-use!
+            (owned_view.compiler-owned-shared-view state)
             scope
             env
             name
-            index-ty
-            start
-            end
-            body
-            maybe-span)])]
-    [(ast.AstExpr.SpmdReduce payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdReduce.Reduce _ index index-ty start end init value)
-          (compiler-semantic-walk-spmd-reduce!
+            maybe-span
+            CompilerSemanticAccess.Read)
+            unit
+            (compiler-semantic-record-name-use! state scope name maybe-span))]
+        [(ast.AstExpr.Let payload)
+          (match (__tl-box-place payload)
+            [(ast.AstLet.Let bindings body)
+              (compiler-semantic-walk-let!
+                state
+                scope
+                env
+                bindings
+                body
+                maybe-span)])]
+        [(ast.AstExpr.Lambda payload)
+          (match (__tl-box-place payload)
+            [(ast.AstLambda.Lambda params maybe-ret body)
+              (compiler-semantic-walk-lambda!
+                state
+                scope
+                env
+                params
+                maybe-ret
+                body
+                maybe-span)])]
+        [(ast.AstExpr.Set name value)
+          (compiler-semantic-walk-set! state scope env name value maybe-span)]
+        [(ast.AstExpr.Match payload)
+          (match (__tl-box-place payload)
+            [(ast.AstMatch.Match scrutinee arms)
+              (begin
+                (compiler-semantic-walk-node! state scope env scrutinee)
+                (compiler-semantic-walk-match-arms!
+                  (owned_view.compiler-owned-shared-view state)
+                  scope
+                  env
+                  (match (tc.tc-expr-id state.ctx env scrutinee)
+                    [(tc.ResultTcType.Ok ty) (ast.AstMaybeType.Some ty)]
+                    [(tc.ResultTcType.Err _) ast.AstMaybeType.No])
+                  arms
+                  (compiler-semantic-expr-end-offset
+                    (owned_view.compiler-owned-shared-view state)
+                    scrutinee
+                    (compiler-semantic-maybe-span-start state maybe-span 0))))])]
+        [(ast.AstExpr.Foreach payload)
+          (match (__tl-box-place payload)
+            [(ast.AstForeach.Foreach name index-ty start end body)
+              (compiler-semantic-walk-foreach!
+                state
+                scope
+                env
+                name
+                index-ty
+                start
+                end
+                body
+                maybe-span)])]
+        [(ast.AstExpr.SpmdReduce payload)
+          (match (__tl-box-place payload)
+            [(ast.AstSpmdReduce.Reduce _ index index-ty start end init value)
+              (compiler-semantic-walk-spmd-reduce!
+                state
+                scope
+                env
+                index
+                index-ty
+                start
+                end
+                init
+                value
+                maybe-span)])]
+        [(ast.AstExpr.SpmdScan payload)
+          (match (__tl-box-place payload)
+            [(ast.AstSpmdScan.Scan
+                _
+                index
+                index-ty
+                start
+                end
+                prefix
+                prefix-ty
+                init
+                value
+                body)
+              (compiler-semantic-walk-spmd-scan!
+                state
+                scope
+                env
+                index
+                index-ty
+                start
+                end
+                prefix
+                prefix-ty
+                init
+                value
+                body
+                maybe-span)])]
+        [(ast.AstExpr.SpmdCompact payload)
+          (match (__tl-box-place payload)
+            [(ast.AstSpmdCompact.Compact
+                index
+                index-ty
+                start
+                end
+                slot
+                slot-ty
+                init
+                keep
+                body)
+              (compiler-semantic-walk-spmd-compact!
+                state
+                scope
+                env
+                index
+                index-ty
+                start
+                end
+                slot
+                slot-ty
+                init
+                keep
+                body
+                maybe-span)])]
+        [(ast.AstExpr.StructGet target field)
+          (begin
+            (compiler-semantic-walk-node! state scope env target)
+            (compiler-semantic-record-struct-field-use!
+              state
+              env
+              target
+              field
+              CompilerSemanticAccess.Read))]
+        [(ast.AstExpr.StructSet target field value)
+          (begin
+            (compiler-semantic-walk-node! state scope env target)
+            (compiler-semantic-record-struct-field-use!
+              (owned_view.compiler-owned-shared-view state)
+              env
+              target
+              field
+              CompilerSemanticAccess.Write)
+            (compiler-semantic-walk-node! state scope env value))]
+        [(ast.AstExpr.WithResource payload)
+          (match (__tl-box-place payload)
+            [(ast.AstWithResource.WithResource bindings body)
+              (compiler-semantic-walk-with-resources!
+                state
+                scope
+                env
+                bindings
+                body
+                maybe-span)])]
+        [(ast.AstExpr.Quote _) unit]
+        [(ast.AstExpr.Quasiquote inner)
+          (compiler-semantic-walk-quasiquote-node! state scope env inner)]
+        [(ast.AstExpr.Replace _ _) unit]
+        [(ast.AstExpr.ForOwnedState _) unit]
+        [(ast.AstExpr.ForOwnedStep _) unit]
+        [_
+          (ast.ast-expr-for-each-child
+            (ast.ast-node-get node-id)
+            compiler-semantic-walk-node!
+            compiler-semantic-walk-type-id!
+            compiler-semantic-walk-child-type!
+            ast.ast-child-unit
             state
             scope
-            env
-            index
-            index-ty
-            start
-            end
-            init
-            value
-            maybe-span)])]
-    [(ast.AstExpr.SpmdScan payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdScan.Scan
-            _
-            index
-            index-ty
-            start
-            end
-            prefix
-            prefix-ty
-            init
-            value
-            body)
-          (compiler-semantic-walk-spmd-scan!
-            state
-            scope
-            env
-            index
-            index-ty
-            start
-            end
-            prefix
-            prefix-ty
-            init
-            value
-            body
-            maybe-span)])]
-    [(ast.AstExpr.SpmdCompact payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdCompact.Compact
-            index
-            index-ty
-            start
-            end
-            slot
-            slot-ty
-            init
-            keep
-            body)
-          (compiler-semantic-walk-spmd-compact!
-            state
-            scope
-            env
-            index
-            index-ty
-            start
-            end
-            slot
-            slot-ty
-            init
-            keep
-            body
-            maybe-span)])]
-    [(ast.AstExpr.StructGet target field)
-      (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-record-struct-field-use!
-          state
-          env
-          target
-          field
-          CompilerSemanticAccess.Read))]
-    [(ast.AstExpr.StructSet target field value)
-      (begin
-        (compiler-semantic-walk-node! state scope env target)
-        (compiler-semantic-record-struct-field-use!
-          (owned_view.compiler-owned-shared-view state)
-          env
-          target
-          field
-          CompilerSemanticAccess.Write)
-        (compiler-semantic-walk-node! state scope env value))]
-    [(ast.AstExpr.WithResource payload)
-      (match (__tl-box-place payload)
-        [(ast.AstWithResource.WithResource bindings body)
-          (compiler-semantic-walk-with-resources!
-            state
-            scope
-            env
-            bindings
-            body
-            maybe-span)])]
-    [(ast.AstExpr.Quote _) unit]
-    [(ast.AstExpr.Quasiquote inner)
-      (compiler-semantic-walk-quasiquote-node! state scope env inner)]
-    [(ast.AstExpr.Replace _ _) unit]
-    [(ast.AstExpr.ForOwnedState _) unit]
-    [(ast.AstExpr.ForOwnedStep _) unit]
-    [_
-      (ast.ast-expr-for-each-child
-        (ast.ast-node-get node-id)
-        compiler-semantic-walk-node!
-        compiler-semantic-walk-type-id!
-        compiler-semantic-walk-child-type!
-        ast.ast-child-unit
-        state
-        scope
-        env)]))
+            env)]))))
 
 (define (compiler-semantic-walk-type-id!
   [state : (& state CompilerSemanticWalkState)]

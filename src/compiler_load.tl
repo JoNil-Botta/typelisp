@@ -8053,7 +8053,7 @@
 
 (define (compiler-load-session-state-lazy-module-macro-demand
   [state : CompilerLoadSessionState]
-  [call-expr : ast.AstExpr]
+  [call-id : i64]
   [alias : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
@@ -8062,78 +8062,76 @@
   ;; either its local alias or canonical module ID), retain the source module
   ;; instead of assuming a later typechecker fast path can materialize it.
   ;; This keeps arbitrary generated-module macros correct.
-  (match call-expr
-    [(ast.AstExpr.Spanned inner _)
+  (let
+    [spanned : i64 (ast.ast-expr-span-wrapper-inner call-id)]
+    (if (>= spanned 0)
       (compiler-load-session-state-lazy-module-macro-demand
         state
-        (ast.ast-node-get inner)
+        spanned
         alias
         summary
-        locals)]
-    [(ast.AstExpr.Call func args)
-      (let
-        [function-demand : CompilerLoadLazyAliasDemand
-          (compiler-load-session-state-lazy-module-macro-demand
-            (owned_view.compiler-owned-shared-view state)
-            (ast.ast-node-get func)
-            alias
-            summary
-            locals)]
-        [macro-demand : CompilerLoadLazyAliasDemand
-          (if function-demand.direct
-            (compiler-load-lazy-alias-demand-unknown)
-            function-demand)]
-        (compiler-load-lazy-alias-demand-merge
-          macro-demand
-          (compiler-load-session-state-lazy-expr-list-demand
-            state
-            args
-            alias
-            summary
-            locals)))]
-    [(ast.AstExpr.Var name)
-      (let
-        [name-demand : CompilerLoadLazyAliasDemand
-          (compiler-load-session-state-lazy-name-demand
-            (owned_view.compiler-owned-shared-view state)
-            name
-            alias
-            summary
-            locals)]
-        (if (or
-          name-demand.direct
-          (compiler-load-session-state-lazy-name-qualified-by-id?
-            state
-            name
-            summary.module-id))
-          (compiler-load-lazy-alias-demand-unknown)
-          name-demand))]
-    [_ (compiler-load-lazy-alias-demand-unknown)]))
+        locals)
+      (match (ast.ast-node-get call-id)
+        [(ast.AstExpr.Call func args)
+          (let
+            [function-demand : CompilerLoadLazyAliasDemand
+              (compiler-load-session-state-lazy-module-macro-demand
+                (owned_view.compiler-owned-shared-view state)
+                func
+                alias
+                summary
+                locals)]
+            [macro-demand : CompilerLoadLazyAliasDemand
+              (if function-demand.direct
+                (compiler-load-lazy-alias-demand-unknown)
+                function-demand)]
+            (compiler-load-lazy-alias-demand-merge
+              macro-demand
+              (compiler-load-session-state-lazy-expr-list-demand
+                state
+                args
+                alias
+                summary
+                locals)))]
+        [(ast.AstExpr.Var name)
+          (let
+            [name-demand : CompilerLoadLazyAliasDemand
+              (compiler-load-session-state-lazy-name-demand
+                (owned_view.compiler-owned-shared-view state)
+                name
+                alias
+                summary
+                locals)]
+            (if (or
+              name-demand.direct
+              (compiler-load-session-state-lazy-name-qualified-by-id?
+                state
+                name
+                summary.module-id))
+              (compiler-load-lazy-alias-demand-unknown)
+              name-demand))]
+        [_ (compiler-load-lazy-alias-demand-unknown)]))))
 
 (define (compiler-load-lazy-module-macro-qualified-by?
   [state : CompilerLoadSessionState]
-  [call-expr : ast.AstExpr]
+  [call-id : i64]
   [module-id : i64]) : bool
   ;; A moduleless source file has a path-derived summary ID, but a caller can
   ;; still invoke its macro through the canonical dotted import ID. Keep that
   ;; import loaded when the macro target uses that spelling.
-  (match call-expr
-    [(ast.AstExpr.Spanned inner _)
-      (compiler-load-lazy-module-macro-qualified-by?
-        state
-        (ast.ast-node-get inner)
-        module-id)]
-    [(ast.AstExpr.Call func _)
-      (compiler-load-lazy-module-macro-qualified-by?
-        state
-        (ast.ast-node-get func)
-        module-id)]
-    [(ast.AstExpr.Var name)
-      (compiler-load-session-state-lazy-name-qualified-by-id?
-        state
-        name
-        module-id)]
-    [_ false]))
+  (let
+    [spanned : i64 (ast.ast-expr-span-wrapper-inner call-id)]
+    (if (>= spanned 0)
+      (compiler-load-lazy-module-macro-qualified-by? state spanned module-id)
+      (match (ast.ast-node-get call-id)
+        [(ast.AstExpr.Call func _)
+          (compiler-load-lazy-module-macro-qualified-by? state func module-id)]
+        [(ast.AstExpr.Var name)
+          (compiler-load-session-state-lazy-name-qualified-by-id?
+            state
+            name
+            module-id)]
+        [_ false]))))
 
 (define (compiler-load-lazy-decl-module-macro-qualified-by?
   [state : CompilerLoadSessionState]
@@ -8148,10 +8146,7 @@
     [(ast.AstDecl.Import
         decl-meta
         (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
-      (compiler-load-lazy-module-macro-qualified-by?
-        state
-        (ast.ast-node-get call-expr)
-        module-id)]
+      (compiler-load-lazy-module-macro-qualified-by? state call-expr module-id)]
     [(ast.AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-module-macro-qualified-by?
         state
@@ -8327,7 +8322,7 @@
         (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-session-state-lazy-module-macro-demand
         state
-        (ast.ast-node-get call-expr)
+        call-expr
         alias
         summary
         locals)]

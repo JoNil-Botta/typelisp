@@ -11140,6 +11140,14 @@
     [(AstType.VarArgs _ _) 34]
     [(AstType.Slice _) 37]))
 
+;; The expression a source-span wrapper at ID wraps, or -1 when the node at ID
+;; is not one. Readers peel a wrapper through this and read its span from the
+;; sidecar (ast-expr-view-span), so they never match the wrapper variant.
+(define (ast-expr-span-wrapper-inner [id : i64]) : i64
+  (match (ast-node-get id)
+    [(AstExpr.Spanned inner _) inner]
+    [_ -1]))
+
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (let
     [fallback : AstExpr (ast-global-shared-view expr)]

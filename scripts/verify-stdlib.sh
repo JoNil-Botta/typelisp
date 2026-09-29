@@ -351,6 +351,11 @@ stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha256_inline.tl|pass|-
 stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
+stdlib/tests/env_nonmatching_count_unsafe_reject.tl|fail|env/linux-nonmatching-count requires unsafe context
+stdlib/tests/env_rebuild_unsafe_reject.tl|fail|env/linux-rebuild! requires unsafe context
+stdlib/tests/env_rebuild_alias_unsafe_reject.tl|fail|e/linux-rebuild! requires unsafe context
+stdlib/tests/env_rebuild_function_value_reject.tl|fail|env/linux-rebuild! is an unsafe callable and cannot be used as a plain function value
+stdlib/tests/env_unlock_unsafe_reject.tl|fail|env/linux-unlock! requires unsafe context
 stdlib/tests/crypto_sha512_inline.tl|pass|-
 stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-

@@ -75,33 +75,39 @@
 ;: Allocate the process-lifetime Linux control block inside `arena` and return
 ;: its address. Runs once, from module initialization, before any worker thread
 ;: exists. Every slot starts at zero: the lock is free, the initial environment
-;: is current, and no gate is installed.
-(define (linux-control-create [arena : i64]) : i64
-  (let
-    [home : i64 (env-arena-current)]
-    (begin
-      (unsafe
-        (env-arena-set arena))
-      (let
-        [slots : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-        [_lock : unit (set! (array-ref slots 0) 0)]
-        [_environ : unit (set! (array-ref slots 1) 0)]
-        [_gate : unit (set! (array-ref slots 2) 0)]
-        [addr : i64
-          (unsafe
-            (cast
-              (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
-              : i64))]
-        (begin
-          (unsafe
-            (env-arena-set home))
-          addr)))))
+;: is current, and no gate is installed. Unsafe: `arena` must be a live arena
+;: handle that is never rewound or destroyed, and no other thread may run.
+(unsafe
+  (define (linux-control-create [arena : i64]) : i64
+    (let
+      [home : i64 (env-arena-current)]
+      (begin
+        (unsafe
+          (env-arena-set arena))
+        (let
+          [slots : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+          [_lock : unit (set! (array-ref slots 0) 0)]
+          [_environ : unit (set! (array-ref slots 1) 0)]
+          [_gate : unit (set! (array-ref slots 2) 0)]
+          [addr : i64
+            (unsafe
+              (cast
+                (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
+                : i64))]
+          (begin
+            (unsafe
+              (env-arena-set home))
+            addr))))))
 
 ;: Address of the Linux control block. Threads share the block, never this
 ;: binding's storage: it is written once during single-threaded initialization
 ;: and only read afterwards. Every access to a slot is an atomic operation.
 (define env-linux-control-addr : i64
-  (cfg windows 0 (linux-control-create env-linux-persistent-arena)))
+  (cfg
+    windows
+    0
+    (unsafe
+      (linux-control-create env-linux-persistent-arena))))
 
 ;: Pointer to one slot of the Linux control block.
 (unsafe
@@ -131,54 +137,61 @@
 ;: Acquire the Linux mutation lock, parking on the lock word under contention.
 ;: The critical section never blocks, so waiters are released promptly. Lock
 ;: values stay below 2^31, so the futex's 32-bit comparison sees the whole state
-;: in the little-endian low half of the i64 word.
-(define (linux-lock!) : unit
-  (let
-    [word : (MutPtr i64)
-      (unsafe
-        (linux-control-slot env-linux-control-lock-slot))]
-    [seen : i64
-      (unsafe
-        (atomic-cas! word 0 1))]
-    (while (not (= seen 0))
-      (begin
-        ;; Mark the lock contended before parking so the holder knows to wake.
-        (if (or
-          (= seen 2)
-          (not
-            (=
-              (unsafe
-                (atomic-cas! word 1 2))
-              0)))
-          (unsafe
-            (linux-futex-wait
-              (unsafe
-                (cast (ptr->int word) : i64))
-              2))
-          unit)
-        (set!
-          seen
-          (unsafe
-            (atomic-cas! word 0 2)))))))
+;: in the little-endian low half of the i64 word. Unsafe: the caller must release
+;: it with `linux-unlock!` on the same thread without blocking or relocking in
+;: between; the lock is what keeps a second mutator out of the persistent arena.
+(unsafe
+  (define (linux-lock!) : unit
+    (let
+      [word : (MutPtr i64)
+        (unsafe
+          (linux-control-slot env-linux-control-lock-slot))]
+      [seen : i64
+        (unsafe
+          (atomic-cas! word 0 1))]
+      (while (not (= seen 0))
+        (begin
+          ;; Mark the lock contended before parking so the holder knows to wake.
+          (if (or
+            (= seen 2)
+            (not
+              (=
+                (unsafe
+                  (atomic-cas! word 1 2))
+                0)))
+            (unsafe
+              (linux-futex-wait
+                (unsafe
+                  (cast (ptr->int word) : i64))
+                2))
+            unit)
+          (set!
+            seen
+            (unsafe
+              (atomic-cas! word 0 2))))))))
 
 ;: Release the Linux mutation lock and wake parked waiters when there are any.
-(define (linux-unlock!) : unit
-  (let
-    [word : (MutPtr i64)
-      (unsafe
-        (linux-control-slot env-linux-control-lock-slot))]
-    (if (=
-      (unsafe
-        (atomic-fetch-add! word -1))
-      1)
-      unit
-      (begin
+;: Unsafe: the calling thread must hold the lock from `linux-lock!`; releasing a
+;: lock another mutator holds lets two of them allocate in the persistent arena
+;: at once.
+(unsafe
+  (define (linux-unlock!) : unit
+    (let
+      [word : (MutPtr i64)
         (unsafe
-          (atomic-store! word 0))
+          (linux-control-slot env-linux-control-lock-slot))]
+      (if (=
         (unsafe
-          (linux-futex-wake-all
-            (unsafe
-              (cast (ptr->int word) : i64))))))))
+          (atomic-fetch-add! word -1))
+        1)
+        unit
+        (begin
+          (unsafe
+            (atomic-store! word 0))
+          (unsafe
+            (linux-futex-wake-all
+              (unsafe
+                (cast (ptr->int word) : i64)))))))))
 
 ;: Install (`gate-addr` nonzero) or remove (zero) a publication gate: two live
 ;: `i64` cells that outlive every mutation performed while installed. With a gate
@@ -469,164 +482,191 @@
       (cast (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))) : i64))))
 
 ;: Count current Linux environment entries whose names do not match `name`.
-(define (linux-nonmatching-count
-  [environ : (Ptr (Ptr u8))]
-  [name : (& name str)]) : i64
-  (let
-    [index : i64 0]
-    [count : i64 0]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [entry : (Ptr u8)
-            (unsafe
-              (ptr-read (ptr-offset environ index)))]
-          (if (ptr-null? entry)
-            (set! done true)
-            (begin
-              (if (ptr-null?
-                (unsafe
-                  (match-entry name entry false)))
-                (set! count (+ count 1))
-                unit)
-              (set! index (+ index 1))))))
-      count)))
+;: Unsafe: `environ` must point to a NULL-terminated table of NUL-terminated
+;: entries that stays live for the call, such as one `linux-environ` returned.
+(unsafe
+  (define (linux-nonmatching-count
+    [environ : (Ptr (Ptr u8))]
+    [name : (& name str)]) : i64
+    (let
+      [index : i64 0]
+      [count : i64 0]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (let
+            [entry : (Ptr u8)
+              (unsafe
+                (ptr-read (ptr-offset environ index)))]
+            (if (ptr-null? entry)
+              (set! done true)
+              (begin
+                (if (ptr-null?
+                  (unsafe
+                    (match-entry name entry false)))
+                  (set! count (+ count 1))
+                  unit)
+                (set! index (+ index 1))))))
+        count))))
 
-;: Allocate one persistent Linux `NAME=VALUE\0` entry and return its address.
-(define (linux-entry-addr [name : (& name str)] [value : (& value str)]) : i64
-  (let
-    [name-len : i64 (string-length name)]
-    [value-len : i64 (string-length value)]
-    [bytes : (__tl_dyn-array u8)
-      (__tl_make-array u8 (+ (+ name-len value-len) 2))]
-    [i : i64 0]
-    (begin
-      (while (< i name-len)
-        (begin
-          (set! (array-ref bytes i) (cast (string-ref name i) : u8))
-          (set! i (+ i 1))))
-      (set! (array-ref bytes name-len) (cast '=' : u8))
-      (set! i 0)
-      (while (< i value-len)
-        (begin
-          (set!
-            (array-ref bytes (+ (+ name-len 1) i))
-            (cast (string-ref value i) : u8))
-          (set! i (+ i 1))))
-      (set! (array-ref bytes (+ (+ name-len 1) value-len)) (cast 0 : u8))
-      (unsafe
-        (cast (ptr->int (array-u8-ptr bytes)) : i64)))))
+;: Allocate one Linux `NAME=VALUE\0` entry in the active arena and return its
+;: address. Unsafe: the persistent arena must be active, so the entry lives as
+;: long as every table that may publish it, and `name` and `value` must satisfy
+;: `valid-name?` and `valid-value?`.
+(unsafe
+  (define (linux-entry-addr [name : (& name str)] [value : (& value str)]) : i64
+    (let
+      [name-len : i64 (string-length name)]
+      [value-len : i64 (string-length value)]
+      [bytes : (__tl_dyn-array u8)
+        (__tl_make-array u8 (+ (+ name-len value-len) 2))]
+      [i : i64 0]
+      (begin
+        (while (< i name-len)
+          (begin
+            (set! (array-ref bytes i) (cast (string-ref name i) : u8))
+            (set! i (+ i 1))))
+        (set! (array-ref bytes name-len) (cast '=' : u8))
+        (set! i 0)
+        (while (< i value-len)
+          (begin
+            (set!
+              (array-ref bytes (+ (+ name-len 1) i))
+              (cast (string-ref value i) : u8))
+            (set! i (+ i 1))))
+        (set! (array-ref bytes (+ (+ name-len 1) value-len)) (cast 0 : u8))
+        (unsafe
+          (cast (ptr->int (array-u8-ptr bytes)) : i64))))))
 
 ;: Build and publish a Linux replacement environment containing all nonmatching
-;: current entries and, when `present` is true, one new value for `name`. The
-;: caller holds the mutation lock with the persistent arena active, so the table
-;: read here is the newest one and no other thread allocates beside this one.
-(define (linux-rebuild!
-  [name : (& name str)]
-  [value : (& value str)]
-  [present : bool]) : unit
-  (let
-    [environ : (Ptr (Ptr u8))
-      (unsafe
-        (linux-environ))]
-    [kept : i64 (linux-nonmatching-count environ name)]
-    [slots : (__tl_dyn-array u64)
-      (__tl_make-array
-        u64
-        (+
+;: current entries and, when `present` is true, one new value for `name`.
+;: Unsafe: the caller must hold the mutation lock with the persistent arena
+;: active, so the table read here is the newest one, no other thread allocates
+;: beside this one, and the published table outlives every reader; `name`, and
+;: `value` when `present`, must be valid. `linux-mutate!` establishes all of it.
+(unsafe
+  (define (linux-rebuild!
+    [name : (& name str)]
+    [value : (& value str)]
+    [present : bool]) : unit
+    (let
+      [environ : (Ptr (Ptr u8))
+        (unsafe
+          (linux-environ))]
+      [kept : i64
+        (unsafe
+          (linux-nonmatching-count environ name))]
+      [slots : (__tl_dyn-array u64)
+        (__tl_make-array
+          u64
           (+
-            kept
-            (if present
-              1
-              0))
-          1))]
-    [read-index : i64 0]
-    [write-index : i64 0]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [entry : (Ptr u8)
-            (unsafe
-              (ptr-read (ptr-offset environ read-index)))]
-          (if (ptr-null? entry)
-            (set! done true)
-            (begin
-              (if (ptr-null?
+            (+
+              kept
+              (if present
+                1
+                0))
+            1))]
+      [read-index : i64 0]
+      [write-index : i64 0]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (let
+            [entry : (Ptr u8)
+              (unsafe
+                (ptr-read (ptr-offset environ read-index)))]
+            (if (ptr-null? entry)
+              (set! done true)
+              (begin
+                (if (ptr-null?
+                  (unsafe
+                    (match-entry name entry false)))
+                  (begin
+                    (set!
+                      (array-ref slots write-index)
+                      (unsafe
+                        (ptr->int entry)))
+                    (set! write-index (+ write-index 1)))
+                  unit)
+                (set! read-index (+ read-index 1))))))
+        (if present
+          (begin
+            (set!
+              (array-ref slots write-index)
+              (cast
                 (unsafe
-                  (match-entry name entry false)))
-                (begin
-                  (set!
-                    (array-ref slots write-index)
-                    (unsafe
-                      (ptr->int entry)))
-                  (set! write-index (+ write-index 1)))
-                unit)
-              (set! read-index (+ read-index 1))))))
-      (if present
-        (begin
-          (set!
-            (array-ref slots write-index)
-            (cast (linux-entry-addr name value) : u64))
-          (set! write-index (+ write-index 1)))
-        unit)
-      (set! (array-ref slots write-index) (cast 0 : u64))
-      (linux-publication-gate-pass!)
-      ;; The table and its new entry are fully written; this sequentially
-      ;; consistent store is the only point where other threads can see them.
-      (unsafe
-        (atomic-store!
-          (linux-control-slot env-linux-control-environ-slot)
-          (unsafe
-            (array-u64-addr slots)))))))
+                  (linux-entry-addr name value))
+                : u64))
+            (set! write-index (+ write-index 1)))
+          unit)
+        (set! (array-ref slots write-index) (cast 0 : u64))
+        (linux-publication-gate-pass!)
+        ;; The table and its new entry are fully written; this sequentially
+        ;; consistent store is the only point where other threads can see them.
+        (unsafe
+          (atomic-store!
+            (linux-control-slot env-linux-control-environ-slot)
+            (unsafe
+              (array-u64-addr slots))))))))
 
 ;: Set or remove one Linux environment entry while retaining replacement
-;: storage for the process lifetime. Mutators are serialized: each one rebuilds
+;: storage for the process lifetime. Returns false for an invalid name, or an
+;: invalid value when `present`. Mutators are serialized: each one rebuilds
 ;: from the table its predecessor published, so concurrent updates to different
-;: names are never lost. The caller's thread-local active arena is restored
-;: before the lock is released; nothing between the two arena switches can fail
-;: short of an allocation abort, which ends the process.
+;: names are never lost. The replacement is allocated in the persistent arena
+;: whatever arena the caller has active, so it survives the caller's arena
+;: being rewound. The caller's thread-local active arena is restored before
+;: the lock is released; nothing between the two arena switches can fail short
+;: of an allocation abort, which ends the process.
 (define (linux-mutate!
   [name : (& name str)]
   [value : (& value str)]
   [present : bool]) : bool
-  (let
-    [home : i64 (env-arena-current)]
-    (begin
-      (linux-lock!)
-      (unsafe
-        (env-arena-set env-linux-persistent-arena))
-      (linux-rebuild! name value present)
-      (unsafe
-        (env-arena-set home))
-      (linux-unlock!)
-      true)))
+  (if (and (valid-name? name) (or (not present) (valid-value? value)))
+    (let
+      [home : i64 (env-arena-current)]
+      (begin
+        (unsafe
+          (linux-lock!))
+        (unsafe
+          (env-arena-set env-linux-persistent-arena))
+        (unsafe
+          (linux-rebuild! name value present))
+        (unsafe
+          (env-arena-set home))
+        (unsafe
+          (linux-unlock!))
+        true))
+    false))
 
-;: Set one Windows environment entry. Kernel32 copies both C strings before the
-;: active-arena buffers expire.
+;: Set one Windows environment entry. Returns false for an invalid name or value
+;: or a host failure. Kernel32 copies both C strings before the active-arena
+;: buffers expire.
 (cfg
   windows
   (define (windows-set! [name : (& name str)] [value : (& value str)]) : bool
-    (let
-      [name-bytes : (__tl_dyn-array u8) (c-string-bytes name)]
-      [value-bytes : (__tl_dyn-array u8) (c-string-bytes value)]
-      (not
-        (=
-          (env-win-set-environment-variable
-            (unsafe
-              (array-u8-ptr name-bytes))
-            (unsafe
-              (array-u8-ptr value-bytes)))
-          (cast 0 : i32))))))
+    (if (and (valid-name? name) (valid-value? value))
+      (let
+        [name-bytes : (__tl_dyn-array u8) (c-string-bytes name)]
+        [value-bytes : (__tl_dyn-array u8) (c-string-bytes value)]
+        (not
+          (=
+            (env-win-set-environment-variable
+              (unsafe
+                (array-u8-ptr name-bytes))
+              (unsafe
+                (array-u8-ptr value-bytes)))
+            (cast 0 : i32))))
+      false)))
 
 ;: Remove one Windows environment entry. Missing entries are normalized to
-;: success to match POSIX `unsetenv` semantics.
+;: success to match POSIX `unsetenv` semantics. Returns false for an invalid
+;: name or a host failure.
 (cfg
   windows
   (define (windows-unset! [name : (& name str)]) : bool
-    (if (not (var-exists? (string.copy name)))
-      true
+    (if (or (not (valid-name? name)) (not (var-exists? (string.copy name))))
+      (valid-name? name)
       (let
         [name-bytes : (__tl_dyn-array u8) (c-string-bytes name)]
         (not
@@ -653,17 +693,13 @@
 ;: coordinated; foreign code that edits `environ` or the initial stack strings
 ;: directly is outside the contract.
 (define (set! [name : (& name str)] [value : (& value str)]) : bool
-  (if (and (valid-name? name) (valid-value? value))
-    (cfg windows (windows-set! name value) (linux-mutate! name value true))
-    false))
+  (cfg windows (windows-set! name value) (linux-mutate! name value true)))
 
 ;: Remove `name` from the current process environment. Removing a missing name
 ;: succeeds. Returns false for an invalid name or a Windows host failure. The
 ;: threading contract is the one documented on `set!`.
 (define (unset! [name : (& name str)]) : bool
-  (if (valid-name? name)
-    (cfg windows (windows-unset! name) (linux-mutate! name "" false))
-    false))
+  (cfg windows (windows-unset! name) (linux-mutate! name "" false)))
 
 ;: Return the target platform PATH-list separator as a one-byte String.
 (define (path-separator) : String

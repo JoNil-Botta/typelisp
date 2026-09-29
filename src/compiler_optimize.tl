@@ -124832,7 +124832,10 @@
     (ir.compiler-ir-role-call-arg)))
 
 ;; One argument of one direct call site, read positionally: the recorded fact
-;; is the intersection over every site, and 0 means "no fact" for good.
+;; is the intersection over every site, and 0 means "no fact" for good. A `Var`
+;; argument is left to opt-arg-global-resolve-forwards, which knows the calling
+;; function: it is either that caller's own unchanged parameter, carrying the
+;; caller's fact, or a conflict.
 (define (opt-arg-global-scan-site
   [scan : OptArgGlobalScan]
   [name : i64]
@@ -124842,20 +124845,37 @@
     [want : i64
       (match (compiler-opt-global-shared-view value)
         [(ir.CompilerIrValue.Global cell) (+ 1 (ir.compiler-ir-symbol-id cell))]
+        [(ir.CompilerIrValue.Var _) (- 0 1)]
         [_ 0])]
     (match (opt-arg-global-scan-value scan value)
       [(OptArgGlobalScan opaque arity sites)
         (let
           [key : i64 (opt-arg-global-key name position)]
           (begin
-            (match (opt_i64_i64_map.get (& sites) key)
-              [(opt_i64_i64_map.LookupFound seen)
-                (if (= seen want)
-                  unit
-                  (opt_i64_i64_map.insert-ref! (&mut sites) key 0))]
-              [(opt_i64_i64_map.LookupMissing)
-                (opt_i64_i64_map.insert-ref! (&mut sites) key want)])
+            (if (< want 0)
+              unit
+              (begin
+                (opt-arg-global-site-meet! (&mut sites) key want)
+                unit))
             (OptArgGlobalScan opaque arity sites)))])))
+
+;; Meet one site's value into a position's fact: the first value is kept, a
+;; different one lowers the fact to 0 for good.
+(define (opt-arg-global-site-meet!
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [key : i64]
+  [want : i64]) : bool
+  (match (opt_i64_i64_map.get (& sites) key)
+    [(opt_i64_i64_map.LookupFound seen)
+      (if (or (= seen want) (= seen 0))
+        false
+        (begin
+          (opt_i64_i64_map.insert-ref! sites key 0)
+          true))]
+    [(opt_i64_i64_map.LookupMissing)
+      (begin
+        (opt_i64_i64_map.insert-ref! sites key want)
+        true)]))
 
 (define (opt-arg-global-scan-site-array
   [scan : OptArgGlobalScan]
@@ -124986,6 +125006,203 @@
   [scan : OptArgGlobalScan]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptArgGlobalScan
   (opt-functions-fold functions scan opt-arg-global-scan-instr))
+
+;; --- forwarded parameters ----------------------------------------------------
+;;
+;; A recursive reader passes its own parameter on (`(form cur)` inside a helper
+;; whose `cur` came from `(form (&mut g))`), which the positional scan above
+;; cannot read. Such an argument carries whatever the caller's parameter is: if
+;; every activation of the caller receives `@g` at position q and the caller
+;; never redefines that parameter's var, every call it makes passing that var
+;; passes `@g`. The caller's position is a fact only if the caller is
+;; enumerable (not opaque, its arity readable, its parameter var ids
+;; positional); otherwise the argument is a conflict, exactly as the scan
+;; treated every `Var` before.
+;;
+;; The facts are solved optimistically. A position no site has reached yet
+;; carries no value and forwards nothing; one that stays so at the end has no
+;; activation at all (every entry the program has is either a direct site this
+;; walk read, or makes its target opaque), so the positions it feeds lose
+;; nothing they could observe. Each step only lowers a fact -- absent, then a
+;; global, then 0 -- so the iteration ends.
+(define (opt-arg-global-forward-redefined!
+  [np : i64]
+  [redefined : (&mut redefined (__tl_dyn-array bool))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some var)
+      (if (and (>= var 0) (< var np))
+        (set! (array-ref redefined var) true)
+        unit)]
+    [(option_i64.None) unit]))
+
+(defstruct OptArgGlobalForwards
+  (dst opt_i64_i64_map.Map)
+  (src opt_i64_i64_map.Map)
+  (count i64))
+
+;; One direct site's `Var` arguments: an edge from the caller's unchanged
+;; parameter, or a conflict.
+(define (opt-arg-global-forward-arg!
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (&mut edges OptArgGlobalForwards)]
+  [caller : i64]
+  [redefined : (& redefined (__tl_dyn-array bool))]
+  [callee : i64]
+  [position : i64]
+  [value : ir.CompilerIrValue]) : unit
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [key : i64 (opt-arg-global-key callee position)]
+        (if (and
+          (>= caller 0)
+          (>= var 0)
+          (< var (array-length redefined))
+          (not (array-ref redefined var)))
+          (begin
+            (opt_i64_i64_map.insert-ref!
+              (&mut edges.dst)
+              edges.count
+              key)
+            (opt_i64_i64_map.insert-ref!
+              (&mut edges.src)
+              edges.count
+              (opt-arg-global-key caller var))
+            (set! edges.count (+ edges.count 1)))
+          (begin
+            (opt-arg-global-site-meet! sites key 0)
+            unit)))]
+    [_ unit]))
+
+(define (opt-arg-global-forward-instr!
+  [scan : (& scan OptArgGlobalScan)]
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (&mut edges OptArgGlobalForwards)]
+  [caller : i64]
+  [redefined : (& redefined (__tl_dyn-array bool))]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (opt-instr-target instr)
+    [(OptInstrTarget.Direct name args)
+      (let
+        [callee : i64 (ir.compiler-ir-symbol-id name)]
+        [count : i64 (opt-arg-global-arity-of scan callee)]
+        (match (compiler-opt-global-shared-view args)
+          [(ir.CompilerIrCallArgs.Sret _ _) unit]
+          [_
+            (if (and (>= count 0) (= count (opt-arg-global-args-count (& args))))
+              (let
+                [position : i64 0]
+                (while (< position count)
+                  (begin
+                    (opt-arg-global-forward-arg!
+                      sites
+                      edges
+                      caller
+                      redefined
+                      callee
+                      position
+                      (opt-inline-clone-arg-at (& args) position))
+                    (set! position (+ position 1)))))
+              unit)]))]
+    [_ unit]))
+
+;; The caller's parameters that may forward: none unless the caller is
+;; enumerable, otherwise every positional parameter whose var the body never
+;; redefines. An entry is kept per var id; a caller whose ids are not
+;; positional gets the empty table, so every `Var` it passes is a conflict.
+(define (opt-arg-global-forward-function!
+  [scan : (& scan OptArgGlobalScan)]
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (&mut edges OptArgGlobalForwards)]
+  [func : ir.CompilerIrFunction]) : unit
+  (match func
+    [(ir.CompilerIrFunction.Function name params _ _ blocks _)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [np : i64 params.len]
+        [enumerable? : bool
+          (and
+            (>= id 0)
+            (> np 0)
+            (not (opt_i64_i64_map.contains? (& scan.opaque) id))
+            (= (opt-arg-global-arity-of scan id) np)
+            (opt-lga-params-positional?
+              (compiler-opt-global-shared-view params)
+              0))]
+        [redefined : (__tl_dyn-array bool)
+          (__tl_make-array
+            bool
+            (if enumerable?
+              np
+              0))]
+        (begin
+          (if enumerable?
+            (opt-blocks-visit
+              blocks
+              opt-arg-global-forward-redefined!
+              np
+              (&mut redefined))
+            unit)
+          (opt-blocks-visit
+            blocks
+            opt-arg-global-forward-instr!
+            scan
+            sites
+            edges
+            (if enumerable?
+              id
+              (- 0 1))
+            (& redefined))))]))
+
+(define (opt-arg-global-forward-fixpoint!
+  [sites : (&mut sites opt_i64_i64_map.Map)]
+  [edges : (& edges OptArgGlobalForwards)]) : unit
+  (let
+    [changed? : bool true]
+    (while changed?
+      (let
+        [index : i64 0]
+        (begin
+          (set! changed? false)
+          (while (< index edges.count)
+            (begin
+              (match (opt_i64_i64_map.get
+                (& sites)
+                (opt-cl-map-count (& edges.src) index))
+                [(opt_i64_i64_map.LookupFound value)
+                  (if (opt-arg-global-site-meet!
+                    sites
+                    (opt-cl-map-count (& edges.dst) index)
+                    value)
+                    (set! changed? true)
+                    unit)]
+                [(opt_i64_i64_map.LookupMissing) unit])
+              (set! index (+ index 1)))))))))
+
+(define (opt-arg-global-resolve-forwards
+  [scan : OptArgGlobalScan]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [capacity : i64]) : OptArgGlobalScan
+  (let
+    [edges : OptArgGlobalForwards
+      (OptArgGlobalForwards
+        (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity)
+        0)]
+    [sites : opt_i64_i64_map.Map scan.sites]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (opt-arg-global-forward-function!
+            (& scan)
+            (&mut sites)
+            (&mut edges)
+            (compiler-opt-global-array-element-shared-view functions.slots index))
+          (set! index (+ index 1))))
+      (opt-arg-global-forward-fixpoint! (&mut sites) (& edges))
+      (OptArgGlobalScan scan.opaque scan.arity sites))))
 
 ;; The roots the reachability walk seeds that are NOT direct call sites, so an
 ;; activation of one of them is an activation this walk cannot account for:
@@ -125166,6 +125383,7 @@
   [externs : ir.CompilerIrExternSeq]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [capacity : i64]) : OptArgGlobalScan
+  (opt-arg-global-resolve-forwards
   (opt-arg-global-scan-functions
     (opt-arg-global-seed-globals
       (opt-arg-global-seed-externs
@@ -125180,7 +125398,9 @@
         0)
       globals
       0)
-    functions))
+    functions)
+    functions
+    capacity))
 
 ;; Build the call-site global-argument identity table, or decline. The
 ;; function-count gate is the one every other whole-program summary applies,

@@ -91603,7 +91603,11 @@
                     compiler-backend-layout-flag-jcc)
                   (shl (- ops s) compiler-backend-layout-flag-ops-shift))
                 0))]
-          [(and (= b0 114) (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+          [(and
+              (= b0 114)
+              (= b1 101)
+              (= b2 116)
+              (or (= (+ t 3) e) (= b3 32) (= b3 113)))
             compiler-backend-layout-flag-ret]
           [(and (= b0 99) (= b1 97) (= b2 108) (= b3 108))
             compiler-backend-layout-flag-call]
@@ -91639,7 +91643,7 @@
         0)]
     (cond
       [(= kind 50)
-        (if (and (= b1 101) (= b2 116) (or (= b3 32) (= b3 113)))
+        (if (and (= b1 101) (= b2 116) (or (= (+ t 3) e) (= b3 32) (= b3 113)))
           compiler-backend-layout-flag-ret
           0)]
       [(= kind 51)

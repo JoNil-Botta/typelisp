@@ -13219,8 +13219,68 @@ g:
       (string.eq split-window-got split-window-input)
       (string.eq alu-only-got alu-only-input))))
 
+(define (compiler-backend-layout-return-line? [line : String] [want : i64]) : bool
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data line))]
+    [len : i64 (string.string-length line)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (begin
+      (set! (array-ref starts 0) 0)
+      (set! (array-ref starts 1) (+ len 1))
+      (backend.compiler-backend-layout-classify-lines!
+        data
+        1
+        (unsafe
+          (__tl_array-data starts))
+        (unsafe
+          (__tl_array-data flags)))
+      (and
+        (= (backend.compiler-backend-layout-classify-line data 0 len) want)
+        (= (array-ref flags 0) want)))))
+
+(define (compiler-backend-layout-return-classification-ok?) : bool
+  (and
+    (compiler-backend-layout-return-line?
+      "    ret"
+      backend.compiler-backend-layout-flag-ret)
+    (compiler-backend-layout-return-line?
+      "\tret"
+      backend.compiler-backend-layout-flag-ret)
+    (compiler-backend-layout-return-line?
+      "ret"
+      backend.compiler-backend-layout-flag-ret)
+    (compiler-backend-layout-return-line?
+      "    retq"
+      backend.compiler-backend-layout-flag-ret)
+    (compiler-backend-layout-return-line?
+      "    ret $16"
+      backend.compiler-backend-layout-flag-ret)
+    (compiler-backend-layout-return-line? "r" 0)
+    (compiler-backend-layout-return-line? "re" 0)
+    (compiler-backend-layout-return-line? "    return" 0)
+    (compiler-backend-layout-return-line? "    retf" 0)
+    (compiler-backend-layout-unchanged?
+      backend.compiler-backend-layout-mode-dup
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    ret
+.Lf0_dead:
+    jmp .Lf0_body
+    .size f, . - f
+")))
+
 (define (compiler-backend-layout-ok?) : bool
   (and
+    (compiler-backend-layout-return-classification-ok?)
     (compiler-backend-layout-tail-duplication-ok?)
     (compiler-backend-layout-cold-arm-ok?)))
 

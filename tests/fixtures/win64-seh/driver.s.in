@@ -1,0 +1,139 @@
+# Win64 SEH unwind driver for scripts/verify-win64-seh-unwind.sh.
+#
+# tl_seh_drive_framed and tl_seh_drive_fpo save every nonvolatile register,
+# load the seed win64_seh_unwind.tl expects into each (0x5eed000000000000 plus
+# the Windows register number for rbx, rbp, rsi, rdi, r12-r15; low 0x100 + N
+# and high 0x200 + N for xmmN), record their %rsp and return address at the
+# victim call, call the victim with the incoming %rcx, and restore everything.
+# The fixture reads the recorded values through tl_seh_driver_recorded.
+
+    .data
+    .p2align 3
+tl_seh_driver_rsp:
+    .quad 0
+tl_seh_driver_rip:
+    .quad 0
+
+    .section .rdata,"dr"
+    .p2align 4
+tl_seh_driver_xmm_seeds:
+    .quad 0x5eed000000000106, 0x5eed000000000206
+    .quad 0x5eed000000000107, 0x5eed000000000207
+    .quad 0x5eed000000000108, 0x5eed000000000208
+    .quad 0x5eed000000000109, 0x5eed000000000209
+    .quad 0x5eed00000000010a, 0x5eed00000000020a
+    .quad 0x5eed00000000010b, 0x5eed00000000020b
+    .quad 0x5eed00000000010c, 0x5eed00000000020c
+    .quad 0x5eed00000000010d, 0x5eed00000000020d
+    .quad 0x5eed00000000010e, 0x5eed00000000020e
+    .quad 0x5eed00000000010f, 0x5eed00000000020f
+
+    .text
+
+# tl_seh_driver_recorded(0) is the recorded %rsp, (1) the return address.
+    .globl tl_seh_driver_recorded
+    .def tl_seh_driver_recorded
+    .scl 2
+    .type 32
+    .endef
+tl_seh_driver_recorded:
+    leaq tl_seh_driver_rsp(%rip), %rax
+    movq (%rax,%rcx,8), %rax
+    ret
+
+.macro SEH_DRIVE name, victim
+    .globl \name
+    .def \name
+    .scl 2
+    .type 32
+    .endef
+    .seh_proc \name
+\name:
+    pushq %rbp
+    .seh_pushreg %rbp
+    pushq %rbx
+    .seh_pushreg %rbx
+    pushq %rsi
+    .seh_pushreg %rsi
+    pushq %rdi
+    .seh_pushreg %rdi
+    pushq %r12
+    .seh_pushreg %r12
+    pushq %r13
+    .seh_pushreg %r13
+    pushq %r14
+    .seh_pushreg %r14
+    pushq %r15
+    .seh_pushreg %r15
+    # 32 bytes of shadow space, ten XMM saves, and 8 bytes to realign.
+    subq $200, %rsp
+    .seh_stackalloc 200
+    movdqu %xmm6, 32(%rsp)
+    .seh_savexmm %xmm6, 32
+    movdqu %xmm7, 48(%rsp)
+    .seh_savexmm %xmm7, 48
+    movdqu %xmm8, 64(%rsp)
+    .seh_savexmm %xmm8, 64
+    movdqu %xmm9, 80(%rsp)
+    .seh_savexmm %xmm9, 80
+    movdqu %xmm10, 96(%rsp)
+    .seh_savexmm %xmm10, 96
+    movdqu %xmm11, 112(%rsp)
+    .seh_savexmm %xmm11, 112
+    movdqu %xmm12, 128(%rsp)
+    .seh_savexmm %xmm12, 128
+    movdqu %xmm13, 144(%rsp)
+    .seh_savexmm %xmm13, 144
+    movdqu %xmm14, 160(%rsp)
+    .seh_savexmm %xmm14, 160
+    movdqu %xmm15, 176(%rsp)
+    .seh_savexmm %xmm15, 176
+    .seh_endprologue
+    movabsq $0x5eed000000000003, %rbx
+    movabsq $0x5eed000000000005, %rbp
+    movabsq $0x5eed000000000006, %rsi
+    movabsq $0x5eed000000000007, %rdi
+    movabsq $0x5eed00000000000c, %r12
+    movabsq $0x5eed00000000000d, %r13
+    movabsq $0x5eed00000000000e, %r14
+    movabsq $0x5eed00000000000f, %r15
+    movdqa tl_seh_driver_xmm_seeds(%rip), %xmm6
+    movdqa tl_seh_driver_xmm_seeds+16(%rip), %xmm7
+    movdqa tl_seh_driver_xmm_seeds+32(%rip), %xmm8
+    movdqa tl_seh_driver_xmm_seeds+48(%rip), %xmm9
+    movdqa tl_seh_driver_xmm_seeds+64(%rip), %xmm10
+    movdqa tl_seh_driver_xmm_seeds+80(%rip), %xmm11
+    movdqa tl_seh_driver_xmm_seeds+96(%rip), %xmm12
+    movdqa tl_seh_driver_xmm_seeds+112(%rip), %xmm13
+    movdqa tl_seh_driver_xmm_seeds+128(%rip), %xmm14
+    movdqa tl_seh_driver_xmm_seeds+144(%rip), %xmm15
+    movq %rsp, tl_seh_driver_rsp(%rip)
+    leaq 1f(%rip), %rax
+    movq %rax, tl_seh_driver_rip(%rip)
+    call \victim
+1:
+    movdqu 32(%rsp), %xmm6
+    movdqu 48(%rsp), %xmm7
+    movdqu 64(%rsp), %xmm8
+    movdqu 80(%rsp), %xmm9
+    movdqu 96(%rsp), %xmm10
+    movdqu 112(%rsp), %xmm11
+    movdqu 128(%rsp), %xmm12
+    movdqu 144(%rsp), %xmm13
+    movdqu 160(%rsp), %xmm14
+    movdqu 176(%rsp), %xmm15
+    addq $200, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rdi
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+    .seh_endproc
+.endm
+
+    SEH_DRIVE tl_seh_drive_framed, _tl_win64_seh_unwind_seh_victim_framed
+    SEH_DRIVE tl_seh_drive_fpo, _tl_win64_seh_unwind_seh_victim_fpo

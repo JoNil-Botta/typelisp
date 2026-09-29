@@ -114,3 +114,4 @@ stage2-native-link-generated-programs	linux	stage2 native link generated program
 stage2-rooted-linux-filesystem-boundary	linux	stage2 rooted Linux filesystem boundary	bootstrap-fixpoint	stage2	512	-	scripts/verify-fs-rooted-linux.sh
 stage2-linux-process-failure-boundary	linux	stage2 Linux process failure boundary	bootstrap-fixpoint	stage2	512	-	scripts/verify-process-runtime-linux.sh
 windows-native-link-build-run	windows	windows native link build/run	bootstrap-fixpoint	stage2	2048	-	scripts/verify-native-link-windows.sh
+win64-seh-unwind-verifier	windows	Win64 SEH unwind verifier	bootstrap-fixpoint	stage2	2304	-	scripts/verify-win64-seh-unwind.sh

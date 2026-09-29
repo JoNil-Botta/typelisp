@@ -7080,6 +7080,7 @@
         frame
         sparse
         3
+        false
         backend-state)]
     [large-frame : i64
       (backend.compiler-backend-frame-size
@@ -7092,6 +7093,7 @@
         large-frame
         xmm15
         600
+        false
         backend-state)]
     [full-frame : i64
       (backend.compiler-backend-frame-size
@@ -7113,6 +7115,7 @@
         32
         (regalloc.compiler-reg-assignment-table-empty)
         3
+        false
         backend-state)]
     [inline-tail : String
       (backend.compiler-backend-inline-return-tail sparse 3 backend-state)]
@@ -7246,6 +7249,301 @@
           3
           backend-state)
         "    movq -32(%rbp), %r12\n"))))
+
+(define (compiler-backend-win64-seh-splice
+  [body : String]
+  [base : i64]
+  [mode-prologue : String]
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [vars : i64]
+  [frame : i64]
+  [backend-state : backend.CompilerBackendState]) : String
+  (match (backend.compiler-backend-windows-framed-save-splice
+    body
+    base
+    mode-prologue
+    assignments
+    vars
+    frame
+    "_tl_seh_fixture"
+    (cdiag.compiler-diagnostic-at-start "" "")
+    backend-state)
+    [(backend.ResultCompilerBackend.Ok text) text]
+    [(backend.ResultCompilerBackend.Err _) "error"]))
+
+;; A Windows rbp-framed prologue describes each fixed-slot GP save with
+;; `.seh_savereg REG, FRAME+SLOT`, the offset from the post-allocation %rsp,
+;; right after the save and before `.seh_endprologue`, and names no frame
+;; register, so the unwinder measures the offset from that %rsp (#7564).
+(define (compiler-backend-win64-framed-save-description-ok?) : bool
+  (let
+    [backend-state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_win : unit (compiler-backend-set-current-fn-win64! backend-state)]
+    [windows : backend.CompilerBackendTargetPolicy
+      (backend.compiler-backend-target-policy-new
+        backend.CompilerBackendTarget.Windows)]
+    [full : regalloc.CompilerRegAssignmentTable
+      (reg-homes "%0=%r12 %1=%r13 %2=%r14 %3=%r15 %4=%rbx %5=%rsi %6=%rdi")]
+    [sparse : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r13 %1=%rdi")]
+    [r12-only : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12")]
+    [mixed : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12 %1=%vec6")]
+    [xmm-only : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%vec6")]
+    [full-frame : i64
+      (backend.compiler-backend-frame-size
+        (backend.compiler-backend-frame-slots 3 full backend-state))]
+    [mixed-frame : i64
+      (backend.compiler-backend-frame-size
+        (backend.compiler-backend-frame-slots 3 mixed backend-state))]
+    [large-frame : i64
+      (backend.compiler-backend-frame-size
+        (backend.compiler-backend-frame-slots 600 full backend-state))]
+    [full-entry : String
+      (backend.compiler-backend-emit-function-entry
+        windows
+        "_tl_seh_full"
+        full-frame
+        full
+        3
+        true
+        backend-state)]
+    [framed-entry : String
+      (backend.compiler-backend-emit-function-entry
+        windows
+        "_tl_seh_framed"
+        full-frame
+        full
+        3
+        false
+        backend-state)]
+    [full-described : String
+      (compiler-backend-win64-seh-splice
+        (str_cat.str-cat
+          (backend.compiler-backend-emit-save-callee-regs full 3 backend-state)
+          "    movq %rcx, %rax\n    call _tl_seh_probe\n")
+        0
+        ""
+        full
+        3
+        full-frame
+        backend-state)]
+    [sparse-described : String
+      (compiler-backend-win64-seh-splice
+        "    movq %r13, 40(%rsp)\n    movq %rdi, 0(%rsp)\n    ret\n"
+        0
+        ""
+        sparse
+        3
+        80
+        backend-state)]
+    [mode-described : String
+      (compiler-backend-win64-seh-splice
+        "    vzeroupper\n    movq %r13, 40(%rsp)\n    movq %rdi, 0(%rsp)\n    ret\n"
+        0
+        "    vzeroupper\n"
+        sparse
+        3
+        80
+        backend-state)]
+    [xmm-only-described : String
+      (compiler-backend-win64-seh-splice
+        "    vzeroupper\n    ret\n"
+        0
+        "    vzeroupper\n"
+        xmm-only
+        3
+        96
+        backend-state)]
+    [wrap-prefix : String
+      ".L_bypass:\n    ret\n.seh_proc _tl_seh_wrap\n_tl_seh_wrap:\n    pushq %rbp\n"]
+    [wrapped : String
+      (compiler-backend-win64-seh-splice
+        (str_cat.str-cat wrap-prefix "    movq %r12, 16(%rsp)\n    ret\n")
+        (string.string-length wrap-prefix)
+        ""
+        r12-only
+        3
+        48
+        backend-state)]
+    [mixed-entry : String
+      (backend.compiler-backend-emit-function-entry
+        windows
+        "_tl_seh_mixed"
+        mixed-frame
+        mixed
+        3
+        true
+        backend-state)]
+    [mixed-described : String
+      (compiler-backend-win64-seh-splice
+        "    movq %r12, -32(%rbp)\n    ret\n"
+        0
+        ""
+        mixed
+        3
+        mixed-frame
+        backend-state)]
+    [large-entry : String
+      (backend.compiler-backend-emit-function-entry
+        windows
+        "_tl_seh_large"
+        large-frame
+        full
+        600
+        true
+        backend-state)]
+    [large-described : String
+      (compiler-backend-win64-seh-splice
+        (backend.compiler-backend-emit-save-callee-regs full 600 backend-state)
+        0
+        ""
+        full
+        600
+        large-frame
+        backend-state)]
+    [far-described : String
+      (compiler-backend-win64-seh-splice
+        "    movq %r12, 599968(%rsp)\n"
+        0
+        ""
+        r12-only
+        3
+        600000
+        backend-state)]
+    [ok : bool
+      (and
+        (= full-frame 80)
+        (string.eq
+          full-entry
+          ".seh_proc _tl_seh_full\n_tl_seh_full:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $80, %rsp\n    .seh_stackalloc 80\n")
+        (asm-has?
+          framed-entry
+          "    .seh_setframe %rbp, 0\n"
+          "    .seh_stackalloc 80\n    .seh_endprologue\n")
+        (string.eq
+          full-described
+          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 48\n    movq %r13, -40(%rbp)\n    .seh_savereg %r13, 40\n    movq %r14, -48(%rbp)\n    .seh_savereg %r14, 32\n    movq %r15, -56(%rbp)\n    .seh_savereg %r15, 24\n    movq %rbx, -64(%rbp)\n    .seh_savereg %rbx, 16\n    movq %rsi, -72(%rbp)\n    .seh_savereg %rsi, 8\n    movq %rdi, -80(%rbp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    movq %rcx, %rax\n    call _tl_seh_probe\n")
+        (string.eq
+          sparse-described
+          "    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rdi, 0(%rsp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    ret\n")
+        (string.eq
+          mode-described
+          "    vzeroupper\n    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rdi, 0(%rsp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    ret\n")
+        (string.eq
+          xmm-only-described
+          "    .seh_endprologue\n    vzeroupper\n    ret\n")
+        (string.eq
+          wrapped
+          (str_cat.str-cat
+            wrap-prefix
+            "    movq %r12, 16(%rsp)\n    .seh_savereg %r12, 16\n    .seh_endprologue\n    ret\n"))
+        (= mixed-frame 96)
+        (string.eq
+          mixed-entry
+          ".seh_proc _tl_seh_mixed\n_tl_seh_mixed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $96, %rsp\n    .seh_stackalloc 96\n    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 0\n")
+        (string.eq
+          mixed-described
+          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 64\n    .seh_endprologue\n    ret\n")
+        (= large-frame 4864)
+        (asm-has?
+          large-entry
+          "    movl $4864, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    .seh_stackalloc 4864\n")
+        (asm-lacks? large-entry ".seh_setframe" ".seh_endprologue")
+        (asm-has?
+          large-described
+          "    movq %r12, -4808(%rbp)\n    .seh_savereg %r12, 56\n"
+          "    movq %rdi, -4856(%rbp)\n    .seh_savereg %rdi, 8\n    .seh_endprologue\n")
+        (string.eq
+          far-described
+          "    movq %r12, 599968(%rsp)\n    .seh_savereg %r12, 599968\n    .seh_endprologue\n")
+        ;; Each save must be the next line, in order, at its own slot and
+        ;; inside the allocation; XMM rows must stay 16-byte aligned.
+        (string.eq
+          (compiler-backend-win64-seh-splice
+            "    movq %rdi, 0(%rsp)\n    movq %r13, 40(%rsp)\n"
+            0
+            ""
+            sparse
+            3
+            80
+            backend-state)
+          "error")
+        (string.eq
+          (compiler-backend-win64-seh-splice
+            "    movq %r12, -40(%rbp)\n"
+            0
+            ""
+            r12-only
+            3
+            80
+            backend-state)
+          "error")
+        (string.eq
+          (compiler-backend-win64-seh-splice
+            "    movq %r12, -32(%rbp)\n"
+            0
+            ""
+            r12-only
+            3
+            16
+            backend-state)
+          "error")
+        (string.eq
+          (compiler-backend-win64-seh-splice
+            "    movq %r12, 16(%rsp)\n"
+            -1
+            ""
+            r12-only
+            3
+            48
+            backend-state)
+          "error")
+        (string.eq
+          (compiler-backend-win64-seh-splice
+            "    ret\n"
+            0
+            ""
+            xmm-only
+            3
+            104
+            backend-state)
+          "error")
+        (<=
+          (backend.compiler-backend-windows-framed-prologue-bound 10 true 8)
+          backend.compiler-backend-windows-prologue-limit)
+        ;; The description holds wherever %rsp is at its post-allocation value.
+        (backend.compiler-backend-windows-framed-rsp-exact?
+          "    movq %rcx, %rax\n    call _tl_f\n    leave\n    ret\n")
+        (backend.compiler-backend-windows-framed-rsp-exact?
+          "    pushq %r10\n    movq 720(%rsp), %r10\n    movq %r10, 416(%rsp)\n    popq %r10\n    call _tl_f\n")
+        (backend.compiler-backend-windows-framed-rsp-exact?
+          "    leaq 416(%rsp), %rsp\n    popq %r13\n    popq %r12\n    leave\n    jmp _tl_f\n.L_next:\n    call _tl_f\n")
+        (backend.compiler-backend-windows-framed-rsp-exact?
+          "    movq %rbp, %rsp\n    popq %rbp\n    ret\n")
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    pushq %r10\n    call _tl_f\n    popq %r10\n"))
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    pushq %r10\n    movq 8(%rax), %r10\n    popq %r10\n"))
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    subq $32, %rsp\n    call _tl_f\n    addq $32, %rsp\n"))
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    pushq %r10\n.L_x:\n    popq %r10\n"))
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    pushq %r10\n    jmp .L_x\n"))
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    andq $-16, %rsp\n"))
+        (not
+          (backend.compiler-backend-windows-framed-rsp-exact?
+            "    leave\n    call _tl_f\n")))]
+    [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
+    ok))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -35913,6 +36211,7 @@ b_keep:
         4800
         (regalloc.compiler-reg-assignment-table-empty)
         0
+        false
         state-a)]
     [b-entry-before : String
       (backend.compiler-backend-emit-function-entry
@@ -35921,6 +36220,7 @@ b_keep:
         4800
         (regalloc.compiler-reg-assignment-table-empty)
         0
+        false
         state-b)]
     [_retarget-a : unit
       (begin
@@ -35942,6 +36242,7 @@ b_keep:
         4800
         (regalloc.compiler-reg-assignment-table-empty)
         0
+        false
         state-a)]
     [b-entry-after : String
       (backend.compiler-backend-emit-function-entry
@@ -35950,6 +36251,7 @@ b_keep:
         4800
         (regalloc.compiler-reg-assignment-table-empty)
         0
+        false
         state-b)]
     (and
       a-before.linux
@@ -37279,7 +37581,8 @@ b_keep:
         (compiler-backend-dead-slot-region-push-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
         (compiler-backend-win64-fpo-seh-prologue-ok?)
-        (compiler-backend-win64-xmm-callee-save-homes-ok?))
+        (compiler-backend-win64-xmm-callee-save-homes-ok?)
+        (compiler-backend-win64-framed-save-description-ok?))
       (and
         (compiler-backend-peephole-ok?)
         (compiler-backend-stream-state-interleaving-ok?)

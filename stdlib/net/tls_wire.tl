@@ -1372,9 +1372,11 @@
     (not reader.failed)
     (= (+ reader.start reader.held) (byte_buf.len (& reader.pending)))))
 
-;: Whether part of a handshake message is buffered.
+;: Whether part of a handshake message is buffered: the bytes after the
+;: complete messages end inside a header or body. `checked` stops exactly at
+;: the end of the buffer only when every buffered message is complete.
 (define (handshake-reader-buffering? [reader : (& reader TlsHandshakeReader)]) : bool
-  (not (handshake-reader-at-record-boundary? reader)))
+  (!= reader.checked (byte_buf.len (& reader.pending))))
 
 ;: Check that a key change may happen now. RFC 9846 requires the messages
 ;: before a key change (ClientHello, ServerHello, EndOfEarlyData, Finished,
@@ -1403,7 +1405,7 @@
     [reader.failed (TlsWireErr (copy-error (& reader.error)))]
     [(or
         (= content-type content-type-handshake)
-        (handshake-reader-at-record-boundary? reader))
+        (not (handshake-reader-buffering? reader)))
       (TlsWireOk)]
     [else
       (TlsWireErr

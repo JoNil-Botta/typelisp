@@ -1037,10 +1037,6 @@
                         (tls.handshake-reader-at-record-boundary? (& reader))
                         ends-fragment
                         "record boundary after a message")
-                      (test.assert-bool-eq
-                        (tls.handshake-reader-buffering? (& reader))
-                        (not ends-fragment)
-                        "buffering after a message")
                       (set!
                         result.frames
                         (byte_buf.append-bytes result.frames message))
@@ -1054,7 +1050,13 @@
                           (if ends-fragment
                             1
                             0)))))]
-                [(tls.TlsHandshakeNeedMore) (set! draining false)]
+                [(tls.TlsHandshakeNeedMore)
+                  (begin
+                    (test.assert-bool-eq
+                      (tls.handshake-reader-buffering? (& reader))
+                      (!= (byte_buf.len (& result.frames)) stop)
+                      "a partial message is buffered exactly when the fragment ends inside one")
+                    (set! draining false))]
                 [(tls.TlsHandshakeFailed error)
                   (begin
                     (test.assert-owned-string-eq
@@ -1229,7 +1231,42 @@
             [_ (test.assert-true false "a header alone needs its body")])
           (test.assert-true
             (tls.handshake-reader-buffering? (& reader))
-            "a header alone is buffered"))))))
+            "a header alone is buffered")))
+      (let
+        [reader : tls.TlsHandshakeReader (tls.handshake-reader-new (limits))]
+        (begin
+          (expect-check-ok
+            (tls.handshake-reader-feed!
+              (&mut reader)
+              (byte_buf.bytes-slice-view (view (& flight)) 0 40))
+            "a whole message feeds")
+          (test.assert-false
+            (tls.handshake-reader-buffering? (& reader))
+            "a whole unread message is not a split one")
+          (test.assert-false
+            (tls.handshake-reader-at-record-boundary? (& reader))
+            "a whole unread message is not yet returned")
+          (expect-check-ok
+            (tls.handshake-reader-note-record!
+              (&mut reader)
+              tls.content-type-alert)
+            "another record may follow whole messages")
+          (expect-check-ok
+            (tls.handshake-reader-feed!
+              (&mut reader)
+              (byte_buf.bytes-slice-view (view (& flight)) 40 3))
+            "a partial header feeds")
+          (test.assert-true
+            (tls.handshake-reader-buffering? (& reader))
+            "a partial header after a whole message is buffered")
+          (expect-check-error
+            (tls.handshake-reader-note-record!
+              (&mut reader)
+              tls.content-type-alert)
+            tls.error-interleaved
+            43
+            tls.alert-unexpected-message
+            "another record after a partial header"))))))
 
 (define (expect-feed-error
   [hex : String]

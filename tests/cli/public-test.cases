@@ -68,6 +68,51 @@ stdout match Wrote[ ]
 in file {{dir}}/inline_test_pass.s
 not-contains __tl_inline_test
 
+# #8169: an inline-test harness prunes runtime declarations to those its tests
+# reach. A constant named only by an imported module's top-level declaration
+# macro call is such a reference and must survive, or the expansion reads an
+# unbound name. `compile` and `run` take the same preflight.
+case inline-test-macro-argument-root
+file mac.tl
+(module mac)
+
+(defmacro (defslot [name : Expr] [first : Expr]) : Decls
+  `(begin
+    (define ,name : i64
+      (+ ,first 1))))
+end-file
+file lib.tl
+(module lib)
+(import mac)
+
+(define lib-first : i64 18)
+
+(mac.defslot slot-a lib-first)
+
+(define (lib-answer) : i64 (+ slot-a 23))
+end-file
+file entry.tl
+(import lib)
+(import stdlib.test)
+
+(define (main) : i64 (lib.lib-answer))
+
+(test entry-answer
+  (test.assert-i64-eq (lib.lib-answer) 42 "answer"))
+end-file
+step macro-argument-root-test
+run test "{{dir}}/entry.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok entry-answer
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step macro-argument-root-compile
+run compile "{{dir}}/entry.tl" --target {{host-target}} -o "{{dir}}/entry.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step macro-argument-root-run
+run run "{{dir}}/entry.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 42
+
 case inline-test-fail
 sh cp "{{work}}/inline_test_fail.tl" "{{dir}}/"
 step inline-test-fail

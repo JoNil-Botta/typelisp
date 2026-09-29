@@ -590,6 +590,27 @@ sh sed -i 's/wrap_missing_on_linux/wrap_still_missing_on_linux/' "{{dir}}/wrap/t
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 stdout contains Fresh {{dir}}/app/target/release/wrap_app
+# Replacing the wrapper's vendored archive relinks the binary; the TLCI image,
+# which no native input reaches, stays fresh.
+file ffi_add8.s
+    .globl ffi_add7
+ffi_add7:
+    movq %rdi, %rax
+    addq $8, %rax
+    ret
+    .section .note.GNU-stack,"",@progbits
+end-file
+step active-archive-change
+exec as "{{dir}}/ffi_add8.s" -o "{{dir}}/ffi_add8.o"
+sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add8.o"
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
+stderr empty
+stdout match ^Built .*/app/target/release/wrap_app$
+stdout contains Fresh {{dir}}/app/target/release/wrap_app.tlci
+step active-archive-run
+exec "{{dir}}/app/target/release/wrap_app"
+exit 43
+sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add7.o"
 # A library the linker cannot find names the manifest field that asked for it.
 step missing-library
 sh sed -i 's/(linux-libraries "ffi_add7")/(linux-libraries "ffi_add7" "wrap_no_such_native_lib")/' "{{dir}}/wrap/typelisp.pkg"

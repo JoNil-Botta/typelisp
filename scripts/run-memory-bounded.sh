@@ -51,13 +51,13 @@ if [ "${1:-}" = --linux-exec ]; then
         "$limit_bytes" "$metrics_file" "$@"
     if [ "$timeout_seconds" -gt 0 ]; then
         exec_status=0
-        linux_memory_limit_run "$limit_bytes" \
+        linux_memory_limit_run_sampled "$limit_bytes" \
             timeout --signal=TERM --kill-after=5s "$timeout_seconds" \
             "$@" || exec_status=$?
         exit "$exec_status"
     fi
     exec_status=0
-    linux_memory_limit_run "$limit_bytes" "$@" || exec_status=$?
+    linux_memory_limit_run_sampled "$limit_bytes" "$@" || exec_status=$?
     exit "$exec_status"
 fi
 

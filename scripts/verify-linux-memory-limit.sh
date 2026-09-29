@@ -175,7 +175,22 @@ exercise_nested_backend() {
     case "$_nested_peak" in
         '' | *[!0-9]*) fail "nested outer OOM lost peak evidence" ;;
     esac
-    [ "$_nested_peak" -ge 33554432 ] || fail "nested outer OOM underreported its peak"
+    [ "$_nested_peak" -ge 33554432 ] || {
+        cat "$_nested_prefix.outer" >&2 || true
+        tail -n 20 "$_nested_prefix.stderr" >&2 || true
+        # Who killed the unit: the kernel's cgroup OOM killer counts in
+        # memory.events, systemd-oomd logs its own kills (#8142).
+        _nested_unit=$(sed -n 's/^Running as unit: \([^;]*\).*/\1/p' "$_nested_prefix.stderr" | tail -n 1)
+        journalctl --user --no-pager -o short-monotonic -u "$_nested_unit" 2>&1 |
+            tail -n 20 >&2 || true
+        journalctl --no-pager -o short-monotonic -u systemd-oomd --since=-10min 2>&1 |
+            tail -n 20 >&2 || true
+        oomctl 2>&1 | head -n 30 >&2 || true
+        cat /proc/pressure/memory >&2 2>/dev/null || true
+        journalctl -k --no-pager -o short-monotonic --since=-10min 2>&1 |
+            grep -i -E 'oom|memory cgroup|killed process' | tail -n 20 >&2 || true
+        fail "nested outer OOM underreported its peak"
+    }
     assert_no_nested_scratch
     for _nested_marker in outer-before inner-marker outer-after; do
         [ "$(grep -Fxc "$_nested_marker" "$_nested_prefix.stderr")" -eq 1 ] || \

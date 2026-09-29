@@ -296,9 +296,9 @@ grep -q 'stdlib.vector.generated.i64' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated vector module docs"
 grep -q 'generated-module-import' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated module import docs"
-grep -q 'href="#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58push-ref-33"' "$SITE/stdlib-vector.html" \
+grep -q 'href="#tl-stdlib_2evector_2egenerated_2ei64.generated.push-ref_21"' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated push-ref! API docs"
-grep -q 'href="#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58push-33"' "$SITE/stdlib-vector.html" \
+grep -q 'href="#tl-stdlib_2evector_2egenerated_2ei64.generated.push_21"' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated push! API docs"
 
 hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
@@ -361,7 +361,7 @@ esac
 
 grep -q 'id="tl-TypeLisp"' "$SITE/readme.html" \
     || fail "readme.html is missing the TypeLisp heading anchor"
-grep -q 'id="tl-TypeLisp-32Language-32Specification"' "$SITE/spec.html" \
+grep -q 'id="tl-TypeLisp_20Language_20Specification"' "$SITE/spec.html" \
     || fail "spec.html is missing the language specification heading anchor"
 grep -q 'href="spec.html"' "$SITE/readme.html" \
     || fail "readme.html did not rewrite SPEC.md links to spec.html"

@@ -70,33 +70,62 @@
   (and (>= c '0') (<= c '9')))
 
 (define (doc-render-anchor-char? [c : char]) : bool
-  (or (doc-render-alpha? c) (doc-render-digit? c) (= c '-') (= c '_')))
+  (or (doc-render-alpha? c) (doc-render-digit? c) (= c '-')))
 
-(define (doc-render-anchor [name : (& name str)]) : String
+(define (doc-render-hex-digit [value : i64]) : String
+  (string.substring "0123456789abcdef" value 1))
+
+;; One field of a canonical anchor. ASCII letters, digits and `-` stand for
+;; themselves; every other byte, `_` and `.` included, is `_` followed by its two
+;; lowercase hex digits. The escape is fixed-width and escapes its own marker, so
+;; the encoding is injective, and a field never contains `.`, which frames the
+;; fields of an item identity. The alphabet needs no escaping in an HTML id or
+;; a URL fragment.
+(define (doc-render-anchor-field [text : (& text str)]) : String
   (let
     [i : i64 0]
-    [n : i64 (string.string-length name)]
-    [out : String "tl-"]
+    [n : i64 (string.string-length text)]
+    [out : String ""]
     (begin
       (while (< i n)
         (let
-          [c : char (string.string-ref name i)]
+          [c : char (string.string-ref text i)]
           (begin
             (if (doc-render-anchor-char? c)
-              (set! out (str_cat.str-cat out (string.substring name i 1) ""))
-              (set!
-                out
-                (str_cat.str-cat
+              (set! out (str_cat.str-cat out (string.substring text i 1)))
+              (let
+                [code : i64 (doc-render-code c)]
+                (set!
                   out
-                  "-"
-                  (string.int->string (doc-render-code c)))))
+                  (str_cat.str-cat
+                    out
+                    "_"
+                    (doc-render-hex-digit (/ code 16))
+                    (doc-render-hex-digit (% code 16))))))
             (set! i (+ i 1)))))
       out)))
 
-;; Canonical declaration identity shared by HTML, search metadata, and future
-;; semantic/LSP links. Module + kind + public name is unique for source
-;; declarations. Synthetic generated imports also include their form because
-;; a generated module can expose more than one import record.
+(define (doc-render-anchor [name : (& name str)]) : String
+  (str_cat.str-cat "tl-" (doc-render-anchor-field name)))
+
+;; Canonical declaration identity shared by HTML, search metadata, generated
+;; doc-site sections and future semantic/LSP links: the module path, kind and
+;; public name as separate anchor fields joined by `.`. Module + kind + name is
+;; unique for source declarations.
+(define (doc-render-identity-anchor
+  [module-path : (& module-path str)]
+  [kind-name : (& kind-name str)]
+  [name : (& name str)]) : String
+  (str_cat.str-cat
+    "tl-"
+    (doc-render-anchor-field module-path)
+    "."
+    (doc-render-anchor-field kind-name)
+    "."
+    (doc-render-anchor-field name)))
+
+;; Synthetic generated imports add their form as a fourth field, because a
+;; generated module can expose more than one import record.
 (define (doc-render-item-anchor
   [module-path : String]
   [item : doc_extract.DocItem]) : String
@@ -104,16 +133,16 @@
     [kind : doc_extract.DocItemKind
       (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item))]
     [base : String
-      (str_cat.str-cat
+      (doc-render-identity-anchor
         module-path
-        "::"
         (doc_extract.doc-kind-name kind)
-        "::"
         (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item)))]
-    (doc-render-anchor
-      (if (= (doc_extract.doc-kind-tag kind) 7)
-        (str_cat.str-cat base "::" (doc_extract.doc-item-signature item))
-        base))))
+    (if (= (doc_extract.doc-kind-tag kind) 7)
+      (str_cat.str-cat
+        base
+        "."
+        (doc-render-anchor-field (doc_extract.doc-item-signature item)))
+      base)))
 
 (define (doc-render-escape-one [text : (& text str)] [idx : i64]) : String
   (let

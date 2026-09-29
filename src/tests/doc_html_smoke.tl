@@ -63,7 +63,7 @@
         "doc-html: title escaping missing")
       (doc_html.doc-html-require-contains
         page
-        "id=\"tl-smoke-60-38-62-46tl\""
+        "id=\"tl-smoke_3c_26_3e_2etl\""
         "doc-html: module anchor missing")
       (doc_html.doc-html-require-contains
         page
@@ -75,7 +75,7 @@
         "doc-html: quote escaping missing")
       (doc_html.doc-html-require-contains
         page
-        "id=\"tl-smoke-60-38-62-46tl-58-58define-58-58answer\""
+        "id=\"tl-smoke_3c_26_3e_2etl.define.answer\""
         "doc-html: item anchor missing")
       (doc_html.doc-html-require-contains
         page
@@ -87,7 +87,7 @@
         "doc-html: item doc escaping missing")
       (doc_html.doc-html-require-contains
         page
-        "href=\"#tl-smoke-60-38-62-46tl-58-58define-function-58-58add-one\""
+        "href=\"#tl-smoke_3c_26_3e_2etl.define-function.add-one\""
         "doc-html: item nav link missing")
       (doc_html.doc-html-require-contains
         graph
@@ -95,7 +95,7 @@
         "doc-html: module nav missing")
       (doc_html.doc-html-require-contains
         graph
-        "href=\"#tl-second-46tl\""
+        "href=\"#tl-second_2etl\""
         "doc-html: second module nav link missing")
       (doc_html.doc-html-require-contains
         graph
@@ -107,7 +107,7 @@
         "doc-html: empty item message missing")
       (doc_html.doc-html-require-contains
         search-records
-        "\"href\":\"smoke.html#tl-smoke-60-38-62-46tl-58-58define-58-58answer\""
+        "\"href\":\"smoke.html#tl-smoke_3c_26_3e_2etl.define.answer\""
         "doc-html: declaration search href missing")
       (doc_html.doc-html-require-contains
         search-records

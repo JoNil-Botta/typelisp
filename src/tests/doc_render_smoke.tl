@@ -93,6 +93,52 @@ _No module docs._
 _No documented declarations._
 ")
 
+;; Anchors are injective: letters, digits and `-` stay, every other byte is
+;; `_` and two hex digits (the marker escapes itself), and item identities join
+;; separately encoded fields with `.`, which a field never contains (#7776).
+(define (doc-render-anchor-is?
+  [text : (& text str)]
+  [expected : (& expected str)]) : bool
+  (string.eq (doc_render.doc-render-anchor text) expected))
+
+(define (doc-render-anchor-table-ok?) : bool
+  (and
+    (doc-render-anchor-is? "ready?" "tl-ready_3f")
+    (doc-render-anchor-is? "ready-63" "tl-ready-63")
+    (doc-render-anchor-is? "a_b" "tl-a_5fb")
+    (doc-render-anchor-is? "a_5fb" "tl-a_5f5fb")
+    (doc-render-anchor-is? "a.b" "tl-a_2eb")
+    (doc-render-anchor-is? "?!" "tl-_3f_21")
+    (doc-render-anchor-is? "" "tl-")
+    (doc-render-anchor-is?
+      "Language Specification"
+      "tl-Language_20Specification")
+    (doc-render-anchor-is? "src/a.tl" "tl-src_2fa_2etl")
+    (doc-render-anchor-is? "é" "tl-_c3_a9")
+    (string.eq
+      (doc_render.doc-render-identity-anchor "a.b" "define" "c")
+      "tl-a_2eb.define.c")
+    (string.eq
+      (doc_render.doc-render-identity-anchor "a" "b.define" "c")
+      "tl-a.b_2edefine.c")
+    (string.eq
+      (doc_render.doc-render-identity-anchor "m" "define-function" "")
+      "tl-m.define-function.")))
+
+(define (doc-render-distinct-names-ok?) : bool
+  (let
+    [rendered : String
+      (doc_render.doc-render-markdown
+        (doc_extract.doc-extract-source
+          ";: Predicate.
+(define (ready? [x : i64]) : bool (> x 0))
+
+;: Escape-looking twin.
+(define (ready-63 [x : i64]) : i64 x)"))]
+    (and
+      (string.contains rendered "<a id=\"tl-ready_3f\"></a>")
+      (string.contains rendered "<a id=\"tl-ready-63\"></a>"))))
+
 (define (doc-render-smoke) : i64
   (let
     [rendered : String
@@ -122,8 +168,13 @@ _No documented declarations._
     [empty-rendered : String
       (doc_render.doc-render-markdown
         (doc_extract.doc-extract-source "(define hidden : i64 1)\n"))]
-    (if (string.eq rendered (doc-render-smoke-expected))
-      (if (string.eq empty-rendered (doc-render-empty-expected))
-        42
-        (io.panic "doc-render: empty markdown smoke mismatch"))
-      (io.panic "doc-render: markdown smoke mismatch"))))
+    (cond
+      [(not (string.eq rendered (doc-render-smoke-expected)))
+        (io.panic "doc-render: markdown smoke mismatch")]
+      [(not (string.eq empty-rendered (doc-render-empty-expected)))
+        (io.panic "doc-render: empty markdown smoke mismatch")]
+      [(not (doc-render-anchor-table-ok?))
+        (io.panic "doc-render: anchor encoding table mismatch")]
+      [(not (doc-render-distinct-names-ok?))
+        (io.panic "doc-render: escape-looking names share an anchor")]
+      [else 42])))

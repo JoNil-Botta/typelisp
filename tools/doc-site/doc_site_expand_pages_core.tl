@@ -6,6 +6,7 @@
 (import stdlib.str_cat)
 (import stdlib.vector)
 (import doc_site_stdlib_manifest as stdlib_manifest)
+(import doc_site_doc_bridge as doc_bridge)
 (import (vector.vector String) as doc_site_name_vec)
 
 (define doc-site-expand-status-ok : i64
@@ -70,40 +71,11 @@
   [needle : (& needle str)]) : bool
   (< (doc-site-expand-find-prefix text needle 0) (string.string-length text)))
 
-(define (doc-site-expand-anchor-char? [c : char]) : bool
-  (or
-    (and (>= c 'A') (<= c 'Z'))
-    (and (>= c 'a') (<= c 'z'))
-    (and (>= c '0') (<= c '9'))
-    (= c '-')
-    (= c '_')))
-
-(define (doc-site-expand-anchor [name : (& name str)]) : String
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length name)]
-    [out : String "tl-"]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref name i)]
-          (begin
-            (if (doc-site-expand-anchor-char? c)
-              (set! out (str_cat.str-cat out (string.substring name i 1)))
-              (set!
-                out
-                (str_cat.str-cat out "-" (string.int->string (cast c : i64)))))
-            (set! i (+ i 1)))))
-      out)))
-
 (define (doc-site-expand-item-anchor [name : (& name str)]) : String
-  (let
-    [identity : String
-      (str_cat.str-cat
-        (string.copy (& doc-site-expand-current-module))
-        "::generated::"
-        (string.copy name))]
-    (doc-site-expand-anchor (& identity))))
+  (doc_bridge.bridge-doc-render-identity-anchor
+    (& doc-site-expand-current-module)
+    "generated"
+    name))
 
 (define (doc-site-expand-json-escape-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -168,7 +140,7 @@
 (define (doc-site-expand-begin-module! [module-name : (& module-name str)]) : unit
   (let
     [module : String (string.copy module-name)]
-    [identity : String (doc-site-expand-anchor (& module))]
+    [identity : String (doc_bridge.bridge-doc-render-anchor (& module))]
     (begin
       (set! doc-site-expand-current-module (string.copy (& module)))
       (doc-site-expand-record!
@@ -261,7 +233,7 @@
   [nav : String]
   [items : String]) : String
   (let
-    [anchor : String (doc-site-expand-anchor module-name)]
+    [anchor : String (doc_bridge.bridge-doc-render-anchor module-name)]
     [escaped : String (doc-site-expand-html-escape module-name)]
     (str_cat.str-cat
       "<section class=\"tl-doc-module\" data-module-identity=\""

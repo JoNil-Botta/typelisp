@@ -1528,6 +1528,17 @@ pre {
 
 (define doc-site-second-hidden : i64 1)")
 
+;; `ready?` escapes to the spelling of the literal name `ready-63`; the two must
+;; keep distinct composed-site anchors and search identities (#7776).
+(define (doc-site-anchor-twins-source) : String
+  ";# Anchor twin docs.
+
+;: Predicate twin.
+(define (ready? [x : i64]) : bool (> x 0))
+
+;: Escape-looking twin.
+(define (ready-63 [x : i64]) : i64 x)")
+
 (define (doc-site-language-smoke-source) : String
   "# Language Reference
 
@@ -1620,6 +1631,16 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         sections
         (DocSiteModule.Module "stdlib/second.tl" "stdlib-second.html")
         (doc-site-second-smoke-source))]
+    [twins-page : String
+      (doc-site-render-module-page
+        sections
+        (DocSiteModule.Module "stdlib/twins.tl" "stdlib-twins.html")
+        (doc-site-anchor-twins-source))]
+    [twins-records : String
+      (doc_bridge.bridge-doc-html-search-records-for-module
+        "stdlib-twins.html"
+        "stdlib/twins.tl"
+        (doc-site-anchor-twins-source))]
     [language-page : String
       (doc-site-render-guide-page
         sections
@@ -1698,7 +1719,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: sidebar current label escaping missing")
       (doc_bridge.bridge-doc-html-require-contains
         page
-        "id=\"tl-stdlib-47smoke-60-38-62-46tl\""
+        "id=\"tl-stdlib_2fsmoke_3c_26_3e_2etl\""
         "doc-site: module anchor missing")
       (doc_bridge.bridge-doc-html-require-contains
         page
@@ -1706,8 +1727,40 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: module docs escaping missing")
       (doc_bridge.bridge-doc-html-require-contains
         page
-        "href=\"#tl-stdlib-47smoke-60-38-62-46tl-58-58define-58-58doc-site-smoke-value\""
+        "href=\"#tl-stdlib_2fsmoke_3c_26_3e_2etl.define.doc-site-smoke-value\""
         "doc-site: item anchor link missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-page
+        "id=\"tl-stdlib_2ftwins_2etl.define-function.ready_3f\""
+        "doc-site: escaped twin anchor missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-page
+        "id=\"tl-stdlib_2ftwins_2etl.define-function.ready-63\""
+        "doc-site: literal twin anchor missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-page
+        "href=\"#tl-stdlib_2ftwins_2etl.define-function.ready_3f\""
+        "doc-site: escaped twin link missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-page
+        "href=\"#tl-stdlib_2ftwins_2etl.define-function.ready-63\""
+        "doc-site: literal twin link missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-records
+        "\"identity\":\"tl-stdlib_2ftwins_2etl.define-function.ready_3f\""
+        "doc-site: escaped twin search identity missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-records
+        "\"href\":\"stdlib-twins.html#tl-stdlib_2ftwins_2etl.define-function.ready_3f\""
+        "doc-site: escaped twin search link missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-records
+        "\"identity\":\"tl-stdlib_2ftwins_2etl.define-function.ready-63\""
+        "doc-site: literal twin search identity missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        twins-records
+        "\"href\":\"stdlib-twins.html#tl-stdlib_2ftwins_2etl.define-function.ready-63\""
+        "doc-site: literal twin search link missing")
       (doc_bridge.bridge-doc-html-require-contains
         second-page
         "Second smoke module docs."
@@ -1726,7 +1779,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: language current sidebar link missing")
       (doc_bridge.bridge-doc-html-require-contains
         language-page
-        "<h1 id=\"tl-Language-32Reference\">Language Reference</h1>"
+        "<h1 id=\"tl-Language_20Reference\">Language Reference</h1>"
         "doc-site: language heading anchor missing")
       (doc_bridge.bridge-doc-html-require-contains
         language-page

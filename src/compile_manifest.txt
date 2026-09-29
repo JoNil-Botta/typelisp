@@ -12,8 +12,10 @@
 #   count-at-least|assembly text|minimum-count
 #   end
 #
-# main-policy is exactly-one, present, none, or skip. Every case also rejects
-# generated assembly containing "# TODO".
+# main-policy is exactly-one, present, none, or skip. A `none` case is a
+# mainless library module: it compiles with --no-entry and its assembly must
+# have no main: or _tl_start: label (#7071). Every case also rejects generated
+# assembly containing "# TODO".
 
 case|integration_calc|tests/integration/calc.tl|assembly|exactly-one|direct
 contains|call tl_alloc
@@ -89,13 +91,13 @@ case|selfhost_main|src/main.tl|assembly|exactly-one|direct
 not-contains|root_list_append
 end
 
-case|selfhost_build_run_core|src/build_run_core.tl|assembly|skip|direct
+case|selfhost_build_run_core|src/build_run_core.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_ast_types|src/compiler_ast_types.tl|assembly|exactly-one|direct
+case|selfhost_compiler_ast_types|src/compiler_ast_types.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_backend|src/compiler_backend.tl|assembly|skip|direct
+case|selfhost_compiler_backend|src/compiler_backend.tl|assembly|none|direct
 not-contains|_tl_compiler_backend_runtime_file_open_status_functions:
 not-contains|_tl_compiler_backend_runtime_file_close_status_functions:
 not-contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
@@ -104,106 +106,106 @@ not-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
-case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
+case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_semantic_index|src/compiler_semantic_index.tl|assembly|skip|direct
+case|selfhost_compiler_semantic_index|src/compiler_semantic_index.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|skip|direct
+case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|skip|direct
+case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|skip|direct
+case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|none|direct
 not-contains|_tl_compiler_driver_emit_package_loaded:
 not-contains|_tl_compiler_driver_emit_package_loaded_object_image:
 end
 
-case|selfhost_compiler_ir_types|src/compiler_ir_types.tl|assembly|skip|direct
+case|selfhost_compiler_ir_types|src/compiler_ir_types.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|skip|direct
+case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|skip|direct
+case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payload.tl|assembly|skip|direct
+case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payload.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_lzss|src/compiler_lzss.tl|assembly|skip|direct
+case|selfhost_compiler_lzss|src/compiler_lzss.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_float|src/compiler_float.tl|assembly|skip|direct
+case|selfhost_compiler_float|src/compiler_float.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_intern|src/compiler_intern.tl|assembly|skip|direct
+case|selfhost_compiler_intern|src/compiler_intern.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_load|src/compiler_load.tl|assembly|skip|direct
+case|selfhost_compiler_load|src/compiler_load.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|skip|direct
+case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|skip|direct
+case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
+case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|none|direct
 count-at-least|call _tl_parse_ast_program_dispatch|1
 end
 
-case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct
+case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|skip|direct
+case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|skip|direct
+case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|none|direct
 end
 
-case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|skip|direct
+case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|none|direct
 end
 
-case|selfhost_doc_extract|src/doc_extract.tl|assembly|skip|direct
+case|selfhost_doc_extract|src/doc_extract.tl|assembly|none|direct
 end
 
-case|selfhost_doc_expand|src/doc_expand.tl|assembly|skip|direct
+case|selfhost_doc_expand|src/doc_expand.tl|assembly|none|direct
 end
 
-case|selfhost_doc_html|src/doc_html.tl|assembly|skip|direct
+case|selfhost_doc_html|src/doc_html.tl|assembly|none|direct
 end
 
-case|selfhost_doc_render|src/doc_render.tl|assembly|skip|direct
+case|selfhost_doc_render|src/doc_render.tl|assembly|none|direct
 end
 
-case|selfhost_doc_test|src/doc_test.tl|assembly|skip|direct
+case|selfhost_doc_test|src/doc_test.tl|assembly|none|direct
 end
 
-case|selfhost_format_cst|src/format_cst.tl|assembly|skip|direct
+case|selfhost_format_cst|src/format_cst.tl|assembly|none|direct
 end
 
-case|selfhost_format_render_buf|src/format_render_buf.tl|assembly|skip|direct
+case|selfhost_format_render_buf|src/format_render_buf.tl|assembly|none|direct
 end
 
-case|selfhost_format_rules|src/format_rules.tl|assembly|skip|direct
+case|selfhost_format_rules|src/format_rules.tl|assembly|none|direct
 end
 
-case|selfhost_format_tokens|src/format_tokens.tl|assembly|skip|direct
+case|selfhost_format_tokens|src/format_tokens.tl|assembly|none|direct
 end
 
-case|selfhost_lex|src/lex.tl|assembly|skip|direct
+case|selfhost_lex|src/lex.tl|assembly|none|direct
 end
 
-case|selfhost_read|src/read.tl|assembly|skip|direct
+case|selfhost_read|src/read.tl|assembly|none|direct
 end
 
-case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
+case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|none|direct
 end
 
-case|selfhost_token|src/token.tl|assembly|skip|direct
+case|selfhost_token|src/token.tl|assembly|none|direct
 end
 
 case|selfhost_linker_archive_core_tests|src/linker_archive_core_tests.tl|assembly|exactly-one|direct

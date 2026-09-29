@@ -1067,7 +1067,8 @@
           (compiler-driver-pic-smoke-roots)
           0
           compiler_backend.CompilerBackendMode.Scalar
-          cfgs)
+          cfgs
+          true)
           [(driver.ResultCompilerDriverBuffer.Ok _ _) true]
           [(driver.ResultCompilerDriverBuffer.Err diagnostic _)
             (compiler-driver-reader-context-smoke-fail

@@ -1276,8 +1276,9 @@ boundary, ownership and fresh-output failure checks.
 
 The gate reuses its freshly built opt1 compiler for two complete opt2 memory
 workloads: the singleton batch compilation of
-`compiler_codegen_smoke_suite.tl` and a standalone build of
-`compiler_backend_tests.tl`. The codegen assembly still participates in the
+`compiler_codegen_smoke_suite.tl` and a standalone build of the backend test
+driver `tests/compiler_backend_smoke.tl`, whose `main` reaches every
+`compiler_backend_tests.tl` test. The codegen assembly still participates in the
 ordinary byte comparison; it is not compiled again just to measure memory. Its
 report name belongs to that one invocation: a report that already exists fails
 the compile, and the gate fails without both complete-fixture reports. These

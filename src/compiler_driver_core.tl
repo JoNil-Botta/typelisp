@@ -4828,7 +4828,8 @@
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
   [mode : compiler_backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
+  [cfgs : sym_i64_env.SymI64Env]
+  [emit-entry : bool]) : ResultCompilerDriverBuffer
   (let
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
@@ -4847,7 +4848,7 @@
         has-target
         mode
         opt-level
-        true))))
+        emit-entry))))
 
 (define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
@@ -4887,7 +4888,8 @@
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
   [mode : compiler_backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
+  [cfgs : sym_i64_env.SymI64Env]
+  [emit-entry : bool]) : ResultCompilerDriverBuffer
   (begin
     (cfg
       compile-profile
@@ -4914,7 +4916,7 @@
         has-target
         mode
         opt-level
-        true))))
+        emit-entry))))
 
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]

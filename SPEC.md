@@ -2798,7 +2798,13 @@ Defines a named function.
 - The body is one or more expressions. Multiple body expressions are evaluated
   as an implicit `begin`; the last expression provides the function result.
 - The entry point is a function named `main` with return type `i64` or `unit`.
-  If `main` is missing, the compiler synthesizes one that returns 0.
+  An executable must define it. Nothing synthesizes a `main`: `build`, `run`
+  and executable `compile` reject a program without one, before any code is
+  emitted, with a diagnostic at its entry file. Code with no entry point is
+  built as a library: a `staticlib` package, or `typelisp compile --no-entry`.
+  Library, check, documentation, lint, format and no-entry (`--no-entry`,
+  `--pic`) paths accept it and emit no entry symbol, and `typelisp test`
+  supplies its own private harness entry.
 - Recursion is supported.
 - Varargs are **not** supported.
 
@@ -8390,6 +8396,9 @@ branch (an explicit trailing dummy value remains valid but unnecessary).
   (if ok
     1
     (io.panic "parse failed")))
+
+(define (main) : i64
+  (parse-or-zero true))
 ```
 
 Function-local early exit uses the Lisp-shaped `(return expr)` form, as in
@@ -8576,8 +8585,8 @@ Environment:
   TYPELISP_REMAP_PATH_PREFIX     FROM=TO mapping for debug and fatal-site paths
 
 Selected Command Forms:
-  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic]
-  typelisp compile --batch <input-output-list>
+  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic | --no-entry]
+  typelisp compile --batch <input-output-list> [--no-entry]
   typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64
   typelisp build <file.tl> [-o <exe>]
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
@@ -8594,9 +8603,11 @@ forms. `--version` prints the compiler build git hash and date.
 
 `compile -o <file>` writes assembly or IR to the given path, `--emit-ir`
 emits the lowered and optimized IR instead of assembly, `--pic` emits
-runtime-free no-entry PIC assembly plus a `<output>.fixups` file, and
-`--batch <file>` reads `input|output` pairs and compiles them in one compiler
-process.
+runtime-free no-entry PIC assembly plus a `<output>.fixups` file, `--no-entry`
+emits ordinary library assembly with no program entry point (the form for a
+module without `main`), and `--batch <file>` reads `input|output` pairs and
+compiles them in one compiler process; with a batch, `--no-entry` applies to
+every entry.
 
 With `--windows-coff-plan <result-plan>` and
 `--target windows-x86_64`, batch input rows instead use

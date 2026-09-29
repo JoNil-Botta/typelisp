@@ -1278,10 +1278,11 @@
       target
       (backend.CompilerBackendMode.Scalar)))
     [(lower.ResultCompilerLower.Ok program spans)
-      (backend.compiler-backend-emit-program-with-spans-for-target
+      (compiler-backend-emit-program-with-spans-for-target-and-entry
         program
         spans
-        target)]
+        target
+        false)]
     [(lower.ResultCompilerLower.Err diag)
       (backend.ResultCompilerBackend.Err diag)]))
 
@@ -3398,63 +3399,47 @@
           true))]
     [(backend.ResultCompilerBackendObject.Err _) false]))
 
-(define (compiler-backend-implicit-main-source) : String
+;; Nothing synthesizes `main` (#7071): an executable entry emission of a
+;; program without one is rejected, while no-entry (library) emission of the
+;; same program still succeeds and exports no entry symbol.
+(define (compiler-backend-missing-main-source) : String
   "(define token-value : i64 7)")
 
-(define (compiler-backend-implicit-main-linux-entry-ok? [asm : String]) : bool
-  (backend.backend-and8
-    (asm-has? asm ".globl _tl_start\n")
-    (asm-has? asm "_tl_start:\n")
-    (asm-has? asm ".globl main\n")
-    (asm-has? asm "main:\n")
-    (asm-has? asm "    call main\n")
-    (asm-has? asm "    xorl %eax, %eax\n")
-    (asm-has? asm ".text\n")
-    true))
+(define (compiler-backend-missing-main-rejected?
+  [result : backend.ResultCompilerBackend]) : bool
+  (match result
+    [(backend.ResultCompilerBackend.Ok _) false]
+    [(backend.ResultCompilerBackend.Err diag)
+      (string.contains
+        (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+        "executable has no `main`")]))
 
-(define (compiler-backend-implicit-main-linux-no-entry-ok? [asm : String]) : bool
-  (and
-    (asm-has? asm ".text\n")
-    (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n" "main:\n")))
-
-(define (compiler-backend-implicit-main-windows-entry-ok? [asm : String]) : bool
-  (backend.backend-and4
-    (asm-has? asm ".globl main\n")
-    (asm-has? asm "main:\n")
-    (asm-has? asm "    xorl %eax, %eax\n")
-    (asm-lacks? asm "\n_start:\n")))
-
-(define (compiler-backend-implicit-main-ok?) : bool
-  (match (lower.lower-compiler-source (compiler-backend-implicit-main-source))
+(define (compiler-backend-missing-main-ok?) : bool
+  (match (lower.lower-compiler-source (compiler-backend-missing-main-source))
     [(lower.ResultCompilerLower.Ok program spans)
-      (match (compiler-backend-emit-program-with-spans-for-target-and-entry
-        (owned_view.compiler-owned-shared-view program)
-        (owned_view.compiler-owned-shared-view spans)
-        (backend.CompilerBackendTarget.Linux)
-        true)
-        [(backend.ResultCompilerBackend.Ok linux-entry-asm)
-          (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+      (and
+        (compiler-backend-missing-main-rejected?
+          (compiler-backend-emit-program-with-spans-for-target-and-entry
             (owned_view.compiler-owned-shared-view program)
             (owned_view.compiler-owned-shared-view spans)
             (backend.CompilerBackendTarget.Linux)
-            false)
-            [(backend.ResultCompilerBackend.Ok linux-no-entry-asm)
-              (match (compiler-backend-emit-program-with-spans-for-target-and-entry
-                program
-                spans
-                (backend.CompilerBackendTarget.Windows)
-                true)
-                [(backend.ResultCompilerBackend.Ok windows-entry-asm)
-                  (and
-                    (compiler-backend-implicit-main-linux-entry-ok?
-                      linux-entry-asm)
-                    (compiler-backend-implicit-main-linux-no-entry-ok?
-                      linux-no-entry-asm)
-                    (compiler-backend-implicit-main-windows-entry-ok?
-                      windows-entry-asm))]
-                [(backend.ResultCompilerBackend.Err _) false])]
-            [(backend.ResultCompilerBackend.Err _) false])]
-        [(backend.ResultCompilerBackend.Err _) false])]
+            true))
+        (compiler-backend-missing-main-rejected?
+          (compiler-backend-emit-program-with-spans-for-target-and-entry
+            (owned_view.compiler-owned-shared-view program)
+            (owned_view.compiler-owned-shared-view spans)
+            (backend.CompilerBackendTarget.Windows)
+            true))
+        (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+          program
+          spans
+          (backend.CompilerBackendTarget.Linux)
+          false)
+          [(backend.ResultCompilerBackend.Ok asm)
+            (and
+              (asm-has? asm ".text\n")
+              (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n" "main:\n"))]
+          [(backend.ResultCompilerBackend.Err _) false]))]
     [(lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-backend-string-ok?) : bool
@@ -5553,6 +5538,12 @@
 (define (compiler-backend-emit-source-opt2-for-target
   [source : String]
   [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
+  (compiler-backend-emit-source-opt2-for-target-and-entry source target true))
+
+(define (compiler-backend-emit-source-opt2-for-target-and-entry
+  [source : String]
+  [target : backend.CompilerBackendTarget]
+  [emit-entry : bool]) : backend.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
     [(lower.ResultCompilerLower.Ok program spans)
       (match (opt.optimize-program-with-spans-and-level program spans 2)
@@ -5570,7 +5561,23 @@
                 target
                 optimized
                 optimized-spans
-                true)))])]
+                emit-entry)))])]
+    [(lower.ResultCompilerLower.Err diag)
+      (backend.ResultCompilerBackend.Err diag)]))
+
+;; A `stdlib.*` module fixture is library code: its module-qualified `main` is
+;; an ordinary function, not the program entry, so it emits without an entry
+;; point (#7071).
+(define (compiler-backend-emit-library-source-for-target
+  [source : String]
+  [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
+  (match (backend.compiler-backend-lower-source-for-target source target)
+    [(lower.ResultCompilerLower.Ok program spans)
+      (compiler-backend-emit-program-with-spans-for-target-and-entry
+        program
+        spans
+        target
+        false)]
     [(lower.ResultCompilerLower.Err diag)
       (backend.ResultCompilerBackend.Err diag)]))
 
@@ -17107,7 +17114,8 @@ g:
 
 (define (compiler-backend-avx2-map-source [elem : String]) : String
   (str_cat.str-cat
-    "(define (fill [a : (__tl_dyn-array "
+    "(define (main) : i64 0)
+(define (fill [a : (__tl_dyn-array "
     elem
     ")] [b : (__tl_dyn-array "
     elem
@@ -17120,7 +17128,8 @@ g:
 
 (define (compiler-backend-uniform-map-source [elem : String]) : String
   (str_cat.str-cat
-    "(define (fill [a : (__tl_dyn-array "
+    "(define (main) : i64 0)
+(define (fill [a : (__tl_dyn-array "
     elem
     ")] [b : (__tl_dyn-array "
     elem
@@ -17134,13 +17143,15 @@ g:
     (set! (array-ref out i) (+ (+ (array-ref a i) (array-ref b i)) r))))"))
 
 (define (compiler-backend-uniform-zip-source) : String
-  "(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [c : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [r : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [c : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
 
 (define (compiler-backend-lane-id-rodata-source) : String
-  "(define (fill [out : (__tl_dyn-array i64)] [other : (__tl_dyn-array i64)] [n : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [out : (__tl_dyn-array i64)] [other : (__tl_dyn-array i64)] [n : i64]) : unit
   (begin
     (foreach
       ([i : i64 0 n])
@@ -18032,7 +18043,8 @@ g:
     (compiler-backend-avx512-vector-reduce-spill-source-ok?)))
 
 (define (compiler-backend-vector-spill-pressure-source) : String
-  "(define (fill
+  "(define (main) : i64 0)
+(define (fill
   [a0 : (__tl_dyn-array i64)]
   [a1 : (__tl_dyn-array i64)]
   [a2 : (__tl_dyn-array i64)]
@@ -18225,7 +18237,8 @@ g:
     (compiler-backend-avx512-predicated-load-address-ok?)))
 
 (define (compiler-backend-avx512-masked-if-source) : String
-  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
@@ -18233,7 +18246,8 @@ g:
       (set! (array-ref out i) (+ (array-ref xs i) 1)))))")
 
 (define (compiler-backend-avx512-masked-if-offset-source) : String
-  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< (array-ref xs (+ i 1)) 0)
@@ -18241,7 +18255,8 @@ g:
       (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))))")
 
 (define (compiler-backend-avx512-masked-if-index-value-source) : String
-  "(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
@@ -18249,7 +18264,8 @@ g:
       (set! (array-ref out i) (+ i 1)))))")
 
 (define (compiler-backend-avx512-masked-if-index-mod-source) : String
-  "(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (= (% i 2) 0)
@@ -18257,7 +18273,8 @@ g:
       (set! (array-ref out i) (+ i 100)))))")
 
 (define (compiler-backend-avx512-masked-if-value-source) : String
-  "(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  "(define (main) : i64 0)
+(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (if (< (array-ref xs i) 0)
@@ -18804,27 +18821,32 @@ g:
 (define (compiler-backend-vector-shuffle-ok?) : bool
   (and
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (lower.CompilerLowerMode.Avx2)
       (backend.CompilerBackendMode.Avx2)
       "foreach_avx2_body")
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (__tl_dyn-array i32)] [out : (__tl_dyn-array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [out : (__tl_dyn-array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (lower.CompilerLowerMode.Avx2)
       (backend.CompilerBackendMode.Avx2)
       "foreach_avx2_body")
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (__tl_dyn-array f64)] [out : (__tl_dyn-array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f64)] [out : (__tl_dyn-array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (lower.CompilerLowerMode.Avx512)
       (backend.CompilerBackendMode.Avx512)
       "foreach_avx2_body")
     (compiler-backend-identity-shuffle-eliminated?
-      "(define (f [xs : (__tl_dyn-array f32)] [out : (__tl_dyn-array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f32)] [out : (__tl_dyn-array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (program-index)))))"
       (lower.CompilerLowerMode.Avx512)
       (backend.CompilerBackendMode.Avx512)
       "foreach_avx2_body")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (__tl_dyn-array i64)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (lower.CompilerLowerMode.Avx2)
       (backend.CompilerBackendMode.Avx2)
       "    vpermd "
@@ -18832,7 +18854,8 @@ g:
       "    vpmovmskb "
       "    shll $1, ")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (__tl_dyn-array i32)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (lower.CompilerLowerMode.Avx2)
       (backend.CompilerBackendMode.Avx2)
       "    vpermd "
@@ -18840,7 +18863,8 @@ g:
       "    vpmovmskb "
       "%rsp), %ymm0, %ymm")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (__tl_dyn-array f64)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f64)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (lower.CompilerLowerMode.Avx512)
       (backend.CompilerBackendMode.Avx512)
       "    vpermq "
@@ -18848,7 +18872,8 @@ g:
       "    kmovw "
       "%zmm")
     (compiler-backend-varying-shuffle-vector-check?
-      "(define (f [xs : (__tl_dyn-array f32)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f32)] [selectors : (__tl_dyn-array i64)] [out : (__tl_dyn-array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) (array-ref selectors i)))))"
       (lower.CompilerLowerMode.Avx512)
       (backend.CompilerBackendMode.Avx512)
       "    vpermd "
@@ -18991,62 +19016,72 @@ g:
 (define (compiler-backend-avx2-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
       "    vpaddq "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
       "    vmovq %xmm2, ")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
       "    vpaddd "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
       "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpminsd "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
       "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsd "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
       "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
       "    vaddpd "
       "    vextractf128 $1, "
       "    vaddsd "
       "    movsd %xmm2, ")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       "    vaddps "
       "    vextractf128 $1, "
       "    vaddss "
       "    movss %xmm2, ")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpcmpgtq "
       "    vextracti128 $1, "
       "    vpblendvb "
       "    vmovq %xmm2, ")
     (compiler-backend-avx2-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpcmpgtq "
       "    vextracti128 $1, "
       "    vpblendvb "
       "    vmovq %xmm2, ")
     (compiler-backend-bool-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
       (lower.CompilerLowerMode.Avx2)
       (backend.CompilerBackendMode.Avx2)
       "    vpmovmskb "
       "    sete %al\n"
       "%ymm")
     (compiler-backend-bool-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
       (lower.CompilerLowerMode.Avx2)
       (backend.CompilerBackendMode.Avx2)
       "    vpmovmskb "
@@ -19087,13 +19122,15 @@ g:
 (define (compiler-backend-avx512-vector-reduce-i64-minmax-ok?) : bool
   (and
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpminsq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
       "    vmovq %xmm2, ")
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
@@ -19102,37 +19139,43 @@ g:
 (define (compiler-backend-avx512-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
       "    vpaddq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
       "    vmovq %xmm2, ")
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
       "    vpaddd "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
       "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpminsd "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
       "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsd "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
       "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
       "    vaddpd "
       "    vextractf64x4 $1, "
       "    vaddsd "
       "    movsd %xmm2, ")
     (compiler-backend-avx512-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       "    vaddps "
       "    vextractf32x8 $1, "
       "    vaddss "
@@ -19142,14 +19185,16 @@ g:
 (define (compiler-backend-avx512-bool-vector-reduce-ok?) : bool
   (and
     (compiler-backend-bool-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))"
       (lower.CompilerLowerMode.Avx512)
       (backend.CompilerBackendMode.Avx512)
       "    kortestq "
       "    setc %al\n"
       "%k")
     (compiler-backend-bool-reduce-asm-contains?
-      "(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
+      "(define (main) : i64 0)
+(define (f [xs : (__tl_dyn-array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"
       (lower.CompilerLowerMode.Avx512)
       (backend.CompilerBackendMode.Avx512)
       "    kortestq "
@@ -19310,8 +19355,10 @@ g:
   (ir.CompilerIrProgram.Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      func
-      (ir.compiler-ir-function-seq-empty))
+      (compiler-backend-test-main-function)
+      (ir.compiler-ir-function-seq-prepend
+        func
+        (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-vector-call-lifetime-function) : ir.CompilerIrFunction
@@ -20675,6 +20722,8 @@ g:
           (string.substring body start (- (string.string-length body) start))
           (string.substring body start (- tail start)))))))
 
+;; The optimizer drops functions a `main` cannot reach, so this mainless
+;; kernel emits as library code (#7071).
 (define (compiler-backend-avx2-data-pointer-cse-ok?) : bool
   (match (lower.lower-compiler-source-with-mode
     (compiler-backend-avx2-data-pointer-cse-source)
@@ -20687,7 +20736,7 @@ g:
             (backend.CompilerBackendTarget.Linux)
             (backend.CompilerBackendMode.Avx2)
             optimized-spans
-            true)
+            false)
             [(backend.ResultCompilerBackend.Ok asm)
               (let
                 [body : String
@@ -25908,7 +25957,7 @@ g:
 (define (compiler-backend-stdlib-env-runtime-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-source-for-target
+    (compiler-backend-emit-library-source-for-target
       (compiler-backend-stdlib-env-runtime-source)
       target)
     (has ".extern getenv\n" ".extern strlen\n")
@@ -26749,19 +26798,21 @@ g:
   [target : backend.CompilerBackendTarget]) : bool
   (and
     (compiler-backend-literal-float-to-bits-asm-ok?
-      (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-emit-library-source-for-target
         (compiler-backend-literal-float-to-bits-source)
         target)
-      (backend.compiler-backend-emit-source-for-target
+      (compiler-backend-emit-library-source-for-target
         (compiler-backend-integer-float-bits-source)
         target))
     (compiler-backend-literal-float-to-bits-asm-ok?
-      (compiler-backend-emit-source-opt2-for-target
+      (compiler-backend-emit-source-opt2-for-target-and-entry
         (compiler-backend-literal-float-to-bits-source)
-        target)
-      (compiler-backend-emit-source-opt2-for-target
+        target
+        false)
+      (compiler-backend-emit-source-opt2-for-target-and-entry
         (compiler-backend-integer-float-bits-source)
-        target))))
+        target
+        false))))
 
 (define (compiler-backend-literal-float-to-bits-ok?) : bool
   (and
@@ -27508,7 +27559,8 @@ g:
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
 (define (compiler-backend-bool-and-source) : String
-  "(defmacro (and [args : bool ...]) : bool
+  "(define (main) : i64 0)
+(defmacro (and [args : bool ...]) : bool
   `(and-from (__and-args ,@args) 0))
 (defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
@@ -27525,7 +27577,8 @@ g:
 (define (f [a : bool] [b : bool]) : bool (and a b))")
 
 (define (compiler-backend-bool-or-source) : String
-  "(defmacro (or [args : bool ...]) : bool
+  "(define (main) : i64 0)
+(defmacro (or [args : bool ...]) : bool
   `(or-from (__or-args ,@args) 0))
 (defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
@@ -27542,17 +27595,21 @@ g:
 (define (f [a : bool] [b : bool]) : bool (or a b))")
 
 (define (compiler-backend-bool-eq-source) : String
-  "(define (f [a : bool] [b : bool]) : bool (= a b))")
+  "(define (main) : i64 0)
+(define (f [a : bool] [b : bool]) : bool (= a b))")
 
 (define (compiler-backend-bool-not-source) : String
-  "(define (f [a : bool]) : bool (not a))")
+  "(define (main) : i64 0)
+(define (f [a : bool]) : bool (not a))")
 
 (define (compiler-backend-negated-compare-branch-source) : String
-  "(define (f [a : i64] [b : i64]) : i64
+  "(define (main) : i64 0)
+(define (f [a : i64] [b : i64]) : i64
   (if (not (= a b)) 1 2))")
 
 (define (compiler-backend-not-branch-source) : String
-  "(define (f [a : bool]) : i64
+  "(define (main) : i64 0)
+(define (f [a : bool]) : i64
   (if (not a) 1 2))")
 
 (define (compiler-backend-multi-not-branch-source) : String
@@ -27604,10 +27661,13 @@ g:
           (asm-lacks? body "    xorq $1, ")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
+;; The optimizer drops functions a `main` cannot reach, so this mainless
+;; fixture emits as library code (#7071).
 (define (compiler-backend-multi-not-branch-ok?) : bool
-  (match (compiler-backend-emit-source-opt2-for-target
+  (match (compiler-backend-emit-source-opt2-for-target-and-entry
     (compiler-backend-multi-not-branch-source)
-    (backend.CompilerBackendTarget.Linux))
+    (backend.CompilerBackendTarget.Linux)
+    false)
     [(backend.ResultCompilerBackend.Ok asm)
       (let
         [body : String (compiler-backend-asm-function-body asm "_tl_contains")]
@@ -27741,7 +27801,8 @@ g:
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms.
 (define (compiler-backend-scalar-wide-source) : String
-  "(define (xor64 [a : i64] [b : i64]) : i64 (bit-xor a b))
+  "(define (main) : i64 0)
+(define (xor64 [a : i64] [b : i64]) : i64 (bit-xor a b))
 (define (shl64 [a : i64] [b : i64]) : i64 (shl a b))
 (define (shr64 [a : i64] [b : i64]) : i64 (shr a b))")
 
@@ -29359,7 +29420,8 @@ g:
     (compiler-backend-missing-var-compare-width-ok?)))
 
 (define (compiler-backend-f64-abi-source) : String
-  "(define (half [x : f64]) : f64 (/ x 2.0))
+  "(define (main) : i64 0)
+(define (half [x : f64]) : f64 (/ x 2.0))
 (define (callhalf [x : f64]) : f64 (half x))
 (define (second [n : i64] [x : f64]) : f64 x)")
 
@@ -31328,27 +31390,32 @@ g:
     (compiler-backend-export-symbol-abort-string-ok?)
     (compiler-backend-export-symbol-diagnostics-ok?)))
 
+;; An executable program built directly in IR defines its own trivial `main`,
+;; as a source fixture would: the backend synthesizes none (#7071).
+(define (compiler-backend-test-main-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ci.intern "main")
+    (ir.compiler-ir-param-seq-empty)
+    (ast.AstType.I64)
+    0
+    (ir.compiler-ir-block-cons
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (compiler-backend-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
+          (ir.compiler-ir-instr-seq-empty)))
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
+
 (define (compiler-backend-clean-module-symbol-collision-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (ir.CompilerIrFunction.Function
-        (ci.intern "pkg/a.tl::helper")
-        (ir.compiler-ir-param-seq-empty)
-        (ast.AstType.I64)
-        0
-        (ir.compiler-ir-block-cons
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-backend-test-instr-seq-prepend
-              (ir.CompilerIrInstr.Return
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
-              (ir.compiler-ir-instr-seq-empty)))
-          ir.CompilerIrBlockList.Nil)
-        ir.CompilerIrFunctionAbi.Ordinary)
+      (compiler-backend-test-main-function)
       (ir.compiler-ir-function-seq-prepend
         (ir.CompilerIrFunction.Function
-          (ci.intern "pkg_a.tl::helper")
+          (ci.intern "pkg/a.tl::helper")
           (ir.compiler-ir-param-seq-empty)
           (ast.AstType.I64)
           0
@@ -31357,11 +31424,26 @@ g:
               (ir.compiler-ir-label "entry")
               (compiler-backend-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return
-                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 2)))
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 1)))
                 (ir.compiler-ir-instr-seq-empty)))
             ir.CompilerIrBlockList.Nil)
           ir.CompilerIrFunctionAbi.Ordinary)
-        (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-function-seq-prepend
+          (ir.CompilerIrFunction.Function
+            (ci.intern "pkg_a.tl::helper")
+            (ir.compiler-ir-param-seq-empty)
+            (ast.AstType.I64)
+            0
+            (ir.compiler-ir-block-cons
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "entry")
+                (compiler-backend-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 2)))
+                  (ir.compiler-ir-instr-seq-empty)))
+              ir.CompilerIrBlockList.Nil)
+            ir.CompilerIrFunctionAbi.Ordinary)
+          (ir.compiler-ir-function-seq-empty))))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-clean-module-symbol-collision-ok?) : bool
@@ -37543,7 +37625,7 @@ b_keep:
         (compiler-backend-float-to-u64-cast-homes-ok?)
         (compiler-backend-float-to-u64-threshold-collection-ok?)
         (compiler-backend-spill-int-cast-home-ok?)
-        (compiler-backend-implicit-main-ok?))
+        (compiler-backend-missing-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)
         (compiler-backend-private-abi-decoding-ok?)

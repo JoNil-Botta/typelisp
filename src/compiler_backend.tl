@@ -38301,26 +38301,42 @@
 ;; Program admission before any emission: every same-program private SPMD
 ;; helper and call must satisfy its explicit ABI descriptor (#7405), then the
 ;; symbol tables must be consistent. Both the assembly and object paths admit a
-;; program only through here.
+;; program only through here. An executable (`emit-entry`) must define `main`:
+;; nothing synthesizes one, so a program without it is rejected before any
+;; code is emitted rather than linked against a missing symbol.
 (define (compiler-backend-validate-program
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
-  [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
+  [index : CompilerBackendProgramIndex]
+  [emit-entry : bool]) : ResultCompilerBackendSymbolValidation
   (let
     [spmd-abi-error : String
       (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)]
-    (if (> (string.string-length spmd-abi-error) 0)
-      (ResultCompilerBackendSymbolValidation.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start "" spmd-abi-error)))
-      (compiler-backend-validate-function-symbols
-        globals
-        functions
-        externs
-        plan
-        index))))
+    (cond
+      [(> (string.string-length spmd-abi-error) 0)
+        (ResultCompilerBackendSymbolValidation.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start "" spmd-abi-error)))]
+      [(and
+          emit-entry
+          (not
+            (compiler-backend-function-seq-defines?
+              (compiler-backend-global-shared-view functions)
+              cbi.compiler-builtin-id-fix-main)))
+        (ResultCompilerBackendSymbolValidation.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
+              ""
+              "executable has no `main`: define `(define (main) : i64 ...)` as its entry point, or emit library code without one (a `staticlib` package or `typelisp compile --no-entry`)")))]
+      [else
+        (compiler-backend-validate-function-symbols
+          globals
+          functions
+          externs
+          plan
+          index)])))
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
@@ -74785,37 +74801,6 @@
       (compiler-backend-clear-function-emit-state! backend-state)
       result)))
 
-(define (compiler-backend-implicit-main-function) : compiler_ir_types.CompilerIrFunction
-  (compiler_ir_types.CompilerIrFunction.Function
-    cbi.compiler-builtin-id-fix-main
-    (compiler_ir_types.compiler-ir-param-seq-empty)
-    (compiler_ast_types.AstType.I64)
-    1
-    (compiler_ir_types.compiler-ir-block-list-compact
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-instr-seq1
-            (compiler_ir_types.CompilerIrInstr.Return
-              (compiler_ir_types.CompilerIrMaybeValue.Some
-                (compiler_ir_types.CompilerIrValue.I64 0)))))
-        compiler_ir_types.CompilerIrBlockList.Nil))
-    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-backend-functions-with-implicit-main
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [emit-entry : bool]) : compiler_ir_types.CompilerIrFunctionSeq
-  (if (and
-    emit-entry
-    (not
-      (compiler-backend-function-seq-defines?
-        (compiler-backend-global-shared-view functions)
-        cbi.compiler-builtin-id-fix-main)))
-    (compiler_ir_types.compiler-ir-function-seq-prepend
-      (compiler-backend-implicit-main-function)
-      functions)
-    functions))
-
 (define (compiler-backend-emit-functions-buffer-raw-into
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -79032,7 +79017,7 @@
 
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [runtime-features : runtime_common.CompilerBackendRuntimeFeatures]
@@ -79103,7 +79088,7 @@
                 [descriptor-buf : text_buf.TextBuf
                   (compiler-backend-emit-closure-descriptors-into
                     closure-names
-                    (compiler-backend-global-shared-view entry-functions)
+                    (compiler-backend-global-shared-view functions)
                     (compiler-backend-global-shared-view externs)
                     program-index
                     lane-id-buf)]
@@ -79119,7 +79104,7 @@
                   (let
                     [switch-buf : text_buf.TextBuf
                       (compiler-backend-emit-switch-tables-functions-into
-                        entry-functions
+                        functions
                         program-index
                         descriptor-buf)]
                     [runtime-data-buf : text_buf.TextBuf
@@ -79214,7 +79199,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackendGlobalsAndCollections
   (let
@@ -79223,13 +79208,13 @@
         type-segment-bases
         program-index
         (compiler-backend-global-shared-view globals)
-        (compiler-backend-global-shared-view entry-functions))]
+        (compiler-backend-global-shared-view functions))]
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
         program-index.backend-state
         (compiler-backend-collect-program-collections-with-iag
           (compiler-backend-global-shared-view globals)
-          entry-functions
+          functions
           (compiler-backend-global-shared-view census))
         spans)]
     ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
@@ -79258,7 +79243,7 @@
   [_program : compiler_ir_types.CompilerIrProgram]
   [target-policy : CompilerBackendTargetPolicy]
   [mode : CompilerBackendMode]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
@@ -79345,7 +79330,7 @@
         [base-prefix-buf : text_buf.TextBuf
           (compiler-backend-emit-program-prefix-buffer
             target
-            (compiler-backend-global-shared-view entry-functions)
+            (compiler-backend-global-shared-view functions)
             (compiler-backend-global-shared-view externs)
             plan
             runtime-features
@@ -79369,7 +79354,7 @@
               base-prefix-buf
               (compiler-backend-debug-prefix
                 target
-                (compiler-backend-global-shared-view entry-functions)
+                (compiler-backend-global-shared-view functions)
                 program-index
                 (compiler-backend-global-shared-view span-index)))
             (compiler-backend-backtrace-map-prefix target))]
@@ -79415,8 +79400,8 @@
             type-segment-bases
             target
             mode
-            (compiler-backend-global-shared-view entry-functions)
-            (compiler-backend-global-shared-view entry-functions)
+            (compiler-backend-global-shared-view functions)
+            (compiler-backend-global-shared-view functions)
             (compiler-backend-global-shared-view globals)
             global-types
             (compiler-backend-global-shared-view externs)
@@ -79445,7 +79430,7 @@
                   type-segment-bases
                   target
                   closure-names
-                  (compiler-backend-global-shared-view entry-functions)
+                  (compiler-backend-global-shared-view functions)
                   externs
                   plan
                   program-index
@@ -79455,7 +79440,7 @@
                       (compiler-backend-backtrace-map-trailer target)
                       (compiler-backend-debug-trailer
                         target
-                        entry-functions
+                        functions
                         program-index))))
                   [(ResultCompilerBackendBuffer.Ok with-adapters)
                     (begin
@@ -79595,24 +79580,17 @@
                   globals
                   functions
                   externs)
-                ;; Build the program index ONCE over the entry function list
-                ;; and share it with the globals emission: each build walks
-                ;; every function body for the register-group counts, so a
-                ;; second build would double both that walk and its transient
-                ;; allocation. The entry list is a superset of
-                ;; `functions` (at most the synthesized implicit main, which
-                ;; no global initializer can reference), so globals resolve
-                ;; identically against the shared index.
+                ;; Build the program index ONCE over the function list and share
+                ;; it with the globals emission: each build walks every
+                ;; function body for the register-group counts, so a second
+                ;; build would double both that walk and its transient
+                ;; allocation.
                 (let
-                  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq
-                    (compiler-backend-functions-with-implicit-main
-                      functions
-                      emit-entry)]
                   [program-index : CompilerBackendProgramIndex
                     (compiler-backend-program-index-build-with-backend-state-and-profile-state
                       backend-state
                       type-segment-bases
-                      (compiler-backend-global-shared-view entry-functions)
+                      (compiler-backend-global-shared-view functions)
                       (compiler-backend-global-shared-view externs)
                       profile-state)]
                   (begin
@@ -79626,7 +79604,7 @@
                       type-segment-bases
                       target
                       (compiler-backend-global-shared-view globals)
-                      (compiler-backend-global-shared-view entry-functions)
+                      (compiler-backend-global-shared-view functions)
                       (compiler-backend-global-shared-view spans)
                       program-index)
                       [(ResultCompilerBackendGlobalsAndCollections.Ok
@@ -79643,11 +79621,11 @@
                             (compiler-backend-profile-start profile-state))
                           (match (compiler-backend-validate-program
                             (compiler-backend-global-shared-view globals)
-                            (compiler-backend-global-shared-view
-                              entry-functions)
+                            (compiler-backend-global-shared-view functions)
                             (compiler-backend-global-shared-view externs)
                             plan
-                            program-index)
+                            program-index
+                            emit-entry)
                             [(ResultCompilerBackendSymbolValidation.Ok _)
                               (compiler-backend-emit-program-buffer-after-index
                                 type-segment-bases
@@ -79655,7 +79633,7 @@
                                 (compiler-backend-state-emission-target-policy
                                   backend-state)
                                 mode
-                                entry-functions
+                                functions
                                 globals
                                 externs
                                 plan
@@ -83073,7 +83051,7 @@
   [_program : compiler_ir_types.CompilerIrProgram]
   [target-policy : CompilerBackendTargetPolicy]
   [_mode : CompilerBackendMode]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
@@ -83090,11 +83068,11 @@
         type-segment-bases
         program-index
         (compiler-backend-global-shared-view globals)
-        (compiler-backend-global-shared-view entry-functions))]
+        (compiler-backend-global-shared-view functions))]
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections-with-iag
         (compiler-backend-global-shared-view globals)
-        (compiler-backend-global-shared-view entry-functions)
+        (compiler-backend-global-shared-view functions)
         (compiler-backend-global-shared-view census))]
     [_frozen-globals-known : unit
       (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
@@ -83122,7 +83100,7 @@
     [runtime-index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index
         program-index.backend-state
-        (compiler-backend-global-shared-view entry-functions)
+        (compiler-backend-global-shared-view functions)
         (compiler-backend-global-shared-view externs))]
     [seed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-runtime-symbols
@@ -83138,7 +83116,7 @@
                           type-segment-bases
                           (object_target.compiler-backend-object-parts-empty)
                           target
-                          entry-functions
+                          functions
                           plan
                           program-index)
                         target
@@ -84017,26 +83995,23 @@
               functions
               externs)
             (let
-              [entry-functions : compiler_ir_types.CompilerIrFunctionSeq
-                (compiler-backend-functions-with-implicit-main
-                  functions
-                  emit-entry)]
               [program-index : CompilerBackendProgramIndex
                 (compiler-backend-program-index-build-with-backend-state-and-profile-state
                   backend-state
                   type-segment-bases
-                  (compiler-backend-global-shared-view entry-functions)
+                  (compiler-backend-global-shared-view functions)
                   (compiler-backend-global-shared-view externs)
                   profile-state)]
               (match (compiler-backend-validate-program
                 (compiler-backend-global-shared-view globals)
-                (compiler-backend-global-shared-view entry-functions)
+                (compiler-backend-global-shared-view functions)
                 (compiler-backend-global-shared-view externs)
                 plan
-                program-index)
+                program-index
+                emit-entry)
                 [(ResultCompilerBackendSymbolValidation.Ok _)
                   (match (compiler-backend-switch-validate-functions
-                    (compiler-backend-global-shared-view entry-functions))
+                    (compiler-backend-global-shared-view functions))
                     [(CompilerBackendSwitchValidation.Ok)
                       (ResultCompilerBackendObject.Ok
                         (compiler-backend-object-image-after-index
@@ -84045,7 +84020,7 @@
                           (compiler-backend-state-emission-target-policy
                             backend-state)
                           mode
-                          entry-functions
+                          functions
                           globals
                           externs
                           plan

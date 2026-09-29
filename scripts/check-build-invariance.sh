@@ -251,7 +251,7 @@ check_backend_memory() {
         "$ROOT/scripts/run-memory-bounded.sh" \
         --limit-mib "$POOL_FULL_CAP_MIB" --report "$memory_dir/backend-tests.memory" \
         --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- \
-        "$OPT1_COMPILER" build src/compiler_backend_tests.tl \
+        "$OPT1_COMPILER" build src/tests/compiler_backend_smoke.tl \
         -o "$memory_dir/backend-tests" --target linux-x86_64 --opt-level 2 \
         --stdlib-root stdlib --stdlib-root src; then
         print_log_pair "bounded backend-tests build failed" \

@@ -2,7 +2,8 @@
 set -eu
 
 # verify-examples.sh — Compile every .tl file in examples/ and verify its exit
-# code plus exact user-visible stdout.
+# code plus exact user-visible stdout. A mainless library module is checked and
+# compiled to no-entry assembly instead, since an executable needs `main`.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -29,7 +30,6 @@ expected_exit() {
         nested_eval) echo 7 ;;
         parser) echo 14 ;;
         safe_threading) echo 42 ;;
-        token) echo 0 ;;
         *) echo "unknown example: $1" >&2; exit 1 ;;
     esac
 }
@@ -51,8 +51,17 @@ expected_stdout() {
         nested_eval) printf '%s\n' 'nested evaluator result: 7' ;;
         parser) printf '%s\n' 'parser result: 14' ;;
         safe_threading) printf '%s\n' 'safe threading score: 42' ;;
-        token) : ;;
         *) echo "unknown example: $1" >&2; exit 1 ;;
+    esac
+}
+
+# Mainless modules the runnable examples import. Nothing synthesizes an entry
+# point (#7071), so each is typechecked and compiled to no-entry assembly, which
+# generates code for every definition and must define no entry symbol.
+library_example() {
+    case "$1" in
+        token) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
@@ -71,14 +80,7 @@ failed=0
 
 for source in "$ROOT/examples/"*.tl; do
     name=$(basename "$source" .tl)
-    want=$(expected_exit "$name")
     asm="$WORKDIR/$name.s"
-    obj="$WORKDIR/$name.$NL_OBJ_EXT"
-    bin="$WORKDIR/$name$NL_BIN_EXT"
-    stdout="$WORKDIR/$name.stdout"
-    stderr="$WORKDIR/$name.stderr"
-    want_stdout="$WORKDIR/$name.expected.stdout"
-    expected_stdout "$name" > "$want_stdout"
 
     echo "[$name] checking format and source conventions"
     "$COMPILER" fmt --check "$source"
@@ -87,6 +89,32 @@ for source in "$ROOT/examples/"*.tl; do
         --redundant-function-name \
         --prefer-dotted-field \
         --name-case
+
+    if library_example "$name"; then
+        input=$source
+        if [ "$HOST_OS" = windows ]; then
+            input="$WORKDIR/$name.tl"
+        fi
+        echo "[$name] checking library module"
+        "$COMPILER" check "$input"
+        echo "[$name] compiling no-entry assembly"
+        "$COMPILER" compile "$input" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --no-entry -o "$asm"
+        if grep -Eq '^[.]globl (main|_tl_start)$' "$asm"; then
+            echo "FAIL: library $name defines an entry symbol" >&2
+            failed=$((failed + 1))
+        else
+            echo "PASS: library $name has no entry symbol"
+        fi
+        continue
+    fi
+
+    want=$(expected_exit "$name")
+    obj="$WORKDIR/$name.$NL_OBJ_EXT"
+    bin="$WORKDIR/$name$NL_BIN_EXT"
+    stdout="$WORKDIR/$name.stdout"
+    stderr="$WORKDIR/$name.stderr"
+    want_stdout="$WORKDIR/$name.expected.stdout"
+    expected_stdout "$name" > "$want_stdout"
 
     if [ "$HOST_OS" = windows ]; then
         echo "[$name] compiling (windows-x86_64)"

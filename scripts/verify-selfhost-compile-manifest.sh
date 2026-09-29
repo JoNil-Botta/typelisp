@@ -5,7 +5,9 @@ set -eu
 #
 # The manifest lists TypeLisp sources to compile. This runner compiles each
 # entry with an already-built TypeLisp compiler, then checks the generated
-# assembly for the expected main-label policy and text markers.
+# assembly for the expected main-label policy and text markers. A `none` case is
+# a mainless library module: it compiles with --no-entry (#7071), in chunks of
+# its own after the executable cases, and must emit no entry label.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -107,6 +109,7 @@ MANIFEST_POOL_PEAK_LABEL=
 
 MANIFEST_INPUT="$WORKDIR/compile-manifest.normalized.txt"
 BATCH_INPUT="$WORKDIR/compile-batch.txt"
+BATCH_LIBRARY_INPUT="$WORKDIR/compile-batch-library.txt"
 BATCH_CHUNK_DIR="$WORKDIR/compile-batch-chunks"
 COMPILER=
 if [ "$SELF_TEST_POOL" -eq 0 ]; then
@@ -352,6 +355,7 @@ END {
         } else if (mains < 1) { print case_id " expected a main: label"; exit }
     } else if (main_policy == "none") {
         if (mains != 0) { print case_id " expected no main: label, found " mains; exit }
+        if (starts_seen != 0) { print case_id " expected no _tl_start: entry, found " starts_seen; exit }
     } else if (main_policy != "skip") { print case_id " has unknown main policy: " main_policy; exit }
     # The stage1 compact fallback, for directives the other routes left open.
     pairs = 0
@@ -392,6 +396,7 @@ END {
 
 prepare_compile_batch() {
     : > "$BATCH_INPUT"
+    : > "$BATCH_LIBRARY_INPUT"
     rm -rf "$BATCH_CHUNK_DIR"
     mkdir -p "$BATCH_CHUNK_DIR"
     prep_case_id=
@@ -447,9 +452,11 @@ prepare_compile_batch() {
                 else
                     prep_compile_source="$ROOT/$prep_case_source"
                 fi
+                prep_batch_input=$BATCH_INPUT
+                [ "$prep_main_policy" != none ] || prep_batch_input=$BATCH_LIBRARY_INPUT
                 printf '%s|%s\n' \
                     "$(compiler_batch_path "$prep_compile_source")" \
-                    "$(compiler_batch_path "$prep_case_dir/$prep_case_id.s")" >> "$BATCH_INPUT"
+                    "$(compiler_batch_path "$prep_case_dir/$prep_case_id.s")" >> "$prep_batch_input"
                 prep_case_id=
                 ;;
             *)
@@ -465,18 +472,35 @@ prepare_compile_batch() {
     split_compile_batch
 }
 
-# Split BATCH_INPUT into BATCH_CHUNK_SIZE-entry chunk files, numbered from 0.
+# Split BATCH_INPUT, then BATCH_LIBRARY_INPUT, into BATCH_CHUNK_SIZE-entry
+# chunk files numbered contiguously from 0. Each library chunk also gets a
+# `.no-entry` marker, which manifest_compile_chunk turns into --no-entry.
 split_compile_batch() {
-    awk -v outdir="$BATCH_CHUNK_DIR" -v size="$BATCH_CHUNK_SIZE" '
+    split_compile_batch_rows "$BATCH_INPUT" 0 ""
+    if [ -s "$BATCH_LIBRARY_INPUT" ]; then
+        split_compile_batch_rows "$BATCH_LIBRARY_INPUT" \
+            "$(find "$BATCH_CHUNK_DIR" -type f -name 'compile-batch.*.txt' | wc -l | tr -d ' ')" \
+            no-entry
+    fi
+}
+
+# ROWS FIRST-CHUNK MARKER: split ROWS into chunks numbered from FIRST-CHUNK,
+# creating `<chunk>.MARKER` beside each chunk when MARKER is not empty.
+split_compile_batch_rows() {
+    awk -v outdir="$BATCH_CHUNK_DIR" -v size="$BATCH_CHUNK_SIZE" -v first="$2" -v marker="$3" '
         {
-            chunk = int((NR - 1) / size)
+            chunk = first + int((NR - 1) / size)
             path = sprintf("%s/compile-batch.%04d.txt", outdir, chunk)
+            if (marker != "" && (NR - 1) % size == 0) {
+                printf "" > (path "." marker)
+                close(path "." marker)
+            }
             print $0 >> path
             if (NR % size == 0) {
                 close(path)
             }
         }
-    ' "$BATCH_INPUT"
+    ' "$1"
 }
 
 # Compile one chunk inside a pool worker. It touches no shared state: it leaves
@@ -494,6 +518,9 @@ manifest_compile_chunk() {
     set -- "$COMPILER" compile --batch "$_chunk" --target linux-x86_64 \
         --cfg selfhost-compile-manifest \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+    if [ -f "$_chunk.no-entry" ]; then
+        set -- "$@" --no-entry
+    fi
     if [ -n "$_chunk_cap" ]; then
         set -- "$ROOT/scripts/run-memory-bounded.sh" \
             --limit-mib "$_chunk_cap" --report "$_chunk.memory" \
@@ -727,6 +754,7 @@ expectation_self_test() {
     expectation_self_test_case entry_stage0 stage0 present "entry_stage0 expected a main: label" '_tl_start:\n'
     expectation_self_test_case no_main stage1 none "no_main expected no main: label, found 1" "$base"
     expectation_self_test_case no_main_ok stage1 none pass '_tl_x:\n    ret\n' 'contains|ret'
+    expectation_self_test_case no_entry stage1 none "no_entry expected no _tl_start: entry, found 1" '_tl_start:\n'
     echo "[selfhost-compile] expectation self-test passed"
 }
 
@@ -749,11 +777,17 @@ manifest_pool_self_test_run() {
     shift 2
     WORKDIR="$MANIFEST_POOL_SELF_TEST_ROOT/$_st_name"
     BATCH_INPUT="$WORKDIR/compile-batch.txt"
+    BATCH_LIBRARY_INPUT="$WORKDIR/compile-batch-library.txt"
     BATCH_CHUNK_DIR="$WORKDIR/compile-batch-chunks"
     mkdir -p "$BATCH_CHUNK_DIR"
     : > "$BATCH_INPUT"
+    : > "$BATCH_LIBRARY_INPUT"
+    # A `lib:` source is a library (main-policy none) row.
     for _st_source in "$@"; do
-        printf '%s|%s\n' "$WORKDIR/$_st_source.tl" "$WORKDIR/$_st_source.s" >> "$BATCH_INPUT"
+        case "$_st_source" in
+            lib:*) printf '%s|%s\n' "$WORKDIR/${_st_source#lib:}.tl" "$WORKDIR/${_st_source#lib:}.s" >> "$BATCH_LIBRARY_INPUT" ;;
+            *) printf '%s|%s\n' "$WORKDIR/$_st_source.tl" "$WORKDIR/$_st_source.s" >> "$BATCH_INPUT" ;;
+        esac
     done
     split_compile_batch
     TYPELISP_CI_TIMING=1
@@ -792,9 +826,10 @@ manifest_pool_self_test() {
     MANIFEST_POOL_SELF_TEST_ROOT="$ROOT/target/selfhost-compile-manifest-pool-self-test"
     rm -rf "$MANIFEST_POOL_SELF_TEST_ROOT"
     mkdir -p "$MANIFEST_POOL_SELF_TEST_ROOT"
-    # The fake compiler writes each entry's output, sleeps 3 s for a source
-    # named `pause*`, 30 s for `stall*`, fails `broken*`, and logs its chunk
-    # list once it finishes.
+    # The fake compiler writes each entry's output (`library:` under
+    # --no-entry, `main:` otherwise), sleeps 3 s for a source named `pause*`,
+    # 30 s for `stall*`, fails `broken*`, and logs its chunk list once it
+    # finishes.
     COMPILER="$MANIFEST_POOL_SELF_TEST_ROOT/fake-typelisp"
     cat > "$COMPILER" <<'FAKE'
 #!/usr/bin/env sh
@@ -802,6 +837,10 @@ if [ "${1:-}" != compile ] || [ "${2:-}" != --batch ]; then
     echo "fake compiler: unexpected arguments: $*" >&2
     exit 2
 fi
+label='main:'
+for arg in "$@"; do
+    [ "$arg" != --no-entry ] || label='library:'
+done
 while IFS='|' read -r source output; do
     case "${source##*/}" in
         pause*) sleep 3 ;;
@@ -813,7 +852,7 @@ while IFS='|' read -r source output; do
             exit 7
             ;;
     esac
-    printf 'main:\n' > "$output"
+    printf '%s\n' "$label" > "$output"
 done < "$3"
 printf '%s\n' "${3##*/}" >> "$MANIFEST_SELF_TEST_LOG"
 FAKE
@@ -836,6 +875,22 @@ FAKE
         manifest_pool_self_test_fail "order: chunk 2 did not finish before chunk 1, so the scenario proves nothing"
     [ "$(awk -F '\t' '{ printf "%s ", $2 }' "$MANIFEST_POOL_SELF_TEST_ROOT/order/timing.tsv")" = "chunk-1 chunk-2 chunk-3 " ] ||
         manifest_pool_self_test_fail "order: timing rows are not one per chunk in chunk order"
+
+    # Library rows follow the executable rows in chunks of their own, and only
+    # those chunks compile with --no-entry.
+    MANIFEST_POOL_WORKERS=2
+    manifest_pool_self_test_run library 2 a b c lib:d lib:e
+    manifest_pool_self_test_expect library pass
+    for _st_output in a b c; do
+        [ "$(cat "$MANIFEST_POOL_SELF_TEST_ROOT/library/$_st_output.s")" = main: ] ||
+            manifest_pool_self_test_fail "library: executable row $_st_output compiled with --no-entry"
+    done
+    for _st_output in d e; do
+        [ "$(cat "$MANIFEST_POOL_SELF_TEST_ROOT/library/$_st_output.s")" = library: ] ||
+            manifest_pool_self_test_fail "library: library row $_st_output compiled without --no-entry"
+    done
+    [ "$(wc -l < "$MANIFEST_POOL_SELF_TEST_ROOT/library/timing.tsv" | tr -d ' ')" -eq 3 ] ||
+        manifest_pool_self_test_fail "library: expected 3 chunks (two executable, one library)"
 
     # One worker is the serial route.
     MANIFEST_POOL_WORKERS=1

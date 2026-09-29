@@ -11563,56 +11563,69 @@
   [able : clone_support.CloneNameSet]
   [roots : clone_support.CloneRootEntries]
   [pools : ast.AstNodePoolContext]) : ResultLowerCloneAugment
-  (match program
-    [(ast.AstProgram.Program decls-box)
-      (let
-        [source-decls : ast.AstDeclList (deref decls-box)]
-        [handoff-roots : clone_support.CloneRootEntries
-          (clone_support.clone-stdlib-handoff-roots
-            pools
-            source-decls
-            able
-            roots)]
-        [conflict : i64
-          (begin
-            ;; Clone roots carry structural generated-symbol identities. The
-            ;; macro handoff below is their first text boundary.
-            (clone_support.clone-root-entries-materialize-helper-names!
-              handoff-roots)
-            (lower-clone-handoff-source-conflict
-              lower-state
-              source-decls
-              handoff-roots))]
-        (if (>= conflict 0)
-          (ResultLowerCloneAugment.Err
-            (str_cat.str-cat
-              "clone: conflicting helper producer for "
-              (clone_support.clone-helper-name
-                (clone_support.clone-name-key-string conflict))))
-          (match (lower-clone-handoff-expand-roots
-            lower-state
-            ctx
-            top-env
-            (lower-global-shared-view source-decls)
-            entry-path
-            pools
-            handoff-roots
-            (ast.ast-decl-list-new))
-            [(tc_core.ResultMacroDecls.Ok handoff-decls)
-              (let
-                [augmented-decls : ast.AstDeclList
-                  (clone_support.clone-decl-list-append
-                    source-decls
-                    handoff-decls)]
-                (ResultLowerCloneAugment.Ok
-                  (ast.ast-program augmented-decls)
-                  handoff-decls
+  (let
+    [_live-start : i64 (cfg compile-profile (profile.alloc-live) 0)]
+    [result : ResultLowerCloneAugment
+      (match program
+        [(ast.AstProgram.Program decls-box)
+          (let
+            [source-decls : ast.AstDeclList (deref decls-box)]
+            [handoff-roots : clone_support.CloneRootEntries
+              (clone_support.clone-stdlib-handoff-roots
+                pools
+                source-decls
+                able
+                roots)]
+            [conflict : i64
+              (begin
+                ;; Clone roots carry structural generated-symbol identities. The
+                ;; macro handoff below is their first text boundary.
+                (clone_support.clone-root-entries-materialize-helper-names!
+                  handoff-roots)
+                (lower-clone-handoff-source-conflict
+                  lower-state
+                  source-decls
                   handoff-roots))]
-            [(tc_core.ResultMacroDecls.Err diag)
-              (let
-                [diagnostic : cdiag.CompilerDiagnostic (deref diag)]
-                (ResultLowerCloneAugment.Err
-                  (cdiag.compiler-diagnostic-message diagnostic)))])))]))
+            (if (>= conflict 0)
+              (ResultLowerCloneAugment.Err
+                (str_cat.str-cat
+                  "clone: conflicting helper producer for "
+                  (clone_support.clone-helper-name
+                    (clone_support.clone-name-key-string conflict))))
+              (match (lower-clone-handoff-expand-roots
+                lower-state
+                ctx
+                top-env
+                (lower-global-shared-view source-decls)
+                entry-path
+                pools
+                handoff-roots
+                (ast.ast-decl-list-new))
+                [(tc_core.ResultMacroDecls.Ok handoff-decls)
+                  (let
+                    [augmented-decls : ast.AstDeclList
+                      (clone_support.clone-decl-list-append
+                        source-decls
+                        handoff-decls)]
+                    (ResultLowerCloneAugment.Ok
+                      (ast.ast-program augmented-decls)
+                      handoff-decls
+                      handoff-roots))]
+                [(tc_core.ResultMacroDecls.Err diag)
+                  (let
+                    [diagnostic : cdiag.CompilerDiagnostic (deref diag)]
+                    (ResultLowerCloneAugment.Err
+                      (cdiag.compiler-diagnostic-message diagnostic)))])))])]
+    ;; What the handoff leaves live: the helpers it generated, not its
+    ;; working memory.
+    (begin
+      (cfg
+        compile-profile
+        (compiler-lower-profile-counter
+          "clone_handoff.retained_bytes"
+          (- (profile.alloc-live) _live-start))
+        unit)
+      result)))
 
 (define (lower-extend-checked-context-with-clone-decls
   [ctx : tc_core.TcContext]

@@ -776,6 +776,97 @@
             (ast.ast-node-pool-context-install! active-before)
             (and shape-ok installed-ok)))])))
 
+(define (compiler-ast-generated-key-decl
+  [name : String]
+  [key : String]
+  [body : i64]) : ast.AstDecl
+  (ast.ast-decl-comptime-decl-with-meta
+    (ast.AstGeneratedDeclMeta.Some
+      "stdlib.clone/synthesize-helpers"
+      (string.copy (& name))
+      (ast.ast-expr-list-new)
+      key)
+    (ast.ast-decl-def-id
+      (ci.intern-generated-name name)
+      ast.AstMaybeType.No
+      body)))
+
+(define (compiler-ast-generated-key-at [decls : ast.AstDeclList] [index : i64]) : String
+  (let
+    [decl : ast.AstDecl
+      (ast.ast-decl-list-get (& decls) index (ast.AstDecl.Module 0))]
+    (match (ast.ast-decl-generated-meta (& decl))
+      [(ast.AstGeneratedDeclMeta.Some _ _ _ key) key]
+      [(ast.AstGeneratedDeclMeta.No) "missing"])))
+
+;; The declarations one macro expansion generates share their identity-key
+;; String. Compaction copies that key once and gives all of them the copy; an
+;; equal key with its own storage still gets its own copy.
+(define (compiler-ast-generated-key-shared-compaction-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new
+        (ast.ast-expr-node-pool-state-create 8)
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Smoke-local scratch pool: never installed, caller-arena owned.
+        (arena.tl_arena_current))]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new
+        (ast.ast-expr-node-pool-state-create 8)
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Smoke-local scratch pool: never installed, caller-arena owned.
+        (arena.tl_arena_current))]
+    [body : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
+    [key : String (string.copy "decls:stdlib.clone/Clone(root-a root-b)")]
+    [twin : String (string.copy "decls:stdlib.clone/Clone(root-a root-b)")]
+    [program : ast.AstProgram
+      (ast.ast-program
+        (ast.ast-decl-cons
+          (compiler-ast-generated-key-decl
+            "clone-a"
+            (owned_view.compiler-owned-shared-view key)
+            body)
+          (ast.ast-decl-cons
+            (compiler-ast-generated-key-decl
+              "clone-b"
+              (owned_view.compiler-owned-shared-view key)
+              body)
+            (ast.ast-decl-cons
+              (compiler-ast-generated-key-decl
+                "clone-c"
+                (owned_view.compiler-owned-shared-view twin)
+                body)
+              (ast.ast-decl-list-new)))))]
+    (match (ast.ast-program-compact-with-pools source-pools dest-pools program)
+      [(ast.AstProgramCompaction out-program _)
+        (match out-program
+          [(ast.AstProgram.Program decls-box)
+            (let
+              [decls : ast.AstDeclList (deref decls-box)]
+              [first : String
+                (compiler-ast-generated-key-at
+                  (owned_view.compiler-owned-shared-view decls)
+                  0)]
+              [second : String
+                (compiler-ast-generated-key-at
+                  (owned_view.compiler-owned-shared-view decls)
+                  1)]
+              [third : String (compiler-ast-generated-key-at decls 2)]
+              (begin
+                (ast.ast-node-pool-context-install! active-before)
+                (and
+                  (string.eq first key)
+                  (string.eq third key)
+                  (ast.ast-string-same-storage? (& first) (& second))
+                  (not (ast.ast-string-same-storage? (& first) (& key)))
+                  (not (ast.ast-string-same-storage? (& first) (& third)))
+                  (not (ast.ast-string-same-storage? (& third) (& twin))))))])])))
+
 (define (compiler-ast-macro-type-kind-dense-compaction-smoke?) : bool
   (let
     [source : ast.AstMacroTypeKindList
@@ -2011,6 +2102,7 @@
     (unless (compiler-ast-span-record-growth-smoke?) (return 22))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
+    (unless (compiler-ast-generated-key-shared-compaction-smoke?) (return 26))
     (unless (compiler-ast-cleanup-syntax-identity-smoke?) (return 20))
     (unless (compiler-ast-field-syntax-identity-smoke?) (return 21))
     (unless

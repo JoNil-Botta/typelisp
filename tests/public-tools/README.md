@@ -18,7 +18,11 @@ fixture to Linux hosts.
   are raw protocol bytes, for malformed-frame cases.
 
 Inputs and `message_checks` strings may use `${{TMP}}` and `${{TMP_URI}}` for
-the case's temporary directory.
+the case's temporary directory, inside JSON strings. Both expand literally, as
+JSON string text, in one pass: spaces, `&`, quotes and non-ASCII bytes need no
+care from a fixture. `${{TMP_URI}}` percent-encodes the path the way the server
+builds file URIs. A temporary path with a control character or a backslash
+(a path separator to `stdlib.fs`) is refused with a diagnostic.
 
 A `.spec.json` is read line by line and may contain:
 
@@ -37,10 +41,12 @@ A `.spec.json` is read line by line and may contain:
   occurrence applies, so a check is not read as a JSON object.
 
 `lib-result-checks.sh` checks a case's exit code, streams and messages in one
-awk process, for both corpora. `test-result-checks.sh` is its self-test
+awk process, for both corpora. It also owns the path handling every stage
+shares: placeholder expansion, request framing, file URIs and the
+fresh-versus-batch normalization. `test-result-checks.sh` is its self-test
 (passing and failing checks, the order of the failure lines, repeated keys,
-path substitution, byte and final-newline edges); `verify-public-tools.sh`
-runs it before the corpora.
+literal path substitution, UTF-8 request frames, byte and final-newline
+edges); `verify-public-tools.sh` runs it before the corpora.
 
 ## Running
 

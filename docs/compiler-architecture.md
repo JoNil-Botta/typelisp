@@ -110,6 +110,20 @@ keyword table. The lowerer's closed core-macro Clone handoff supplies its explic
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 
+The expansion walk splices each macro's output into a segmented program view
+and continues over it. A splice costs work in its delta and the module it
+expands in, never a rescan of the whole program (#8120). Segment nodes and the
+emitted prefix index their module-marker and import rows, so a module's local
+environment and the import-alias index read those rows plus the target
+module's own rows. Each cached top-env layer records the resolution generation
+at which it last re-resolved its unresolved signatures. Only a new walk, a
+splice with a nominal type, import or module row, an import marker, or a lazy
+import stub advances the generation, so function-only splices skip the pass. A
+splice that keeps the context's flat program keeps its module declaration
+index. The `macro-segmented-program-events` test and the generated-declaration
+typecheck cases cover the event index and the re-resolution boundary; the
+`expansions` compiler-scaling row measures expansions within one module.
+
 Lexer tokens are scan scratch. Their geometric growth replaces dedicated
 storage after moving the live prefix, then retires the superseded owner and
 restores the caller's active arena. Token storage is not published until

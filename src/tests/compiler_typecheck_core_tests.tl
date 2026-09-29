@@ -6990,6 +6990,7 @@
         (tc_core.macro-program-segment-node-new-current
           (ast.ast-decl-list-new)
           (ast.ast-decl-path-list-new)
+          (__tl_make-array i64 0)
           data.head))]
     (begin
       (set! data.head empty-head)
@@ -7212,6 +7213,336 @@
     (if (macro-segmented-program-boundary-smoke?)
       unit
       (io.panic "typecheck: segmented macro program boundary smoke failed"))))
+
+;; Rows for the event-index smoke: 0 a module marker, 1 an aliased import of
+;; `id` as alias `id + 1`, 2 the same import under `unsafe`, 3 a plain row.
+(define (macro-segmented-event-row [kind : i64] [id : i64]) : ast.AstDecl
+  (let
+    [marker : ast.AstDeclList
+      (tc_core.macro-module-import-marker-decls
+        "target"
+        id
+        (ast.AstMaybeImportAlias.Some (+ id 1))
+        (ast.ast-source-span 1 1 1 2))]
+    [import : ast.AstDecl (ast.ast-decl-list-ref marker 0)]
+    (cond
+      [(= kind 0) (ast.AstDecl.Module id)]
+      [(= kind 1) import]
+      [(= kind 2) (ast.AstDecl.Unsafe (box import))]
+      [else (ast.AstDecl.IncludeStr id "row")])))
+
+;; `specs` holds (kind, id) pairs.
+(define (macro-segmented-event-rows [specs : (& specs (__tl_dyn-array i64))]) : ast.AstDeclList
+  (let
+    [out : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity (/ (array-length specs) 2))]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length specs))
+        (begin
+          (ast.ast-decl-list-push
+            (&mut out)
+            (macro-segmented-event-row
+              (array-ref specs index)
+              (array-ref specs (+ index 1))))
+          (set! index (+ index 2))))
+      out)))
+
+;; The event index lists exactly the module/import rows of the program, in
+;; program order: the prefix's positions, then each unprocessed node's slot
+;; positions from the cursor on.
+(define (macro-segmented-events-match-flat? [state : tc_core.TcJobState]) : bool
+  (let
+    [data : tc_core.MacroSegmentedProgramViewData
+      (tc_core.macro-segmented-prefix-events-sync! state)]
+    [flat : tc_core.MacroSegmentedProgramFlatView
+      (tc_core.macro-segmented-program-flatten-raw state)]
+    [flat-decls : ast.AstDeclList flat.decls]
+    [count : i64 (ast.ast-decl-list-len (& flat-decls))]
+    [expected : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [expected-count : i64 0]
+    [actual : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [actual-count : i64 0]
+    [base : i64 (ast.ast-decl-list-len (& data.prefix-rev))]
+    [node-address : i64 data.head]
+    [start : i64 data.cursor]
+    [index : i64 0]
+    [ok : bool (= data.prefix-scanned base)]
+    (begin
+      (while (< index count)
+        (begin
+          (if (tc_core.macro-decl-list-event-at? (& flat-decls) index)
+            (begin
+              (set! (array-ref expected expected-count) index)
+              (set! expected-count (+ expected-count 1)))
+            unit)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index data.prefix-event-count)
+        (begin
+          (set!
+            (array-ref actual actual-count)
+            (array-ref data.prefix-events index))
+          (set! actual-count (+ actual-count 1))
+          (set! index (+ index 1))))
+      (while (and ok (> node-address 0))
+        (let
+          [node : tc_core.MacroProgramSegmentNodeData
+            (tc_core.macro-program-segment-node-data node-address)]
+          [first : i64 (+ node.decls.offset start)]
+          [end : i64
+            (+ node.decls.offset (ast.ast-decl-list-len (& node.decls)))]
+          [event : i64 0]
+          (begin
+            (while (< event (array-length node.events))
+              (let
+                [slot : i64 (array-ref node.events event)]
+                (begin
+                  (if (and (>= slot first) (< slot end))
+                    (if (< actual-count count)
+                      (begin
+                        (set!
+                          (array-ref actual actual-count)
+                          (+ base (- slot first)))
+                        (set! actual-count (+ actual-count 1)))
+                      (set! ok false))
+                    unit)
+                  (set! event (+ event 1)))))
+            (set! base (+ base (- end first)))
+            (set! node-address node.next)
+            (set! start 0))))
+      (set! ok (and ok (= actual-count expected-count) (= base count)))
+      (set! index 0)
+      (while (and ok (< index expected-count))
+        (begin
+          (set! ok (= (array-ref actual index) (array-ref expected index)))
+          (set! index (+ index 1))))
+      ok)))
+
+;; The alias index built from the events answers every (module, alias) pair of
+;; `pairs` exactly as the full flat build does.
+(define (macro-segmented-alias-index-matches-flat?
+  [state : tc_core.TcJobState]
+  [pairs : (& pairs (__tl_dyn-array i64))]) : bool
+  (let
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state state)]
+    [flat : tc_core.MacroSegmentedProgramFlatView
+      (tc_core.macro-segmented-program-flatten-raw state)]
+    [flat-decls : ast.AstDeclList flat.decls]
+    [count : i64 (array-length pairs)]
+    [segmented : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
+      (tc_core.macro-alias-cache-ensure! macro-state)
+      (tc_core.macro-alias-cache-build-segmented! state)
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref segmented index)
+            (tc_core.macro-alias-cache-get
+              macro-state
+              (array-ref pairs index)
+              (array-ref pairs (+ index 1))))
+          (set! index (+ index 2))))
+      (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
+      (tc_core.macro-alias-cache-ensure! macro-state)
+      (tc_core.macro-alias-cache-build! macro-state (& flat-decls))
+      (set! index 0)
+      (while (< index count)
+        (begin
+          (if (=
+            (array-ref segmented index)
+            (tc_core.macro-alias-cache-get
+              macro-state
+              (array-ref pairs index)
+              (array-ref pairs (+ index 1))))
+            unit
+            (set! ok false))
+          (set! index (+ index 2))))
+      ok)))
+
+;; Moves `count` rows from the cursor into the emitted prefix, as the walk does.
+(define (macro-segmented-events-emit!
+  [state : tc_core.TcJobState]
+  [count : i64]) : unit
+  (let
+    [data : tc_core.MacroSegmentedProgramViewData
+      (tc_core.macro-segmented-program-view-data
+        (tc_core.tc-job-state-macro-program-view-address state))]
+    [out-rev : ast.AstDeclList data.prefix-rev]
+    [out-paths-rev : ast.AstDeclPathList data.prefix-paths-rev]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out-rev
+            (ast.ast-decl-list-prepend-builder
+              (tc_core.macro-segmented-program-current-decl state)
+              out-rev))
+          (set!
+            out-paths-rev
+            (ast.ast-decl-path-list-prepend-builder-with-owner-id
+              (tc_core.macro-segmented-program-current-path state)
+              (tc_core.macro-segmented-program-current-owner-id state)
+              out-paths-rev))
+          (tc_core.macro-segmented-program-advance! state)
+          (set! index (+ index 1))))
+      (tc_core.macro-segmented-program-prefix-set! state out-rev out-paths-rev))))
+
+(define (macro-segmented-events-smoke?) : bool
+  (let
+    [state : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state state)]
+    [m1 : i64 (ci.intern "seg-event-m1")]
+    [m2 : i64 (ci.intern "seg-event-m2")]
+    [t1 : i64 (ci.intern "seg-event-t1")]
+    [t2 : i64 (ci.intern "seg-event-t2")]
+    [t3 : i64 (ci.intern "seg-event-t3")]
+    [t4 : i64 (ci.intern "seg-event-t4")]
+    ;; Twenty prefix events outgrow the index's first allocation.
+    [prefix-specs : (__tl_dyn-array i64) (__tl_make-array i64 44)]
+    [_prefix-specs : unit
+      (let
+        [index : i64 0]
+        (while (< index 22)
+          (begin
+            (set!
+              (array-ref prefix-specs (* index 2))
+              (if (= (% index 7) 3)
+                3
+                1))
+            (set! (array-ref prefix-specs (+ (* index 2) 1)) (+ t1 index))
+            (set! index (+ index 1)))))]
+    [prefix : ast.AstDeclList (macro-segmented-event-rows (& prefix-specs))]
+    [source-specs : (__tl_dyn-array i64) (__tl_make-array i64 18)]
+    [_source-specs : unit
+      (begin
+        (set! (array-ref source-specs 0) 0)
+        (set! (array-ref source-specs 1) m1)
+        (set! (array-ref source-specs 2) 3)
+        (set! (array-ref source-specs 3) 1)
+        (set! (array-ref source-specs 4) 1)
+        (set! (array-ref source-specs 5) t2)
+        (set! (array-ref source-specs 6) 3)
+        (set! (array-ref source-specs 7) 2)
+        (set! (array-ref source-specs 8) 3)
+        (set! (array-ref source-specs 9) 3)
+        (set! (array-ref source-specs 10) 2)
+        (set! (array-ref source-specs 11) t3)
+        (set! (array-ref source-specs 12) 0)
+        (set! (array-ref source-specs 13) m2)
+        (set! (array-ref source-specs 14) 3)
+        (set! (array-ref source-specs 15) 4)
+        (set! (array-ref source-specs 16) 1)
+        (set! (array-ref source-specs 17) t2))]
+    [source : ast.AstDeclList (macro-segmented-event-rows (& source-specs))]
+    [delta-specs : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [_delta-specs : unit
+      (begin
+        (set! (array-ref delta-specs 0) 3)
+        (set! (array-ref delta-specs 1) 5)
+        (set! (array-ref delta-specs 2) 1)
+        (set! (array-ref delta-specs 3) t4)
+        (set! (array-ref delta-specs 4) 3)
+        (set! (array-ref delta-specs 5) 6))]
+    [delta : ast.AstDeclList (macro-segmented-event-rows (& delta-specs))]
+    [plain-specs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [_plain-specs : unit
+      (begin
+        (set! (array-ref plain-specs 0) 3)
+        (set! (array-ref plain-specs 1) 7))]
+    [plain : ast.AstDeclList (macro-segmented-event-rows (& plain-specs))]
+    ;; (module, alias) pairs: every alias in every module, the two duplicate
+    ;; imports of t2, and a missing pair.
+    [pairs : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+    [_pairs : unit
+      (begin
+        (set! (array-ref pairs 0) cbi.compiler-builtin-id-fix-empty)
+        (set! (array-ref pairs 1) (+ t1 1))
+        (set! (array-ref pairs 2) m1)
+        (set! (array-ref pairs 3) (+ t2 1))
+        (set! (array-ref pairs 4) m1)
+        (set! (array-ref pairs 5) (+ t3 1))
+        (set! (array-ref pairs 6) m1)
+        (set! (array-ref pairs 7) (+ t4 1))
+        (set! (array-ref pairs 8) m2)
+        (set! (array-ref pairs 9) (+ t2 1))
+        (set! (array-ref pairs 10) m2)
+        (set! (array-ref pairs 11) (+ t3 1)))]
+    (begin
+      (tc_core.macro-expand-scratch-begin! macro-state)
+      (tc_core.macro-segmented-program-begin!
+        state
+        (tc_core.macro-decl-list-reverse-into
+          (tc_core.tc-global-shared-view prefix)
+          (ast.ast-decl-list-new))
+        (tc_core.macro-decl-path-list-reverse-into
+          (tc_core.macro-paths-for-decls macro-state prefix "prefix")
+          (ast.ast-decl-path-list-new))
+        (tc_core.tc-global-shared-view source)
+        (tc_core.macro-paths-for-decls macro-state source "source"))
+      (let
+        [initial-ok : bool (macro-segmented-events-match-flat? state)]
+        ;; Emit the module marker and the plain row, then replace the import at
+        ;; the cursor by a delta with its own import (a mid-node split).
+        [_emit : unit (macro-segmented-events-emit! state 2)]
+        [_split : unit
+          (tc_core.macro-segmented-program-splice-current!
+            state
+            (tc_core.tc-global-shared-view delta)
+            (tc_core.macro-paths-for-decls macro-state delta "delta"))]
+        [split-ok : bool (macro-segmented-events-match-flat? state)]
+        [split-alias-ok : bool
+          (macro-segmented-alias-index-matches-flat? state (& pairs))]
+        ;; Emit through the delta and replace the first row of the suffix
+        ;; slice with an event-free delta (a node-boundary splice).
+        [_emit-delta : unit (macro-segmented-events-emit! state 3)]
+        [_boundary : unit
+          (tc_core.macro-segmented-program-splice-current!
+            state
+            (tc_core.tc-global-shared-view plain)
+            (tc_core.macro-paths-for-decls macro-state plain "plain"))]
+        [boundary-ok : bool (macro-segmented-events-match-flat? state)]
+        [boundary-alias-ok : bool
+          (macro-segmented-alias-index-matches-flat? state (& pairs))]
+        ;; Everything emitted: the prefix alone holds every event.
+        [_drain : unit
+          (macro-segmented-events-emit!
+            state
+            (__tl-project-field
+              (tc_core.macro-segmented-program-view-data
+                (tc_core.tc-job-state-macro-program-view-address state))
+              queue-len))]
+        [drained-ok : bool
+          (and
+            (tc_core.macro-segmented-program-empty? state)
+            (macro-segmented-events-match-flat? state))]
+        [drained-alias-ok : bool
+          (macro-segmented-alias-index-matches-flat? state (& pairs))]
+        (begin
+          (tc_core.macro-segmented-program-end! state)
+          (tc_core.macro-expand-scratch-release! macro-state)
+          (and
+            initial-ok
+            split-ok
+            split-alias-ok
+            boundary-ok
+            boundary-alias-ok
+            drained-ok
+            drained-alias-ok))))))
+
+(cfg
+  test
+  (test
+    macro-segmented-program-events
+    (if (macro-segmented-events-smoke?)
+      unit
+      (io.panic "typecheck: segmented macro program event index smoke failed"))))
 
 (define (macro-segmented-program-job-reset-smoke?) : bool
   (let

@@ -157,6 +157,7 @@ units there are, never what a unit does:
 | `decls` | declaration count | one small function, all reachable from `main` through eight-way callers |
 | `cfg` | size of one function and its CFG | one two-armed branch on a running value, then a mask |
 | `fields` | width of one struct | one `i64` field, initialized once and read once |
+| `expansions` | macro expansions within one module | one `decls` function, defined by its own `: Decls` macro invocation inside one generated module |
 
 Every program checks itself: the generator evaluates the same arithmetic while
 it emits the source, and `main` returns 42 only if the compiled program
@@ -189,8 +190,8 @@ justifies a regression. A row whose growth is not linear names the issue that
 owns the defect in its `owner` column; the PR that fixes the defect refreshes
 the row, which turns the fix into a permanent regression check. New dimensions
 and phases are new rows; do not widen the tolerances to admit a slower
-compiler. The complete gate builds the generator, validates 12 programs and
-runs 27 Cachegrind measurements.
+compiler. The complete gate builds the generator, validates 15 programs and
+runs 30 Cachegrind measurements.
 
 This is the compiler-scaling half of #7773. It does not replace the
 self-compile row or the memory checks: it bounds how cost grows, not how large

@@ -1,0 +1,6 @@
+1	.debug_info.dwo	257	no	01.debug_info.dwo.bin	3a84c663c800fdfded881900167b06752a67ba37e23911b5f76f1c028b46f845
+2	.debug_abbrev.dwo	278	no	02.debug_abbrev.dwo.bin	4e065ad13bad13853084ba31ab89f9a0053eded000fa4a1617c257dcf28e976c
+3	.debug_loc.dwo	83	no	03.debug_loc.dwo.bin	d08c0dd66d366081dd614bec10adf8217e7dfe935320f412a812fa6d6b190b37
+4	.debug_line.dwo	41	no	04.debug_line.dwo.bin	e28fbafac2d7521c6b2f26e16641a489c3fbf51f54019a36cb9947d80e1e2ab3
+5	.debug_str_offsets.dwo	56	no	05.debug_str_offsets.dwo.bin	bcbd286e41e79cd2f5e84b6b7f372f626cccfe53e6f3e3d79dbcbc059f5c17a0
+6	.debug_str.dwo	168	no	06.debug_str.dwo.bin	898c096092b226fd33d6436742f45b91a479bda68b748ed0d7d053c09016c34e

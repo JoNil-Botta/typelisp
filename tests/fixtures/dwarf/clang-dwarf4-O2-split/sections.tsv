@@ -1,0 +1,7 @@
+2	.debug_abbrev	26	yes	02.debug_abbrev.bin	cece599129b616dbc29d81a4c414569853a84dd2c1a6513ce75cbca077c0d2c7
+3	.debug_info	48	yes	03.debug_info.bin	d3cbafaf0e7eb231916affefd861e0b11893a535c06f7a3daeeea0897ccab46d
+5	.debug_str	20	yes	05.debug_str.bin	77e35e58e278f32c5152f2a7ec92099a3b2b662e79da90957d244724da63d4c0
+6	.debug_addr	24	yes	06.debug_addr.bin	9d908ecfb6b256def8b49a7c504e6c889c4b0e41fe6ce3e01863dd7b61a20aa0
+8	.debug_gnu_pubnames	53	yes	08.debug_gnu_pubnames.bin	2ab619165136d51931a05cb889b54d35a8e8c039d8eabd3bc0ef1bce3c558a27
+10	.debug_gnu_pubtypes	47	yes	10.debug_gnu_pubtypes.bin	34f084a7feba67ebaa15c84c87de6fb7cf49b4d70c54e8625071353891aa7ffd
+16	.debug_line	74	yes	16.debug_line.bin	dede022bc069407b6cf00cba097ddc62ac9a3470c2597b909c44733a7873bec2

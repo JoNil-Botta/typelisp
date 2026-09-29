@@ -1,0 +1,8 @@
+6	.debug_info	324	yes	06.debug_info.bin	9a3a74b841e5762d5a9188fc1f9e3027167d083f50f09ed1074539b150965bd4
+8	.debug_abbrev	275	yes	08.debug_abbrev.bin	7b9aaa19c406ca06d1bd6a9dbbd5cfc13280dcb84342ef64e0cdd0582d8fd228
+9	.debug_loclists	96	yes	09.debug_loclists.bin	f68b378e426e539b93769900ec0722b1d20d75a28e06d6e7a968acdd2bcbe5e5
+11	.debug_aranges	64	yes	11.debug_aranges.bin	804f3876cc22ea2e3fc82ac194b135a9b3b82669d0a95a5d5ac7eaaf9ae5bfec
+13	.debug_rnglists	49	yes	13.debug_rnglists.bin	c092c3783431b28a3caf7661465fe8ad8acb94d30098e89672a7b34415a50e53
+15	.debug_line	172	yes	15.debug_line.bin	93fecb471c9d7a07ca012df9a185975673f64d0f9484c0bbd3fd4dda2fa3d269
+17	.debug_str	156	yes	17.debug_str.bin	57d33d52d7bc3715ae069b8916cc1e99a566bb00f20cfcef8f10806b873d5272
+18	.debug_line_str	44	yes	18.debug_line_str.bin	71e52162edb4b9d67e7c925dd2fdabb3e568a6a3812706cd1408a355cc8b924b

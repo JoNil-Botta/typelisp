@@ -1,0 +1,5 @@
+1	.debug_loc.dwo	18	no	01.debug_loc.dwo.bin	84d3b542c4794aee83569777ec19238e2f825dbed09b3c3f77218a0aa85b8e2c
+2	.debug_str.dwo	96	no	02.debug_str.dwo.bin	3c5fa23f297fe44ae3b6ea41be2a373de8628725f4a1d3b1e68485c022354261
+3	.debug_str_offsets.dwo	52	no	03.debug_str_offsets.dwo.bin	88a9565bec664cba7210f40c350dbd1972cc6ea95e1a1c03118e1eeb6978a942
+4	.debug_info.dwo	154	no	04.debug_info.dwo.bin	5769b16f3158c5e82194fe3d819fc9aa9390cf7491c0b359a7ee775c748443bb
+5	.debug_abbrev.dwo	177	no	05.debug_abbrev.dwo.bin	0ae08072f40f41684aed5a52ef5bd91ffc26445000f879a16c062a8345c19db4

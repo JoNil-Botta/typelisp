@@ -331,6 +331,9 @@ control_flow|all|-|tests/integration/control_flow.tl|15|-|-|-|-
 scalar_while_break_continue|all|-|tests/integration/scalar_while_break_continue.tl|42|-|-|stdlib/string.tl|-
 tail_call_stack_args|all|-|tests/integration/tail_call_stack_args.tl|42|-|-|-|-
 tail_aggregate_return|all|-|tests/integration/tail_aggregate_return.tl|42|-|-|-|-
+# Register groups reassigned in loops, swapped, and carried by tail calls keep
+# every word through the per-word split and SSA (#7913).
+group_split_loops|all|0,1,2|tests/integration/group_split_loops.tl|42|-|-|-|-
 aggregate_return_no_alloc|all|-|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
 aggregate_return_no_alloc|all|0,2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|stage-stdlib
 c_abi_aggregate_no_alloc|all|-|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|-

@@ -70102,6 +70102,8 @@
               (tc_core.tc-clone-able-set source-ctx)]
             [_install-clone-pools : unit
               (ast.ast-node-pool-context-install! pools)]
+            [clone-handoff-live-start : i64
+              (cfg compile-profile (profile.alloc-live) 0)]
             [clone-augmentation : ResultLowerCloneAugment
               (lower-clone-handoff-augment
                 lower-state
@@ -70112,6 +70114,15 @@
                 clone-able
                 clone-roots
                 pools)]
+            ;; What the stdlib clone handoff leaves live: the helpers it
+            ;; generated, not its working memory.
+            [_clone-handoff-profile : unit
+              (cfg
+                compile-profile
+                (compiler-lower-profile-counter
+                  "clone_handoff.retained_bytes"
+                  (- (profile.alloc-live) clone-handoff-live-start))
+                unit)]
             [checked-program : ast.AstProgram
               (match (lower-global-shared-view clone-augmentation)
                 [(ResultLowerCloneAugment.Ok augmented _ _) augmented]

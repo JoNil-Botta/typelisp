@@ -10035,7 +10035,10 @@
   (source-expr-bases i64)
   (shared-expr-base i64)
   (shared-type-base i64)
-  (persist-in-place bool))
+  (persist-in-place bool)
+  ;; Two String slots owned by the compaction entry point: the last generated
+  ;; identity key seen and its destination copy (ast-compaction-copy-generated-key).
+  (generated-key-cache-address u64))
 
 ;; Return the backing address, not the address of the dynamic-array descriptor.
 ;; Compaction maps are allocated at their final length, never grow, and remain
@@ -10791,6 +10794,34 @@
                   (cast (+ new-id 1) : i32))
                 new-id))))))))
 
+(define (ast-string-same-storage? [left : (& left str)] [right : (& right str)]) : bool
+  (and
+    (= (__tl_string_length left) (__tl_string_length right))
+    (unsafe
+      (= (ptr->int (string-data left)) (ptr->int (string-data right))))))
+
+;; Every declaration one macro expansion generates carries the same identity-key
+;; String (macro-wrap-generated-decls shares it), and a key can run to hundreds
+;; of KB. The compaction copies such a key once and hands the later declarations
+;; the same copy, as the source shared it. A key with the storage of the last
+;; key copied is the same immutable text, so sharing its copy is unobservable.
+(define (ast-compaction-copy-generated-key
+  [remap : (& remap AstProgramCompactionRemap)]
+  [key : String]) : String
+  (unsafe
+    (let
+      [slots : (MutPtr String)
+        (int->ptr remap.generated-key-cache-address : (MutPtr String))]
+      [cached-source : String (ptr-read slots)]
+      (if (ast-string-same-storage? (& key) (& cached-source))
+        (ptr-read (ptr-offset slots 1))
+        (let
+          [copy : String (string.copy (& key))]
+          (begin
+            (ptr-write! slots key)
+            (ptr-write! (ptr-offset slots 1) (ast-global-shared-view copy))
+            copy))))))
+
 (define (ast-compaction-remap-generated-meta
   [remap : (& remap AstProgramCompactionRemap)]
   [meta : AstGeneratedDeclMeta]) : AstGeneratedDeclMeta
@@ -10801,7 +10832,7 @@
         (ast-compaction-copy-string generator)
         (ast-compaction-copy-string item)
         (ast-compaction-remap-expr-list remap args)
-        (ast-compaction-copy-string key))]))
+        (ast-compaction-copy-generated-key remap key))]))
 
 (define (ast-compaction-remap-decl-meta
   [remap : (& remap AstProgramCompactionRemap)]
@@ -10972,6 +11003,7 @@
       [type-map : (__tl_dyn-array i32)
         (ast-compaction-id-map-create
           (ast-node-pool-context-type-len source-pools))]
+      [key-cache : (Array String 2) (array "" "")]
       [remap : AstProgramCompactionRemap
         (AstProgramCompactionRemap
           source-pools
@@ -10981,7 +11013,9 @@
           (ast-node-pool-context-expr-segment-bases source-pools)
           0
           0
-          false)]
+          false
+          (unsafe
+            (ptr->int (__tl_array-data key-cache))))]
       [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
       [out-program : AstProgram
         (begin
@@ -11066,6 +11100,7 @@
   [persist-in-place : bool]) : AstProgramCompaction
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
+    [key-cache : (Array String 2) (array "" "")]
     [remap : AstProgramCompactionRemap
       (AstProgramCompactionRemap
         source-pools
@@ -11075,7 +11110,9 @@
         (ast-node-pool-context-expr-segment-bases source-pools)
         shared-expr-base
         shared-type-base
-        persist-in-place)]
+        persist-in-place
+        (unsafe
+          (ptr->int (__tl_array-data key-cache))))]
     [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
     [out-program : AstProgram
       (begin

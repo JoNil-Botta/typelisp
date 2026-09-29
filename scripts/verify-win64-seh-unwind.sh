@@ -42,7 +42,7 @@ mkdir -p "$WORK"
 
 # Each function's name, then its frame register and unwind codes.
 unwind_rows() {
-    llvm-readobj --unwind "$1" | sed -n \
+    llvm-readobj --unwind "$1" | tr -d '\r' | sed -n \
         -e 's/^ *StartAddress: \([^ ]*\).*/\1/p' \
         -e 's/^ *\(FrameRegister: .*\)/\1/p' \
         -e 's/^ *\(0x[0-9A-F]*: .*\)/\1/p'

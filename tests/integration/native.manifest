@@ -353,6 +353,8 @@ bytes_view_trap_negative_length|all|0,2|tests/integration/bytes_view_no_alloc.tl
 bytes_view_trap_overflow|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|3|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 bytes_view_trap_past_end|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|4|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 bytes_view_trap_subview_past_end|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|5|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+slice_borrowed_records|all|0,2|tests/integration/slice_borrowed_records.tl|42|-|-|stdlib/io.tl stdlib/profile.tl stdlib/string.tl|-
+slice_borrowed_records_trap|all|0,2|tests/integration/slice_borrowed_records.tl|134|-|1|stdlib/io.tl stdlib/profile.tl stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 c_abi_aggregate_no_alloc|all|-|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|-
 c_abi_aggregate_no_alloc|all|0,2|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|stage-stdlib
 tuple_inline_storage_lifetime|all|-|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|-

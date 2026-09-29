@@ -7,8 +7,9 @@ dimension and a size:
 typelisp run tools/compiler-scaling/main.tl -- cfg 1000 > cfg_1000.tl
 ```
 
-Dimensions are `decls` (declaration count), `cfg` (size of one function) and
-`fields` (width of one struct). A size is a decimal integer from 1 to 1000000;
+Dimensions are `decls` (declaration count), `cfg` (size of one function),
+`fields` (width of one struct) and `expansions` (`: Decls` macro expansions
+within one generated module). A size is a decimal integer from 1 to 1000000;
 anything else, an unknown dimension or a wrong argument count prints the usage
 and exits 2. The same arguments always produce the same bytes.
 

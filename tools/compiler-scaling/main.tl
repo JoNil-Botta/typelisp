@@ -17,6 +17,10 @@
 ;;           over one running value (function and CFG size).
 ;;   fields  one struct with <size> fields, built once and summed field by
 ;;           field (aggregate width).
+;;   expansions
+;;           the `decls` program's units and callers inside one generated
+;;           module, each unit defined by its own invocation of a `: Decls`
+;;           macro (macro expansions within one module).
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat)
@@ -54,7 +58,7 @@
 
 ;; Callers g<k> sum eight units each and chain to g<k-1>, so every unit is
 ;; reachable and no single expression grows with <size>. Returns the value the
-;; last caller produces for x = 1.
+;; last caller, g<(size - 1) / 8>, produces for x = 1.
 (define (decls-emit-callers [size : i64]) : i64
   (let
     [start : i64 0]
@@ -85,17 +89,38 @@
             (set! expected (bit-and sum scaling-mask))
             (set! start stop)
             (set! group (+ group 1)))))
-      (io.print-format
-        "(define (main) : i64\n  (if (= (g{} 1) {}) 42 1))\n"
-        (- group 1)
-        expected)
       expected)))
 
 (define (emit-decls [size : i64]) : unit
   (begin
     (decls-emit-units size)
-    (decls-emit-callers size)
-    unit))
+    (io.print-format
+      "(define (main) : i64\n  (if (= (g{} 1) {}) 42 1))\n"
+      (/ (- size 1) 8)
+      (decls-emit-callers size))))
+
+;; expansions: unit f<i> of `decls`, defined by `(unit-fn f<i> <mul> <add>)`.
+(define (emit-expansions [size : i64]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (scaling-line
+        "(defmacro (unit-fn [name : Expr] [mul : Expr] [add : Expr]) : Decls\n  `(define (,name [x : i64]) : i64\n    (+ (* x ,mul) ,add)))\n")
+      (scaling-line "(defmacro (units) : Module\n  `(begin\n    (module units)")
+      (while (< index size)
+        (begin
+          (io.print-format
+            "    (unit-fn f{} {} {})\n"
+            index
+            (+ (% index 7) 1)
+            (% index 11))
+          (set! index (+ index 1))))
+      (let
+        [expected : i64 (decls-emit-callers size)]
+        (io.print-format
+          "))\n(import (units) as u)\n(define (main) : i64\n  (if (= (u.g{} 1) {}) 42 1))\n"
+          (/ (- size 1) 8)
+          expected)))))
 
 ;; cfg: step i takes one of two arms on the running value, then masks it.
 (define (cfg-step [acc : i64] [index : i64]) : i64
@@ -166,7 +191,7 @@
 (define (scaling-usage) : i64
   (begin
     (io.print-error
-      "usage: compiler-scaling <decls|cfg|fields> <size>\n  size is a decimal integer from 1 to 1000000\n")
+      "usage: compiler-scaling <decls|cfg|fields|expansions> <size>\n  size is a decimal integer from 1 to 1000000\n")
     2))
 
 ;; A size is digits only: `string.>int` alone would read "12x" as 12.
@@ -208,5 +233,9 @@
               [(string.eq (& dimension) "fields")
                 (begin
                   (emit-fields size)
+                  0)]
+              [(string.eq (& dimension) "expansions")
+                (begin
+                  (emit-expansions size)
                   0)]
               [else (scaling-usage)])))))))

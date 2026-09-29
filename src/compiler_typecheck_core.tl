@@ -117,14 +117,27 @@
   ;; Only top-env signatures that still contain Var/VarArgs can change after
   ;; an additive splice. Explicit layers fuse that shrinking candidate-name
   ;; list into the tail of `unsafe-flags`: [flags x capacity, live count,
-  ;; names x capacity]. The existing `ids` map recovers each value slot. This
-  ;; avoids a separate candidate-name array in the hot cache record.
+  ;; names x capacity, resolution stamp]. The existing `ids` map recovers each
+  ;; value slot. This avoids a separate candidate-name array in the hot cache
+  ;; record. The stamp is the tc-top-env-resolution-generation at which the
+  ;; candidates were last re-resolved (0: never).
   (unsafe-flags (__tl_dyn-array i64))
   (shadow-flags (__tl_dyn-array i64))
   (scan-through bool)
   (partial bool)
   (rest i64)
   (below i64))
+
+;; Type-name resolution reads nominal declarations, import aliases and module
+;; rows, and lazy import stubs. Every change to one of them, and every new
+;; expansion walk, advances this process-wide generation. A cache layer whose
+;; candidates were re-resolved at the current generation would resolve them
+;; to the same types again, so the splice re-resolution pass skips it.
+(define tc-top-env-resolution-generation : i64
+  0)
+
+(define (tc-top-env-resolution-inputs-changed!) : unit
+  (set! tc-top-env-resolution-generation (+ tc-top-env-resolution-generation 1)))
 
 (defstruct TcTopEnvMembershipStateData
   ;; Bit 0 = membership active, bit 1 = alias fanout, bit 2 = explicit build.
@@ -10326,7 +10339,7 @@
           i64
           (if scan-through
             capacity
-            (+ (* capacity 2) 1)))]
+            (+ (* capacity 2) 2)))]
       [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
@@ -10391,7 +10404,7 @@
           i64
           (if scan-through
             capacity
-            (+ (* capacity 2) 1)))]
+            (+ (* capacity 2) 2)))]
       [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
@@ -19886,11 +19899,11 @@
 ;; positions (module markers excluded); consumers keep their own per-decl match
 ;; arms, so they process exactly the subsequence the full scan would have. The
 ;; program view changes at in-pass splice rebuilds, so validity is stamped by
-;; (len, offset, intern generation) and dropped by macro-alias-derived-cache-
-;; reset! (the same per-splice/per-program boundary as the alias caches); a
-;; single-decl splice that preserves the list length also preserves every
-;; module's positions (memo markers never add or remove module markers), so
-;; the stamp is sufficient. Backing storage lives in a dedicated arena (the
+;; (slots, len, offset, intern generation) and dropped by macro-alias-derived-
+;; cache-reset! (the same per-splice/per-program boundary as the alias caches,
+;; except splices that keep the flat program); a single-decl splice that
+;; preserves the list length also preserves every module's positions (memo
+;; markers never add or remove module markers), so the stamp is sufficient. Backing storage lives in a dedicated arena (the
 ;; tc-hygiene-module-env-cache-arena idiom) because queries run while
 ;; transient scratch arenas are active.
 (define tc-module-decl-index-ready : bool
@@ -19899,6 +19912,8 @@
   -1)
 (define tc-module-decl-index-decl-offset : i64
   -1)
+(define tc-module-decl-index-decl-slots : i64
+  0)
 (define tc-module-decl-index-generation : i64
   -1)
 (define tc-module-decl-index-arena : i64
@@ -19970,7 +19985,10 @@
       (and
         tc-module-decl-index-ready
         (= tc-module-decl-index-decl-count decls.len)
-        (= tc-module-decl-index-decl-offset decls.offset))
+        (= tc-module-decl-index-decl-offset decls.offset)
+        (=
+          tc-module-decl-index-decl-slots
+          (macro-decl-list-slots-data-addr decls)))
       (begin
         (when
           (and
@@ -20113,6 +20131,9 @@
         (set! tc-module-import-index-positions import-positions)
         (set! tc-module-decl-index-decl-count count)
         (set! tc-module-decl-index-decl-offset decl-offset)
+        (set!
+          tc-module-decl-index-decl-slots
+          (macro-decl-list-slots-data-addr decls))
         (set! tc-module-decl-index-generation (ci.intern-generation))
         (set! tc-module-decl-index-maybe-stale false)
         ;; The stable arena root names the complete grown chain. The previous
@@ -20838,6 +20859,7 @@
       (tc-lazy-import-stubs-ensure-for-state! macro-state lazy-state)]
     [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
     (begin
+      (tc-top-env-resolution-inputs-changed!)
       (if (< data.record-count tc-lazy-import-stub-capacity)
         (let
           [index : i64 data.record-count]
@@ -83807,6 +83829,11 @@
 (defstruct MacroProgramSegmentNodeData
   (decls ast.AstDeclList)
   (paths ast.AstDeclPathList)
+  ;; The ascending slot positions (`decls.offset + index`) of the declarations
+  ;; that are, once unwrapped, a module marker or an import
+  ;; (macro-decl-list-events). A zero-copy suffix slice shares its parent's
+  ;; array: the slots are the same, and positions outside the slice are ignored.
+  (events (__tl_dyn-array i64))
   (next i64))
 
 (defstruct MacroSegmentedProgramViewData
@@ -83821,7 +83848,16 @@
   (head i64)
   (cursor i64)
   (queue-len i64)
-  (generation i64))
+  (generation i64)
+  ;; The prefix's event positions in program order (0 is the first emitted
+  ;; declaration), for the first `prefix-scanned` declarations of it
+  ;; (macro-segmented-prefix-events-sync!). The prefix only ever grows at its
+  ;; logical end, so the positions stay valid. `storage` is the arena the view
+  ;; and these arrays live in.
+  (prefix-events (__tl_dyn-array i64))
+  (prefix-event-count i64)
+  (prefix-scanned i64)
+  (storage i64))
 
 (define (macro-program-segment-node-data [address : i64]) : MacroProgramSegmentNodeData
   (unsafe
@@ -83841,15 +83877,57 @@
       (int->ptr (cast address : u64) : (MutPtr MacroSegmentedProgramViewData))
       data)))
 
+;; Module markers and imports are the only declarations that change which
+;; module the rows after them belong to or which aliases a module sees. The
+;; whole-program walks a macro expansion repeats after every splice -- a module's
+;; local environment, the alias index -- visit these positions and the rows of
+;; the one or two modules they need, rather than every row of the program
+;; (#8120).
+(define (macro-decl-list-event-at?
+  [decls : (& decls ast.AstDeclList)]
+  [index : i64]) : bool
+  (ast.ast-decl-list-unwrapped-module-or-import-at? decls index))
+
+(define (macro-decl-list-events [decls : (& decls ast.AstDeclList)]) : (__tl_dyn-array
+    i64)
+  (let
+    [count : i64 (ast.ast-decl-list-len decls)]
+    [found : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (macro-decl-list-event-at? decls index)
+            (set! found (+ found 1))
+            unit)
+          (set! index (+ index 1))))
+      (let
+        [events : (__tl_dyn-array i64) (__tl_make-array i64 found)]
+        [slot : i64 0]
+        (begin
+          (set! index 0)
+          (while (< index count)
+            (begin
+              (if (macro-decl-list-event-at? decls index)
+                (begin
+                  (set! (array-ref events slot) (+ decls.offset index))
+                  (set! slot (+ slot 1)))
+                unit)
+              (set! index (+ index 1))))
+          events)))))
+
 (define (macro-program-segment-node-new-current
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
+  [events : (__tl_dyn-array i64)]
   [next : i64]) : i64
   (let
     [cell : (__tl_dyn-array MacroProgramSegmentNodeData)
       (__tl_make-array MacroProgramSegmentNodeData 1)]
     (begin
-      (set! (array-ref cell 0) (MacroProgramSegmentNodeData decls paths next))
+      (set!
+        (array-ref cell 0)
+        (MacroProgramSegmentNodeData decls paths events next))
       (cast
         (unsafe
           (ptr->int
@@ -83862,7 +83940,8 @@
   [prefix-rev : ast.AstDeclList]
   [prefix-paths-rev : ast.AstDeclPathList]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : i64
+  [paths : ast.AstDeclPathList]
+  [storage : i64]) : i64
   (let
     [head : i64
       (if (<= (ast.ast-decl-list-len (& decls)) 0)
@@ -83870,6 +83949,7 @@
         (macro-program-segment-node-new-current
           (tc-global-shared-view decls)
           paths
+          (macro-decl-list-events (& decls))
           0))]
     [cell : (__tl_dyn-array MacroSegmentedProgramViewData)
       (__tl_make-array MacroSegmentedProgramViewData 1)]
@@ -83882,7 +83962,11 @@
           head
           0
           (ast.ast-decl-list-len (& decls))
-          0))
+          0
+          (__tl_make-array i64 0)
+          0
+          0
+          storage))
       (cast
         (unsafe
           (ptr->int
@@ -83911,7 +83995,8 @@
           prefix-rev
           prefix-paths-rev
           decls
-          paths))]
+          paths
+          storage))]
     (tc-job-state-set-macro-program-view-address! state address)))
 
 (define (macro-segmented-program-end! [state : TcJobState]) : unit
@@ -84165,10 +84250,13 @@
             suffix-count
             false)
           (macro-segmented-path-drop node-paths next-index)
+          node.events
           node.next)
         node.next)]
     [middle-count : i64 (ast.ast-decl-list-len (& middle))]
     [stable-middle : ast.AstDeclList (macro-segmented-decl-copy-current middle)]
+    [middle-events : (__tl_dyn-array i64)
+      (macro-decl-list-events (& stable-middle))]
     [stable-paths : ast.AstDeclPathList
       (macro-segmented-path-copy-current middle-paths middle-count)]
     [next-head : i64
@@ -84176,6 +84264,7 @@
         (macro-program-segment-node-new-current
           stable-middle
           stable-paths
+          middle-events
           suffix-head)
         suffix-head)]
     (begin
@@ -84639,167 +84728,283 @@
             (macro-segmented-program-iter-advance! (&mut iter)))))
       found)))
 
-(define (macro-segmented-module-local-root-shadow-note-at!
-  [session : cis.InternStructuralSessionHandle]
-  [seen : (&mut seen tc_i64_i64_map.Map)]
-  [decls : (& decls ast.AstDeclList)]
-  [index : i64]
-  [cur-module-id : i64]) : i64
-  ;; A segment row stays installed for this complete call. The initial branch
-  ;; needs only its tag, so borrow it and materialize the 104-byte declaration
-  ;; only on the root-module arm that actually consumes the full payload.
-  (match (ast.ast-decl-list-ref-borrowed (& decls) index)
-    [(ast.AstDecl.Module _)
-      (ast.ast-decl-list-module-id-at
-        (& decls)
-        index
-        cbi.compiler-builtin-id-fix-empty)]
-    [_
-      (begin
-        (if (= cur-module-id cbi.compiler-builtin-id-fix-empty)
-          (tc-module-local-root-shadow-decl-note!
-            session
-            seen
-            (tc-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index)))
-          unit)
-        cur-module-id)]))
-
-(define (macro-segmented-module-local-root-shadow-names-note!
-  [session : cis.InternStructuralSessionHandle]
-  [state : TcJobState]
-  [seen : (&mut seen tc_i64_i64_map.Map)]) : unit
+;; Extend the prefix's event positions over the rows emitted since the last
+;; sync, and return the updated view. Logical position `p` is reversed index
+;; `len - 1 - p`.
+(define (macro-segmented-prefix-events-sync! [state : TcJobState]) : MacroSegmentedProgramViewData
   (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
     [data : MacroSegmentedProgramViewData
-      (macro-segmented-program-view-data
-        (tc-job-state-macro-program-view-address state))]
+      (macro-segmented-program-view-data address)]
     [prefix : ast.AstDeclList data.prefix-rev]
-    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
-    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [node-address : i64 data.head]
-    [node-index : i64 data.cursor]
+    [len : i64 (ast.ast-decl-list-len (& prefix))]
+    (if (= data.prefix-scanned len)
+      data
+      (in-arena
+        (arena.Arena data.storage)
+        (let
+          [restart? : bool (< len data.prefix-scanned)]
+          [events : (__tl_dyn-array i64) data.prefix-events]
+          [count : i64
+            (if restart?
+              0
+              data.prefix-event-count)]
+          [position : i64
+            (if restart?
+              0
+              data.prefix-scanned)]
+          (begin
+            (while (< position len)
+              (begin
+                (if (macro-decl-list-event-at?
+                  (& prefix)
+                  (- (- len 1) position))
+                  (begin
+                    (if (< count (array-length events))
+                      unit
+                      (let
+                        [grown : (__tl_dyn-array i64)
+                          (__tl_make-array
+                            i64
+                            (if (< count 8)
+                              16
+                              (* count 2)))]
+                        [index : i64 0]
+                        (begin
+                          (while (< index count)
+                            (begin
+                              (set!
+                                (array-ref grown index)
+                                (array-ref events index))
+                              (set! index (+ index 1))))
+                          (set! events grown))))
+                    (set! (array-ref events count) position)
+                    (set! count (+ count 1)))
+                  unit)
+                (set! position (+ position 1))))
+            (set! data.prefix-events events)
+            (set! data.prefix-event-count count)
+            (set! data.prefix-scanned len)
+            (macro-segmented-program-view-data-set!
+              address
+              (tc-global-shared-view data))
+            data))))))
+
+;; The first index of the ascending `events` whose position is at least `bound`.
+(define (macro-events-lower-bound
+  [events : (& events (__tl_dyn-array i64))]
+  [bound : i64]) : i64
+  (let
+    [low : i64 0]
+    [high : i64 (array-length events)]
     (begin
-      (while (>= prefix-index 0)
-        (begin
-          (set!
-            cur-module-id
-            (macro-segmented-module-local-root-shadow-note-at!
-              session
+      (while (< low high)
+        (let
+          [middle : i64 (/ (+ low high) 2)]
+          (if (< (array-ref events middle) bound)
+            (set! low (+ middle 1))
+            (set! high middle))))
+      low)))
+
+;; One pass of a module's local environment build over the segmented program,
+;; in program order: the rows of module `interest` are added to the environment
+;; the pass threads through (`add?`) or noted as root shadows. Every row a
+;; module marker can hide in is an event, so the walk reads the event rows and
+;; the rows of `interest`'s regions only.
+(defstruct MacroSegmentedModuleWalk
+  (interest i64)
+  (add? bool)
+  (module i64)
+  (ok bool)
+  (message String))
+
+(define (macro-segmented-module-walk-row!
+  [ctx : TcContext]
+  [walk : (&mut walk MacroSegmentedModuleWalk)]
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [env : TcTypeEnv]
+  [decls : (& decls ast.AstDeclList)]
+  [index : i64]) : TcTypeEnv
+  (match (ast.ast-decl-list-ref-borrowed decls index)
+    [(ast.AstDecl.Module _)
+      (begin
+        (set!
+          walk.module
+          (ast.ast-decl-list-module-id-at
+            decls
+            index
+            cbi.compiler-builtin-id-fix-empty))
+        env)]
+    [_
+      (cond
+        [(or (not walk.ok) (not (= walk.module walk.interest))) env]
+        [walk.add?
+          (match (tc-module-local-env-add-decl
+            ctx
+            (tc-global-shared-view env)
+            seen
+            (ast.ast-decl-list-ref (deref decls) index))
+            [(ResultTcEnv.Ok next-env) next-env]
+            [(ResultTcEnv.Err message)
+              (begin
+                (set! walk.message message)
+                (set! walk.ok false)
+                env)])]
+        [else
+          (begin
+            (tc-module-local-root-shadow-decl-note!
+              (tc-context-structural-session ctx)
               seen
-              prefix
-              prefix-index
-              cur-module-id))
-          (set! prefix-index (- prefix-index 1))))
+              (tc-global-array-element-shared-view
+                decls.slots
+                (+ decls.offset index)))
+            env)])]))
+
+(define (macro-segmented-module-walk!
+  [ctx : TcContext]
+  [data : (& data MacroSegmentedProgramViewData)]
+  [walk : (&mut walk MacroSegmentedModuleWalk)]
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [cur-env : TcTypeEnv env]
+    [prefix : ast.AstDeclList data.prefix-rev]
+    [len : i64 (ast.ast-decl-list-len (& prefix))]
+    [position : i64 0]
+    [event : i64 0]
+    [node-address : i64 data.head]
+    [start : i64 data.cursor]
+    (begin
+      ;; The emitted prefix: logical positions, stored reversed. The rows up
+      ;; to each event belong to the module the walk is in; the event row may
+      ;; change it.
+      (while (<= event data.prefix-event-count)
+        (let
+          [at : i64
+            (if (< event data.prefix-event-count)
+              (array-ref data.prefix-events event)
+              len)]
+          (begin
+            (if (= walk.module walk.interest)
+              (while (< position at)
+                (begin
+                  (set!
+                    cur-env
+                    (macro-segmented-module-walk-row!
+                      ctx
+                      walk
+                      seen
+                      cur-env
+                      (& prefix)
+                      (- (- len 1) position)))
+                  (set! position (+ position 1))))
+              unit)
+            (if (< event data.prefix-event-count)
+              (set!
+                cur-env
+                (macro-segmented-module-walk-row!
+                  ctx
+                  walk
+                  seen
+                  cur-env
+                  (& prefix)
+                  (- (- len 1) at)))
+              unit)
+            (set! position (+ at 1))
+            (set! event (+ event 1)))))
+      ;; The unprocessed segments: slot positions.
       (while (> node-address 0)
         (let
           [node : MacroProgramSegmentNodeData
             (macro-program-segment-node-data node-address)]
           [decls : ast.AstDeclList node.decls]
-          [count : i64 (ast.ast-decl-list-len (& decls))]
+          [events : (__tl_dyn-array i64) node.events]
+          [event-count : i64 (array-length events)]
+          [end : i64 (+ decls.offset (ast.ast-decl-list-len (& decls)))]
+          [slot : i64 (+ decls.offset start)]
+          [next-event : i64
+            (macro-events-lower-bound (& events) (+ decls.offset start))]
+          [more? : bool true]
           (begin
-            (while (< node-index count)
-              (begin
-                (set!
-                  cur-module-id
-                  (macro-segmented-module-local-root-shadow-note-at!
-                    session
-                    seen
-                    decls
-                    node-index
-                    cur-module-id))
-                (set! node-index (+ node-index 1))))
+            (while more?
+              (let
+                [at : i64
+                  (if (and
+                    (< next-event event-count)
+                    (< (array-ref events next-event) end))
+                    (array-ref events next-event)
+                    end)]
+                (begin
+                  (if (= walk.module walk.interest)
+                    (while (< slot at)
+                      (begin
+                        (set!
+                          cur-env
+                          (macro-segmented-module-walk-row!
+                            ctx
+                            walk
+                            seen
+                            cur-env
+                            (& decls)
+                            (- slot decls.offset)))
+                        (set! slot (+ slot 1))))
+                    unit)
+                  (if (< at end)
+                    (begin
+                      (set!
+                        cur-env
+                        (macro-segmented-module-walk-row!
+                          ctx
+                          walk
+                          seen
+                          cur-env
+                          (& decls)
+                          (- at decls.offset)))
+                      (set! slot (+ at 1))
+                      (set! next-event (+ next-event 1)))
+                    (set! more? false)))))
             (set! node-address node.next)
-            (set! node-index 0)))))))
+            (set! start 0))))
+      cur-env)))
 
 (define (macro-segmented-module-local-env-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [target-module-id : i64]) : ResultTcEnv
   (let
-    [state : TcJobState (tc-context-job-state ctx)]
     [data : MacroSegmentedProgramViewData
-      (macro-segmented-program-view-data
-        (tc-job-state-macro-program-view-address state))]
-    [prefix : ast.AstDeclList data.prefix-rev]
-    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
-    [node-address : i64 data.head]
-    [node-index : i64 data.cursor]
-    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+      (macro-segmented-prefix-events-sync! (tc-context-job-state ctx))]
     ;; This map grows only to root plus target-module names. A whole-program
-    ;; reserve retained hundreds of MiB across cached module environments;
-    ;; counting first avoided that retention but paid a third full traversal.
+    ;; reserve retained hundreds of MiB across cached module environments.
     [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 64)]
-    [cur-env : TcTypeEnv env]
-    [message : String ""]
-    [ok : bool true]
-    (begin
-      ;; Root declarations shadow imported module-local aliases regardless of
-      ;; segment boundaries, matching tc-module-local-env-list's index pass.
-      (macro-segmented-module-local-root-shadow-names-note!
-        (tc-context-structural-session ctx)
-        state
-        (&mut seen))
-      (while (and ok (>= prefix-index 0))
-        (begin
-          (match (ast.ast-decl-list-ref-borrowed (& prefix) prefix-index)
-            [(ast.AstDecl.Module _)
-              (set!
-                cur-module-id
-                (ast.ast-decl-list-module-id-at
-                  (& prefix)
-                  prefix-index
-                  cbi.compiler-builtin-id-fix-empty))]
-            [_
-              (if (= cur-module-id target-module-id)
-                (match (tc-module-local-env-add-decl
-                  ctx
-                  cur-env
-                  (&mut seen)
-                  (ast.ast-decl-list-ref prefix prefix-index))
-                  [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
-                  [(ResultTcEnv.Err step-message)
-                    (begin
-                      (set! message step-message)
-                      (set! ok false))])
-                unit)])
-          (set! prefix-index (- prefix-index 1))))
-      (while (and ok (> node-address 0))
-        (let
-          [node : MacroProgramSegmentNodeData
-            (macro-program-segment-node-data node-address)]
-          [decls : ast.AstDeclList node.decls]
-          [count : i64 (ast.ast-decl-list-len (& decls))]
-          (begin
-            (while (and ok (< node-index count))
-              (begin
-                (match (ast.ast-decl-list-ref-borrowed (& decls) node-index)
-                  [(ast.AstDecl.Module _)
-                    (set!
-                      cur-module-id
-                      (ast.ast-decl-list-module-id-at
-                        (& decls)
-                        node-index
-                        cbi.compiler-builtin-id-fix-empty))]
-                  [_
-                    (if (= cur-module-id target-module-id)
-                      (match (tc-module-local-env-add-decl
-                        ctx
-                        cur-env
-                        (&mut seen)
-                        (ast.ast-decl-list-ref decls node-index))
-                        [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
-                        [(ResultTcEnv.Err step-message)
-                          (begin
-                            (set! message step-message)
-                            (set! ok false))])
-                      unit)])
-                (set! node-index (+ node-index 1))))
-            (set! node-address node.next)
-            (set! node-index 0))))
-      (if ok
-        (ResultTcEnv.Ok cur-env)
-        (ResultTcEnv.Err message)))))
+    ;; Root declarations shadow imported module-local aliases regardless of
+    ;; segment boundaries, matching tc-module-local-env-list's index pass.
+    [shadows : MacroSegmentedModuleWalk
+      (MacroSegmentedModuleWalk
+        cbi.compiler-builtin-id-fix-empty
+        false
+        cbi.compiler-builtin-id-fix-empty
+        true
+        "")]
+    [_shadows : TcTypeEnv
+      (macro-segmented-module-walk!
+        ctx
+        (& data)
+        (&mut shadows)
+        (&mut seen)
+        (tc-global-shared-view env))]
+    [adds : MacroSegmentedModuleWalk
+      (MacroSegmentedModuleWalk
+        target-module-id
+        true
+        cbi.compiler-builtin-id-fix-empty
+        true
+        "")]
+    [local-env : TcTypeEnv
+      (macro-segmented-module-walk! ctx (& data) (&mut adds) (&mut seen) env)]
+    (if adds.ok
+      (ResultTcEnv.Ok local-env)
+      (ResultTcEnv.Err adds.message))))
 
 (define (macro-expand-scratch-program
   [state : TcMacroState]
@@ -93232,6 +93437,13 @@
 (define (macro-alias-derived-cache-reset-for-state! [state : TcMacroState]) : unit
   (begin
     (tc-module-decl-index-reset!)
+    (macro-import-derived-cache-reset-for-state! state)))
+
+;; A splice that keeps the context's flat program keeps its module decl index:
+;; the index covers exactly that list, while the import-derived caches below
+;; also read the segmented view the splice changed.
+(define (macro-import-derived-cache-reset-for-state! [state : TcMacroState]) : unit
+  (begin
     (tc-program-enum-index-reset!)
     (tc-macro-import-index-control-set! state 3 0)
     (tc-macro-import-index-control-set! state 14 0)
@@ -93934,6 +94146,36 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
+;; The alias index's step for one row that is, once unwrapped, a module
+;; marker or an import: returns the module the rows after it belong to.
+(define (macro-alias-cache-index-at!
+  [state : TcMacroState]
+  [decls : (& decls ast.AstDeclList)]
+  [index : i64]
+  [cur-module-id : i64]) : i64
+  (match (ast.ast-decl-unwrapped
+    (tc-global-array-element-shared-view decls.slots (+ decls.offset index)))
+    [(ast.AstDecl.Module next-module) next-module]
+    [(ast.AstDecl.Import
+        _decl-meta
+        (ast.AstImportSpec.Spec kind _ expected maybe-alias _))
+      (begin
+        (if (macro-import-kind-module-alias? kind)
+          (match maybe-alias
+            [(ast.AstMaybeImportAlias.Some alias)
+              (let
+                [target-id : i64
+                  (match expected
+                    [(ast.AstMaybeModuleName.Some target) target]
+                    [(ast.AstMaybeModuleName.No) alias])]
+                (if (>= (* (tc-macro-import-index-control state 0) 2) 16384)
+                  (tc-macro-import-index-control-set! state 6 0)
+                  (macro-alias-cache-put! state cur-module-id alias target-id)))]
+            [(ast.AstMaybeImportAlias.No) unit])
+          unit)
+        cur-module-id)]
+    [_ cur-module-id]))
+
 (define (macro-alias-cache-index-range!
   [state : TcMacroState]
   [decls : (& decls ast.AstDeclList)]
@@ -93941,8 +94183,6 @@
   [count : i64]
   [start-module-id : i64]) : i64
   (let
-    [decl-offset : i64 decls.offset]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [cur-module-id : i64 start-module-id]
     [i : i64 start]
     (begin
@@ -93951,84 +94191,12 @@
           ;; Classify through a borrow first: only module markers and imports
           ;; carry a payload this index reads, so every other declaration is
           ;; skipped without the two 104 B rows `ast-decl-unwrapped` copies.
-          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) i)
-            (match (ast.ast-decl-unwrapped
-              (tc-global-array-element-shared-view decl-slots (+ decl-offset i)))
-              [(ast.AstDecl.Module next-module)
-                (set! cur-module-id next-module)]
-              [(ast.AstDecl.Import
-                  decl-meta
-                  (ast.AstImportSpec.Spec kind _ expected maybe-alias _))
-                (if (macro-import-kind-module-alias? kind)
-                  (match maybe-alias
-                    [(ast.AstMaybeImportAlias.Some alias)
-                      (let
-                        [target-id : i64
-                          (match expected
-                            [(ast.AstMaybeModuleName.Some target) target]
-                            [(ast.AstMaybeModuleName.No) alias])]
-                        (if (>=
-                          (* (tc-macro-import-index-control state 0) 2)
-                          16384)
-                          (tc-macro-import-index-control-set! state 6 0)
-                          (macro-alias-cache-put!
-                            state
-                            cur-module-id
-                            alias
-                            target-id)))]
-                    [(ast.AstMaybeImportAlias.No) unit])
-                  unit)]
-              [_ unit])
+          (if (macro-decl-list-event-at? decls i)
+            (set!
+              cur-module-id
+              (macro-alias-cache-index-at! state decls i cur-module-id))
             unit)
           (set! i (+ i 1))))
-      cur-module-id)))
-
-;; The expansion prefix is a prepend builder and therefore stored in reverse
-;; program order. Index it back-to-front without constructing the large
-;; generic segmented iterator result for every declaration.
-(define (macro-alias-cache-index-reverse-range!
-  [state : TcMacroState]
-  [decls : (& decls ast.AstDeclList)]
-  [start : i64]
-  [start-module-id : i64]) : i64
-  (let
-    [decl-offset : i64 decls.offset]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [cur-module-id : i64 start-module-id]
-    [i : i64 start]
-    (begin
-      (while (>= i 0)
-        (begin
-          (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) i)
-            (match (ast.ast-decl-unwrapped
-              (tc-global-array-element-shared-view decl-slots (+ decl-offset i)))
-              [(ast.AstDecl.Module next-module)
-                (set! cur-module-id next-module)]
-              [(ast.AstDecl.Import
-                  _decl-meta
-                  (ast.AstImportSpec.Spec kind _ expected maybe-alias _))
-                (if (macro-import-kind-module-alias? kind)
-                  (match maybe-alias
-                    [(ast.AstMaybeImportAlias.Some alias)
-                      (let
-                        [target-id : i64
-                          (match expected
-                            [(ast.AstMaybeModuleName.Some target) target]
-                            [(ast.AstMaybeModuleName.No) alias])]
-                        (if (>=
-                          (* (tc-macro-import-index-control state 0) 2)
-                          16384)
-                          (tc-macro-import-index-control-set! state 6 0)
-                          (macro-alias-cache-put!
-                            state
-                            cur-module-id
-                            alias
-                            target-id)))]
-                    [(ast.AstMaybeImportAlias.No) unit])
-                  unit)]
-              [_ unit])
-            unit)
-          (set! i (- i 1))))
       cur-module-id)))
 
 ;; One-pass eager index over the program's aliased imports: record every
@@ -94069,37 +94237,50 @@
     [state : TcMacroState (tc-job-state-macro-state job-state)]
     [count : i64 (macro-segmented-program-decl-count job-state)]
     [data : MacroSegmentedProgramViewData
-      (macro-segmented-program-view-data
-        (tc-job-state-macro-program-view-address job-state))]
+      (macro-segmented-prefix-events-sync! job-state)]
     [prefix : ast.AstDeclList data.prefix-rev]
+    [len : i64 (ast.ast-decl-list-len (& prefix))]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [event : i64 0]
     [node-address : i64 data.head]
-    [node-index : i64 data.cursor]
+    [start : i64 data.cursor]
     (begin
       (tc-macro-import-index-control-set! state 6 1)
-      (set!
-        cur-module-id
-        (macro-alias-cache-index-reverse-range!
-          state
-          prefix
-          (- (ast.ast-decl-list-len (& prefix)) 1)
-          cur-module-id))
+      ;; Only event rows carry what the index reads (macro-decl-list-events).
+      (while (< event data.prefix-event-count)
+        (begin
+          (set!
+            cur-module-id
+            (macro-alias-cache-index-at!
+              state
+              (& prefix)
+              (- (- len 1) (array-ref data.prefix-events event))
+              cur-module-id))
+          (set! event (+ event 1))))
       (while (> node-address 0)
         (let
           [node : MacroProgramSegmentNodeData
             (macro-program-segment-node-data node-address)]
           [decls : ast.AstDeclList node.decls]
+          [events : (__tl_dyn-array i64) node.events]
+          [end : i64 (+ decls.offset (ast.ast-decl-list-len (& decls)))]
+          [next-event : i64
+            (macro-events-lower-bound (& events) (+ decls.offset start))]
           (begin
-            (set!
-              cur-module-id
-              (macro-alias-cache-index-range!
-                state
-                decls
-                node-index
-                (ast.ast-decl-list-len (& decls))
-                cur-module-id))
+            (while (and
+              (< next-event (array-length events))
+              (< (array-ref events next-event) end))
+              (begin
+                (set!
+                  cur-module-id
+                  (macro-alias-cache-index-at!
+                    state
+                    (& decls)
+                    (- (array-ref events next-event) decls.offset)
+                    cur-module-id))
+                (set! next-event (+ next-event 1))))
             (set! node-address node.next)
-            (set! node-index 0))))
+            (set! start 0))))
       (tc-macro-import-index-control-set! state 10 cur-module-id)
       (tc-macro-import-index-control-set! state 4 1)
       (tc-macro-import-index-control-set! state 5 1)
@@ -101016,44 +101197,47 @@
   [decls : ast.AstDeclList]
   [_module : String]
   [module-id : i64]) : ResultTcEnv
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons decl _)
-      (match decl
-        [(ast.AstDecl.Import
-            decl-meta
-            (ast.AstImportSpec.Spec
-              _
-              _
-              (ast.AstMaybeModuleName.Some target-module)
-              (ast.AstMaybeImportAlias.Some alias)
-              _))
-          (if (= alias cbi.compiler-builtin-id-fix-empty)
-            (if (macro-segmented-program-active? (tc-context-job-state ctx))
-              (macro-segmented-bind-import-alias-module
-                ctx
-                top-env
-                target-module
-                cbi.compiler-builtin-id-fix-empty
-                module-id
-                true)
-              (tc-bind-import-alias-module
-                ctx
-                all-decls
-                top-env
-                target-module
-                cbi.compiler-builtin-id-fix-empty
-                module-id
-                true))
-            (begin
-              (tc-lazy-import-stub-record-for-job!
-                (tc-context-job-state ctx)
-                module-id
-                (csym.compiler-symbols-import-alias-key-id module-id alias)
-                target-module
-                false)
-              (ResultTcEnv.Ok top-env)))]
-        [_ (ResultTcEnv.Ok top-env)])]
-    [(ast.AstDeclListStep.Nil) (ResultTcEnv.Ok top-env)]))
+  (begin
+    ;; The marker publishes an import alias (or the unaliased module surface).
+    (tc-top-env-resolution-inputs-changed!)
+    (match (ast.ast-decl-list-step decls)
+      [(ast.AstDeclListStep.Cons decl _)
+        (match decl
+          [(ast.AstDecl.Import
+              decl-meta
+              (ast.AstImportSpec.Spec
+                _
+                _
+                (ast.AstMaybeModuleName.Some target-module)
+                (ast.AstMaybeImportAlias.Some alias)
+                _))
+            (if (= alias cbi.compiler-builtin-id-fix-empty)
+              (if (macro-segmented-program-active? (tc-context-job-state ctx))
+                (macro-segmented-bind-import-alias-module
+                  ctx
+                  top-env
+                  target-module
+                  cbi.compiler-builtin-id-fix-empty
+                  module-id
+                  true)
+                (tc-bind-import-alias-module
+                  ctx
+                  all-decls
+                  top-env
+                  target-module
+                  cbi.compiler-builtin-id-fix-empty
+                  module-id
+                  true))
+              (begin
+                (tc-lazy-import-stub-record-for-job!
+                  (tc-context-job-state ctx)
+                  module-id
+                  (csym.compiler-symbols-import-alias-key-id module-id alias)
+                  target-module
+                  false)
+                (ResultTcEnv.Ok top-env)))]
+          [_ (ResultTcEnv.Ok top-env)])]
+      [(ast.AstDeclListStep.Nil) (ResultTcEnv.Ok top-env)])))
 
 (define (macro-existing-module-import-target
   [ctx : TcContext]
@@ -104149,6 +104333,29 @@
         (macro-decl-reflection-relevant? decl)
         (macro-decls-reflection-relevant? rest))]))
 
+;; Whether a splice can change what a type name resolves to: it adds a nominal
+;; type, an import alias, or a module row. Functions, globals and macros never
+;; do, since type names resolve through the type namespace only.
+(define (macro-decl-type-resolution-relevant? [decl : ast.AstDecl]) : bool
+  (or
+    (macro-decl-reflection-relevant? (tc-global-shared-view decl))
+    (match decl
+      [(ast.AstDecl.Module _) true]
+      [(ast.AstDecl.ModuleBody _ _) true]
+      [(ast.AstDecl.Import _ _) true]
+      [(ast.AstDecl.Unsafe inner-box)
+        (macro-decl-type-resolution-relevant?
+          (ast.ast-decl-box-shared-view inner-box))]
+      [_ false])))
+
+(define (macro-decls-type-resolution-relevant? [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (or
+        (macro-decl-type-resolution-relevant? decl)
+        (macro-decls-type-resolution-relevant? rest))]))
+
 ;; A forced splice installs the current live symbols/registries in a new
 ;; context. Generated modules append to those tables; arbitrary splices and
 ;; materialized files rebuild them. Every top-env plan is additive: it revisits
@@ -104173,7 +104380,10 @@
 ;; Var/VarArgs nodes are candidates. Every cache records that candidate set at
 ;; construction, and this walk compacts it in place as names become resolvable.
 ;; The fixed-width scan is proportional to unresolved signatures, never the
-;; retained top-env spine or source tail.
+;; retained top-env spine or source tail. A layer already re-resolved at the
+;; current resolution generation is skipped: most splices add only functions,
+;; and signatures waiting for a later generated import would otherwise be
+;; re-resolved at every splice before it.
 (define (tc-top-env-reresolve-cache-node!
   [ctx : TcContext]
   [cache-ptr : (Ptr TcTypeEnvCache)]) : i64
@@ -104186,9 +104396,14 @@
     [sidecar : (__tl_dyn-array i64) cache.unsafe-flags]
     [capacity : i64 (array-length values)]
     [count : i64 (array-ref sidecar capacity)]
+    [stamp-slot : i64 (- (array-length sidecar) 1)]
+    ;; Captured first: a resolution that itself changes an input leaves the
+    ;; layer stale for the next pass.
+    [generation : i64 tc-top-env-resolution-generation]
     [read-index : i64 0]
     [write-index : i64 0]
     (begin
+      (when (= (array-ref sidecar stamp-slot) generation) (return count))
       (while (< read-index count)
         (let
           [name-id : i64 (array-ref sidecar (+ capacity 1 read-index))]
@@ -104239,6 +104454,7 @@
                   (string.int->string (array-length values)))))
             (set! read-index (+ read-index 1)))))
       (set! (array-ref sidecar capacity) write-index)
+      (set! (array-ref sidecar stamp-slot) generation)
       write-index)))
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
@@ -104305,7 +104521,12 @@
   [plan : MacroSpliceEnvPlan]) : ResultTcEnv
   (match plan
     [(MacroSpliceEnvPlan.Extend base-env splice)
-      (tc-extend-top-env-for-splice ctx base-env splice module module-id)]
+      (begin
+        (if (macro-decls-type-resolution-relevant?
+          (tc-global-shared-view splice))
+          (tc-top-env-resolution-inputs-changed!)
+          unit)
+        (tc-extend-top-env-for-splice ctx base-env splice module module-id))]
     [(MacroSpliceEnvPlan.ExtendGeneratedModule base-env summary marker)
       (let
         [module-env : TcTypeEnv
@@ -104356,8 +104577,12 @@
         (tc-job-state-nominal-cache (tc-context-job-state cur-ctx)))
       ;; Program-position and import-derived alias indexes can contain negative
       ;; answers and refer to the replaced flat program view. Keep their shared
-      ;; invalidation until they gain an insert API of their own.
-      (macro-alias-derived-cache-reset-for-state! state)
+      ;; invalidation until they gain an insert API of their own. A reused
+      ;; segmented context keeps its flat program, and with it the module decl
+      ;; index.
+      (if reuse-segmented?
+        (macro-import-derived-cache-reset-for-state! state)
+        (macro-alias-derived-cache-reset-for-state! state))
       (tc-job-state-reset-derived-caches! (tc-context-job-state cur-ctx))
       ;; Do not reset ctfe-module-macro-export here: the export set is stable
       ;; across the splice (additive-inert) and is owned by macro-live-prescan-
@@ -104456,6 +104681,8 @@
     ;; rebuilding it from the whole expanded program per import retained tens
     ;; of megabytes of obsolete persistent-env bindings.
     [cur-materialize-seen : sym_i64_env.SymI64Env initial-materialize-seen]
+    ;; A new walk resolves over a new program: no earlier stamp may hold.
+    [_resolution-inputs : unit (tc-top-env-resolution-inputs-changed!)]
     [walk-state : TcJobState (tc-context-job-state ctx)]
     [macro-state : TcMacroState (tc-job-state-macro-state walk-state)]
     [cur-module : String module]
@@ -104644,7 +104871,10 @@
                                             (begin
                                               (tc-nominal-owner-cache-reset-for-job!
                                                 (tc-context-job-state cur-ctx))
-                                              (macro-alias-derived-cache-reset-for-state!
+                                              ;; The marker changes only the
+                                              ;; segmented view, not cur-ctx's
+                                              ;; flat program.
+                                              (macro-import-derived-cache-reset-for-state!
                                                 macro-state)
                                               (tc-job-state-reset-derived-caches!
                                                 (tc-context-job-state cur-ctx))

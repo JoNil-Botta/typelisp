@@ -6468,7 +6468,53 @@
       "(defmacro (emit-two [v : Expr]) : Decls
   `(define (generated-two) : i64 2))
 (emit-two 5)
-(define (main) : i64 (generated-two))")))
+(define (main) : i64 (generated-two))")
+    ;; A signature naming a type that a later splice defines, or a module alias
+    ;; a later import publishes, is unresolved when the walk starts. The splice
+    ;; that adds the type or the alias re-resolves it, including one a
+    ;; function-only splice generated earlier; function-only splices skip the
+    ;; re-resolution. `expr-type` fails on a still-unresolved signature.
+    (compiler-typecheck-ok?
+      "(defmacro (gen-struct) : Decls `(defstruct Late (v i64)))
+(defmacro (gen-fn [name : Expr]) : Decls `(define (,name) : i64 1))
+(defmacro (gen-user [name : Expr]) : Decls `(define (,name [x : Late]) : Late x))
+(defmacro (late-code [value : Expr]) : i64
+  (let [T : Expr (expr-type value)]
+    (if (__tl_string_eq (type-kind T) \"struct\")
+      (if (__tl_string_eq (type-nominal-name T) \"Late\")
+        (expr-int 1)
+        (comptime-error (type-nominal-name T)))
+      (comptime-error (type-kind T)))))
+(define (early [x : Late]) : Late x)
+(gen-fn a1)
+(gen-user late-user)
+(gen-fn a2)
+(gen-struct)
+(gen-fn a3)
+(define (main) : i64
+  (+ (late-code (early (Late 5)))
+     (+ (late-code (late-user (Late 6))) (a3))))")
+    (compiler-typecheck-ok?
+      "(defmacro (gen-box) : Module
+  `(begin
+    (module gen.box)
+    (defstruct Box (v i64))))
+(defmacro (gen-fn [name : Expr]) : Decls `(define (,name) : i64 1))
+(defmacro (box-code [value : Expr]) : i64
+  (let [T : Expr (expr-type value)]
+    (if (__tl_string_eq (type-kind T) \"struct\")
+      (expr-int 1)
+      (comptime-error (type-kind T)))))
+(import (gen-box) as bx)
+(gen-fn a1)
+(import (gen-box) as by)
+(gen-fn a2)
+(define (early [x : bx.Box]) : bx.Box x)
+(define (early2 [x : by.Box]) : by.Box x)
+(gen-fn a3)
+(define (main) : i64
+  (+ (box-code (early (bx.Box 5)))
+     (+ (box-code (early2 (by.Box 6))) (a3))))")))
 
 (define (compiler-typecheck-quote-tests-ok?) : bool
   (and

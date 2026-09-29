@@ -62433,6 +62433,384 @@
       end-value
       body)))
 
+;; Fixed-array SPMD operands (#8346). A fixed array, and a reference to one,
+;; lowers to a raw pointer to its inline storage, so a foreach body reads and
+;; writes it through the native Slice path the SIMD plans already support: the
+;; preheader packs `(pointer, N)` once per array and rebinds the name to that
+;; view for the body. The view aliases the same storage with the same static
+;; length, so every element access keeps its value and its bounds check, and
+;; fixed arrays need no gather or map path of their own. A name gets a view only
+;; when each occurrence in the body is the base of an `array-ref` or of an
+;; element store. Any other occurrence -- a borrow, a whole-array `set!`, a call
+;; argument, a binder of the same name -- keeps the array binding, and a shared
+;; reference never gets a writable view.
+(defenum LowerSpmdArrayViews
+  (Views LowerState sym_i64_env.SymI64Env tc_core.TcTypeEnv))
+
+(defenum ResultLowerSpmdArrayViews
+  (Ok LowerSpmdArrayViews)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define lower-spmd-array-view-read : i64
+  1)
+(define lower-spmd-array-view-write : i64
+  2)
+(define lower-spmd-array-view-other : i64
+  4)
+
+(define (lower-spmd-array-view-note!
+  [flags : (&mut flags lower_i64_i64_map.Map)]
+  [name : i64]
+  [flag : i64]) : unit
+  (let
+    [prior : i64 (lower_i64_i64_map.get-value-or flags name 0)]
+    (lower_i64_i64_map.insert-ref! flags name (bit-or prior flag))))
+
+(define (lower-spmd-array-view-base-name
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]) : i64
+  (match expr
+    [(ast.AstExpr.Spanned inner-box _)
+      (lower-spmd-array-view-base-name
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.Ann inner-box _)
+      (lower-spmd-array-view-base-name
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.Var name) name]
+    [_ -1]))
+
+(define (lower-spmd-array-view-note-base!
+  [ctx : tc_core.TcContext]
+  [flags : (&mut flags lower_i64_i64_map.Map)]
+  [base-id : i64]
+  [flag : i64]) : unit
+  (let
+    [base : ast.AstExpr (lower-context-expr-get ctx base-id)]
+    [name : i64
+      (lower-spmd-array-view-base-name ctx (lower-global-shared-view base))]
+    (if (< name 0)
+      (lower-spmd-array-view-scan! ctx flags base)
+      (lower-spmd-array-view-note! flags name flag))))
+
+(define (lower-spmd-array-view-note-pattern!
+  [flags : (&mut flags lower_i64_i64_map.Map)]
+  [pattern : ast.AstPattern]) : unit
+  (match pattern
+    [(ast.AstPattern.Var name _)
+      (lower-spmd-array-view-note! flags name lower-spmd-array-view-other)]
+    [(ast.AstPattern.Binding name)
+      (lower-spmd-array-view-note! flags name lower-spmd-array-view-other)]
+    [(ast.AstPattern.Tuple patterns-box)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [(ast.AstPattern.Array patterns-box)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [(ast.AstPattern.Variant _ patterns-box)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [_ unit]))
+
+(define (lower-spmd-array-view-note-patterns!
+  [flags : (&mut flags lower_i64_i64_map.Map)]
+  [patterns : ast.AstPatternList]) : unit
+  (let
+    [index : i64 0]
+    (while (< index patterns.len)
+      (begin
+        (lower-spmd-array-view-note-pattern!
+          flags
+          (ast.ast-pattern-list-get
+            (& patterns)
+            index
+            (ast.ast-pattern-fallback)))
+        (set! index (+ index 1))))))
+
+;; Names a node carries as payload rather than as a `Var` child: binders and
+;; the whole-variable `set!` target. Each counts as an "other" use.
+(define (lower-spmd-array-view-note-payload-names!
+  [flags : (&mut flags lower_i64_i64_map.Map)]
+  [expr : ast.AstExpr]) : unit
+  (let
+    [other : i64 lower-spmd-array-view-other]
+    (match expr
+      [(ast.AstExpr.Set name _) (lower-spmd-array-view-note! flags name other)]
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings _)
+            (let
+              [index : i64 0]
+              (while (< index bindings.len)
+                (begin
+                  (match (array-ref bindings.slots index)
+                    [(ast.AstLetBinding.Binding name _ _)
+                      (lower-spmd-array-view-note! flags name other)])
+                  (set! index (+ index 1)))))])]
+      [(ast.AstExpr.Lambda lambda-box)
+        (match (__tl-box-place lambda-box)
+          [(ast.AstLambda.Lambda params _ _)
+            (let
+              [index : i64 0]
+              (while (< index params.len)
+                (begin
+                  (match (array-ref params.slots index)
+                    [(ast.AstParam.Param name _ _)
+                      (lower-spmd-array-view-note! flags name other)])
+                  (set! index (+ index 1)))))])]
+      [(ast.AstExpr.Foreach foreach-box)
+        (match (__tl-box-place foreach-box)
+          [(ast.AstForeach.Foreach name _ _ _ _)
+            (lower-spmd-array-view-note! flags name other)])]
+      [(ast.AstExpr.SpmdReduce reduce-box)
+        (match (__tl-box-place reduce-box)
+          [(ast.AstSpmdReduce.Reduce _ name _ _ _ _ _)
+            (lower-spmd-array-view-note! flags name other)])]
+      [(ast.AstExpr.SpmdScan scan-box)
+        (match (__tl-box-place scan-box)
+          [(ast.AstSpmdScan.Scan _ name _ _ _ result _ _ _ _)
+            (begin
+              (lower-spmd-array-view-note! flags name other)
+              (lower-spmd-array-view-note! flags result other))])]
+      [(ast.AstExpr.SpmdCompact compact-box)
+        (match (__tl-box-place compact-box)
+          [(ast.AstSpmdCompact.Compact name _ _ _ result _ _ _ _)
+            (begin
+              (lower-spmd-array-view-note! flags name other)
+              (lower-spmd-array-view-note! flags result other))])]
+      [(ast.AstExpr.WithResource resource-box)
+        (match (__tl-box-place resource-box)
+          [(ast.AstWithResource.WithResource bindings _)
+            (let
+              [index : i64 0]
+              (while (< index bindings.len)
+                (begin
+                  (match (array-ref bindings.slots index)
+                    [(ast.AstResourceBinding.Binding name _ _ _)
+                      (lower-spmd-array-view-note! flags name other)])
+                  (set! index (+ index 1)))))])]
+      [_ unit])))
+
+(define (lower-spmd-array-view-scan!
+  [ctx : tc_core.TcContext]
+  [flags : (&mut flags lower_i64_i64_map.Map)]
+  [expr : ast.AstExpr]) : unit
+  (match (lower-global-shared-view expr)
+    [(ast.AstExpr.Var name)
+      (lower-spmd-array-view-note! flags name lower-spmd-array-view-other)]
+    [(ast.AstExpr.ArrayRef array-box index-box)
+      (begin
+        (lower-spmd-array-view-note-base!
+          ctx
+          flags
+          array-box
+          lower-spmd-array-view-read)
+        (lower-spmd-array-view-scan!
+          ctx
+          flags
+          (lower-context-expr-get ctx index-box)))]
+    [(ast.AstExpr.ArraySet array-box index-box value-box)
+      (begin
+        (lower-spmd-array-view-note-base!
+          ctx
+          flags
+          array-box
+          lower-spmd-array-view-write)
+        (lower-spmd-array-view-scan!
+          ctx
+          flags
+          (lower-context-expr-get ctx index-box))
+        (lower-spmd-array-view-scan!
+          ctx
+          flags
+          (lower-context-expr-get ctx value-box)))]
+    [_
+      (let
+        [children : ast.AstExprChildList
+          (ast.ast-expr-children (lower-global-shared-view expr))]
+        [index : i64 0]
+        (begin
+          (lower-spmd-array-view-note-payload-names!
+            flags
+            (lower-global-shared-view expr))
+          (while (< index children.len)
+            (begin
+              (match (ast.ast-expr-child-list-get
+                (& children)
+                index
+                (ast.ast-expr-child-fallback))
+                [(ast.AstExprChild.Expr child-id)
+                  (lower-spmd-array-view-scan!
+                    ctx
+                    flags
+                    (lower-context-expr-get ctx child-id))]
+                [(ast.AstExprChild.Pattern pattern)
+                  (lower-spmd-array-view-note-pattern! flags pattern)]
+                [_ unit])
+              (set! index (+ index 1))))))]))
+
+(define (lower-spmd-array-view-elem? [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-without-regions ty)
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.F32) true]
+    [(ast.AstType.F64) true]
+    [_ false]))
+
+;; The fixed array a name's current binding reaches, and whether that binding
+;; may be written through: a fixed-array value or a `&mut` to one may, a shared
+;; reference may not. Returns the array type, or `Unit` when the name is not a
+;; fixed array of scalar lanes.
+(define (lower-spmd-array-view-array-type
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [write : bool]) : ast.AstType
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+    [array : ast.AstType
+      (match (lower-global-shared-view resolved)
+        [(ast.AstType.Array _ _) resolved]
+        [(ast.AstType.MutRef _ inner)
+          (tc_core.tc-type-strip-region
+            (tc_core.tc-resolve-type
+              ctx
+              (tc_core.tc-context-type-get ctx inner)))]
+        [(ast.AstType.Ref _ inner)
+          (if write
+            (ast.AstType.Unit)
+            (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type
+                ctx
+                (tc_core.tc-context-type-get ctx inner))))]
+        [_ (ast.AstType.Unit)])]
+    (match (lower-global-shared-view array)
+      [(ast.AstType.Array elem _)
+        (if (lower-spmd-array-view-elem? (tc_core.tc-context-type-get ctx elem))
+          array
+          (ast.AstType.Unit))]
+      [_ (ast.AstType.Unit)])))
+
+(define (lower-spmd-array-view-bind
+  [ctx : tc_core.TcContext]
+  [views : LowerSpmdArrayViews]
+  [name : i64]
+  [write : bool]) : ResultLowerSpmdArrayViews
+  (match views
+    [(LowerSpmdArrayViews.Views state env type-env)
+      (match (tc_core.tc-lookup-id type-env name)
+        [(tc_core.ResultTcType.Err _)
+          (ResultLowerSpmdArrayViews.Ok
+            (LowerSpmdArrayViews.Views state env type-env))]
+        [(tc_core.ResultTcType.Ok ty)
+          (match (lower-spmd-array-view-array-type ctx ty write)
+            [(ast.AstType.Array elem count)
+              (let
+                [slice : i64
+                  (ast.ast-node-pool-context-type-push
+                    (tc_core.tc-context-pools ctx)
+                    (ast.AstType.Slice elem))]
+                [view-ty : ast.AstType
+                  (if write
+                    (ast.AstType.MutRef -1 slice)
+                    (ast.AstType.Ref -1 slice))]
+                (match (lower-expr
+                  ctx
+                  state
+                  env
+                  type-env
+                  (ast.AstExpr.Var name))
+                  [(ResultLowerExpr.Err diag)
+                    (ResultLowerSpmdArrayViews.Err diag)]
+                  [(ResultLowerExpr.Ok lowered)
+                    (match lowered
+                      [(LowerExpr.Expr source-state source-value source-ty)
+                        (match (lower-cast-value
+                          source-state
+                          source-value
+                          source-ty
+                          (ast.AstType.U64))
+                          [(LowerExpr.Expr ptr-state ptr _)
+                            (match (lower-slice-view-pack
+                              ptr-state
+                              ptr
+                              (ir.CompilerIrValue.I64 count)
+                              (lower-global-shared-view view-ty))
+                              [(LowerExpr.Expr view-state view-value _)
+                                (match view-value
+                                  [(ir.CompilerIrValue.Var view-var)
+                                    (ResultLowerSpmdArrayViews.Ok
+                                      (LowerSpmdArrayViews.Views
+                                        view-state
+                                        (sym_i64_env.sym-i64-bind-id
+                                          env
+                                          name
+                                          view-var)
+                                        (tc_core.tc-bind-id
+                                          type-env
+                                          name
+                                          view-ty)))]
+                                  [_
+                                    (ResultLowerSpmdArrayViews.Err
+                                      (box
+                                        (lower-diagnostic
+                                          "lower: internal SPMD fixed-array view pack failed")))])])])])]))]
+            [_
+              (ResultLowerSpmdArrayViews.Ok
+                (LowerSpmdArrayViews.Views state env type-env))])])]))
+
+(define (lower-spmd-array-views
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-ty : ast.AstType]
+  [body : ast.AstExpr]) : ResultLowerSpmdArrayViews
+  (if (and
+    (lower-mode-simd? (lower-state-mode state))
+    (lower-type-i64? index-ty))
+    (let
+      [flags : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 16)]
+      [_scan : unit (lower-spmd-array-view-scan! ctx (&mut flags) body)]
+      [capacity : i64 (lower_i64_i64_map.capacity (& flags))]
+      [slot : i64 (lower_i64_i64_map.next-occupied (& flags) 0)]
+      [views : LowerSpmdArrayViews
+        (LowerSpmdArrayViews.Views state env type-env)]
+      [failed : ResultLowerSpmdArrayViews
+        (ResultLowerSpmdArrayViews.Ok
+          (LowerSpmdArrayViews.Views state env type-env))]
+      [ok : bool true]
+      (begin
+        (while (and ok (< slot capacity))
+          (begin
+            (match (lower_i64_i64_map.entry-at (& flags) slot)
+              [(lower_i64_i64_map.EntrySome name bits)
+                (if (and
+                  (= (bit-and bits lower-spmd-array-view-other) 0)
+                  (> bits 0))
+                  (match (lower-spmd-array-view-bind
+                    ctx
+                    views
+                    name
+                    (> (bit-and bits lower-spmd-array-view-write) 0))
+                    [(ResultLowerSpmdArrayViews.Ok next) (set! views next)]
+                    [(ResultLowerSpmdArrayViews.Err diag)
+                      (begin
+                        (set! failed (ResultLowerSpmdArrayViews.Err diag))
+                        (set! ok false))])
+                  unit)]
+              [(lower_i64_i64_map.EntryNone) unit])
+            (set! slot (lower_i64_i64_map.next-occupied (& flags) (+ slot 1)))))
+        (if ok
+          (ResultLowerSpmdArrayViews.Ok views)
+          failed)))
+    (ResultLowerSpmdArrayViews.Ok
+      (LowerSpmdArrayViews.Views state env type-env))))
+
 (define (lower-foreach-lowered-after-numeric-admission
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -62451,18 +62829,29 @@
     [shadowed (lower-id-set-insert (lower-id-set-empty) index-id)]
     (lower-spmd-inline-expr ctx function-state env type-env expr subst shadowed))
     [(ResultLowerAstExpr.Ok inlined-body)
-      (lower-foreach-lowered-inlined
+      (match (lower-spmd-array-views
         ctx
         state
         env
         type-env
-        index-id
-        index
-        index-ty
-        start-value
-        end-value
-        body
-        inlined-body)]
+        (lower-global-shared-view index-ty)
+        (lower-global-shared-view inlined-body))
+        [(ResultLowerSpmdArrayViews.Ok views)
+          (match views
+            [(LowerSpmdArrayViews.Views view-state view-env view-type-env)
+              (lower-foreach-lowered-inlined
+                ctx
+                view-state
+                view-env
+                view-type-env
+                index-id
+                index
+                index-ty
+                start-value
+                end-value
+                body
+                inlined-body)])]
+        [(ResultLowerSpmdArrayViews.Err diag) (ResultLowerExpr.Err diag)])]
     [(ResultLowerAstExpr.Err diag) (ResultLowerExpr.Err diag)]))
 
 (define (lower-foreach-lowered

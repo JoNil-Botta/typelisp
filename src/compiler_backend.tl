@@ -8615,7 +8615,9 @@
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
     [(compiler_ast_types.AstType.I32) "vpgatherqd"]
+    [(compiler_ast_types.AstType.U32) "vpgatherqd"]
     [(compiler_ast_types.AstType.I64) "vpgatherqq"]
+    [(compiler_ast_types.AstType.U64) "vpgatherqq"]
     [(compiler_ast_types.AstType.F32) "vgatherqps"]
     [(compiler_ast_types.AstType.F64) "vgatherqpd"]
     [_ ""]))
@@ -8626,13 +8628,11 @@
 
 (define (compiler-backend-gather-dword-element?
   [elem-ty : compiler_ast_types.AstType]) : bool
-  (or
-    (compiler_typecheck_core.tc-type-eq
-      (compiler-backend-global-shared-view elem-ty)
-      (compiler_ast_types.AstType.I32))
-    (compiler_typecheck_core.tc-type-eq
-      elem-ty
-      (compiler_ast_types.AstType.F32))))
+  (match elem-ty
+    [(compiler_ast_types.AstType.I32) true]
+    [(compiler_ast_types.AstType.U32) true]
+    [(compiler_ast_types.AstType.F32) true]
+    [_ false]))
 
 (define (compiler-backend-avx2-gather-mask-reg [dst-reg : String]) : String
   (if (string.eq (compiler-backend-vector-reg-lower-ymm dst-reg) "%ymm13")

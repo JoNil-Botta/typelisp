@@ -55,6 +55,29 @@ mode scalar avx2 avx512
 opt 0 1
 exit 42
 
+# Fixed arrays, global, local and referenced, are SPMD operands through one
+# preheader Slice view each (#8346): all eight foreach loops take the vector
+# path, gathering every 32- and 64-bit lane type.
+case fixed-array-sources-opcodes
+source tests/spmd/fixed_array_sources.tl
+mode avx2 avx512
+contains vpgatherqq
+contains vpgatherqd
+contains vgatherqpd
+contains vgatherqps
+count = 8 foreach_avx2_body\.[0-9]+:
+
+# A fixed-array gather keeps the ordinary per-lane bounds check, in logical
+# lane order, before the hardware gather.
+case fixed-array-gather-oob
+source tests/spmd/fixed_array_gather_oob.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 134
+in stderr
+contains array index out of bounds
+
 # ----------------------------------------------------------------- shuffles
 
 case shuffle-opcodes

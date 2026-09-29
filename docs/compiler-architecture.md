@@ -88,6 +88,17 @@ The optimizer's per-call integrity check applies the call-side half. Backend
 and register-allocation decisions still read generated helper and parameter
 spellings; #7493 moves them onto the descriptor.
 
+SIMD `foreach` plans address their array operands as sequence variables: a
+dynamic-array descriptor, or a native Slice register group (data pointer, then
+length). Fixed arrays reach the same plans through views, not a path of their
+own: after same-program helper inlining, `lower-spmd-array-views` gives every
+fixed array (global, local, or behind `&`/`&mut`) whose each body occurrence is
+an element read or store one Slice view formed in the preheader from its
+storage pointer and static length, and rebinds the name to it for the body.
+The view aliases the array, so element accesses and bounds checks are
+unchanged; any other occurrence keeps the array binding, and a shared reference
+never gets a writable view (#8346).
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

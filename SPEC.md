@@ -4982,6 +4982,17 @@ every logical access; a nonzero owner offset is therefore invisible to the
 `foreach` body. Empty ranges, sub-gang ranges, full gangs, multiple gangs, and
 partial tails preserve the scalar reference behavior.
 
+Fixed arrays `(Array T N)`, global or local, and references to them are SPMD
+sources and destinations with the same semantics. In SIMD modes a `foreach`
+body reads and writes such an array through a view of its whole storage whose
+length is the static `N`, so contiguous maps, index-array gathers and
+lane-offset gathers from fixed arrays vectorize like their Slice forms, and
+every access keeps its bounds check. This applies when every use of the array's
+name in the body is an element read or an element store; any other use there
+(borrowing the whole array, passing it to a call or to `array-length`, or
+assigning the whole variable) keeps the array itself, and the body is then
+subject to the ordinary SIMD shape diagnostic.
+
 Shared Slice references permit reads. Mutable Slice references permit reads
 and the same statically lane-disjoint contiguous writes as other SPMD buffers.
 The ordinary borrow checker continues to enforce owner provenance, exclusive
@@ -8393,8 +8404,8 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 
 | Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
 |---------|--------|------|---------|---------------------|
-| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates, including packed `i8`/`u8` multiplication |
-| Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
+| Contiguous `foreach` map/zip, native `Slice` and fixed-array map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates, including packed `i8`/`u8` multiplication and fixed-array operands |
+| Gather-only reads from dynamic buffers, Slices and fixed arrays | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration, fixed-array source and benchmark gates |
 | Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
 | Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates, including packed `i8`/`u8` multiplication |
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |

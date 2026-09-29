@@ -679,6 +679,7 @@ sync_channel_pair_thread_runtime|all|-|tests/integration/sync_channel_pair_threa
 sync_channel_string_thread_runtime|all|-|tests/integration/sync_channel_string_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 sync_mutex_thread_runtime|all|-|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 sync_mutex_forged_lock_abort|all|-|tests/integration/sync_mutex_forged_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_mutex_wrong_family_lock_abort|all|-|tests/integration/sync_mutex_wrong_family_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 sync_mutex_stolen_token_guard_abort|all|-|tests/integration/sync_mutex_stolen_token_guard_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 sync_mutex_closed_alias_lock_abort|all|-|tests/integration/sync_mutex_closed_alias_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 box_take_set|all|-|tests/integration/box_take_set.tl|42|-|-|-|-

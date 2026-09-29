@@ -97,6 +97,59 @@
       [(> (live-authorities) authorities-before-share) 9]
       [else 42])))
 
+;: A genuine authority of another family wrapped as a mutex handle names no
+;: mutex: `close`, `share` and `store-raw!` refuse it, and the foreign resource
+;: is untouched, so its own family can still close it and read its fields.
+(define (wrong-family-refusals [mutex : (& mutex mutex_i64.Mutex)]) : i64
+  (let
+    [closed : bool (mutex_i64.close mutex)]
+    [shared : bool
+      (match (mutex_i64.share mutex)
+        [(mutex_i64.Shared other)
+          (begin
+            (mutex_i64.release other)
+            true)]
+        [(mutex_i64.ShareErr) false])]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [stored : bool
+      (unsafe
+        (mutex_i64.store-raw! mutex (&mut words) 0))]
+    (cond [closed 1] [shared 2] [stored 3] [else 0])))
+
+(define (wrong-family-reclaim [mutex : (& mutex mutex_i64.Mutex)]) : i64
+  (let
+    [claim : registry.ConcurrencyClaim
+      (unsafe
+        (registry.concurrency-close
+          (& mutex.authority)
+          registry.concurrency-family-channel-i64
+          2))]
+    (if (and claim.ok (= claim.field0 11) (= claim.field1 22))
+      0
+      4)))
+
+(define (wrong-family-code) : i64
+  (match (unsafe
+    (registry.concurrency-register
+      registry.concurrency-family-channel-i64
+      2
+      11
+      22
+      0
+      0
+      0
+      0
+      0))
+    [(registry.ConcurrencyShareErr) 5]
+    [(registry.ConcurrencyShared authority)
+      (with
+        ([mutex (mutex_i64.Mutex authority) mutex_i64.release])
+        (let
+          [refused : i64 (wrong-family-refusals (& mutex))]
+          (if (= refused 0)
+            (wrong-family-reclaim (& mutex))
+            refused)))]))
+
 (define (main) : i64
   (let
     [resources : i64 (live-resources)]
@@ -105,8 +158,10 @@
       (match (mutex_i64.create 0)
         [(mutex_i64.CreateErr _) 1]
         [(mutex_i64.CreateOk mutex) (run (& mutex))])]
+    [wrong-family : i64 (wrong-family-code)]
     (cond
       [(not (= code 42)) code]
+      [(not (= wrong-family 0)) (+ 30 wrong-family)]
       [(not (= (live-resources) resources)) 20]
       [(not (= (live-authorities) authorities)) 21]
       [(not (mutex_i64.create-initial-ok? 5)) 22]

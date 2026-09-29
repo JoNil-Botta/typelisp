@@ -3820,6 +3820,28 @@
 (define (compiler-parse-dispatch-env) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-env-from-cfg (compiler-cfg-empty)))
 
+;; Classification reads the current default index or its immutable base.
+;; Rebinding per-invocation markers would append to the persistent base store.
+(define (compiler-parse-default-dispatch-tag-id [name-id : i64]) : i64
+  (let
+    [control : i64
+      (compiler-parse-state-control-addr
+        (compiler-parse-default-state-shared-view))]
+    [base : sym_i64_env.SymI64Env
+      (compiler-parse-dispatch-env-for-control control)]
+    (if (and
+      (not
+        (=
+          (compiler-parse-raw-i64-ref
+            control
+            compiler-parse-state-control-ready)
+          0))
+      (compiler-parse-dispatch-index-current-control? control))
+      (compiler-parse-dispatch-index-lookup-id control name-id)
+      (match (sym_i64_env.sym-i64-lookup-id base name-id)
+        [(option_i64.Some tag) tag]
+        [(option_i64.None) (compiler-parse-tag-unknown)]))))
+
 (define (compiler-parse-dispatch-tag
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : i64

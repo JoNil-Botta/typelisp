@@ -2,6 +2,7 @@
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
+(import stdlib.test)
 (import compiler_intern as ci)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -583,6 +584,191 @@
 
 (define (ast-expr-inner-tag [expr : ast.AstExpr]) : i64
   (ast_tests.ast-expr-tag (ast.ast-expr-unspan expr)))
+
+(define (compiler-parse-default-dispatch-tests-ok?) : bool
+  (let
+    [dispatch : sym_i64_env.SymI64Env (parser.compiler-parse-dispatch-env)]
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array
+        (reader.stable-symbol-id "+")
+        (reader.stable-symbol-id "if")
+        (reader.stable-symbol-id "define")
+        (reader.stable-symbol-id "defdispatch")
+        (reader.stable-symbol-id "dot")
+        (reader.stable-symbol-id "unknown-default-dispatch"))]
+    [tags : (__tl_dyn-array i64)
+      (__tl_make-array
+        (parser.compiler-parse-tag-bin-add)
+        (parser.compiler-parse-tag-expr-if)
+        (parser.compiler-parse-tag-decl-define)
+        (parser.compiler-parse-tag-decl-defdispatch)
+        (parser.compiler-parse-tag-unknown)
+        (parser.compiler-parse-tag-unknown))]
+    [control : i64
+      (parser.compiler-parse-state-control-addr
+        (parser.compiler-parse-default-state-shared-view))]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index (array-length names))
+        (begin
+          (set!
+            ok
+            (and
+              ok
+              (=
+                (parser.compiler-parse-dispatch-tag-id
+                  dispatch
+                  (array-ref names index))
+                (array-ref tags index))
+              (=
+                (parser.compiler-parse-default-dispatch-tag-id
+                  (array-ref names index))
+                (array-ref tags index))))
+          (set! index (+ index 1))))
+      (let
+        [base : sym_i64_env.SymI64Env
+          (parser.compiler-parse-dispatch-cache-ref control)]
+        [before : sym_i64_env.SymI64Store
+          (sym_i64_env.sym-i64-store-read base.store-address)]
+        (begin
+          (set! index 0)
+          (while (< index 4096)
+            (begin
+              (set!
+                ok
+                (and
+                  ok
+                  (=
+                    (parser.compiler-parse-default-dispatch-tag-id
+                      (array-ref names (% index (array-length names))))
+                    (array-ref tags (% index (array-length names))))))
+              (set! index (+ index 1))))
+          (let
+            [after : sym_i64_env.SymI64Store
+              (sym_i64_env.sym-i64-store-read base.store-address)]
+            (set! ok (and ok (= before.len after.len))))))
+      ;; A stale oracle environment falls back to its immutable bindings. The
+      ;; default lookup must refresh the canonical index before classifying.
+      (let
+        [fields : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+        (begin
+          (set!
+            (array-ref fields 0)
+            parser.compiler-parse-state-control-cache-generation)
+          (set!
+            (array-ref fields 1)
+            parser.compiler-parse-state-control-cache-table-id)
+          (set! index 0)
+          (while (< index (array-length fields))
+            (begin
+              (parser.compiler-parse-raw-i64-set!
+                control
+                (array-ref fields index)
+                -1)
+              (set!
+                ok
+                (and
+                  ok
+                  (=
+                    (parser.compiler-parse-dispatch-indexed-control dispatch)
+                    0)
+                  (=
+                    (parser.compiler-parse-dispatch-tag-id
+                      dispatch
+                      (array-ref names 0))
+                    (parser.compiler-parse-tag-bin-add))
+                  (=
+                    (parser.compiler-parse-default-dispatch-tag-id
+                      (array-ref names 0))
+                    (parser.compiler-parse-tag-bin-add))
+                  (parser.compiler-parse-dispatch-index-current-control?
+                    control)))
+              (set! index (+ index 1))))))
+      (and
+        ok
+        (=
+          (parser.compiler-parse-default-dispatch-tag-id -1)
+          (parser.compiler-parse-tag-unknown))))))
+
+(define (compiler-parse-default-dispatch-owner-tests-ok?) : bool
+  (let
+    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [owner : ci.InternCompatState (ci.intern-compat-state-new)]
+    [control : i64
+      (parser.compiler-parse-state-control-addr
+        (parser.compiler-parse-default-state-shared-view))]
+    [ok : bool false]
+    (begin
+      (ci.intern-compat-state-install! owner)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (set!
+        ok
+        (and
+          (=
+            (parser.compiler-parse-default-dispatch-tag-id
+              (reader.stable-symbol-id "+"))
+            (parser.compiler-parse-tag-bin-add))
+          (=
+            (parser.compiler-parse-raw-i64-ref
+              control
+              parser.compiler-parse-state-control-cache-table-id)
+            (ci.intern-compat-state-table-id owner))))
+      (ci.intern-compat-state-capture-from-globals! (&mut owner))
+      (ci.intern-compat-state-reset! (&mut owner))
+      (ci.intern-compat-state-install! owner)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (set!
+        ok
+        (and
+          ok
+          (not (parser.compiler-parse-dispatch-index-current-control? control))
+          (=
+            (parser.compiler-parse-default-dispatch-tag-id
+              (reader.stable-symbol-id "if"))
+            (parser.compiler-parse-tag-expr-if))
+          (=
+            (parser.compiler-parse-raw-i64-ref
+              control
+              parser.compiler-parse-state-control-cache-generation)
+            (ci.intern-generation))))
+      (ci.intern-compat-state-install! home)
+      (cbi.compiler-builtin-reset!)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (set!
+        ok
+        (and
+          ok
+          (=
+            (parser.compiler-parse-default-dispatch-tag-id
+              (reader.stable-symbol-id "define"))
+            (parser.compiler-parse-tag-decl-define))
+          (=
+            (parser.compiler-parse-raw-i64-ref
+              control
+              parser.compiler-parse-state-control-cache-table-id)
+            (ci.intern-compat-state-table-id home))))
+      ok)))
+
+(test
+  compiler-parse-default-dispatch-tags-and-storage
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (test.assert-true
+      (and
+        (compiler-parse-defdispatch-tests-ok?)
+        (compiler-parse-default-dispatch-tests-ok?))
+      "default dispatch tags preserve classification without appending bindings")))
+
+(test
+  compiler-parse-default-dispatch-owner-refresh
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (test.assert-true
+      (compiler-parse-default-dispatch-owner-tests-ok?)
+      "default dispatch refreshes after intern reset and owner changes")))
 
 (define (ast-main-body-tag [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
@@ -3555,6 +3741,8 @@
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)
         (compiler-parse-defdispatch-tests-ok?)
+        (compiler-parse-default-dispatch-tests-ok?)
+        (compiler-parse-default-dispatch-owner-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)
         (compiler-parse-implicit-body-tail-ok?)
         (compiler-parse-inline-test-ok?)

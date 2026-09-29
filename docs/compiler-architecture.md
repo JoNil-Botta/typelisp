@@ -105,8 +105,10 @@ Declaration-producing macro expansion threads that environment through scratch
 generations and reparses both `Decls` and `Module` output with that same
 environment. Generated predicates use the canonical parser evaluator;
 constructing an empty dispatch would silently drop enabled declarations. Syntax
-head classification does not evaluate predicates and may use the cfg-free
-keyword table. The lowerer's closed core-macro Clone handoff supplies its explicit
+head classification does not evaluate predicates and reads the cfg-free
+keyword index directly, refreshing its cached base for the current intern
+table/generation without appending invocation bindings. The lowerer's closed
+core-macro Clone handoff supplies its explicit
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 

@@ -1,0 +1,39 @@
+	.text
+	.globl	leaf
+	.type	leaf, @function
+leaf:
+	.cfi_startproc
+	movq	%rdi, %rax
+	ret
+	.cfi_endproc
+	.size	leaf, .-leaf
+	.globl	framed
+	.type	framed, @function
+framed:
+	.cfi_startproc
+	pushq	%rbp
+	.cfi_def_cfa_offset 16
+	.cfi_offset 6, -16
+	movq	%rsp, %rbp
+	.cfi_def_cfa_register 6
+	pushq	%rbx
+	.cfi_offset 3, -24
+	subq	$8, %rsp
+	testq	%rdi, %rdi
+	je	.Lskip
+	.cfi_remember_state
+	movq	-8(%rbp), %rbx
+	leave
+	.cfi_def_cfa 7, 8
+	ret
+.Lskip:
+	.cfi_restore_state
+	addq	$8, %rsp
+	popq	%rbx
+	.cfi_restore 3
+	popq	%rbp
+	.cfi_def_cfa 7, 8
+	ret
+	.cfi_endproc
+	.size	framed, .-framed
+	.section	.note.GNU-stack,"",@progbits

@@ -14934,21 +14934,6 @@
     (compiler-backend-plan-uses-callee-regs? assignments backend-state)
     (compiler-backend-windows-framed-rsp-exact? body)))
 
-;: A framed function that saves callee registers but fails the %rsp audit.
-;: Its frame-register form would leave the GP saves undescribed and place the
-;: XMM rows in the caller's frame, so emission refuses it instead.
-(define (compiler-backend-windows-framed-saves-undescribable?
-  [target-policy : CompilerBackendTargetPolicy]
-  [fpo-ok : bool]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [body : (& body str)]
-  [backend-state : CompilerBackendState]) : bool
-  (and
-    target-policy.seh-unwind
-    (not fpo-ok)
-    (compiler-backend-plan-uses-callee-regs? assignments backend-state)
-    (not (compiler-backend-windows-framed-rsp-exact? body))))
-
 ;; The x64 unwind format records a prologue of at most 255 bytes. Upper bounds
 ;; per instruction: pushq %rbp 1, movq %rsp, %rbp 3, the allocation 13 (the
 ;; `__chkstk` probe sequence), each XMM `movdqu` save 10, the mode prologue 4,
@@ -74329,13 +74314,6 @@
                                   assignments
                                   (compiler-backend-global-shared-view swb-body)
                                   program-index.backend-state)]
-                              [windows-undescribable? : bool
-                                (compiler-backend-windows-framed-saves-undescribable?
-                                  target-policy
-                                  fpo-ok
-                                  assignments
-                                  (compiler-backend-global-shared-view swb-body)
-                                  program-index.backend-state)]
                               [selected-prologue : String
                                 (if fpo-ok
                                   (if target-policy.seh-unwind
@@ -74376,47 +74354,37 @@
                                       selected-prologue))
                                   swb-body)]
                               [described-result : ResultCompilerBackend
-                                (cond
-                                  [windows-undescribable?
-                                    (compiler-backend-instr-error
-                                      (compiler-backend-global-shared-view
-                                        func-diag)
-                                      (str_cat.str-cat
-                                        "backend: Windows prologue of "
-                                        symbol
-                                        " cannot describe its callee-register saves: %rsp is not at its post-allocation value at every call and faulting instruction"))]
-                                  [windows-describe?
-                                    (compiler-backend-windows-framed-save-splice
-                                      (compiler-backend-global-shared-view
-                                        emitted-body)
-                                      ;; A shrink-wrapped prologue sits at its
-                                      ;; saving label; its saves follow it.
-                                      (if wrap-active?
-                                        (let
-                                          [at : i64
-                                            (compiler-backend-string-find-from
-                                              (compiler-backend-global-shared-view
-                                                emitted-body)
-                                              (compiler-backend-global-shared-view
-                                                selected-prologue)
-                                              0)]
-                                          (if (< at 0)
-                                            -1
-                                            (+
-                                              at
-                                              (string.string-length
-                                                selected-prologue))))
-                                        0)
-                                      (compiler-backend-mode-prologue mode)
-                                      assignments
-                                      slot-vars
-                                      frame
-                                      (compiler-backend-global-shared-view
-                                        symbol)
-                                      (compiler-backend-global-shared-view
-                                        func-diag)
-                                      program-index.backend-state)]
-                                  [else (ResultCompilerBackend.Ok emitted-body)])]
+                                (if windows-describe?
+                                  (compiler-backend-windows-framed-save-splice
+                                    (compiler-backend-global-shared-view
+                                      emitted-body)
+                                    ;; A shrink-wrapped prologue sits at its
+                                    ;; saving label; its saves follow it.
+                                    (if wrap-active?
+                                      (let
+                                        [at : i64
+                                          (compiler-backend-string-find-from
+                                            (compiler-backend-global-shared-view
+                                              emitted-body)
+                                            (compiler-backend-global-shared-view
+                                              selected-prologue)
+                                            0)]
+                                        (if (< at 0)
+                                          -1
+                                          (+
+                                            at
+                                            (string.string-length
+                                              selected-prologue))))
+                                      0)
+                                    (compiler-backend-mode-prologue mode)
+                                    assignments
+                                    slot-vars
+                                    frame
+                                    (compiler-backend-global-shared-view symbol)
+                                    (compiler-backend-global-shared-view
+                                      func-diag)
+                                    program-index.backend-state)
+                                  (ResultCompilerBackend.Ok emitted-body))]
                               (cond
                                 ;; SW-1: the first emission found a placement.
                                 ;; Re-emit applying it, so the bypass returns

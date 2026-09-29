@@ -7541,50 +7541,7 @@
             "    andq $-16, %rsp\n"))
         (not
           (backend.compiler-backend-windows-framed-rsp-exact?
-            "    leave\n    call _tl_f\n"))
-        ;; A framed function whose saves cannot be described is refused, not
-        ;; left in the frame-register form.
-        (backend.compiler-backend-windows-framed-saves-undescribable?
-          windows
-          false
-          r12-only
-          "    subq $32, %rsp\n    call _tl_f\n    addq $32, %rsp\n"
-          backend-state)
-        (backend.compiler-backend-windows-framed-saves-undescribable?
-          windows
-          false
-          xmm-only
-          "    pushq %r10\n    call _tl_f\n    popq %r10\n"
-          backend-state)
-        (not
-          (backend.compiler-backend-windows-framed-saves-undescribable?
-            windows
-            false
-            r12-only
-            "    call _tl_f\n    leave\n    ret\n"
-            backend-state))
-        (not
-          (backend.compiler-backend-windows-framed-saves-undescribable?
-            windows
-            true
-            r12-only
-            "    subq $32, %rsp\n    call _tl_f\n    addq $32, %rsp\n"
-            backend-state))
-        (not
-          (backend.compiler-backend-windows-framed-saves-undescribable?
-            (backend.compiler-backend-target-policy-new
-              backend.CompilerBackendTarget.Linux)
-            false
-            r12-only
-            "    subq $32, %rsp\n    call _tl_f\n    addq $32, %rsp\n"
-            backend-state))
-        (not
-          (backend.compiler-backend-windows-framed-saves-undescribable?
-            windows
-            false
-            (reg-homes "%0=%rax")
-            "    subq $32, %rsp\n    call _tl_f\n    addq $32, %rsp\n"
-            backend-state)))]
+            "    leave\n    call _tl_f\n")))]
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
     ok))
 

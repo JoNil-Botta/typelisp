@@ -201,6 +201,7 @@ checked_size.tl
 comptime.tl
 concurrency_registry.tl
 core_macros.tl
+crypto_p256.tl
 crypto_rsa_core.tl
 crypto_rsa_verify.tl
 crypto_random.tl
@@ -280,6 +281,7 @@ stdlib/tests/arena_atomic_api.tl|42|-|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
+stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_api.tl|42|-|-|-

@@ -14,8 +14,8 @@ set -eu
 # result, never a verification success.
 #
 # --jobs N runs up to N gates at once: a gate starts once every gate it needs
-# passed and while the memory reservations of the running gates fit
-# --memory-mib. One job, the default, runs the table in order.
+# passed and while the memory and CPU reservations of the running gates fit
+# --memory-mib and --cpu-slots. One job, the default, runs the table in order.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -25,7 +25,7 @@ TAB=$(printf '\t')
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/ci-verify.sh [--gates ID[,ID...]] [--jobs N --memory-mib MIB]
+usage: scripts/ci-verify.sh [--gates ID[,ID...]] [--jobs N --memory-mib MIB] [--cpu-slots N]
        scripts/ci-verify.sh --list-gates linux|windows [--gates ID[,ID...]]
 
 Runs the repository's CI verification gate: every gate of scripts/ci-gates.tsv
@@ -45,6 +45,12 @@ gate it needs passed and while the memory column of the running gates, plus
 its own, fits --memory-mib, which --jobs above 1 requires. Each gate's output is
 printed whole when it finishes. Every gate still runs, and the first failure
 stops further starts.
+
+--cpu-slots N (1-16384, default: the host's online CPU count) also budgets each
+gate's CPU column. The column counts its default concurrent compiler workers,
+so nested pools reserve more than one slot. This is admission, not a CPU quota;
+custom nested worker counts still need an appropriate budget. A gate needing
+more slots than the budget runs alone.
 
 Before the first gate starts, every host tool that scripts/ci-host-tools.tsv
 lists for a selected gate must be usable; a missing one fails the run at once
@@ -70,7 +76,7 @@ EOF
 
 # ci_gates_plan HOST [ID,...]
 #   Validate the whole table, then print the HOST rows (id, hosts, label,
-#   needs projected onto HOST, compiler, memory, locks, command), or only the
+#   needs projected onto HOST, compiler, memory, cpu, locks, command), or only the
 #   requested gates plus the closure of their needs, in table order.
 ci_gates_plan() {
     awk -F '\t' -v host="$1" -v request="${2:-}" '
@@ -82,20 +88,21 @@ ci_gates_plan() {
         { sub(/\r$/, "") }
         /^#/ { next }
         !header {
-            if ($0 != "id\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand")
-                fail("line " NR ": expected the id/hosts/label/needs/compiler/memory/locks/command header")
+            if ($0 != "id\thosts\tlabel\tneeds\tcompiler\tmemory\tcpu\tlocks\tcommand")
+                fail("line " NR ": expected the id/hosts/label/needs/compiler/memory/cpu/locks/command header")
             header = 1
             next
         }
         {
-            if (NF != 8 || $1 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
-                fail("line " NR ": expected eight fields and a lowercase kebab-case ID")
+            if (NF != 9 || $1 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
+                fail("line " NR ": expected nine fields and a lowercase kebab-case ID")
             if ($2 != "all" && $2 != "linux" && $2 != "windows") fail("line " NR ": invalid hosts: " $2)
             if ($3 == "") fail("line " NR ": empty label")
             if ($5 != "-" && $5 != "stage2" && $5 != "profile") fail("line " NR ": invalid compiler: " $5)
             if ($6 !~ /^[1-9][0-9]*$/) fail("line " NR ": memory must be a positive MiB count: " $6)
-            if ($7 != "-" && $7 !~ /^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$/) fail("line " NR ": invalid locks: " $7)
-            if ($8 == "") fail("line " NR ": empty command")
+            if ($7 !~ /^([1-9]|1[0-6])$/) fail("line " NR ": CPU slots must be an integer from 1 to 16: " $7)
+            if ($8 != "-" && $8 !~ /^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$/) fail("line " NR ": invalid locks: " $8)
+            if ($9 == "") fail("line " NR ": empty command")
             if ($1 in gate_hosts) fail("line " NR ": duplicate gate ID: " $1)
             gate_hosts[$1] = $2
             # A need names an earlier gate that runs wherever this one does,
@@ -128,7 +135,7 @@ ci_gates_plan() {
             delete direct
             if ($2 != "all" && $2 != host) next
             rows++
-            row[rows] = $1 "\t" $2 "\t" $3 "\t" (projected == "" ? "-" : projected) "\t" $5 "\t" $6 "\t" $7 "\t" $8
+            row[rows] = $1 "\t" $2 "\t" $3 "\t" (projected == "" ? "-" : projected) "\t" $5 "\t" $6 "\t" $7 "\t" $8 "\t" $9
             needs[rows] = projected
             position[$1] = rows
         }
@@ -165,7 +172,7 @@ ci_gates_plan() {
 # and the gate_* functions defined in this file.
 ci_gates_check_commands() {
     _ci_missing=0
-    for _ci_word in $(awk -F '\t' '!/^#/ && NF == 8 && $1 != "id" { print $8 }' "$GATES_FILE" |
+    for _ci_word in $(awk -F '\t' '!/^#/ && NF == 9 && $1 != "id" { print $9 }' "$GATES_FILE" |
         tr -d '\r"' | tr ' ' '\n' |
         grep -E '^(gate_[a-z0-9_]+|scripts/[A-Za-z0-9._/-]+)$' | sort -u); do
         case "$_ci_word" in
@@ -558,6 +565,7 @@ gate_heavy_instruction_counts() {
 CI_VERIFY_GATES=
 CI_VERIFY_JOBS=1
 CI_VERIFY_MEMORY_MIB=
+CI_VERIFY_CPU_SLOTS=
 case "${1:-}" in
     -h | --help)
         usage
@@ -573,14 +581,14 @@ case "${1:-}" in
         ci_gates_check_commands
         CI_VERIFY_PLAN=$(ci_gates_plan "$2" "${4:-}")
         ci_host_tools_plan "$2" > /dev/null
-        printf 'id\thosts\tlabel\tneeds\tmemory\tlocks\n'
-        printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1-4,6,7
+        printf 'id\thosts\tlabel\tneeds\tmemory\tcpu\tlocks\n'
+        printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1-4,6-8
         exit 0
         ;;
 esac
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --gates | --jobs | --memory-mib)
+        --gates | --jobs | --memory-mib | --cpu-slots)
             if [ "$#" -lt 2 ] || [ -z "$2" ]; then
                 usage
                 exit 2
@@ -589,6 +597,7 @@ while [ "$#" -gt 0 ]; do
                 --gates) CI_VERIFY_GATES=$2 ;;
                 --jobs) CI_VERIFY_JOBS=$2 ;;
                 --memory-mib) CI_VERIFY_MEMORY_MIB=$2 ;;
+                --cpu-slots) CI_VERIFY_CPU_SLOTS=$2 ;;
             esac
             shift 2
             ;;
@@ -612,6 +621,21 @@ case "$CI_VERIFY_MEMORY_MIB" in
         exit 2
         ;;
 esac
+if [ -z "$CI_VERIFY_CPU_SLOTS" ]; then
+    CI_VERIFY_CPU_SLOTS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null) ||
+        CI_VERIFY_CPU_SLOTS=
+    case "$CI_VERIFY_CPU_SLOTS" in
+        "" | *[!0-9]* | 0*)
+            echo "cannot count this host's online CPUs; pass --cpu-slots N" >&2
+            exit 2
+            ;;
+    esac
+    [ "$CI_VERIFY_CPU_SLOTS" -le 16384 ] || CI_VERIFY_CPU_SLOTS=16384
+fi
+if ! awk -v slots="$CI_VERIFY_CPU_SLOTS" 'BEGIN { exit !(slots ~ /^[1-9][0-9]*$/ && slots <= 16384) }'; then
+    echo "--cpu-slots must be an integer from 1 to 16384: $CI_VERIFY_CPU_SLOTS" >&2
+    exit 2
+fi
 if [ "$CI_VERIFY_JOBS" -gt 1 ] && [ -z "$CI_VERIFY_MEMORY_MIB" ]; then
     echo "--jobs $CI_VERIFY_JOBS needs --memory-mib: the memory the running gates may reserve at once" >&2
     exit 2
@@ -744,8 +768,8 @@ echo "[ci-verify] host=$HOST_OS seed=${SEED_TYPELISP_BIN:-<unused by this select
 
 # Gates are the jobs of one bounded pool (scripts/lib-bounded-pool.sh), queued
 # in table order with their needs, their memory column as the reservation and
-# their locks. The memory column is a gate's measured process-tree peak with
-# headroom; the pool admits a gate while the reservations of the running gates,
+# their CPU slots and locks. The memory column is a gate's measured process-tree
+# peak with headroom; the pool admits a gate while the reservations of the running gates,
 # plus its own, fit --memory-mib, but it does not enforce them. Pools inside
 # gates still run every chunk under its enforced cap. Gates that share a lock
 # write or read the same checkout paths, so they never run at once. One job
@@ -759,12 +783,8 @@ printf '%s\n' "$CI_VERIFY_PLAN" > "$CI_VERIFY_PLAN_FILE"
 CI_VERIFY_QUEUE="$ROOT/target/ci-verify-queue.txt"
 CI_VERIFY_BUDGET_MIB=0
 : > "$CI_VERIFY_QUEUE"
-while IFS=$TAB read -r gate_id gate_hosts gate_label gate_needs gate_compiler_kind gate_memory gate_locks gate_command; do
-    if [ "$gate_locks" = - ]; then
-        printf '%s|%s|%s\n' "$gate_id" "$gate_memory" "$gate_needs" >> "$CI_VERIFY_QUEUE"
-    else
-        printf '%s|%s|%s|%s\n' "$gate_id" "$gate_memory" "$gate_needs" "$gate_locks" >> "$CI_VERIFY_QUEUE"
-    fi
+while IFS=$TAB read -r gate_id gate_hosts gate_label gate_needs gate_compiler_kind gate_memory gate_cpu gate_locks gate_command; do
+    printf '%s|%s|%s|%s|%s\n' "$gate_id" "$gate_memory" "$gate_needs" "$gate_locks" "$gate_cpu" >> "$CI_VERIFY_QUEUE"
     [ "$gate_memory" -le "$CI_VERIFY_BUDGET_MIB" ] || CI_VERIFY_BUDGET_MIB=$gate_memory
 done < "$CI_VERIFY_PLAN_FILE"
 # One job needs no memory budget: each gate runs alone.
@@ -772,14 +792,15 @@ if [ "$CI_VERIFY_JOBS" -gt 1 ]; then
     CI_VERIFY_BUDGET_MIB=$CI_VERIFY_MEMORY_MIB
     echo "[ci-verify] $CI_VERIFY_SELECTED_COUNT gates, up to $CI_VERIFY_JOBS at once within $CI_VERIFY_BUDGET_MIB MiB of reservations"
 fi
-bounded_pool_init "$CI_VERIFY_POOL" "$CI_VERIFY_BUDGET_MIB" "$CI_VERIFY_QUEUE" || exit 1
+bounded_pool_init "$CI_VERIFY_POOL" "$CI_VERIFY_BUDGET_MIB" "$CI_VERIFY_QUEUE" "$CI_VERIFY_CPU_SLOTS" || exit 1
+echo "[ci-verify] CPU reservation budget: $CI_VERIFY_CPU_SLOTS slots"
 mkdir -p "$CI_VERIFY_POOL/logs" "$CI_VERIFY_POOL/timing" "$CI_VERIFY_POOL/elapsed"
 CI_VERIFY_TIMING_FILE=${TYPELISP_CI_TIMING_FILE:-}
 
 # The pool's job callback. Workers are background subshells, so gates read
 # standard input from /dev/null.
 bounded_pool_run_job() {
-    while IFS=$TAB read -r job_id job_hosts job_label job_needs job_compiler_kind job_memory job_locks job_command; do
+    while IFS=$TAB read -r job_id job_hosts job_label job_needs job_compiler_kind job_memory job_cpu job_locks job_command; do
         [ "$job_id" != "$1" ] || break
     done < "$CI_VERIFY_PLAN_FILE"
     if [ "$job_id" != "$1" ]; then

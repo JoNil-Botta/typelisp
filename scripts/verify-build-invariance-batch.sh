@@ -157,6 +157,8 @@ reject bounded_pool_require_complete "$POOL"
 rmdir "$POOL/claims/foreign"
 printf '4096\n' > "$POOL/running/small-a"
 reject bounded_pool_require_complete "$POOL"
+reject bounded_pool_claim "$POOL"
+test ! -e "$POOL/lock"
 rm "$POOL/running/small-a"
 : > "$POOL/abort"
 reject bounded_pool_require_complete "$POOL"
@@ -212,7 +214,8 @@ bounded_pool_run_job() {
     bounded_pool_lock "$POOL"
     pool_used=0
     for pool_running in "$POOL/running"/*; do
-        pool_used=$((pool_used + $(cat "$pool_running")))
+        read -r pool_running_cap < "$pool_running"
+        pool_used=$((pool_used + pool_running_cap))
     done
     bounded_pool_unlock "$POOL"
     [ "$pool_used" -ge "$2" ] && [ "$pool_used" -le 12288 ]
@@ -406,4 +409,126 @@ bounded_pool_start "$POOL" 3
 bounded_pool_join "$POOL"
 mkdir "$POOL/held/stamp"
 reject bounded_pool_require_complete "$POOL"
+
+# CPU admission accounts for nested compiler workers as well as memory and
+# checkout locks. Workers observe the bound while running, not just at claim.
+cat > "$QUEUE" <<'EOF'
+first|4096|-|stamp|2
+second|4096|-|-|2
+third|4096|-|-|1
+after|4096|first,second|stamp|2
+tail|4096|third,after|-|1
+EOF
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+bounded_pool_run_job() {
+    bounded_pool_lock "$POOL"
+    cpu_used=$(awk 'FNR == 3 { sum += $0 } END { print sum + 0 }' "$POOL"/running/*)
+    bounded_pool_unlock "$POOL"
+    test "$cpu_used" -le 4 || exit 9
+    if [ "$1" = first ] || [ "$1" = after ]; then
+        mkdir "$WORKDIR/cpu-stamp" || exit 8
+    fi
+    sleep 0.2
+    if [ "$1" = first ] || [ "$1" = after ]; then
+        rmdir "$WORKDIR/cpu-stamp"
+    fi
+    mkdir "$WORKDIR/ran/$1"
+}
+bounded_pool_init "$POOL" 16384 "$QUEUE" 4
+bounded_pool_start "$POOL" 4
+bounded_pool_join "$POOL"
+test "$(count_entries "$WORKDIR/ran")" -eq 5
+test "$(count_entries "$POOL/held")" -eq 0
+
+# Admission skips a CPU-heavy job for one that fits exactly, even with memory
+# to spare. Releasing that reservation makes the skipped job eligible.
+printf 'first|4096|-|-|3\nsecond|4096|-|-|2\nsmall|4096|-|-|1\n' > "$QUEUE"
+bounded_pool_init "$POOL" 16384 "$QUEUE" 4
+test "$(bounded_pool_claim "$POOL")" = 'first|4096'
+test "$(bounded_pool_claim "$POOL")" = 'small|4096'
+pool_status=0
+bounded_pool_claim "$POOL" > "$WORKDIR/stdout" || pool_status=$?
+test "$pool_status" -eq 3
+test ! -s "$WORKDIR/stdout"
+bounded_pool_finish "$POOL" first 0
+test "$(bounded_pool_claim "$POOL")" = 'second|4096'
+bounded_pool_finish "$POOL" small 0
+bounded_pool_finish "$POOL" second 0
+bounded_pool_require_complete "$POOL"
+
+# A multi-worker job exceeds a one-slot caller only while running alone; the
+# caller still executes the whole queue, including ordinary two-field records.
+printf 'pooled|4096|-|-|2\nordinary|4096\n' > "$QUEUE"
+bounded_pool_init "$POOL" 12288 "$QUEUE" 1
+test "$(bounded_pool_claim "$POOL")" = 'pooled|4096'
+pool_status=0
+bounded_pool_claim "$POOL" > "$WORKDIR/stdout" || pool_status=$?
+test "$pool_status" -eq 3
+test ! -s "$WORKDIR/stdout"
+bounded_pool_finish "$POOL" pooled 0
+test "$(bounded_pool_claim "$POOL")" = 'ordinary|4096'
+bounded_pool_finish "$POOL" ordinary 0
+bounded_pool_require_complete "$POOL"
+
+# The upper CPU boundaries are accepted, and omitting the CPU budget keeps
+# memory-only callers free to run weighted records beside each other.
+printf 'wide|4096|-|-|16\nordinary|4096\n' > "$QUEUE"
+for cpu_budget in 16384 ''; do
+    bounded_pool_init "$POOL" 8192 "$QUEUE" "$cpu_budget"
+    test "$(bounded_pool_claim "$POOL")" = 'wide|4096'
+    test "$(bounded_pool_claim "$POOL")" = 'ordinary|4096'
+    bounded_pool_finish "$POOL" wide 0
+    bounded_pool_finish "$POOL" ordinary 0
+    bounded_pool_require_complete "$POOL"
+done
+
+for bad_cpu in 0 03 -1 16385 1.5 cpu; do
+    reject bounded_pool_init "$POOL.bad" 12288 "$QUEUE" "$bad_cpu"
+    test ! -e "$POOL.bad"
+done
+for bad_weight in '' 0 02 -1 17 cpu; do
+    printf 'job|4096|-|-|%s\n' "$bad_weight" > "$QUEUE"
+    reject bounded_pool_init "$POOL.bad" 12288 "$QUEUE" 4
+    test ! -e "$POOL.bad"
+done
+
+# The gate inventory validates the new field even when only listing a host.
+CI_REPO="$WORKDIR/ci-repo"
+mkdir -p "$CI_REPO/scripts"
+cp "$ROOT/scripts/ci-verify.sh" "$ROOT/scripts/lib-linux-entry.sh" \
+    "$ROOT/scripts/lib-ci-timing.sh" "$ROOT/scripts/lib-benchmark.sh" \
+    "$ROOT/scripts/lib-bounded-pool.sh" "$CI_REPO/scripts/"
+printf 'tool\thosts\tgates\tcheck\tinstall\n' > "$CI_REPO/scripts/ci-host-tools.tsv"
+for gate_cpu in 1 16 '' 0 02 -1 17 cpu; do
+    printf 'id\thosts\tlabel\tneeds\tcompiler\tmemory\tcpu\tlocks\tcommand\n' > "$CI_REPO/scripts/ci-gates.tsv"
+    printf 'cpu-gate\tall\tCPU gate\t-\t-\t256\t%s\t-\tgate_bootstrap_fixpoint\n' "$gate_cpu" >> "$CI_REPO/scripts/ci-gates.tsv"
+    case "$gate_cpu" in
+        1 | 16)
+            sh "$CI_REPO/scripts/ci-verify.sh" --list-gates linux > "$WORKDIR/stdout"
+            awk -F '\t' -v cpu="$gate_cpu" 'NR == 1 && $6 != "cpu" { exit 1 } NR == 2 && $6 != cpu { exit 1 } END { if (NR != 2) exit 1 }' "$WORKDIR/stdout"
+            ;;
+        *) reject sh "$CI_REPO/scripts/ci-verify.sh" --list-gates linux ;;
+    esac
+done
+for bad_cpu in 0 03 -1 16385 1.5 cpu; do
+    reject sh "$CI_REPO/scripts/ci-verify.sh" --cpu-slots "$bad_cpu"
+    grep -F -- '--cpu-slots must be an integer' "$WORKDIR/stderr" > /dev/null
+done
+reject sh "$CI_REPO/scripts/ci-verify.sh" --cpu-slots
+
+# The CPU budget defaults to the online CPU count, and a two-slot gate still
+# runs under an explicit one-slot budget.
+printf 'id\thosts\tlabel\tneeds\tcompiler\tmemory\tcpu\tlocks\tcommand\n' > "$CI_REPO/scripts/ci-gates.tsv"
+printf 'wide-gate\tall\twide gate\t-\t-\t256\t2\t-\ttrue\n' >> "$CI_REPO/scripts/ci-gates.tsv"
+printf 'narrow-gate\tall\tnarrow gate\t-\t-\t256\t1\t-\ttrue\n' >> "$CI_REPO/scripts/ci-gates.tsv"
+online_cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)
+for cpu_args in '' '--cpu-slots 1'; do
+    # shellcheck disable=SC2086
+    sh "$CI_REPO/scripts/ci-verify.sh" --jobs 2 --memory-mib 512 $cpu_args > "$WORKDIR/stdout"
+    want_slots=${cpu_args#--cpu-slots }
+    [ -n "$want_slots" ] || want_slots=$online_cpus
+    grep -F -x "[ci-verify] CPU reservation budget: $want_slots slots" "$WORKDIR/stdout" > /dev/null
+    test "$(grep -c '^\[ci-verify\] PASS ' "$WORKDIR/stdout")" -eq 2
+done
 echo 'build-invariance batch reuse and worker pool checks passed'

@@ -16,6 +16,15 @@
 (import (serialize.serialize json (Tuple i64 i64)) as tuple_i64_i64_json)
 (import (serialize.serialize json (Tuple i64 i64)) as tuple_i64_i64_json_again)
 (import (serialize.serialize json (Tuple i64 bool)) as tuple_i64_bool_json)
+(import (serialize.serialize json u64) as u64_json)
+(import (serialize.serialize json enum_fixture.Stamp) as stamp_json)
+
+(defstruct Ledger
+  (id u64)
+  (history (Array u64 2))
+  (pair (Tuple u64 bool)))
+
+(import (serialize.serialize json Ledger) as ledger_json)
 
 (defstruct Person
   (name String)
@@ -465,6 +474,79 @@
     [(person_json_again.Ok parsed) (serialize-json-person-ok? parsed)]
     [(person_json_again.Err _) false]))
 
+(define (serialize-json-u64-root-roundtrip-ok?) : bool
+  (let
+    [max : u64 (cast -1 : u64)]
+    [json : json.Json (u64_json.to-json max)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    (and
+      (string.eq encoded "18446744073709551615")
+      (match (u64_json.from-json json)
+        [(u64_json.Ok parsed) (= parsed max)]
+        [(u64_json.Err _) false]))))
+
+(define (serialize-json-u64-fields-roundtrip-ok?) : bool
+  (let
+    [top : u64 (cast -1 : u64)]
+    [high : u64 (+ (cast 9223372036854775807 : u64) (cast 1 : u64))]
+    [ledger : Ledger
+      (Ledger top (array high (cast 0 : u64)) (tuple (cast 7 : u64) true))]
+    [json : json.Json (ledger_json.to-json ledger)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    (and
+      (string.eq
+        encoded
+        "{\"id\":18446744073709551615,\"history\":[9223372036854775808,0],\"pair\":[7,true]}")
+      (match (ledger_json.from-json json)
+        [(ledger_json.Ok parsed)
+          (and
+            (= parsed.id top)
+            (= (array-ref parsed.history 0) high)
+            (= (array-ref parsed.history 1) (cast 0 : u64))
+            (= (tuple-ref parsed.pair 0) (cast 7 : u64))
+            (tuple-ref parsed.pair 1))]
+        [(ledger_json.Err _) false]))))
+
+(define (serialize-json-u64-enum-roundtrip-ok?) : bool
+  (let
+    [stamp : enum_fixture.Stamp (enum_fixture.stamp-max)]
+    [json : json.Json (stamp_json.to-json stamp)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    (and
+      (string.eq encoded "{\"tag\":\"At\",\"payload\":[18446744073709551615]}")
+      (match (stamp_json.from-json json)
+        [(stamp_json.Ok parsed) (enum_fixture.stamp-max? parsed)]
+        [(stamp_json.Err _) false]))))
+
+(define (serialize-json-u64-rejects? [value : json.Json] [message : String]) : bool
+  (match (u64_json.from-json value)
+    [(u64_json.Ok _) false]
+    [(u64_json.Err actual) (string.eq actual message)]))
+
+(define (serialize-json-u64-invalid-ok?) : bool
+  (and
+    (serialize-json-u64-rejects?
+      (json.JsonNumber "18446744073709551616")
+      "json: integer outside u64 range")
+    (serialize-json-u64-rejects?
+      (json.JsonNumber "-1")
+      "json: negative number outside u64 range")
+    (serialize-json-u64-rejects?
+      (json.JsonNumber "-0")
+      "json: negative number outside u64 range")
+    (serialize-json-u64-rejects?
+      (json.JsonNumber "2.5")
+      "json: expected integer number")
+    (serialize-json-u64-rejects?
+      (json.JsonNumber "1e3")
+      "json: expected integer number")
+    (serialize-json-u64-rejects?
+      (json.JsonString "5")
+      "json: expected integer number")))
+
 (define (main) : i64
   (begin
     (unless (serialize-json-roundtrip-ok?) (return 1))
@@ -487,4 +569,8 @@
     (unless (serialize-json-status-struct-payload-roundtrip-ok?) (return 18))
     (unless (serialize-json-tuple-root-roundtrip-ok?) (return 19))
     (unless (serialize-json-distinct-tuple-root-ok?) (return 20))
+    (unless (serialize-json-u64-root-roundtrip-ok?) (return 21))
+    (unless (serialize-json-u64-fields-roundtrip-ok?) (return 22))
+    (unless (serialize-json-u64-enum-roundtrip-ok?) (return 23))
+    (unless (serialize-json-u64-invalid-ok?) (return 24))
     42))

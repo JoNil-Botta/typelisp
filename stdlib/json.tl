@@ -12,6 +12,12 @@
 ;# Parsed values, list nodes, decoded strings, and serialized strings are
 ;# ordinary TypeLisp heap values allocated in the active arena.
 ;#
+;# Integer conversions are exact. `number->i64` and `number->u64` accept only an
+;# integer spelling within the target range: no fraction, exponent, leading
+;# zero, or (for u64) minus sign, `-0` included. `u64->number` renders the
+;# whole unsigned range. The `stdlib.serialize` JSON hooks use them for every
+;# fixed-width integer type, u64 included.
+;#
 ;# ```typelisp
 ;# (import stdlib.json)
 ;# (define sample : String (json.stringify (json.JsonBool true)))
@@ -212,6 +218,11 @@
 (defenum JsonNumberI64Result
   (OkJsonNumberI64 i64)
   (ErrJsonNumberI64 String))
+
+;: Result for converting valid JSON integer number text into a u64.
+(defenum JsonNumberU64Result
+  (OkJsonNumberU64 u64)
+  (ErrJsonNumberU64 String))
 
 ;: Result for rendering a finite float as valid JSON number text.
 (defenum JsonNumberTextResult
@@ -746,6 +757,10 @@
 (define (i64->number [value : i64]) : Json
   (JsonNumber (string.int->string value)))
 
+;: Render a u64 as a JSON number value, exactly across the full range.
+(define (u64->number [value : u64]) : Json
+  (JsonNumber (format.format-u64-core value)))
+
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:
 ;: Only tab, newline, carriage return, and printable ASCII are supported.
@@ -1150,6 +1165,50 @@
     [(OkJsonNumberText owned) (stdlib.json.number-owned->i64 owned)]
     [(ErrJsonNumberText message) (ErrJsonNumberI64 message)]))
 
+;: Parse owned JSON integer number text into a u64 with recoverable errors.
+;:
+;: The digit text is compared with 2^64 - 1 before any arithmetic, then
+;: accumulated in u64, so no value passes through a signed or floating type.
+(define (number-owned->u64 [owned : String]) : JsonNumberU64Result
+  (cond
+    [(not (stdlib.json.number-integer-text? (json-shared-view owned)))
+      (ErrJsonNumberU64 "json: expected integer number")]
+    ;; `-0` is an integer spelling but not an unsigned one.
+    [(= (string-ref owned 0) '-')
+      (ErrJsonNumberU64 "json: negative number outside u64 range")]
+    [(stdlib.json.number-digits-gt-limit?
+        (json-shared-view owned)
+        0
+        "18446744073709551615")
+      (ErrJsonNumberU64 "json: integer outside u64 range")]
+    [else
+      (let
+        [n : i64 (string-length owned)]
+        [index : i64 0]
+        [value : u64 (cast 0 : u64)]
+        (begin
+          (while (< index n)
+            (begin
+              (set!
+                value
+                (+
+                  (* value (cast 10 : u64))
+                  (cast
+                    (- (stdlib.json.char-code (string-ref owned index)) 48)
+                    : u64)))
+              (set! index (+ index 1))))
+          (OkJsonNumberU64 value)))]))
+
+;: Parse borrowed JSON integer number text into a u64 with recoverable errors.
+;:
+;: The text must be exactly one JSON integer number from 0 to 2^64 - 1.
+;: Negative numbers (including `-0`), decimal fractions, exponents, malformed
+;: numbers, and u64 overflow reject.
+(define (number->u64 [text : (& text str)]) : JsonNumberU64Result
+  (match (stdlib.json.number-validated-text text)
+    [(OkJsonNumberText owned) (stdlib.json.number-owned->u64 owned)]
+    [(ErrJsonNumberText message) (ErrJsonNumberU64 message)]))
+
 ;: Convert validated JSON number text into a finite f64 result.
 (define (number-decimal-f64-result
   [owned : String]
@@ -1255,8 +1314,7 @@
 ;: `stdlib.serialize` hook for integer fields.
 (defmacro (encode-int [T : type] [value : comptime.Expr]) : Value
   (match (type-key T)
-    ["u64"
-      (comptime.comptime-error "serialize json: u64 fields are not supported")]
+    ["u64" `(stdlib.json.JsonValue (stdlib.json.u64->number ,value))]
     [_ `(stdlib.json.JsonValue (stdlib.json.i64->number (cast ,value : i64)))]))
 
 ;: `stdlib.serialize` hook for integer fields.
@@ -1268,7 +1326,15 @@
     [field-key : String (type-key T)]
     (match field-key
       ["u64"
-        (comptime.comptime-error "serialize json: u64 fields are not supported")]
+        `(match ,value
+          [(stdlib.json.JsonValue __json_value)
+            (match __json_value
+              [(stdlib.json.JsonNumber text)
+                (match (stdlib.json.number-owned->u64 text)
+                  [(stdlib.json.OkJsonNumberU64 parsed) parsed]
+                  [(stdlib.json.ErrJsonNumberU64 message)
+                    (return (,err-ctor message))])]
+              [_ (return (,err-ctor "json: expected integer number"))])])]
       [_
         (let
           [min-expr : comptime.Expr

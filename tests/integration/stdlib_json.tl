@@ -76,6 +76,54 @@
         [(json.OkJsonNumberI64 _) false]
         [(json.ErrJsonNumberI64 _) true]))))
 
+(define (json-test-u64-round-trip? [value : u64] [text : String]) : bool
+  (let
+    [number : json.Json (json.u64->number value)]
+    [encoded : String (json.stringify (json.json-shared-view number))]
+    (and
+      (string.eq encoded text)
+      (match (json.number->u64 (& text))
+        [(json.OkJsonNumberU64 parsed) (= parsed value)]
+        [(json.ErrJsonNumberU64 _) false]))))
+
+(define (json-test-u64-rejects? [text : String] [message : String]) : bool
+  (match (json.number->u64 (& text))
+    [(json.OkJsonNumberU64 _) false]
+    [(json.ErrJsonNumberU64 actual) (string.eq actual message)]))
+
+(define (json-test-u64-rejects-any? [text : String]) : bool
+  (match (json.number->u64 (& text))
+    [(json.OkJsonNumberU64 _) false]
+    [(json.ErrJsonNumberU64 _) true]))
+
+(define (json-test-u64) : bool
+  (let
+    [max : u64 (cast -1 : u64)]
+    [i64-max : u64 (cast 9223372036854775807 : u64)]
+    (and
+      (json-test-u64-round-trip? (cast 0 : u64) "0")
+      (json-test-u64-round-trip? (cast 1 : u64) "1")
+      (json-test-u64-round-trip? i64-max "9223372036854775807")
+      (json-test-u64-round-trip?
+        (+ i64-max (cast 1 : u64))
+        "9223372036854775808")
+      (json-test-u64-round-trip? max "18446744073709551615")
+      (json-test-u64-rejects?
+        "18446744073709551616"
+        "json: integer outside u64 range")
+      (json-test-u64-rejects?
+        "100000000000000000000"
+        "json: integer outside u64 range")
+      (json-test-u64-rejects? "-1" "json: negative number outside u64 range")
+      (json-test-u64-rejects? "-0" "json: negative number outside u64 range")
+      (json-test-u64-rejects? "1.5" "json: expected integer number")
+      (json-test-u64-rejects? "1e0" "json: expected integer number")
+      (json-test-u64-rejects? "1.0" "json: expected integer number")
+      (json-test-u64-rejects-any? "01")
+      (json-test-u64-rejects-any? " 1")
+      (json-test-u64-rejects-any? "+1")
+      (json-test-u64-rejects-any? "abc"))))
+
 (define (json-test-f64-from-bits [bits : u64]) : f64
   (let
     [buf : (__tl_dyn-array u64) (__tl_make-array u64 1)]
@@ -126,4 +174,5 @@
       (unless (json-test-float-render) (return 15))
       (unless (json-test-nonfinite-render) (return 16))
       (unless (json-test-i64-parse) (return 17))
+      (unless (json-test-u64) (return 18))
       42)))

@@ -147,22 +147,6 @@ canonical_tmp_path() {
     fi
 }
 
-file_uri_for_path() {
-    path=$1
-    uri_path=
-    while :; do
-        case "$path" in
-            *' '*) uri_path="$uri_path${path%% *}%20"; path=${path#* } ;;
-            *) uri_path="$uri_path$path"; break ;;
-        esac
-    done
-    if [ "$HOST_OS" = windows ]; then
-        printf 'file:///%s' "$uri_path"
-    else
-        printf 'file://%s' "$uri_path"
-    fi
-}
-
 compiler_file_path() {
     path=$1
     if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
@@ -170,44 +154,6 @@ compiler_file_path() {
     else
         printf '%s' "$path"
     fi
-}
-
-frame_append() (
-    frame_file=$1
-    frame_body=$2
-    # POSIX shell length counts bytes in the C locale, as Content-Length requires.
-    LC_ALL=C
-    export LC_ALL
-    frame_len=${#frame_body}
-    {
-        printf 'Content-Length: %s\r\n\r\n' "$frame_len"
-        printf '%s' "$frame_body"
-    } >> "$frame_file"
-)
-
-write_json_frames() {
-    input_json=$1
-    output_frames=$2
-    tmp_path=$3
-    tmp_uri=$4
-    : > "$output_frames"
-    awk -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
-function replace_vars(s) {
-    gsub(/\$\{\{TMP_URI\}\}/, tmp_uri, s)
-    gsub(/\$\{\{TMP\}\}/, tmp_path, s)
-    return s
-}
-{
-    line = $0
-    sub(/^[[:space:]]*/, "", line)
-    sub(/[[:space:]]*,[[:space:]]*$/, "", line)
-    if (line ~ /^\{/) {
-        print replace_vars(line)
-    }
-}
-' "$input_json" | while IFS= read -r payload || [ -n "$payload" ]; do
-        frame_append "$output_frames" "$payload"
-    done
 }
 
 extract_lsp_bodies() {
@@ -280,6 +226,7 @@ prepare_lsp_case() {
         tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lsp-fixture.XXXXXX")
     fi
     tmp_path=$(canonical_tmp_path "$tmpdir")
+    corpus_require_literal_path "$tmp_path"
     tmp_uri=$(file_uri_for_path "$tmp_path")
     printf '%s\n' "$tmpdir" > "$run_dir/$case_id.tmpdir"
     printf '%s\n' "$tmp_path" > "$run_dir/$case_id.tmp-path"
@@ -298,14 +245,9 @@ prepare_lsp_case() {
                 write_json_frames "$path" "$stdin_file" "$tmp_path" "$tmp_uri"
                 ;;
             *)
-                awk -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
-                {
-                    line = $0
-                    gsub(/\$\{\{TMP_URI\}\}/, tmp_uri, line)
-                    gsub(/\$\{\{TMP\}\}/, tmp_path, line)
-                    print line
-                }
-                ' "$path" > "$stdin_file"
+                CORPUS_TMP=$tmp_path CORPUS_URI=$tmp_uri LC_ALL=C \
+                    awk "$CORPUS_PATH_AWK"'{ print corpus_expand($0) }' \
+                    "$path" > "$stdin_file"
                 ;;
         esac
     fi
@@ -429,31 +371,6 @@ report_lsp_batch_memory() {
             { printf "[public-tools] LSP batch child_elapsed_s=%s peak_rss_kib=%s\n", $1, $2 }
         ' "$run_dir/batch.time"
     fi
-}
-
-normalize_lsp_differential_stream() {
-    input=$1
-    output=$2
-    tmp_path=$3
-    tmp_uri=$4
-    awk -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
-function replace_literal(text, needle, replacement,    out, at) {
-    if (needle == "") return text
-    out = ""
-    while ((at = index(text, needle)) > 0) {
-        out = out substr(text, 1, at - 1) replacement
-        text = substr(text, at + length(needle))
-    }
-    return out text
-}
-{
-    line = $0
-    sub(/\r$/, "", line)
-    line = replace_literal(line, tmp_uri, "${{TMP_URI}}")
-    line = replace_literal(line, tmp_path, "${{TMP}}")
-    print line
-}
-' "$input" > "$output"
 }
 
 compare_lsp_differential_cases() {

@@ -6,9 +6,11 @@ mkdir -p "$ROOT/target/exp"
 case_dir=$(mktemp -d "$ROOT/target/exp/corpus-result-checks.XXXXXX")
 trap 'rm -rf "$case_dir"' EXIT HUP INT TERM
 
+case_tmp='/tmp/a bc'
+case_uri='file:///tmp/a%20bc'
 check() {
     check_corpus_result "$case_dir/spec" "$case_dir/out" "$case_dir/err" "$1" \
-        "$case_dir/messages" '/tmp/a bc' 'file:///tmp/a%20bc' "$2" > "$case_dir/got"
+        "$case_dir/messages" "$case_tmp" "$case_uri" "$2" > "$case_dir/got"
     if ! cmp -s "$case_dir/want" "$case_dir/got"; then
         echo "corpus result self-test failed: $3" >&2
         diff -u "$case_dir/want" "$case_dir/got" >&2 || true
@@ -139,6 +141,90 @@ printf 'quote" slash\\ tab\t' > "$case_dir/out"
 printf '%s\n' '{"id":1,"result":"alpha"}' '{"id":2,"result":"beta"}' > "$case_dir/messages"
 printf '%s\n' 'no message matched:     {"raw_contains": "alpha", "raw_contains": "beta"}' > "$case_dir/want"
 check 0 linux 'escapes and same-message conjunction'
+# Fixture paths are literal data: an ampersand is not the matched placeholder
+# and a backslash is not an escape. Messages carry them as JSON strings.
+case_tmp='/tmp/a b&c\d'
+case_uri='file:///tmp/a%20b&c\d'
+cat > "$case_dir/spec" <<'SPEC'
+{
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "${{TMP}}", "raw_contains": "${{TMP}}", "json_contains": "${{TMP_URI}}/main.tl"},
+    {"jsonpath_id": 1, "raw_contains": "${{TMP}}/missing"},
+    {"jsonpath_id": 1, "json_contains": "${{TMP_URI}}${{TMP_URI}}"},
+    {"jsonpath_id": 1, "raw_not_contains": "${{TMP}}"}
+  ]
+}
+SPEC
+printf '%s\n' '{"id":1,"result":"/tmp/a b&c\\d file:///tmp/a%20b&c\\d/main.tl"}' > "$case_dir/messages"
+cat > "$case_dir/want" <<'EXPECTED'
+no message matched:     {"jsonpath_id": 1, "raw_contains": "${{TMP}}/missing"},
+no message matched:     {"jsonpath_id": 1, "json_contains": "${{TMP_URI}}${{TMP_URI}}"},
+no message matched:     {"jsonpath_id": 1, "raw_not_contains": "${{TMP}}"}
+EXPECTED
+check 0 linux 'literal ampersand and backslash paths'
+
+# Request frames expand placeholders once, as JSON string text, and count
+# Content-Length in bytes for a UTF-8 path.
+frame_tmp='/tmp/å b&c\d'
+frame_uri='file:///tmp/%C3%A5%20b&c\d'
+cat > "$case_dir/in.json" <<'INPUT'
+[
+  {"id":1,"uri":"${{TMP_URI}}/main.tl","path":"${{TMP}}","raw":"${{TMPX}}"},
+  {"id":2,"result":null}
+]
+INPUT
+: > "$case_dir/want"
+for body in \
+    '{"id":1,"uri":"file:///tmp/%C3%A5%20b&c\\d/main.tl","path":"/tmp/å b&c\\d","raw":"${{TMPX}}"}' \
+    '{"id":2,"result":null}'; do
+    printf '%s' "$body" > "$case_dir/body"
+    printf 'Content-Length: %s\r\n\r\n%s' "$(LC_ALL=C wc -c < "$case_dir/body" | tr -d ' ')" "$body" >> "$case_dir/want"
+done
+write_json_frames "$case_dir/in.json" "$case_dir/got" "$frame_tmp" "$frame_uri"
+if ! cmp -s "$case_dir/want" "$case_dir/got"; then
+    echo 'corpus result self-test failed: literal UTF-8 request frames' >&2
+    diff -u "$case_dir/want" "$case_dir/got" >&2 || true
+    exit 1
+fi
+
+# Differential normalization maps both the JSON string and the raw forms back.
+printf '%s\r\n%s\n' \
+    '{"uri":"file:///tmp/%C3%A5%20b&c\\d/x.tl","path":"/tmp/å b&c\\d"}' \
+    'error: /tmp/å b&c\d/x.tl' > "$case_dir/stream"
+printf '%s\n%s\n' \
+    '{"uri":"${{TMP_URI}}/x.tl","path":"${{TMP}}"}' \
+    'error: ${{TMP}}/x.tl' > "$case_dir/want"
+normalize_lsp_differential_stream "$case_dir/stream" "$case_dir/got" "$frame_tmp" "$frame_uri"
+if ! cmp -s "$case_dir/want" "$case_dir/got"; then
+    echo 'corpus result self-test failed: literal path normalization' >&2
+    diff -u "$case_dir/want" "$case_dir/got" >&2 || true
+    exit 1
+fi
+
+# Fixture URIs percent-encode exactly as the server's lsp-path-to-file-uri.
+for pair in \
+    '/tmp/å b&c\d|file:///tmp/%c3%a5%20b%26c%5cd' \
+    'C:/Users/a b/x-y_z.~|file:///C:/Users/a%20b/x-y_z.~' \
+    "/tmp/q'%#?|file:///tmp/q%27%25%23%3f"; do
+    got=$(file_uri_for_path "${pair%%|*}")
+    if [ "$got" != "${pair#*|}" ]; then
+        echo "corpus result self-test failed: file URI for ${pair%%|*}: $got" >&2
+        exit 1
+    fi
+done
+
+corpus_require_literal_path "/tmp/å b&c'%#?"
+for pair in "$(printf '/tmp/a\tb')|control character" '/tmp/a\b|backslash'; do
+    if corpus_require_literal_path "${pair%%|*}" 2> "$case_dir/got"; then
+        echo "unsupported fixture path accepted: ${pair#*|}" >&2
+        exit 1
+    fi
+    if ! grep -q "unsupported LSP fixture path (${pair#*|}" "$case_dir/got"; then
+        echo "unsupported fixture path lacks its diagnostic: ${pair#*|}" >&2
+        exit 1
+    fi
+done
+
 if check_corpus_result "$case_dir/missing" "$case_dir/out" "$case_dir/err" 0 '' '' '' linux > "$case_dir/got" 2>&1; then
     echo 'missing spec unexpectedly accepted' >&2
     exit 1

@@ -31,6 +31,7 @@
 (import tlci_core as tlci)
 (import tlci_loader as tlci_loader_support)
 (import compiler_owned_view as owned_view)
+(import compiler_source_overlay as source_overlay)
 
 (defmacro (compiler-load-global-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -733,6 +734,16 @@
         [(env.EnvSomeString value) (string.eq value "1")]
         [(env.EnvNoString) false]))))
 
+;; What answers a session's source reads during an overlay check (#7455). While
+;; `active`, an admitted overlay entry answers its canonical path, every other
+;; source is read as usual, and each consumed source is recorded in `ledger`,
+;; which allocates in `owner-arena` so it outlives per-file scratch arenas.
+(defstruct CompilerLoadSourceProvider
+  (active bool)
+  (overlay source_overlay.CompilerSourceOverlay)
+  (ledger source_overlay.CompilerSourceLedger)
+  (owner-arena i64))
+
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
 ;; the active state pointer. State-owned driver reset paths use the explicit
@@ -786,7 +797,8 @@
   (owner-arena i64)
   (shared-address u64)
   (dotted-path-cache-owner-arena (__tl_dyn-array i64))
-  (embedded-provenance-owner-arena (__tl_dyn-array i64)))
+  (embedded-provenance-owner-arena (__tl_dyn-array i64))
+  (source-provider (__tl_dyn-array CompilerLoadSourceProvider)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -847,6 +859,18 @@
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (compiler-load-session-state-bool-cell false)))
 
+(define (compiler-load-source-provider-inactive) : CompilerLoadSourceProvider
+  (CompilerLoadSourceProvider
+    false
+    (source_overlay.compiler-source-overlay-empty "")
+    (source_overlay.compiler-source-ledger-new
+      (source_overlay.compiler-source-overlay-default-limits))
+    0))
+
+(define (compiler-load-source-provider-cell) : (__tl_dyn-array
+    CompilerLoadSourceProvider)
+  (__tl_make-array (compiler-load-source-provider-inactive)))
+
 (define (compiler-load-session-state-new-with-reset-safety-and-catalog
   [standalone-reset-safe : bool]
   [catalog : CompilerLoadDependencyCatalogRegistry]) : CompilerLoadSessionState
@@ -894,7 +918,8 @@
         (arena.tl_arena_current)
         0
         (compiler-load-session-state-i64-cell 0)
-        (compiler-load-session-state-i64-cell 0))]
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-source-provider-cell))]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
       (unsafe
@@ -1921,6 +1946,204 @@
 (define (compiler-load-serial-test-session-state) : CompilerLoadSessionState
   (compiler-load-active-session-state-shared-view))
 
+;; Source provider (#7455). Installing one makes every source read of the
+;; session answer admitted overlay entries from the overlay and record each
+;; consumed source in the provider's ledger; finishing hands the ledger back.
+(define (compiler-load-session-state-source-provider
+  [state : (& state CompilerLoadSessionState)]) : CompilerLoadSourceProvider
+  (compiler-load-global-array-element-shared-view state.source-provider 0))
+
+(define (compiler-load-session-state-source-provider-active?
+  [state : (& state CompilerLoadSessionState)]) : bool
+  (let
+    [provider : CompilerLoadSourceProvider
+      (compiler-load-session-state-source-provider state)]
+    provider.active))
+
+;; Start answering `state`'s source reads from `overlay`. The ledger allocates
+;; in the caller's current arena, which must outlive the provider.
+(define (compiler-load-session-state-source-provider-install!
+  [state : CompilerLoadSessionState]
+  [overlay : source_overlay.CompilerSourceOverlay]) : unit
+  (let
+    [ledger : source_overlay.CompilerSourceLedger
+      (source_overlay.compiler-source-ledger-new overlay.limits)]
+    (set!
+      (array-ref state.source-provider 0)
+      (CompilerLoadSourceProvider true overlay ledger (arena.tl_arena_current)))))
+
+;; Stop the provider and return its ledger.
+(define (compiler-load-session-state-source-provider-finish!
+  [state : CompilerLoadSessionState]) : source_overlay.CompilerSourceLedger
+  (let
+    [provider : CompilerLoadSourceProvider
+      (compiler-load-session-state-source-provider (& state))]
+    (begin
+      (in-arena
+        (arena.Arena state.owner-arena)
+        (set!
+          (array-ref state.source-provider 0)
+          (compiler-load-source-provider-inactive)))
+      provider.ledger)))
+
+;; Record one consumed source whose content identity is already known.
+(define (compiler-load-session-state-source-record!
+  [state : CompilerLoadSessionState]
+  [class : source_overlay.CompilerSourceClass]
+  [canonical : (& canonical str)]
+  [path : (& path str)]
+  [content : source_overlay.CompilerSourceContent]) : unit
+  (let
+    [provider : CompilerLoadSourceProvider
+      (compiler-load-session-state-source-provider (& state))]
+    (if provider.active
+      (in-arena
+        (arena.Arena provider.owner-arena)
+        (begin
+          (source_overlay.compiler-source-ledger-record!
+            (&mut provider.ledger)
+            class
+            canonical
+            path
+            (source_overlay.compiler-source-content-copy (& content)))
+          (set! (array-ref state.source-provider 0) provider)))
+      unit)))
+
+;; Record `text` as consumed from `path` under `class` and `canonical`.
+(define (compiler-load-session-state-source-note!
+  [state : CompilerLoadSessionState]
+  [class : source_overlay.CompilerSourceClass]
+  [canonical : (& canonical str)]
+  [path : (& path str)]
+  [text : (& text str)]) : unit
+  (let
+    [provider : CompilerLoadSourceProvider
+      (compiler-load-session-state-source-provider (& state))]
+    (if provider.active
+      (in-arena
+        (arena.Arena provider.owner-arena)
+        (begin
+          (source_overlay.compiler-source-ledger-record-text!
+            (&mut provider.ledger)
+            class
+            canonical
+            path
+            text)
+          (set! (array-ref state.source-provider 0) provider)))
+      unit)))
+
+(define (compiler-load-source-provider-canonical-path
+  [provider : (& provider CompilerLoadSourceProvider)]
+  [path : (& path str)]) : String
+  (source_overlay.compiler-source-canonical-path (& provider.overlay.cwd) path))
+
+;; Every source file a load session consumes is read here: the admitted
+;; overlay entry for its canonical path when a provider is active, else the
+;; file itself. Resolution has already chosen `path`, so an overlay can change a
+;; source's bytes but not which file an import names.
+(define (compiler-load-session-state-read-source-text
+  [state : CompilerLoadSessionState]
+  [path : (& path str)]) : String
+  (let
+    [provider : CompilerLoadSourceProvider
+      (compiler-load-session-state-source-provider (& state))]
+    (if (not provider.active)
+      (compiler-load-read-file-text path)
+      (let
+        [canonical : String
+          (compiler-load-source-provider-canonical-path (& provider) path)]
+        [index : i64
+          (source_overlay.compiler-source-overlay-find
+            (& provider.overlay)
+            (& canonical))]
+        (if (< index 0)
+          (let
+            [text : String (compiler-load-read-file-text path)]
+            (begin
+              (compiler-load-session-state-source-note!
+                state
+                (source_overlay.CompilerSourceClass.Disk)
+                (& canonical)
+                path
+                (& text))
+              text))
+          (begin
+            (compiler-load-session-state-source-record!
+              state
+              (source_overlay.CompilerSourceClass.Overlay)
+              (& canonical)
+              path
+              (source_overlay.compiler-source-overlay-entry-content
+                (& provider.overlay)
+                index))
+            (source_overlay.compiler-source-overlay-entry-bytes
+              (& provider.overlay)
+              index)))))))
+
+(define (compiler-load-session-source-provider-active?) : bool
+  (let
+    [state : CompilerLoadSessionState
+      (compiler-load-active-session-state-shared-view)]
+    (compiler-load-session-state-source-provider-active? state)))
+
+(define (compiler-load-session-read-source-text [path : (& path str)]) : String
+  (compiler-load-session-state-read-source-text
+    (compiler-load-active-session-state-shared-view)
+    path))
+
+;; Read an input other than a source that still decides what the check sees,
+;; such as a dependency's TLCI image. An active provider records it from disk.
+(define (compiler-load-session-try-read-input-text [path : (& path str)]) : io.ResultIoString
+  (match (compiler-load-try-read-file-text path)
+    [(io.OkIoString text)
+      (let
+        [state : CompilerLoadSessionState
+          (compiler-load-active-session-state-shared-view)]
+        [provider : CompilerLoadSourceProvider
+          (compiler-load-session-state-source-provider (& state))]
+        (begin
+          (if provider.active
+            (let
+              [canonical : String
+                (compiler-load-source-provider-canonical-path (& provider) path)]
+              (compiler-load-session-state-source-note!
+                state
+                (source_overlay.CompilerSourceClass.Disk)
+                (& canonical)
+                path
+                (& text)))
+            unit)
+          (io.OkIoString text)))]
+    [(io.ErrIoString error) (io.ErrIoString error)]))
+
+;; Record an embedded stdlib source the session parsed. Embedded sources are no
+;; file, so their identity is `embedded:` and the stdlib path.
+(define (compiler-load-session-state-note-embedded-source!
+  [state : CompilerLoadSessionState]
+  [path : (& path str)]
+  [text : (& text str)]) : unit
+  (if (compiler-load-session-state-source-provider-active? (& state))
+    (let
+      [canonical : String (str_cat.str-cat "embedded:" (string.copy path))]
+      (compiler-load-session-state-source-note!
+        state
+        (source_overlay.CompilerSourceClass.Embedded)
+        (& canonical)
+        path
+        text))
+    unit))
+
+;; Record the embedded stdlib source for `path` when a provider is active.
+(define (compiler-load-session-state-note-embedded-path!
+  [state : CompilerLoadSessionState]
+  [path : (& path str)]) : unit
+  (if (compiler-load-session-state-source-provider-active? (& state))
+    (match (compiler-load-embedded-stdlib-source-for-path (string.copy path))
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource text)
+        (compiler-load-session-state-note-embedded-source! state path (& text))]
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource) unit])
+    unit))
+
 (define (compiler-load-session-state-standalone-reset-safe?
   [state : CompilerLoadSessionState]) : bool
   (compiler-load-session-state-bool-cell-get state.standalone-reset-safe))
@@ -2646,21 +2869,26 @@
   (let
     [state : CompilerLoadSessionState
       (owned_view.compiler-owned-reference-shared-view state)]
+    [source-path : String (string.copy (& path))]
     [id : i64
       (compiler-load-session-state-intern
         (owned_view.compiler-owned-shared-view state)
         (compiler-load-canonical-module-id-from-path path))]
-    ;; The map head belongs to this session. Its nodes outlive load-scoped
-    ;; scratch arenas and remain valid until the next session intern reset.
-    (in-arena
-      (arena.Arena
-        (compiler-load-session-state-embedded-provenance-arena state))
-      (set!
-        (array-ref state.embedded-stdlib-provenance.module-ids 0)
-        (sym_i64_env.sym-i64-bind-id
-          (compiler-load-session-state-embedded-module-ids-shared-view state)
-          id
-          1)))))
+    (begin
+      (compiler-load-session-state-note-embedded-path!
+        (owned_view.compiler-owned-shared-view state)
+        (& source-path))
+      ;; The map head belongs to this session. Its nodes outlive load-scoped
+      ;; scratch arenas and remain valid until the next session intern reset.
+      (in-arena
+        (arena.Arena
+          (compiler-load-session-state-embedded-provenance-arena state))
+        (set!
+          (array-ref state.embedded-stdlib-provenance.module-ids 0)
+          (sym_i64_env.sym-i64-bind-id
+            (compiler-load-session-state-embedded-module-ids-shared-view state)
+            id
+            1))))))
 
 (define (compiler-load-note-embedded-module! [path : String]) : unit
   (let
@@ -3765,7 +3993,7 @@
         [(CompilerLoadSomePath manifest-path)
           (match (compiler-load-parse-manifest-diagnostic
             (string.copy manifest-path)
-            (compiler-load-read-file-text manifest-path))
+            (compiler-load-session-read-source-text manifest-path))
             [(ResultCompilerPkgManifestDiagnostic.Err _)
               (compiler-load-resolve-module-path-with-roots
                 importer-path
@@ -4356,13 +4584,18 @@
         kind
         pools
         name
-        (compiler-load-read-file-text resolved)))
+        (compiler-load-session-read-source-text resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path
       (string.copy resolved))
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
-        (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-def-with-pools kind pools name source))]
+        (begin
+          (compiler-load-session-state-note-embedded-source!
+            (compiler-load-active-session-state-shared-view)
+            (& resolved)
+            (& source))
+          (ResultCompilerLoadInclude.Ok
+            (compiler-load-include-def-with-pools kind pools name source)))]
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
@@ -4732,7 +4965,7 @@
             (string.copy source-path))
           (compiler-load-source-with-paths-and-roots-cfg
             (string.copy path)
-            (compiler-load-read-file-text source-path)
+            (compiler-load-session-read-source-text source-path)
             seen
             stdlib-roots
             cfgs))]
@@ -4792,14 +5025,19 @@
             (owned_view.compiler-owned-shared-view load-state)
             suffix
             (string.copy source-path))
-          (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
-            load-state
-            (string.copy path)
-            (compiler-load-read-file-text source-path)
-            seen
-            stdlib-roots
-            cfgs
-            pools))]
+          (let
+            [text : String
+              (compiler-load-session-state-read-source-text
+                (owned_view.compiler-owned-shared-view load-state)
+                (& source-path))]
+            (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
+              load-state
+              (string.copy path)
+              text
+              seen
+              stdlib-roots
+              cfgs
+              pools)))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
           [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
@@ -10413,7 +10651,11 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstProgramDiagnostic
-      (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)]
+      (compiler-load-parse-file-diagnostic-detached-with-pools
+        (compiler-load-active-session-state-shared-view)
+        path
+        cfgs
+        pools)]
     ;; Serial package loading reads the compatibility pools after this boundary.
     ;; Publish the compacted destination before traversing imports; the parser's
     ;; temporary pools and arena have already been retired by the shared helper.
@@ -10422,11 +10664,13 @@
       result)))
 
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (let
-    [source : String (compiler-load-read-file-text (string.copy path))]
+    [source : String
+      (compiler-load-session-state-read-source-text load-state (& path))]
     (compiler-load-parse-source-diagnostic-escaping-with-pools
       path
       source
@@ -10498,6 +10742,7 @@
             records-end)])]))
 
 (define (compiler-load-parse-file-diagnostic-detached-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
@@ -10507,7 +10752,8 @@
     [_use-scratch : unit
       (unsafe
         (arena.tl_arena_set scratch-root))]
-    [source : String (compiler-load-read-file-text path)]
+    [source : String
+      (compiler-load-session-state-read-source-text load-state (& path))]
     [source-len : i64 (string.string-length source)]
     ;; Source bytes are a useful low-cost predictor for parser node count. A
     ;; modest estimate avoids both a multi-million-node reserve per file and a
@@ -10656,6 +10902,7 @@
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-file-diagnostic-escaping-with-pools
+              (owned_view.compiler-owned-shared-view load-state)
               path
               cfgs
               pools)))]
@@ -10666,7 +10913,11 @@
             persistent-key
             parsed
             pools)]))
-    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+    (compiler-load-parse-file-diagnostic-escaping-with-pools
+      load-state
+      path
+      cfgs
+      pools)))
 
 (define (compiler-load-ast-program-result-ok?
   [result : (& result parser.ResultAstProgramDiagnostic)]) : bool
@@ -10704,6 +10955,7 @@
       [start-nodes : i64 (ast.ast-node-pool-context-expr-len pools)]
       [cold : parser.ResultAstProgramDiagnostic
         (compiler-load-parse-file-diagnostic-escaping-with-pools
+          (owned_view.compiler-owned-shared-view load-state)
           (string.copy path)
           cfgs
           pools)]
@@ -10719,7 +10971,11 @@
           cfgs
           pools)
         cold))
-    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+    (compiler-load-parse-file-diagnostic-escaping-with-pools
+      load-state
+      path
+      cfgs
+      pools)))
 
 (define (compiler-load-parse-file-diagnostic-admit-only
   [key : CompilerLoadProgramCacheKey]
@@ -10745,7 +11001,11 @@
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
   (let
     [parsed : parser.ResultAstProgramDiagnostic
-      (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)]
+      (compiler-load-parse-file-diagnostic-escaping-with-pools
+        (owned_view.compiler-owned-shared-view load-state)
+        path
+        cfgs
+        pools)]
     (begin
       (match (& parsed)
         [(parser.ResultAstProgramDiagnostic.Ok _)
@@ -10762,9 +11022,11 @@
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
+  ;; A source provider must see every read, so its checks bypass the cache.
   (if (and
     (compiler-load-session-cache-enabled?)
     (compiler-load-session-program-cache-enabled?)
+    (not (compiler-load-session-source-provider-active?))
     (compiler-load-session-file-cacheable? (string.copy path) stdlib-roots))
     (let
       [key : CompilerLoadProgramCacheKey
@@ -10802,9 +11064,11 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : parser.ResultAstProgramDiagnostic
+  ;; A source provider must see every read, so its checks bypass the cache.
   (if (and
     (compiler-load-session-state-cache-enabled? load-state)
     (compiler-load-session-state-program-cache-enabled? load-state)
+    (not (compiler-load-session-state-source-provider-active? load-state))
     (compiler-load-session-file-cacheable? (string.copy path) stdlib-roots))
     (let
       [key : CompilerLoadProgramCacheKey
@@ -10853,7 +11117,11 @@
                   (string.copy path)
                   cfgs
                   pools))))]))
-    (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)))
+    (compiler-load-parse-file-diagnostic-detached-with-pools
+      load-state
+      path
+      cfgs
+      pools)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
   [key : CompilerLoadProgramCacheKey]
@@ -10914,9 +11182,14 @@
   [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (begin
     (compiler-load-session-note-embedded-stdlib-source!)
+    (compiler-load-session-state-note-embedded-source!
+      (compiler-load-active-session-state-shared-view)
+      (& path)
+      (& source))
     (if (and
       (compiler-load-session-cache-enabled?)
-      (compiler-load-session-program-cache-enabled?))
+      (compiler-load-session-program-cache-enabled?)
+      (not (compiler-load-session-source-provider-active?)))
       (let
         [key : CompilerLoadProgramCacheKey
           (compiler-load-program-cache-key-id
@@ -10948,9 +11221,14 @@
   (begin
     (compiler-load-session-state-note-embedded-stdlib-source!
       (owned_view.compiler-owned-shared-view load-state))
+    (compiler-load-session-state-note-embedded-source!
+      (owned_view.compiler-owned-shared-view load-state)
+      (& path)
+      (& source))
     (if (and
       (compiler-load-session-state-cache-enabled? load-state)
-      (compiler-load-session-state-program-cache-enabled? load-state))
+      (compiler-load-session-state-program-cache-enabled? load-state)
+      (not (compiler-load-session-state-source-provider-active? load-state)))
       (let
         [key : CompilerLoadProgramCacheKey
           (compiler-load-session-state-program-cache-key-id
@@ -11431,6 +11709,7 @@
                 parse-cfgs
                 pools)
               (compiler-load-parse-file-diagnostic-detached-with-pools
+                (owned_view.compiler-owned-shared-view load-state)
                 (string.copy path)
                 parse-cfgs
                 pools))
@@ -11879,7 +12158,7 @@
     (if (not (io.file-exists? (string.copy path)))
       (ResultCompilerLoadPackageSpmdInterface.Ok
         CompilerLoadPackageSpmdInterface.Unavailable)
-      (match (compiler-load-try-read-file-text (& path))
+      (match (compiler-load-session-try-read-input-text (& path))
         [(io.ErrIoString error)
           (ResultCompilerLoadPackageSpmdInterface.Err
             (str_cat.str-cat
@@ -12321,7 +12600,7 @@
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest-diagnostic-infer-kind
         (string.copy manifest-path)
-        (compiler-load-read-file-text manifest-path))
+        (compiler-load-session-read-source-text manifest-path))
         [(ResultCompilerPkgManifestDiagnostic.Err diag)
           (ResultCompilerLoadPackageEntry.Err
             (str_cat.str-cat
@@ -13657,7 +13936,7 @@
             (string.copy source-path))
           (compiler-load-package-stdlib-prelude-source-with-roots-cfg
             (string.copy path)
-            (compiler-load-read-file-text source-path)
+            (compiler-load-session-read-source-text source-path)
             seen
             stdlib-roots
             (string.copy manifest-dir)
@@ -15319,7 +15598,7 @@
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest-diagnostic
         (string.copy manifest-path)
-        (compiler-load-read-file-text manifest-path))
+        (compiler-load-session-read-source-text manifest-path))
         [(ResultCompilerPkgManifestDiagnostic.Err _)
           (ResultPkgResolve.Ok import-path)]
         [(ResultCompilerPkgManifestDiagnostic.Ok manifest)

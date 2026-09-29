@@ -86743,10 +86743,13 @@
                     (__tl_make-array ast.AstDeclList memo.capacity))))]
             [i : i64 0]
             (begin
+              ;; Re-arming clears only the keys. Every read of `decls` needs a
+              ;; matching key and `put!` replaces the element, so a previous
+              ;; generation's lists are never read; refilling them would leave
+              ;; `capacity` dead lists in the owner arena on every re-arm.
               (while (< i memo.capacity)
                 (begin
                   (set! (array-ref memo.keys i) 0)
-                  (set! (array-ref memo.decls i) (ast.ast-decl-list-new))
                   (set! i (+ i 1))))
               (set! memo.count 0)
               (set! memo.owner-table-id table-id)

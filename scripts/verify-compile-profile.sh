@@ -1029,9 +1029,10 @@ c typecheck.macro.retention_retired_generations_max_bytes >= 1
 c typecheck.macro.retention_generation_arenas_mapped <= 3
 # What the stdlib clone handoff leaves live after generating its helpers. One
 # identity-key copy per generated helper made this 89 MB; each key is now copied
-# once per expansion. The ceiling leaves room for more clone roots.
+# once per expansion, and re-arming the generated-declarations memo no longer
+# refills its slots. The ceiling leaves room for more clone roots.
 l lower.clone_handoff.retained_bytes >= 1
-l lower.clone_handoff.retained_bytes <= 32000000
+l lower.clone_handoff.retained_bytes <= 20000000
 ROWS
     SELFHOST_SEGMENT_FILE_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \

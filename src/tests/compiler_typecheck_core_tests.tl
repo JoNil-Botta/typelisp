@@ -21,6 +21,7 @@
 (import (vector.vector String) as svec)
 (import token)
 (cfg test (import stdlib.test))
+(cfg test (import stdlib.profile))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
 (import compiler_owned_view as owned_view)
@@ -9845,3 +9846,123 @@
               unit
               (io.panic
                 "typecheck: preserving lazy-import handoff reset failed"))))))))
+
+;; --- generated-declarations memo re-arm (#8158) ---------------------------------
+(cfg
+  test
+  (define (memo-test-decls [count : i64]) : ast.AstDeclList
+    (let
+      [out : ast.AstDeclList (ast.ast-decl-list-new)]
+      [index : i64 0]
+      (begin
+        (while (< index count)
+          (begin
+            (set!
+              out
+              (ast.ast-decl-cons
+                (ast.ast-decl-def-fn-id
+                  (ci.intern-generated-name "memo-test-decl")
+                  (ast.ast-param-list-new)
+                  (ast.AstType.Unit)
+                  (ast.ast-node-push
+                    (ast.AstExpr.Literal (ast.AstLiteral.Unit))))
+                out))
+            (set! index (+ index 1))))
+        out))))
+
+(cfg
+  test
+  (define (memo-test-identity [index : i64]) : String
+    (str_cat.str-cat "memo-test-identity-" (string.int->string index))))
+
+;; The number of decls memoized for `identity`, or -1 when it misses.
+(cfg
+  test
+  (define (memo-test-lookup [state : tc_core.TcMacroState] [index : i64]) : i64
+    (match (tc_core.macro-generated-decls-memo-get
+      state
+      (memo-test-identity index))
+      [(tc_core.MacroMaybeSpliceDecls.Some decls)
+        (ast.ast-decl-list-len (& decls))]
+      [(tc_core.MacroMaybeSpliceDecls.No) -1])))
+
+;; An identity index past 0 whose bucket is identity 0's, so it probes past it.
+(cfg
+  test
+  (define (memo-test-colliding-index [state : tc_core.TcMacroState]) : i64
+    (let
+      [home : i64
+        (tc_core.macro-generated-decls-memo-bucket
+          state
+          (tc_core.macro-generated-identity-id state (memo-test-identity 0)))]
+      [index : i64 1]
+      (begin
+        (while (!=
+          (tc_core.macro-generated-decls-memo-bucket
+            state
+            (tc_core.macro-generated-identity-id
+              state
+              (memo-test-identity index)))
+          home)
+          (set! index (+ index 1)))
+        index))))
+
+(cfg
+  test
+  (test
+    macro-generated-decls-memo-rearm-clears-only-keys
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+      [other : i64 (memo-test-colliding-index state)]
+      (begin
+        (tc_core.macro-generated-decls-memo-put!
+          state
+          (memo-test-identity 0)
+          (memo-test-decls 1))
+        (tc_core.macro-generated-decls-memo-put!
+          state
+          (memo-test-identity other)
+          (memo-test-decls 2))
+        (test.assert-i64-eq (memo-test-lookup state 0) 1 "home slot entry")
+        (test.assert-i64-eq
+          (memo-test-lookup state other)
+          2
+          "an entry that probes past the home slot")
+        (tc_core.macro-generated-decls-memo-reset! state)
+        (let
+          [before : i64 (profile.alloc-total)]
+          (begin
+            (tc_core.macro-generated-decls-memo-ensure! state)
+            (test.assert-i64-eq
+              (- (profile.alloc-total) before)
+              0
+              "re-arming the memo allocates nothing")))
+        (test.assert-i64-eq (memo-test-lookup state 0) -1 "no stale home entry")
+        (test.assert-i64-eq
+          (memo-test-lookup state other)
+          -1
+          "no stale probed entry")
+        ;; After the re-arm `other` takes the empty home slot. Identity 0 then
+        ;; probes past it into the zeroed slot that still holds the old list,
+        ;; and must miss rather than return that list.
+        (tc_core.macro-generated-decls-memo-put!
+          state
+          (memo-test-identity other)
+          (memo-test-decls 3))
+        (test.assert-i64-eq
+          (memo-test-lookup state other)
+          3
+          "put/get round-trips after a re-arm")
+        (test.assert-i64-eq
+          (memo-test-lookup state 0)
+          -1
+          "a key probing past a zeroed slot misses")
+        (tc_core.macro-generated-decls-memo-put!
+          state
+          (memo-test-identity 0)
+          (memo-test-decls 4))
+        (test.assert-i64-eq
+          (memo-test-lookup state 0)
+          4
+          "the zeroed slot is reused")))))

@@ -1,5 +1,6 @@
 ;; package_source_core_tests.tl - White-box tests for package sources: the
-;; fetched-boundary lexer, directory skips, source vectors and sorting, and
+;; fetched-boundary lexer, directory skips, lock stage names, entries that
+;; vanish between listing and inspection, source vectors and sorting, and
 ;; source-set binding.
 (cfg test (import compiler_owned_view as owned_view))
 (import stdlib.fs)
@@ -12,6 +13,7 @@
 (cfg test (import compiler_load))
 (cfg test (import tlci_core as tlci))
 (import package_source_core as pkgsrc)
+(cfg test (import package_lock_core))
 
 (test
   package-source-fetched-boundary-rejects-lexical-escapes-before-io
@@ -666,3 +668,188 @@
               binding)
               [(pkgsrc.PackageSourceBindingVerification.Match _) unit]
               [_ (io.panic "package-source: restored discovery did not match")])))))))
+
+(test
+  package-source-lock-stage-names-match-the-writer-spelling-exactly
+  (let
+    [built : String
+      (package_lock_core.package-lock-stage-path
+        (package_lock_core.package-lock-file-name)
+        7
+        3)]
+    (unless
+      (and
+        (package_lock_core.package-lock-stage-name?
+          "typelisp.lock.stage.28860.1.0")
+        (package_lock_core.package-lock-stage-name? (& built))
+        (not (package_lock_core.package-lock-stage-name? ""))
+        (not (package_lock_core.package-lock-stage-name? "typelisp.lock"))
+        (not
+          (package_lock_core.package-lock-stage-name? "typelisp.lock.stage."))
+        (not
+          (package_lock_core.package-lock-stage-name? "typelisp.lock.stage.1.2"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "typelisp.lock.stage.1.2."))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "typelisp.lock.stage.1.2.3.4"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "typelisp.lock.stage.1..3"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "typelisp.lock.stage.-1.2.3"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "typelisp.lock.stage.1.2.x"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "typelisp.lock.stage.1.2.3.tl"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "xtypelisp.lock.stage.1.2.3"))
+        (not
+          (package_lock_core.package-lock-stage-name?
+            "Typelisp.lock.stage.1.2.3")))
+      (io.panic "package-source: lock stage name predicate mismatch"))))
+
+(test
+  package-source-inspection-not-found-skips-and-other-errors-stay-fatal
+  (unless
+    (and
+      (match (pkgsrc.package-source-scan-kind
+        "build"
+        "root"
+        "gone"
+        "root/gone"
+        (fs.ErrFsFileKind (io.IoNotFound "root/gone"))
+        (svec.new))
+        [(pkgsrc.ResultPackageSourceList.Ok items) (= (svec.len (& items)) 0)]
+        [_ false])
+      (match (pkgsrc.package-source-scan-kind
+        "build"
+        "root"
+        "locked"
+        "root/locked"
+        (fs.ErrFsFileKind (io.IoPermissionDenied "root/locked"))
+        (svec.new))
+        [(pkgsrc.ResultPackageSourceList.Err message)
+          (string.eq
+            message
+            "build: failed to inspect package path 'root/locked': io: permission denied: root/locked")]
+        [_ false])
+      (match (pkgsrc.package-source-scan-kind
+        "check"
+        "root"
+        "odd.tl"
+        "root/odd.tl"
+        (fs.ErrFsFileKind (io.IoSystemCode 5 "root/odd.tl"))
+        (svec.new))
+        [(pkgsrc.ResultPackageSourceList.Err message)
+          (string.eq
+            message
+            "check: failed to inspect package path 'root/odd.tl': io: system error 5: root/odd.tl")]
+        [_ false])
+      (match (pkgsrc.package-source-scan-kind
+        "build"
+        "root"
+        "bad"
+        "root/bad"
+        (fs.ErrFsFileKind (io.IoInvalidPath "root/bad"))
+        (svec.new))
+        [(pkgsrc.ResultPackageSourceList.Err message)
+          (string.eq
+            message
+            "build: failed to inspect package path 'root/bad': io: invalid path: root/bad")]
+        [_ false]))
+    (io.panic "package-source: inspection error classification mismatch")))
+
+(cfg
+  test
+  (define (package-source-vanish-test-sources
+    [root : (& root str)]
+    [names : svec.Vec]) : svec.Vec
+    (match (pkgsrc.package-source-scan-entries "build" root "" names (svec.new))
+      [(pkgsrc.ResultPackageSourceList.Err message) (io.panic message)]
+      [(pkgsrc.ResultPackageSourceList.Ok items) items])))
+
+(cfg
+  test
+  (define (package-source-vanish-test-only?
+    [items : svec.Vec]
+    [expected : String]) : bool
+    (and
+      (= (svec.len (& items)) 1)
+      (string.eq (svec.get (& items) 0 "") expected))))
+
+;; Entries listed and then gone before inspection: the scan sees a name the
+;; directory no longer holds, which is exactly the state a concurrent lock
+;; writer leaves between this process's listing and its inspection.
+(test
+  package-source-scan-skips-entries-vanished-since-listing
+  (match (fs.try-create-temp-dir "typelisp package source vanish")
+    [(io.ErrIoString error) (io.panic (io.error-message error))]
+    [(io.OkIoString root)
+      (let
+        [a-name : String "a.tl"]
+        [a : String (fs.path-join (& root) (& a-name))]
+        [nested-name : String "typelisp.lock.stage.1.2.3.tl"]
+        [nested-dir-name : String "sub"]
+        [sub : String (fs.path-join (& root) (& nested-dir-name))]
+        [resembling : String (fs.path-join (& sub) (& nested-name))]
+        [stage-dir-name : String "typelisp.lock.stage.4.5.6"]
+        [stage-dir : String (fs.path-join (& root) (& stage-dir-name))]
+        [hidden-name : String "hidden.tl"]
+        [hidden : String (fs.path-join (& stage-dir) (& hidden-name))]
+        [stage-file-name : String "typelisp.lock.stage.7.8.9"]
+        [stage-file : String (fs.path-join (& sub) (& stage-file-name))]
+        [listed : svec.Vec (svec.new)]
+        [expected-a : String (compiler_load.compiler-load-normalize-path a)]
+        [expected-resembling : String
+          (compiler_load.compiler-load-normalize-path resembling)]
+        (begin
+          (unless
+            (and
+              (match (fs.try-mkdir-if-missing (& sub))
+                [(io.OkIoUnit) true]
+                [(io.ErrIoUnit _) false])
+              (match (fs.try-mkdir-if-missing (& stage-dir))
+                [(io.OkIoUnit) true]
+                [(io.ErrIoUnit _) false])
+              (package-source-binding-test-write (& a) "(a)\n")
+              (package-source-binding-test-write (& resembling) "(r)\n")
+              (package-source-binding-test-write (& hidden) "(h)\n")
+              (package-source-binding-test-write (& stage-file) "stage\n"))
+            (io.panic "package-source: unable to create vanish fixture"))
+          ;; A vanished non-source file, a vanished `.tl`-named entry, and a
+          ;; vanished directory name are all skipped around a present source.
+          (svec.push-ref! (&mut listed) "a.tl")
+          (svec.push-ref! (&mut listed) "gone.lock")
+          (svec.push-ref! (&mut listed) "gone.tl")
+          (svec.push-ref! (&mut listed) "gone-dir")
+          (unless
+            (package-source-vanish-test-only?
+              (package-source-vanish-test-sources (& root) listed)
+              (string.copy (& expected-a)))
+            (io.panic "package-source: vanished entries changed the scan"))
+          ;; A stage-named directory is never package content, even with a
+          ;; source inside; a stage-named file in a subdirectory is skipped;
+          ;; a name that only resembles the stage spelling is ordinary.
+          (match (pkgsrc.package-source-discover-root-for "build" (& root))
+            [(pkgsrc.ResultPackageSourceList.Err message) (io.panic message)]
+            [(pkgsrc.ResultPackageSourceList.Ok items)
+              (unless
+                (and
+                  (= (svec.len (& items)) 2)
+                  (string.eq (svec.get (& items) 0 "") expected-a)
+                  (string.eq (svec.get (& items) 1 "") expected-resembling))
+                (io.panic "package-source: stage-named entries were scanned"))])
+          (package-source-binding-test-remove (& hidden))
+          (package-source-binding-test-remove (& stage-file))
+          (package-source-binding-test-remove (& resembling))
+          (package-source-binding-test-remove (& a))
+          (fs.try-remove-dir-if-exists (& stage-dir))
+          (fs.try-remove-dir-if-exists (& sub))
+          (fs.try-remove-dir-if-exists (& root))
+          unit))]))

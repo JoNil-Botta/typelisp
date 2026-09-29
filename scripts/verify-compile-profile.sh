@@ -813,6 +813,10 @@ has compile-profile|typecheck.macro.retention_retired_symbols_max_bytes|
 has compile-profile|typecheck.macro.retention_expansion_scratch_max_bytes|
 has compile-profile|typecheck.macro.retention_active_generations_max_bytes|
 has compile-profile|typecheck.macro.retention_retired_generations_max_bytes|
+# Every declaration-generation rotation rewinds the walk's one generation arena
+# instead of mapping a fresh one (#7934).
+c typecheck.macro.walk_decl_generation_rotations >= 2
+c typecheck.macro.retention_generation_arenas_mapped <= 1
 ROWS
 assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
@@ -1022,6 +1026,7 @@ c typecheck.macro.retention_retired_symbols_max_bytes >= 1
 c typecheck.macro.retention_expansion_scratch_max_bytes >= 1
 c typecheck.macro.retention_active_generations_max_bytes >= 1
 c typecheck.macro.retention_retired_generations_max_bytes >= 1
+c typecheck.macro.retention_generation_arenas_mapped <= 3
 ROWS
     SELFHOST_SEGMENT_FILE_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \

@@ -23470,15 +23470,6 @@
     [(cabi.CompilerRegTargetAbi.Linux) true]
     [(cabi.CompilerRegTargetAbi.Windows) false]))
 
-(define (compiler-reg-reference-to-slice?
-  [type-segment-bases : i64]
-  [inner : i64]) : bool
-  (match (ast.ast-type-segment-bases-get type-segment-bases inner)
-    [(ast.AstType.Region _ nested)
-      (compiler-reg-reference-to-slice? type-segment-bases nested)]
-    [(ast.AstType.Slice _) true]
-    [_ false]))
-
 ;; True when a var's type is a >=2-word register-group per the program map.
 (define (compiler-reg-type-register-group?
   [type-segment-bases : i64]
@@ -23486,9 +23477,9 @@
   [ty : ast.AstType]) : bool
   (match (compiler-reg-global-shared-view ty)
     [(ast.AstType.Ref _ inner)
-      (compiler-reg-reference-to-slice? type-segment-bases inner)]
+      (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
     [(ast.AstType.MutRef _ inner)
-      (compiler-reg-reference-to-slice? type-segment-bases inner)]
+      (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
     [(ast.AstType.Region _ inner)
       (compiler-reg-type-register-group?
         type-segment-bases

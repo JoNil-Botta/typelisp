@@ -4770,13 +4770,12 @@
 ;; References carry a type-pool id for their referent. Peel only Region
 ;; wrappers around that immediate referent; owning containers remain ordinary
 ;; one-word references.
-(define (ctfe-reference-to-slice?
-  [pools : ast.AstNodePoolContext]
-  [inner : i64]) : bool
+(define (ctfe-fat-reference? [pools : ast.AstNodePoolContext] [inner : i64]) : bool
   (match (ast.ast-node-pool-context-type-get pools inner)
-    [(ast.AstType.Region _ nested) (ctfe-reference-to-slice? pools nested)]
-    [(ast.AstType.Slice _) true]
-    [_ false]))
+    [(ast.AstType.Region _ nested) (ctfe-fat-reference? pools nested)]
+    [_
+      (ast.ast-type-fat-referent?
+        (ast.ast-node-pool-context-type-get pools inner))]))
 
 ;; A named type's recorded layout size or alignment, or `missing` when no
 ;; layout is recorded for it.
@@ -4843,11 +4842,11 @@
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
     [(ast.AstType.Ref _ inner)
-      (if (ctfe-reference-to-slice? pools inner)
+      (if (ctfe-fat-reference? pools inner)
         16
         8)]
     [(ast.AstType.MutRef _ inner)
-      (if (ctfe-reference-to-slice? pools inner)
+      (if (ctfe-fat-reference? pools inner)
         16
         8)]
     [(ast.AstType.Region _ inner)

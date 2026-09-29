@@ -2743,10 +2743,17 @@ stored lifetime.
 `ByteBuf` uses an aggregate-handle representation analogous to other owned
 runtime aggregates. Its inline storage is a pointer/length/capacity record. The
 capacity is a source-level invariant, not permission for safe code to read
-uninitialized bytes. `(& lifetime bytes)` and `(&mut lifetime bytes)` lower as
-pointer-sized reference/provenance values to immutable or mutable slice records
-containing `(data_ptr, length)`. Mutable byte views carry exclusivity in the
-source checker; the runtime representation does not retain aliasing state.
+uninitialized bytes. `(& lifetime bytes)` and `(&mut lifetime bytes)` have the
+borrowed Slice representation (see "Borrowed Slice referent"): an
+allocation-free and drop-free 16-byte value, a data pointer followed by a
+signed `i64` length, passed and returned as two integer-class words. Taking a
+byte view never allocates and never creates a view record. Mutable byte views
+carry exclusivity in the source checker; the runtime representation does not
+retain aliasing state. The stdlib builds every byte view with the private
+`__tl_bytes-view` / `__tl_bytes-mut-view` builtins, the checked subview of
+`slice-view`/`slice-mut-view` over a u8 array, a `str` or a `bytes` source
+that returns a byte view: an out-of-range request traps before any pointer is
+formed, and the result borrows its source like a Slice subview.
 
 ---
 

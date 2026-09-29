@@ -4590,6 +4590,28 @@
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
 
+;; A borrowed Slice or `bytes` is a fat reference: two integer-class words, the
+;; data pointer and then the signed length, with no referent record in memory.
+;; Every other reference is one pointer word. `referent` is the reference's
+;; immediate referent with its Region wrappers already stripped.
+(define (ast-type-fat-referent? [referent : AstType]) : bool
+  (match referent
+    [(AstType.Slice _) true]
+    [(AstType.Bytes) true]
+    [_ false]))
+
+;; `ast-type-fat-referent?` for the referent node `inner` of the type pool at
+;; `type-segment-bases`, peeling Region wrappers.
+(define (ast-type-segment-bases-fat-referent?
+  [type-segment-bases : i64]
+  [inner : i64]) : bool
+  (match (ast-type-segment-bases-get type-segment-bases inner)
+    [(AstType.Region _ nested)
+      (ast-type-segment-bases-fat-referent? type-segment-bases nested)]
+    [(AstType.Slice _) true]
+    [(AstType.Bytes) true]
+    [_ false]))
+
 ;; Return the canonical nominal identity for aggregate metadata. Region is a
 ;; transparent ownership wrapper; every non-aggregate shape stays explicit as
 ;; None so callers never need an empty-string or integer sentinel.

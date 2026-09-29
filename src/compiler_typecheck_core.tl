@@ -2713,13 +2713,18 @@
 ;; Core Slice subview calls are recognized as a small call-local operation,
 ;; rather than an additional AST node.  Keeping the classifier in one place
 ;; lets typechecking, move checking, and borrow checking agree on both
-;; spellings and on the ordinary-name shadowing rule.
+;; spellings and on the ordinary-name shadowing rule.  The private
+;; `__tl_bytes-view`/`__tl_bytes-mut-view` kinds are the same checked subview
+;; over a byte source (u8 array, `str`, `bytes`) whose result is a borrowed
+;; `bytes` view instead of a Slice; stdlib builds every byte view with them.
 (defenum TcSliceViewCallKind
   (None)
   (Shared)
   (Mutable)
   (SplitShared)
-  (SplitMutable))
+  (SplitMutable)
+  (BytesShared)
+  (BytesMutable))
 
 ;; Source shape accepted by the Slice subview builtins.  `Direct` is a genuine
 ;; Array/DynArray place; `Borrow` carries the source reference lifetime,
@@ -39806,6 +39811,32 @@
     (tc-tls-current-arena-read-call args)
     (tc-tls-current-arena-set-call ctx env args)))
 
+;; The subview kind `name` spells, before any shadowing check. Nearly every
+;; call name starts with neither `s` nor `_`, so its first byte settles most
+;; lookups without a string comparison.
+(define (tc-slice-view-spelling-kind [name : (& name str)]) : TcSliceViewCallKind
+  (let
+    [first : i64
+      (if (> (string.string-length name) 0)
+        (cast (string.string-ref name 0) : i64)
+        0)]
+    (cond
+      [(= first 115)
+        (cond
+          [(string.eq name "slice-view") TcSliceViewCallKind.Shared]
+          [(string.eq name "slice-mut-view") TcSliceViewCallKind.Mutable]
+          [(string.eq name "slice-split-at") TcSliceViewCallKind.SplitShared]
+          [(string.eq name "slice-split-at-mut")
+            TcSliceViewCallKind.SplitMutable]
+          [else TcSliceViewCallKind.None])]
+      [(= first 95)
+        (cond
+          [(string.eq name "__tl_bytes-view") TcSliceViewCallKind.BytesShared]
+          [(string.eq name "__tl_bytes-mut-view")
+            TcSliceViewCallKind.BytesMutable]
+          [else TcSliceViewCallKind.None])]
+      [else TcSliceViewCallKind.None])))
+
 (define (tc-slice-view-call-kind-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -39816,14 +39847,13 @@
   ;; source builtins: private/compiler names use their own policy, while these
   ;; public compatibility operations consult the authoritative source-value
   ;; membership table.
-  (if (tc-source-value-bound-id? ctx env name-id)
-    (TcSliceViewCallKind.None)
-    (cond
-      [(string.eq name "slice-view") TcSliceViewCallKind.Shared]
-      [(string.eq name "slice-mut-view") TcSliceViewCallKind.Mutable]
-      [(string.eq name "slice-split-at") TcSliceViewCallKind.SplitShared]
-      [(string.eq name "slice-split-at-mut") TcSliceViewCallKind.SplitMutable]
-      [else TcSliceViewCallKind.None])))
+  (let
+    [kind : TcSliceViewCallKind (tc-slice-view-spelling-kind (& name))]
+    (if (or
+      (= kind TcSliceViewCallKind.None)
+      (tc-source-value-bound-id? ctx env name-id))
+      (TcSliceViewCallKind.None)
+      kind)))
 
 (define (tc-slice-view-call-kind
   [ctx : TcContext]
@@ -39872,17 +39902,20 @@
           (if (tc-hygiene-global-name-id? session raw-name)
             (tc-hygiene-global-call-name raw-text)
             raw-text)]
-        (or
-          (string.eq name "slice-view")
-          (string.eq name "slice-mut-view")
-          (string.eq name "slice-split-at")
-          (string.eq name "slice-split-at-mut")))]
+        (not
+          (= (tc-slice-view-spelling-kind (& name)) TcSliceViewCallKind.None)))]
     [_ false]))
 
 (define (tc-slice-call-mutable? [kind : TcSliceViewCallKind]) : bool
   (or
     (= kind TcSliceViewCallKind.Mutable)
-    (= kind TcSliceViewCallKind.SplitMutable)))
+    (= kind TcSliceViewCallKind.SplitMutable)
+    (= kind TcSliceViewCallKind.BytesMutable)))
+
+(define (tc-slice-call-bytes? [kind : TcSliceViewCallKind]) : bool
+  (or
+    (= kind TcSliceViewCallKind.BytesShared)
+    (= kind TcSliceViewCallKind.BytesMutable)))
 
 (define (tc-slice-call-split? [kind : TcSliceViewCallKind]) : bool
   (or
@@ -39916,6 +39949,10 @@
               lifetime
               false
               (ast.AstType.Slice elem))]
+          [(ast.AstType.Str)
+            (TcSliceViewSourceInfo.Borrow lifetime false (ast.AstType.Str))]
+          [(ast.AstType.Bytes)
+            (TcSliceViewSourceInfo.Borrow lifetime false (ast.AstType.Bytes))]
           [_ (TcSliceViewSourceInfo.Invalid)]))]
     [(ast.AstType.MutRef lifetime referent-id)
       (let
@@ -39938,6 +39975,8 @@
               lifetime
               true
               (ast.AstType.Slice elem))]
+          [(ast.AstType.Bytes)
+            (TcSliceViewSourceInfo.Borrow lifetime true (ast.AstType.Bytes))]
           [_ (TcSliceViewSourceInfo.Invalid)]))]
     [_ (TcSliceViewSourceInfo.Invalid)]))
 
@@ -39955,8 +39994,47 @@
         [(ast.AstType.Array elem _) (ast.ty-node-get elem)]
         [(ast.AstType.DynArray elem) (ast.ty-node-get elem)]
         [(ast.AstType.Slice elem) (ast.ty-node-get elem)]
+        [(ast.AstType.Str) (ast.AstType.U8)]
+        [(ast.AstType.Bytes) (ast.AstType.U8)]
         [_ (ast.AstType.Unit)])]
     [_ (ast.AstType.Unit)]))
+
+;; Whether `source` suits `kind`: a byte view needs u8 elements, and only a
+;; byte view reads a `str` or `bytes` referent.
+(define (tc-slice-view-source-fits?
+  [ctx : TcContext]
+  [kind : TcSliceViewCallKind]
+  [source : TcSliceViewSourceInfo]
+  [element : ast.AstType]) : bool
+  (let
+    [text-referent : bool
+      (match source
+        [(TcSliceViewSourceInfo.Borrow _ _ referent)
+          (match (tc-type-strip-region (tc-resolve-type ctx referent))
+            [(ast.AstType.Str) true]
+            [(ast.AstType.Bytes) true]
+            [_ false])]
+        [_ false])]
+    (if (tc-slice-call-bytes? kind)
+      (match (tc-type-strip-region (tc-resolve-type ctx element))
+        [(ast.AstType.U8) true]
+        [_ false])
+      (not text-referent))))
+
+;; The borrowed view a subview call of `kind` returns over `element`.
+(define (tc-slice-view-borrow-type
+  [ctx : TcContext]
+  [kind : TcSliceViewCallKind]
+  [lifetime : i64]
+  [element : ast.AstType]) : ast.AstType
+  (let
+    [referent : ast.AstType
+      (if (tc-slice-call-bytes? kind)
+        (ast.AstType.Bytes)
+        (ast.ast-ty-slice-with-pools (tc-context-pools ctx) element))]
+    (if (tc-slice-call-mutable? kind)
+      (ast.ast-ty-mut-ref-with-pools (tc-context-pools ctx) lifetime referent)
+      (ast.ast-ty-ref-with-pools (tc-context-pools ctx) lifetime referent))))
 
 (define (tc-slice-view-result-type
   [ctx : TcContext]
@@ -39969,82 +40047,79 @@
       (tc-slice-view-source-info ctx source-ty)]
     [source-element : ast.AstType
       (tc-slice-view-source-element ctx (tc-global-shared-view source-info))]
-    (match source-info
-      [(TcSliceViewSourceInfo.Invalid)
-        (ResultTcType.Err
-          (tc-locate-error-at-expr
-            (tc-context-expr-bases ctx)
-            source
-            (tc-kind-message
-              (cdiag.CompilerTypecheckKind.TypeMismatch)
-              "typecheck: slice-view source must be a fixed array, dynamic array, or borrowed reference to one")))]
-      [(TcSliceViewSourceInfo.Direct _)
-        (begin
-          (when
-            (tc-slice-call-mutable? kind)
-            (match (tc-mut-borrow-non-call-place-ok
+    (begin
+      (when
+        (or
+          (match (tc-global-shared-view source-info)
+            [(TcSliceViewSourceInfo.Invalid) true]
+            [_ false])
+          (not
+            (tc-slice-view-source-fits?
               ctx
-              env
-              (tc-global-shared-view source))
-              [(ResultTcUnit.Ok) unit]
-              [(ResultTcUnit.Err message)
-                (return
-                  (ResultTcType.Err
-                    (tc-locate-error-at-expr
-                      (tc-context-expr-bases ctx)
-                      source
-                      message)))]))
-          (match (tc-borrow-place
-            ctx
-            (tc-context-expr-bases ctx)
-            env
-            (tc-global-shared-view source))
-            [(ResultTcBorrowPlace.Ok place)
-              (match place
-                [(TcBorrowPlace lifetime _)
-                  (ResultTcType.Ok
-                    (if (tc-slice-call-mutable? kind)
-                      (ast.ast-ty-mut-ref-with-pools
-                        (tc-context-pools ctx)
-                        lifetime
-                        (ast.ast-ty-slice-with-pools
-                          (tc-context-pools ctx)
-                          source-element))
-                      (ast.ast-ty-ref-with-pools
-                        (tc-context-pools ctx)
-                        lifetime
-                        (ast.ast-ty-slice-with-pools
-                          (tc-context-pools ctx)
-                          source-element))))])]
-            [(ResultTcBorrowPlace.Err message)
-              (ResultTcType.Err
-                (tc-locate-error-at-expr
-                  (tc-context-expr-bases ctx)
-                  source
-                  message))]))]
-      [(TcSliceViewSourceInfo.Borrow lifetime source-mutable _)
-        (if (and (tc-slice-call-mutable? kind) (not source-mutable))
+              kind
+              (tc-global-shared-view source-info)
+              (tc-global-shared-view source-element))))
+        (return
           (ResultTcType.Err
             (tc-locate-error-at-expr
               (tc-context-expr-bases ctx)
               source
               (tc-kind-message
-                (cdiag.CompilerTypecheckKind.BorrowViolation)
-                "typecheck: slice-mut-view requires a mutable borrowed source")))
-          (ResultTcType.Ok
-            (if (tc-slice-call-mutable? kind)
-              (ast.ast-ty-mut-ref-with-pools
-                (tc-context-pools ctx)
-                lifetime
-                (ast.ast-ty-slice-with-pools
-                  (tc-context-pools-live ctx)
-                  source-element))
-              (ast.ast-ty-ref-with-pools
-                (tc-context-pools ctx)
-                lifetime
-                (ast.ast-ty-slice-with-pools
-                  (tc-context-pools ctx)
-                  source-element)))))])))
+                (cdiag.CompilerTypecheckKind.TypeMismatch)
+                (if (tc-slice-call-bytes? kind)
+                  "typecheck: a bytes view source must be a u8 array, a u8 dynamic array, or a borrowed str, bytes or u8 Slice"
+                  "typecheck: slice-view source must be a fixed array, dynamic array, or borrowed reference to one"))))))
+      (match source-info
+        [(TcSliceViewSourceInfo.Invalid) (ResultTcType.Err "unreachable")]
+        [(TcSliceViewSourceInfo.Direct _)
+          (begin
+            (when
+              (tc-slice-call-mutable? kind)
+              (match (tc-mut-borrow-non-call-place-ok
+                ctx
+                env
+                (tc-global-shared-view source))
+                [(ResultTcUnit.Ok) unit]
+                [(ResultTcUnit.Err message)
+                  (return
+                    (ResultTcType.Err
+                      (tc-locate-error-at-expr
+                        (tc-context-expr-bases ctx)
+                        source
+                        message)))]))
+            (match (tc-borrow-place
+              ctx
+              (tc-context-expr-bases ctx)
+              env
+              (tc-global-shared-view source))
+              [(ResultTcBorrowPlace.Ok place)
+                (match place
+                  [(TcBorrowPlace lifetime _)
+                    (ResultTcType.Ok
+                      (tc-slice-view-borrow-type
+                        ctx
+                        kind
+                        lifetime
+                        source-element))])]
+              [(ResultTcBorrowPlace.Err message)
+                (ResultTcType.Err
+                  (tc-locate-error-at-expr
+                    (tc-context-expr-bases ctx)
+                    source
+                    message))]))]
+        [(TcSliceViewSourceInfo.Borrow lifetime source-mutable _)
+          (if (and (tc-slice-call-mutable? kind) (not source-mutable))
+            (ResultTcType.Err
+              (tc-locate-error-at-expr
+                (tc-context-expr-bases ctx)
+                source
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.BorrowViolation)
+                  (if (tc-slice-call-bytes? kind)
+                    "typecheck: __tl_bytes-mut-view requires a mutable borrowed source"
+                    "typecheck: slice-mut-view requires a mutable borrowed source"))))
+            (ResultTcType.Ok
+              (tc-slice-view-borrow-type ctx kind lifetime source-element)))]))))
 
 (define (tc-slice-split-result-type
   [ctx : TcContext]
@@ -49106,18 +49181,14 @@
           (ResultTcInlineAggregateLayout.Err
             (str_cat.str-cat "typecheck: unknown aggregate " name))]))))
 
-;; Borrowed slices are represented physically as a data pointer plus a signed
-;; length.  Their referent is stored in the type pool, so inspect that node
-;; here rather than treating every Ref/MutRef as a one-word
-;; pointer.  Region wrappers on either the reference itself (stripped by the
-;; caller) or its immediate referent do not change the representation.
-(define (tc-inline-aggregate-reference-to-slice?
-  [ctx : TcContext]
-  [inner : i64]) : bool
-  (match (tc-type-strip-region
-    (tc-resolve-type ctx (tc-context-type-get ctx inner)))
-    [(ast.AstType.Slice _) true]
-    [_ false]))
+;; Borrowed Slices and `bytes` are fat references (`ast.ast-type-fat-referent?`):
+;; a data pointer plus a signed length. Their referent is stored in the type
+;; pool, so inspect that node here rather than treating every Ref/MutRef as a
+;; one-word pointer. Region wrappers on either the reference itself (stripped
+;; by the caller) or its immediate referent do not change the representation.
+(define (tc-inline-aggregate-fat-reference? [ctx : TcContext] [inner : i64]) : bool
+  (ast.ast-type-fat-referent?
+    (tc-type-strip-region (tc-resolve-type ctx (tc-context-type-get ctx inner)))))
 
 (define (tc-inline-aggregate-type-layout-with-stack
   [ctx : TcContext]
@@ -49172,11 +49243,11 @@
     [(ast.AstType.MutPtr _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.Ref _ inner)
-      (if (tc-inline-aggregate-reference-to-slice? ctx inner)
+      (if (tc-inline-aggregate-fat-reference? ctx inner)
         (ResultTcLayoutInfo.Ok (tc-inline-aggregate-layout-info 16 8))
         (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info)))]
     [(ast.AstType.MutRef _ inner)
-      (if (tc-inline-aggregate-reference-to-slice? ctx inner)
+      (if (tc-inline-aggregate-fat-reference? ctx inner)
         (ResultTcLayoutInfo.Ok (tc-inline-aggregate-layout-info 16 8))
         (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info)))]
     [(ast.AstType.Region _ inner)
@@ -78398,7 +78469,7 @@
             expr-bases
             (tc-global-shared-view locals)
             borrowed1
-            (= kind TcSliceViewCallKind.Mutable)
+            (tc-slice-call-mutable? kind)
             source
             call-expr)
             [(TcBorrowCheckResult.Ok borrowed2)

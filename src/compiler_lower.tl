@@ -10456,13 +10456,7 @@
         cbi.compiler-builtin-id-runtime-int-to-string]
       [(= base-id cbi.compiler-builtin-id-tl-substring)
         cbi.compiler-builtin-id-runtime-substring]
-      [(or
-          (= base-id cbi.compiler-builtin-id-tl-str-view)
-          (= base-id cbi.compiler-builtin-id-tl-bytes-view-from-str-parts)
-          (= base-id cbi.compiler-builtin-id-tl-bytes-view-from-buf-parts)
-          (= base-id cbi.compiler-builtin-id-tl-bytes-mut-view-from-buf-parts)
-          (= base-id cbi.compiler-builtin-id-tl-bytes-view-from-bytes-parts)
-          (= base-id cbi.compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts))
+      [(= base-id cbi.compiler-builtin-id-tl-str-view)
         cbi.compiler-builtin-id-runtime-str-view]
       [(= base-id cbi.compiler-builtin-id-tl-string-concat)
         cbi.compiler-builtin-id-string-concat]
@@ -16133,16 +16127,13 @@
           (tc_core.tc-layout-info-align info)]
         [(tc_core.ResultTcLayoutInfo.Err _) fallback])]))
 
-;; A borrowed Slice is a structural fat reference: two integer-class words
-;; (data pointer, signed length).  The referent is a type-pool id and may have
-;; Region wrappers, which are transparent for this physical classification.
-;; Do not recurse through owning containers; only an immediate Slice referent
-;; receives the fat-reference representation.
-(define (lower-reference-to-slice? [ctx : tc_core.TcContext] [inner : i64]) : bool
-  (match (tc_core.tc-type-strip-region
-    (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
-    [(ast.AstType.Slice _) true]
-    [_ false]))
+;; Whether a reference to the type-pool node `inner` is a fat reference
+;; (`ast.ast-type-fat-referent?`): a borrowed Slice or `bytes`. Region wrappers
+;; on the referent are transparent; owning containers are not looked through.
+(define (lower-fat-reference? [ctx : tc_core.TcContext] [inner : i64]) : bool
+  (ast.ast-type-fat-referent?
+    (tc_core.tc-type-strip-region
+      (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))))
 
 (define (lower-type-size [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
   (let
@@ -16174,11 +16165,11 @@
       [(ast.AstType.Ptr _) 8]
       [(ast.AstType.MutPtr _) 8]
       [(ast.AstType.Ref _ inner)
-        (if (lower-reference-to-slice? ctx inner)
+        (if (lower-fat-reference? ctx inner)
           16
           8)]
       [(ast.AstType.MutRef _ inner)
-        (if (lower-reference-to-slice? ctx inner)
+        (if (lower-fat-reference? ctx inner)
           16
           8)]
       [(ast.AstType.Region _ inner)
@@ -16771,8 +16762,8 @@
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
-    [(ast.AstType.Ref _ inner) (lower-reference-to-slice? ctx inner)]
-    [(ast.AstType.MutRef _ inner) (lower-reference-to-slice? ctx inner)]
+    [(ast.AstType.Ref _ inner) (lower-fat-reference? ctx inner)]
+    [(ast.AstType.MutRef _ inner) (lower-fat-reference? ctx inner)]
     [(ast.AstType.Struct name)
       (> (tc_core.tc-inline-aggregate-regwords-cached ctx name) 0)]
     [(ast.AstType.StructArgs name _)
@@ -16805,11 +16796,11 @@
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
     [(ast.AstType.Ref _ inner)
-      (if (lower-reference-to-slice? ctx inner)
+      (if (lower-fat-reference? ctx inner)
         2
         0)]
     [(ast.AstType.MutRef _ inner)
-      (if (lower-reference-to-slice? ctx inner)
+      (if (lower-fat-reference? ctx inner)
         2
         0)]
     [(ast.AstType.Struct name)
@@ -16933,13 +16924,13 @@
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
       [(ast.AstType.Ref _ inner)
-        (if (lower-reference-to-slice? ctx inner)
+        (if (lower-fat-reference? ctx inner)
           (if (= word-index 0)
             (ast.AstType.U64)
             (ast.AstType.I64))
           (ast.AstType.I64))]
       [(ast.AstType.MutRef _ inner)
-        (if (lower-reference-to-slice? ctx inner)
+        (if (lower-fat-reference? ctx inner)
           (if (= word-index 0)
             (ast.AstType.U64)
             (ast.AstType.I64))
@@ -31644,6 +31635,20 @@
         source-value
         source-ty
         (tc_core.tc-context-type-get ctx elem))]
+    ;; A `str` reference points at its `{data_ptr, length}` record, laid out
+    ;; like a dynamic-array descriptor; `bytes` is a two-word view like Slice.
+    [(ast.AstType.Str)
+      (lower-slice-view-dynamic-source-fields
+        source-state
+        source-value
+        (ast.AstType.U8))]
+    [(ast.AstType.Bytes)
+      (lower-slice-view-reference-slice-fields
+        ctx
+        source-state
+        source-value
+        source-ty
+        (ast.AstType.U8))]
     [_ (lower-slice-view-invalid-source ctx source)]))
 
 (define (lower-slice-view-source-fields
@@ -34809,50 +34814,17 @@
       [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-bytes-view-from-parts-result
-  [ctx : tc_core.TcContext]
   [state : LowerState]
   [ptr-value : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]
-  [result-ty : ast.AstType]
-  [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (let
-    [ty (ast.AstType.String)]
-    (lower-reserve-inline-storage state 16 ty))
-    [(LowerExpr.Expr base-state base-value _)
-      (let
-        [with-ptr : LowerState
-          (lower-store-at-offset
-            base-state
-            base-value
-            0
-            ptr-value
-            (ast.AstType.U64))]
-        [with-len : LowerState
-          (lower-store-at-offset
-            with-ptr
-            base-value
-            8
-            (lower-global-shared-view len-value)
-            (ast.AstType.I64))]
-        (match (lower-state-alloc-var with-len)
-          [(LowerAlloc.Alloc call-state call-var)
-            (ResultLowerExpr.Ok
-              (LowerExpr.Expr
-                (lower-state-emit-at-expr
-                  ctx
-                  call-state
-                  (ir.CompilerIrInstr.Call
-                    call-var
-                    (lower-tl-str-view-symbol)
-                    (ir.compiler-ir-call-args-from-seq
-                      (ir.compiler-ir-value-seq3
-                        base-value
-                        (ir.CompilerIrValue.I64 0)
-                        len-value))
-                    (lower-one-word-register-storage-type ctx result-ty))
-                  origin)
-                (ir.CompilerIrValue.Var call-var)
-                result-ty))]))]))
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  ;; A `bytes` view is the two-word fat reference itself: no record, no
+  ;; storage and no runtime call.
+  (ResultLowerExpr.Ok
+    (lower-emit-pack
+      state
+      (ir.compiler-ir-value-seq2 ptr-value len-value)
+      result-ty)))
 
 (define (lower-bytes-view-from-parts-values
   [ctx : tc_core.TcContext]
@@ -34863,12 +34835,10 @@
     [(ResultLowerArgs.Ok args-state values)
       (if (= values.len 3)
         (lower-bytes-view-from-parts-result
-          ctx
           args-state
           (ir.compiler-ir-value-seq-ref values 0)
           (ir.compiler-ir-value-seq-ref values 1)
-          result-ty
-          origin)
+          result-ty)
         (ResultLowerExpr.Err
           (box
             (lower-diagnostic-at-expr
@@ -38007,7 +37977,7 @@
                   (ast.AstType.I64)))
               (match resolved
                 [(ast.AstType.Ref _ inner)
-                  (if (lower-reference-to-slice? ctx inner)
+                  (if (lower-fat-reference? ctx inner)
                     (match (lower-emit-word
                       arr-state
                       arr-value
@@ -38021,7 +37991,7 @@
                             (ast.AstType.I64)))])
                     (lower-array-length-load-descriptor arr-state arr-value))]
                 [(ast.AstType.MutRef _ inner)
-                  (if (lower-reference-to-slice? ctx inner)
+                  (if (lower-fat-reference? ctx inner)
                     (match (lower-emit-word
                       arr-state
                       arr-value
@@ -38074,12 +38044,20 @@
   (let
     [lowered : LowerExpr (try (lower-expr ctx state env type-env str))]
     (match lowered
-      [(LowerExpr.Expr str-state str-value _)
-        (match (lower-load-at-offset
-          str-state
-          str-value
-          0
-          (lower-global-shared-view result-ty))
+      [(LowerExpr.Expr str-state str-value str-ty)
+        (match (if (lower-type-register-resident? ctx str-ty)
+          ;; A `bytes` view is a two-word fat reference; its data pointer is
+          ;; word 0. A `str` or String points at its `{data_ptr, len}` record.
+          (lower-emit-word
+            str-state
+            str-value
+            0
+            (lower-global-shared-view result-ty))
+          (lower-load-at-offset
+            str-state
+            str-value
+            0
+            (lower-global-shared-view result-ty)))
           [(LowerExpr.Expr data-state data-value _)
             (ResultLowerExpr.Ok
               (LowerExpr.Expr data-state data-value result-ty))])])))
@@ -40731,9 +40709,7 @@
                                               elem-ptr
                                               elem-ir-ty)])]
                                       [(ast.AstType.Ref _ inner)
-                                        (if (lower-reference-to-slice?
-                                          ctx
-                                          inner)
+                                        (if (lower-fat-reference? ctx inner)
                                           (match (lower-slice-element-addr
                                             ctx
                                             idx-state
@@ -40762,9 +40738,7 @@
                                                 arr
                                                 "lower: array-ref requires array type"))))]
                                       [(ast.AstType.MutRef _ inner)
-                                        (if (lower-reference-to-slice?
-                                          ctx
-                                          inner)
+                                        (if (lower-fat-reference? ctx inner)
                                           (match (lower-slice-element-addr
                                             ctx
                                             idx-state
@@ -40946,7 +40920,7 @@
             arr
             "lower: set! array element requires mutable array access")))]
     [(ast.AstType.MutRef _ inner)
-      (if (lower-reference-to-slice? ctx inner)
+      (if (lower-fat-reference? ctx inner)
         (match (lower-slice-element-addr
           ctx
           state
@@ -41061,7 +41035,7 @@
               arr
               "lower: set! array element requires mutable array access")))]
       [(ast.AstType.MutRef _ inner)
-        (if (lower-reference-to-slice? ctx inner)
+        (if (lower-fat-reference? ctx inner)
           (match (lower-slice-element-addr
             ctx
             state

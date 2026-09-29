@@ -117,6 +117,12 @@ slice_view_mut_owner_write_reject|check-fail|tests/safety/slice_view_mut_owner_w
 slice_view_mut_shared_subview_reject|check-fail|tests/safety/slice_view_mut_shared_subview_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
 slice_view_mut_double_reject|check-fail|tests/safety/slice_view_mut_double_reject.tl|-|cannot mutably borrow borrowed place `items`
 slice_view_parent_child_shared_reject|check-fail|tests/safety/slice_view_parent_child_shared_reject.tl|-|cannot assign to borrowed place `parent[0]`
+# Borrowed bytes views follow the Slice view rules (#8089).
+bytes_view_element_reject|check-fail|tests/safety/bytes_view_element_reject.tl|-|a bytes view source must be a u8 array
+slice_view_str_source_reject|check-fail|tests/safety/slice_view_str_source_reject.tl|-|slice-view source must be a fixed array
+bytes_mut_view_shared_source_reject|check-fail|tests/safety/bytes_mut_view_shared_source_reject.tl|-|__tl_bytes-mut-view requires a mutable borrowed source
+bytes_mut_view_parent_child_reject|check-fail|tests/safety/bytes_mut_view_parent_child_reject.tl|-|cannot mutably borrow borrowed place `parent`
+bytes_view_escape_reject|check-fail|tests/safety/bytes_view_escape_reject.tl|-|returned reference lifetime must be tied to a parameter
 slice_view_parent_child_mut_reject|check-fail|tests/safety/slice_view_parent_child_mut_reject.tl|-|cannot read mutably borrowed place `parent[0]`
 slice_view_parent_child_shared_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_shared_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_parent_child_mut_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_mut_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`

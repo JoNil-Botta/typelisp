@@ -1,0 +1,12 @@
+extern long sink(long);
+long leaf(long x) { return x * 3 + 1; }
+long walk(long *xs, long n) {
+  long s = 0;
+  for (long i = 0; i < n; i++) s += sink(xs[i]);
+  return s;
+}
+long framed(long n) {
+  long buf[n > 0 && n < 64 ? n : 1];
+  for (long i = 0; i < n && i < 64; i++) buf[i] = sink(i);
+  return sink(buf[0]);
+}

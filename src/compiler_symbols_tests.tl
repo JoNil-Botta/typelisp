@@ -1173,6 +1173,189 @@
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
+;; The index of the first declaration named `name`, or -1.
+(define (compiler-symbols-index-named
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [name : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and
+        (< found 0)
+        (< index (csym.compiler-symbols-decl-count symbols)))
+        (let
+          [name-id : i64
+            (csym.compiler-symbols-decl-name-id-at-index symbols index)]
+          (begin
+            (if (and
+              (ci.intern-renderable-id? name-id)
+              (string.eq (ci.intern-str name-id) name))
+              (set! found index)
+              unit)
+            (set! index (+ index 1)))))
+      found)))
+
+;; The in-place owner-name comparison: 1 equal, 0 different, -1 unresolved, or
+;; -2 when a resolved answer disagrees with comparing the rendered owner name.
+(define (compiler-symbols-owner-compare-checked
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [target : i64]
+  [nominal-id : i64]) : i64
+  (let
+    [rendered-equal? : bool
+      (match (csym.compiler-symbols-owner-name-at-index symbols target)
+        [(CompilerSomeString name)
+          (string.eq (ast.ast-nominal-name-id-display nominal-id) name)]
+        [(CompilerNoString) false])]
+    (match (csym.compiler-symbols-owner-name-at-index-compare
+      symbols
+      target
+      nominal-id)
+      [(csym.CompilerOwnerNameComparison.Equal)
+        (if rendered-equal?
+          1
+          -2)]
+      [(csym.CompilerOwnerNameComparison.Different)
+        (if rendered-equal?
+          -2
+          0)]
+      [(csym.CompilerOwnerNameComparison.Unresolved) -1])))
+
+(define (compiler-symbols-owner-compare-ok?) : bool
+  (match (parser.parse-ast-source
+    "(defstruct Top (x i64))
+(module left)
+(defstruct Point (x i64))
+(define (helper) : i64 0)")
+    [(parser.ResultAstProgram.Ok program)
+      (match (csym.build-compiler-symbols program)
+        [(csym.ResultCompilerSymbols.Ok symbols)
+          (let
+            [top : i64 (compiler-symbols-index-named (& symbols) "Top")]
+            [point : i64 (compiler-symbols-index-named (& symbols) "Point")]
+            [helper : i64 (compiler-symbols-index-named (& symbols) "helper")]
+            [left-id : i64
+              (compiler-symbols-owner-module-id-at-index symbols point)]
+            [point-id : i64
+              (csym.compiler-symbols-decl-name-id-at-index symbols point)]
+            [owners : (__tl_dyn-array i64)
+              (csym.compiler-symbols-owner-module-ids symbols)]
+            (and
+              (>= top 0)
+              (>= point 0)
+              (>= helper 0)
+              ;; A qualified source id and the structural module/name pair both
+              ;; display as the owner's name.
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "left/Point"))
+                1)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern-composite-pair-id left-id point-id))
+                1)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  helper
+                  (ci.intern "left/helper"))
+                1)
+              ;; Each part and the separator must match exactly.
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "left/Poin"))
+                0)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "left/Points"))
+                0)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "left.Point"))
+                0)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "lefx/Point"))
+                0)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "Point"))
+                0)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  point
+                  (ci.intern "left/helper"))
+                0)
+              ;; Root owners, macro-local module texts and missing declarations
+              ;; are left to the rendered comparison.
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  top
+                  (ci.intern "Top"))
+                -1)
+              ;; Source cannot spell these owner modules, so the test rewrites
+              ;; Point's owner lane: a module text with the macro-local prefix
+              ;; is left to the rendered comparison, and a structural module
+              ;; renders through its fallback text.
+              (begin
+                (set!
+                  (array-ref owners point)
+                  (ci.intern "__tl_macro_local$hidden"))
+                (=
+                  (compiler-symbols-owner-compare-checked
+                    (& symbols)
+                    point
+                    (ci.intern "__tl_macro_local$hidden/Point"))
+                  -1))
+              (begin
+                (set!
+                  (array-ref owners point)
+                  (ci.intern-composite-pair-id left-id point-id))
+                (and
+                  (=
+                    (compiler-symbols-owner-compare-checked
+                      (& symbols)
+                      point
+                      (ci.intern "<structural-module>/Point"))
+                    1)
+                  (=
+                    (compiler-symbols-owner-compare-checked
+                      (& symbols)
+                      point
+                      (ci.intern "left/Point"))
+                    0)))
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  -1
+                  (ci.intern "left/Point"))
+                -1)
+              (=
+                (compiler-symbols-owner-compare-checked
+                  (& symbols)
+                  (csym.compiler-symbols-decl-count symbols)
+                  (ci.intern "left/Point"))
+                -1)))]
+        [(csym.ResultCompilerSymbols.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
+
 (define (compiler-symbols-module-scope-source) : String
   "(module left)
 (define same : i64 1)
@@ -2130,6 +2313,7 @@
                         (compiler-symbols-append-external-macro-alias-ok?)
                         (compiler-symbols-nominal-decl-ok?)
                         (compiler-symbols-module-scope-ok?)
+                        (compiler-symbols-owner-compare-ok?)
                         (compiler-symbols-structural-id-api-ok?)
                         (compiler-symbols-decl-span-view-ok?)
                         (compiler-symbol-map-fast-path-ok?)

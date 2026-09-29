@@ -102,6 +102,11 @@
   (CompilerNoString)
   (CompilerSomeString String))
 
+(defenum CompilerOwnerNameComparison
+  (Equal)
+  (Different)
+  (Unresolved))
+
 (defenum CompilerRegistries
   (CompilerRegistries CompilerSymbolMap CompilerSymbolMap i64))
 
@@ -2714,29 +2719,28 @@
           inner)]
       [_ fallback])))
 
+;; The declared name of a declaration that owns a nominal module/name key.
+;; `compiler-symbol-owner-id-for-decl` matches the same declaration kinds.
+(define (compiler-symbol-owner-decl-name-id [decl : ast.AstDecl]) : option_i64.Option
+  (match decl
+    [(ast.AstDecl.Def decl-meta name _ _) (option_i64.Some name)]
+    [(ast.AstDecl.DefFn decl-meta name _ _ _ _) (option_i64.Some name)]
+    [(ast.AstDecl.Extern decl-meta name _ _ _) (option_i64.Some name)]
+    [(ast.AstDecl.DefMacro decl-meta name _ _ _) (option_i64.Some name)]
+    [(ast.AstDecl.DefDispatch decl-meta name _) (option_i64.Some name)]
+    [(ast.AstDecl.DefEnum decl-meta name _ _) (option_i64.Some name)]
+    [(ast.AstDecl.DefEnumLifetimes decl-meta name _ _ _) (option_i64.Some name)]
+    [(ast.AstDecl.DefStruct decl-meta name _ _ _) (option_i64.Some name)]
+    [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
+      (option_i64.Some name)]
+    [_ option_i64.None]))
+
 (define (compiler-symbol-owner-name-for-decl
   [decl : ast.AstDecl]
   [module-id : i64]) : String
-  (match decl
-    [(ast.AstDecl.Def decl-meta name _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.Extern decl-meta name _ _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefMacro decl-meta name _ _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefDispatch decl-meta name _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefEnum decl-meta name _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta name _ _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefStruct decl-meta name _ _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
-      (compiler-symbol-module-key-by-id module-id name)]
-    [_ ""]))
+  (match (compiler-symbol-owner-decl-name-id decl)
+    [(option_i64.Some name) (compiler-symbol-module-key-by-id module-id name)]
+    [(option_i64.None) ""]))
 
 (define (compiler-symbol-owner-id-for-decl
   [decl : ast.AstDecl]
@@ -2846,6 +2850,58 @@
         (if (> (string.string-length owner-name) 0)
           (CompilerSomeString owner-name)
           (CompilerNoString))))))
+
+;; Compares the display of the nominal `nominal-id` with the name
+;; `compiler-symbols-owner-name-at-index` renders for `target`, without
+;; rendering that name. When the owner's declared name is renderable and its
+;; module is not the root, that name is `module-text "/" name-text`. Only such
+;; names with a non-empty module text that does not begin with the macro-local
+;; prefix are resolved here; the prefix would make the name read as a hygienic
+;; local rather than a qualified name. Every other owner is Unresolved, its
+;; name must be rendered, and the display is not computed.
+(define (compiler-symbols-owner-name-at-index-compare
+  [symbols : (& symbols CompilerSymbols)]
+  [target : i64]
+  [nominal-id : i64]) : CompilerOwnerNameComparison
+  (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
+    CompilerOwnerNameComparison.Unresolved
+    (let
+      [module-id : i64
+        (array-ref (compiler-symbols-owner-module-ids symbols) target)]
+      (match (compiler-symbol-owner-decl-name-id
+        (ast.ast-array-shared-view (compiler-symbols-decls symbols) target))
+        [(option_i64.Some owner-name-id)
+          (if (or
+            (compiler-symbol-root-module-id? module-id)
+            (not (ci.intern-renderable-id? owner-name-id)))
+            CompilerOwnerNameComparison.Unresolved
+            (let
+              [module-text : String
+                (ci.intern-syntax-name-text-or module-id "<structural-module>")]
+              [module-len : i64 (string.string-length module-text)]
+              (if (or
+                (= module-len 0)
+                (string.is-string-prefix-at
+                  (& module-text)
+                  (ci.intern-macro-local-prefix)
+                  0))
+                CompilerOwnerNameComparison.Unresolved
+                (let
+                  [name-text : String (ci.intern-str owner-name-id)]
+                  [text : String (ast.ast-nominal-name-id-display nominal-id)]
+                  (if (and
+                    (=
+                      (string.string-length text)
+                      (+ module-len (+ 1 (string.string-length name-text))))
+                    (string.char-eq (string.string-ref text module-len) '/')
+                    (string.is-string-prefix-at (& text) (& module-text) 0)
+                    (string.is-string-prefix-at
+                      (& text)
+                      (& name-text)
+                      (+ module-len 1)))
+                    CompilerOwnerNameComparison.Equal
+                    CompilerOwnerNameComparison.Different)))))]
+        [(option_i64.None) CompilerOwnerNameComparison.Unresolved]))))
 
 (define (build-compiler-symbol-list-in-module
   [all-decls : ast.AstDeclList]

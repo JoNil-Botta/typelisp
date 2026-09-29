@@ -6,6 +6,7 @@
 ;; final function addresses.  The supported dialect is pinned below.
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 
 (define compiler-sframe-v3-magic : i64
   0xdee2)
@@ -194,44 +195,6 @@
   [count : i64]) : bool
   (and (>= start 0) (>= count 0) (<= start length) (<= count (- length start))))
 
-(define (compiler-sframe-v3-read-u8
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (cast (array-ref bytes offset) : i64))
-
-(define (compiler-sframe-v3-read-u16
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (+
-    (compiler-sframe-v3-read-u8 bytes offset)
-    (shl (compiler-sframe-v3-read-u8 bytes (+ offset 1)) 8)))
-
-(define (compiler-sframe-v3-read-u32
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (+
-    (compiler-sframe-v3-read-u16 bytes offset)
-    (shl (compiler-sframe-v3-read-u16 bytes (+ offset 2)) 16)))
-
-(define (compiler-sframe-v3-read-i64
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (let
-    [value : u64 (cast 0 : u64)]
-    [index : i64 0]
-    (begin
-      (while (< index 8)
-        (begin
-          (set!
-            value
-            (bit-or
-              value
-              (shl
-                (cast (compiler-sframe-v3-read-u8 bytes (+ offset index)) : u64)
-                (* index 8))))
-          (set! index (+ index 1))))
-      (cast value : i64))))
-
 (define (compiler-sframe-v3-sign-extend [value : i64] [width : i64]) : i64
   (cond
     [(= width 1)
@@ -253,9 +216,9 @@
   [offset : i64]
   [width : i64]) : i64
   (cond
-    [(= width 1) (compiler-sframe-v3-read-u8 bytes offset)]
-    [(= width 2) (compiler-sframe-v3-read-u16 bytes offset)]
-    [else (compiler-sframe-v3-read-u32 bytes offset)]))
+    [(= width 1) (byte_le.byte-le-at bytes offset)]
+    [(= width 2) (byte_le.read-u16 bytes offset)]
+    [else (byte_le.read-u32 bytes offset)]))
 
 (define (compiler-sframe-v3-read-signed-word
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -464,8 +427,8 @@
               "sframe v3: truncated header"))))
       (when
         (or
-          (!= (compiler-sframe-v3-read-u16 bytes 0) compiler-sframe-v3-magic)
-          (!= (compiler-sframe-v3-read-u8 bytes 2) compiler-sframe-v3-version))
+          (!= (byte_le.read-u16 bytes 0) compiler-sframe-v3-magic)
+          (!= (byte_le.byte-le-at bytes 2) compiler-sframe-v3-version))
         (return
           (ResultCompilerSframeV3Image.Err
             (compiler-sframe-v3-error
@@ -473,18 +436,16 @@
               0
               "sframe v3: unsupported magic or version"))))
       (let
-        [flags : i64 (compiler-sframe-v3-read-u8 bytes 3)]
-        [abi : i64 (compiler-sframe-v3-read-u8 bytes 4)]
-        [fixed-fp : i64
-          (compiler-sframe-v3-i8 (compiler-sframe-v3-read-u8 bytes 5))]
-        [fixed-ra : i64
-          (compiler-sframe-v3-i8 (compiler-sframe-v3-read-u8 bytes 6))]
-        [aux-length : i64 (compiler-sframe-v3-read-u8 bytes 7)]
-        [function-count : i64 (compiler-sframe-v3-read-u32 bytes 8)]
-        [declared-row-count : i64 (compiler-sframe-v3-read-u32 bytes 12)]
-        [fre-bytes : i64 (compiler-sframe-v3-read-u32 bytes 16)]
-        [fde-offset : i64 (compiler-sframe-v3-read-u32 bytes 20)]
-        [fre-offset : i64 (compiler-sframe-v3-read-u32 bytes 24)]
+        [flags : i64 (byte_le.byte-le-at bytes 3)]
+        [abi : i64 (byte_le.byte-le-at bytes 4)]
+        [fixed-fp : i64 (compiler-sframe-v3-i8 (byte_le.byte-le-at bytes 5))]
+        [fixed-ra : i64 (compiler-sframe-v3-i8 (byte_le.byte-le-at bytes 6))]
+        [aux-length : i64 (byte_le.byte-le-at bytes 7)]
+        [function-count : i64 (byte_le.read-u32 bytes 8)]
+        [declared-row-count : i64 (byte_le.read-u32 bytes 12)]
+        [fre-bytes : i64 (byte_le.read-u32 bytes 16)]
+        [fde-offset : i64 (byte_le.read-u32 bytes 20)]
+        [fre-offset : i64 (byte_le.read-u32 bytes 24)]
         [index-bytes : i64 (* function-count compiler-sframe-v3-index-size)]
         [fde-start : i64 (+ compiler-sframe-v3-header-size fde-offset)]
         [fre-start : i64 (+ compiler-sframe-v3-header-size fre-offset)]
@@ -600,12 +561,11 @@
                     (+
                       fde-start
                       (* function-index compiler-sframe-v3-index-size))]
-                  [raw-start : i64
-                    (compiler-sframe-v3-read-i64 bytes index-offset)]
+                  [raw-start : i64 (byte_le.read-u64 bytes index-offset)]
                   [function-size : i64
-                    (compiler-sframe-v3-read-u32 bytes (+ index-offset 8))]
+                    (byte_le.read-u32 bytes (+ index-offset 8))]
                   [function-fre-offset : i64
-                    (compiler-sframe-v3-read-u32 bytes (+ index-offset 12))]
+                    (byte_le.read-u32 bytes (+ index-offset 12))]
                   [start-base-offset : i64
                     (if field-pcrel?
                       index-offset
@@ -686,19 +646,13 @@
                                 "sframe v3: truncated function attributes"))))
                         (let
                           [function-row-count : i64
-                            (compiler-sframe-v3-read-u16 bytes attribute-offset)]
+                            (byte_le.read-u16 bytes attribute-offset)]
                           [info : i64
-                            (compiler-sframe-v3-read-u8
-                              bytes
-                              (+ attribute-offset 2))]
+                            (byte_le.byte-le-at bytes (+ attribute-offset 2))]
                           [info2 : i64
-                            (compiler-sframe-v3-read-u8
-                              bytes
-                              (+ attribute-offset 3))]
+                            (byte_le.byte-le-at bytes (+ attribute-offset 3))]
                           [repetition-size : i64
-                            (compiler-sframe-v3-read-u8
-                              bytes
-                              (+ attribute-offset 4))]
+                            (byte_le.byte-le-at bytes (+ attribute-offset 4))]
                           [fre-type : i64 (bit-and info 15)]
                           [mask-pc? : bool (!= (bit-and info 16) 0)]
                           [signal-frame? : bool (!= (bit-and info 128) 0)]
@@ -779,7 +733,7 @@
                                             row-byte-offset
                                             start-width)]
                                         [row-info : i64
-                                          (compiler-sframe-v3-read-u8
+                                          (byte_le.byte-le-at
                                             bytes
                                             (+ row-byte-offset start-width))]
                                         [word-count : i64

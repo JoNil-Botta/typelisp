@@ -223,6 +223,7 @@ format_writer_core.tl
 ffi.tl
 hash.tl
 hashmap.tl
+leb128.tl
 net/http_head_codec.tl
 net/http_trailer.tl
 net/http_trailer_policy.tl

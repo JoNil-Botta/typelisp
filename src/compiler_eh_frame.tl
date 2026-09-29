@@ -14,6 +14,8 @@
 ;; augmentations and pointer encodings, DW_CFA_set_loc, expression opcodes and
 ;; unknown opcodes fail closed.
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
+(import stdlib.leb128)
 (import stdlib.string)
 
 (define compiler-eh-frame-pe-udata4 : i64
@@ -194,30 +196,11 @@
     (>= limits.max-state-depth 0)
     (>= limits.max-work 0)))
 
-(define (compiler-eh-frame-read-u8
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (cast (array-ref bytes offset) : i64))
-
-(define (compiler-eh-frame-read-u16
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (+
-    (compiler-eh-frame-read-u8 bytes offset)
-    (shl (compiler-eh-frame-read-u8 bytes (+ offset 1)) 8)))
-
-(define (compiler-eh-frame-read-u32
-  [bytes : (& bytes (__tl_dyn-array u8))]
-  [offset : i64]) : i64
-  (+
-    (compiler-eh-frame-read-u16 bytes offset)
-    (shl (compiler-eh-frame-read-u16 bytes (+ offset 2)) 16)))
-
 (define (compiler-eh-frame-read-i32
   [bytes : (& bytes (__tl_dyn-array u8))]
   [offset : i64]) : i64
   (let
-    [value : i64 (compiler-eh-frame-read-u32 bytes offset)]
+    [value : i64 (byte_le.read-u32 bytes offset)]
     (if (>= value 2147483648)
       (- value 4294967296)
       value)))
@@ -235,134 +218,32 @@
   [value : i64]) : unit
   (byte_buf_core.byte-buf-builder-push out (cast (bit-and value 255) : u8)))
 
-(define (compiler-eh-frame-push-u32!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index 4)
-      (begin
-        (compiler-eh-frame-push-u8! out (shr value (* index 8)))
-        (set! index (+ index 1))))))
-
 ;; --- LEB128 ------------------------------------------------------------------
-;; A decoded LEB128 operand: its value and the offset just past it, or `ok?`
-;; false for a truncated, overlong or out-of-range encoding.  Values are
-;; limited to [0, 2^62) unsigned and [-2^62, 2^62) signed, far beyond any
-;; admitted operand, so later arithmetic on them cannot overflow.
-(defstruct CompilerEhFrameLeb
-  (ok? bool)
-  (value i64)
-  (next i64))
-
+;; The admitted LEB128 operand at `offset`: `stdlib.leb128`'s decode, further
+;; limited to nine bytes and to [0, 2^62) unsigned or [-2^62, 2^62) signed, far
+;; beyond any admitted operand, so later arithmetic on it cannot overflow.
+;; `ok?` is false for a truncated, overlong or out-of-range encoding.
 (define (compiler-eh-frame-leb
   [bytes : (& bytes (__tl_dyn-array u8))]
   [offset : i64]
   [end : i64]
-  [signed? : bool]) : CompilerEhFrameLeb
+  [signed? : bool]) : leb128.Decoded
   (let
-    [value : i64 0]
-    [shift : i64 0]
-    [at : i64 offset]
-    [done : bool false]
-    [ok : bool true]
-    (begin
-      (while (and ok (not done))
-        (if (or (>= at end) (>= shift 63))
-          (set! ok false)
-          (let
-            [byte : i64 (compiler-eh-frame-read-u8 bytes at)]
-            [payload : i64 (bit-and byte 127)]
-            (begin
-              ;; An unsigned 9th group (shift 56) may only carry 6 value
-              ;; bits; a signed one also carries the sign in its bit 6.
-              (when
-                (and (not signed?) (= shift 56) (> payload 63))
-                (set! ok false))
-              (set! value (bit-or value (shl payload shift)))
-              (set! shift (+ shift 7))
-              (set! at (+ at 1))
-              (when (< byte 128) (set! done true))))))
-      (if (not ok)
-        (CompilerEhFrameLeb false 0 at)
-        (let
-          [result : i64
-            (if (and signed? (!= (bit-and value (shl 1 (- shift 1))) 0))
-              (bit-or value (shl -1 shift))
-              value)]
-          (if (and
-            (>= result (- 0 4611686018427387904))
-            (<= result 4611686018427387903)
-            (or signed? (>= result 0)))
-            (CompilerEhFrameLeb true result at)
-            (CompilerEhFrameLeb false 0 at)))))))
-
-(define (compiler-eh-frame-uleb-size [value : i64]) : i64
-  (let
-    [size : i64 1]
-    [rest : i64 (shr value 7)]
-    (begin
-      (while (> rest 0)
-        (begin
-          (set! size (+ size 1))
-          (set! rest (shr rest 7))))
-      size)))
-
-(define (compiler-eh-frame-sleb-size [value : i64]) : i64
-  (let
-    [size : i64 1]
-    [rest : i64 value]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [byte : i64 (bit-and rest 127)]
-          [next : i64 (shr rest 7)]
-          (if (or
-            (and (= next 0) (= (bit-and byte 64) 0))
-            (and (= next -1) (!= (bit-and byte 64) 0)))
-            (set! done true)
-            (begin
-              (set! size (+ size 1))
-              (set! rest next)))))
-      size)))
-
-(define (compiler-eh-frame-push-uleb!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [rest : i64 value]
-    [done : bool false]
-    (while (not done)
-      (let
-        [byte : i64 (bit-and rest 127)]
-        (begin
-          (set! rest (shr rest 7))
-          (if (= rest 0)
-            (begin
-              (compiler-eh-frame-push-u8! out byte)
-              (set! done true))
-            (compiler-eh-frame-push-u8! out (bit-or byte 128))))))))
-
-(define (compiler-eh-frame-push-sleb!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [value : i64]) : unit
-  (let
-    [rest : i64 value]
-    [done : bool false]
-    (while (not done)
-      (let
-        [byte : i64 (bit-and rest 127)]
-        [next : i64 (shr rest 7)]
-        (if (or
-          (and (= next 0) (= (bit-and byte 64) 0))
-          (and (= next -1) (!= (bit-and byte 64) 0)))
-          (begin
-            (compiler-eh-frame-push-u8! out byte)
-            (set! done true))
-          (begin
-            (compiler-eh-frame-push-u8! out (bit-or byte 128))
-            (set! rest next)))))))
+    [decoded : leb128.Decoded
+      (if signed?
+        (leb128.decode-signed bytes offset end)
+        (leb128.decode-unsigned bytes offset end))]
+    (if (and
+      decoded.ok?
+      (<= (- decoded.next offset) 9)
+      (>=
+        decoded.value
+        (if signed?
+          (- 0 4611686018427387904)
+          0))
+      (<= decoded.value 4611686018427387903))
+      decoded
+      (leb128.Decoded false 0 decoded.next))))
 
 ;; --- CFA programs ------------------------------------------------------------
 ;; The result of checking one CFA program: `end` is the offset just past its
@@ -402,7 +283,7 @@
       (while (and (< at end) (string.eq message ""))
         (let
           [op-at : i64 at]
-          [op : i64 (compiler-eh-frame-read-u8 bytes at)]
+          [op : i64 (byte_le.byte-le-at bytes at)]
           [high : i64 (shr op 6)]
           [low : i64 (bit-and op 63)]
           ;; -1: no advance; otherwise the unscaled delta.
@@ -418,7 +299,7 @@
               [(= high 1) (set! advance low)]
               [(= high 2)
                 (let
-                  [operand : CompilerEhFrameLeb
+                  [operand : leb128.Decoded
                     (compiler-eh-frame-leb bytes at end false)]
                   (begin
                     (set! register-a low)
@@ -437,19 +318,19 @@
                 (if (> (+ at 1) end)
                   (set! ok false)
                   (begin
-                    (set! advance (compiler-eh-frame-read-u8 bytes at))
+                    (set! advance (byte_le.byte-le-at bytes at))
                     (set! at (+ at 1))))]
               [(= op 0x03)
                 (if (> (+ at 2) end)
                   (set! ok false)
                   (begin
-                    (set! advance (compiler-eh-frame-read-u16 bytes at))
+                    (set! advance (byte_le.read-u16 bytes at))
                     (set! at (+ at 2))))]
               [(= op 0x04)
                 (if (> (+ at 4) end)
                   (set! ok false)
                   (begin
-                    (set! advance (compiler-eh-frame-read-u32 bytes at))
+                    (set! advance (byte_le.read-u32 bytes at))
                     (set! at (+ at 4))))]
               ;; register, operand: offset_extended, register, def_cfa,
               ;; val_offset (both ULEB) and the _sf forms (SLEB second).
@@ -462,9 +343,9 @@
                   (= op 0x14)
                   (= op 0x15))
                 (let
-                  [first : CompilerEhFrameLeb
+                  [first : leb128.Decoded
                     (compiler-eh-frame-leb bytes at end false)]
-                  [second : CompilerEhFrameLeb
+                  [second : leb128.Decoded
                     (compiler-eh-frame-leb
                       bytes
                       first.next
@@ -479,7 +360,7 @@
               ;; same_value, def_cfa_register.
               [(or (= op 0x06) (= op 0x07) (= op 0x08) (= op 0x0d))
                 (let
-                  [operand : CompilerEhFrameLeb
+                  [operand : leb128.Decoded
                     (compiler-eh-frame-leb bytes at end false)]
                   (if (and cie? (= op 0x06))
                     (set!
@@ -493,7 +374,7 @@
               ;; (SLEB), GNU_args_size (ULEB).
               [(or (= op 0x0e) (= op 0x13) (= op 0x2e))
                 (let
-                  [operand : CompilerEhFrameLeb
+                  [operand : leb128.Decoded
                     (compiler-eh-frame-leb bytes at end (= op 0x13))]
                   (if (and cie? (= op 0x2e))
                     (set! message "cfa: DW_CFA_GNU_args_size in a CIE program")
@@ -592,7 +473,7 @@
           [record-length : i64
             (if (> (+ at 4) length)
               -1
-              (compiler-eh-frame-read-u32 bytes at))]
+              (byte_le.read-u32 bytes at))]
           (cond
             [(< record-length 0)
               (begin
@@ -636,7 +517,7 @@
                 (set! message "eh_frame: record limit exceeded"))]
             [else
               (begin
-                (if (= (compiler-eh-frame-read-u32 bytes (+ at 4)) 0)
+                (if (= (byte_le.read-u32 bytes (+ at 4)) 0)
                   (set! cies (+ cies 1))
                   (set! fdes (+ fdes 1)))
                 (set! at (+ at (+ 4 record-length))))])))
@@ -736,8 +617,8 @@
               (while (< (+ cie-count fde-count) (+ framing.cies framing.fdes))
                 (let
                   [record : i64 at]
-                  [end : i64 (+ at (+ 4 (compiler-eh-frame-read-u32 bytes at)))]
-                  [id : i64 (compiler-eh-frame-read-u32 bytes (+ at 4))]
+                  [end : i64 (+ at (+ 4 (byte_le.read-u32 bytes at)))]
+                  [id : i64 (byte_le.read-u32 bytes (+ at 4))]
                   (begin
                     (set! at end)
                     (if (= id 0)
@@ -831,7 +712,7 @@
                               (compiler-eh-frame-read-i32 bytes (+ record 8))]
                             [range : i64
                               (compiler-eh-frame-read-i32 bytes (+ record 12))]
-                            [augmentation : CompilerEhFrameLeb
+                            [augmentation : leb128.Decoded
                               (compiler-eh-frame-leb
                                 bytes
                                 (+ record 16)
@@ -977,7 +858,7 @@
               at
               "eh_frame: CIE too short for its fixed fields"))))
       (when
-        (!= (compiler-eh-frame-read-u8 bytes at) 1)
+        (!= (byte_le.byte-le-at bytes at) 1)
         (return
           (ResultCompilerEhFrameCieParse.Err
             (compiler-eh-frame-error
@@ -988,9 +869,9 @@
               "eh_frame: only CIE version 1 is admitted"))))
       (when
         (or
-          (!= (compiler-eh-frame-read-u8 bytes (+ at 1)) 122)
-          (!= (compiler-eh-frame-read-u8 bytes (+ at 2)) 82)
-          (!= (compiler-eh-frame-read-u8 bytes (+ at 3)) 0))
+          (!= (byte_le.byte-le-at bytes (+ at 1)) 122)
+          (!= (byte_le.byte-le-at bytes (+ at 2)) 82)
+          (!= (byte_le.byte-le-at bytes (+ at 3)) 0))
         (return
           (ResultCompilerEhFrameCieParse.Err
             (compiler-eh-frame-error
@@ -1000,10 +881,8 @@
               (+ at 1)
               "eh_frame: only CIE augmentation \"zR\" is admitted"))))
       (let
-        [code : CompilerEhFrameLeb
-          (compiler-eh-frame-leb bytes (+ at 4) end false)]
-        [data : CompilerEhFrameLeb
-          (compiler-eh-frame-leb bytes code.next end true)]
+        [code : leb128.Decoded (compiler-eh-frame-leb bytes (+ at 4) end false)]
+        [data : leb128.Decoded (compiler-eh-frame-leb bytes code.next end true)]
         (begin
           (when
             (or (not code.ok?) (not data.ok?))
@@ -1043,8 +922,8 @@
                   data.next
                   "eh_frame: CIE too short for its augmentation data"))))
           (let
-            [return-register : i64 (compiler-eh-frame-read-u8 bytes data.next)]
-            [augmentation : CompilerEhFrameLeb
+            [return-register : i64 (byte_le.byte-le-at bytes data.next)]
+            [augmentation : leb128.Decoded
               (compiler-eh-frame-leb bytes (+ data.next 1) end false)]
             (begin
               (when
@@ -1072,7 +951,7 @@
                       "eh_frame: \"zR\" CIE augmentation data must be one pointer-encoding byte"))))
               (when
                 (!=
-                  (compiler-eh-frame-read-u8 bytes augmentation.next)
+                  (byte_le.byte-le-at bytes augmentation.next)
                   compiler-eh-frame-pe-pcrel-sdata4)
                 (return
                   (ResultCompilerEhFrameCieParse.Err
@@ -1358,8 +1237,8 @@
 (define (compiler-eh-frame-cie-size [cie : (& cie CompilerEhFrameCie)]) : i64
   (compiler-eh-frame-align
     (+
-      (+ 15 (compiler-eh-frame-uleb-size cie.code-alignment))
-      (+ (compiler-eh-frame-sleb-size cie.data-alignment) cie.program-length))))
+      (+ 15 (leb128.unsigned-size cie.code-alignment))
+      (+ (leb128.signed-size cie.data-alignment) cie.program-length))))
 
 ;; Encoded FDE record size: length, CIE pointer, location, range, empty
 ;; augmentation, program, padding.
@@ -1622,18 +1501,14 @@
                         cie-offset
                         (byte_buf_core.byte-buf-builder-len (& out)))
                       (set! current-id id)
-                      (compiler-eh-frame-push-u32! (&mut out) (- size 4))
-                      (compiler-eh-frame-push-u32! (&mut out) 0)
+                      (byte_le.push-u32! (&mut out) (- size 4))
+                      (byte_le.push-u32! (&mut out) 0)
                       (compiler-eh-frame-push-u8! (&mut out) 1)
                       (compiler-eh-frame-push-u8! (&mut out) 122)
                       (compiler-eh-frame-push-u8! (&mut out) 82)
                       (compiler-eh-frame-push-u8! (&mut out) 0)
-                      (compiler-eh-frame-push-uleb!
-                        (&mut out)
-                        cie.code-alignment)
-                      (compiler-eh-frame-push-sleb!
-                        (&mut out)
-                        cie.data-alignment)
+                      (leb128.push-unsigned! (&mut out) cie.code-alignment)
+                      (leb128.push-signed! (&mut out) cie.data-alignment)
                       (compiler-eh-frame-push-u8!
                         (&mut out)
                         cie.return-register)
@@ -1670,10 +1545,10 @@
                         (compiler-eh-frame-encode-error
                           compiler-eh-frame-error-address
                           "eh_frame: CIE pointer overflows its 32-bit field")))
-                    (compiler-eh-frame-push-u32! (&mut out) (- size 4))
-                    (compiler-eh-frame-push-u32! (&mut out) cie-pointer)
-                    (compiler-eh-frame-push-u32! (&mut out) location)
-                    (compiler-eh-frame-push-u32! (&mut out) fde.range)
+                    (byte_le.push-u32! (&mut out) (- size 4))
+                    (byte_le.push-u32! (&mut out) cie-pointer)
+                    (byte_le.push-u32! (&mut out) location)
+                    (byte_le.push-u32! (&mut out) fde.range)
                     (compiler-eh-frame-push-u8! (&mut out) 0)
                     (compiler-eh-frame-push-program!
                       (&mut out)
@@ -1691,7 +1566,7 @@
                         fde.range
                         (+ section-address fde-offset)))))
                 (set! index (+ index 1)))))
-          (compiler-eh-frame-push-u32! (&mut out) 0)
+          (byte_le.push-u32! (&mut out) 0)
           ;; Two FDEs claiming one code address leave an unwinder no way to
           ;; choose, whether or not a search header is built.
           (match (compiler-eh-frame-sorted-rows (& rows))
@@ -1925,8 +1800,8 @@
               (compiler-eh-frame-push-u8!
                 (&mut out)
                 compiler-eh-frame-pe-datarel-sdata4)
-              (compiler-eh-frame-push-u32! (&mut out) pointer)
-              (compiler-eh-frame-push-u32! (&mut out) count)
+              (byte_le.push-u32! (&mut out) pointer)
+              (byte_le.push-u32! (&mut out) count)
               (set! index 0)
               (while (< index count)
                 (let
@@ -1944,8 +1819,8 @@
                             compiler-eh-frame-error-address
                             (+ compiler-eh-frame-header-size (* index 8))
                             "eh_frame_hdr: table displacement overflows sdata4"))))
-                    (compiler-eh-frame-push-u32! (&mut out) location)
-                    (compiler-eh-frame-push-u32! (&mut out) fde)
+                    (byte_le.push-u32! (&mut out) location)
+                    (byte_le.push-u32! (&mut out) fde)
                     (set! index (+ index 1)))))
               (ResultCompilerEhFrameHeaderBytes.Ok
                 (byte_buf_core.byte-buf-builder-finish-array (& out)))))]))))
@@ -1995,16 +1870,10 @@
               "eh_frame_hdr: truncated header"))))
       (when
         (or
-          (!=
-            (compiler-eh-frame-read-u8 bytes 0)
-            compiler-eh-frame-header-version)
-          (!=
-            (compiler-eh-frame-read-u8 bytes 1)
-            compiler-eh-frame-pe-pcrel-sdata4)
-          (!= (compiler-eh-frame-read-u8 bytes 2) compiler-eh-frame-pe-udata4)
-          (!=
-            (compiler-eh-frame-read-u8 bytes 3)
-            compiler-eh-frame-pe-datarel-sdata4))
+          (!= (byte_le.byte-le-at bytes 0) compiler-eh-frame-header-version)
+          (!= (byte_le.byte-le-at bytes 1) compiler-eh-frame-pe-pcrel-sdata4)
+          (!= (byte_le.byte-le-at bytes 2) compiler-eh-frame-pe-udata4)
+          (!= (byte_le.byte-le-at bytes 3) compiler-eh-frame-pe-datarel-sdata4))
         (return
           (ResultCompilerEhFrameHeader.Err
             (compiler-eh-frame-header-error
@@ -2012,7 +1881,7 @@
               0
               "eh_frame_hdr: only version 1 with pcrel|sdata4, udata4 and datarel|sdata4 is admitted"))))
       (let
-        [count : i64 (compiler-eh-frame-read-u32 bytes 8)]
+        [count : i64 (byte_le.read-u32 bytes 8)]
         (begin
           (when
             (> count limits.max-records)

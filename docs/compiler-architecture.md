@@ -355,6 +355,23 @@ always-failing literal bounds check hoists nothing. The `licm-deref` optimizer
 test and `tests/integration/licm_raw_deref.tl` guard these rules; #8124 tracks
 a checked pointer loaded speculatively from an enum payload.
 
+An element read refused only for want of that bound can still leave a counting
+loop whose one exit is the latch's, behind the bound its own check tests. When
+a `bounds_check i, len` (or the unsigned test whose edge leads there) comes
+before the read, with `i`, `len` and the address all available at the
+preheader, the preheader branches on `lt i, len : u64` to a block that does the
+read, and a join takes the loaded word or a zero. The loop keeps its check,
+which dominates every use of the value and tests the same two values, so the
+zero never reaches a use and no unbounded address is read. Reads of checked
+pointer types, reads wider than a word or than one element, and reads reached
+only through an equality's equal edge are left in place. One LICM run below the
+level-2 fixpoint and every loop-cloning pass places these guards and moves
+nothing else. It analyses only loops where a block checks an invariant index
+and then reads an invariant address, which a syntactic scan finds first, and
+it records one plan per read during the loop walk and builds the diamonds
+afterwards, so no loop's body or dominator facts change under the walk. The `licm-guard` optimizer test and `tests/integration/licm_guarded_read.tl`
+cover it.
+
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.
 These internal shallow reads require valid storage and an index below logical len.

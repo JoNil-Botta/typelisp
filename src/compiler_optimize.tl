@@ -24349,15 +24349,18 @@
   ;; var that is not a phi.
   (phis (__tl_dyn-array i64))
   ;; `index <u len` rows keyed by the index var after copy resolution: CSR
-  ;; offsets over `frame + 1` slots, the bounding length, and the dense id of
-  ;; the block the fact holds in.
+  ;; offsets over `frame + 1` slots, the bounding length, the dense id of the
+  ;; block the fact holds in, and where in it: the check's instruction index,
+  ;; or -1 for a branch edge's fact, which holds from the block's entry.
   (offsets (__tl_dyn-array i64))
   (lens (__tl_dyn-array ir.CompilerIrValue))
   (blocks (__tl_dyn-array i64))
+  (positions (__tl_dyn-array i64))
   ;; Rows whose index is a nonnegative literal, scanned linearly.
   (literal-indexes (__tl_dyn-array i64))
   (literal-lens (__tl_dyn-array ir.CompilerIrValue))
-  (literal-blocks (__tl_dyn-array i64)))
+  (literal-blocks (__tl_dyn-array i64))
+  (literal-positions (__tl_dyn-array i64)))
 
 ;; What the scan of the function's blocks records beside `defs`
 ;; (opt-licm-deref-defs-fill-instrs!).
@@ -24379,12 +24382,16 @@
   (jumps (__tl_dyn-array i64)))
 
 ;; The facts, and where one loop's hoist lands: the dominator tree, the
-;; preheader's dense id (-1 proves nothing) and the loop header's.
+;; preheader's dense id (-1 proves nothing) and the loop header's. `guard?`
+;; admits guarded reads, which the walk records in `plans[0]`
+;; (opt-licm-guard-plan!).
 (defstruct OptLicmDerefSite
   (facts OptLicmDerefFacts)
   (doms OptDomInfo)
   (at i64)
-  (header i64))
+  (header i64)
+  (guard? bool)
+  (plans (__tl_dyn-array OptLicmGuardPlans)))
 
 ;; The two passes of the fact scan share one walk. With `fill?` false a row is
 ;; COUNTED -- on `cursor[key + 1]`, or on `literal-cursor[0]` -- and with
@@ -24394,10 +24401,12 @@
   (cursor (__tl_dyn-array i64))
   (lens (__tl_dyn-array ir.CompilerIrValue))
   (blocks (__tl_dyn-array i64))
+  (positions (__tl_dyn-array i64))
   (literal-cursor (__tl_dyn-array i64))
   (literal-indexes (__tl_dyn-array i64))
   (literal-lens (__tl_dyn-array ir.CompilerIrValue))
-  (literal-blocks (__tl_dyn-array i64)))
+  (literal-blocks (__tl_dyn-array i64))
+  (literal-positions (__tl_dyn-array i64)))
 
 (define (opt-licm-deref-fuel) : i64
   8)
@@ -24596,14 +24605,15 @@
           index
           blocks))]))
 
-;; One `index <u len` row holding in dense block `block`.
+;; One `index <u len` row holding in dense block `block` from `position` on.
 (define (opt-licm-deref-row!
   [sink : OptLicmDerefSink]
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [sources : (& sources OptValueSources)]
   [index : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]
-  [block : i64]) : unit
+  [block : i64]
+  [position : i64]) : unit
   (match (opt-licm-deref-resolve defs sources index (opt-licm-deref-fuel))
     [(ir.CompilerIrValue.Var var)
       (let
@@ -24619,6 +24629,7 @@
               (begin
                 (set! (array-ref sink.lens slot) len)
                 (set! (array-ref sink.blocks slot) block)
+                (set! (array-ref sink.positions slot) position)
                 (set! (array-ref cursor var) (+ slot 1))))
             (set!
               (array-ref cursor (+ var 1))
@@ -24634,7 +24645,8 @@
               (begin
                 (set! (array-ref sink.literal-indexes slot) literal)
                 (set! (array-ref sink.literal-lens slot) len)
-                (set! (array-ref sink.literal-blocks slot) block))
+                (set! (array-ref sink.literal-blocks slot) block)
+                (set! (array-ref sink.literal-positions slot) position))
               unit)
             (set! (array-ref cursor 0) (+ slot 1)))))]
     [_ unit]))
@@ -24717,7 +24729,7 @@
                       (opt-binop-eq
                         (compiler-opt-global-shared-view op)
                         (ir.CompilerIrBinOp.Ge))))
-                  (opt-licm-deref-row! sink defs sources lhs rhs block)]
+                  (opt-licm-deref-row! sink defs sources lhs rhs block -1)]
                 ;; `rhs < lhs` holds: taken `gt`, or `le` not taken.
                 [(or
                     (and
@@ -24726,7 +24738,7 @@
                         (compiler-opt-global-shared-view op)
                         (ir.CompilerIrBinOp.Gt)))
                     (and (not taken?) (opt-binop-eq op (ir.CompilerIrBinOp.Le))))
-                  (opt-licm-deref-row! sink defs sources rhs lhs block)]
+                  (opt-licm-deref-row! sink defs sources rhs lhs block -1)]
                 [else unit]))]
           [_ unit]))]
     [_ unit]))
@@ -24772,7 +24784,8 @@
                   sources
                   check-index
                   length
-                  id)]
+                  id
+                  cursor)]
               [(ir.CompilerIrInstr.Branch cond true-label false-label)
                 (if (= true-label false-label)
                   unit
@@ -24895,9 +24908,11 @@
           (compiler-opt-global-shared-view offsets)
           (__tl_make-array ir.CompilerIrValue 0)
           (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
           (compiler-opt-global-shared-view literal-count)
           (__tl_make-array i64 0)
           (__tl_make-array ir.CompilerIrValue 0)
+          (__tl_make-array i64 0)
           (__tl_make-array i64 0))
         defs
         sources
@@ -24917,6 +24932,7 @@
     [lens : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue total)]
     [rows : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [positions : (__tl_dyn-array i64) (__tl_make-array i64 total)]
     [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
     [_cursor : unit
       (let
@@ -24930,6 +24946,7 @@
     [literal-lens : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue literals)]
     [literal-blocks : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
+    [literal-positions : (__tl_dyn-array i64) (__tl_make-array i64 literals)]
     (begin
       (opt-licm-deref-scan-blocks!
         (OptLicmDerefSink
@@ -24937,10 +24954,12 @@
           cursor
           (compiler-opt-global-shared-view lens)
           (compiler-opt-global-shared-view rows)
+          (compiler-opt-global-shared-view positions)
           literal-cursor
           (compiler-opt-global-shared-view literal-indexes)
           (compiler-opt-global-shared-view literal-lens)
-          (compiler-opt-global-shared-view literal-blocks))
+          (compiler-opt-global-shared-view literal-blocks)
+          (compiler-opt-global-shared-view literal-positions))
         defs
         sources
         index
@@ -24954,9 +24973,11 @@
         offsets
         lens
         rows
+        positions
         literal-indexes
         literal-lens
-        literal-blocks))))
+        literal-blocks
+        literal-positions))))
 
 ;; A descriptor, as one comparable key: a single-definition handle var (copies
 ;; looked through) is its var id, and a header-typed global -- whose own
@@ -25156,88 +25177,108 @@
             [_ (OptLicmDerefAddress.No)])]
         [_ (OptLicmDerefAddress.No)]))))
 
-;; Is `index <u length-of(key)` proven where the site's hoist lands?
+;; The length of a row bounding `index` by the length word of descriptor `key`
+;; that holds at instruction `position` of dense block `at`: the row's block
+;; dominates `at`, and inside `at` the row comes first. A literal index is
+;; bounded by a row of the same descriptor at a literal at least as large.
+(define (opt-licm-deref-bound
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
+  [facts : (& facts OptLicmDerefFacts)]
+  [doms : (& doms OptDomInfo)]
+  [index : ir.CompilerIrValue]
+  [key : i64]
+  [at : i64]
+  [position : i64]) : ir.CompilerIrMaybeValue
+  (let
+    [literal? : bool false]
+    [literal : i64 0]
+    [row : i64 0]
+    [end : i64 0]
+    [found? : bool false]
+    [found : ir.CompilerIrMaybeValue (ir.CompilerIrMaybeValue.No)]
+    (begin
+      (if (< at 0)
+        unit
+        (match (opt-licm-deref-resolve
+          facts.defs
+          facts.sources
+          index
+          (opt-licm-deref-fuel))
+          [(ir.CompilerIrValue.Var var)
+            (if (and
+              (opt-gvn-stable-var? facts.sources var)
+              (>= var 0)
+              (< (+ var 1) (array-length facts.offsets)))
+              (begin
+                (set! row (array-ref facts.offsets var))
+                (set! end (array-ref facts.offsets (+ var 1))))
+              unit)]
+          [(ir.CompilerIrValue.I64 value)
+            (if (>= value 0)
+              (begin
+                (set! literal? true)
+                (set! literal value)
+                (set! end (array-length facts.literal-indexes)))
+              unit)]
+          [_ unit]))
+      (while (and (not found?) (< row end))
+        (let
+          [block : i64
+            (if literal?
+              (array-ref facts.literal-blocks row)
+              (array-ref facts.blocks row))]
+          [row-position : i64
+            (if literal?
+              (array-ref facts.literal-positions row)
+              (array-ref facts.positions row))]
+          [len : ir.CompilerIrValue
+            (if literal?
+              (compiler-opt-global-array-element-shared-view
+                facts.literal-lens
+                row)
+              (compiler-opt-global-array-element-shared-view facts.lens row))]
+          (begin
+            (if (and
+              (or
+                (not literal?)
+                (>= (array-ref facts.literal-indexes row) literal))
+              (opt-dom-info-dominates-id? doms block at)
+              (or (not (= block at)) (< row-position position))
+              (=
+                (opt-licm-deref-word-owner
+                  type-segment-bases
+                  types
+                  facts
+                  (compiler-opt-global-shared-view len)
+                  false)
+                key))
+              (begin
+                (set! found? true)
+                (set! found (ir.CompilerIrMaybeValue.Some len)))
+              unit)
+            (set! row (+ row 1)))))
+      found)))
+
+;; Is `index <u length-of(key)` proven where the site's hoist lands, at the end
+;; of the preheader?
 (define (opt-licm-deref-proven?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [site : (& site OptLicmDerefSite)]
   [index : ir.CompilerIrValue]
   [key : i64]) : bool
-  (let
-    [facts : OptLicmDerefFacts site.facts]
-    (if (< site.at 0)
-      false
-      (match (opt-licm-deref-resolve
-        facts.defs
-        facts.sources
-        index
-        (opt-licm-deref-fuel))
-        [(ir.CompilerIrValue.Var var)
-          (let
-            [offsets : (__tl_dyn-array i64) facts.offsets]
-            (if (or
-              (not (opt-gvn-stable-var? facts.sources var))
-              (< var 0)
-              (>= (+ var 1) (array-length offsets)))
-              false
-              (let
-                [row : i64 (array-ref offsets var)]
-                [end : i64 (array-ref offsets (+ var 1))]
-                [found : bool false]
-                (begin
-                  (while (and (not found) (< row end))
-                    (begin
-                      (if (and
-                        (opt-dom-info-dominates-id?
-                          site.doms
-                          (array-ref facts.blocks row)
-                          site.at)
-                        (=
-                          (opt-licm-deref-word-owner
-                            type-segment-bases
-                            types
-                            facts
-                            (compiler-opt-global-array-element-shared-view
-                              facts.lens
-                              row)
-                            false)
-                          key))
-                        (set! found true)
-                        unit)
-                      (set! row (+ row 1))))
-                  found))))]
-        ;; A literal index is proven by any row bounding the same descriptor
-        ;; at a literal at least as large.
-        [(ir.CompilerIrValue.I64 literal)
-          (let
-            [indexes : (__tl_dyn-array i64) facts.literal-indexes]
-            [count : i64 (array-length indexes)]
-            [row : i64 0]
-            [found : bool false]
-            (begin
-              (while (and (not found) (>= literal 0) (< row count))
-                (begin
-                  (if (and
-                    (>= (array-ref indexes row) literal)
-                    (opt-dom-info-dominates-id?
-                      site.doms
-                      (array-ref facts.literal-blocks row)
-                      site.at)
-                    (=
-                      (opt-licm-deref-word-owner
-                        type-segment-bases
-                        types
-                        facts
-                        (compiler-opt-global-array-element-shared-view
-                          facts.literal-lens
-                          row)
-                        false)
-                      key))
-                    (set! found true)
-                    unit)
-                  (set! row (+ row 1))))
-              found))]
-        [_ false]))))
+  (match (opt-licm-deref-bound
+    type-segment-bases
+    types
+    site.facts
+    site.doms
+    index
+    key
+    site.at
+    (opt-licm-deref-no-exit))
+    [(ir.CompilerIrMaybeValue.Some _) true]
+    [(ir.CompilerIrMaybeValue.No) false]))
 
 ;; How many bytes a valid pointer of static type `ty` is known to address, as
 ;; far as a moved read may rely on them:
@@ -25690,29 +25731,512 @@
                 (opt-licm-deref-fuel)))]
           [(OptLicmDerefAddress.Opaque) false]
           [(OptLicmDerefAddress.Element index key stride)
-            (match (opt-licm-deref-key-element
+            (and
+              (opt-licm-deref-element-fits?
+                type-segment-bases
+                types
+                facts
+                key
+                stride
+                load-ty)
+              (opt-licm-deref-proven? type-segment-bases types site index key))])])))
+
+;; Does a `load-ty` read at stride `stride` cover no more than one element of
+;; descriptor `key`, so that a bound on the index covers the read?
+(define (opt-licm-deref-element-fits?
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
+  [facts : (& facts OptLicmDerefFacts)]
+  [key : i64]
+  [stride : ast.AstType]
+  [load-ty : ast.AstType]) : bool
+  (match (opt-licm-deref-key-element type-segment-bases types facts key)
+    [(OptMaybeAstType.No) false]
+    [(OptMaybeAstType.Some elem)
+      (let
+        [width : i64 (opt-load-loc-type-size type-segment-bases load-ty)]
+        (and
+          (opt-type-eq
+            type-segment-bases
+            stride
+            (compiler-opt-global-shared-view elem))
+          (> width 0)
+          (<= width (opt-load-loc-type-size type-segment-bases elem))))]))
+
+;; --- guarded element reads (#7997) -------------------------------------------
+;;
+;; An invariant element read the loop may not move, because nothing proves
+;; `index <u len` at the preheader, need not still run on every trip. When a
+;; row proves `index <u len` at the read itself -- the loop's own
+;; `bounds_check index, len`, or the unsigned test whose edge leads there --
+;; and the address, index and length are all available at the preheader, the
+;; read moves to the preheader behind that same comparison:
+;;
+;;   pre:   %ok = lt index, len : u64 ; branch %ok, pre__licm_guard, pre__licm_join
+;;   pre__licm_guard:  %t = load <address> ; jump pre__licm_join
+;;   pre__licm_join:   %v = phi [0, pre], [%t, pre__licm_guard] ; jump header
+;;
+;; The loop keeps its check. Every use of %v is dominated by the read's old
+;; place and so by the row, which tests the same two invariant values; so a use
+;; runs only where %ok held in the preheader, and there %v is the word the loop
+;; would have read: the address is invariant and the memory proof keeps the
+;; loop from writing it. The zero reaches no use. No address the source did not
+;; bound is read.
+;;
+;; Only reads of at most a word whose type no rule trusts as a pointer move
+;; this way: a checked pointer's value is a root for later hoists
+;; (opt-licm-deref-type-extent), and the zero arm is not one. The
+;; profitability rules hold the setup to reads that run on most trips of a
+;; loop that runs many: the loop counts and has no exit but the latch's
+;; (opt-licm-apply-loop), and the read is not reached only through the equal
+;; edge of an equality test (opt-licm-guard-sparse?).
+;;
+;; One LICM run below the level-2 fixpoint and every pass that clones a loop
+;; places the guards (opt-licm-guard-final). A preheader diamond inside the
+;; pipeline would enlarge an enclosing loop's body before the versioner and
+;; the unroller price it, and the run moves nothing ordinary LICM would: what
+;; that moves has moved, and later passes may have sunk it back on purpose.
+;; The walk records a plan per read and the diamonds are built once every loop
+;; has been walked (opt-licm-guard-apply), so no loop's body or dominator facts
+;; change under the walk.
+(define opt-licm-guard-on : bool
+  false)
+
+(defstruct OptLicmGuardPlan
+  (preheader i64)
+  (header i64)
+  (dst i64)
+  (src ir.CompilerIrValue)
+  (ty ast.AstType)
+  (index ir.CompilerIrValue)
+  (len ir.CompilerIrValue))
+
+(defenum OptLicmGuardPlans
+  (Nil)
+  (Cons OptLicmGuardPlan (Box OptLicmGuardPlans)))
+
+(define (opt-licm-guard-planned?
+  [plans : (& plans OptLicmGuardPlans)]
+  [dst : i64]) : bool
+  (match plans
+    [(OptLicmGuardPlans.Nil) false]
+    [(OptLicmGuardPlans.Cons plan rest)
+      (or (= plan.dst dst) (opt-licm-guard-planned? (deref (deref rest)) dst))]))
+
+;; Is dense block `block` reached, inside the site's loop, only through the
+;; equal edge of an equality test -- `eq` taken, or `ne` not taken? Such a
+;; test usually fails, so a read there runs on few trips and does not repay
+;; its guard.
+(define (opt-licm-guard-sparse?
+  [site : (& site OptLicmDerefSite)]
+  [block : i64]) : bool
+  (let
+    [facts (& site.facts)]
+    [index (& site.doms.index)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [at : i64 block]
+    [steps : i64 0]
+    [found? : bool false]
+    (begin
+      (while (and
+        (not found?)
+        (>= at 0)
+        (< at count)
+        (not (= at site.header))
+        (< steps count))
+        (let
+          [pred : i64 (array-ref site.doms.idom at)]
+          (begin
+            (match (opt-cfg-index-block index pred)
+              [(OptMaybeBlock.Some (ir.CompilerIrBlock.Block _ instrs))
+                (if (> (ir.compiler-ir-instr-seq-count instrs) 0)
+                  (match (ir.compiler-ir-instr-seq-ref
+                    instrs
+                    (- (ir.compiler-ir-instr-seq-count instrs) 1))
+                    [(ir.CompilerIrInstr.Branch cond yes no)
+                      (match (opt-licm-deref-resolve
+                        facts.defs
+                        facts.sources
+                        cond
+                        (opt-licm-deref-fuel))
+                        [(ir.CompilerIrValue.Var var)
+                          (match (opt-licm-deref-def
+                            facts.defs
+                            facts.sources
+                            var)
+                            [(OptBoolBranchDef.Some
+                                (ir.CompilerIrInstr.BinOp _ op _ _ _)
+                                _)
+                              (set!
+                                found?
+                                (and
+                                  (not (= yes no))
+                                  (or
+                                    (and
+                                      (opt-binop-eq
+                                        (compiler-opt-global-shared-view op)
+                                        (ir.CompilerIrBinOp.Eq))
+                                      (=
+                                        (opt-licm-deref-edge-target
+                                          index
+                                          pred
+                                          yes)
+                                        at))
+                                    (and
+                                      (opt-binop-eq op (ir.CompilerIrBinOp.Ne))
+                                      (=
+                                        (opt-licm-deref-edge-target
+                                          index
+                                          pred
+                                          no)
+                                        at)))))]
+                            [_ unit])]
+                        [_ unit])]
+                    [_ unit])
+                  unit)]
+              [_ unit])
+            (set!
+              at
+              (if (= pred at)
+                (- 0 1)
+                pred))
+            (set! steps (+ steps 1)))))
+      found?)))
+
+;; Record a guarded read of `instr` in the site's plans when it qualifies.
+;; opt-licm-candidate? admitted it on every question but readability. An
+;; inner loop plans a read first; an enclosing loop does not plan it again.
+(define (opt-licm-guard-plan!
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
+  [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [hoisted : (& hoisted opt_i64_i64_map.Map)]
+  [site : (& site OptLicmDerefSite)]
+  [instr : (& instr ir.CompilerIrInstr)]) : unit
+  (let
+    [facts (& site.facts)]
+    (match (owned_view.compiler-owned-reference-shared-view instr)
+      [(ir.CompilerIrInstr.Load dst src ty)
+        (let
+          [width : i64
+            (opt-load-loc-type-size
+              type-segment-bases
+              (compiler-opt-global-shared-view ty))]
+          [block : i64
+            (if (and
+              (>= dst 0)
+              (< dst (array-length facts.scan.def-blocks))
+              (opt-gvn-stable-var? facts.sources dst))
+              (array-ref facts.scan.def-blocks dst)
+              (- 0 1))]
+          (if (or
+            (< block 0)
+            (<= width 0)
+            (> width 8)
+            (not
+              (=
+                (opt-licm-deref-type-extent
+                  type-segment-bases
+                  (compiler-opt-global-shared-view ty))
+                0))
+            (opt-licm-guard-planned? (& (array-ref site.plans 0)) dst)
+            (opt-licm-guard-sparse? site block))
+            unit
+            (match (opt-licm-deref-address
               type-segment-bases
               types
-              site.facts
-              key)
-              [(OptMaybeAstType.No) false]
-              [(OptMaybeAstType.Some elem)
+              facts
+              (compiler-opt-global-shared-view src))
+              [(OptLicmDerefAddress.Element raw-index key stride)
                 (let
-                  [width : i64
-                    (opt-load-loc-type-size type-segment-bases load-ty)]
-                  (and
-                    (opt-type-eq
-                      type-segment-bases
-                      stride
-                      (compiler-opt-global-shared-view elem))
-                    (> width 0)
-                    (<= width (opt-load-loc-type-size type-segment-bases elem))
-                    (opt-licm-deref-proven?
-                      type-segment-bases
-                      types
-                      site
-                      index
-                      key)))])])])))
+                  [index : ir.CompilerIrValue
+                    (opt-licm-deref-resolve
+                      facts.defs
+                      facts.sources
+                      raw-index
+                      (opt-licm-deref-fuel))]
+                  (match (opt-licm-deref-bound
+                    type-segment-bases
+                    types
+                    facts
+                    site.doms
+                    (compiler-opt-global-shared-view index)
+                    key
+                    block
+                    (array-ref facts.scan.positions dst))
+                    [(ir.CompilerIrMaybeValue.Some len)
+                      (if (and
+                        (opt-licm-deref-element-fits?
+                          type-segment-bases
+                          types
+                          facts
+                          key
+                          stride
+                          (compiler-opt-global-shared-view ty))
+                        (opt-licm-value-invariant?
+                          false
+                          loop-defs
+                          hoisted
+                          index)
+                        (opt-licm-value-invariant? false loop-defs hoisted len))
+                        (set!
+                          (array-ref site.plans 0)
+                          (OptLicmGuardPlans.Cons
+                            (OptLicmGuardPlan
+                              (opt-cfg-index-label site.doms.index site.at)
+                              (opt-cfg-index-label site.doms.index site.header)
+                              dst
+                              src
+                              ty
+                              index
+                              len)
+                            (box
+                              (compiler-opt-global-array-element-shared-view
+                                site.plans
+                                0))))
+                        unit)]
+                    [(ir.CompilerIrMaybeValue.No) unit]))]
+              [_ unit])))]
+      [_ unit])))
+
+(define (opt-licm-guard-trace! [plan : (& plan OptLicmGuardPlan)]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "licm-guard|"
+        (ir.compiler-ir-symbol-text opt-licm-trace-function)
+        "|"
+        (ir.compiler-ir-label-text plan.header)
+        "|%"
+        (string.int->string plan.dst)
+        "\n"))
+    unit))
+
+(define (opt-licm-guard-zero [ty : (& ty ast.AstType)]) : ir.CompilerIrValue
+  (match ty
+    [(ast.AstType.F64) (ir.CompilerIrValue.F64 0)]
+    [(ast.AstType.F32) (ir.CompilerIrValue.F64 0)]
+    [(ast.AstType.Bool) (ir.CompilerIrValue.Bool false)]
+    [_ (ir.CompilerIrValue.I64 0)]))
+
+;; `instrs` without its instruction defining `dst` by a load, or nothing when
+;; it holds none.
+(defenum OptLicmGuardDropped
+  (No)
+  (Some ir.CompilerIrInstrSeq))
+
+(define (opt-licm-guard-drop-load
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [dst : i64]) : OptLicmGuardDropped
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    [found? : bool false]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref instrs index)]
+          (begin
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Load load-dst _ _)
+                (if (= load-dst dst)
+                  (set! found? true)
+                  (ir.compiler-ir-instr-builder-push! (&mut builder) instr))]
+              [_ (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
+            (set! index (+ index 1)))))
+      (if found?
+        (OptLicmGuardDropped.Some (ir.compiler-ir-instr-builder-to-seq builder))
+        (OptLicmGuardDropped.No)))))
+
+;; Build one plan's diamond. `tail` is the block that enters the loop header
+;; now (its preheader, or the join of a guard built there before); it must end
+;; with the jump to the header. Returns the new tail, or -1 and `blocks`
+;; unchanged when the plan no longer applies: an enclosing loop's walk left
+;; the read where it was, so it still is where the plan found it.
+(define (opt-licm-guard-apply-plan
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [plan : OptLicmGuardPlan]
+  [tail : i64]
+  [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptLicmGuardApplied
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (owned_view.compiler-owned-reference-shared-view blocks))]
+    [tail-ok? : bool false]
+    [load-ok? : bool false]
+    [position : i64 0]
+    (begin
+      (while (< position seq.len)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq position)
+            [(ir.CompilerIrBlock.Block label instrs)
+              (begin
+                (if (and
+                  (= label tail)
+                  (> (ir.compiler-ir-instr-seq-count instrs) 0))
+                  (match (ir.compiler-ir-instr-seq-ref
+                    instrs
+                    (- (ir.compiler-ir-instr-seq-count instrs) 1))
+                    [(ir.CompilerIrInstr.Jump target)
+                      (set! tail-ok? (= target plan.header))]
+                    [_ unit])
+                  unit)
+                (match (opt-licm-guard-drop-load (& instrs) plan.dst)
+                  [(OptLicmGuardDropped.Some _) (set! load-ok? true)]
+                  [(OptLicmGuardDropped.No) unit]))])
+          (set! position (+ position 1))))
+      (if (not (and tail-ok? load-ok?))
+        (OptLicmGuardApplied.Applied
+          (owned_view.compiler-owned-reference-shared-view blocks)
+          (- 0 1))
+        (let
+          [ok : i64 (array-ref frame-cell 0)]
+          [loaded : i64 (+ ok 1)]
+          [_frame : unit (set! (array-ref frame-cell 0) (+ ok 2))]
+          [guard-label : i64
+            (ir.compiler-ir-label
+              (str_cat.str-cat (ir.compiler-ir-label-text tail) "__licm_guard"))]
+          [join-label : i64
+            (ir.compiler-ir-label
+              (str_cat.str-cat (ir.compiler-ir-label-text tail) "__licm_join"))]
+          [out : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity (+ seq.len 2))]
+          [index : i64 0]
+          (begin
+            (opt-licm-guard-trace! (& plan))
+            (while (< index seq.len)
+              (begin
+                (match (ir.compiler-ir-block-seq-ref seq index)
+                  [(ir.CompilerIrBlock.Block label instrs)
+                    (let
+                      [kept : ir.CompilerIrInstrSeq
+                        (match (opt-licm-guard-drop-load (& instrs) plan.dst)
+                          [(OptLicmGuardDropped.Some rest) rest]
+                          [(OptLicmGuardDropped.No) instrs])]
+                      [entered : ir.CompilerIrInstrSeq
+                        (if (= label plan.header)
+                          (opt-relabel-phi-instrs kept 0 tail join-label)
+                          kept)]
+                      (if (= label tail)
+                        (let
+                          [count : i64 (ir.compiler-ir-instr-seq-count entered)]
+                          [head : ir.CompilerIrInstrBuilder
+                            (ir.compiler-ir-instr-builder-with-capacity
+                              (+ count 1))]
+                          (begin
+                            (ir.compiler-ir-instr-builder-append-seq-range!
+                              (&mut head)
+                              entered
+                              0
+                              (- count 1))
+                            (ir.compiler-ir-instr-builder-push!
+                              (&mut head)
+                              (ir.CompilerIrInstr.BinOp
+                                ok
+                                (ir.CompilerIrBinOp.Lt)
+                                (compiler-opt-global-shared-view plan.index)
+                                (compiler-opt-global-shared-view plan.len)
+                                (ast.AstType.U64)))
+                            (ir.compiler-ir-instr-builder-push!
+                              (&mut head)
+                              (ir.CompilerIrInstr.Branch
+                                (ir.CompilerIrValue.Var ok)
+                                guard-label
+                                join-label))
+                            (ir.compiler-ir-block-builder-push!
+                              (&mut out)
+                              (ir.CompilerIrBlock.Block
+                                label
+                                (ir.compiler-ir-instr-builder-to-seq head)))
+                            (ir.compiler-ir-block-builder-push!
+                              (&mut out)
+                              (ir.CompilerIrBlock.Block
+                                guard-label
+                                (ir.compiler-ir-instr-seq2
+                                  (ir.CompilerIrInstr.Load
+                                    loaded
+                                    (compiler-opt-global-shared-view plan.src)
+                                    (compiler-opt-global-shared-view plan.ty))
+                                  (ir.CompilerIrInstr.Jump join-label))))
+                            (ir.compiler-ir-block-builder-push!
+                              (&mut out)
+                              (ir.CompilerIrBlock.Block
+                                join-label
+                                (ir.compiler-ir-instr-seq2
+                                  (ir.CompilerIrInstr.Phi
+                                    plan.dst
+                                    (ir.compiler-ir-phi-input-seq-prepend
+                                      (opt-licm-guard-zero (& plan.ty))
+                                      label
+                                      (ir.compiler-ir-phi-input-seq-prepend
+                                        (ir.CompilerIrValue.Var loaded)
+                                        guard-label
+                                        (ir.compiler-ir-phi-input-seq-empty)))
+                                    (compiler-opt-global-shared-view plan.ty))
+                                  (ir.CompilerIrInstr.Jump plan.header))))))
+                        (ir.compiler-ir-block-builder-push!
+                          (&mut out)
+                          (ir.CompilerIrBlock.Block label entered))))])
+                (set! index (+ index 1))))
+            (OptLicmGuardApplied.Applied
+              (ir.compiler-ir-block-builder-to-list out)
+              join-label)))))))
+
+(defenum OptLicmGuardApplied
+  (Applied ir.CompilerIrBlockList i64))
+
+;; Build every plan's diamond. Plans are independent except within one loop,
+;; where they chain: each splits the block the previous one left entering the
+;; header, which `tails` maps each preheader to.
+(define (opt-licm-guard-apply-from
+  [blocks : ir.CompilerIrBlockList]
+  [plans : OptLicmGuardPlans]
+  [tails : opt_i64_i64_map.Map]
+  [changed? : bool]
+  [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptBlockListPassResult
+  (match plans
+    [(OptLicmGuardPlans.Nil) (OptBlockListPassResult.Result blocks changed?)]
+    [(OptLicmGuardPlans.Cons plan rest)
+      (let
+        [tail : i64
+          (match (opt_i64_i64_map.get (& tails) plan.preheader)
+            [(opt_i64_i64_map.LookupFound joined) joined]
+            [(opt_i64_i64_map.LookupMissing) plan.preheader])]
+        (match (opt-licm-guard-apply-plan
+          (& blocks)
+          (compiler-opt-global-shared-view plan)
+          tail
+          frame-cell)
+          [(OptLicmGuardApplied.Applied next joined)
+            (if (< joined 0)
+              (opt-licm-guard-apply-from
+                next
+                (deref rest)
+                tails
+                changed?
+                frame-cell)
+              (begin
+                (opt_i64_i64_map.insert-ref! (&mut tails) plan.preheader joined)
+                (opt-licm-guard-apply-from
+                  next
+                  (deref rest)
+                  tails
+                  true
+                  frame-cell)))]))]))
+
+(define (opt-licm-guard-apply
+  [blocks : ir.CompilerIrBlockList]
+  [plans : OptLicmGuardPlans]
+  [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptBlockListPassResult
+  (opt-licm-guard-apply-from
+    blocks
+    plans
+    (opt_i64_i64_map.with-capacity 4)
+    false
+    frame-cell))
 
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
@@ -25736,6 +26260,8 @@
   ;; #7992: where this loop's hoist lands, and the facts that bound an
   ;; element load there (opt-licm-deref-load-ok?).
   [deref-site : (& deref-site OptLicmDerefSite)]
+  ;; False asks every question but that one (opt-licm-guard-plan!).
+  [deref? : bool]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(ir.CompilerIrInstr.Mov _ src _)
@@ -25956,14 +26482,16 @@
         ;; #7992: and the address has to be readable at the preheader whether
         ;; or not the loop would have read it. Asked last: it walks
         ;; definitions, and every clause above is cheaper and refuses more.
-        (opt-licm-deref-load-ok?
-          type-segment-bases
-          types
-          ptrs
-          deref-site
-          dst
-          src
-          load-ty))]
+        (or
+          (not deref?)
+          (opt-licm-deref-load-ok?
+            type-segment-bases
+            types
+            ptrs
+            deref-site
+            dst
+            src
+            load-ty)))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -26032,25 +26560,35 @@
         (let
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          [load? : bool
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Load _ _ _) true]
+              [_ false])]
+          ;; The final run asks only about reads it may guard.
+          [ordinary? : bool
+            (and
+              (or (not opt-licm-guard-on) (and load? deref-site.guard?))
+              (opt-licm-candidate?
+                type-segment-bases
+                loop-defs
+                next-hoisted
+                sources
+                types
+                store-summary
+                legacy-store-summary
+                ptrs
+                roots
+                store-roots
+                any-call?
+                licm-mode
+                descriptor-header-hoist?
+                globals
+                hot-uses
+                deref-site
+                true
+                instr))]
           (begin
-            (if (opt-licm-candidate?
-              type-segment-bases
-              loop-defs
-              next-hoisted
-              sources
-              types
-              store-summary
-              legacy-store-summary
-              ptrs
-              roots
-              store-roots
-              any-call?
-              licm-mode
-              descriptor-header-hoist?
-              globals
-              hot-uses
-              deref-site
-              instr)
+            (if (and ordinary? (not opt-licm-guard-on))
               (begin
                 (ir.compiler-ir-instr-builder-push!
                   (&mut moved)
@@ -26059,7 +26597,42 @@
                   next-hoisted
                   (opt-licm-add-hoisted-def next-hoisted instr))
                 (set! changed true))
-              (ir.compiler-ir-instr-builder-push! (&mut kept) instr))
+              ;; #7997: a read refused only for want of a bound at the
+              ;; preheader may still move behind its own comparison. The
+              ;; final run moves nothing else.
+              (begin
+                (if (and
+                  deref-site.guard?
+                  load?
+                  (not ordinary?)
+                  (opt-licm-candidate?
+                    type-segment-bases
+                    loop-defs
+                    next-hoisted
+                    sources
+                    types
+                    store-summary
+                    legacy-store-summary
+                    ptrs
+                    roots
+                    store-roots
+                    any-call?
+                    licm-mode
+                    descriptor-header-hoist?
+                    globals
+                    hot-uses
+                    deref-site
+                    false
+                    instr))
+                  (opt-licm-guard-plan!
+                    type-segment-bases
+                    types
+                    loop-defs
+                    (& next-hoisted)
+                    deref-site
+                    instr)
+                  unit)
+                (ir.compiler-ir-instr-builder-push! (&mut kept) instr)))
             (set! cursor (+ cursor 1)))))
       (OptLicmInstrsResult.Result
         (ir.compiler-ir-instr-builder-to-seq kept)
@@ -28260,6 +28833,8 @@
   [late? : bool]
   ;; #7992: the function's element-bound facts (opt-licm-deref-facts).
   [deref-facts : OptLicmDerefFacts]
+  ;; #7997: where the walk records guarded reads (opt-licm-guard-plan!).
+  [guard-plans : (__tl_dyn-array OptLicmGuardPlans)]
   ;; Valid for `blocks`: LICM only inserts into existing preheaders, so the
   ;; original dominance relation remains valid throughout this loop walk.
   [context : OptCfgContext]
@@ -28452,7 +29027,11 @@
               context.index
               (opt-natural-loop-header loop))
               [(option_i64.Some id) id]
-              [(option_i64.None) (- 0 1)]))]
+              [(option_i64.None) (- 0 1)])
+            ;; opt-licm-apply-loops passes the final run only the loops
+            ;; that may take guards (opt-licm-guard-loop?).
+            (and opt-licm-guard-on late?)
+            (compiler-opt-global-shared-view guard-plans))]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
           loop-defs
@@ -28483,7 +29062,9 @@
             ;; the gate is closed, which keeps this byte-identical there).
             (let
               [promotion : OptLicmGlobalPromotion
-                (if (or globals-promote-clean? globals-promote-filtered?)
+                (if (and
+                  (not opt-licm-guard-on)
+                  (or globals-promote-clean? globals-promote-filtered?))
                   (opt-licm-global-promote
                     global-cells
                     frame-cell
@@ -28555,6 +29136,124 @@
                 (OptBlockListPassResult.Result blocks false)))]))]
     [(OptLoopPreheader.No) (OptBlockListPassResult.Result blocks false)]))
 
+;; #7997: may the final run guard a read in `loop`? Only counting loops whose
+;; one exit is the latch's: a loop with another exit may be a short probe, a
+;; loop that chases a value (`a = idom[a]`) takes a trip or two, and a read
+;; such loops bypass or reach once does not repay the guard. And only a body
+;; holding the shape a guard reads (opt-licm-guard-shape?).
+(define (opt-licm-guard-loop?
+  [type-segment-bases : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [loop : (& loop OptNaturalLoop)]) : bool
+  (match (opt-natural-loop-preheader loop)
+    [(OptLoopPreheader.No) false]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [body-blocks : ir.CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks loop blocks)]
+        [loop-defs : opt_i64_i64_map.Map
+          (opt-licm-collect-defs-blocks
+            (compiler-opt-global-shared-view body-blocks)
+            (opt_i64_i64_map.with-capacity
+              (opt-licm-body-map-capacity
+                (compiler-opt-global-shared-view body-blocks))))]
+        (and
+          (opt-licm-guard-shape? (& loop-defs) (& body-blocks))
+          (=
+            (opt-licm-loop-side-exit-kind
+              blocks
+              (opt-natural-loop-header loop)
+              (opt-natural-loop-latch loop)
+              (opt-natural-loop-body loop)
+              (& body-blocks))
+            0)
+          (match (opt-induction-find-fact
+            type-segment-bases
+            (& body-blocks)
+            loop
+            preheader)
+            [(OptMaybeInductionFact.Some _) true]
+            [(OptMaybeInductionFact.No) false])))]))
+
+;; Does some block hold a `bounds_check` followed by a load of an address the
+;; block does not compute in between, with every operand of both outside
+;; `loop-defs`? That is the shape a guard reads -- the check an arm keeps, and
+;; the read of an address LICM already moved out -- and a scan finds it ahead
+;; of LICM's analyses. An ordinary checked read computes its address after its
+;; check. With `loop-defs` empty the scan asks only whether the shape occurs.
+(define (opt-licm-guard-shape?
+  [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [index : i64 0]
+            [checked : i64 (- 0 1)]
+            [found? : bool false]
+            (begin
+              (while (and (not found?) (< index count))
+                (begin
+                  (match (ir.compiler-ir-instr-seq-ref instrs index)
+                    [(ir.CompilerIrInstr.BoundsCheck value len _)
+                      (if (opt-licm-seed-values? loop-defs value len)
+                        (set! checked index)
+                        unit)]
+                    [(ir.CompilerIrInstr.Load _ (ir.CompilerIrValue.Var src) _)
+                      (if (and
+                        (>= checked 0)
+                        (not (opt-used-contains loop-defs src))
+                        (not
+                          (opt-licm-guard-defined? (& instrs) checked index src)))
+                        (set! found? true)
+                        unit)]
+                    [_ unit])
+                  (set! index (+ index 1))))
+              (or found? (opt-licm-guard-shape? loop-defs (deref rest)))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [blocks (ir.compiler-ir-block-seq-to-list seq)]
+        (opt-licm-guard-shape? loop-defs (& blocks)))]))
+
+;; Does an instruction of `instrs` in `from..to` define `var`?
+(define (opt-licm-guard-defined?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [from : i64]
+  [to : i64]
+  [var : i64]) : bool
+  (let
+    [index : i64 from]
+    [found? : bool false]
+    (begin
+      (while (and (not found?) (< index to))
+        (begin
+          (match (opt-instr-def-var (ir.compiler-ir-instr-seq-ref instrs index))
+            [(option_i64.Some def) (set! found? (= def var))]
+            [(option_i64.None) unit])
+          (set! index (+ index 1))))
+      found?)))
+
+;; Whether any block of a function holds that shape, before any loop is known.
+(define (opt-licm-guard-function-shape? [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [none : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    (opt-licm-guard-shape? (& none) (& blocks))))
+
+;; The final run's analyses run only for a function with a loop it may guard.
+(define (opt-licm-guard-loops?
+  [type-segment-bases : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [loops : (& loops OptNaturalLoopList)]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (or
+        (opt-licm-guard-loop? type-segment-bases blocks loop)
+        (opt-licm-guard-loops? type-segment-bases blocks (deref (deref rest))))]))
+
 (define (opt-licm-apply-loops
   [type-segment-bases : i64]
   [sources : (& sources OptValueSources)]
@@ -28565,6 +29264,7 @@
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
   [late? : bool]
   [deref-facts : OptLicmDerefFacts]
+  [guard-plans : (__tl_dyn-array OptLicmGuardPlans)]
   [context : OptCfgContext]
   [all-loops : (& all-loops OptNaturalLoopList)]
   [loops : (& loops OptNaturalLoopList)]
@@ -28572,20 +29272,25 @@
   (match loops
     [(OptNaturalLoopList.Nil) (OptBlockListPassResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-licm-apply-loop
-        type-segment-bases
-        sources
-        (compiler-opt-global-shared-view types)
-        (compiler-opt-global-shared-view provenance)
-        (compiler-opt-global-shared-view direct-call-clean)
-        (compiler-opt-global-shared-view global-cells)
-        frame-cell
-        late?
-        (compiler-opt-global-shared-view deref-facts)
-        (compiler-opt-global-shared-view context)
-        all-loops
-        blocks
-        loop)
+      (match (if (and
+        opt-licm-guard-on
+        (not (opt-licm-guard-loop? type-segment-bases (& blocks) loop)))
+        (OptBlockListPassResult.Result blocks false)
+        (opt-licm-apply-loop
+          type-segment-bases
+          sources
+          (compiler-opt-global-shared-view types)
+          (compiler-opt-global-shared-view provenance)
+          (compiler-opt-global-shared-view direct-call-clean)
+          (compiler-opt-global-shared-view global-cells)
+          frame-cell
+          late?
+          (compiler-opt-global-shared-view deref-facts)
+          (compiler-opt-global-shared-view guard-plans)
+          (compiler-opt-global-shared-view context)
+          all-loops
+          blocks
+          loop))
         [(OptBlockListPassResult.Result loop-blocks loop-changed)
           (match (opt-licm-apply-loops
             type-segment-bases
@@ -28597,6 +29302,7 @@
             frame-cell
             late?
             deref-facts
+            guard-plans
             context
             all-loops
             (deref (deref rest))
@@ -28770,10 +29476,12 @@
               (compiler-opt-global-shared-view blocks)
               context)]
           (if (not
-            (opt-licm-loops-may-change?
-              (not (= global-cells.word-cell 0))
-              late?
-              loops))
+            (if opt-licm-guard-on
+              (opt-licm-guard-loops? type-segment-bases (& blocks) (& loops))
+              (opt-licm-loops-may-change?
+                (not (= global-cells.word-cell 0))
+                late?
+                loops)))
             (OptBlockRewriteResult.Result blocks frame false)
             (let
               [sources : OptValueSources
@@ -28808,6 +29516,8 @@
               ;; value back into the rewritten function.
               [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
               [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
+              [guard-plans : (__tl_dyn-array OptLicmGuardPlans)
+                (__tl_make-array OptLicmGuardPlans 1)]
               (match (opt-licm-apply-loops
                 type-segment-bases
                 sources
@@ -28818,15 +29528,24 @@
                 (&mut frame-cell)
                 late?
                 deref-facts
+                (compiler-opt-global-shared-view guard-plans)
                 context
                 loops
                 loops
                 blocks)
                 [(OptBlockListPassResult.Result hoisted-blocks licm-changed?)
-                  (OptBlockRewriteResult.Result
+                  ;; #7997: the guards, once every loop has been walked.
+                  (match (opt-licm-guard-apply
                     hoisted-blocks
-                    (array-ref frame-cell 0)
-                    licm-changed?)])))))]))
+                    (compiler-opt-global-array-element-shared-view
+                      guard-plans
+                      0)
+                    (&mut frame-cell))
+                    [(OptBlockListPassResult.Result guarded-blocks guarded?)
+                      (OptBlockRewriteResult.Result
+                        guarded-blocks
+                        (array-ref frame-cell 0)
+                        (or licm-changed? guarded?))])])))))]))
 
 (define (opt-licm-function-with-direct-call-clean
   [type-segment-bases : i64]
@@ -102943,6 +103662,34 @@
         (owned_view.compiler-owned-reference-shared-view func))
       changed)))
 
+;; #7997's slot: LICM once more with guarded element reads admitted
+;; (opt-licm-guard-instrs). The fixpoint above has moved everything ordinary
+;; LICM moves, so what this run adds is the guarded reads and whatever becomes
+;; invariant through them.
+(define (opt-licm-guard-final
+  [type-segment-bases : i64]
+  [summaries : OptProgramSummaries]
+  [context : OptCfgContext]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ _ _ _)
+      (let
+        [_on : unit (set! opt-licm-guard-on true)]
+        [next : ir.CompilerIrFunction
+          (match (opt-licm-function-with-context-result-and-direct-call-clean
+            type-segment-bases
+            context
+            false
+            summaries.direct-call-clean
+            summaries.return-alias
+            summaries.global-cell
+            true
+            func)
+            [(OptFunctionCtxResult.Result next _) next])]
+        (begin
+          (set! opt-licm-guard-on false)
+          next))]))
+
 ;; GAP-1's slot: ONE length-equality sweep with the call-site
 ;; global-argument facts in hand, below the whole level-2 fixpoint.
 ;;
@@ -103825,6 +104572,23 @@
                 (opt-pass-func s))
               s)
             "licm_unswitch")]
+        ;; Below every pass that clones a loop (opt-licm-guard-final). The
+        ;; priced pipeline leaves it out, so inlining prices what it always did,
+        ;; and a function without the shape a guard reads pays one scan.
+        [s
+          (if (or
+            s.priced?
+            (not (opt-licm-guard-function-shape? (opt-pass-blocks s))))
+            s
+            (opt-pass-observed
+              (opt-pass-with-cfg-func
+                (opt-licm-guard-final
+                  type-segment-bases
+                  (compiler-opt-global-shared-view summaries)
+                  (opt-pass-context s true)
+                  (opt-pass-func s))
+                s)
+              "licm_guard"))]
         ;; A wide power-of-two global multiply becomes a shift only here, after
         ;; every pass that treats a shift as a possible abort
         ;; (opt-const-global-mul-shift-final).

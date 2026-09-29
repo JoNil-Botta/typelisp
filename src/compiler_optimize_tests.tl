@@ -45853,6 +45853,200 @@
       [(not (= (opt-licm-bound-run 2 true) hoisted)) 12]
       [else 42])))
 
+;; --- #7997: guarded element reads ---------------------------------------------
+;;
+;; The #7992 loop through the final slot's LICM (opt-licm-guard-final), as the
+;; pipeline leaves it: invariant addresses already computed outside the loop.
+;; Each case gives entry code, the header's branch, the arm and the latch step:
+;;
+;;   entry:  len, data = array's words ; olen, odata = other's ; <entry>
+;;   pre:    jump loop
+;;   loop:   i = phi ; sum = phi ; <header>
+;;   arm:    <arm, ending in its own terminator>
+;;   latch:  sum' = phi ; i' = <step> ; branch i' < 10, loop, exit
+;;
+;; The result packs the guard blocks built, and the loads and checks left in
+;; `arm`, as `guards * 100 + loads * 10 + checks`: 101 is one read moved behind
+;; its guard with its check kept, 11 a read left where it was. A rewritten
+;; function that fails the verifier gives -1.
+(define (opt-licm-guard-run
+  [entry : String]
+  [header : String]
+  [arm : String]
+  [step : String]) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        (str_cat.str-cat
+          "entry:\n  %4 = gep %1, 1 : i64\n  %5 = load %4 : i64\n  %6 = gep %1, 0 : i64\n  %7 = load %6 : u64\n  %8 = gep %3, 1 : i64\n  %9 = load %8 : i64\n  %28 = gep %3, 0 : i64\n  %29 = load %28 : u64\n"
+          entry
+          "\n  jump pre\npre:\n  jump loop\nloop:\n  %12 = phi [0, pre], [%16, latch] : i64\n  %13 = phi [0, pre], [%17, latch] : i64\n"
+          header
+          "\narm:\n"
+          arm
+          "\nlatch:\n  %17 = phi [%18, arm], [%13, loop] : i64\n  %16 = "
+          step
+          " : i64\n  %19 = lt %16, 10 : i64\n  branch %19, loop, exit\nexit:\n  return %13"))]
+    [result : ir.CompilerIrFunction
+      (opt.opt-licm-guard-final
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.opt-program-summaries-empty)
+        (opt.opt-cfg-context-build (ir.compiler-ir-global-shared-view blocks))
+        (opt-licm-bound-function blocks))]
+    [out : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+    [guards : i64
+      (+
+        (if (>
+          (opt-licm-multi-exit-count-loads
+            out
+            (ir.compiler-ir-label "pre__licm_guard"))
+          0)
+          1
+          0)
+        (if (>
+          (opt-licm-multi-exit-count-loads
+            out
+            (ir.compiler-ir-label "pre__licm_join__licm_guard"))
+          0)
+          1
+          0))]
+    [checks : i64
+      (match (opt.opt-cfg-find-block (& out) (ir.compiler-ir-label "arm"))
+        [(opt.OptMaybeBlock.Some (ir.CompilerIrBlock.Block _ instrs))
+          (opt-count-bounds-instrs (& instrs))]
+        [(opt.OptMaybeBlock.No) 0])]
+    (match (opt.opt-verify-function result)
+      [(opt.ResultCompilerOptimizeVerify.Err _) (- 0 1)]
+      [(opt.ResultCompilerOptimizeVerify.Ok)
+        (+
+          (* guards 100)
+          (*
+            (opt-licm-multi-exit-count-loads out (ir.compiler-ir-label "arm"))
+            10)
+          checks)])))
+
+;; `array[k]`'s address, computed outside the loop.
+(define (opt-licm-guard-entry) : String
+  "  %14 = gep %7, %2 : i64")
+
+;; The arm most cases share: that element behind its own check.
+(define (opt-licm-guard-arm) : String
+  "  bounds_check %2, %5 message \"arm_ok\"\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  jump latch")
+
+(define (opt-licm-guard-case [entry : String] [arm : String]) : i64
+  (opt-licm-guard-run entry "  branch %0, arm, latch" arm "add %12, 1"))
+
+(define (opt-licm-guard-header-case [header : String]) : i64
+  (opt-licm-guard-run
+    (opt-licm-guard-entry)
+    header
+    (opt-licm-guard-arm)
+    "add %12, 1"))
+
+(define (compiler-optimize-licm-guard-self-test) : i64
+  (let
+    [guarded : i64 101]
+    [kept : i64 11]
+    (cond
+      [(not
+          (=
+            (opt-licm-guard-case (opt-licm-guard-entry) (opt-licm-guard-arm))
+            guarded))
+        1]
+      ;; The check comes after the read: nothing bounds the read itself.
+      [(not
+          (=
+            (opt-licm-guard-case
+              (opt-licm-guard-entry)
+              "  %15 = load %14 : i64\n  bounds_check %2, %5 message \"arm_ok\"\n  %18 = add %13, %15 : i64\n  jump latch")
+            kept))
+        2]
+      ;; Checked against another array's length.
+      [(not
+          (=
+            (opt-licm-guard-case
+              (opt-licm-guard-entry)
+              "  bounds_check %2, %9 message \"arm_ok\"\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  jump latch")
+            kept))
+        3]
+      ;; The index varies with the loop, so the address does too.
+      [(not
+          (=
+            (opt-licm-guard-case
+              ""
+              "  bounds_check %12, %5 message \"arm_ok\"\n  %14 = gep %7, %12 : i64\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  jump latch")
+            kept))
+        4]
+      ;; The loop writes the array: the memory proof fails.
+      [(not
+          (=
+            (opt-licm-guard-case
+              (opt-licm-guard-entry)
+              "  bounds_check %2, %5 message \"arm_ok\"\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  bounds_check %12, %5 message \"store_ok\"\n  %20 = gep %7, %12 : i64\n  store_ptr %20, 0 : i64\n  jump latch")
+            (+ kept 1)))
+        5]
+      ;; A word read at a byte stride: the bound covers one byte.
+      [(not
+          (=
+            (opt-licm-guard-case "  %14 = gep %7, %2 : u8" (opt-licm-guard-arm))
+            kept))
+        6]
+      ;; The arm is the equal edge of an equality: few trips take it.
+      [(not
+          (=
+            (opt-licm-guard-header-case
+              "  %21 = eq %12, 3 : i64\n  branch %21, arm, latch")
+            kept))
+        7]
+      [(not
+          (=
+            (opt-licm-guard-header-case
+              "  %21 = ne %12, 3 : i64\n  branch %21, latch, arm")
+            kept))
+        8]
+      ;; ... but the not-equal edge is the common one.
+      [(not
+          (=
+            (opt-licm-guard-header-case
+              "  %21 = ne %12, 3 : i64\n  branch %21, arm, latch")
+            guarded))
+        9]
+      ;; A loop that does not count: its step is not an add of a constant.
+      [(not
+          (=
+            (opt-licm-guard-run
+              (opt-licm-guard-entry)
+              "  branch %0, arm, latch"
+              (opt-licm-guard-arm)
+              "mul %12, 2")
+            kept))
+        10]
+      ;; An exit from the arm: the loop may be a short probe.
+      [(not
+          (=
+            (opt-licm-guard-case
+              (opt-licm-guard-entry)
+              "  bounds_check %2, %5 message \"arm_ok\"\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  %22 = lt %18, 100 : i64\n  branch %22, latch, exit")
+            kept))
+        11]
+      ;; Two reads, each behind its own check: two guards, chained.
+      [(not
+          (=
+            (opt-licm-guard-case
+              "  %14 = gep %7, %2 : i64\n  %24 = gep %29, %2 : i64"
+              "  bounds_check %2, %5 message \"arm_ok\"\n  %15 = load %14 : i64\n  bounds_check %2, %9 message \"other_ok\"\n  %25 = load %24 : i64\n  %26 = add %13, %15 : i64\n  %18 = add %26, %25 : i64\n  jump latch")
+            202))
+        12]
+      ;; A read the entry already bounds is ordinary LICM's, not this run's.
+      [(not
+          (=
+            (opt-licm-guard-case
+              "  %14 = gep %7, %2 : i64\n  bounds_check %2, %5 message \"entry_ok\""
+              (opt-licm-guard-arm))
+            kept))
+        13]
+      [else 42])))
+
 ;; --- readable storage for moved reads (#8085) ---------------------------------
 ;;
 ;; One loop whose arm, taken while `%0` holds, reads through an address the case

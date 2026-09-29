@@ -54,6 +54,16 @@ reject_diag() {
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl)
             printf 'requires unsafe context' ;;
+        stdlib/tests/env_nonmatching_count_unsafe_reject.tl)
+            printf 'env/linux-nonmatching-count requires unsafe context' ;;
+        stdlib/tests/env_rebuild_unsafe_reject.tl)
+            printf 'env/linux-rebuild! requires unsafe context' ;;
+        stdlib/tests/env_rebuild_alias_unsafe_reject.tl)
+            printf 'e/linux-rebuild! requires unsafe context' ;;
+        stdlib/tests/env_rebuild_function_value_reject.tl)
+            printf 'env/linux-rebuild! is an unsafe callable and cannot be used as a plain function value' ;;
+        stdlib/tests/env_unlock_unsafe_reject.tl)
+            printf 'env/linux-unlock! requires unsafe context' ;;
         stdlib/tests/format_nonliteral_template_reject.tl)
             printf 'format: template must be a string literal' ;;
         stdlib/tests/format_println_nonliteral_template_reject.tl)

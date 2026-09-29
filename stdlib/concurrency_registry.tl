@@ -22,6 +22,14 @@
   (ConcurrencyShared ConcurrencyAuthority (:owned))
   (ConcurrencyShareErr))
 
+;: An issued token Box before it is wrapped in a `ConcurrencyAuthority`. An
+;: unsafe adapter that embeds the token in its own cleanup-owning value (a
+;: mutex guard) takes this form and must revoke it exactly once with
+;: `concurrency-authority-token-cleanup`.
+(defenum ConcurrencyTokenResult
+  (ConcurrencyToken (Box i64))
+  (ConcurrencyTokenErr))
+
 ;: Internal snapshot returned with a live lease. Raw fields are unsafe-only.
 (defstruct ConcurrencyLease
   (ok bool)
@@ -251,16 +259,20 @@
     [token : i64 (deref box)]
     (ConcurrencyBoxIdentity box address token)))
 
-;: Inspect a borrowed authority without consuming it. The first read follows
-;: the borrowed struct's field place; it does not dereference a raw OS pointer.
+;: The issued address of a borrowed token Box, without consuming it. The first
+;: read follows the borrowed place; it does not dereference a raw OS pointer.
+(define (concurrency-token-address [token : (& token (Box i64))]) : i64
+  (let
+    [place : i64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of token) : (Ptr i64))))]
+    (unsafe
+      (ptr-read (int->ptr (cast place : u64) : (Ptr i64))))))
+
+;: Inspect a borrowed authority without consuming it.
 (define (concurrency-authority-address
   [authority : (& authority ConcurrencyAuthority)]) : i64
-  (let
-    [struct-address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of authority) : (Ptr i64))))]
-    (unsafe
-      (ptr-read (int->ptr (cast struct-address : u64) : (Ptr i64))))))
+  (concurrency-token-address (& authority.token)))
 
 ;: Read the scalar token from a borrowed issued authority.
 (define (concurrency-authority-token
@@ -454,11 +466,11 @@
               -1
               resource-slot)))))))
 
-;: Issue an authority for a known live resource while holding the lock.
+;: Issue an authority token for a known live resource while holding the lock.
 ;: The caller has already reserved/validated that resource. A failed issue
 ;: leaves it unchanged; register must then free its reserved row.
 (unsafe
-  (define (concurrency-issue [resource-slot : i64]) : ConcurrencyShareResult
+  (define (concurrency-issue-token [resource-slot : i64]) : ConcurrencyTokenResult
     (let
       [slot : i64
         (unsafe
@@ -467,7 +479,7 @@
             concurrency-authority-capacity
             concurrency-next-authority))]
       (if (< slot 0)
-        (ConcurrencyShareErr)
+        (ConcurrencyTokenErr)
         (let
           [generation : i64
             (+
@@ -479,7 +491,7 @@
               (unsafe
                 (concurrency-set! concurrency-authority-state slot 2))
               (unsafe
-                (concurrency-issue resource-slot)))
+                (concurrency-issue-token resource-slot)))
             (let
               [token : i64
                 (+ (* generation concurrency-authority-capacity) slot)]
@@ -527,7 +539,16 @@
                 (set!
                   concurrency-next-authority
                   (% (+ slot 1) concurrency-authority-capacity))
-                (ConcurrencyShared (ConcurrencyAuthority identity.box))))))))))
+                (ConcurrencyToken identity.box)))))))))
+
+;: `concurrency-issue-token` wrapped as a move-only authority.
+(unsafe
+  (define (concurrency-issue [resource-slot : i64]) : ConcurrencyShareResult
+    (match (unsafe
+      (concurrency-issue-token resource-slot))
+      [(ConcurrencyTokenErr) (ConcurrencyShareErr)]
+      [(ConcurrencyToken token)
+        (ConcurrencyShared (ConcurrencyAuthority token))])))
 
 ;: Register seven or fewer raw fields. Only an unsafe constructor that owns
 ;: those fields may call this function. On failure it still owns all fields.
@@ -657,37 +678,89 @@
                           (concurrency-unlock!))
                         (ConcurrencyShared authority))]))))))))))
 
-;: Issue a second authority for one live shareable resource. Thread task
-;: owners are deliberately excluded: their typed handles must remain move-only.
+;: Issue a second authority token for one live shareable resource. Thread
+;: task owners are deliberately excluded: their typed handles must remain
+;: move-only. The caller owns the returned token (see `ConcurrencyTokenResult`).
+(unsafe
+  (define (concurrency-share-token
+    [authority : (& authority ConcurrencyAuthority)]
+    [family : i64]) : ConcurrencyTokenResult
+    (if (= family concurrency-family-thread)
+      (ConcurrencyTokenErr)
+      (let
+        [token : i64 (concurrency-authority-token authority)]
+        [box-address : i64 (concurrency-authority-address authority)]
+        (begin
+          (unsafe
+            (concurrency-lock!))
+          (let
+            [slot : i64
+              (unsafe
+                (concurrency-validated-resource token box-address family))]
+            [issued : ConcurrencyTokenResult
+              (if (< slot 0)
+                (ConcurrencyTokenErr)
+                (unsafe
+                  (concurrency-issue-token slot)))]
+            (begin
+              (unsafe
+                (concurrency-unlock!))
+              issued)))))))
+
+;: Issue a second authority for one live shareable resource.
 (define (concurrency-share
   [authority : (& authority ConcurrencyAuthority)]
   [family : i64]) : ConcurrencyShareResult
-  (if (= family concurrency-family-thread)
-    (ConcurrencyShareErr)
+  (match (unsafe
+    (concurrency-share-token authority family))
+    [(ConcurrencyTokenErr) (ConcurrencyShareErr)]
+    [(ConcurrencyToken token) (ConcurrencyShared (ConcurrencyAuthority token))]))
+
+;: Validate an issued identity and lease its resource while holding the lock,
+;: returning the lease with the resource's fields. No field is read on failure.
+(unsafe
+  (define (concurrency-locked-acquire
+    [token : i64]
+    [box-address : i64]
+    [family : i64]
+    [field-count : i64]) : ConcurrencyLease
     (let
-      [token : i64 (concurrency-authority-token authority)]
-      [box-address : i64 (concurrency-authority-address authority)]
-      (begin
+      [slot : i64
         (unsafe
-          (concurrency-lock!))
-        (let
-          [slot : i64
-            (unsafe
-              (concurrency-validated-resource token box-address family))]
-          (match (if (< slot 0)
-            (ConcurrencyShareErr)
-            (unsafe
-              (concurrency-issue slot)))
-            [(ConcurrencyShareErr)
-              (begin
+          (concurrency-locked-resource token box-address family field-count))]
+      (if (< slot 0)
+        (ConcurrencyLease false -1 0 0 0 0 0 0 0 0 0 0 "")
+        (begin
+          (unsafe
+            (concurrency-set!
+              concurrency-resource-leases
+              slot
+              (+
+                1
                 (unsafe
-                  (concurrency-unlock!))
-                (ConcurrencyShareErr))]
-            [(ConcurrencyShared issued)
-              (begin
-                (unsafe
-                  (concurrency-unlock!))
-                (ConcurrencyShared issued))]))))))
+                  (concurrency-ref concurrency-resource-leases slot)))))
+          (ConcurrencyLease
+            true
+            slot
+            (unsafe
+              (concurrency-locked-generation slot))
+            family
+            field-count
+            (unsafe
+              (concurrency-locked-field slot 0))
+            (unsafe
+              (concurrency-locked-field slot 1))
+            (unsafe
+              (concurrency-locked-field slot 2))
+            (unsafe
+              (concurrency-locked-field slot 3))
+            (unsafe
+              (concurrency-locked-field slot 4))
+            (unsafe
+              (concurrency-locked-field slot 5))
+            (unsafe
+              (concurrency-locked-field slot 6))
+            ""))))))
 
 ;: Lease one resource, returning raw fields only to an unsafe adapter.
 (unsafe
@@ -698,70 +771,57 @@
     (let
       [token : i64 (concurrency-authority-token authority)]
       [box-address : i64 (concurrency-authority-address authority)]
-      [empty : ConcurrencyLease
-        (ConcurrencyLease false -1 0 0 0 0 0 0 0 0 0 0 "")]
       (begin
         (unsafe
           (concurrency-lock!))
         (let
-          [slot : i64
-            (unsafe
-              (concurrency-validated-resource token box-address family))]
           [lease : ConcurrencyLease
-            (if (or
-              (< slot 0)
-              (!=
-                (unsafe
-                  (concurrency-ref concurrency-resource-field-count slot))
-                field-count))
-              empty
-              (begin
-                (unsafe
-                  (concurrency-set!
-                    concurrency-resource-leases
-                    slot
-                    (+
-                      1
-                      (unsafe
-                        (concurrency-ref concurrency-resource-leases slot)))))
-                (ConcurrencyLease
-                  true
-                  slot
-                  (unsafe
-                    (concurrency-ref concurrency-resource-generation slot))
-                  family
-                  field-count
-                  (unsafe
-                    (concurrency-ref concurrency-resource-fields (* slot 7)))
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-fields
-                      (+ (* slot 7) 1)))
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-fields
-                      (+ (* slot 7) 2)))
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-fields
-                      (+ (* slot 7) 3)))
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-fields
-                      (+ (* slot 7) 4)))
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-fields
-                      (+ (* slot 7) 5)))
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-fields
-                      (+ (* slot 7) 6)))
-                  "")))]
+            (unsafe
+              (concurrency-locked-acquire token box-address family field-count))]
           (begin
             (unsafe
               (concurrency-unlock!))
             lease))))))
+
+;: The live resource row an issued token identity names, or -1: the token and
+;: its Box address, as `concurrency-token-address` reads them from a token the
+;: caller borrows. The caller holds the registry lock and keeps holding it
+;: while it uses the row: close detaches rows under the same lock, so the row
+;: and the native resource its fields name stay live without a lease. An
+;: adapter whose own cleanup-owning value embeds a token (a mutex guard) uses
+;: this form.
+(unsafe
+  (define (concurrency-locked-resource
+    [token : i64]
+    [box-address : i64]
+    [family : i64]
+    [field-count : i64]) : i64
+    (let
+      [slot : i64
+        (unsafe
+          (concurrency-validated-resource token box-address family))]
+      (if (or
+        (< slot 0)
+        (!=
+          (unsafe
+            (concurrency-ref concurrency-resource-field-count slot))
+          field-count))
+        -1
+        slot))))
+
+;: Raw field `index` of a row returned by `concurrency-locked-resource`, read
+;: while the caller still holds the registry lock.
+(unsafe
+  (define (concurrency-locked-field [slot : i64] [index : i64]) : i64
+    (unsafe
+      (concurrency-ref concurrency-resource-fields (+ (* slot 7) index)))))
+
+;: Generation of a row returned by `concurrency-locked-resource`, read while the
+;: caller still holds the registry lock.
+(unsafe
+  (define (concurrency-locked-generation [slot : i64]) : i64
+    (unsafe
+      (concurrency-ref concurrency-resource-generation slot))))
 
 ;: Release exactly one acquired lease. Invalid snapshots cannot alter counters.
 (unsafe

@@ -7521,6 +7521,18 @@ guard. The required source contract is:
 - Unlocking releases the guard's exclusive access. It does not change the
   arena owner of the protected value and does not make non-spanning data
   transferable.
+- Mutex handles are checked resource identities, not copyable records. A
+  handle is move-only; `share` issues another handle for the same mutex, and
+  dropping a handle revokes only that handle. Every operation validates its
+  handle before touching the protected storage or the semaphore, so a handle
+  constructed in safe code, or one kept after `close`, fails closed.
+- A lock attempt holds a lease from before the wait until its guard is
+  cleaned up, so `close` fails while any lock attempt or guard exists. A
+  successful `close` revokes every handle of that mutex.
+- A guard is valid only as the registered holder of its mutex. Guard access
+  checks that before reading or writing the value, and a guard that is not
+  the holder (for example one constructed in safe code) aborts on access and
+  unlocks nothing when cleaned up. The genuine guard unlocks exactly once.
 
 #### Channels
 

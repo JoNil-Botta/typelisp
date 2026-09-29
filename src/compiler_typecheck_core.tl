@@ -17862,7 +17862,7 @@
           (& params)
           0
           0
-          (ast.ast-param-list-new)))]
+          (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))))]
     [input-params : ast.AstParamList inputs.params]
     [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
     [lifetime : TcMaybeNameId

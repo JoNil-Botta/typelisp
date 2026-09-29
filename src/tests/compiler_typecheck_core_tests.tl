@@ -636,6 +636,93 @@
           0
           "right body-fact miss resets independently")))))
 
+(cfg
+  test
+  (test
+    compiler-tc-splice-profile-job-isolation
+    (let
+      [left-metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 tc_core.compiler-tc-profile-metric-count)]
+      [right-metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 tc_core.compiler-tc-profile-metric-count)]
+      [left : tc_core.TcJobState
+        (tc_core.tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data left-metrics) : (Ptr i64)))))]
+      [right : tc_core.TcJobState
+        (tc_core.tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data right-metrics) : (Ptr i64)))))]
+      [left-macro : tc_core.TcMacroState
+        (tc_core.tc-job-state-macro-state left)]
+      [right-macro : tc_core.TcMacroState
+        (tc_core.tc-job-state-macro-state right)]
+      [left-address : u64 (tc_core.compiler-tc-profile-metrics-address left)]
+      [right-address : u64 (tc_core.compiler-tc-profile-metrics-address right)]
+      (begin
+        (tc_core.compiler-tc-splice-profile-reset left)
+        (tc_core.compiler-tc-splice-profile-reset right)
+        ;; Interleave the two jobs' notes on the same slot names.
+        (tc_core.compiler-tc-walk-segment-fallback-flatten-note! left-macro 2)
+        (tc_core.compiler-tc-walk-segment-fallback-flatten-note! right-macro 1)
+        (tc_core.compiler-tc-walk-segment-fallback-flatten-note! left-macro 2)
+        (tc_core.compiler-tc-macro-profile-metric-add!
+          left-macro
+          tc_core.tc-profile-segment-delta-decls
+          5)
+        (tc_core.compiler-tc-macro-profile-metric-add!
+          right-macro
+          tc_core.tc-profile-segment-final-flattens
+          1)
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-segment-fallback-file-flattens)
+          2
+          "left file flattens count only left notes")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-segment-fallback-alias-flattens)
+          0
+          "right alias flatten is not left's")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            right-address
+            tc_core.tc-profile-segment-fallback-flattens)
+          1
+          "right counts its own flatten")
+        (tc_core.compiler-tc-splice-profile-reset right)
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            right-address
+            tc_core.tc-profile-segment-final-flattens)
+          0
+          "right reset clears the family's last slot")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-segment-fallback-flattens)
+          2
+          "right reset leaves left's flattens")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-segment-delta-decls)
+          5
+          "right reset leaves left's delta declarations")
+        ;; The family sits between the reinference/body-fact columns and the
+        ;; driver ledger's first slot.
+        (test.assert-true
+          (and
+            (>=
+              tc_core.compiler-tc-splice-profile-first
+              (+
+                tc_core.compiler-tc-body-fact-profile-misses-start
+                tc_core.compiler-tc-reinfer-profile-site-count))
+            (<= tc_core.compiler-tc-splice-profile-end 108))
+          "splice slots do not overlap another family")))))
+
 ;; Every span-bearing diagnostic builder below a typecheck error, rendered for
 ;; one expression root through one expression segment-bases token.
 (define (tc-diagnostic-span-isolation-transcript

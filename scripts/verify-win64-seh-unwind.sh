@@ -66,7 +66,9 @@ count_rows() {
     -- "$WORK/oracle.s"
 clang --target=x86_64-pc-windows-msvc -c "$WORK/oracle.s" -o "$WORK/oracle.obj"
 unwind_rows "$WORK/oracle.obj" > "$WORK/oracle.rows"
-diff -u "$FIXTURES/savereg-oracle.expected" "$WORK/oracle.rows" \
+# A Windows checkout may give the expected file CRLF line endings.
+tr -d '\r' < "$FIXTURES/savereg-oracle.expected" > "$WORK/oracle.expected"
+diff -u "$WORK/oracle.expected" "$WORK/oracle.rows" \
     || fail "win64 SEH savereg oracle rows differ from tests/fixtures/win64-seh/savereg-oracle.expected"
 echo "win64 SEH savereg oracle rows match"
 

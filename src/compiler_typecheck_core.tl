@@ -5209,10 +5209,14 @@
 ;; Full catalogs are validated by their one ordinary typecheck walk, so
 ;; `generated_module_catalog_validations` stays zero. The active-generation
 ;; rotation row is the sum of declaration and splice generation rotations.
+;; The table lives in the job's typecheck metrics view at relative slots 36-75;
+;; its last three slots report no row: the splice-generation rotations and the
+;; start clocks of the two stdlib TLCI entry timers.
 (cfg
-  compile-profile
-  (counters.defcounters
+  (any compile-profile test)
+  (counters.defslots
     compiler-tc-macro-program-profile
+    36
     (tc-profile-generated-module-materializations
       "typecheck.macro.generated_module_materializations")
     (tc-profile-generated-decl-checks "typecheck.macro.generated_decl_checks")
@@ -5281,7 +5285,15 @@
     (tc-profile-stdlib-entry-invoke-calls
       "typecheck.macro.stdlib_tlci_entry_invoke_calls")
     (tc-profile-stdlib-source-interpreted
-      "typecheck.macro.stdlib_source_interpreted")))
+      "typecheck.macro.stdlib_source_interpreted")
+    (tc-profile-splice-generation-rotations)
+    (tc-profile-stdlib-entry-resolution-start-ns)
+    (tc-profile-stdlib-entry-invoke-start-ns)))
+
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-program-profile-first : i64
+    tc-profile-generated-module-materializations))
 
 ;; Fired-declaration rows. The walk's decl loop samples each iteration's time
 ;; and live bytes into the fired bucket when the iteration captured macro
@@ -5467,19 +5479,7 @@
     0))
 (cfg
   compile-profile
-  (define compiler-tc-stdlib-entry-resolution-start-ns : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-stdlib-entry-invoke-start-ns : i64
-    0))
-(cfg
-  compile-profile
   (define compiler-tc-walk-reresolve-start-alloc : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-macro-splice-generation-rotations : i64
     0))
 
 (cfg
@@ -5508,35 +5508,31 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-stdlib-tlci-entry-resolution-start!) : unit
-    (set!
-      compiler-tc-stdlib-entry-resolution-start-ns
+  (define (compiler-tc-stdlib-tlci-entry-timer-start!
+    [state : TcMacroState]
+    [start-metric : i64]) : unit
+    (compiler-tc-profile-metric-set!
+      (compiler-tc-macro-profile-metrics-address state)
+      start-metric
       (compiler-tc-walk-now-ns))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-stdlib-tlci-entry-resolution-finish!) : unit
+  (define (compiler-tc-stdlib-tlci-entry-timer-finish!
+    [state : TcMacroState]
+    [start-metric : i64]
+    [ns-metric : i64]
+    [calls-metric : i64]) : unit
     (begin
-      (counters.add!
-        tc-profile-stdlib-entry-resolution-ns
+      (compiler-tc-macro-profile-metric-add!
+        state
+        ns-metric
         (-
           (compiler-tc-walk-now-ns)
-          compiler-tc-stdlib-entry-resolution-start-ns))
-      (counters.bump! tc-profile-stdlib-entry-resolution-calls))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-stdlib-tlci-entry-invoke-start!) : unit
-    (set! compiler-tc-stdlib-entry-invoke-start-ns (compiler-tc-walk-now-ns))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-stdlib-tlci-entry-invoke-finish!) : unit
-    (begin
-      (counters.add!
-        tc-profile-stdlib-entry-invoke-ns
-        (- (compiler-tc-walk-now-ns) compiler-tc-stdlib-entry-invoke-start-ns))
-      (counters.bump! tc-profile-stdlib-entry-invoke-calls))))
+          (compiler-tc-profile-metric-value
+            (compiler-tc-macro-profile-metrics-address state)
+            start-metric)))
+      (compiler-tc-macro-profile-metric-add! state calls-metric 1))))
 
 (cfg
   compile-profile
@@ -6250,6 +6246,19 @@
           (compiler-tc-profile-metric-set! metrics-address metric 0)
           (set! metric (+ metric 1)))))))
 
+;; Raise a counter of the job's view to `value` when that is larger.
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-macro-profile-metric-max!
+    [state : TcMacroState]
+    [metric : i64]
+    [value : i64]) : unit
+    (let
+      [metrics-address : u64 (compiler-tc-macro-profile-metrics-address state)]
+      (if (> value (compiler-tc-profile-metric-value metrics-address metric))
+        (compiler-tc-profile-metric-set! metrics-address metric value)
+        unit))))
+
 ;; The splice counters reset with each macro-expansion program.
 (cfg
   (any compile-profile test)
@@ -6258,6 +6267,15 @@
       (compiler-tc-profile-metrics-address state)
       compiler-tc-splice-profile-first
       compiler-tc-splice-profile-end)))
+
+;; The macro-program counters reset with each macro-expansion program.
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-macro-program-profile-reset [state : TcJobState]) : unit
+    (compiler-tc-profile-metric-reset-range!
+      (compiler-tc-profile-metrics-address state)
+      compiler-tc-macro-program-profile-first
+      compiler-tc-macro-program-profile-end)))
 
 (cfg
   (any compile-profile test)
@@ -6656,9 +6674,8 @@
     (begin
       (compiler-tc-resolve-profile-reset!)
       (compiler-tc-unbound-profile-reset!)
-      (compiler-tc-macro-program-profile-reset!)
-      (compiler-tc-splice-profile-reset state)
-      (set! compiler-tc-macro-splice-generation-rotations 0))))
+      (compiler-tc-macro-program-profile-reset state)
+      (compiler-tc-splice-profile-reset state))))
 
 (cfg
   compile-profile
@@ -6671,10 +6688,15 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-decl-profile-record [decl : ast.AstDecl]) : unit
+  (define (compiler-tc-decl-profile-record
+    [state : TcMacroState]
+    [decl : ast.AstDecl]) : unit
     (match (ast.ast-decl-generated-meta decl)
       [(ast.AstGeneratedDeclMeta.Some _ _ _ _)
-        (counters.bump! tc-profile-generated-decl-checks)]
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-generated-decl-checks
+          1)]
       [(ast.AstGeneratedDeclMeta.No) unit])))
 
 (cfg
@@ -6688,7 +6710,7 @@
 ;; nested lanes; the survivor pool nodes are priced at their pool node size.
 (cfg
   compile-profile
-  (define (compiler-tc-walk-profile-derive!) : unit
+  (define (compiler-tc-walk-profile-derive! [state : TcJobState]) : unit
     (let
       [nonoutput : i64
         (- tc-profile-fire-superseded-alloc tc-profile-fire-superseded-released)]
@@ -6697,11 +6719,14 @@
           (* tc-profile-fire-survivor-expr-nodes (ast.ast-expr-node-bytes))
           (* tc-profile-fire-survivor-type-nodes (ast.ast-type-node-bytes)))]
       (begin
-        (set!
+        (compiler-tc-profile-metric-set!
+          (compiler-tc-profile-metrics-address state)
           tc-profile-active-generation-rotations
           (+
             tc-profile-decl-generation-rotations
-            compiler-tc-macro-splice-generation-rotations))
+            (compiler-tc-profile-metric-value
+              (compiler-tc-profile-metrics-address state)
+              tc-profile-splice-generation-rotations)))
         (set!
           tc-profile-fire-self-ns
           (if (> tc-profile-fire-ns tc-profile-fire-nested-ns)
@@ -6731,11 +6756,12 @@
   compile-profile
   (define (compiler-tc-decl-profile-finish [state : TcJobState]) : unit
     (begin
-      (compiler-tc-walk-profile-derive!)
+      (compiler-tc-walk-profile-derive! state)
       (compiler-tc-resolve-profile-emit!)
       (compiler-tc-env-profile-emit!)
       (compiler-tc-unbound-profile-emit!)
-      (compiler-tc-macro-program-profile-emit!)
+      (compiler-tc-macro-program-profile-emit!
+        (compiler-tc-profile-metrics-address state))
       (compiler-tc-walk-profile-emit!)
       (compiler-tc-splice-profile-emit!
         (compiler-tc-profile-metrics-address state))
@@ -81815,11 +81841,13 @@
   compile-profile
   (define (compiler-tc-macro-retention-sample-symbols! [state : TcMacroState]) : unit
     (begin
-      (counters.max!
+      (compiler-tc-macro-profile-metric-max!
+        state
         tc-profile-live-symbols-max-bytes
         (compiler-tc-macro-retention-arena-bytes
           (tc-macro-walk-field state macro-live-symbols-arena)))
-      (counters.max!
+      (compiler-tc-macro-profile-metric-max!
+        state
         tc-profile-retired-symbols-max-bytes
         (compiler-tc-macro-retention-arena-bytes
           (tc-macro-walk-field state macro-live-symbols-retired-arena))))))
@@ -81829,14 +81857,16 @@
   (define (compiler-tc-macro-retention-sample-generations!
     [state : TcMacroState]) : unit
     (begin
-      (counters.max!
+      (compiler-tc-macro-profile-metric-max!
+        state
         tc-profile-active-generations-max-bytes
         (+
           (compiler-tc-macro-retention-arena-bytes
             (tc-macro-walk-field state macro-decl-generation-arena))
           (compiler-tc-macro-retention-arena-bytes
             (tc-macro-walk-field state macro-splice-generation-arena))))
-      (counters.max!
+      (compiler-tc-macro-profile-metric-max!
+        state
         tc-profile-retired-generations-max-bytes
         (+
           (compiler-tc-macro-retention-arena-bytes
@@ -81854,7 +81884,10 @@
       (begin
         (compiler-tc-macro-retention-sample-symbols! state)
         (compiler-tc-macro-retention-sample-generations! state)
-        (counters.max! tc-profile-expansion-scratch-max-bytes scratch)))))
+        (compiler-tc-macro-profile-metric-max!
+          state
+          tc-profile-expansion-scratch-max-bytes
+          scratch)))))
 
 (define (tc-macro-walk-state-new) : TcMacroWalkStateData
   (TcMacroWalkStateData
@@ -82772,11 +82805,21 @@
     (tc-macro-walk-field state macro-live-registries-ready)
     (not (tc-macro-walk-field state macro-live-registries-fallback)))
     (begin
-      (cfg compile-profile (counters.bump! tc-profile-live-registry-reuses))
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-live-registry-reuses
+          1))
       (csym.ResultCompilerRegistries.Ok
         (macro-live-registries-shared-view state)))
     (begin
-      (cfg compile-profile (counters.bump! tc-profile-live-registry-rebuilds))
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-live-registry-rebuilds
+          1))
       (let
         [registries : csym.CompilerRegistries
           (try (csym.build-compiler-registries-with-symbols program symbols))]
@@ -82806,7 +82849,9 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : csym.ResultCompilerSymbols
   (begin
-    (cfg compile-profile (counters.bump! tc-profile-live-rebuilds))
+    (cfg
+      compile-profile
+      (compiler-tc-macro-profile-metric-add! state tc-profile-live-rebuilds 1))
     (match (csym.build-compiler-symbols-diagnostic-with-paths-and-capacity
       (tc-global-shared-view program)
       paths
@@ -82874,7 +82919,10 @@
                 (begin
                   (if (= previous 0)
                     unit
-                    (counters.bump! tc-profile-retired-symbol-rotations))
+                    (compiler-tc-macro-profile-metric-add!
+                      state
+                      tc-profile-retired-symbol-rotations
+                      1))
                   (compiler-tc-macro-retention-sample-symbols! state)))
               (macro-expand-allocation-profile-snapshot! state retired)
               (if (= retired 0)
@@ -82900,7 +82948,9 @@
     (tc-macro-walk-field state macro-live-symbols-ready)
     (not (tc-macro-walk-field state macro-live-symbols-fallback)))
     (begin
-      (cfg compile-profile (counters.bump! tc-profile-live-reuses))
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-metric-add! state tc-profile-live-reuses 1))
       (match (macro-live-registries-build-current
         state
         program
@@ -83138,6 +83188,12 @@
         compile-profile
         (begin
           (compiler-tc-macro-retention-sample-generations! state)
+          (if (= previous 0)
+            (compiler-tc-macro-profile-metric-add!
+              state
+              tc-profile-generation-arenas-mapped
+              1)
+            unit)
           (counters.bump! tc-profile-decl-generation-rotations)))
       (tc-macro-walk-set! state macro-decl-generation-arena next)
       (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
@@ -83209,12 +83265,10 @@
       (unsafe
         (arena.tl_arena_destroy generation)))))
 
-;: A fresh generation arena. Every one the walk maps is counted, so the
-;: compile profile can pin the number of mappings to a small constant.
+;: A fresh generation arena. Both callers count every mapping, so the compile
+;: profile can pin the number of mappings to a small constant.
 (define (macro-generation-map!) : i64
-  (begin
-    (cfg compile-profile (counters.bump! tc-profile-generation-arenas-mapped))
-    (arena.tl_arena_make)))
+  (arena.tl_arena_make))
 
 ;: The mark of `generation` while it is still empty.
 (define (macro-generation-base-mark [generation : i64]) : i64
@@ -83272,12 +83326,22 @@
         compile-profile
         (begin
           (compiler-tc-macro-retention-sample-generations! state)
-          (set!
-            compiler-tc-macro-splice-generation-rotations
-            (+ compiler-tc-macro-splice-generation-rotations 1))
+          (if (= retired 0)
+            (compiler-tc-macro-profile-metric-add!
+              state
+              tc-profile-generation-arenas-mapped
+              1)
+            unit)
+          (compiler-tc-macro-profile-metric-add!
+            state
+            tc-profile-splice-generation-rotations
+            1)
           (if (= previous 0)
             unit
-            (counters.bump! tc-profile-retired-generation-rotations))))
+            (compiler-tc-macro-profile-metric-add!
+              state
+              tc-profile-retired-generation-rotations
+              1))))
       (tc-macro-walk-set! state macro-splice-generation-arena next)
       (tc-macro-walk-set! state macro-splice-generation-mark next-mark)
       (tc-macro-walk-set! state macro-splice-generation-retired-arena previous)
@@ -83435,7 +83499,10 @@
         (tc-macro-walk-set! state macro-expand-scratch-arena scratch)
         (cfg
           compile-profile
-          (counters.bump! tc-profile-expansion-scratch-creations))
+          (compiler-tc-macro-profile-metric-add!
+            state
+            tc-profile-expansion-scratch-creations
+            1))
         scratch))
     (tc-macro-walk-field state macro-expand-scratch-arena)))
 
@@ -98024,15 +98091,28 @@
 (cfg
   embedded-stdlib-tlci
   (define (macro-expand-stdlib-tlci-catalog-lookup-cached [name : String]) : embedded_tlci.CompilerEmbeddedStdlibTlciLookup
+    (embedded_tlci.compiler-embedded-stdlib-tlci-catalog-lookup name)))
+
+;; The same lookup timed into the job's view. Callers select it with
+;; `(cfg compile-profile ...)`, so ordinary builds keep the plain lookup.
+(cfg
+  (all embedded-stdlib-tlci compile-profile)
+  (define (macro-expand-stdlib-tlci-catalog-lookup-profiled
+    [state : TcMacroState]
+    [name : String]) : embedded_tlci.CompilerEmbeddedStdlibTlciLookup
     (begin
-      (cfg compile-profile (compiler-tc-stdlib-tlci-entry-resolution-start!))
+      (compiler-tc-stdlib-tlci-entry-timer-start!
+        state
+        tc-profile-stdlib-entry-resolution-start-ns)
       (let
         [lookup : embedded_tlci.CompilerEmbeddedStdlibTlciLookup
-          (embedded_tlci.compiler-embedded-stdlib-tlci-catalog-lookup name)]
+          (macro-expand-stdlib-tlci-catalog-lookup-cached name)]
         (begin
-          (cfg
-            compile-profile
-            (compiler-tc-stdlib-tlci-entry-resolution-finish!))
+          (compiler-tc-stdlib-tlci-entry-timer-finish!
+            state
+            tc-profile-stdlib-entry-resolution-start-ns
+            tc-profile-stdlib-entry-resolution-ns
+            tc-profile-stdlib-entry-resolution-calls)
           lookup)))))
 
 (define (macro-dependency-tlci-catalog-lookup
@@ -98165,7 +98245,12 @@
           (macro-expand-stdlib-tlci-module-id?
             (tc-context-macro-state ctx)
             definition-module))
-          (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
+          (match (cfg
+            compile-profile
+            (macro-expand-stdlib-tlci-catalog-lookup-profiled
+              (tc-context-macro-state ctx)
+              identity)
+            (macro-expand-stdlib-tlci-catalog-lookup-cached identity))
             [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
               (MacroTlciCatalogSelection.Resolved
                 (MacroTlciResolvedCatalog.Embedded resolved))]
@@ -98428,35 +98513,61 @@
         (begin
           (cfg
             embedded-stdlib-tlci
-            (match (macro-expand-stdlib-tlci-catalog-lookup-cached
-              (macro-tlci-catalog-identity definition-module macro-name))
+            (match (cfg
+              compile-profile
+              (macro-expand-stdlib-tlci-catalog-lookup-profiled
+                state
+                (macro-tlci-catalog-identity definition-module macro-name))
+              (macro-expand-stdlib-tlci-catalog-lookup-cached
+                (macro-tlci-catalog-identity definition-module macro-name)))
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved _)
                 (cfg
                   compile-profile
-                  (counters.bump! tc-profile-stdlib-catalog-hits))]
+                  (compiler-tc-macro-profile-metric-add!
+                    state
+                    tc-profile-stdlib-catalog-hits
+                    1))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Shell _)
                 (cfg
                   compile-profile
-                  (counters.bump! tc-profile-stdlib-catalog-hits))]
+                  (compiler-tc-macro-profile-metric-add!
+                    state
+                    tc-profile-stdlib-catalog-hits
+                    1))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Missing)
                 (cfg
                   compile-profile
-                  (counters.bump! tc-profile-stdlib-catalog-misses))]
+                  (compiler-tc-macro-profile-metric-add!
+                    state
+                    tc-profile-stdlib-catalog-misses
+                    1))]
               [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Unavailable _)
                 (cfg
                   compile-profile
-                  (counters.bump! tc-profile-stdlib-load-failures))]))
+                  (compiler-tc-macro-profile-metric-add!
+                    state
+                    tc-profile-stdlib-load-failures
+                    1))]))
           (cfg
             (not embedded-stdlib-tlci)
             (cfg
               compile-profile
-              (counters.bump! tc-profile-stdlib-load-failures)))
+              (compiler-tc-macro-profile-metric-add!
+                state
+                tc-profile-stdlib-load-failures
+                1)))
           (cfg
             compile-profile
-            (counters.bump! tc-profile-stdlib-interpreted-fallbacks)))
+            (compiler-tc-macro-profile-metric-add!
+              state
+              tc-profile-stdlib-interpreted-fallbacks
+              1)))
         (cfg
           compile-profile
-          (counters.bump! tc-profile-stdlib-source-interpreted))))
+          (compiler-tc-macro-profile-metric-add!
+            state
+            tc-profile-stdlib-source-interpreted
+            1))))
     unit))
 
 (defenum MacroNativeStdlibTlciResult
@@ -98765,7 +98876,9 @@
                 compile-profile
                 (if (macro-tlci-resolved-catalog-dependency? catalog)
                   unit
-                  (compiler-tc-stdlib-tlci-entry-invoke-start!)))
+                  (compiler-tc-stdlib-tlci-entry-timer-start!
+                    route-state
+                    tc-profile-stdlib-entry-invoke-start-ns)))
               (macro-dependency-tlci-note-if!
                 route-state
                 catalog
@@ -98781,7 +98894,11 @@
                     compile-profile
                     (if (macro-tlci-resolved-catalog-dependency? catalog)
                       unit
-                      (compiler-tc-stdlib-tlci-entry-invoke-finish!)))
+                      (compiler-tc-stdlib-tlci-entry-timer-finish!
+                        route-state
+                        tc-profile-stdlib-entry-invoke-start-ns
+                        tc-profile-stdlib-entry-invoke-ns
+                        tc-profile-stdlib-entry-invoke-calls)))
                   (match dispatch-result
                     [(tlci_loader_support.ResultTlciMacroDispatch.Err message)
                       (begin
@@ -98846,20 +98963,30 @@
                                     catalog)
                                     unit
                                     (begin
-                                      (counters.bump!
-                                        tc-profile-stdlib-catalog-hits)
-                                      (counters.bump!
-                                        tc-profile-stdlib-native-dispatches)
+                                      (compiler-tc-macro-profile-metric-add!
+                                        route-state
+                                        tc-profile-stdlib-catalog-hits
+                                        1)
+                                      (compiler-tc-macro-profile-metric-add!
+                                        route-state
+                                        tc-profile-stdlib-native-dispatches
+                                        1)
                                       (if (tc-macro-result-module?
                                         (tc-global-shared-view ret))
-                                        (counters.bump!
-                                          tc-profile-stdlib-native-module-results)
+                                        (compiler-tc-macro-profile-metric-add!
+                                          route-state
+                                          tc-profile-stdlib-native-module-results
+                                          1)
                                         (if (tc-macro-result-decls?
                                           (tc-global-shared-view ret))
-                                          (counters.bump!
-                                            tc-profile-stdlib-native-decls-results)
-                                          (counters.bump!
-                                            tc-profile-stdlib-native-expr-results))))))
+                                          (compiler-tc-macro-profile-metric-add!
+                                            route-state
+                                            tc-profile-stdlib-native-decls-results
+                                            1)
+                                          (compiler-tc-macro-profile-metric-add!
+                                            route-state
+                                            tc-profile-stdlib-native-expr-results
+                                            1))))))
                                 (if (tc-macro-result-module?
                                   (tc-global-shared-view ret))
                                   (macro-dependency-tlci-note-if!
@@ -98913,8 +99040,10 @@
                                     (if (macro-tlci-resolved-catalog-dependency?
                                       catalog)
                                       unit
-                                      (counters.bump!
-                                        tc-profile-stdlib-shell-learns)))
+                                      (compiler-tc-macro-profile-metric-add!
+                                        route-state
+                                        tc-profile-stdlib-shell-learns
+                                        1)))
                                   (macro-dependency-tlci-note-if!
                                     route-state
                                     catalog
@@ -99035,7 +99164,10 @@
               compile-profile
               (if (macro-tlci-resolved-catalog-dependency? catalog)
                 unit
-                (counters.bump! tc-profile-stdlib-shell-cache-hits)))
+                (compiler-tc-macro-profile-metric-add!
+                  (tc-context-macro-state ctx)
+                  tc-profile-stdlib-shell-cache-hits
+                  1)))
             MacroNativeStdlibTlciResult.No)]
         [(MacroTlciCatalogSelection.MetadataOnly)
           MacroNativeStdlibTlciResult.No]
@@ -99074,52 +99206,61 @@
   (PreparedEnv ctfe_support.CtfeEnv)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+;; Stdlib fallbacks from the direct-expression route, counted into the job's
+;; view. Only compile-profile builds call these; dependency catalogs and slots
+;; are reported by their own rows instead.
 (cfg
-  embedded-stdlib-tlci
+  (all embedded-stdlib-tlci compile-profile)
   (define (macro-note-embedded-tlci-resolved-fallback!
+    [state : TcMacroState]
     [catalog : (& catalog MacroTlciResolvedCatalog)]) : unit
     (if (macro-tlci-resolved-catalog-dependency? catalog)
       unit
-      (cfg
-        compile-profile
-        (begin
-          (counters.bump! tc-profile-stdlib-catalog-hits)
-          (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
-        unit))))
+      (begin
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-stdlib-catalog-hits
+          1)
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-stdlib-interpreted-fallbacks
+          1)))))
 
 (cfg
-  embedded-stdlib-tlci
+  (all embedded-stdlib-tlci compile-profile)
   (define (macro-note-embedded-tlci-shell-fallback!
-    [catalog : MacroTlciResolvedCatalog]) : unit
+    [state : TcMacroState]
+    [catalog : (& catalog MacroTlciResolvedCatalog)]) : unit
     (if (macro-tlci-resolved-catalog-dependency? catalog)
       unit
-      (cfg
-        compile-profile
-        (begin
-          (counters.bump! tc-profile-stdlib-catalog-hits)
-          (counters.bump! tc-profile-stdlib-shell-cache-hits)
-          (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
-        unit))))
-
-(define (macro-note-embedded-tlci-missing-fallback! [dependency-slot : i64]) : unit
-  (if (>= dependency-slot 0)
-    unit
-    (cfg
-      compile-profile
       (begin
-        (counters.bump! tc-profile-stdlib-catalog-misses)
-        (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
-      unit)))
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-stdlib-catalog-hits
+          1)
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-stdlib-shell-cache-hits
+          1)
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-stdlib-interpreted-fallbacks
+          1)))))
 
-(define (macro-note-embedded-tlci-unavailable-fallback! [dependency-slot : i64]) : unit
-  (if (>= dependency-slot 0)
-    unit
-    (cfg
-      compile-profile
+(cfg
+  compile-profile
+  (define (macro-note-embedded-tlci-slot-fallback!
+    [state : TcMacroState]
+    [dependency-slot : i64]
+    [metric : i64]) : unit
+    (if (>= dependency-slot 0)
+      unit
       (begin
-        (counters.bump! tc-profile-stdlib-load-failures)
-        (counters.bump! tc-profile-stdlib-interpreted-fallbacks))
-      unit)))
+        (compiler-tc-macro-profile-metric-add! state metric 1)
+        (compiler-tc-macro-profile-metric-add!
+          state
+          tc-profile-stdlib-interpreted-fallbacks
+          1)))))
 
 ;; Expression position can resolve the catalog before binding. A native
 ;; commit consumes the shared capture values directly. If the first dispatch
@@ -99233,8 +99374,10 @@
                               (if (macro-tlci-resolved-catalog-dependency?
                                 catalog)
                                 unit
-                                (counters.bump!
-                                  tc-profile-stdlib-direct-expr-results))
+                                (compiler-tc-macro-profile-metric-add!
+                                  (tc-context-macro-state ctx)
+                                  tc-profile-stdlib-direct-expr-results
+                                  1))
                               (compiler-tc-macro-profile-finish
                                 (tc-context-macro-state ctx)
                                 (ci.intern-composite-pair-id
@@ -99260,15 +99403,22 @@
                           (MacroDirectStdlibTlciResult.Err (box diag)))]
                       [(MacroNativeStdlibTlciResult.Shell)
                         (begin
-                          (macro-note-embedded-tlci-resolved-fallback! catalog)
+                          (cfg
+                            compile-profile
+                            (macro-note-embedded-tlci-resolved-fallback!
+                              (tc-context-macro-state ctx)
+                              catalog)
+                            unit)
                           (macro-dependency-tlci-note-if!
                             (tc-context-macro-state ctx)
                             catalog
                             tc-dependency-tlci-direct-shell-env-folds)
                           (cfg
                             compile-profile
-                            (counters.bump!
-                              tc-profile-stdlib-direct-shell-env-folds))
+                            (compiler-tc-macro-profile-metric-add!
+                              (tc-context-macro-state ctx)
+                              tc-profile-stdlib-direct-shell-env-folds
+                              1))
                           (MacroDirectStdlibTlciResult.PreparedEnv
                             (macro-fold-captured-operands-env
                               params
@@ -99279,23 +99429,51 @@
                                 syntax-pools))))]
                       [(MacroNativeStdlibTlciResult.No)
                         (begin
-                          (macro-note-embedded-tlci-resolved-fallback! catalog)
+                          (cfg
+                            compile-profile
+                            (macro-note-embedded-tlci-resolved-fallback!
+                              (tc-context-macro-state ctx)
+                              catalog)
+                            unit)
                           MacroDirectStdlibTlciResult.BoundFallback)]))]))]
           [(MacroTlciCatalogSelection.Shell catalog)
             (begin
-              (macro-note-embedded-tlci-shell-fallback! catalog)
+              (cfg
+                compile-profile
+                (macro-note-embedded-tlci-shell-fallback!
+                  (tc-context-macro-state ctx)
+                  catalog)
+                unit)
               MacroDirectStdlibTlciResult.BoundFallback)]
           [(MacroTlciCatalogSelection.MetadataOnly)
             (begin
-              (macro-note-embedded-tlci-missing-fallback! dependency-slot)
+              (cfg
+                compile-profile
+                (macro-note-embedded-tlci-slot-fallback!
+                  (tc-context-macro-state ctx)
+                  dependency-slot
+                  tc-profile-stdlib-catalog-misses)
+                unit)
               MacroDirectStdlibTlciResult.BoundFallback)]
           [(MacroTlciCatalogSelection.Missing)
             (begin
-              (macro-note-embedded-tlci-missing-fallback! dependency-slot)
+              (cfg
+                compile-profile
+                (macro-note-embedded-tlci-slot-fallback!
+                  (tc-context-macro-state ctx)
+                  dependency-slot
+                  tc-profile-stdlib-catalog-misses)
+                unit)
               MacroDirectStdlibTlciResult.BoundFallback)]
           [(MacroTlciCatalogSelection.Unavailable)
             (begin
-              (macro-note-embedded-tlci-unavailable-fallback! dependency-slot)
+              (cfg
+                compile-profile
+                (macro-note-embedded-tlci-slot-fallback!
+                  (tc-context-macro-state ctx)
+                  dependency-slot
+                  tc-profile-stdlib-load-failures)
+                unit)
               MacroDirectStdlibTlciResult.BoundFallback)])))))
 
 (cfg
@@ -102379,11 +102557,17 @@
                 import-path)
               (cfg
                 compile-profile
-                (counters.bump! tc-profile-generated-module-catalog-builds)))
+                (compiler-tc-macro-profile-metric-add!
+                  state
+                  tc-profile-generated-module-catalog-builds
+                  1)))
             unit)
           (cfg
             compile-profile
-            (counters.bump! tc-profile-generated-module-materializations)))]
+            (compiler-tc-macro-profile-metric-add!
+              state
+              tc-profile-generated-module-materializations
+              1)))]
       [(ResultMacroDeclExpansion.Err _) unit])
     result))
 
@@ -103036,12 +103220,16 @@
                                       (begin
                                         (cfg
                                           compile-profile
-                                          (counters.bump!
-                                            tc-profile-generated-module-memo-hits))
+                                          (compiler-tc-macro-profile-metric-add!
+                                            (tc-context-macro-state ctx)
+                                            tc-profile-generated-module-memo-hits
+                                            1))
                                         (cfg
                                           compile-profile
-                                          (counters.bump!
-                                            tc-profile-generated-module-catalog-hits))
+                                          (compiler-tc-macro-profile-metric-add!
+                                            (tc-context-macro-state ctx)
+                                            tc-profile-generated-module-catalog-hits
+                                            1))
                                         (let
                                           [target-module : String
                                             (tc-env-key-name-text target-id)]
@@ -109738,6 +109926,7 @@
                                   (cfg
                                     compile-profile
                                     (compiler-tc-decl-profile-record
+                                      (tc-context-macro-state ctx)
                                       (tc-global-shared-view decl)))
                                   (set!
                                     cur-summary

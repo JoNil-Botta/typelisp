@@ -33,26 +33,26 @@
   (begin
     (test.assert-owned-string-eq
       (batch-tokens (op-line "expr-span" "3 14 -21474836480"))
-      "expr-span 3 14 -21474836480"
-      "integer immediates stay as they are")
+      "expr-spanA3A>fD00000"
+      "integer immediates become batch integers")
     (test.assert-owned-string-eq
       (batch-tokens
         (op-line "expr-var" (str_cat.str-cat (name-arg "value") " 5 0")))
-      "expr-var #5:value 5 0"
+      "expr-var#A5valueA5@"
       "a name argument carries its bytes")
     (test.assert-owned-string-eq
       (batch-tokens
         (op-line
           "string-value"
           (str_cat.str-cat (name-arg "a\\\"b\\\\c\\n d") " 8 0")))
-      "string-value #8:a\"b\\c\n d 8 0"
+      "string-value#A8a\"b\\c\n dA8@"
       "escapes are undone and the byte length counts raw bytes")
     (test.assert-owned-string-eq
       (batch-tokens
         (op-line
           "type-ref"
           (str_cat.str-cat "1 " (str_cat.str-cat (name-arg "r") " 1"))))
-      "type-ref 1 #1:r 1"
+      "type-refA1#A1rA1"
       "a name argument may sit in the middle position")))
 
 (test
@@ -133,6 +133,14 @@
           (set! index (+ index 1))))
       count)))
 
+;; A batch name entry: this build's row hint, the length and the name.
+(define (batch-name [name : String]) : String
+  (str_cat.str-cat
+    (producer.embedded-native-batch-int
+      (tlci_core.tlci-host-callback-row-index (& name)))
+    (producer.embedded-native-batch-int (string.string-length name))
+    name))
+
 (test
   status-chain-batches-constant-runs
   (let
@@ -167,13 +175,25 @@
           (test.assert-i64-eq
             (occurrences
               (& text)
-              "2 expr-list-empty expr-var 2 0 0 0 0 1 #1:x 1 0")
+              (producer.embedded-native-escape-string
+                (str_cat.str-cat
+                  (producer.embedded-native-batch-int 2)
+                  (batch-name "expr-list-empty")
+                  (batch-name "expr-var")
+                  (producer.embedded-native-batch-int 2)
+                  "0@@@1#A1xA1@")))
             1
             "the first run names each op once and indexes its names")
           (test.assert-i64-eq
             (occurrences
               (& text)
-              "2 expr-span expr-list-empty 2 0 3 4 -5 1 0 0 0")
+              (producer.embedded-native-escape-string
+                (str_cat.str-cat
+                  (producer.embedded-native-batch-int 2)
+                  (batch-name "expr-span")
+                  (batch-name "expr-list-empty")
+                  (producer.embedded-native-batch-int 2)
+                  "0A3A4a51@@@")))
             1
             "the second run")
           (test.assert-i64-eq

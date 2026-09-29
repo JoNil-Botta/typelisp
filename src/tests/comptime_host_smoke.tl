@@ -10,6 +10,8 @@
 ;; #4870, #6609.
 (import compiler_embedded_stdlib_tlci as host)
 (import tlci_core as tlci)
+(import compiler_tlci_native_producer as producer)
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
 (import compiler_intern as ci)
@@ -118,6 +120,55 @@
         (host.compiler-comptime-host-result-ready?)
         (host-smoke-result-shape-ok? pools operand-node)))))
 
+;; A batch integer, in the encoding the producer writes.
+(define (host-smoke-int [value : i64]) : String
+  (producer.embedded-native-batch-int value))
+
+;; A batch name entry with this build's row hint for `name`.
+(define (host-smoke-name [name : String]) : String
+  (str_cat.str-cat
+    (host-smoke-int (tlci.tlci-host-callback-row-index (& name)))
+    (host-smoke-int (string.string-length name))
+    name))
+
+;; A batch name entry whose row hint is wrong, as in an image another build
+;; produced: the host must fall back to finding the name.
+(define (host-smoke-stale-name [name : String]) : String
+  (str_cat.str-cat
+    (host-smoke-int (+ (tlci.tlci-host-callback-row-index (& name)) 1))
+    (host-smoke-int (string.string-length name))
+    name))
+
+;; A record: the op byte for batch name `op`, then three zero immediates.
+(define (host-smoke-zero-record [op : i64]) : String
+  (str_cat.str-cat
+    (producer.embedded-native-batch-char op)
+    (host-smoke-int 0)
+    (host-smoke-int 0)
+    (host-smoke-int 0)))
+
+;; A batch of one name and one record.
+(define (host-smoke-one [name : String] [record : String]) : String
+  (str_cat.str-cat
+    (host-smoke-int 1)
+    (host-smoke-name name)
+    (host-smoke-int 1)
+    record))
+
+;; A batch whose one op is `run-ops` over `inner`, passed as caller bytes: a
+;; well-formed inner batch would run if `run-ops` could name itself.
+(define (host-smoke-nested-run-ops [inner : String]) : String
+  (let
+    [length : i64 (string.string-length inner)]
+    (host-smoke-one
+      "run-ops"
+      (str_cat.str-cat
+        "0#"
+        (host-smoke-int length)
+        inner
+        (host-smoke-int length)
+        (host-smoke-int 0)))))
+
 ;; The construction above as one `run-ops` batch: the same callbacks with the
 ;; same immediates commit the same call shape. Refs #8274.
 (define (host-smoke-run-ops-construct-ok?) : bool
@@ -127,7 +178,24 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [batch : String
-      "5 expr-var expr-list-empty push-operand expr-list-append expr-call 5 0 #17:__tl_array-length 17 0 1 0 0 0 2 0 0 0 3 0 0 0 4 0 0 0"]
+      (str_cat.str-cat
+        (host-smoke-int 5)
+        (host-smoke-name "expr-var")
+        (host-smoke-name "expr-list-empty")
+        (host-smoke-stale-name "push-operand")
+        (host-smoke-name "expr-list-append")
+        (host-smoke-name "expr-call")
+        (host-smoke-int 5)
+        (str_cat.str-cat
+          "0#"
+          (host-smoke-int 17)
+          "__tl_array-length"
+          (host-smoke-int 17)
+          (host-smoke-int 0))
+        (host-smoke-zero-record 1)
+        (host-smoke-zero-record 2)
+        (host-smoke-zero-record 3)
+        (host-smoke-zero-record 4))]
     (begin
       (set! (array-ref operands 0) (host-smoke-expr operand-node))
       (host-smoke-open! pools operands 1 8)
@@ -161,42 +229,145 @@
           (host.compiler-comptime-host-session-close!)
           (+ (* status 1000) depth))))))
 
-;; A malformed batch is a bad request before any of its ops runs, and a batch
-;; stops at its first failing op.
+;; A malformed batch is a bad request at the malformed token: the header
+;; tokens resolve before any op runs, an earlier op in the same batch has
+;; already run (which a failed expansion never commits), and a batch stops at
+;; its first failing op.
 (define (host-smoke-run-ops-rejects-ok?) : bool
   (let
     [rejected : i64 (* tlci.tlci-host-callback-status-bad-request 1000)]
     (and
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0 0") 1)
-      (= (host-smoke-run-ops-outcome "1 no-such-op 1 0 0 0 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 run-ops 1 0 0 0 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 1 0 0 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 -1 0 0 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 #1:x 2 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 #1:x #1:y 1") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 0 0 #1:x") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 #9:x 9 0") rejected)
       (=
         (host-smoke-run-ops-outcome
-          "2 expr-list-empty expr-list-empty 2 0 0 0 0")
-        rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0 0 9") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0 -") rejected)
+          (host-smoke-one "expr-list-empty" (host-smoke-zero-record 0)))
+        1)
       (=
         (host-smoke-run-ops-outcome
-          "1 expr-list-empty 1 0 0 0 1234567890123456789")
-        rejected)
-      (= (host-smoke-run-ops-outcome "0 1 0 0 0 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 0") rejected)
-      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0  0 0 0") rejected)
+          (str_cat.str-cat
+            (host-smoke-int 1)
+            (host-smoke-stale-name "expr-list-empty")
+            (host-smoke-int 1)
+            (host-smoke-zero-record 0)))
+        1)
       (=
         (host-smoke-run-ops-outcome
-          "2 expr-list-append expr-list-empty 2 0 0 0 0 1 0 0 0")
+          (host-smoke-one "no-such-op" (host-smoke-zero-record 0)))
         rejected)
       (=
         (host-smoke-run-ops-outcome
-          "2 expr-list-empty expr-list-empty 3 0 0 0 0 1 0 0 0 0 0 0 0")
+          (host-smoke-one "run-ops" (host-smoke-zero-record 0)))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-nested-run-ops
+            (host-smoke-one "expr-list-empty" (host-smoke-zero-record 0))))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-one "expr-list-empty" (host-smoke-zero-record 1)))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-one "expr-list-empty" (str_cat.str-cat "/" "@@@")))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-one
+            "expr-var"
+            (str_cat.str-cat "0#" (host-smoke-int 1) "x" (host-smoke-int 2) "@")))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-one
+            "expr-var"
+            (str_cat.str-cat
+              "0#"
+              (host-smoke-int 1)
+              "x#"
+              (host-smoke-int 1)
+              "y"
+              (host-smoke-int 1))))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-one
+            "expr-var"
+            (str_cat.str-cat "0@@#" (host-smoke-int 1) "x")))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (host-smoke-one
+            "expr-var"
+            (str_cat.str-cat "0#" (host-smoke-int 9) "x")))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 1)
+            (host-smoke-name "expr-list-empty")
+            (host-smoke-int 2)
+            (host-smoke-zero-record 0)))
+        (+ rejected 1))
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-one "expr-list-empty" (host-smoke-zero-record 0))
+            "@"))
+        (+ rejected 1))
+      (=
+        (host-smoke-run-ops-outcome (host-smoke-one "expr-list-empty" "0@@"))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome (host-smoke-one "expr-list-empty" "0@Z@"))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome (host-smoke-one "expr-list-empty" "0@`@"))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome (host-smoke-one "expr-list-empty" "0@A~@"))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 0)
+            (host-smoke-int 1)
+            (host-smoke-zero-record 0)))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 1)
+            (host-smoke-name "expr-list-empty")
+            (host-smoke-int 0)))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 2)
+            (host-smoke-name "expr-list-append")
+            (host-smoke-name "expr-list-empty")
+            (host-smoke-int 2)
+            (host-smoke-zero-record 0)
+            (host-smoke-zero-record 1)))
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 1)
+            (host-smoke-name "expr-list-empty")
+            (host-smoke-int 2)
+            (host-smoke-zero-record 0)
+            "0@Z@"))
+        (+ rejected 1))
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 1)
+            (host-smoke-name "expr-list-empty")
+            (host-smoke-int 3)
+            (host-smoke-zero-record 0)
+            (host-smoke-zero-record 0)
+            (host-smoke-zero-record 0)))
         3))))
 
 (define (host-smoke-result-shape-ok?

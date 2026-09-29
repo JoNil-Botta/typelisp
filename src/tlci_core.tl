@@ -914,6 +914,42 @@
     ;; what keeps template construction out of machine code. Refs #8274.
     compiler-comptime-host-callback-run-ops))
 
+;; `(tlci-host-callback-row-index-rows name rows...)` is the row index of the
+;; ABI name `name` among `rows`, or -1: one comparison per row.
+(defmacro (tlci-host-callback-row-index-rows [name : Expr] [rows : Expr ...]) : i64
+  (let
+    [prefix-length : i64
+      (string.string-length "compiler-comptime-host-callback-")]
+    [row : i64 (expr-list-length rows)]
+    [lookup : Expr `-1]
+    (begin
+      (while (> row 0)
+        (begin
+          (set! row (- row 1))
+          (match (expr-list-nth rows row)
+            [(comptime.Expr.Var text)
+              (set!
+                lookup
+                `(if (string.eq
+                  ,name
+                  ,(comptime.expr-string
+                    (comptime.string-slice
+                      text
+                      prefix-length
+                      (- (string.string-length text) prefix-length))))
+                  ,(comptime.expr-int row)
+                  ,lookup))]
+            [_
+              (comptime-error
+                "tlci-host-callback-row-index-rows: rows must be bare names")])))
+      lookup)))
+
+;; The row index of ABI name `name` in `tlci-host-callback-table`, or -1. The
+;; producer stamps it into `run-ops` batches as a hint that the host confirms
+;; against its own row names before trusting it. Refs #8274.
+(define (tlci-host-callback-row-index [name : (& name str)]) : i64
+  (tlci-host-callback-table tlci-host-callback-row-index-rows name))
+
 ;; The ABI name String of one host callback table row. A name outside the
 ;; table fails to compile. (The definition-time macro checker runs the lookup
 ;; with no rows; that admits every name.)

@@ -6109,16 +6109,18 @@ is not a session failure. There is no separate operation-id argument, central
 numeric catalog, or hand-maintained data-operation exception list.
 
 A run of status-returning calls whose arguments are all constants may instead
-be one `run-ops` call whose argument A points at the run encoded as ASCII data
-and whose argument B is its byte length. The data names every operation it
-uses, so it binds callbacks by name exactly as the image's imports do, and
-each record carries the three arguments the individual call would pass; caller
-bytes travel inside the data as a pointer followed by their length. The host
-validates the whole run first (every name bound, every token well formed and
-in bounds, no trailing bytes, never `run-ops` itself) and answers a malformed
-run with the bad-request status before calling anything. It then makes the
-calls in order and returns the first nonzero status, so the session state is
-exactly that of the individual calls.
+be one `run-ops` call whose argument A points at the run encoded as printable
+ASCII data and whose argument B is its byte length. The data names every
+operation it uses, so it binds callbacks by name exactly as the image's imports
+do; each name carries the producer's row index as a hint that the host trusts
+only after confirming its own row of that index has that name. Each record
+carries the three arguments the individual call would pass, and caller bytes
+travel inside the data as a pointer followed by their length. The host reads
+the run in one pass, making the calls in order with those arguments. The first
+nonzero status ends the run and is returned; a malformed token (an unbound
+name or `run-ops` itself, a bad integer, a pointer without its length, bytes
+past the data or after the last record) ends it with the bad-request status.
+Either way the expansion commits nothing, as when an individual call fails.
 
 The `abort` callback is for native image failures that cannot be represented
 as a normal macro diagnostic. Its fixed host-C-ABI signature is:

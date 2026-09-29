@@ -4276,8 +4276,6 @@
       name
       1)))
 
-;; Render a contiguous neutral-call range as the still-open host-op let/if
-;; chain used by data-returning probes and legacy-sized arm blocks.
 ;; An op line whose callback and immediates are all constants, split into
 ;; the callback's ABI name and its three immediates as `run-ops` batch tokens.
 (defenum EmbeddedNativeBatchOp
@@ -4326,6 +4324,69 @@
         -1
         cursor))))
 
+;; The batch alphabet: bytes 48 to 111 in order, so `(+ 48 n)` is entry `n`.
+(define embedded-native-batch-alphabet : String
+  "0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmno")
+
+;; The batch byte `48 + index`, for `index` in 0..63.
+(define (embedded-native-batch-char [index : i64]) : String
+  (string.substring embedded-native-batch-alphabet index 1))
+
+;; `value` in the batch integer encoding that
+;; `compiler-comptime-host-batch-int!` reads: a header byte, `@` + digit
+;; count for a non-negative value or a backtick + digit count for a negative
+;; one, then base-64 digits (48 + digit), most significant first.
+(define (embedded-native-batch-int [value : i64]) : String
+  (let
+    [magnitude : i64
+      (if (< value 0)
+        (- 0 value)
+        value)]
+    [digits : String ""]
+    [count : i64 0]
+    (begin
+      (while (> magnitude 0)
+        (begin
+          (set!
+            digits
+            (str_cat.str-cat
+              (embedded-native-batch-char (bit-and magnitude 63))
+              digits))
+          (set! magnitude (shr magnitude 6))
+          (set! count (+ count 1))))
+      (str_cat.str-cat
+        (embedded-native-batch-char
+          (+
+            (if (< value 0)
+              48
+              16)
+            count))
+        digits))))
+
+;; The value of the decimal integer `[start, end)` of `line`, which
+;; `embedded-native-int-token-end` has checked.
+(define (embedded-native-decimal-value
+  [line : (& line str)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [negative : bool (= (string.string-ref line start) '-')]
+    [index : i64
+      (if negative
+        (+ start 1)
+        start)]
+    [value : i64 0]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            value
+            (+ (* value 10) (- (cast (string.string-ref line index) : i64) 48)))
+          (set! index (+ index 1))))
+      (if negative
+        (- 0 value)
+        value))))
+
 ;; The name-arg form `embedded-native-name-arg` renders around a literal.
 (define embedded-native-name-arg-prefix : String
   "(cast (unsafe (ptr->int (string-data \"")
@@ -4333,10 +4394,10 @@
   "\"))) : i64)")
 
 ;; Split an op line rendered by `embedded-native-op-call` into its callback
-;; name and batch tokens: a decimal immediate stays as it is, and a name-arg
-;; literal becomes `#<n>:<bytes>` with its escapes undone, which is only
-;; accepted when the next immediate is the literal's byte length `n` -- the
-;; same pointer and length the native call passes. Any other shape (a
+;; name and batch tokens: a decimal immediate becomes a batch integer, and a
+;; name-arg literal becomes `#`, its byte length and its bytes with the escapes
+;; undone, which is only accepted when the next immediate is that length --
+;; the same pointer and length the native call passes. Any other shape (a
 ;; generated variable, a pointer without its length) is not batchable.
 (define (embedded-native-batch-op [line : (& line str)]) : EmbeddedNativeBatchOp
   (let
@@ -4421,9 +4482,8 @@
                       tokens
                       (str_cat.str-cat
                         tokens
-                        " #"
-                        (string.int->string pending-length)
-                        ":"
+                        "#"
+                        (embedded-native-batch-int pending-length)
                         raw)))
                   (set! ok false))))
             (let
@@ -4431,16 +4491,15 @@
               (if (< end 0)
                 (set! ok false)
                 (let
-                  [token : String (string.substring line cursor (- end cursor))]
+                  [value : i64 (embedded-native-decimal-value line cursor end)]
                   (begin
                     (when
-                      (and
-                        (>= pending-length 0)
-                        (not
-                          (string.eq token (string.int->string pending-length))))
+                      (and (>= pending-length 0) (not (= value pending-length)))
                       (set! ok false))
                     (set! pending-length -1)
-                    (set! tokens (str_cat.str-cat tokens " " token))
+                    (set!
+                      tokens
+                      (str_cat.str-cat tokens (embedded-native-batch-int value)))
                     (set! cursor end))))))
           (set! arg (+ arg 1))
           (cond
@@ -4530,8 +4589,7 @@
                             records
                             (str_cat.str-cat
                               records
-                              " "
-                              (string.int->string op)
+                              (embedded-native-batch-char op)
                               tokens))
                           (set! record-count (+ record-count 1))
                           (set! cursor (+ cursor 1))))))]
@@ -4549,26 +4607,31 @@
                         index))))
                 (set! index (+ index 1)))
               (let
-                [batch : String (string.int->string name-count)]
+                [batch : String (embedded-native-batch-int name-count)]
                 [name-index : i64 0]
                 (begin
                   (while (< name-index name-count)
-                    (begin
-                      (set!
-                        batch
-                        (str_cat.str-cat
+                    (let
+                      [name : String
+                        (owned_view.compiler-owned-array-element-shared-view
+                          names
+                          name-index)]
+                      (begin
+                        (set!
                           batch
-                          " "
-                          (owned_view.compiler-owned-array-element-shared-view
-                            names
-                            name-index)))
-                      (set! name-index (+ name-index 1))))
+                          (str_cat.str-cat
+                            batch
+                            (embedded-native-batch-int
+                              (tlci_core.tlci-host-callback-row-index (& name)))
+                            (embedded-native-batch-int
+                              (string.string-length name))
+                            name))
+                        (set! name-index (+ name-index 1)))))
                   (set!
                     batch
                     (str_cat.str-cat
                       batch
-                      " "
-                      (string.int->string record-count)
+                      (embedded-native-batch-int record-count)
                       records))
                   (set!
                     out

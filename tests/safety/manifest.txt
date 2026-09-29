@@ -501,12 +501,13 @@ tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_r
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 # Value forms (#8268): a consumer moves the places at the value tails of the
-# `if`, `match`, `begin` or `let` it consumes when the value carries a cleanup
-# obligation. Each reject fails on main by acceptance.
+# `if`, `match`, `begin`, `let` or `with` it consumes when the value carries a
+# cleanup obligation. Each reject fails on main by acceptance.
 move_value_if_reuse_reject|check-fail|tests/safety/move_value_if_reuse_reject.tl|-|use of moved value `x`
 move_value_match_reuse_reject|check-fail|tests/safety/move_value_match_reuse_reject.tl|-|use of moved value `x`
 move_value_begin_reuse_reject|check-fail|tests/safety/move_value_begin_reuse_reject.tl|-|use of moved value `x`
 move_value_let_body_reuse_reject|check-fail|tests/safety/move_value_let_body_reuse_reject.tl|-|use of moved value `x`
+move_value_with_tail_reuse_reject|check-fail|tests/safety/move_value_with_tail_reuse_reject.tl|-|use of moved value `x`
 move_value_box_reuse_reject|check-fail|tests/safety/move_value_box_reuse_reject.tl|-|use of moved value `x`
 move_value_loop_carried_reject|check-fail|tests/safety/move_value_loop_carried_reject.tl|-|cannot move loop-carried owner value `x`
 with_owner_value_begin_move_reject|check-fail|tests/safety/with_owner_value_begin_move_reject.tl|-|cleanup owner `h` moved before with scope exit

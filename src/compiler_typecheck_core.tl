@@ -63213,24 +63213,12 @@
 (define (tc-move-scope-owners-possible?) : bool
   (or (tc-move-let-obligations-possible?) (tc-cleanup-owner-markers-possible?)))
 
-(define tc-move-scope-owner-count-key-generation : i64
-  -1)
-(define tc-move-scope-owner-count-key-cache : i64
-  -1)
-
 ;; `locals` counts the scope owners bound around the checked expression under
-;; this private key, so an edge or a loop body with none skips its work.
+;; this private key, so an edge or a loop body with none skips its work. Name
+;; identities are nonnegative; negative metadata keys cannot alias a binding
+;; and remain valid when another job's intern pool is installed.
 (define (tc-move-scope-owner-count-key) : i64
-  (let
-    [generation : i64 (ci.intern-generation)]
-    (if (= tc-move-scope-owner-count-key-generation generation)
-      tc-move-scope-owner-count-key-cache
-      (let
-        [key : i64 (ci.intern "\n__typelisp_move_scope_owner_count")]
-        (begin
-          (set! tc-move-scope-owner-count-key-cache key)
-          (set! tc-move-scope-owner-count-key-generation generation)
-          key)))))
+  -1)
 
 (define (tc-move-owners-in-scope? [locals : TcMovedSet]) : bool
   (and
@@ -63259,25 +63247,11 @@
       (tc-move-scope-owner-count-key)
       (+ count 1))))
 
-(define tc-move-loop-depth-key-generation : i64
-  -1)
-(define tc-move-loop-depth-key-cache : i64
-  -1)
-
 ;; `locals` records the depth of loop bodies around the checked expression
-;; under this key, which no source name can spell. A lambda body starts from
-;; fresh locals and therefore at depth 0.
+;; under a distinct non-name key. A lambda body starts from fresh locals and
+;; therefore at depth 0.
 (define (tc-move-loop-depth-key) : i64
-  (let
-    [generation : i64 (ci.intern-generation)]
-    (if (= tc-move-loop-depth-key-generation generation)
-      tc-move-loop-depth-key-cache
-      (let
-        [key : i64 (ci.intern "\n__typelisp_move_loop_depth")]
-        (begin
-          (set! tc-move-loop-depth-key-cache key)
-          (set! tc-move-loop-depth-key-generation generation)
-          key)))))
+  -2)
 
 (define (tc-move-loop-depth [locals : TcMovedSet]) : i64
   (let

@@ -8844,8 +8844,60 @@
 "
     src))
 
+(define (compiler-typecheck-scope-owner-state-isolation-ok?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [owner : ci.InternCompatState (ci.intern-compat-state-new)]
+    [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [name : i64 (ci.intern-compat-state-intern (&mut owner) "handle")]
+    (begin
+      (ci.intern-compat-state-intern (&mut decoy) "other-0")
+      (ci.intern-compat-state-intern (&mut decoy) "other-1")
+      (ci.intern-compat-state-intern (&mut decoy) "other-2")
+      (ci.intern-compat-state-intern (&mut decoy) "other-3")
+      (ci.intern-compat-state-install! (& owner))
+      (let
+        [locals : tc_core.TcMovedSet
+          (tc_core.tc-move-enter-loop-body
+            (tc_core.tc-move-bind-let-obligation
+              (tc_core.tc-moved-empty)
+              name
+              42))]
+        (begin
+          (ci.intern-compat-state-capture-from-globals! (&mut owner))
+          (ci.intern-compat-state-install! (& decoy))
+          (let
+            [foreign : tc_core.TcMovedSet
+              (tc_core.tc-move-bind-let-obligation
+                (tc_core.tc-moved-empty)
+                name
+                43)]
+            [ok : bool
+              (and
+                (tc_core.tc-move-owners-in-scope?
+                  (tc_core.tc-global-shared-view locals))
+                (=
+                  (tc_core.tc-move-loop-depth
+                    (tc_core.tc-global-shared-view locals))
+                  1)
+                (tc_core.tc-move-let-obligated?
+                  (tc_core.tc-global-shared-view locals)
+                  name)
+                (tc_core.tc-move-owners-in-scope?
+                  (tc_core.tc-global-shared-view foreign))
+                (= (tc_core.tc-move-loop-depth foreign) 0))]
+            (begin
+              (ci.intern-compat-state-install! (& installed))
+              (unsafe
+                (ci.tl_arena_destroy
+                  (ci.intern-compat-state-persistent-arena (& owner)))
+                (ci.tl_arena_destroy
+                  (ci.intern-compat-state-persistent-arena (& decoy))))
+              ok)))))))
+
 (define (compiler-typecheck-let-obligation-tests-ok?) : bool
   (and
+    (compiler-typecheck-scope-owner-state-isolation-ok?)
     ;; Discharged by the declared cleanup function, on every path.
     (compiler-typecheck-ok?
       (compiler-typecheck-let-obligation-source

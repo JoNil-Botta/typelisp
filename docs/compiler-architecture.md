@@ -298,6 +298,9 @@ still await migration are tracked in #4960.
 
 The move checker stores an ordinary cleanup-owning `let`'s obligation in its
 lexical locals entry and its discharge in the existing place-path facts.
+Private owner-count and loop-depth entries use reserved negative map keys;
+source and structural name identities are nonnegative, so these snapshots
+neither alias bindings nor depend on an installed intern pool.
 Shadowing snapshots and restores the outer binding's facts. Normal exit edges
 check every owner they leave before diverging arms are removed from joins;
 normally completing paths must agree on obligated roots. Transfer through a

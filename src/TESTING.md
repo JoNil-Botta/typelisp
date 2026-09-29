@@ -119,8 +119,9 @@ and loop `break` forms when changing either join. The `let_obligation_*` rows
 also require explicit discharge on every normal exit. Their value-tail cases
 check that transparent scopes and branches return the same visible owner,
 that shadowing cannot discharge an outer binding, and that `never` tails need
-no cleanup. The join fast
-path runs for every branch in a self-compile; measure typecheck-only
+no cleanup. The scope-owner state test installs an unrelated intern pool while
+keeping a lexical snapshot and verifies that its owners and loop depth survive.
+The join fast path runs for every branch in a self-compile; measure typecheck-only
 instruction counts on identical source when touching it.
 
 ## Discarded speculative errors

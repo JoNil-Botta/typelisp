@@ -1290,15 +1290,15 @@ this backend before running the gates. Reports and command logs are retained in
 `target/build-invariance/backend-memory/` and uploaded by Linux CI; large
 assembly/executable outputs remain local.
 
-The four selfhost compiles run alone within the gate, before its pool starts;
-under `ci-verify.sh --jobs` other gates may run beside them, so their timing
-rows are evidence, not budgets. Every other chunk of both producers and the
+Every chunk of both producers, including the four selfhost compiles, and the
 backend-tests build are jobs of one worker pool
 (`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 reproduces the serial
-order). Each pooled job runs through `scripts/run-memory-bounded.sh` with swap
-disabled and a 600 s timeout: 8192 MiB for the backend-tests build and both
-producers' complete codegen smoke, and 4096 MiB for every other chunk, about
-1.5 times the largest measured chunk peak (2.7 GiB). A job starts only while
+order). The selfhost compiles keep their own timing rows; other jobs and gates
+run beside them, so the rows are evidence, not budgets. Each pooled job runs
+through `scripts/run-memory-bounded.sh` with swap disabled and a 600 s timeout:
+8192 MiB for the backend-tests build, both producers' complete codegen smoke
+and the four whole-compiler selfhost compiles, and 4096 MiB for every other
+chunk, about 1.5 times the largest measured chunk peak (2.7 GiB). A job starts only while
 the caps of all running jobs fit 12288 MiB, so no two 8 GiB jobs overlap and
 the bound holds for every worker count; a job whose cap does not fit waits
 while later jobs that fit run. Chunk metrics and the chunk log lines carry each

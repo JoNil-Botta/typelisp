@@ -26,8 +26,7 @@ compiler. Builds one opt1 compiler from src/main.tl, then compares emitted
 assembly for a fixed corpus. The same fresh opt1 compiler must also compile
 the complete codegen smoke and build backend-tests at opt2 within 8 GiB.
 
-The four selfhost compiles run alone. Every other
-compile and the backend-tests build run in a pool of
+Every compile and the backend-tests build run in a pool of
 TYPELISP_BUILD_INVARIANCE_WORKERS processes (1-3, default 2), each under a
 kernel-enforced memory cap, with at most 12288 MiB of caps running at once.
 EOF
@@ -99,10 +98,11 @@ fi
 # every pooled job runs under a kernel-enforced cap with swap disabled, and a
 # job starts only while the caps of all running jobs fit the pool budget. The
 # budget leaves a 16 GiB runner a quarter of its memory for everything outside
-# the pool. The complete backend-tests build and both producers' complete
-# codegen smoke keep the 8 GiB cap, so no two of them overlap; every other
-# chunk gets 4 GiB, half as much again as the largest measured peak
-# (src/TESTING.md records the measurements).
+# the pool. The complete backend-tests build, both producers' complete codegen
+# smoke and the four whole-compiler selfhost compiles keep the 8 GiB cap, so no
+# two of them overlap and the gate's process tree stays within its ci-verify
+# reservation; every other chunk gets 4 GiB, half as much again as the largest
+# measured peak (src/TESTING.md records the measurements).
 POOL_WORKERS_MAX=3
 POOL_WORKERS=${TYPELISP_BUILD_INVARIANCE_WORKERS:-2}
 case "$POOL_WORKERS" in
@@ -414,7 +414,7 @@ verify_batch_outputs() {
     done < "$verify_case_chunk"
 }
 
-chunk_is_timed_selfhost() {
+chunk_is_selfhost() {
     [ "$(wc -l < "$1" | tr -d ' ')" -eq 1 ] || return 1
     case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
         selfhost_main_opt1 | selfhost_main_opt2) return 0 ;;
@@ -435,8 +435,7 @@ run_batch_chunk() {
     batch_case_chunk=$5
     batch_id=$6
     batch_entries=$7
-    # Empty for the selfhost compiles that run alone; a pooled chunk passes the
-    # cap its queue record reserved.
+    # The cap the chunk's queue record reserved.
     batch_cap_mib=$8
     batch_logical_cases=$(wc -l < "$batch_case_chunk" | tr -d ' ')
     batch_label="build-invariance $batch_compiler_label opt$batch_opt_level chunk $batch_id ($batch_entries compile(s), $batch_logical_cases case(s), serial)"
@@ -476,27 +475,23 @@ run_batch_chunk() {
         --backend-mode scalar \
         --opt-level "$batch_opt_level" \
         --stdlib-root stdlib --stdlib-root src
-    batch_memory_report=
-    batch_peak_bytes=0
-    if [ -n "$batch_cap_mib" ]; then
-        batch_suffix=${batch_chunk_path##*/entries.}
-        batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
-        if [ "$batch_compiler_label" = opt1-built ] && chunk_is_complete_codegen_smoke "$batch_case_chunk"; then
-            # This existing singleton already compiles the complete stress
-            # corpus with the opt1-built compiler. Its report is the ownership
-            # regression's evidence; it is not compiled a second time.
-            batch_memory_report="$WORKDIR/backend-memory/codegen-smoke.memory"
-            batch_stdout="$WORKDIR/backend-memory/codegen-smoke.stdout"
-            batch_stderr="$WORKDIR/backend-memory/codegen-smoke.stderr"
-        fi
-        if [ -e "$batch_memory_report" ] || [ -L "$batch_memory_report" ]; then
-            echo "[build-invariance] memory report exists before compile: $batch_memory_report" >&2
-            exit 1
-        fi
-        set -- "$ROOT/scripts/run-memory-bounded.sh" \
-            --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
-            --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- "$@"
+    batch_suffix=${batch_chunk_path##*/entries.}
+    batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
+    if [ "$batch_compiler_label" = opt1-built ] && chunk_is_complete_codegen_smoke "$batch_case_chunk"; then
+        # This existing singleton already compiles the complete stress corpus
+        # with the opt1-built compiler. Its report is the ownership
+        # regression's evidence; it is not compiled a second time.
+        batch_memory_report="$WORKDIR/backend-memory/codegen-smoke.memory"
+        batch_stdout="$WORKDIR/backend-memory/codegen-smoke.stdout"
+        batch_stderr="$WORKDIR/backend-memory/codegen-smoke.stderr"
     fi
+    if [ -e "$batch_memory_report" ] || [ -L "$batch_memory_report" ]; then
+        echo "[build-invariance] memory report exists before compile: $batch_memory_report" >&2
+        exit 1
+    fi
+    set -- "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
+        --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- "$@"
     if ! ci_timing_run "$batch_timing_label" compile \
         run_with_heartbeat_capture \
         "$batch_label" \
@@ -508,12 +503,10 @@ run_batch_chunk() {
         print_batch_cases "$batch_case_chunk"
         exit 1
     fi
-    if [ -n "$batch_memory_report" ]; then
-        check_backend_memory_report "$batch_memory_report" "$batch_cap_mib"
-        batch_peak_bytes=$(sed -n 's/^peak_memory_bytes=//p' "$batch_memory_report")
-        if [ "$batch_memory_report" = "$WORKDIR/backend-memory/codegen-smoke.memory" ]; then
-            cat "$batch_memory_report"
-        fi
+    check_backend_memory_report "$batch_memory_report" "$batch_cap_mib"
+    batch_peak_bytes=$(sed -n 's/^peak_memory_bytes=//p' "$batch_memory_report")
+    if [ "$batch_memory_report" = "$WORKDIR/backend-memory/codegen-smoke.memory" ]; then
+        cat "$batch_memory_report"
     fi
     build_invariance_copy_aliases "$batch_aliases"
     verify_batch_outputs "$batch_compiler_label" "$batch_case_chunk" "$batch_stdout" "$batch_stderr"
@@ -641,7 +634,7 @@ run_batch_sentinels() {
 }
 
 pool_job_cap_mib() {
-    if chunk_is_complete_codegen_smoke "$1"; then
+    if chunk_is_complete_codegen_smoke "$1" || chunk_is_selfhost "$1"; then
         printf '%s\n' "$POOL_FULL_CAP_MIB"
     else
         printf '%s\n' "$POOL_CHUNK_CAP_MIB"
@@ -748,7 +741,6 @@ run_batched_comparison() {
 
     BATCH_CASE_COUNT=0
     batch_index=0
-    exclusive_selfhost_count=0
     for opt_level in 1 2; do
         left_chunk_dir="$left_batches/opt$opt_level/chunks"
         right_chunk_dir="$right_batches/opt$opt_level/chunks"
@@ -773,15 +765,6 @@ run_batched_comparison() {
             fi
 
             batch_index=$((batch_index + 1))
-            if chunk_is_timed_selfhost "$left_cases"; then
-                # CI budgets the wall time of these four compiles, so they run
-                # alone, before the pool starts.
-                run_batch_chunk "opt1-built" "$OPT1_COMPILER" "$opt_level" "$left_chunk" "$left_cases" "$batch_index/$left_chunk_count" "$left_entries" ""
-                run_batch_chunk "opt2-built" "$OPT2_STAGE4" "$opt_level" "$right_chunk" "$right_cases" "$batch_index/$left_chunk_count" "$right_entries" ""
-                compare_batch_cases "$left_cases" "$LEFT_DIR" "$RIGHT_DIR"
-                exclusive_selfhost_count=$((exclusive_selfhost_count + 1))
-                continue
-            fi
             left_job="opt1-built.opt$opt_level.$chunk_id"
             right_job="opt2-built.opt$opt_level.$chunk_id"
             printf '%s|%s\n' "$left_job" "$(pool_job_cap_mib "$left_cases")" >> "$POOL_QUEUE"
@@ -791,11 +774,6 @@ run_batched_comparison() {
             printf '%s|%s|%s\n' "$left_job" "$right_job" "$left_cases" >> "$POOL_PAIRS"
         done
     done
-    if [ "$exclusive_selfhost_count" -ne 2 ]; then
-        echo "[build-invariance] expected the opt1 and opt2 selfhost chunks to run alone, got $exclusive_selfhost_count" >&2
-        exit 1
-    fi
-
     POOL_DIR="$WORKDIR/pool"
     bounded_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE"
     mkdir -p "$POOL_DIR/metrics" "$POOL_DIR/timing" "$WORKDIR/backend-memory"
@@ -817,7 +795,7 @@ run_batched_comparison() {
     pool_finished=$(date +%s%3N)
 
     pool_merge_rows required
-    pool_serial_ms=$(awk -F '\t' '$6 + 0 > 0 { total += $1 } END { print total + 0 }' "$CHUNK_METRICS")
+    pool_serial_ms=$(awk -F '\t' '{ total += $1 } END { print total + 0 }' "$CHUNK_METRICS")
     echo "[build-invariance] worker pool: $((pool_finished - pool_started))ms wall for ${pool_serial_ms}ms of chunk compiles plus the backend-tests build"
 
     for required_report in backend-tests codegen-smoke; do

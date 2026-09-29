@@ -118,6 +118,87 @@
         (host.compiler-comptime-host-result-ready?)
         (host-smoke-result-shape-ok? pools operand-node)))))
 
+;; The construction above as one `run-ops` batch: the same callbacks with the
+;; same immediates commit the same call shape. Refs #8274.
+(define (host-smoke-run-ops-construct-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operand-node : i64 (host-smoke-var pools "x")]
+    [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
+      (__tl_make-array ctfe.CompilerCtfeValue 1)]
+    [batch : String
+      "5 expr-var expr-list-empty push-operand expr-list-append expr-call 5 0 #17:__tl_array-length 17 0 1 0 0 0 2 0 0 0 3 0 0 0 4 0 0 0"]
+    (begin
+      (set! (array-ref operands 0) (host-smoke-expr operand-node))
+      (host-smoke-open! pools operands 1 8)
+      (and
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-run-ops
+          (host-smoke-name-ptr batch)
+          (string.string-length batch))
+        (host-smoke-commit?)
+        (host.compiler-comptime-host-result-ready?)
+        (host-smoke-result-shape-ok? pools operand-node)))))
+
+;; Run `batch` in a fresh one-operand session; the status and the value-stack
+;; depth it left, as `status * 1000 + depth`.
+(define (host-smoke-run-ops-outcome [batch : String]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
+      (__tl_make-array ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set! (array-ref operands 0) (host-smoke-expr (host-smoke-var pools "x")))
+      (host-smoke-open! pools operands 1 8)
+      (let
+        [status : i64
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-run-ops
+            (host-smoke-name-ptr batch)
+            (string.string-length batch))]
+        [depth : i64 host.compiler-comptime-host-stack-len]
+        (begin
+          (host.compiler-comptime-host-session-close!)
+          (+ (* status 1000) depth))))))
+
+;; A malformed batch is a bad request before any of its ops runs, and a batch
+;; stops at its first failing op.
+(define (host-smoke-run-ops-rejects-ok?) : bool
+  (let
+    [rejected : i64 (* tlci.tlci-host-callback-status-bad-request 1000)]
+    (and
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0 0") 1)
+      (= (host-smoke-run-ops-outcome "1 no-such-op 1 0 0 0 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 run-ops 1 0 0 0 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 1 0 0 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 -1 0 0 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 #1:x 2 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 #1:x #1:y 1") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 0 0 #1:x") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-var 1 0 #9:x 9 0") rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          "2 expr-list-empty expr-list-empty 2 0 0 0 0")
+        rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0 0 9") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0 0 0 -") rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          "1 expr-list-empty 1 0 0 0 1234567890123456789")
+        rejected)
+      (= (host-smoke-run-ops-outcome "0 1 0 0 0 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 0") rejected)
+      (= (host-smoke-run-ops-outcome "1 expr-list-empty 1 0  0 0 0") rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          "2 expr-list-append expr-list-empty 2 0 0 0 0 1 0 0 0")
+        rejected)
+      (=
+        (host-smoke-run-ops-outcome
+          "2 expr-list-empty expr-list-empty 3 0 0 0 0 1 0 0 0 0 0 0 0")
+        3))))
+
 (define (host-smoke-result-shape-ok?
   [pools : (& pools ast.AstNodePoolContext)]
   [operand-node : i64]) : bool
@@ -1417,6 +1498,10 @@
   (cond
     [(not (host-smoke-construct-ok?))
       (io.panic "comptime host smoke: construction")]
+    [(not (host-smoke-run-ops-construct-ok?))
+      (io.panic "comptime host smoke: run-ops construction")]
+    [(not (host-smoke-run-ops-rejects-ok?))
+      (io.panic "comptime host smoke: run-ops rejections")]
     [(not (host-smoke-type-kind-data-ok?))
       (io.panic "comptime host smoke: type-kind data status")]
     [(not (host-smoke-type-slice-ok?))

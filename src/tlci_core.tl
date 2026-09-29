@@ -503,6 +503,10 @@
   16)
 (define tlci-macro-entry-reserved0-offset : i64
   24)
+
+;; The most distinct op names one `run-ops` batch may bind. Refs #8274.
+(define tlci-run-ops-names-cap : i64
+  64)
 (define tlci-host-callback-status-ok : i64
   0)
 (define tlci-host-callback-status-diagnostic : i64
@@ -900,7 +904,15 @@
     ;; template argument/splice path and push the corresponding expression
     ;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
     compiler-comptime-host-callback-expr-tuple
-    compiler-comptime-host-callback-expr-array))
+    compiler-comptime-host-callback-expr-array
+    ;; run-ops replays a batch of status ops encoded as data: `a` points at the
+    ;; batch and `b` is its byte length. The batch names each op it uses, so
+    ;; it binds callbacks by name like an image import, and it calls each op
+    ;; with the immediates a native call would pass, stopping at the first
+    ;; non-ok status. `run-ops` itself is not a batchable op. The producer
+    ;; emits it for runs of ops whose immediates are all constants, which is
+    ;; what keeps template construction out of machine code. Refs #8274.
+    compiler-comptime-host-callback-run-ops))
 
 ;; The ABI name String of one host callback table row. A name outside the
 ;; table fails to compile. (The definition-time macro checker runs the lookup

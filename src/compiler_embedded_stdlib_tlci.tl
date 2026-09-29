@@ -5308,6 +5308,387 @@
         (set! compiler-comptime-host-result-ready true)
         tlci.tlci-host-callback-status-ok))))
 
+;; Host callback dispatch for `run-ops`, generated from the host callback
+;; table rows so it cannot drift from them. Both lookups are balanced `if`
+;; trees of about log2(rows) comparisons: one maps a batch's op name to its row
+;; index, the other calls row `index`'s callback.
+;; `(compiler-comptime-host-dispatch-call-range base index session a b c
+;; rows...)` calls the callback of the row at `index` among `rows`, the rows
+;; from index `base` of the table, splitting the range in halves.
+(defmacro (compiler-comptime-host-dispatch-call-range
+  [base-expr : Expr]
+  [index : Expr]
+  [session : Expr]
+  [a : Expr]
+  [b : Expr]
+  [c : Expr]
+  [rows : Expr ...]) : i64
+  (match base-expr
+    [(comptime.Expr.Int base)
+      (let
+        [count : i64 (expr-list-length rows)]
+        [half : i64 (/ count 2)]
+        [low : ExprList (expr-list-empty)]
+        [high : ExprList (expr-list-empty)]
+        [cursor : i64 count]
+        (if (= count 1)
+          `(,(expr-list-nth rows 0) ,session ,a ,b ,c)
+          (begin
+            (while (> cursor 0)
+              (begin
+                (set! cursor (- cursor 1))
+                (if (< cursor half)
+                  (set! low (expr-list-cons (expr-list-nth rows cursor) low))
+                  (set! high (expr-list-cons (expr-list-nth rows cursor) high)))))
+            `(if (< ,index ,(comptime.expr-int (+ base half)))
+              (compiler-comptime-host-dispatch-call-range
+                ,base-expr
+                ,index
+                ,session
+                ,a
+                ,b
+                ,c
+                ,@low)
+              (compiler-comptime-host-dispatch-call-range
+                ,(comptime.expr-int (+ base half))
+                ,index
+                ,session
+                ,a
+                ,b
+                ,c
+                ,@high)))))]
+    [_
+      (comptime-error
+        "compiler-comptime-host-dispatch-call-range: base must be an integer")]))
+
+(defmacro (compiler-comptime-host-dispatch-call-rows
+  [index : Expr]
+  [session : Expr]
+  [a : Expr]
+  [b : Expr]
+  [c : Expr]
+  [rows : Expr ...]) : i64
+  `(compiler-comptime-host-dispatch-call-range
+    0
+    ,index
+    ,session
+    ,a
+    ,b
+    ,c
+    ,@rows))
+
+;; `(compiler-comptime-host-dispatch-name-rows batch start length rows...)`
+;; is the row index of the batch name token `[start, start + length)`, or -1:
+;; one test per row, each comparing the name length inline before the bytes.
+;; `run-ops` is left out, so a batch can never name itself.
+(defmacro (compiler-comptime-host-dispatch-name-rows
+  [batch : Expr]
+  [start : Expr]
+  [length : Expr]
+  [rows : Expr ...]) : i64
+  (let
+    [prefix-length : i64
+      (string.string-length "compiler-comptime-host-callback-")]
+    [row : i64 (expr-list-length rows)]
+    [lookup : Expr `-1]
+    (begin
+      (while (> row 0)
+        (begin
+          (set! row (- row 1))
+          (match (expr-list-nth rows row)
+            [(comptime.Expr.Var text)
+              (let
+                [name : String
+                  (comptime.string-slice
+                    text
+                    prefix-length
+                    (- (string.string-length text) prefix-length))]
+                (if (string.eq name "run-ops")
+                  unit
+                  (set!
+                    lookup
+                    `(if (and
+                      (=
+                        ,length
+                        ,(comptime.expr-int (string.string-length name)))
+                      (compiler-comptime-host-batch-token-eq?
+                        ,batch
+                        ,start
+                        ,length
+                        ,(comptime.expr-string name)))
+                      ,(comptime.expr-int row)
+                      ,lookup))))]
+            [_
+              (comptime-error
+                "compiler-comptime-host-dispatch-name-rows: rows must be bare names")])))
+      lookup)))
+
+;; A `run-ops` batch is ASCII text of single-space-separated tokens:
+;;
+;;   <name-count> <name>... <record-count> (<op> <arg> <arg> <arg>)...
+;;
+;; `<op>` indexes the batch's own name list, so the batch binds callbacks by
+;; ABI name exactly as an image import does and row order never enters it. An
+;; `<arg>` is a decimal i64, or `#<n>:<n bytes>`: a pointer to those bytes
+;; inside the batch, which must be followed by the integer argument `n`, the
+;; (pointer, length) pair a native call passes for caller bytes. Every token is
+;; bounds-checked against the batch and any malformed batch is a bad request
+;; before the op it would have called, so a batch never reads outside itself.
+;: A cursor over one batch: its address, length, read position, and whether
+;: every token so far was well formed.
+(defstruct CompilerComptimeHostBatch
+  (base i64)
+  (len i64)
+  (pos i64)
+  (ok bool))
+
+;: The byte at `index` of the batch, which the caller has bounds-checked.
+(define (compiler-comptime-host-batch-byte
+  [batch : (& batch CompilerComptimeHostBatch)]
+  [index : i64]) : i64
+  (cast
+    (unsafe
+      (ptr-read (ptr-offset (int->ptr batch.base : (Ptr u8)) index)))
+    : i64))
+
+;: Consume the single space after a token, or accept the end of the batch.
+(define (compiler-comptime-host-batch-separator!
+  [batch : (&mut batch CompilerComptimeHostBatch)]) : unit
+  (cond
+    [(>= batch.pos batch.len) unit]
+    [(= (compiler-comptime-host-batch-byte batch batch.pos) 32)
+      (set! batch.pos (+ batch.pos 1))]
+    [else (set! batch.ok false)]))
+
+;: Read a decimal i64 ending at `terminator` (a space also ends the batch
+;: when `terminator` is 32).
+(define (compiler-comptime-host-batch-int-until!
+  [batch : (&mut batch CompilerComptimeHostBatch)]
+  [terminator : i64]) : i64
+  (let
+    [negative : bool
+      (and
+        batch.ok
+        (< batch.pos batch.len)
+        (= (compiler-comptime-host-batch-byte batch batch.pos) 45))]
+    [value : i64 0]
+    [digits : i64 0]
+    [done : bool (not batch.ok)]
+    (begin
+      (when negative (set! batch.pos (+ batch.pos 1)))
+      (while (not done)
+        (if (>= batch.pos batch.len)
+          (set! done true)
+          (let
+            [byte : i64 (compiler-comptime-host-batch-byte batch batch.pos)]
+            (if (and (>= byte 48) (<= byte 57) (< digits 18))
+              (begin
+                (set! value (+ (* value 10) (- byte 48)))
+                (set! digits (+ digits 1))
+                (set! batch.pos (+ batch.pos 1)))
+              (set! done true)))))
+      (when (= digits 0) (set! batch.ok false))
+      (if (= terminator 32)
+        (compiler-comptime-host-batch-separator! batch)
+        (if (and
+          batch.ok
+          (< batch.pos batch.len)
+          (= (compiler-comptime-host-batch-byte batch batch.pos) terminator))
+          (set! batch.pos (+ batch.pos 1))
+          (set! batch.ok false)))
+      (if negative
+        (- 0 value)
+        value))))
+
+;: Whether the batch bytes `[start, start + length)` spell `name`.
+(define (compiler-comptime-host-batch-token-eq?
+  [batch : (& batch CompilerComptimeHostBatch)]
+  [start : i64]
+  [length : i64]
+  [name : (& name str)]) : bool
+  (let
+    [same : bool (= (string.string-length name) length)]
+    [offset : i64 0]
+    (begin
+      (while (and same (< offset length))
+        (begin
+          (when
+            (not
+              (=
+                (cast (string.string-ref name offset) : i64)
+                (compiler-comptime-host-batch-byte batch (+ start offset))))
+            (set! same false))
+          (set! offset (+ offset 1))))
+      same)))
+
+;: The row index of the batch name token `[start, start + length)`, or -1
+;: when no row has that ABI name. `run-ops` itself never resolves.
+(define (compiler-comptime-host-batch-name-index
+  [batch : (& batch CompilerComptimeHostBatch)]
+  [start : i64]
+  [length : i64]) : i64
+  (tlci.tlci-host-callback-table
+    compiler-comptime-host-dispatch-name-rows
+    batch
+    start
+    length))
+
+;: Call the callback of row `index` with the session and immediates.
+(define (compiler-comptime-host-batch-call
+  [index : i64]
+  [session : i64]
+  [a : i64]
+  [b : i64]
+  [c : i64]) : i64
+  (tlci.tlci-host-callback-table
+    compiler-comptime-host-dispatch-call-rows
+    index
+    session
+    a
+    b
+    c))
+
+;; Walk the batch at `base`/`len`. With `execute` false this only validates
+;; it: every name resolves, every token is well formed and in bounds, the
+;; record count is exact and nothing trails. With `execute` true it replays
+;; the ops through their callbacks in order and returns the first non-ok
+;; status; each op receives exactly the immediates the equivalent native call
+;; passes, so its effects (value stack, spans, hygiene marks, status latch)
+;; are those of the native chain.
+(define (compiler-comptime-host-walk-batch
+  [session : i64]
+  [base : i64]
+  [len : i64]
+  [execute : bool]) : i64
+  (let
+    [batch : CompilerComptimeHostBatch
+      (CompilerComptimeHostBatch base len 0 true)]
+    [resolved : (Array i64 64) (init : (Array i64 64))]
+    [name-count : i64 (compiler-comptime-host-batch-int-until! (&mut batch) 32)]
+    [index : i64 0]
+    [status : i64 tlci.tlci-host-callback-status-ok]
+    (begin
+      (when
+        (or (< name-count 1) (> name-count tlci.tlci-run-ops-names-cap))
+        (set! batch.ok false))
+      (while (and batch.ok (< index name-count))
+        (let
+          [start : i64 batch.pos]
+          (begin
+            (while (and
+              (< batch.pos batch.len)
+              (not
+                (= (compiler-comptime-host-batch-byte (& batch) batch.pos) 32)))
+              (set! batch.pos (+ batch.pos 1)))
+            (let
+              [found : i64
+                (compiler-comptime-host-batch-name-index
+                  (& batch)
+                  start
+                  (- batch.pos start))]
+              (if (< found 0)
+                (set! batch.ok false)
+                (begin
+                  (set! (array-ref resolved index) found)
+                  (compiler-comptime-host-batch-separator! (&mut batch))
+                  (set! index (+ index 1))))))))
+      (let
+        [record-count : i64
+          (compiler-comptime-host-batch-int-until! (&mut batch) 32)]
+        [record : i64 0]
+        (begin
+          (when (< record-count 1) (set! batch.ok false))
+          (while (and
+            batch.ok
+            (= status tlci.tlci-host-callback-status-ok)
+            (< record record-count))
+            (let
+              [op : i64
+                (compiler-comptime-host-batch-int-until! (&mut batch) 32)]
+              [args : (Array i64 3) (init : (Array i64 3))]
+              [byte-len : i64 -1]
+              [arg : i64 0]
+              (begin
+                (when (or (< op 0) (>= op name-count)) (set! batch.ok false))
+                (while (and batch.ok (< arg 3))
+                  (if (and
+                    (< batch.pos batch.len)
+                    (=
+                      (compiler-comptime-host-batch-byte (& batch) batch.pos)
+                      35))
+                    ;; Caller bytes: a pointer argument whose length must be
+                    ;; the next argument.
+                    (let
+                      [count : i64
+                        (begin
+                          (set! batch.pos (+ batch.pos 1))
+                          (compiler-comptime-host-batch-int-until!
+                            (&mut batch)
+                            58))]
+                      (if (or
+                        (not batch.ok)
+                        (>= byte-len 0)
+                        (< count 0)
+                        (> count (- batch.len batch.pos))
+                        (= arg 2))
+                        (set! batch.ok false)
+                        (begin
+                          (set! (array-ref args arg) (+ batch.base batch.pos))
+                          (set! batch.pos (+ batch.pos count))
+                          (set! byte-len count)
+                          (compiler-comptime-host-batch-separator! (&mut batch)))))
+                    (let
+                      [value : i64
+                        (compiler-comptime-host-batch-int-until!
+                          (&mut batch)
+                          32)]
+                      (begin
+                        (when
+                          (and (>= byte-len 0) (not (= value byte-len)))
+                          (set! batch.ok false))
+                        (set! byte-len -1)
+                        (set! (array-ref args arg) value))))
+                  (set! arg (+ arg 1))))
+              (when
+                (and batch.ok execute)
+                (set!
+                  status
+                  (compiler-comptime-host-batch-call
+                    (array-ref resolved op)
+                    session
+                    (array-ref args 0)
+                    (array-ref args 1)
+                    (array-ref args 2))))
+              (set! record (+ record 1)))))
+        (cond
+          [(not (= status tlci.tlci-host-callback-status-ok)) status]
+          [(and batch.ok (= record record-count) (= batch.pos batch.len))
+            tlci.tlci-host-callback-status-ok]
+          [else tlci.tlci-host-callback-status-bad-request])))))
+
+;: Validate a batch completely, then replay it: a malformed batch is a bad
+;: request before any of its ops runs.
+(define (compiler-comptime-host-run-batch
+  [session : i64]
+  [base : i64]
+  [len : i64]) : i64
+  (let
+    [checked : i64 (compiler-comptime-host-walk-batch session base len false)]
+    (if (= checked tlci.tlci-host-callback-status-ok)
+      (compiler-comptime-host-walk-batch session base len true)
+      checked)))
+
+(define (compiler-comptime-host-callback-run-ops
+  [session : i64]
+  [arg-a : i64]
+  [arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (if (or (<= arg-a 0) (< arg-b 1))
+      tlci.tlci-host-callback-status-bad-request
+      (compiler-comptime-host-run-batch session arg-a arg-b))))
+
 ;; Extract the raw code pointer from a top-level TypeLisp function value.
 ;; Generated image calls provide the host context in the hidden-environment
 ;; register, so no per-callback trampoline is needed.

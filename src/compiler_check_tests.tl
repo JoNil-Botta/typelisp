@@ -6,6 +6,7 @@
 (import compiler_load)
 (import compiler_load_tests as load_tests)
 (import compiler_check_core as check_core)
+(import compiler_source_overlay_tests as overlay_tests)
 (import compiler_diagnostic as cdiag)
 (import compiler_diagnostic_tests as cdiag_tests)
 (import compiler_semantic_index as semantic_index)
@@ -789,7 +790,8 @@
       (compiler-check-advisory-result-ok?)
       (compiler-check-subform-diagnostic-spans-ok?)
       (compiler-check-qualified-near-miss-ok?)
-      (compiler-check-qualified-unbound-display-ok?))))
+      (compiler-check-qualified-unbound-display-ok?)
+      (overlay_tests.compiler-source-overlay-tests-ok?))))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (check_core.compiler-check-source path source)

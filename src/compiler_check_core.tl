@@ -7,6 +7,7 @@
 (import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
 (import compiler_load)
+(import compiler_source_overlay as source_overlay)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg_core)
@@ -27,6 +28,24 @@
     ast.AstDeclPathList
     cdiag.CompilerAdvisoryList)
   (Err (Box cdiag.CompilerDiagnosticList) cdiag.CompilerAdvisoryList))
+
+;; A check answered from one admitted overlay generation (#7455): the check's
+;; own result and the ledger of every source it consumed, in first-read order.
+(defstruct CompilerCheckOverlayResult
+  (check ResultCompilerCheck)
+  (ledger source_overlay.CompilerSourceLedger))
+
+(defenum ResultCompilerCheckOverlay
+  (Checked CompilerCheckOverlayResult)
+  (Rejected source_overlay.CompilerSourceOverlayError))
+
+(defstruct CompilerCheckOverlayPackageResult
+  (check ResultCompilerCheckWithPaths)
+  (ledger source_overlay.CompilerSourceLedger))
+
+(defenum ResultCompilerCheckOverlayPackage
+  (Checked CompilerCheckOverlayPackageResult)
+  (Rejected source_overlay.CompilerSourceOverlayError))
 
 (define (compiler-check-advisories-for-job [job-state : tc.TcJobState]) : cdiag.CompilerAdvisoryList
   (cdiag.compiler-advisory-sink-snapshot
@@ -333,7 +352,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg
     (owned_view.compiler-owned-shared-view path)
-    (compiler_load.compiler-load-read-file-text path)
+    (compiler_load.compiler-load-session-read-source-text path)
     stdlib-roots
     cfgs))
 
@@ -511,3 +530,140 @@
     stdlib-roots
     cfgs
     (tc.tc-serial-job-state)))
+
+;; An overlay may only replace sources outside every stdlib root.
+(define (compiler-check-overlay-editable
+  [overlay : (& overlay source_overlay.CompilerSourceOverlay)]
+  [stdlib-roots : (& stdlib-roots svec.Vec)]) : source_overlay.CompilerSourceOverlayStatus
+  (let
+    [count : i64 (svec.len stdlib-roots)]
+    [index : i64 0]
+    [rejected : bool false]
+    [status : source_overlay.CompilerSourceOverlayStatus
+      (source_overlay.CompilerSourceOverlayStatus.Ok)]
+    (begin
+      (while (and (not rejected) (< index count))
+        (let
+          [root : String (svec.get stdlib-roots index "")]
+          (begin
+            (match (source_overlay.compiler-source-overlay-check-not-under
+              overlay
+              (& root))
+              [(source_overlay.CompilerSourceOverlayStatus.Err failure)
+                (begin
+                  (set!
+                    status
+                    (source_overlay.CompilerSourceOverlayStatus.Err failure))
+                  (set! rejected true))]
+              [(source_overlay.CompilerSourceOverlayStatus.Ok) unit])
+            (set! index (+ index 1)))))
+      status)))
+
+;; The ledger's verdict on a finished overlay check: a recording failure, or,
+;; when the check `passed`, an admitted entry it never read and whose candidate
+;; it therefore did not check. A failing check keeps its diagnostics however
+;; many entries it stopped short of.
+(define (compiler-check-overlay-ledger-status
+  [overlay : (& overlay source_overlay.CompilerSourceOverlay)]
+  [ledger : (& ledger source_overlay.CompilerSourceLedger)]
+  [passed : bool]) : source_overlay.CompilerSourceOverlayStatus
+  (if (source_overlay.compiler-source-ledger-failed? ledger)
+    (source_overlay.CompilerSourceOverlayStatus.Err
+      (source_overlay.compiler-source-ledger-failure ledger))
+    (let
+      [unread : svec.Vec
+        (source_overlay.compiler-source-overlay-unread overlay ledger)]
+      [first : String (svec.get (& unread) 0 "")]
+      (if (or (not passed) (= (svec.len (& unread)) 0))
+        (source_overlay.CompilerSourceOverlayStatus.Ok)
+        (source_overlay.CompilerSourceOverlayStatus.Err
+          (source_overlay.compiler-source-overlay-error
+            source_overlay.compiler-source-overlay-error-unread
+            (& first)
+            "the check never read an admitted overlay source"))))))
+
+;; Check `path` with `overlay` answering its admitted sources. The root and
+;; every import are resolved exactly as in `compiler-check-file-with-roots-and-cfg`;
+;; only the bytes of an admitted resolved source differ. The overlay is
+;; installed on the serial session for the duration of the check.
+(define (compiler-check-file-with-overlay
+  [path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [overlay : source_overlay.CompilerSourceOverlay]) : ResultCompilerCheckOverlay
+  (match (compiler-check-overlay-editable (& overlay) (& stdlib-roots))
+    [(source_overlay.CompilerSourceOverlayStatus.Err failure)
+      (ResultCompilerCheckOverlay.Rejected failure)]
+    [(source_overlay.CompilerSourceOverlayStatus.Ok)
+      (let
+        [state : compiler_load.CompilerLoadSessionState
+          (compiler_load.compiler-load-serial-test-session-state)]
+        [_install : unit
+          (compiler_load.compiler-load-session-state-source-provider-install!
+            (owned_view.compiler-owned-shared-view state)
+            (owned_view.compiler-owned-shared-view overlay))]
+        [source : String
+          (compiler_load.compiler-load-session-read-source-text (& path))]
+        [check : ResultCompilerCheck
+          (compiler-check-source-with-roots-and-cfg
+            path
+            source
+            stdlib-roots
+            cfgs)]
+        [ledger : source_overlay.CompilerSourceLedger
+          (compiler_load.compiler-load-session-state-source-provider-finish!
+            state)]
+        (match (compiler-check-overlay-ledger-status
+          (& overlay)
+          (& ledger)
+          (match (& check)
+            [(ResultCompilerCheck.Ok _ _) true]
+            [(ResultCompilerCheck.Err _ _) false]))
+          [(source_overlay.CompilerSourceOverlayStatus.Err failure)
+            (ResultCompilerCheckOverlay.Rejected failure)]
+          [(source_overlay.CompilerSourceOverlayStatus.Ok)
+            (ResultCompilerCheckOverlay.Checked
+              (CompilerCheckOverlayResult check ledger))]))]))
+
+;; The package-entry form of `compiler-check-file-with-overlay`.
+(define (compiler-check-package-entry-file-with-overlay
+  [path : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [emit-entry : bool]
+  [cfgs : sym_i64_env.SymI64Env]
+  [overlay : source_overlay.CompilerSourceOverlay]) : ResultCompilerCheckOverlayPackage
+  (match (compiler-check-overlay-editable (& overlay) (& stdlib-roots))
+    [(source_overlay.CompilerSourceOverlayStatus.Err failure)
+      (ResultCompilerCheckOverlayPackage.Rejected failure)]
+    [(source_overlay.CompilerSourceOverlayStatus.Ok)
+      (let
+        [state : compiler_load.CompilerLoadSessionState
+          (compiler_load.compiler-load-serial-test-session-state)]
+        [_install : unit
+          (compiler_load.compiler-load-session-state-source-provider-install!
+            (owned_view.compiler-owned-shared-view state)
+            (owned_view.compiler-owned-shared-view overlay))]
+        [check : ResultCompilerCheckWithPaths
+          (compiler-check-package-entry-file-with-roots-and-cfg
+            path
+            stdlib-roots
+            manifest-dir
+            deps
+            emit-entry
+            cfgs)]
+        [ledger : source_overlay.CompilerSourceLedger
+          (compiler_load.compiler-load-session-state-source-provider-finish!
+            state)]
+        (match (compiler-check-overlay-ledger-status
+          (& overlay)
+          (& ledger)
+          (match (& check)
+            [(ResultCompilerCheckWithPaths.Ok _ _ _) true]
+            [(ResultCompilerCheckWithPaths.Err _ _) false]))
+          [(source_overlay.CompilerSourceOverlayStatus.Err failure)
+            (ResultCompilerCheckOverlayPackage.Rejected failure)]
+          [(source_overlay.CompilerSourceOverlayStatus.Ok)
+            (ResultCompilerCheckOverlayPackage.Checked
+              (CompilerCheckOverlayPackageResult check ledger))]))]))

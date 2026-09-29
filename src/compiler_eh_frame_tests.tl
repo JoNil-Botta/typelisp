@@ -3,6 +3,7 @@
 ;; tests/fixtures/eh-frame/.
 (import compiler_eh_frame as eh)
 (import stdlib.io)
+(import stdlib.leb128)
 (import stdlib.string)
 (cfg test (import stdlib.test))
 
@@ -817,7 +818,7 @@
               "version")]
           [_ (io.panic "expected a version error")])))))
 
-(define (eh-frame-test-leb [hex : (& hex str)] [signed? : bool]) : eh.CompilerEhFrameLeb
+(define (eh-frame-test-leb [hex : (& hex str)] [signed? : bool]) : leb128.Decoded
   (let
     [bytes : (__tl_dyn-array u8) (eh-frame-test-bytes hex)]
     (eh.compiler-eh-frame-leb (& bytes) 0 (array-length bytes) signed?)))

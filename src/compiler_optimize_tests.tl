@@ -30655,7 +30655,7 @@
     "loop:
        %4 = add %1, %2 : i64
        %5 = neg %1 : i64
-       %6 = gep %3, 0 : i64
+       %6 = gep %10, 0 : i64
        %7 = load %6 : i64
        branch %0, cold, latch
      cold:
@@ -30667,7 +30667,7 @@
      latch:
        branch %0, loop, exit
      exit:
-       store_ptr %3, 0 : i64
+       store_ptr %10, 0 : i64
        return 0"))
 
 (define (opt-licm-profitability-blocks [non-entry-preheader? : bool]) : ir.CompilerIrBlockList
@@ -30676,7 +30676,8 @@
       (ir.compiler-ir-label "entry")
       (opt-test-instrs
         (ir.CompilerIrInstr.Alloc 3 (ast.AstType.I64))
-        (irt.instr "store_ptr %3, 7 : i64")
+        (irt.instr "%10 = addr_of %3")
+        (irt.instr "store_ptr %10, 7 : i64")
         (ir.CompilerIrInstr.Jump
           (if non-entry-preheader?
             (ir.compiler-ir-label "pre")
@@ -31211,11 +31212,12 @@
     "entry:
        %3 = mov 0 : i64
        %6 = alloc i64
-       store_ptr %6, 99 : i64
+       %10 = addr_of %6
+       store_ptr %10, 99 : i64
        jump loop
      loop:
        %4 = phi [%3, entry], [%5, body] : i64
-       %7 = gep %6, 0 : i64
+       %7 = gep %10, 0 : i64
        %8 = load %7 : i64
        %5 = add %4, 1 : i64
        branch %0, body, exit
@@ -31229,11 +31231,12 @@
     "entry:
        %3 = mov 0 : i64
        %6 = alloc i64
-       store_ptr %6, 99 : i64
+       %10 = addr_of %6
+       store_ptr %10, 99 : i64
        jump loop
      loop:
        %4 = phi [%3, entry], [%5, body] : i64
-       %7 = gep %6, 0 : i64
+       %7 = gep %10, 0 : i64
        %8 = load %7 : i64
        store_ptr %7, 100 : i64
        %5 = add %4, 1 : i64
@@ -31248,11 +31251,12 @@
     "entry:
        %3 = mov 0 : i64
        %6 = alloc i64
-       store_ptr %6, 99 : i64
+       %10 = addr_of %6
+       store_ptr %10, 99 : i64
        jump loop
      loop:
        %4 = phi [%3, entry], [%5, body] : i64
-       %7 = gep %6, 0 : i64
+       %7 = gep %10, 0 : i64
        %8 = load %7 : i64
        %9 = call touch() : i64
        %5 = add %4, 1 : i64
@@ -31267,11 +31271,12 @@
     "entry:
        %3 = mov 0 : i64
        %6 = alloc i64
-       store_ptr %6, 99 : i64
+       %10 = addr_of %6
+       store_ptr %10, 99 : i64
        jump loop
      loop:
        %4 = phi [%3, entry], [%5, body] : i64
-       %7 = gep %6, %4 : i64
+       %7 = gep %10, %4 : i64
        %8 = load %7 : i64
        %5 = add %4, 1 : i64
        branch %0, body, exit
@@ -31469,6 +31474,21 @@
       (ir.CompilerIrInstr.Load 10 (ir.CompilerIrValue.Var 9) (ast.AstType.I64))
       (irt.instr "store_ptr %9, 100 : i64"))
     10))
+
+(define (opt-licm-declare-global [name : i64] [ty : ast.AstType]) : unit
+  (let
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (ir.compiler-ir-global-builder-push!
+        (&mut builder)
+        (ir.CompilerIrGlobal.Global name ty (ir.CompilerIrValue.I64 0)))
+      (let
+        [globals : ir.CompilerIrGlobalSeq
+          (ir.compiler-ir-global-builder-to-seq builder)]
+        (opt.opt-licm-deref-globals-fill!
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& globals))))))
 
 ;; R7: a `Global` operand is a hidden rip-relative load of that global's cell,
 ;; so the descriptor chain rooted at one is loop-invariant exactly when the body
@@ -32520,6 +32540,12 @@
       (opt-licm-optimized-function (opt-licm-header-load-element-store-blocks))]
     [raw-slot : ir.CompilerIrBlockList (opt.opt-function-blocks raw-slot-func)]
     [global-cell : i64 (opt-test-symbol "global_cell")]
+    ;; The object a struct global designates is its own inline storage, so
+    ;; a field of it is readable wherever the loop runs (#8085).
+    [_global-cell-type : unit
+      (opt-licm-declare-global
+        global-cell
+        (ast.AstType.Struct (ci.intern "Pair")))]
     [global-load-func : ir.CompilerIrFunction
       (opt-licm-array-late-optimized-function
         (opt-licm-global-cell-load-blocks symbols global-cell 0))]
@@ -45342,7 +45368,7 @@
 ;; exit) must still hoist its loop-invariant ptr/len loads; adding an in-loop
 ;; store must block the hoist.
 (define (opt-licm-multi-exit-test-params) : ir.CompilerIrParamSeq
-  (irt.params "map=%0:i64, key=%1:i64, limit=%2:i64"))
+  (irt.params "map=%0:(__tl_dyn-array i64), key=%1:i64, limit=%2:i64"))
 
 (define (opt-licm-multi-exit-header-block) : ir.CompilerIrBlock
   (irt.block
@@ -45377,7 +45403,7 @@
     (ir.compiler-ir-label "next")
     (opt-test-instrs-with-tail
       (if with-store
-        (irt.instrs "store_ptr %12, 0 : i64
+        (irt.instrs "store_ptr %1, 0 : i64
            jump header")
         (irt.instrs "jump header"))
       (irt.instr "%10 = add %3, 1 : i64")
@@ -45825,6 +45851,396 @@
       ;; proof a fast copy's read carries there.
       [(not (= (opt-licm-bound-run 0 true) kept)) 11]
       [(not (= (opt-licm-bound-run 2 true) hoisted)) 12]
+      [else 42])))
+
+;; --- readable storage for moved reads (#8085) ---------------------------------
+;;
+;; One loop whose arm, taken while `%0` holds, reads through an address the case
+;; builds; `%18` feeds the latch. A case gives the parameters, the entry code
+;; (which may open blocks of its own) and the arm. The result packs the loads
+;; left in the preheader and in the arm as `pre * 10 + arm`, as
+;; opt-licm-bound-run does, after `visits` LICM runs (the second one late).
+(define (opt-licm-deref-blocks [entry : String] [arm : String]) : ir.CompilerIrBlockList
+  (opt-licm-deref-loop-blocks entry "" "loop" arm))
+
+;; The same loop with code at the head of the header, which may end the header
+;; in a jump chain of its own blocks; `branching` names the block that ends it
+;; with the branch to the arm.
+(define (opt-licm-deref-loop-blocks
+  [entry : String]
+  [header : String]
+  [branching : String]
+  [arm : String]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (str_cat.str-cat
+      (str_cat.str-cat
+        (str_cat.str-cat "entry:\n" entry)
+        (str_cat.str-cat
+          "\n  jump pre\npre:\n  jump loop\nloop:\n  %12 = phi [0, pre], [%16, latch] : i64\n  %13 = phi [0, pre], [%17, latch] : i64\n"
+          header))
+      (str_cat.str-cat
+        (str_cat.str-cat
+          (str_cat.str-cat "\n  branch %0, arm, latch\narm:\n" arm)
+          (str_cat.str-cat
+            "\n  jump latch\nlatch:\n  %17 = phi [%18, arm], [%13, "
+            branching))
+        "] : i64\n  %16 = add %12, 1 : i64\n  %19 = lt %16, 10 : i64\n  branch %19, loop, exit\nexit:\n  return %13"))))
+
+(define (opt-licm-deref-run
+  [params : ir.CompilerIrParamSeq]
+  [entry : String]
+  [arm : String]
+  [visits : i64]) : i64
+  (opt-licm-deref-run-blocks
+    params
+    (opt-licm-deref-blocks entry arm)
+    "arm"
+    visits))
+
+(define (opt-licm-deref-run-blocks
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [counted : String]
+  [visits : i64]) : i64
+  (let
+    [func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (opt-test-symbol "licm_deref")
+        params
+        (ast.AstType.I64)
+        32
+        blocks
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [visit : i64 0]
+    (begin
+      (while (< visit visits)
+        (let
+          [context : opt.OptCfgContext
+            (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+          (set!
+            func
+            (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+              (ast.ast-node-pool-reader-type-segment-bases)
+              context
+              false
+              (opt_i64_i64_map.with-capacity 1)
+              (opt_i64_i64_map.with-capacity 1)
+              (opt.opt-global-cell-summary-empty)
+              (= visit 1)
+              func)
+              [(opt.OptFunctionCtxResult.Result next _) next]))
+          (set! visit (+ visit 1))))
+      (let
+        [out : ir.CompilerIrBlockList (opt.opt-function-blocks func)]
+        (+
+          (*
+            (opt-licm-multi-exit-count-loads out (ir.compiler-ir-label "pre"))
+            10)
+          (opt-licm-multi-exit-count-loads out (ir.compiler-ir-label counted)))))))
+
+;; A read at the head of the loop, counted in `counted` (the header or a block
+;; its jump chain enters); the arm only feeds the latch.
+(define (opt-licm-deref-header-case [header : String] [counted : String]) : i64
+  (opt-licm-deref-run-blocks
+    (irt.params (opt-licm-deref-raw))
+    (opt-licm-deref-loop-blocks
+      ""
+      header
+      (string.copy counted)
+      "  %20 = mov 0 : i64")
+    counted
+    1))
+
+(define (opt-licm-deref-case [params : String] [entry : String] [arm : String]) : i64
+  (opt-licm-deref-run (irt.params params) entry arm 1))
+
+;; The payload word of an enum parameter, which IR text cannot type.
+(define (opt-licm-deref-enum-case [arm : String]) : i64
+  (opt-licm-deref-run
+    (ir.compiler-ir-param-seq-append-one
+      (irt.params "cond=%0:bool")
+      (ir.CompilerIrParam.Param "e" (ast.AstType.Enum (ci.intern "Val")) 1))
+    ""
+    arm
+    1))
+
+(define (opt-licm-deref-raw) : String
+  "cond=%0:bool, raw=%1:u64, n=%2:i64")
+
+(define (opt-licm-deref-xs) : String
+  "cond=%0:bool, xs=%1:(__tl_dyn-array i64), ys=%2:(__tl_dyn-array i64), pick=%3:bool")
+
+(define (opt-licm-deref-pair) : String
+  "cond=%0:bool, s=%1:(& a Pair), n=%2:i64")
+
+;; Entry blocks joining on `%3`, for a phi of the two arms.
+(define (opt-licm-deref-join) : String
+  "  branch %3, a, b\na:\n  jump j\nb:\n  jump j\nj:\n")
+
+(define (compiler-optimize-licm-deref-self-test) : i64
+  (let
+    [hoisted : i64 10]
+    [kept : i64 1]
+    (cond
+      ;; No evidence: a raw parameter, its copy, a cast or literal address,
+      ;; arithmetic on a checked handle, or a join with a zero arm.
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-raw)
+              ""
+              "  %18 = load %1 : i64")
+            kept))
+        1]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-raw)
+              "  %20 = mov %1 : u64"
+              "  %18 = load %20 : i64")
+            kept))
+        2]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-raw)
+              "  %20 = cast %2 : i64 to u64"
+              "  %18 = load %20 : i64")
+            kept))
+        3]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-raw)
+              "  %20 = mov 4096 : u64"
+              "  %18 = load %20 : i64")
+            kept))
+        4]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              "  %20 = add %1, 8 : u64"
+              "  %18 = load %20 : i64")
+            kept))
+        5]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              (str_cat.str-cat
+                (opt-licm-deref-join)
+                "  %20 = phi [0, a], [%1, b] : (__tl_dyn-array i64)")
+              "  %21 = gep %20, 1 : i64\n  %18 = load %21 : i64")
+            kept))
+        6]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              (str_cat.str-cat
+                (opt-licm-deref-join)
+                "  %20 = phi [0, a], [%1, b] : (__tl_dyn-array i64)\n  %22 = add %20, 8 : u64")
+              "  %18 = load %22 : i64")
+            kept))
+        7]
+      ;; A descriptor's two words, a join of two descriptors, and a call's.
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              ""
+              "  %21 = gep %1, 1 : i64\n  %18 = load %21 : i64")
+            hoisted))
+        8]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              ""
+              "  %21 = gep %1, 2 : i64\n  %18 = load %21 : i64")
+            kept))
+        9]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              (str_cat.str-cat
+                (opt-licm-deref-join)
+                "  %20 = phi [%2, a], [%1, b] : (__tl_dyn-array i64)")
+              "  %21 = gep %20, 1 : i64\n  %18 = load %21 : i64")
+            hoisted))
+        10]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-xs)
+              "  %20 = call deref_make() : (__tl_dyn-array i64)"
+              "  %21 = gep %20, 1 : i64\n  %18 = load %21 : i64")
+            hoisted))
+        11]
+      ;; A struct through a reference: byte field offsets, not indexing; a
+      ;; checked handle loaded from a field is a root in turn.
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              ""
+              "  %21 = gep %1, 8 : u8\n  %18 = load %21 : i64")
+            hoisted))
+        12]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              ""
+              "  %21 = gep %1, 1 : i64\n  %18 = load %21 : i64")
+            kept))
+        13]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              ""
+              "  %21 = gep %1, 8 : u8\n  %22 = load %21 : (__tl_dyn-array i64)\n  %23 = gep %22, 1 : i64\n  %18 = load %23 : i64")
+            20))
+        14]
+      ;; A frame object spans its `alloc` run and nothing past it, and the
+      ;; home `addr_of` takes of any other var spans that var's value.
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              "  %24 = alloc Pair\n  %25 = alloc Pair\n  %26 = addr_of %25"
+              "  %21 = gep %26, 8 : u8\n  %18 = load %21 : i64")
+            hoisted))
+        15]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              "  %24 = alloc Pair\n  %25 = alloc Pair\n  %26 = addr_of %25"
+              "  %21 = gep %26, 16 : u8\n  %18 = load %21 : i64")
+            kept))
+        16]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              "  %26 = addr_of %2"
+              "  %18 = load %26 : i64")
+            hoisted))
+        17]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              "  %26 = addr_of %2"
+              "  %21 = gep %26, 8 : u8\n  %18 = load %21 : i64")
+            kept))
+        25]
+      ;; An enum may be a nullary variant's 8-byte tag object: only the tag.
+      [(not
+          (=
+            (opt-licm-deref-enum-case
+              "  %21 = gep %1, 0 : u8\n  %18 = load %21 : i64")
+            hoisted))
+        18]
+      [(not
+          (=
+            (opt-licm-deref-enum-case
+              "  %21 = gep %1, 8 : u8\n  %18 = load %21 : i64")
+            kept))
+        19]
+      ;; A block whose literal check always fails reads nothing past it.
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              ""
+              "  bounds_check 10, 4 message \"doomed\"\n  %21 = gep %1, 8 : u8\n  %18 = load %21 : i64")
+            kept))
+        20]
+      [(not
+          (=
+            (opt-licm-deref-case
+              (opt-licm-deref-pair)
+              ""
+              "  bounds_check 2, 4 message \"fine\"\n  %21 = gep %1, 8 : u8\n  %18 = load %21 : i64")
+            hoisted))
+        21]
+      ;; A global holds a value of its declared type.
+      [(begin
+          (opt-licm-declare-global
+            (opt-test-symbol "deref_table")
+            (ast.ast-ty-dyn-array (ast.AstType.I64)))
+          (not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-xs)
+                ""
+                "  %21 = gep @deref_table, 1 : i64\n  %18 = load %21 : i64")
+              hoisted)))
+        22]
+      [(begin
+          (opt-licm-declare-global
+            (opt-test-symbol "deref_raw")
+            (ast.AstType.U64))
+          (not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-xs)
+                ""
+                "  %18 = load @deref_raw : i64")
+              kept)))
+        23]
+      ;; A second, late visit sees the first one's preheader and still finds
+      ;; no evidence for a raw read.
+      [(not
+          (=
+            (opt-licm-deref-run
+              (irt.params (opt-licm-deref-raw))
+              "  %20 = mov %1 : u64"
+              "  %18 = load %20 : i64"
+              2)
+            kept))
+        24]
+      ;; A read the loop runs on every entry needs no evidence at all: at the
+      ;; head of the header, or of a block the header's jump chain enters,
+      ;; and not past anything that may stop the block first.
+      [(not
+          (=
+            (opt-licm-deref-header-case "  %18 = load %1 : i64" "loop")
+            hoisted))
+        26]
+      [(not
+          (=
+            (opt-licm-deref-header-case
+              "  jump mid\nmid:\n  %18 = load %1 : i64"
+              "mid")
+            hoisted))
+        27]
+      [(not
+          (=
+            (opt-licm-deref-header-case
+              "  bounds_check %2, 4 message \"head\"\n  %18 = load %1 : i64"
+              "loop")
+            kept))
+        28]
+      [(not
+          (=
+            (opt-licm-deref-header-case
+              "  %21 = div 100, %2 : i64\n  %18 = load %1 : i64"
+              "loop")
+            kept))
+        29]
+      [(not
+          (=
+            (opt-licm-deref-header-case
+              "  %21 = div 100, %2 : i64\n  jump mid\nmid:\n  %18 = load %1 : i64"
+              "mid")
+            kept))
+        30]
       [else 42])))
 
 ;; --- descriptor-header hoist past the return-shaped suppression ---------------

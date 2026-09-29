@@ -24314,6 +24314,25 @@
 ;;     false one. The versioner's fast-path guard is this shape, which is what
 ;;     keeps an invariant-index read of a versioned fast copy hoistable.
 ;;
+;; Every other load needs POSITIVE evidence that its word is readable at the
+;; preheader (#8085). The strongest is that the source reads it there anyway:
+;; a load the loop runs on every entry -- in the header, or a block the header's
+;; chain of unconditional jumps enters, before anything that may abort or not
+;; return -- reads the same word the hoisted copy does (the address is
+;; invariant and the memory proof keeps the loop from writing it), whatever its
+;; address class (opt-licm-deref-guaranteed?). Otherwise the word must be a
+;; fixed word of a trusted ROOT, inside the root's extent
+;; (opt-licm-deref-fixed-read?). A raw pointer's validity is a use-site
+;; obligation (SPEC section 7.3), so an integer, a cast or pointer arithmetic
+;; proves nothing. Roots are values of checked pointer types, valid wherever
+;; they are available (opt-licm-deref-root-extent). A load of one is a root as
+;; well, which holds while nothing speculates such a load from a word another
+;; type may occupy: #8124 tracks LICM moving a wrong-variant enum payload out of
+;; its arm. A block holding a literal bounds check that always fails reads
+;; nothing past it, so none of its loads hoist: a constant out-of-bounds
+;; fixed-array index there addresses a byte past the array that looks like a
+;; field offset.
+;;
 ;; The facts are gathered once per function. LICM only inserts into existing
 ;; preheaders and never moves a check or a branch, so the facts and the
 ;; dominator tree stay valid while the loops are walked. Every var a walk reads
@@ -24323,8 +24342,12 @@
   (sources OptValueSources)
   ;; Declared global types, for a header-typed global's element type.
   (cells OptGlobalCellSummary)
-  ;; var -> the Gep, Load, Mov or BinOp defining it.
+  ;; var -> the Gep, Load, Mov, BinOp, AddrOf, Call or Phi defining it.
   (defs (__tl_dyn-array OptBoolBranchDef))
+  (scan OptLicmDerefScan)
+  ;; var -> the extent a phi joins (opt-licm-deref-phi-fixpoint), 0 for any
+  ;; var that is not a phi.
+  (phis (__tl_dyn-array i64))
   ;; `index <u len` rows keyed by the index var after copy resolution: CSR
   ;; offsets over `frame + 1` slots, the bounding length, and the dense id of
   ;; the block the fact holds in.
@@ -24336,12 +24359,32 @@
   (literal-lens (__tl_dyn-array ir.CompilerIrValue))
   (literal-blocks (__tl_dyn-array i64)))
 
-;; The facts, and where one loop's hoist lands: the dominator tree and the
-;; preheader's dense id (-1 proves nothing).
+;; What the scan of the function's blocks records beside `defs`
+;; (opt-licm-deref-defs-fill-instrs!).
+(defstruct OptLicmDerefScan
+  ;; var -> the extent (opt-licm-deref-type-extent) of a root known before any
+  ;; walk: a parameter of a checked type, or an `addr_of` -- of a frame object,
+  ;; which spans its whole `alloc` run, or of any other var's home, which holds
+  ;; that var's value (opt-licm-deref-home-extent). 0 elsewhere.
+  (roots (__tl_dyn-array i64))
+  ;; var -> the dense id of its definition's block and its index there.
+  (def-blocks (__tl_dyn-array i64))
+  (positions (__tl_dyn-array i64))
+  ;; dense block id -> 1 when the block holds a literal bounds check that
+  ;; always fails; the index of its first instruction that may abort or not
+  ;; return (opt-licm-deref-no-exit when none does); and the dense id its
+  ;; unconditional `jump` enters (-1 for any other terminator).
+  (doomed (__tl_dyn-array i64))
+  (first-exits (__tl_dyn-array i64))
+  (jumps (__tl_dyn-array i64)))
+
+;; The facts, and where one loop's hoist lands: the dominator tree, the
+;; preheader's dense id (-1 proves nothing) and the loop header's.
 (defstruct OptLicmDerefSite
   (facts OptLicmDerefFacts)
   (doms OptDomInfo)
-  (at i64))
+  (at i64)
+  (header i64))
 
 ;; The two passes of the fact scan share one walk. With `fill?` false a row is
 ;; COUNTED -- on `cursor[key + 1]`, or on `literal-cursor[0]` -- and with
@@ -24358,6 +24401,35 @@
 
 (define (opt-licm-deref-fuel) : i64
   8)
+
+(define (opt-licm-deref-no-exit) : i64
+  4611686018427387904)
+
+;; Might this instruction stop the block from running to its end: abort (a
+;; failing bounds check, a trapping division or shift, an allocation), not
+;; return (any call), or do anything this list does not name? Loads and stores
+;; stay in: one that faults ends the program the same way wherever it runs.
+;; So do a jump and a branch, which end the block and only choose where the
+;; walk goes next.
+(define (opt-licm-deref-may-exit? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ _) false]
+    [(ir.CompilerIrInstr.Alloc _ _) false]
+    [(ir.CompilerIrInstr.AddrOf _ _) false]
+    [(ir.CompilerIrInstr.Gep _ _ _ _) false]
+    [(ir.CompilerIrInstr.Load _ _ _) false]
+    [(ir.CompilerIrInstr.StorePtr _ _ _) false]
+    [(ir.CompilerIrInstr.StoreOwned _ _ _) false]
+    [(ir.CompilerIrInstr.Store _ _ _) false]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) false]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) false]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) false]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-binop-traps? op)]
+    [(ir.CompilerIrInstr.Phi _ _ _) false]
+    ;; A block's own terminator: the chain walk decides where it leads.
+    [(ir.CompilerIrInstr.Jump _) false]
+    [(ir.CompilerIrInstr.Branch _ _ _) false]
+    [_ true]))
 
 (define (opt-licm-deref-def
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
@@ -24383,13 +24455,33 @@
           [_ value]))]
     [_ value]))
 
+;; Also finds the frame objects and the doomed blocks. A frame object is the
+;; run the lowering spells it as, which the register allocator lays out as one
+;; object (compiler-reg-color-detect-storage-seq): consecutive `alloc` words
+;; with consecutive ids, whose last one the next instruction takes `addr_of`.
+;; Anything else resets the run, exactly as there. `addr_of` of any other var
+;; is that var's home, which holds its value (opt-licm-deref-home-extent).
 (define (opt-licm-deref-defs-fill-instrs!
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
+  [scan : (&mut scan OptLicmDerefScan)]
+  [cfg-index : (& cfg-index OptCfgIndex)]
+  [block : i64]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [index : i64 0]
+    [run-last : i64 (- 0 1)]
+    [run-count : i64 0]
+    [block? : bool (and (>= block 0) (< block (array-length scan.first-exits)))]
+    [_block : unit
+      (if block?
+        (begin
+          (set! (array-ref scan.first-exits block) (opt-licm-deref-no-exit))
+          (set! (array-ref scan.jumps block) (- 0 1)))
+        unit)]
     (while (< index count)
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
@@ -24399,15 +24491,75 @@
             [(ir.CompilerIrInstr.Load dst _ _) dst]
             [(ir.CompilerIrInstr.Mov dst _ _) dst]
             [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
+            [(ir.CompilerIrInstr.AddrOf dst _) dst]
+            [(ir.CompilerIrInstr.Call dst _ _ _) dst]
+            [(ir.CompilerIrInstr.Phi dst _ _) dst]
             [_ (- 0 1)])]
         (begin
+          (match (compiler-opt-global-shared-view instr)
+            [(ir.CompilerIrInstr.Alloc var _)
+              (if (and (> run-count 0) (= var (+ run-last 1)))
+                (begin
+                  (set! run-last var)
+                  (set! run-count (+ run-count 1)))
+                (begin
+                  (set! run-last var)
+                  (set! run-count 1)))]
+            [(ir.CompilerIrInstr.AddrOf var src)
+              (begin
+                (if (and (>= var 0) (< var (array-length scan.roots)))
+                  (set!
+                    (array-ref scan.roots var)
+                    (if (and (> run-count 0) (= src run-last))
+                      (* run-count 8)
+                      (match (opt-ssa-var-types-lookup types src)
+                        [(OptMaybeAstType.Some ty)
+                          (opt-licm-deref-home-extent type-segment-bases ty)]
+                        [(OptMaybeAstType.No) 0])))
+                  unit)
+                (set! run-count 0))]
+            [(ir.CompilerIrInstr.Jump target)
+              (begin
+                (if block?
+                  (match (opt-cfg-index-id cfg-index target)
+                    [(option_i64.Some id)
+                      (set! (array-ref scan.jumps block) id)]
+                    [(option_i64.None) unit])
+                  unit)
+                (set! run-count 0))]
+            [(ir.CompilerIrInstr.BoundsCheck
+                (ir.CompilerIrValue.I64 checked)
+                (ir.CompilerIrValue.I64 length)
+                _)
+              (begin
+                (if (and
+                  (not (and (>= checked 0) (< checked length)))
+                  (>= block 0)
+                  (< block (array-length scan.doomed)))
+                  (set! (array-ref scan.doomed block) 1)
+                  unit)
+                (set! run-count 0))]
+            [_ (set! run-count 0)])
+          (if (and
+            block?
+            (= (array-ref scan.first-exits block) (opt-licm-deref-no-exit))
+            (opt-licm-deref-may-exit? (compiler-opt-global-shared-view instr)))
+            (set! (array-ref scan.first-exits block) index)
+            unit)
           (if (and (>= dst 0) (< dst (array-length defs)))
-            (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
+            (begin
+              (set! (array-ref scan.def-blocks dst) block)
+              (set! (array-ref scan.positions dst) index)
+              (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label)))
             unit)
           (set! index (+ index 1)))))))
 
 (define (opt-licm-deref-defs-fill-blocks!
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
+  [scan : (&mut scan OptLicmDerefScan)]
+  [index : (& index OptCfgIndex)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view blocks)
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -24415,12 +24567,34 @@
       (begin
         (match block
           [(ir.CompilerIrBlock.Block label instrs)
-            (opt-licm-deref-defs-fill-instrs! defs label instrs)])
-        (opt-licm-deref-defs-fill-blocks! defs (deref rest)))]
+            (opt-licm-deref-defs-fill-instrs!
+              type-segment-bases
+              types
+              defs
+              scan
+              index
+              (match (opt-cfg-index-id index label)
+                [(option_i64.Some id) id]
+                [(option_i64.None) (- 0 1)])
+              label
+              instrs)])
+        (opt-licm-deref-defs-fill-blocks!
+          type-segment-bases
+          types
+          defs
+          scan
+          index
+          (deref rest)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-licm-deref-defs-fill-blocks! defs blocks))]))
+        (opt-licm-deref-defs-fill-blocks!
+          type-segment-bases
+          types
+          defs
+          scan
+          index
+          blocks))]))
 
 ;; One `index <u len` row holding in dense block `block`.
 (define (opt-licm-deref-row!
@@ -24657,15 +24831,61 @@
         (opt-licm-deref-scan-blocks! sink defs sources index blocks))]))
 
 (define (opt-licm-deref-facts
+  [type-segment-bases : i64]
+  [types : (& types OptSsaVarTypes)]
   [sources : OptValueSources]
   [cells : OptGlobalCellSummary]
   [index : (& index OptCfgIndex)]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLicmDerefFacts
   (let
     [defs : (__tl_dyn-array OptBoolBranchDef)
       (__tl_make-array OptBoolBranchDef frame)]
-    [_defs : unit (opt-licm-deref-defs-fill-blocks! (&mut defs) blocks)]
+    [block-count : i64 (array-length index.labels)]
+    [scan : OptLicmDerefScan
+      (OptLicmDerefScan
+        (__tl_make-array i64 frame)
+        (let
+          [ids : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [var : i64 0]
+          (begin
+            (while (< var frame)
+              (begin
+                (set! (array-ref ids var) (- 0 1))
+                (set! var (+ var 1))))
+            ids))
+        (__tl_make-array i64 frame)
+        (__tl_make-array i64 block-count)
+        (__tl_make-array i64 block-count)
+        (__tl_make-array i64 block-count))]
+    [_params : unit
+      (let
+        [position : i64 0]
+        (while (< position params.len)
+          (begin
+            (match (ir.compiler-ir-param-seq-ref params position)
+              [(ir.CompilerIrParam.Param _ ty id)
+                (if (and (>= id 0) (< id frame))
+                  (set!
+                    (array-ref scan.roots id)
+                    (opt-licm-deref-type-extent type-segment-bases ty))
+                  unit)])
+            (set! position (+ position 1)))))]
+    [_defs : unit
+      (opt-licm-deref-defs-fill-blocks!
+        type-segment-bases
+        types
+        (&mut defs)
+        (&mut scan)
+        index
+        blocks)]
+    [phis : (__tl_dyn-array i64)
+      (opt-licm-deref-phi-fixpoint
+        type-segment-bases
+        (& sources)
+        (& defs)
+        (& scan.roots))]
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
     [literal-count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_count : unit
@@ -24729,6 +24949,8 @@
         sources
         cells
         defs
+        scan
+        phis
         offsets
         lens
         rows
@@ -25017,18 +25239,409 @@
               found))]
         [_ false]))))
 
-;; May a Load of `load-ty` through `src` execute at the site's preheader? True
-;; unless the address is element storage -- by its provenance class or by its
-;; shape -- without a proven bound. The bound speaks of one ELEMENT, so it
-;; covers the read only when the address strides by the descriptor's own
-;; element type and the read is no wider than that element; anything else (a
-;; word read at a byte index, a raw pointer re-typed over the buffer) is
-;; refused.
+;; How many bytes a valid pointer of static type `ty` is known to address, as
+;; far as a moved read may rely on them:
+;;   > 0  that many bytes from the pointer
+;;    -1  a struct or tuple: fields are stored inline, so every field offset the
+;;        lowering forms off it -- a chain of literal byte Geps -- stays inside
+;;        its storage
+;;     0  no evidence: raw pointers, integers, closures, fixed arrays, slices
+;; A descriptor is its data and length words. An enum value may be a nullary
+;; variant, the 8-byte tag object the lowering emits as a global, so only its
+;; tag word counts. A reference addresses its referent; one to a descriptor is
+;; the descriptor pointer itself (opt-licm-array-header-type?).
+(define (opt-licm-deref-type-extent
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.DynArray _) 16]
+    [(ast.AstType.String) 16]
+    [(ast.AstType.Str) 16]
+    [(ast.AstType.Bytes) 16]
+    [(ast.AstType.Enum _) 8]
+    [(ast.AstType.EnumArgs _ _) 8]
+    [(ast.AstType.Struct _) (- 0 1)]
+    [(ast.AstType.StructArgs _ _) (- 0 1)]
+    [(ast.AstType.Tuple _) (- 0 1)]
+    [(ast.AstType.Box _) 8]
+    [(ast.AstType.Ref _ inner)
+      (opt-licm-deref-referent-extent
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.MutRef _ inner)
+      (opt-licm-deref-referent-extent
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.Region _ inner)
+      (opt-licm-deref-type-extent
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ 0]))
+
+(define (opt-licm-deref-referent-extent
+  [type-segment-bases : i64]
+  [referent : ast.AstType]) : i64
+  (match (compiler-opt-global-shared-view referent)
+    [(ast.AstType.Region _ inner)
+      (opt-licm-deref-referent-extent
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.Slice _) 0]
+    [(ast.AstType.Array _ _) 0]
+    [(ast.AstType.Func _ _) 0]
+    [(ast.AstType.CFunc _ _) 0]
+    [(ast.AstType.Var _) 0]
+    [(ast.AstType.VarArgs _ _) 0]
+    [_
+      (let
+        [extent : i64
+          (opt-licm-deref-type-extent
+            type-segment-bases
+            (compiler-opt-global-shared-view referent))]
+        (if (= extent 0)
+          (opt-load-loc-type-size type-segment-bases referent)
+          extent))]))
+
+;; The extent of the object `value` points at when it is a trusted root, else
+;; 0. A root is a value of a checked pointer type whose validity its type
+;; guarantees wherever it is available: a parameter or a global (valid on
+;; entry, SPEC section 4.1), a string literal, a call result, a checked load,
+;; a frame object or a var's home, or a copy or phi join of roots. A Cast, a
+;; BinOp or an integer is never one, so a join with the zero arm of a nullable
+;; value proves nothing either. `phis` holds what each phi joins.
+(define (opt-licm-deref-root-extent
+  [type-segment-bases : i64]
+  [sources : (& sources OptValueSources)]
+  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
+  [roots : (& roots (__tl_dyn-array i64))]
+  [phis : (& phis (__tl_dyn-array i64))]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (cond
+        [(or
+            (< var 0)
+            (>= var (array-length roots))
+            (not (opt-gvn-stable-var? sources var)))
+          0]
+        [(not (= (array-ref roots var) 0)) (array-ref roots var)]
+        [else
+          (match (opt-licm-deref-def defs sources var)
+            [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Mov _ src _) _)
+              (opt-licm-deref-root-extent
+                type-segment-bases
+                sources
+                defs
+                roots
+                phis
+                src)]
+            [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Call _ _ _ ty) _)
+              (opt-licm-deref-type-extent type-segment-bases ty)]
+            [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Load _ _ ty) _)
+              (opt-licm-deref-type-extent type-segment-bases ty)]
+            [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Phi _ _ _) _)
+              (if (< var (array-length phis))
+                (array-ref phis var)
+                0)]
+            [_ 0])])]
+    [(ir.CompilerIrValue.Global name)
+      (match (opt_i64_i64_map.get
+        (& opt-licm-deref-global-extents)
+        (ir.compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound extent) extent]
+        [(opt_i64_i64_map.LookupMissing) 0])]
+    [(ir.CompilerIrValue.String _)
+      (opt-licm-deref-type-extent type-segment-bases (ast.AstType.String))]
+    [(ir.CompilerIrValue.Bytes _)
+      (opt-licm-deref-type-extent type-segment-bases (ast.AstType.Bytes))]
+    [_ 0]))
+
+;; A phi still unresolved by the fixpoint below: it joins nothing yet.
+(define (opt-licm-deref-open-extent) : i64
+  (- 0 2))
+
+;; The join of two extents: the smaller of two byte extents, the same extent
+;; kept, `open` absorbed, anything else no evidence.
+(define (opt-licm-deref-join [left : i64] [right : i64]) : i64
+  (cond
+    [(= left (opt-licm-deref-open-extent)) right]
+    [(= right (opt-licm-deref-open-extent)) left]
+    [(= left right) left]
+    [(and (> left 0) (> right 0))
+      (if (< left right)
+        left
+        right)]
+    [else 0]))
+
+;; What each phi of the function joins, as an optimistic fixpoint: every phi
+;; starts open and becomes the join of its inputs until nothing changes. Only
+;; copies and phis carry a phi's value to another phi, and both pass it through
+;; unchanged, so a phi can only ever hold what the roots entering its web bring
+;; in; a phi only its own web reaches stays open and proves nothing. The join
+;; only moves down (open, then an extent, then smaller ones, then 0), so the
+;; iteration ends.
+(define (opt-licm-deref-phi-fixpoint
+  [type-segment-bases : i64]
+  [sources : (& sources OptValueSources)]
+  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
+  [roots : (& roots (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
+  (let
+    [count : i64 (array-length defs)]
+    [phis : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [var : i64 0]
+    [changed : bool true]
+    (begin
+      (while (< var count)
+        (begin
+          (match (opt-licm-deref-def defs sources var)
+            [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Phi _ _ _) _)
+              (set! (array-ref phis var) (opt-licm-deref-open-extent))]
+            [_ unit])
+          (set! var (+ var 1))))
+      (while changed
+        (begin
+          (set! changed false)
+          (set! var 0)
+          (while (< var count)
+            (begin
+              (if (= (array-ref phis var) 0)
+                unit
+                (match (opt-licm-deref-def defs sources var)
+                  [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Phi _ inputs _) _)
+                    (let
+                      [inputs-count : i64
+                        (ir.compiler-ir-phi-input-seq-count inputs)]
+                      [position : i64 0]
+                      [extent : i64 (opt-licm-deref-open-extent)]
+                      (begin
+                        (while (and
+                          (< position inputs-count)
+                          (not (= extent 0)))
+                          (let
+                            [input : ir.CompilerIrPhiInput
+                              (ir.compiler-ir-phi-input-seq-ref inputs position)]
+                            (begin
+                              (set!
+                                extent
+                                (opt-licm-deref-join
+                                  extent
+                                  (opt-licm-deref-root-extent
+                                    type-segment-bases
+                                    sources
+                                    defs
+                                    roots
+                                    (& phis)
+                                    input.value)))
+                              (set! position (+ position 1)))))
+                        (if (= extent (array-ref phis var))
+                          unit
+                          (begin
+                            (set! (array-ref phis var) extent)
+                            (set! changed true)))))]
+                  [_ unit]))
+              (set! var (+ var 1))))))
+      (set! var 0)
+      (while (< var count)
+        (begin
+          (if (= (array-ref phis var) (opt-licm-deref-open-extent))
+            (set! (array-ref phis var) 0)
+            unit)
+          (set! var (+ var 1))))
+      phis)))
+
+;; Global symbol id -> the extent (opt-licm-deref-type-extent) of the value its
+;; declared type says the cell holds, for every global with one. Filled at
+;; program entry from the program's own globals, before inlining, so the
+;; inliner's priced pipeline -- which runs without program summaries -- and the
+;; final one see the same roots. A fresh table per program: `compile --batch`
+;; must not read the previous entry's.
+(define opt-licm-deref-global-extents : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+;; The program's value representations, for the size of a register group's
+;; home. Captured with the global extents, for the same reason.
+(define opt-licm-deref-representations : ir.CompilerIrRepresentationIndex
+  (ir.compiler-ir-representation-index-empty))
+
+;; How many bytes the home `addr_of` takes of a var of type `ty` holds: its
+;; value -- a scalar, one pointer word, a fat reference's two, or a register
+;; group's words (ir.CompilerIrRepresentationKind). An aggregate of unknown
+;; representation proves nothing.
+(define (opt-licm-deref-home-extent
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match (ir.compiler-ir-representation-index-kind
+    type-segment-bases
+    (& opt-licm-deref-representations)
+    (compiler-opt-global-shared-view ty))
+    [(ir.CompilerIrRepresentationKind.RegisterGroup words _) (* words 8)]
+    [(ir.CompilerIrRepresentationKind.KnownOneWord) 8]
+    [(ir.CompilerIrRepresentationKind.Unknown)
+      (match (compiler-opt-global-shared-view ty)
+        [(ast.AstType.Region _ inner)
+          (opt-licm-deref-home-extent
+            type-segment-bases
+            (ast.ast-type-segment-bases-get type-segment-bases inner))]
+        [(ast.AstType.Struct _) 0]
+        [(ast.AstType.StructArgs _ _) 0]
+        [(ast.AstType.Enum _) 0]
+        [(ast.AstType.EnumArgs _ _) 0]
+        [(ast.AstType.Tuple _) 0]
+        [(ast.AstType.Array _ _) 0]
+        [(ast.AstType.Slice _) 0]
+        [_ (opt-load-loc-type-size type-segment-bases ty)])]))
+
+(define (opt-licm-deref-program-facts!
+  [type-segment-bases : i64]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
+  [representations : ir.CompilerIrRepresentationIndex]) : unit
+  (begin
+    (set! opt-licm-deref-representations representations)
+    (opt-licm-deref-globals-fill! type-segment-bases globals)))
+
+(define (opt-licm-deref-globals-fill!
+  [type-segment-bases : i64]
+  [globals : (& globals ir.CompilerIrGlobalSeq)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-global-seq-count globals)]
+    [extents : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-global-seq-ref globals index)
+            [(ir.CompilerIrGlobal.Global name ty _)
+              (let
+                [extent : i64
+                  (opt-licm-deref-type-extent type-segment-bases ty)]
+                (if (= extent 0)
+                  unit
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut extents)
+                    (ir.compiler-ir-symbol-id name)
+                    extent)))])
+          (set! index (+ index 1))))
+      (set! opt-licm-deref-global-extents extents))))
+
+;; Is a `width`-byte read `offset` bytes past `ptr` inside a live object where
+;; the site's hoist lands? `ptr` is followed through single-definition copies
+;; and literal Gep steps -- each adds `index * size(scale)` bytes -- to a trusted
+;; root, whose extent must cover the whole read. `bytes?` stays true while every
+;; nonzero step is a byte Gep: only those are field offsets, and only field
+;; offsets stay inside a struct whose size this pass does not know.
+(define (opt-licm-deref-fixed-read?
+  [type-segment-bases : i64]
+  [facts : (& facts OptLicmDerefFacts)]
+  [ptr : ir.CompilerIrValue]
+  [offset : i64]
+  [bytes? : bool]
+  [width : i64]
+  [fuel : i64]) : bool
+  (let
+    [resolved : ir.CompilerIrValue
+      (opt-licm-deref-resolve
+        facts.defs
+        facts.sources
+        ptr
+        (opt-licm-deref-fuel))]
+    [step : OptBoolBranchDef
+      (match (compiler-opt-global-shared-view resolved)
+        [(ir.CompilerIrValue.Var var)
+          (opt-licm-deref-def facts.defs facts.sources var)]
+        [_ (OptBoolBranchDef.No)])]
+    (match step
+      [(OptBoolBranchDef.Some (ir.CompilerIrInstr.Gep _ base index scale) _)
+        (match index
+          [(ir.CompilerIrValue.I64 k)
+            (let
+              [size : i64
+                (opt-load-loc-type-size
+                  type-segment-bases
+                  (compiler-opt-global-shared-view scale))]
+              (and
+                (> fuel 0)
+                (>= k 0)
+                (> size 0)
+                ;; Keeps the byte sum exact; no object is this large.
+                (< k (/ 1099511627776 size))
+                (opt-licm-deref-fixed-read?
+                  type-segment-bases
+                  facts
+                  base
+                  (+ offset (* k size))
+                  (and
+                    bytes?
+                    (or
+                      (= k 0)
+                      (opt-type-eq type-segment-bases scale (ast.AstType.U8))))
+                  width
+                  (- fuel 1))))]
+          [_ false])]
+      [_
+        (let
+          [extent : i64
+            (opt-licm-deref-root-extent
+              type-segment-bases
+              (& facts.sources)
+              (& facts.defs)
+              (& facts.scan.roots)
+              (& facts.phis)
+              resolved)]
+          (cond
+            [(> extent 0) (and (>= offset 0) (<= (+ offset width) extent))]
+            [(= extent (- 0 1)) (and bytes? (>= offset 0))]
+            [else false]))])))
+
+;; Does the load defined as `dst`, in dense block `block`, run on every entry to
+;; the site's loop (the header comment above)? The walk follows the header's
+;; chain of unconditional jumps while each block on it runs to its end.
+(define (opt-licm-deref-guaranteed?
+  [facts : (& facts OptLicmDerefFacts)]
+  [header : i64]
+  [dst : i64]
+  [block : i64]) : bool
+  (let
+    [count : i64 (array-length facts.scan.first-exits)]
+    [at : i64 header]
+    [steps : i64 0]
+    (begin
+      (while (and
+        (>= at 0)
+        (< at count)
+        (not (= at block))
+        (< steps count)
+        (= (array-ref facts.scan.first-exits at) (opt-licm-deref-no-exit)))
+        (begin
+          (set! at (array-ref facts.scan.jumps at))
+          (set! steps (+ steps 1))
+          (if (= at header)
+            (set! at (- 0 1))
+            unit)))
+      (and
+        (>= at 0)
+        (< at count)
+        (= at block)
+        (>= dst 0)
+        (< dst (array-length facts.scan.positions))
+        (<
+          (array-ref facts.scan.positions dst)
+          (array-ref facts.scan.first-exits at))))))
+
+;; May a Load of `load-ty` through `src`, defined as `dst`, execute at the
+;; site's preheader? Not from a doomed block; always when the loop runs it on
+;; every entry (opt-licm-deref-guaranteed?). Element storage -- by its
+;; provenance class or by its shape -- needs a proven bound. The bound speaks of
+;; one ELEMENT, so it covers the read only when the address strides by the
+;; descriptor's own element type and the read is no wider than that element;
+;; anything else (a word read at a byte index, a raw pointer re-typed over the
+;; buffer) is refused. Every other address needs a fixed word of a trusted
+;; root (opt-licm-deref-fixed-read?).
 (define (opt-licm-deref-load-ok?
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [ptrs : (& ptrs OptLicmPtrEnv)]
   [site : (& site OptLicmDerefSite)]
+  [dst : i64]
   [src : ir.CompilerIrValue]
   [load-ty : ast.AstType]) : bool
   (let
@@ -25040,27 +25653,66 @@
             [(OptLicmPtrKind.DataBuffer _) true]
             [_ false])]
         [_ false])]
-    (match (opt-licm-deref-address type-segment-bases types site.facts src)
-      [(OptLicmDerefAddress.No) (not element-kind?)]
-      [(OptLicmDerefAddress.Opaque) false]
-      [(OptLicmDerefAddress.Element index key stride)
-        (match (opt-licm-deref-key-element
+    [facts (& site.facts)]
+    [block : i64
+      (if (and
+        (>= dst 0)
+        (< dst (array-length facts.scan.def-blocks))
+        (opt-gvn-stable-var? facts.sources dst))
+        (array-ref facts.scan.def-blocks dst)
+        (- 0 1))]
+    [refused? : bool (or (< block 0) (= (array-ref facts.scan.doomed block) 1))]
+    [guaranteed? : bool
+      (and
+        (not refused?)
+        (opt-licm-deref-guaranteed? facts site.header dst block))]
+    (cond
+      [refused? false]
+      [guaranteed? true]
+      [else
+        (match (opt-licm-deref-address
           type-segment-bases
           types
           site.facts
-          key)
-          [(OptMaybeAstType.No) false]
-          [(OptMaybeAstType.Some elem)
-            (let
-              [width : i64 (opt-load-loc-type-size type-segment-bases load-ty)]
-              (and
-                (opt-type-eq
+          (compiler-opt-global-shared-view src))
+          [(OptLicmDerefAddress.No)
+            (and
+              (not element-kind?)
+              (opt-licm-deref-fixed-read?
+                type-segment-bases
+                facts
+                src
+                0
+                true
+                (opt-load-loc-type-size
                   type-segment-bases
-                  stride
-                  (compiler-opt-global-shared-view elem))
-                (> width 0)
-                (<= width (opt-load-loc-type-size type-segment-bases elem))
-                (opt-licm-deref-proven? type-segment-bases types site index key)))])])))
+                  (compiler-opt-global-shared-view load-ty))
+                (opt-licm-deref-fuel)))]
+          [(OptLicmDerefAddress.Opaque) false]
+          [(OptLicmDerefAddress.Element index key stride)
+            (match (opt-licm-deref-key-element
+              type-segment-bases
+              types
+              site.facts
+              key)
+              [(OptMaybeAstType.No) false]
+              [(OptMaybeAstType.Some elem)
+                (let
+                  [width : i64
+                    (opt-load-loc-type-size type-segment-bases load-ty)]
+                  (and
+                    (opt-type-eq
+                      type-segment-bases
+                      stride
+                      (compiler-opt-global-shared-view elem))
+                    (> width 0)
+                    (<= width (opt-load-loc-type-size type-segment-bases elem))
+                    (opt-licm-deref-proven?
+                      type-segment-bases
+                      types
+                      site
+                      index
+                      key)))])])])))
 
 (define (opt-licm-candidate?
   [type-segment-bases : i64]
@@ -25309,6 +25961,7 @@
           types
           ptrs
           deref-site
+          dst
           src
           load-ty))]
     [_ false]))
@@ -27136,8 +27789,9 @@
   (live-in i64)
   (header-count i64)
   (header i64)
-  ;; #7992: an element load is also kept when its bound is unproven at the
-  ;; preheader; that is reported as `element-bound`, not as a memory clause.
+  ;; #7992/#8085: a load is also kept when its word may not be readable at the
+  ;; preheader; that is reported as `element-bound` or `deref`, not as a memory
+  ;; clause.
   (deref-site OptLicmDerefSite))
 
 ;; Why the loop-wide answer opt-licm-globals-clean? gives is `false`. The two
@@ -27341,65 +27995,103 @@
       2
       0)))
 
+;; Why a read may not execute at the preheader (opt-licm-deref-load-ok?): 0
+;; when it may, 1 (`element-bound`) for element storage without a proven bound,
+;; 2 (`deref`) for any other address without readable-storage evidence. Such a
+;; read stays whatever the memory clauses say, so this is the reason reported
+;; first.
+(define (opt-licm-refuse-deref-code
+  [ctx : (& ctx OptLicmRefuseCtx)]
+  [dst : i64]
+  [ptr-var : i64]
+  [load-ty : ast.AstType]) : i64
+  (let
+    [site (& ctx.deref-site)]
+    [address : ir.CompilerIrValue (ir.CompilerIrValue.Var ptr-var)]
+    (cond
+      [(opt-licm-deref-load-ok?
+          ctx.type-segment-bases
+          (& ctx.types)
+          (& ctx.ptrs)
+          site
+          dst
+          (compiler-opt-global-shared-view address)
+          load-ty)
+        0]
+      [(match (opt-licm-deref-address
+          ctx.type-segment-bases
+          (& ctx.types)
+          (& site.facts)
+          address)
+          [(OptLicmDerefAddress.Element _ _ _) true]
+          [_ false])
+        1]
+      [else 2])))
+
 (define (opt-licm-refuse-load!
   [ctx : OptLicmRefuseCtx]
   [dst : i64]
   [ptr-var : i64]
   [load-ty : ast.AstType]
   [blocked? : bool]) : unit
-  (match (opt-licm-ptr-lookup ctx.ptrs ptr-var)
-    [(OptLicmPtrKind.GlobalDataSlot name)
-      (opt-licm-refuse-emit!
-        (compiler-opt-global-shared-view ctx)
-        dst
-        "global-cell"
-        (cond
-          [blocked? "chain-head"]
-          [(opt-licm-refuse-global-invariant? ctx name)
-            (opt-licm-refuse-memory-reason ctx)]
-          [else (opt-licm-refuse-global-reason ctx name)]))]
-    [(OptLicmPtrKind.GlobalSlot name)
-      (opt-licm-refuse-emit!
-        (compiler-opt-global-shared-view ctx)
-        dst
-        "global-cell"
-        (cond
-          [blocked? "chain-head"]
-          [(opt-licm-refuse-global-invariant? ctx name)
-            (opt-licm-refuse-memory-reason ctx)]
-          [else (opt-licm-refuse-global-reason ctx name)]))]
-    [(OptLicmPtrKind.HeaderSlot _)
-      (opt-licm-refuse-emit!
-        (compiler-opt-global-shared-view ctx)
-        dst
-        "descriptor-length"
-        (if blocked?
-          "chain-head"
-          (opt-licm-refuse-memory-reason ctx)))]
-    [(OptLicmPtrKind.DataSlot _)
-      (opt-licm-refuse-emit!
-        (compiler-opt-global-shared-view ctx)
-        dst
-        "descriptor-data"
-        (if blocked?
-          "chain-head"
-          (opt-licm-refuse-memory-reason ctx)))]
-    [_
-      (if blocked?
-        unit
+  (let
+    [code : i64 (opt-licm-refuse-deref-code ctx dst ptr-var load-ty)]
+    [readable? : bool (= code 0)]
+    [deref : String
+      (if (= code 1)
+        "element-bound"
+        "deref")]
+    (match (opt-licm-ptr-lookup ctx.ptrs ptr-var)
+      [(OptLicmPtrKind.GlobalDataSlot name)
         (opt-licm-refuse-emit!
           (compiler-opt-global-shared-view ctx)
           dst
-          "load"
-          (if (opt-licm-deref-load-ok?
-            ctx.type-segment-bases
-            ctx.types
-            ctx.ptrs
-            ctx.deref-site
-            (ir.CompilerIrValue.Var ptr-var)
-            load-ty)
-            (opt-licm-refuse-memory-reason ctx)
-            "element-bound")))]))
+          "global-cell"
+          (cond
+            [blocked? "chain-head"]
+            [(not readable?) deref]
+            [(opt-licm-refuse-global-invariant? ctx name)
+              (opt-licm-refuse-memory-reason ctx)]
+            [else (opt-licm-refuse-global-reason ctx name)]))]
+      [(OptLicmPtrKind.GlobalSlot name)
+        (opt-licm-refuse-emit!
+          (compiler-opt-global-shared-view ctx)
+          dst
+          "global-cell"
+          (cond
+            [blocked? "chain-head"]
+            [(not readable?) deref]
+            [(opt-licm-refuse-global-invariant? ctx name)
+              (opt-licm-refuse-memory-reason ctx)]
+            [else (opt-licm-refuse-global-reason ctx name)]))]
+      [(OptLicmPtrKind.HeaderSlot _)
+        (opt-licm-refuse-emit!
+          (compiler-opt-global-shared-view ctx)
+          dst
+          "descriptor-length"
+          (cond
+            [blocked? "chain-head"]
+            [(not readable?) deref]
+            [else (opt-licm-refuse-memory-reason ctx)]))]
+      [(OptLicmPtrKind.DataSlot _)
+        (opt-licm-refuse-emit!
+          (compiler-opt-global-shared-view ctx)
+          dst
+          "descriptor-data"
+          (cond
+            [blocked? "chain-head"]
+            [(not readable?) deref]
+            [else (opt-licm-refuse-memory-reason ctx)]))]
+      [_
+        (if blocked?
+          unit
+          (opt-licm-refuse-emit!
+            (compiler-opt-global-shared-view ctx)
+            dst
+            "load"
+            (if readable?
+              (opt-licm-refuse-memory-reason ctx)
+              deref)))])))
 
 ;; One instruction of the kept body. A Gep or a Load whose address class is one
 ;; of the four the report names, and whose own operands are outside the loop,
@@ -27755,6 +28447,11 @@
             context.doms
             (match (opt-cfg-index-id context.index preheader)
               [(option_i64.Some id) id]
+              [(option_i64.None) (- 0 1)])
+            (match (opt-cfg-index-id
+              context.index
+              (opt-natural-loop-header loop))
+              [(option_i64.Some id) id]
               [(option_i64.None) (- 0 1)]))]
         (match (opt-licm-filter-body-blocks
           type-segment-bases
@@ -28092,15 +28789,18 @@
               [provenance : OptLicmStoreState
                 (opt-licm-provenance-state-from-function
                   type-segment-bases
-                  params
+                  (compiler-opt-global-shared-view params)
                   types
                   return-alias
                   blocks)]
               [deref-facts : OptLicmDerefFacts
                 (opt-licm-deref-facts
+                  type-segment-bases
+                  (& types)
                   (compiler-opt-global-shared-view sources)
                   (compiler-opt-global-shared-view global-cells)
                   context.index
+                  params
                   frame
                   blocks)]
               ;; Loop-scope global promotion mints fresh vars, so the pass
@@ -126492,6 +127192,11 @@
           (let
             ;; LICM-GDP: the header-typed-global table is per program.
             [_licm-headers : unit (opt-licm-global-headers-reset!)]
+            [_licm-deref : unit
+              (opt-licm-deref-program-facts!
+                type-segment-bases
+                (& globals)
+                (compiler-opt-global-shared-view representations))]
             [enclosing : i64 (arena.tl_arena_current)]
             ;; Keep this direct-local owner raw. Level 2 destroys it before
             ;; summary/function optimization after copying survivors to the

@@ -4173,6 +4173,8 @@
   licm-element-bound
   (smoke-require-42 (ot.compiler-optimize-licm-element-bound-self-test)))
 
+(test licm-deref (smoke-require-42 (ot.compiler-optimize-licm-deref-self-test)))
+
 (test
   bce-version
   (smoke-require-42 (ot.compiler-optimize-bce-version-self-test)))

@@ -315,6 +315,24 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+LICM moves a load only with evidence that its word is readable at the
+preheader. The strongest is that the loop reads it on every entry anyway: in
+the header, or a block the header's chain of unconditional jumps enters, before
+any instruction that may abort or not return. Otherwise an element read needs
+`i <u len` proven there, and any other read must be a fixed word of a trusted
+root, inside the root's extent. Roots are parameters, globals, call results,
+checked loads and string literals of checked pointer types, frame objects
+(their `alloc` run), and var homes (their value's representation, so a register
+group's pair). Copies and phis pass roots through; phis are joined by an
+optimistic fixpoint. Raw pointers, integers, casts, pointer arithmetic and
+joins with a literal arm are never evidence. An enum pointer spans only its tag
+word, because a nullary variant is an 8-byte tag global. Global extents and
+value representations are captured at program entry, before inlining, so the
+priced and final pipelines see the same roots. A block holding an
+always-failing literal bounds check hoists nothing. The `licm-deref` optimizer
+test and `tests/integration/licm_raw_deref.tl` guard these rules; #8124 tracks
+a checked pointer loaded speculatively from an enum payload.
+
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.
 These internal shallow reads require valid storage and an index below logical len.

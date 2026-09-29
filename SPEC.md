@@ -6108,6 +6108,18 @@ directly and use a negative malformed-request sentinel; a nonzero data answer
 is not a session failure. There is no separate operation-id argument, central
 numeric catalog, or hand-maintained data-operation exception list.
 
+A run of status-returning calls whose arguments are all constants may instead
+be one `run-ops` call whose argument A points at the run encoded as ASCII data
+and whose argument B is its byte length. The data names every operation it
+uses, so it binds callbacks by name exactly as the image's imports do, and
+each record carries the three arguments the individual call would pass; caller
+bytes travel inside the data as a pointer followed by their length. The host
+validates the whole run first (every name bound, every token well formed and
+in bounds, no trailing bytes, never `run-ops` itself) and answers a malformed
+run with the bad-request status before calling anything. It then makes the
+calls in order and returns the first nonzero status, so the session state is
+exactly that of the individual calls.
+
 The `abort` callback is for native image failures that cannot be represented
 as a normal macro diagnostic. Its fixed host-C-ABI signature is:
 

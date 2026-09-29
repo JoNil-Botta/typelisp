@@ -252,6 +252,9 @@ licm_alias_stress|all|-|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.
 licm_element_bound|all|-|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|stage-stdlib
 licm_element_bound_abort_opt2|all|2|tests/integration/licm_element_bound.tl|134|0\n0\n0\n|4 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:88:62: array index out of bounds: index=4398046511104 length=4\n
+licm_guarded_read|all|-|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|-
+licm_guarded_read_opt2|all|2|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_guarded_read_abort_opt2|all|2|tests/integration/licm_guarded_read.tl|134|254\n122\n0\n|9 3 8|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:49:44: array index out of bounds: index=9 length=8\n
 licm_raw_deref|all|-|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|-
 licm_raw_deref|all|0,1,2|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
 loadcse_forward|all|-|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl|-

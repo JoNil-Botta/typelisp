@@ -4175,6 +4175,8 @@
 
 (test licm-deref (smoke-require-42 (ot.compiler-optimize-licm-deref-self-test)))
 
+(test licm-guard (smoke-require-42 (ot.compiler-optimize-licm-guard-self-test)))
+
 (test
   bce-version
   (smoke-require-42 (ot.compiler-optimize-bce-version-self-test)))

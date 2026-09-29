@@ -6311,7 +6311,10 @@ Three comptime-only query forms expose type layout:
   string and not an evaluated expression.
 
 `type-expr` must evaluate at compile time to a type value, usually from
-`(type T)` or a comptime type parameter. `offset-of` requires a struct type and
+`(type T)` or a comptime type parameter. `T` may name an imported nominal type
+through an import alias or its module name; it denotes the declaration an
+ordinary annotation of `T` names at that point, so same-named types of different
+modules keep distinct layouts. `offset-of` requires a struct type and
 a field that exists on that struct. `size-of` and `align-of` also work for enum
 types using the TypeLisp tagged-union layout from section 3.5.3. All three
 forms are valid only in compile-time-required contexts such as comptime

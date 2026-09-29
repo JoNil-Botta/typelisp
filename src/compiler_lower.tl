@@ -29615,7 +29615,10 @@
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        [ctfe-env : ctfe.CtfeEnv (tc_core.tc-ctfe-env ctx)]
+        [ctfe-env : ctfe.CtfeEnv
+          (tc_core.tc-ctfe-env-for-comptime
+            ctx
+            (lower-global-shared-view inner))]
         (match (ctfe.compiler-ctfe-eval inner ctfe-env (ctfe.ctfe-fuel-limit))
           [(ctfe.ResultCtfe.Ok value _)
             (match (lower-global-shared-view value)

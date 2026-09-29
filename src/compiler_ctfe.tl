@@ -1180,11 +1180,25 @@
   (len i64)
   (owner-arena i64))
 
+;; Type literals of one comptime evaluation resolved by the typechecker in
+;; their module's scope: the literal with type id `written[i]` denotes the type
+;; with id `resolved[i]` in the same pool, the declaration identity its written
+;; type names (`other.Point` through an import alias, say). The evaluator
+;; itself has no import scope.
+(defstruct CtfeTypeLiteralResolutions
+  (written ast.AstTypeList)
+  (resolved ast.AstTypeList))
+
+(define (ctfe-type-literal-resolutions-empty) : CtfeTypeLiteralResolutions
+  (CtfeTypeLiteralResolutions (ast.ast-type-list-new) (ast.ast-type-list-new)))
+
 (defstruct CtfeEnvMetadata
   (pools ast.AstNodePoolContext)
   (layouts CtfeLayoutInfoList)
   (reflections CtfeReflectInfoList)
-  (source-names ci.InternSourceNameSessionHandle))
+  (source-names ci.InternSourceNameSessionHandle)
+  ;; The boxed CtfeTypeLiteralResolutions of one comptime evaluation, or 0.
+  (type-literals u64))
 
 ;; The binding arena and the metadata are boxed and shared by every snapshot of
 ;; an environment; the environment keeps the two box pointers as addresses, so
@@ -1252,7 +1266,7 @@
       -1
       (CtfeMaybeSyntaxPools.None)
       (ctfe-env-metadata-box-new
-        (CtfeEnvMetadata pools layouts reflections source-names))
+        (CtfeEnvMetadata pools layouts reflections source-names 0))
       macro-state)))
 
 (define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
@@ -1895,6 +1909,58 @@
   [ty : ast.AstType]) : CompilerCtfeValue
   (ctfe-syntax-expr-value env (ctfe-syntax-ast-push env node) ty))
 
+;; `env` evaluating one comptime expression whose type literals the caller
+;; resolved in `resolutions`.
+(define (ctfe-env-with-type-literals
+  [env : CtfeEnv]
+  [resolutions : CtfeTypeLiteralResolutions]) : CtfeEnv
+  (let
+    [env-view : CtfeEnv env]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
+    [boxed : (Box CtfeTypeLiteralResolutions) (box resolutions)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of boxed) : (Ptr u64))))]
+    (CtfeEnv
+      env.arena-store
+      env.head
+      env.syntax-pools
+      (ctfe-env-metadata-box-new
+        (CtfeEnvMetadata
+          metadata.pools
+          metadata.layouts
+          metadata.reflections
+          metadata.source-names
+          address))
+      env.macro-state)))
+
+;; The type a TypeLiteral with type id `id` denotes: the caller's resolution
+;; when it recorded one, otherwise the written type.
+(define (ctfe-type-literal-type [env : (& env CtfeEnv)] [id : i64]) : ast.AstType
+  (let
+    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
+    [address : u64 metadata.type-literals]
+    (if (= address (cast 0 : u64))
+      (ctfe-ty-get env id)
+      (let
+        [resolutions : CtfeTypeLiteralResolutions
+          (unsafe
+            (ptr-read (int->ptr address : (Ptr CtfeTypeLiteralResolutions))))]
+        [count : i64 (ast.ast-type-list-len (& resolutions.written))]
+        [index : i64 0]
+        [resolved : i64 id]
+        (begin
+          (while (< index count)
+            (if (= (ast.ast-type-list-get (& resolutions.written) index -1) id)
+              (begin
+                (set!
+                  resolved
+                  (ast.ast-type-list-get (& resolutions.resolved) index id))
+                (set! index count))
+              (set! index (+ index 1))))
+          (ctfe-ty-get env resolved))))))
+
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : ast.AstNodePoolContext]) : CtfeEnv
   (let
     [env-view : CtfeEnv env]
@@ -1908,7 +1974,8 @@
           pools
           metadata.layouts
           metadata.reflections
-          metadata.source-names))
+          metadata.source-names
+          metadata.type-literals))
       env.macro-state)))
 
 ;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
@@ -1931,7 +1998,8 @@
           pools
           metadata.layouts
           metadata.reflections
-          metadata.source-names))
+          metadata.source-names
+          metadata.type-literals))
       env.macro-state)))
 
 (define (ctfe-ast-get [env : (& env CtfeEnv)] [id : i64]) : ast.AstExpr
@@ -4588,7 +4656,7 @@
             (ctfe-reflect-resolve-type-with-pools
               (ctfe-env-pools env)
               reflections
-              (ctfe-ty-get env ty-id)))
+              (ctfe-type-literal-type env ty-id)))
           fuel))]
     [(ast.AstExpr.Init _)
       (ResultCtfe.Err

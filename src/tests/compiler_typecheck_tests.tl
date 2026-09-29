@@ -6168,7 +6168,62 @@
   (tag u8)
   (count i64))
 (define (f) : i64 (comptime (offset-of (type Packet) missing)))"
-      "offset-of unknown field missing")))
+      "offset-of unknown field missing")
+    ;; Imported nominal types resolve through the import like an annotation
+    ;; (#8112): an alias and a module-name qualification, struct and enum
+    ;; queries, and a same-named type of another module. Each answer sizes a
+    ;; fixed array, so a wrong layout is a return type mismatch.
+    (compiler-typecheck-ok? (compiler-typecheck-imported-layout-source))
+    (compiler-typecheck-error-ok?
+      "(module geom)
+(defstruct Point (x i64))
+(module main)
+(import geom as g)
+(define (f) : i64 (comptime (size-of (type g.Missing))))"
+      "typecheck: unknown type g.Missing; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")
+    (compiler-typecheck-error-ok?
+      "(module geom)
+(defstruct Packet
+  (:repr c)
+  (tag u8)
+  (count i64))
+(module main)
+(import geom as g)
+(define (f) : i64 (comptime (offset-of (type g.Packet) missing)))"
+      "offset-of unknown field missing")
+    (compiler-typecheck-error-ok?
+      "(module geom)
+(defstruct Point (x i64))
+(module main)
+(import geom as g)
+(define (f) : i64 (size-of (type g.Point)))"
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
+
+(define (compiler-typecheck-imported-layout-source) : String
+  "(module geom)
+(defstruct Point (x i64) (y i64))
+(defstruct Packet
+  (:repr c)
+  (tag u8)
+  (count i64))
+(defenum Shape (Dot) (Box Point))
+(module narrow)
+(defstruct Point (x i8))
+(module main)
+(import geom as g)
+(import narrow)
+(define (aliased) : (Array i64 16)
+  (make-array i64 (comptime (size-of (type g.Point)))))
+(define (aligned) : (Array i64 8)
+  (make-array i64 (comptime (align-of (type g.Point)))))
+(define (offset) : (Array i64 8)
+  (make-array i64 (comptime (offset-of (type g.Packet) count))))
+(define (qualified) : (Array i64 1)
+  (make-array i64 (comptime (size-of (type narrow.Point)))))
+(define (shape) : (Array i64 24)
+  (make-array i64 (comptime (size-of (type g.Shape)))))
+(define (shape-align) : (Array i64 8)
+  (make-array i64 (comptime (align-of (type g.Shape)))))")
 
 ;; Keep the public spelling here until #6133 teaches CTFE's captured type
 ;; expression bridge to recognize the private alias used as a macro operand.

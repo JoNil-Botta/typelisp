@@ -32086,7 +32086,8 @@
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env-for-comptime ctx (tc-global-shared-view inner))]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           ctfe-env
@@ -50052,6 +50053,62 @@
                 ;; geometrically; reserve only the known program surface.
                 (ctfe_support.ctfe-metadata-decl-capacity decls)))))])))
 
+;; The comptime evaluator has no import scope, so each type literal of a
+;; comptime expression is resolved here, in the module being checked, to the
+;; declaration identity an ordinary annotation names: `(type other.Point)`
+;; reaches the layout and reflection entries of `size_dep/Point` (#8112).
+;; Literals whose resolution is their written type stay out of the table, so
+;; an unknown type still reaches the evaluator's own diagnostic.
+(define (tc-ctfe-type-literal-resolutions-into
+  [ctx : TcContext]
+  [resolutions : (&mut resolutions ctfe_support.CtfeTypeLiteralResolutions)]
+  [expr : ast.AstExpr]) : unit
+  (let
+    [children : ast.AstExprList
+      (ast.ast-expr-child-ids (tc-global-shared-view expr))]
+    [count : i64 (ast.ast-expr-list-len (& children))]
+    [index : i64 0]
+    (begin
+      (match (tc-global-shared-view expr)
+        [(ast.AstExpr.TypeLiteral ty-id)
+          (let
+            [written : ast.AstType (tc-context-type-get ctx ty-id)]
+            [resolved : ast.AstType
+              (tc-resolve-type ctx (tc-global-shared-view written))]
+            (if (ast.ast-type-eq?
+              (tc-global-shared-view written)
+              (tc-global-shared-view resolved))
+              unit
+              (begin
+                (ast.ast-type-list-push (&mut resolutions.written) ty-id)
+                (ast.ast-type-list-push
+                  (&mut resolutions.resolved)
+                  (ast.ast-node-pool-context-type-push
+                    (tc-context-pools ctx)
+                    resolved)))))]
+        [_ unit])
+      (while (< index count)
+        (begin
+          (tc-ctfe-type-literal-resolutions-into
+            ctx
+            resolutions
+            (tc-context-expr-get
+              ctx
+              (ast.ast-expr-list-get (& children) index -1)))
+          (set! index (+ index 1)))))))
+
+;; The CTFE environment for evaluating the source comptime expression `expr`.
+(define (tc-ctfe-env-for-comptime [ctx : TcContext] [expr : ast.AstExpr]) : ctfe_support.CtfeEnv
+  (let
+    [env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+    [resolutions : ctfe_support.CtfeTypeLiteralResolutions
+      (ctfe_support.ctfe-type-literal-resolutions-empty)]
+    (begin
+      (tc-ctfe-type-literal-resolutions-into ctx (&mut resolutions) expr)
+      (if (ast.ast-type-list-empty? (& resolutions.written))
+        env
+        (ctfe_support.ctfe-env-with-type-literals env resolutions)))))
+
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
 ;; times per compile -- once in macro expansion plus once per comptime evaluation
@@ -55954,7 +56011,8 @@
   [elem : ast.AstType]
   [len : ast.AstExpr]) : ResultTcType
   (let
-    [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+    [ctfe-env : ctfe_support.CtfeEnv
+      (tc-ctfe-env-for-comptime ctx (tc-global-shared-view len))]
     (match (ctfe_support.compiler-ctfe-eval
       len
       ctfe-env
@@ -58173,7 +58231,8 @@
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env-for-comptime ctx (tc-global-shared-view inner))]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           ctfe-env

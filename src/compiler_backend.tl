@@ -7447,19 +7447,44 @@
 
 ;; A plain IR Mov can carry a SIMD identity after CSE/GVN. Recover its shape
 ;; from the direct definition at the root of the copy chain; the current
-;; backend mode then selects YMM, ZMM, or k-register emission. A function-sized
-;; step budget admits every valid copy chain and still terminates on malformed
-;; cyclic hand-authored IR.
+;; backend mode then selects YMM, ZMM, or k-register emission. Below opt2 a
+;; variable can have several Mov definitions joined by loop back edges, so the
+;; chains form a graph. Each query follows a variable at most once (`seen`,
+;; keyed by variable id: backend-introduced copies may exceed the IR's
+;; variable count), so its work is bounded by the variables it reaches times
+;; the function's instructions and it terminates on cyclic chains; the depth
+;; budget is a second guard. A
+;; variable's shape is the first of its definitions, in block and instruction
+;; order, that resolves to one: a definition that does not (a scalar source, or
+;; a chain back into a variable already being followed) never hides a later
+;; definition that does.
 (defenum CompilerBackendSimdCopyShape
   (No)
   (Vector i64 compiler_ast_types.AstType)
   (Mask i64))
+
+(define (compiler-backend-simd-copy-shape-follow
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [source : i64]
+  [remaining : i64]
+  [seen : (&mut seen backend_i64_i64_map.Map)]) : CompilerBackendSimdCopyShape
+  (if (or (<= remaining 0) (backend_i64_i64_map.contains? seen source))
+    (CompilerBackendSimdCopyShape.No)
+    (begin
+      (backend_i64_i64_map.insert-ref! seen source 1)
+      (compiler-backend-simd-copy-shape-blocks
+        (compiler-backend-global-shared-view blocks)
+        blocks
+        source
+        (- remaining 1)
+        seen))))
 
 (define (compiler-backend-simd-copy-shape-seq
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [var : i64]
   [remaining : i64]
+  [seen : (&mut seen backend_i64_i64_map.Map)]
   [index : i64]) : CompilerBackendSimdCopyShape
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     (CompilerBackendSimdCopyShape.No)
@@ -7472,6 +7497,7 @@
             instrs
             var
             remaining
+            seen
             (+ index 1)))]
       [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
         (let
@@ -7485,6 +7511,7 @@
               instrs
               var
               remaining
+              seen
               (+ index 1))))]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
         (let
@@ -7497,76 +7524,138 @@
               instrs
               var
               remaining
+              seen
               (+ index 1))))]
       [(compiler_ir_types.CompilerIrInstr.Mov dst src _)
-        (if (= dst var)
-          (if (<= remaining 0)
-            (CompilerBackendSimdCopyShape.No)
-            (match src
-              [(compiler_ir_types.CompilerIrValue.Var source)
-                (compiler-backend-simd-copy-shape-blocks
-                  (compiler-backend-global-shared-view blocks)
-                  blocks
-                  source
-                  (- remaining 1))]
-              [_ (CompilerBackendSimdCopyShape.No)]))
-          (compiler-backend-simd-copy-shape-seq
-            blocks
-            instrs
-            var
-            remaining
-            (+ index 1)))]
+        (match (if (= dst var)
+          (match src
+            [(compiler_ir_types.CompilerIrValue.Var source)
+              (compiler-backend-simd-copy-shape-follow
+                (compiler-backend-global-shared-view blocks)
+                source
+                remaining
+                seen)]
+            [_ (CompilerBackendSimdCopyShape.No)])
+          (CompilerBackendSimdCopyShape.No))
+          ;; A definition that resolves to no shape does not end the scan:
+          ;; another definition of `var`, even later in this block, may.
+          [(CompilerBackendSimdCopyShape.No)
+            (compiler-backend-simd-copy-shape-seq
+              blocks
+              instrs
+              var
+              remaining
+              seen
+              (+ index 1))]
+          [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
+            (CompilerBackendSimdCopyShape.Vector lanes elem-ty)]
+          [(CompilerBackendSimdCopyShape.Mask lanes)
+            (CompilerBackendSimdCopyShape.Mask lanes)])]
       [_
         (compiler-backend-simd-copy-shape-seq
           blocks
           instrs
           var
           remaining
+          seen
           (+ index 1))])))
+
+(define (compiler-backend-simd-copy-shape-block
+  [all-blocks : compiler_ir_types.CompilerIrBlockList]
+  [block : compiler_ir_types.CompilerIrBlock]
+  [var : i64]
+  [remaining : i64]
+  [seen : (&mut seen backend_i64_i64_map.Map)]) : CompilerBackendSimdCopyShape
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+      (compiler-backend-simd-copy-shape-seq
+        all-blocks
+        instrs
+        var
+        remaining
+        seen
+        0)]))
+
+;; An `Array` block list is walked in place: converting it to a list here would
+;; allocate a copy of the function's block spine on every followed variable.
+(define (compiler-backend-simd-copy-shape-block-seq
+  [all-blocks : compiler_ir_types.CompilerIrBlockList]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [var : i64]
+  [remaining : i64]
+  [seen : (&mut seen backend_i64_i64_map.Map)]
+  [index : i64]) : CompilerBackendSimdCopyShape
+  (if (>= index seq.len)
+    (CompilerBackendSimdCopyShape.No)
+    (match (compiler-backend-simd-copy-shape-block
+      (compiler-backend-global-shared-view all-blocks)
+      (compiler_ir_types.compiler-ir-block-seq-ref seq index)
+      var
+      remaining
+      seen)
+      [(CompilerBackendSimdCopyShape.No)
+        (compiler-backend-simd-copy-shape-block-seq
+          all-blocks
+          seq
+          var
+          remaining
+          seen
+          (+ index 1))]
+      [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
+        (CompilerBackendSimdCopyShape.Vector lanes elem-ty)]
+      [(CompilerBackendSimdCopyShape.Mask lanes)
+        (CompilerBackendSimdCopyShape.Mask lanes)])))
 
 (define (compiler-backend-simd-copy-shape-blocks
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [var : i64]
-  [remaining : i64]) : CompilerBackendSimdCopyShape
+  [remaining : i64]
+  [seen : (&mut seen backend_i64_i64_map.Map)]) : CompilerBackendSimdCopyShape
   (match blocks
     [(compiler_ir_types.CompilerIrBlockList.Nil)
       (CompilerBackendSimdCopyShape.No)]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (match (compiler-backend-simd-copy-shape-seq
-            (compiler-backend-global-shared-view all-blocks)
-            instrs
+      (match (compiler-backend-simd-copy-shape-block
+        (compiler-backend-global-shared-view all-blocks)
+        block
+        var
+        remaining
+        seen)
+        [(CompilerBackendSimdCopyShape.No)
+          (compiler-backend-simd-copy-shape-blocks
+            all-blocks
+            (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
             var
             remaining
-            0)
-            [(CompilerBackendSimdCopyShape.No)
-              (compiler-backend-simd-copy-shape-blocks
-                all-blocks
-                (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
-                var
-                remaining)]
-            [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
-              (CompilerBackendSimdCopyShape.Vector lanes elem-ty)]
-            [(CompilerBackendSimdCopyShape.Mask lanes)
-              (CompilerBackendSimdCopyShape.Mask lanes)])])]
+            seen)]
+        [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
+          (CompilerBackendSimdCopyShape.Vector lanes elem-ty)]
+        [(CompilerBackendSimdCopyShape.Mask lanes)
+          (CompilerBackendSimdCopyShape.Mask lanes)])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-simd-copy-shape-blocks
+      (compiler-backend-simd-copy-shape-block-seq
         all-blocks
-        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        seq
         var
-        remaining)]))
+        remaining
+        seen
+        0)]))
 
 (define (compiler-backend-simd-copy-shape
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [dst : i64]
   [vars : i64]) : CompilerBackendSimdCopyShape
-  (compiler-backend-simd-copy-shape-blocks
-    (compiler-backend-global-shared-view blocks)
-    blocks
-    dst
-    (+ vars 1)))
+  (let
+    [seen : backend_i64_i64_map.Map (backend_i64_i64_map.with-capacity 16)]
+    (begin
+      (backend_i64_i64_map.insert-ref! (&mut seen) dst 1)
+      (compiler-backend-simd-copy-shape-blocks
+        (compiler-backend-global-shared-view blocks)
+        blocks
+        dst
+        (+ vars 1)
+        (&mut seen)))))
 
 (define (compiler-backend-emit-vector-copy
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]

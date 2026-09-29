@@ -183,6 +183,7 @@ tests/spmd/map_fused_reduce_i64.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_compact_scalar.tl
 tests/integration/spmd_gather_read.tl
+tests/integration/spmd_loop_carried_copy_shape.tl
 tests/integration/spmd_reduce_scalar.tl
 tests/integration/spmd_scan_scalar.tl
 tests/integration/spmd_shuffle_simd.tl

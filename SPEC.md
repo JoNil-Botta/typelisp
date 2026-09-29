@@ -5623,7 +5623,9 @@ parameter-rooted places are rejected until signatures can declare a
 caller-visible invalidation effect. Atomic brands require the same joined-user
 proof. Both calls are rejected while executing inside the same owner through
 `in-arena`, because the active allocation target would be invalidated by the
-operation.
+operation. They are also rejected while a live `with` cleanup owner (section
+5.19) carries the destroyed brand or the rewound phase generation: that owner
+is not merely made unusable, because its cleanup runs when its scope ends.
 
 ### 5.17 Comptime type reflection
 
@@ -6423,6 +6425,15 @@ For cleanup-owning aggregate types (section 4.7.1), the explicit cleanup
 function must be the aggregate type's declared cleanup function. The field
 cleanup plan is then run by that aggregate cleanup function; `with` itself still
 only owns the bound value and invokes one cleanup function per binding.
+
+A `with` binding keeps the arena brands of its initializer, as a `let` binding
+does. Because the owner's cleanup reads the owner when the scope ends,
+`arena.destroy-safe!` of an arena whose brand the owner carries, and
+`arena.rewind-safe!` of a phase that covers the owner's allocation, are rejected
+while the owner is live. This holds even when the body never mentions the owner
+again, and when a later binding shadows its name. An owner that was already
+moved out is judged by the ordinary move rules instead. Invalidating a different
+arena, or the same arena after the `with` scope has ended, is unaffected.
 
 ---
 

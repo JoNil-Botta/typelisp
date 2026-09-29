@@ -611,6 +611,16 @@ arena_branded_in_arena_plain_field_reject|check-fail|tests/safety/arena_branded_
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
 arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
 arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
+# A `with` cleanup owner carries its initializer's arena brand. A safe destroy
+# or rewind of that arena is rejected while the owner is live, because the
+# owner's cleanup runs when its scope ends, even if the body never uses it again.
+with_owner_destroy_use_reject|check-fail|tests/safety/with_owner_destroy_use_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_destroy_cleanup_only_reject|check-fail|tests/safety/with_owner_destroy_cleanup_only_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_destroy_nested_inner_reject|check-fail|tests/safety/with_owner_destroy_nested_inner_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `inner` holds values from it
+with_owner_destroy_shadowed_reject|check-fail|tests/safety/with_owner_destroy_shadowed_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_rewind_reject|check-fail|tests/safety/with_owner_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_destroy_moved_reject|check-fail|tests/safety/with_owner_destroy_moved_reject.tl|-|error[E0211]: typecheck: cleanup owner `owner` moved before with scope exit
+with_owner_other_arena_destroy_ok|run-exit|tests/safety/with_owner_other_arena_destroy_ok.tl|42|-
 arena_branded_destroy_owner_field_reuse_reject|check-fail|tests/safety/arena_branded_destroy_owner_field_reuse_reject.tl|-|use of moved value `state`
 arena_branded_destroy_value_use_reject|check-fail|tests/safety/arena_branded_destroy_value_use_reject.tl|-|use of moved value `text`
 arena_branded_destroy_nested_field_use_reject|check-fail|tests/safety/arena_branded_destroy_nested_field_use_reject.tl|-|use of moved value `payload`

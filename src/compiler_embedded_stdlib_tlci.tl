@@ -5309,131 +5309,22 @@
         tlci.tlci-host-callback-status-ok))))
 
 ;; Host callback dispatch for `run-ops`, generated from the host callback
-;; table rows so it cannot drift from them. Both lookups are balanced `if`
-;; trees of about log2(rows) comparisons: one maps a batch's op name to its row
-;; index, the other calls row `index`'s callback.
-;; `(compiler-comptime-host-dispatch-call-range base index session a b c
-;; rows...)` calls the callback of the row at `index` among `rows`, the rows
-;; from index `base` of the table, splitting the range in halves.
-(defmacro (compiler-comptime-host-dispatch-call-range
+;; table rows so it cannot drift from them.
+;; `(compiler-comptime-host-dispatch-range kind base index x y z w rows...)` is
+;; a balanced `if` tree of about log2(rows) comparisons on the row index
+;; `index`, over `rows`, the rows from index `base` of the table. The leaf for a
+;; row is, for `kind` `call`, the call `(row x y z w)` and, for `kind` `check`,
+;; whether the bytes `[y, y + z)` of batch `x` spell the row's ABI name, which
+;; `run-ops` never does.
+(defmacro (compiler-comptime-host-dispatch-range
+  [kind : Expr]
   [base-expr : Expr]
   [index : Expr]
-  [session : Expr]
-  [a : Expr]
-  [b : Expr]
-  [c : Expr]
-  [rows : Expr ...]) : i64
-  (match base-expr
-    [(comptime.Expr.Int base)
-      (let
-        [count : i64 (expr-list-length rows)]
-        [half : i64 (/ count 2)]
-        [low : ExprList (expr-list-empty)]
-        [high : ExprList (expr-list-empty)]
-        [cursor : i64 count]
-        (if (= count 1)
-          `(,(expr-list-nth rows 0) ,session ,a ,b ,c)
-          (begin
-            (while (> cursor 0)
-              (begin
-                (set! cursor (- cursor 1))
-                (if (< cursor half)
-                  (set! low (expr-list-cons (expr-list-nth rows cursor) low))
-                  (set! high (expr-list-cons (expr-list-nth rows cursor) high)))))
-            `(if (< ,index ,(comptime.expr-int (+ base half)))
-              (compiler-comptime-host-dispatch-call-range
-                ,base-expr
-                ,index
-                ,session
-                ,a
-                ,b
-                ,c
-                ,@low)
-              (compiler-comptime-host-dispatch-call-range
-                ,(comptime.expr-int (+ base half))
-                ,index
-                ,session
-                ,a
-                ,b
-                ,c
-                ,@high)))))]
-    [_
-      (comptime-error
-        "compiler-comptime-host-dispatch-call-range: base must be an integer")]))
-
-(defmacro (compiler-comptime-host-dispatch-call-rows
-  [index : Expr]
-  [session : Expr]
-  [a : Expr]
-  [b : Expr]
-  [c : Expr]
-  [rows : Expr ...]) : i64
-  `(compiler-comptime-host-dispatch-call-range
-    0
-    ,index
-    ,session
-    ,a
-    ,b
-    ,c
-    ,@rows))
-
-;; `(compiler-comptime-host-dispatch-name-rows batch start length rows...)`
-;; is the row index of the batch name token `[start, start + length)`, or -1:
-;; one test per row, each comparing the name length inline before the bytes.
-;; `run-ops` is left out, so a batch can never name itself.
-(defmacro (compiler-comptime-host-dispatch-name-rows
-  [batch : Expr]
-  [start : Expr]
-  [length : Expr]
-  [rows : Expr ...]) : i64
-  (let
-    [prefix-length : i64
-      (string.string-length "compiler-comptime-host-callback-")]
-    [row : i64 (expr-list-length rows)]
-    [lookup : Expr `-1]
-    (begin
-      (while (> row 0)
-        (begin
-          (set! row (- row 1))
-          (match (expr-list-nth rows row)
-            [(comptime.Expr.Var text)
-              (let
-                [name : String
-                  (comptime.string-slice
-                    text
-                    prefix-length
-                    (- (string.string-length text) prefix-length))]
-                (if (string.eq name "run-ops")
-                  unit
-                  (set!
-                    lookup
-                    `(if (and
-                      (=
-                        ,length
-                        ,(comptime.expr-int (string.string-length name)))
-                      (compiler-comptime-host-batch-token-eq?
-                        ,batch
-                        ,start
-                        ,length
-                        ,(comptime.expr-string name)))
-                      ,(comptime.expr-int row)
-                      ,lookup))))]
-            [_
-              (comptime-error
-                "compiler-comptime-host-dispatch-name-rows: rows must be bare names")])))
-      lookup)))
-
-;; `(compiler-comptime-host-dispatch-check-range base index batch start length
-;; rows...)` is whether the batch bytes `[start, start + length)` spell the ABI
-;; name of the row at `index` among `rows`, the rows from index `base` of the
-;; table, splitting the range in halves. `run-ops` never matches.
-(defmacro (compiler-comptime-host-dispatch-check-range
-  [base-expr : Expr]
-  [index : Expr]
-  [batch : Expr]
-  [start : Expr]
-  [length : Expr]
-  [rows : Expr ...]) : bool
+  [x : Expr]
+  [y : Expr]
+  [z : Expr]
+  [w : Expr]
+  [rows : Expr ...]) : Expr
   (match base-expr
     [(comptime.Expr.Int base)
       (let
@@ -5445,24 +5336,31 @@
         [prefix-length : i64
           (string.string-length "compiler-comptime-host-callback-")]
         (if (= count 1)
-          (match (expr-list-nth rows 0)
-            [(comptime.Expr.Var text)
-              (let
-                [name : String
-                  (comptime.string-slice
-                    text
-                    prefix-length
-                    (- (string.string-length text) prefix-length))]
-                (if (string.eq name "run-ops")
-                  `false
-                  `(compiler-comptime-host-batch-token-eq?
-                    ,batch
-                    ,start
-                    ,length
-                    ,(comptime.expr-string name))))]
+          (match kind
+            [(comptime.Expr.Var kind-text)
+              (if (string.eq kind-text "call")
+                `(,(expr-list-nth rows 0) ,x ,y ,z ,w)
+                (match (expr-list-nth rows 0)
+                  [(comptime.Expr.Var text)
+                    (let
+                      [name : String
+                        (comptime.string-slice
+                          text
+                          prefix-length
+                          (- (string.string-length text) prefix-length))]
+                      (if (string.eq name "run-ops")
+                        `false
+                        `(compiler-comptime-host-batch-token-eq?
+                          ,x
+                          ,y
+                          ,z
+                          ,(comptime.expr-string name))))]
+                  [_
+                    (comptime-error
+                      "compiler-comptime-host-dispatch-range: rows must be bare names")]))]
             [_
               (comptime-error
-                "compiler-comptime-host-dispatch-check-range: rows must be bare names")])
+                "compiler-comptime-host-dispatch-range: kind must be call or check")])
           (begin
             (while (> cursor 0)
               (begin
@@ -5471,37 +5369,27 @@
                   (set! low (expr-list-cons (expr-list-nth rows cursor) low))
                   (set! high (expr-list-cons (expr-list-nth rows cursor) high)))))
             `(if (< ,index ,(comptime.expr-int (+ base half)))
-              (compiler-comptime-host-dispatch-check-range
+              (compiler-comptime-host-dispatch-range
+                ,kind
                 ,base-expr
                 ,index
-                ,batch
-                ,start
-                ,length
+                ,x
+                ,y
+                ,z
+                ,w
                 ,@low)
-              (compiler-comptime-host-dispatch-check-range
+              (compiler-comptime-host-dispatch-range
+                ,kind
                 ,(comptime.expr-int (+ base half))
                 ,index
-                ,batch
-                ,start
-                ,length
+                ,x
+                ,y
+                ,z
+                ,w
                 ,@high)))))]
     [_
       (comptime-error
-        "compiler-comptime-host-dispatch-check-range: base must be an integer")]))
-
-(defmacro (compiler-comptime-host-dispatch-check-rows
-  [index : Expr]
-  [batch : Expr]
-  [start : Expr]
-  [length : Expr]
-  [rows : Expr ...]) : bool
-  `(compiler-comptime-host-dispatch-check-range
-    0
-    ,index
-    ,batch
-    ,start
-    ,length
-    ,@rows))
+        "compiler-comptime-host-dispatch-range: base must be an integer")]))
 
 ;; The number of host callback table rows.
 (defmacro (compiler-comptime-host-dispatch-row-count [rows : Expr ...]) : i64
@@ -5606,8 +5494,8 @@
 
 ;: The row index of the batch name `[start, start + length)` given the
 ;: producer's `hint`: the hint when this build's row of that index has the
-;: name, otherwise a search of every row, and -1 when no row has it.
-;: `run-ops` itself never resolves.
+;: name, otherwise the row with that name (an image another build produced),
+;: and -1 when there is none. `run-ops` itself never resolves.
 (define (compiler-comptime-host-batch-name-index
   [batch : (& batch CompilerComptimeHostBatch)]
   [hint : i64]
@@ -5619,17 +5507,22 @@
       hint
       (tlci.tlci-host-callback-table compiler-comptime-host-dispatch-row-count))
     (tlci.tlci-host-callback-table
-      compiler-comptime-host-dispatch-check-rows
+      compiler-comptime-host-dispatch-range
+      check
+      0
       hint
       batch
       start
-      length))
+      length
+      0))
     hint
-    (tlci.tlci-host-callback-table
-      compiler-comptime-host-dispatch-name-rows
-      batch
-      start
-      length)))
+    (let
+      [name : String
+        (unsafe
+          (string-from-bytes (int->ptr (+ batch.base start) : (Ptr u8)) length))]
+      (if (string.eq name "run-ops")
+        -1
+        (tlci.tlci-host-callback-row-index (& name))))))
 
 ;: Call the callback of row `index` with the session and immediates.
 (define (compiler-comptime-host-batch-call
@@ -5639,7 +5532,9 @@
   [b : i64]
   [c : i64]) : i64
   (tlci.tlci-host-callback-table
-    compiler-comptime-host-dispatch-call-rows
+    compiler-comptime-host-dispatch-range
+    call
+    0
     index
     session
     a

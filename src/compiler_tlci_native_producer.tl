@@ -4282,27 +4282,6 @@
   (EmbeddedNativeBatchOpNone)
   (EmbeddedNativeBatchOpSome String String))
 
-;; Whether `text` has `prefix` at `index`.
-(define (embedded-native-text-at?
-  [text : (& text str)]
-  [index : i64]
-  [prefix : (& prefix str)]) : bool
-  (let
-    [length : i64 (string.string-length prefix)]
-    [offset : i64 0]
-    [same : bool (<= (+ index length) (string.string-length text))]
-    (begin
-      (while (and same (< offset length))
-        (begin
-          (when
-            (not
-              (=
-                (string.string-ref text (+ index offset))
-                (string.string-ref prefix offset)))
-            (set! same false))
-          (set! offset (+ offset 1))))
-      same)))
-
 ;; The end of the decimal integer at `index` of `line` (an optional `-` and
 ;; 1 to 18 digits), or -1.
 (define (embedded-native-int-token-end [line : (& line str)] [index : i64]) : i64
@@ -4410,7 +4389,7 @@
     [tokens : String ""]
     [pending-length : i64 -1]
     [arg : i64 0]
-    [ok : bool (embedded-native-text-at? line 0 (& call-prefix))]
+    [ok : bool (string.is-string-prefix-at line (& call-prefix) 0)]
     (begin
       (set! name-start cursor)
       (while (and
@@ -4419,15 +4398,15 @@
         (not (= (string.string-ref line cursor) ' ')))
         (set! cursor (+ cursor 1)))
       (set! name (string.substring line name-start (- cursor name-start)))
-      (if (and ok (embedded-native-text-at? line cursor (& session-infix)))
+      (if (and ok (string.is-string-prefix-at line (& session-infix) cursor))
         (set! cursor (+ cursor (string.string-length session-infix)))
         (set! ok false))
       (while (and ok (< arg 3))
         (begin
-          (if (embedded-native-text-at?
+          (if (string.is-string-prefix-at
             line
-            cursor
-            (& embedded-native-name-arg-prefix))
+            (& embedded-native-name-arg-prefix)
+            cursor)
             (let
               [raw : String ""]
               [done : bool false]
@@ -4467,10 +4446,10 @@
                   ok
                   (< arg 2)
                   (< pending-length 0)
-                  (embedded-native-text-at?
+                  (string.is-string-prefix-at
                     line
-                    cursor
-                    (& embedded-native-name-arg-suffix)))
+                    (& embedded-native-name-arg-suffix)
+                    cursor))
                   (begin
                     (set!
                       cursor

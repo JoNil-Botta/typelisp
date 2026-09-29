@@ -201,6 +201,14 @@ failure, and success. `verify-embedded-stdlib-tlci-resources.sh` runs its
 builds under that interface; `src/TESTING.md` (Embedded stdlib and TLCI gates)
 describes its caps and reports.
 
+`verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
+including the root opt0 build, at 8192 MiB and writes
+`target/selfhost-build-run.memory`. The root release build in
+`check-opt2-cli-regression.sh` has the same cap and writes
+`target/opt2-cli-regression/build.memory`. Either gate fails on a capped
+termination. CI retains these reports on both hosts in its root-build-memory
+artifact, including reports from failed builds.
+
 On Linux, `TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE` is an invocation-local
 output destination for the limiting helper. The helper removes it from the
 workload's environment; its own sampler receives the destination explicitly.

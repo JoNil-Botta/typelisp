@@ -23,7 +23,9 @@
 (import tlci_loader)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import stdlib.byte_buf_core as source_buf)
 (import stdlib.io)
+(import stdlib.profile)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as producer_test_svec)
@@ -185,6 +187,90 @@
               names
               captures)
             (producer-test-collect-decls! rest module names captures))])]))
+
+(define (producer-test-source-allocated-bytes [count : i64]) : i64
+  (let
+    [source : source_buf.ByteBufBuilder (source_buf.byte-buf-builder-new)]
+    [names : producer_test_svec.Vec (producer_test_svec.new)]
+    [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
+      (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
+    [index : i64 0]
+    (begin
+      (source_buf.byte-buf-builder-append-string
+        (&mut source)
+        "(module catalog.macros)\n")
+      (while (< index count)
+        (begin
+          (source_buf.byte-buf-builder-append-string
+            (&mut source)
+            (str_cat.str-cat
+              "(defmacro (entry-"
+              (string.int->string index)
+              " [value : Expr]) : Expr `(+ ,value 1))\n"))
+          (set! index (+ index 1))))
+      (match (parse_core.parse-ast-source
+        (source_buf.byte-buf-builder-finish-string (& source)))
+        [(parse_core.ResultAstProgram.Err _)
+          (io.panic "native source allocation fixture did not parse")]
+        [(parse_core.ResultAstProgram.Ok program)
+          (match program
+            [(ast.AstProgram.Program decls)
+              (begin
+                (producer-test-collect-decls!
+                  (deref decls)
+                  ""
+                  (&mut names)
+                  (&mut captures))
+                (let
+                  [name-array : (__tl_dyn-array String)
+                    (__tl_make-array String count)]
+                  [name-index : i64 0]
+                  [_copy-names : unit
+                    (while (< name-index count)
+                      (begin
+                        (set!
+                          (array-ref name-array name-index)
+                          (producer_test_svec.get (& names) name-index ""))
+                        (set! name-index (+ name-index 1))))]
+                  [before : i64 (profile.alloc-total)]
+                  [text : String
+                    (compiler_tlci_native_producer.embedded-native-source
+                      name-array
+                      (& captures))]
+                  [allocated : i64 (- (profile.alloc-total) before)]
+                  (begin
+                    (unless
+                      (and
+                        (= captures.len count)
+                        (=
+                          (compiler_tlci_native_producer.embedded-native-count-occurrences
+                            text
+                            "(define (macro-entry-")
+                          count)
+                        (=
+                          (array-ref
+                            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+                            0)
+                          count))
+                      (io.panic "native source catalog lost an entry"))
+                    allocated)))])]))))
+
+;; Fixture parsing is outside the allocation samples. Doubling a catalog must
+;; stay near linear even when the generated source outgrows its initial buffer.
+(test
+  native-source-catalog-allocation-growth
+  (let
+    [_empty : i64 (producer-test-source-allocated-bytes 0)]
+    [_warm : i64 (producer-test-source-allocated-bytes 1)]
+    [small : i64 (producer-test-source-allocated-bytes 64)]
+    [large : i64 (producer-test-source-allocated-bytes 128)]
+    (begin
+      (unless
+        (> small 0)
+        (io.panic "native source allocation counters are inactive"))
+      (unless
+        (<= (* large 2) (* small 5))
+        (io.panic "native source allocations grow superlinearly")))))
 
 ;; Keep the focused Decls producer separate from the large expression-shape
 ;; corpus below so its result policy remains explicit in this cross-platform

@@ -120,6 +120,8 @@ if ! run_with_heartbeat_capture \
     "build release opt2 compiler" \
     "$BUILD_STDOUT" \
     "$BUILD_STDERR" \
+    scripts/run-memory-bounded.sh --limit-mib 8192 \
+    --report "$WORKDIR/build.memory" -- \
     "$COMPILER" build \
     --manifest-path typelisp.pkg \
     --profile release \

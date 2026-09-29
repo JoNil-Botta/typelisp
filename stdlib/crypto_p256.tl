@@ -19,12 +19,14 @@
 ;# identity, a point and its inverse, and equal points all take the same steps.
 ;# The identity is `(0 : 1 : 0)`, distinct from every affine point.
 ;#
-;# Public-only multiplication. `public-mul` and `public-double-mul` branch on
-;# their scalars' bits and take variable time. They are for public inputs only,
-;# such as ECDSA verification's `u1`, `u2` and a peer's public key. A secret
-;# scalar (a private key, ECDH; #7686) needs a fixed-work multiplication of its
-;# own. It may reuse this module's field arithmetic and complete formulas, but
-;# never these two functions.
+;# Public inputs only. `public-mul` and `public-double-mul` branch on their
+;# scalars' bits, and the field and scalar helpers branch on operand values
+;# (final subtractions, borrows, comparisons), so everything here takes
+;# variable time. That is sound for public data such as ECDSA verification's
+;# `u1`, `u2` and a peer's public key. A secret scalar (a private key, ECDH;
+;# #7686) needs a fixed-work multiplication of its own and must never reach
+;# `public-mul` or `public-double-mul`. It may reuse a helper here only once
+;# #7686's fixed-work audit shows that the helper meets its contract.
 ;#
 ;# Public points. `public-point-parse` accepts exactly the 65-byte SEC1
 ;# uncompressed form `0x04 || X || Y` with canonical `X, Y < p` on the curve.

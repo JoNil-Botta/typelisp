@@ -225,6 +225,60 @@ for pair in "$(printf '/tmp/a\tb')|control character" '/tmp/a\b|backslash'; do
     fi
 done
 
+# A `]`, escaped quote or backslash, or comma inside a pattern is part of it,
+# and the array may continue over several lines (#8106).
+cat > "$case_dir/spec" <<'SPEC'
+{
+  "stdout_contains": ["left]right", "say \"hi\", ok",
+    "back\\slash", "[bracketed]"],
+  "stdout_not_contains": ["ab]sent", "gone\"]"]
+}
+SPEC
+printf 'left]right say "hi", ok back\\slash [bracketed]\n' > "$case_dir/out"
+: > "$case_dir/messages"
+: > "$case_dir/want"
+check 0 linux 'patterns containing brackets, escapes and commas'
+: > "$case_dir/out"
+cat > "$case_dir/want" <<'EXPECTED'
+stdout missing: left]right
+stdout missing: say "hi", ok
+stdout missing: back\slash
+stdout missing: [bracketed]
+EXPECTED
+check 0 linux 'every bracketed pattern is still required'
+printf 'ab]sent gone"]\n' > "$case_dir/out"
+cat > "$case_dir/want" <<'EXPECTED'
+stdout missing: left]right
+stdout missing: say "hi", ok
+stdout missing: back\slash
+stdout missing: [bracketed]
+stdout unexpectedly contains: ab]sent
+stdout unexpectedly contains: gone"]
+EXPECTED
+check 0 linux 'every bracketed pattern is still excluded'
+printf '{"stdout_contains": ["missing]needle"]}\n' > "$case_dir/spec"
+: > "$case_dir/out"
+printf '%s\n' 'stdout missing: missing]needle' > "$case_dir/want"
+check 0 linux 'a bracket inside the only pattern'
+
+# A numeric ID selects exactly that ID: 1 does not match 10 or 11, and 10
+# does not match 1 (#8106).
+cat > "$case_dir/spec" <<'SPEC'
+{
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "wrong-id"},
+    {"jsonpath_id": 10, "raw_contains": "one"},
+    {"jsonpath_id": 1, "raw_contains": "one"},
+    {"jsonpath_id": 11, "raw_contains": "eleven"}
+  ]
+}
+SPEC
+printf '%s\n' '{"id":10,"result":"wrong-id"}' '{"id":1,"result":"one"}' '{"id":11,"result":"eleven"}' > "$case_dir/messages"
+cat > "$case_dir/want" <<'EXPECTED'
+no message matched:     {"jsonpath_id": 1, "raw_contains": "wrong-id"},
+no message matched:     {"jsonpath_id": 10, "raw_contains": "one"},
+EXPECTED
+check 0 linux 'numeric IDs match whole numbers'
 if check_corpus_result "$case_dir/missing" "$case_dir/out" "$case_dir/err" 0 '' '' '' linux > "$case_dir/got" 2>&1; then
     echo 'missing spec unexpectedly accepted' >&2
     exit 1

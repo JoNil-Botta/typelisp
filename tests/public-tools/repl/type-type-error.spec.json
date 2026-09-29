@@ -1,5 +1,5 @@
 {
   "exit": 0,
   "stdout_contains": ["i64"],
-  "stderr_contains": ["error[E0206]", "arithmetic operator requires numeric types"]
+  "stderr_contains": ["--> <repl>:1:11", "integer operator expects matching integer operands", "error[E0206]"]
 }

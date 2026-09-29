@@ -1,0 +1,6 @@
+(define answer : i64 41)
+(+ answer true)
+(+ 1)
+42 43
+.type answer
+.exit

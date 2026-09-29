@@ -2979,7 +2979,26 @@
 (define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
   (match (parser.parse-ast-repl-source src)
     [(parser.ResultAstReplItem.Ok _) false]
-    [(parser.ResultAstReplItem.Err message) (string.eq message expected)]))
+    [(parser.ResultAstReplItem.Err diag)
+      (let
+        [error : cdiag.CompilerDiagnostic (deref diag)]
+        (and
+          (string.eq (cdiag.compiler-diagnostic-message error) expected)
+          (match (cdiag.compiler-diagnostic-code error)
+            [(cdiag.CompilerDiagnosticSomeString code)
+              (string.eq code (cdiag.compiler-diagnostic-code-parse))]
+            [cdiag.CompilerDiagnosticNoString false])
+          (>= (cdiag.compiler-diagnostic-line error) 1)))]))
+
+(define (compiler-parse-repl-error-at? [src : String] [line : i64] [col : i64]) : bool
+  (match (parser.parse-ast-repl-source src)
+    [(parser.ResultAstReplItem.Ok _) false]
+    [(parser.ResultAstReplItem.Err diag)
+      (let
+        [error : cdiag.CompilerDiagnostic (deref diag)]
+        (and
+          (= (cdiag.compiler-diagnostic-line error) line)
+          (= (cdiag.compiler-diagnostic-col error) col)))]))
 
 (define (compiler-parse-repl-tests-ok?) : bool
   (and
@@ -2996,7 +3015,13 @@
       "42 43"
       "parse: trailing tokens after REPL input")
     ;; a malformed expression item surfaces the expression diagnostic
-    (compiler-parse-repl-error-ok? "(+ 1)" "parse: malformed binary expression")))
+    (compiler-parse-repl-error-ok? "(+ 1)" "parse: malformed binary expression")
+    ;; errors are located in the input: at the trailing token, and at the
+    ;; malformed input form, including one on a later line
+    (compiler-parse-repl-error-at? "42 43" 1 4)
+    (compiler-parse-repl-error-at? "(+ 1)" 1 1)
+    (compiler-parse-repl-error-at? "\n  (+ 1)" 2 3)
+    (compiler-parse-repl-error-at? "" 1 1)))
 
 ;; comptime function-parameter parsing: `[comptime n : i64]`
 ;; and the type-valued `[comptime T : type]` parse as top-level function

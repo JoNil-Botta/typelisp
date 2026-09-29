@@ -1,0 +1,6 @@
+{
+  "exit": 0,
+  "stdout_contains": ["i64"],
+  "stderr_contains": ["--> <repl>:1:11", "integer operator expects matching integer operands", "--> <repl>:1:1", "malformed binary expression", "--> <repl>:1:4", "trailing tokens after REPL input", "error[E0206]", "error[E0100]"],
+  "stderr_not_contains": ["__tl_tc_", "REPL parse error"]
+}

@@ -1644,9 +1644,11 @@
   (AstReplDecl ast.AstDecl)
   (AstReplExpr i64))
 
+;; A REPL parse error is an E0100 diagnostic located in the input, with an
+;; empty path the REPL names.
 (defenum ResultAstReplItem
   (Ok AstReplItem)
-  (Err String))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultAstDeclListDiagnostic
   (Ok ast.AstDeclList)
@@ -12393,13 +12395,30 @@
       (string.eq path "")]
     [_ false]))
 
+(define (parse-ast-repl-error [span : token.SourceSpan] [message : String]) : ResultAstReplItem
+  (ResultAstReplItem.Err
+    (box
+      (parse-ast-canonical-diagnostic
+        (cdiag.compiler-diagnostic-from-span "" span message)))))
+
+(define (parse-ast-repl-source-error [err : token.SourceError]) : ResultAstReplItem
+  (parse-ast-repl-error
+    (token.source-error-span (compiler-parse-place-shared-view err))
+    (token.source-error-message err)))
+
+;; The REPL dispatch carries no invocation frame to record the failing subform,
+;; so an expression error is located at the input form.
 (define (parse-ast-repl-expr-item
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [form : reader.SpannedSexpr]) : ResultAstReplItem
-  (match (parse-ast-expr-with-pools dispatch pools form)
+  (match (parse-ast-expr-with-pools
+    dispatch
+    pools
+    (compiler-parse-place-shared-view form))
     [(ResultAstExpr.Ok expr) (ResultAstReplItem.Ok (AstReplExpr expr))]
-    [(ResultAstExpr.Err message) (ResultAstReplItem.Err message)]))
+    [(ResultAstExpr.Err message)
+      (parse-ast-repl-error (reader.spanned-sexpr-span form) message)]))
 
 (define (parse-ast-repl-source-with-pools
   [src : String]
@@ -12418,7 +12437,9 @@
               (if (= (reader.peek-spanned-tag (& toks) (& cur)) (token.tag-end))
                 (begin
                   (reader.sp-node-pool-truncate! mark)
-                  (ResultAstReplItem.Err "parse: expected REPL input"))
+                  (parse-ast-repl-error
+                    (token.SourceSpan 1 1 1 1)
+                    "parse: expected REPL input"))
                 (match (reader.form-spanned-result (& toks) (&mut cur))
                   [(reader.ResultSpannedSexpr.Ok form)
                     (let
@@ -12451,16 +12472,18 @@
                                   result)))])
                         (begin
                           (reader.sp-node-pool-truncate! mark)
-                          (ResultAstReplItem.Err
+                          (parse-ast-repl-error
+                            (token.spanned-token-span
+                              (& (array-ref toks (array-ref cur 0))))
                             "parse: trailing tokens after REPL input"))))]
                   [(reader.ResultSpannedSexpr.Err err)
                     (begin
                       (reader.sp-node-pool-truncate! mark)
-                      (ResultAstReplItem.Err (token.source-error-message err)))]))))]
+                      (parse-ast-repl-source-error err))]))))]
         [(lexer.ResultSpannedTokens.Err err)
           (begin
             (reader.sp-node-pool-truncate! mark)
-            (ResultAstReplItem.Err (token.source-error-message err)))]))))
+            (parse-ast-repl-source-error err))]))))
 
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (let

@@ -63158,24 +63158,23 @@
 ;; rewrites the entry, hides the obligation exactly as it hides the local. The
 ;; entry also records the loop depth the binding was made at, so a `break` or
 ;; `continue` checks exactly the obligations it leaves.
-;; Loop depths past 63 share one bucket, so a `break` that deep checks every
-;; owner bound that deep: never fewer owners than it leaves.
-(define (tc-move-loop-depth-bucket [loop-depth : i64]) : i64
-  (if (> loop-depth 63)
-    63
-    loop-depth))
+;; Expression-pool indices fit 28 bits, and loop nesting cannot exceed the
+;; expression count. Two 32-bit lanes therefore preserve the initializer and
+;; exact depth without overflowing either signed owner-code domain.
+(define (tc-move-scope-owner-depth-width) : i64
+  4294967296)
 
 (define (tc-move-let-obligation-code [origin-id : i64] [loop-depth : i64]) : i64
-  (- -2 (+ (* origin-id 64) (tc-move-loop-depth-bucket loop-depth))))
+  (- -2 (+ (* origin-id (tc-move-scope-owner-depth-width)) loop-depth)))
 
 (define (tc-move-let-obligation-code? [code : i64]) : bool
   (<= code -2))
 
 (define (tc-move-let-obligation-origin [code : i64]) : i64
-  (/ (- -2 code) 64))
+  (/ (- -2 code) (tc-move-scope-owner-depth-width)))
 
 (define (tc-move-let-obligation-loop-depth [code : i64]) : i64
-  (% (- -2 code) 64))
+  (% (- -2 code) (tc-move-scope-owner-depth-width)))
 
 ;; A non-move-aware `with` owner's `locals` entry, with its initializer and
 ;; loop depth in the same packing: lowering runs the owner's cleanup on every
@@ -63186,16 +63185,16 @@
 (define (tc-move-with-owner-code [origin-id : i64] [loop-depth : i64]) : i64
   (+
     (tc-move-with-owner-code-base)
-    (+ (* origin-id 64) (tc-move-loop-depth-bucket loop-depth))))
+    (+ (* origin-id (tc-move-scope-owner-depth-width)) loop-depth)))
 
 (define (tc-move-with-owner-code? [code : i64]) : bool
   (>= code (tc-move-with-owner-code-base)))
 
 (define (tc-move-with-owner-origin [code : i64]) : i64
-  (/ (- code (tc-move-with-owner-code-base)) 64))
+  (/ (- code (tc-move-with-owner-code-base)) (tc-move-scope-owner-depth-width)))
 
 (define (tc-move-with-owner-loop-depth [code : i64]) : i64
-  (% (- code (tc-move-with-owner-code-base)) 64))
+  (% (- code (tc-move-with-owner-code-base)) (tc-move-scope-owner-depth-width)))
 
 (define (tc-move-bind-with-owner
   [locals : TcMovedSet]
@@ -63645,9 +63644,7 @@
                     (tc-move-let-obligation-code? value)
                     (or
                       (< loop-depth 0)
-                      (=
-                        (tc-move-let-obligation-loop-depth value)
-                        (tc-move-loop-depth-bucket loop-depth))))
+                      (= (tc-move-let-obligation-loop-depth value) loop-depth)))
                   (let
                     [status : i64
                       (tc-move-obligation-status
@@ -63671,9 +63668,7 @@
                     (tc-move-with-owner-code? value)
                     (or
                       (< loop-depth 0)
-                      (=
-                        (tc-move-with-owner-loop-depth value)
-                        (tc-move-loop-depth-bucket loop-depth)))
+                      (= (tc-move-with-owner-loop-depth value) loop-depth))
                     (or
                       (tc-moved-contains? (& moved) key)
                       (tc-moved-partial? (& moved) key)))

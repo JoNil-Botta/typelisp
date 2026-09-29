@@ -8895,9 +8895,33 @@
                   (ci.intern-compat-state-persistent-arena (& decoy))))
               ok)))))))
 
+(define (compiler-typecheck-deep-owner-source [body : String]) : String
+  (let
+    [nested : String body]
+    [depth : i64 0]
+    (begin
+      (while (< depth 63)
+        (begin
+          (set!
+            nested
+            (str_cat.str-cat "(while true (begin " nested " (break)))"))
+          (set! depth (+ depth 1))))
+      (compiler-typecheck-let-obligation-source
+        (str_cat.str-cat
+          "(define (f) : unit (with ([root (open 1) cleanup-file-handle]) "
+          nested
+          "))")))))
+
 (define (compiler-typecheck-let-obligation-tests-ok?) : bool
   (and
     (compiler-typecheck-scope-owner-state-isolation-ok?)
+    (compiler-typecheck-ok?
+      (compiler-typecheck-deep-owner-source
+        "(let [h : FileHandle (open 2)] (begin (while true (break)) (cleanup-file-handle h)))"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-deep-owner-source
+        "(let [h : FileHandle (open 2)] (break))")
+      "typecheck: cleanup obligation of `h` is not discharged before this break leaves its loop")
     ;; Discharged by the declared cleanup function, on every path.
     (compiler-typecheck-ok?
       (compiler-typecheck-let-obligation-source

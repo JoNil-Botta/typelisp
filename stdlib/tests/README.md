@@ -143,6 +143,17 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   positive and negative text tables with byte offsets, RFC 5952 formatting,
   all 65,536 IPv4 suffixes, generated IPv6 round trips, and parser/formatter
   allocation contracts.
+- `net_tls_wire_api.tl` checks the TLS 1.3 wire codec against RFC 8448's
+  traces: every handshake message decodes to the expected fields and
+  re-encodes to the same bytes. It feeds every two-piece split of record
+  streams and handshake flights through the readers, checks record boundaries,
+  interleaving and key-change alignment, sweeps all 65,536 extension types
+  through RFC 9846 table 1 in every message context, and checks each record,
+  inner-plaintext, extension, list and message rejection by code, offset and
+  alert. Every prefix and a single-byte change at every position of each
+  message vector are decoded, and warmed readers allocate nothing.
+  `net_tls_wire_encode_reject.tl` checks that an encoder traps rather than
+  write a ClientHello whose random is not 32 bytes.
 - `format_primitive_display.tl` covers zero, one, signed minima, and maxima for
   every fixed-width integer type, including the full `u64` range. Its pinned
   Rust Display tables cover binary32/binary64 signed zero, source-width

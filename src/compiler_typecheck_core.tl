@@ -61532,7 +61532,7 @@
   (move-aware bool))
 
 ;; One slot per resource binding, filled in binding order as the checked
-;; recursion unwinds, so the exit scan walks the same order the cons chain did.
+;; recursion descends, so the exit scan walks the owners in binding order.
 (defstruct TcMoveCleanupOwners
   (slots (__tl_dyn-array TcMoveCleanupOwner))
   (len i64))
@@ -61554,10 +61554,6 @@
         (array-ref slots index)
         (TcMoveCleanupOwner name-id owner-origin-id move-aware))
       (TcMoveCleanupOwners slots len))))
-
-(defenum TcMoveResourceBindings
-  (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet TcMoveCleanupOwners)
-  (Err String))
 
 (defenum TcMoveMaybeIndex
   (No)
@@ -62939,6 +62935,105 @@
       (tc-param-storage-origin-clear
         (tc-moved-param-storage-origins without-root)
         name-id))))
+
+;; Everything `tc-moved-remove-root-state` clears for one name. A binder that
+;; shadows a local clears the name's state for its own binding, so it captures
+;; the outer state first and restores it where its scope ends and the outer
+;; local is visible again (#8266).
+(defstruct TcMovedRootSnapshot
+  (name-id i64)
+  (moved? bool)
+  (moved-origin i64)
+  (partial? bool)
+  (partial-origin i64)
+  (paths TcMovedPathFacts)
+  (parameter-id i64))
+
+(define (tc-moved-root-paths-at
+  [facts : TcMovedPathFacts]
+  [root-id : i64]
+  [out : TcMovedPathFacts]) : TcMovedPathFacts
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      (tc-moved-root-paths-at
+        rest
+        root-id
+        (if (= (tc-move-path-root-id fact.path) root-id)
+          (tc-moved-path-facts-cons out fact)
+          out)))))
+
+(define (tc-moved-root-snapshot [set : TcMovedSet] [name-id : i64]) : TcMovedRootSnapshot
+  (let
+    [roots : tc_i64_i64_map.Map (tc-moved-roots (tc-global-shared-view set))]
+    [partials : tc_i64_i64_map.Map
+      (tc-moved-partials (tc-global-shared-view set))]
+    [root : tc_i64_i64_map.Lookup (tc_i64_i64_map.get (& roots) name-id)]
+    [partial : tc_i64_i64_map.Lookup (tc_i64_i64_map.get (& partials) name-id)]
+    (TcMovedRootSnapshot
+      name-id
+      (match root
+        [(tc_i64_i64_map.LookupFound _) true]
+        [(tc_i64_i64_map.LookupMissing) false])
+      (match root
+        [(tc_i64_i64_map.LookupFound origin-id) origin-id]
+        [(tc_i64_i64_map.LookupMissing) (tc-moved-no-origin-id)])
+      (match partial
+        [(tc_i64_i64_map.LookupFound _) true]
+        [(tc_i64_i64_map.LookupMissing) false])
+      (match partial
+        [(tc_i64_i64_map.LookupFound origin-id) origin-id]
+        [(tc_i64_i64_map.LookupMissing) (tc-moved-no-origin-id)])
+      (tc-moved-root-paths-at
+        (tc-moved-paths (tc-global-shared-view set))
+        name-id
+        TcMovedPathFacts.Nil)
+      (match (tc-param-storage-origin-in-set set name-id)
+        [(TcMaybeNameId.Some parameter-id) parameter-id]
+        [(TcMaybeNameId.No) -1]))))
+
+(define (tc-moved-restore-root-paths-at
+  [set : TcMovedSet]
+  [facts : TcMovedPathFacts]) : TcMovedSet
+  (if (tc-moved-path-facts-empty? facts)
+    set
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      (tc-moved-restore-root-paths-at
+        (tc-moved-add-path-fact
+          set
+          fact.path
+          fact.kind
+          (tc-moved-path-fact-origin fact))
+        rest))))
+
+;; Drops what the scope recorded about its own binding of the name and puts
+;; back the captured state of the local it shadowed.
+(define (tc-moved-restore-root-state
+  [set : TcMovedSet]
+  [snapshot : TcMovedRootSnapshot]) : TcMovedSet
+  (let
+    [name-id : i64 snapshot.name-id]
+    [cleared : TcMovedSet (tc-moved-remove-root-state set name-id)]
+    [with-root : TcMovedSet
+      (if snapshot.moved?
+        (tc-moved-add-value cleared name-id snapshot.moved-origin)
+        cleared)]
+    [with-partial : TcMovedSet
+      (if snapshot.partial?
+        (tc-moved-add-partial-value with-root name-id snapshot.partial-origin)
+        with-root)]
+    [with-paths : TcMovedSet
+      (tc-moved-restore-root-paths-at with-partial snapshot.paths)]
+    (if (< snapshot.parameter-id 0)
+      with-paths
+      (tc-param-storage-origin-bind-in-set
+        with-paths
+        name-id
+        snapshot.parameter-id))))
 
 (define (tc-moved-any-root-path-at? [facts : TcMovedPathFacts] [root-id : i64]) : bool
   (if (tc-moved-path-facts-empty? facts)
@@ -66458,7 +66553,8 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
-  [bindings : ast.AstLetBindingList]) : TcMoveBindings
+  [bindings : ast.AstLetBindingList]
+  [body-box : i64]) : TcMoveResult
   (tc-move-check-let-bindings-at
     ctx
     expr-bases
@@ -66467,7 +66563,8 @@
     loop-carried
     moved
     (& bindings)
-    0))
+    0
+    body-box))
 
 (define (tc-move-add-local-binding
   [ctx : TcContext]
@@ -66488,6 +66585,9 @@
       (tc-moved-add-value locals name-id fact)
       (tc-moved-add locals name-id))))
 
+;; A binding is in scope for the later bindings and the body, so the body is
+;; checked at the innermost level and each level restores the state of the
+;; local its binding shadowed.
 (define (tc-move-check-let-bindings-at
   [ctx : TcContext]
   [expr-bases : i64]
@@ -66496,9 +66596,17 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : TcMoveBindings
+  [index : i64]
+  [body-box : i64]) : TcMoveResult
   (if (>= index (ast.ast-let-binding-list-len bindings))
-    (TcMoveBindings.Ok env moved locals loop-carried)
+    (tc-move-check-expr-id
+      ctx
+      expr-bases
+      env
+      locals
+      loop-carried
+      moved
+      body-box)
     (match (ast.ast-let-binding-list-get
       bindings
       index
@@ -66534,40 +66642,50 @@
                   init-box
                   (tc-global-shared-view binding-ty))
                   [(TcMoveResult.Ok moved2)
-                    (tc-move-check-let-bindings-at
-                      ctx
-                      expr-bases
-                      (tc-bind-initialized-value-id
-                        ctx
-                        env
-                        name
-                        (tc-global-shared-view binding-ty)
-                        (tc-global-shared-view init))
-                      (tc-move-add-local-binding
+                    (let
+                      [shadowed : TcMovedRootSnapshot
+                        (tc-moved-root-snapshot
+                          (tc-global-shared-view moved2)
+                          name)]
+                      (match (tc-move-check-let-bindings-at
                         ctx
                         expr-bases
-                        env
-                        locals
-                        name
-                        (tc-global-shared-view init))
-                      (tc-moved-remove-root-state loop-carried name)
-                      (tc-move-rebind-lambda-owner-dependencies
-                        expr-bases
-                        env
-                        (tc-param-storage-rebind-from-init
+                        (tc-bind-initialized-value-id
+                          ctx
+                          env
+                          name
+                          (tc-global-shared-view binding-ty)
+                          (tc-global-shared-view init))
+                        (tc-move-add-local-binding
                           ctx
                           expr-bases
                           env
-                          moved2
+                          locals
                           name
-                          binding-ty
                           (tc-global-shared-view init))
-                        name
-                        init)
-                      bindings
-                      (+ index 1))]
-                  [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]
-            [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))])))
+                        (tc-moved-remove-root-state loop-carried name)
+                        (tc-move-rebind-lambda-owner-dependencies
+                          expr-bases
+                          env
+                          (tc-param-storage-rebind-from-init
+                            ctx
+                            expr-bases
+                            env
+                            moved2
+                            name
+                            binding-ty
+                            (tc-global-shared-view init))
+                          name
+                          init)
+                        bindings
+                        (+ index 1)
+                        body-box)
+                        [(TcMoveResult.Ok body-moved)
+                          (TcMoveResult.Ok
+                            (tc-moved-restore-root-state body-moved shadowed))]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])))
 
 (define (tc-move-check-resource-bindings
   [ctx : TcContext]
@@ -66576,7 +66694,9 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
-  [bindings : ast.AstResourceBindingList]) : TcMoveResourceBindings
+  [bindings : ast.AstResourceBindingList]
+  [exprs : ast.AstExprList]
+  [scope : ast.AstExpr]) : TcMoveResult
   (tc-move-check-resource-bindings-at
     ctx
     expr-bases
@@ -66585,8 +66705,14 @@
     loop-carried
     moved
     (& bindings)
-    0))
+    0
+    (tc-move-cleanup-owners-new (ast.ast-resource-binding-list-len bindings))
+    exprs
+    scope))
 
+;; Owners are recorded in binding order on the way down. The innermost level
+;; checks the body and the owners' exit, and each level then restores the state
+;; of the local its binding shadowed.
 (define (tc-move-check-resource-bindings-at
   [ctx : TcContext]
   [expr-bases : i64]
@@ -66595,14 +66721,22 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : TcMoveResourceBindings
+  [index : i64]
+  [roots : TcMoveCleanupOwners]
+  [exprs : ast.AstExprList]
+  [scope : ast.AstExpr]) : TcMoveResult
   (if (>= index (ast.ast-resource-binding-list-len bindings))
-    (TcMoveResourceBindings.Ok
+    (match (tc-move-check-exprs
+      ctx
+      expr-bases
       env
-      moved
       locals
       loop-carried
-      (tc-move-cleanup-owners-new (ast.ast-resource-binding-list-len bindings)))
+      moved
+      exprs)
+      [(TcMoveResult.Ok body-moved)
+        (tc-move-check-cleanup-owner-exit expr-bases body-moved roots scope 0)]
+      [(TcMoveResult.Err message) (TcMoveResult.Err message)])
     (match (ast.ast-resource-binding-list-get
       bindings
       index
@@ -66635,55 +66769,52 @@
                     env
                     init-box)
                     [(ResultTcType.Ok init-ty)
-                      (match (tc-move-check-resource-bindings-at
-                        ctx
-                        expr-bases
-                        (tc-bind-id
-                          (tc-bind-id
-                            env
-                            (tc-cleanup-owner-marker-id)
-                            (ast.AstType.Var name))
-                          name
-                          ;; Keep the initializer's arena brands, as a `let`
-                          ;; binding does: a safe destroy or rewind of that
-                          ;; arena must find this owner.
-                          (tc-global-shared-view init-ty))
-                        (tc-moved-add locals name)
-                        (tc-moved-remove-root-state loop-carried name)
-                        (tc-param-storage-rebind-from-init
+                      (let
+                        [shadowed : TcMovedRootSnapshot
+                          (tc-moved-root-snapshot
+                            (tc-global-shared-view moved2)
+                            name)]
+                        (match (tc-move-check-resource-bindings-at
                           ctx
                           expr-bases
-                          env
-                          moved2
-                          name
-                          init-ty
-                          init)
-                        bindings
-                        (+ index 1))
-                        [(TcMoveResourceBindings.Ok
-                            env2
-                            moved3
-                            locals2
-                            loop-carried2
-                            roots)
-                          (TcMoveResourceBindings.Ok
-                            env2
-                            moved3
-                            locals2
-                            loop-carried2
-                            (tc-move-cleanup-owners-set
-                              roots
-                              index
-                              name
-                              init-box
-                              move-aware?))]
-                        [(TcMoveResourceBindings.Err message)
-                          (TcMoveResourceBindings.Err message)])]
-                    [(ResultTcType.Err message)
-                      (TcMoveResourceBindings.Err message)])]
-                [(TcMoveResult.Err message)
-                  (TcMoveResourceBindings.Err message)])]
-            [(TcMoveResult.Err message) (TcMoveResourceBindings.Err message)]))])))
+                          (tc-bind-id
+                            (tc-bind-id
+                              env
+                              (tc-cleanup-owner-marker-id)
+                              (ast.AstType.Var name))
+                            name
+                            ;; Keep the initializer's arena brands, as a `let`
+                            ;; binding does: a safe destroy or rewind of that
+                            ;; arena must find this owner.
+                            (tc-global-shared-view init-ty))
+                          (tc-moved-add locals name)
+                          (tc-moved-remove-root-state loop-carried name)
+                          (tc-param-storage-rebind-from-init
+                            ctx
+                            expr-bases
+                            env
+                            moved2
+                            name
+                            init-ty
+                            init)
+                          bindings
+                          (+ index 1)
+                          (tc-move-cleanup-owners-set
+                            roots
+                            index
+                            name
+                            init-box
+                            move-aware?)
+                          exprs
+                          scope)
+                          [(TcMoveResult.Ok exit-moved)
+                            (TcMoveResult.Ok
+                              (tc-moved-restore-root-state exit-moved shadowed))]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)]))]
+                    [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])))
 
 (define (tc-move-check-cleanup-owner-exit
   [expr-bases : i64]
@@ -67573,6 +67704,30 @@
           [else break-moved-box]))]
     [(TcMoveLoopResult.Err message) (TcMoveLoopResult.Err message)]))
 
+;; A `let` scope in a loop body ends both where its body falls through and
+;; where it breaks out of the loop.
+(define (tc-move-loop-result-restore-root-state
+  [result : TcMoveLoopResult]
+  [shadowed : TcMovedRootSnapshot]) : TcMoveLoopResult
+  (match result
+    [(TcMoveLoopResult.Ok normal? normal-moved-box breaks? break-moved-box)
+      (TcMoveLoopResult.Ok
+        normal?
+        (if normal?
+          (box
+            (tc-moved-restore-root-state
+              (tc-moved-set-box-shared-view normal-moved-box)
+              (tc-global-shared-view shadowed)))
+          normal-moved-box)
+        breaks?
+        (if breaks?
+          (box
+            (tc-moved-restore-root-state
+              (tc-moved-set-box-shared-view break-moved-box)
+              shadowed))
+          break-moved-box))]
+    [(TcMoveLoopResult.Err message) (TcMoveLoopResult.Err message)]))
+
 (define (tc-move-loop-result-branches
   [fallback : TcMovedSet]
   [a : TcMoveLoopResult]
@@ -67768,40 +67923,49 @@
                     (tc-global-shared-view binding-ty))
                     [(TcMoveResult.Err message) (TcMoveLoopResult.Err message)]
                     [(TcMoveResult.Ok moved2)
-                      (tc-move-loop-result-add-breaks
-                        breaks?
-                        (tc-moved-set-box-shared-view break-moved-box)
-                        (tc-move-check-loop-let-bindings-at
-                          ctx
-                          expr-bases
-                          (tc-bind-initialized-value-id
-                            ctx
-                            env
-                            name
-                            (tc-global-shared-view binding-ty)
-                            (tc-global-shared-view init))
-                          (tc-move-add-local-binding
-                            ctx
-                            expr-bases
-                            env
-                            locals
-                            name
-                            (tc-global-shared-view init))
-                          (tc-moved-remove-root-state loop-carried name)
-                          (tc-moved-remove-root-state outer-loop-carried name)
-                          (tc-param-storage-rebind-from-init
-                            ctx
-                            expr-bases
-                            env
-                            moved2
-                            name
-                            binding-ty
-                            init)
-                          bindings
-                          (+ index 1)
-                          body-box
-                          continuation-repeats
-                          continuation-breaks))]))
+                      (let
+                        [shadowed : TcMovedRootSnapshot
+                          (tc-moved-root-snapshot
+                            (tc-global-shared-view moved2)
+                            name)]
+                        (tc-move-loop-result-add-breaks
+                          breaks?
+                          (tc-moved-set-box-shared-view break-moved-box)
+                          (tc-move-loop-result-restore-root-state
+                            (tc-move-check-loop-let-bindings-at
+                              ctx
+                              expr-bases
+                              (tc-bind-initialized-value-id
+                                ctx
+                                env
+                                name
+                                (tc-global-shared-view binding-ty)
+                                (tc-global-shared-view init))
+                              (tc-move-add-local-binding
+                                ctx
+                                expr-bases
+                                env
+                                locals
+                                name
+                                (tc-global-shared-view init))
+                              (tc-moved-remove-root-state loop-carried name)
+                              (tc-moved-remove-root-state
+                                outer-loop-carried
+                                name)
+                              (tc-param-storage-rebind-from-init
+                                ctx
+                                expr-bases
+                                env
+                                moved2
+                                name
+                                binding-ty
+                                init)
+                              bindings
+                              (+ index 1)
+                              body-box
+                              continuation-repeats
+                              continuation-breaks)
+                            shadowed)))]))
                 (TcMoveLoopResult.Ok false moved1-box breaks? break-moved-box))]))])))
 
 (define (tc-move-check-loop-match-arms-at
@@ -68773,24 +68937,15 @@
     [(ast.AstExpr.Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
         [(ast.AstLet.Let bindings body-box)
-          (match (tc-move-check-let-bindings
+          (tc-move-check-let-bindings
             ctx
             expr-bases
             env
             (tc-moved-clone locals)
             (tc-moved-clone loop-carried)
             moved
-            bindings)
-            [(TcMoveBindings.Ok env2 moved2 locals2 loop-carried2)
-              (tc-move-check-expr-id
-                ctx
-                expr-bases
-                env2
-                locals2
-                loop-carried2
-                moved2
-                body-box)]
-            [(TcMoveBindings.Err message) (TcMoveResult.Err message)])])]
+            bindings
+            body-box)])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (ast.ast-lambda-box-shared-view lambda-box)
         [(ast.AstLambda.Lambda params maybe-ret body-box)
@@ -69954,37 +70109,16 @@
     [(ast.AstExpr.WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(ast.AstWithResource.WithResource bindings exprs)
-          (match (tc-move-check-resource-bindings
+          (tc-move-check-resource-bindings
             ctx
             expr-bases
             env
             locals
             loop-carried
             moved
-            bindings)
-            [(TcMoveResourceBindings.Ok
-                body-env
-                moved1
-                body-locals
-                body-loop
-                roots)
-              (match (tc-move-check-exprs
-                ctx
-                expr-bases
-                body-env
-                body-locals
-                body-loop
-                moved1
-                exprs)
-                [(TcMoveResult.Ok moved2)
-                  (tc-move-check-cleanup-owner-exit
-                    expr-bases
-                    moved2
-                    roots
-                    expr
-                    0)]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-            [(TcMoveResourceBindings.Err message) (TcMoveResult.Err message)])])]
+            bindings
+            exprs
+            expr)])]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr

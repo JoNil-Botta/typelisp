@@ -4120,6 +4120,13 @@ owner (section 5.19). The owner's cleanup runs on every `return`, `try`,
 leaves the scope is rejected with the same `cleanup owner ... moved before with
 scope exit` diagnostic as a move on the fallthrough path.
 
+**Shadowing.** Move facts belong to a binding, not to its printed name. A
+`let` or `with` binding that shadows a local starts initialized, and where its
+scope ends the shadowed local is visible again with the state it had when the
+shadowing binding was introduced, after that binding's initializer ran. A local
+moved before a shadowing scope, or by the shadowing initializer, stays moved
+after it, and moving the shadowing binding does not move the outer local.
+
 **Borrowing use sites.** A borrowing use may inspect a move-only value without
 moving it. These are limited to:
 

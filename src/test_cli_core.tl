@@ -1901,6 +1901,14 @@
             names)])]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body)
       (tltest-reach-mark-expr session body names)]
+    ;; A top-level declaration macro call stays unexpanded here and is always
+    ;; kept (tltest-reachable-runtime-decl?). Its arguments are the caller's
+    ;; references: a constant named only by `(gen-slots first ...)` must survive
+    ;; pruning, or the expansion reads an unbound name.
+    [(ast.AstDecl.Import
+        decl-meta
+        (ast.AstImportSpec.Spec (ast.AstImportKind.MacroDecls call _) _ _ _ _))
+      (tltest-reach-mark-expr session call names)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

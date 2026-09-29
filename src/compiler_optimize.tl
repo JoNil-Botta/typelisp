@@ -107321,6 +107321,13 @@
 (define (opt-inline-shape-structure) : i64
   6)
 
+;; A body that defines its hidden sret parameter. Every clone substitutes the
+;; call's own result-place argument for that parameter (see
+;; opt-inline-staged-arg), so a redefinition would have no slot to land in.
+;; Lowering never emits one; the code keeps the refusal visible.
+(define (opt-inline-shape-sret-param-def) : i64
+  11)
+
 ;; INL-5: the three clauses only the SINGLE-BLOCK gate can refuse on, reported
 ;; by `inline-shape-single|<callee>|<reason>`. They share the code space above
 ;; with the multiblock reasons so one `opt-inline-shape-reason-text` serves both
@@ -107343,7 +107350,7 @@
   9)
 
 (define (opt-inline-shape-other-base) : i64
-  10)
+  12)
 
 ;; The kinds an `other-instr:` refusal can name. Only instructions the
 ;; multiblock whitelist does not admit can reach this, so the arms are the
@@ -107404,6 +107411,7 @@
     [(= reason (opt-inline-shape-params-not-sequential))
       "params-not-sequential"]
     [(= reason (opt-inline-shape-structure)) "structure"]
+    [(= reason (opt-inline-shape-sret-param-def)) "sret-param-def"]
     [(= reason (opt-inline-shape-blocks)) "blocks"]
     [(= reason (opt-inline-shape-body-size)) "body-size"]
     [(= reason (opt-inline-shape-terminator)) "terminator"]
@@ -107767,20 +107775,36 @@
           (set! position (+ position 1))))
       found)))
 
-(define (opt-inline-params-have-sret? [params : ir.CompilerIrParamSeq]) : bool
+;; The var of the hidden sret parameter, or -1 when the callee has none.
+(define (opt-inline-sret-param-var [params : ir.CompilerIrParamSeq]) : i64
   (let
     [position : i64 0]
-    [found : bool false]
+    [found : i64 (- 0 1)]
     (begin
-      (while (and (not found) (< position params.len))
+      (while (and (< found 0) (< position params.len))
         (begin
           (match (ir.compiler-ir-param-seq-ref params position)
-            [(ir.CompilerIrParam.Param name _ _)
+            [(ir.CompilerIrParam.Param name _ var)
               (if (string.eq name (ir.compiler-ir-hidden-sret-param-name))
-                (set! found true)
+                (set! found var)
                 unit)])
           (set! position (+ position 1))))
       found)))
+
+(define (opt-inline-params-have-sret? [params : ir.CompilerIrParamSeq]) : bool
+  (>= (opt-inline-sret-param-var params) 0))
+
+(define (opt-inline-defines-var? [target : i64] [instr : ir.CompilerIrInstr]) : bool
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some var) (= var target)]
+    [(option_i64.None) false]))
+
+(define (opt-inline-sret-param-defined?
+  [params : ir.CompilerIrParamSeq]
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
+  (let
+    [var : i64 (opt-inline-sret-param-var params)]
+    (and (>= var 0) (opt-blocks-any? blocks opt-inline-defines-var? var))))
 
 (define (opt-inline-multiblock-return-type-ok?
   [params : ir.CompilerIrParamSeq]
@@ -107813,6 +107837,10 @@
             (compiler-opt-global-shared-view cparams)
             ret))
         (opt-inline-shape-return-type)]
+      [(opt-inline-sret-param-defined?
+          (compiler-opt-global-shared-view cparams)
+          cblocks)
+        (opt-inline-shape-sret-param-def)]
       [(not (opt-inline-params-sequential? cparams 0))
         (opt-inline-shape-params-not-sequential)]
       [(< cvars np) (opt-inline-shape-structure)]
@@ -108389,22 +108417,31 @@
       [(ir.CompilerIrParam.Param name _ _)
         (string.eq name (ir.compiler-ir-hidden-sret-param-name))])))
 
+;; Inlining preserves the identity and ownership of the caller-selected result
+;; place (#7144). The hidden sret parameter is never staged: every clone, staged
+;; or not, reads the call's own sret argument wherever the body names that
+;; parameter, so each write through it lands in the storage the call would have
+;; passed, and the inlined body performs exactly the call's memory operations.
+;; No temporary is needed for aliasing: lowering hands a call either a fresh
+;; reserved slot (lower-call-append-sret-arg) or, for sret forwarding, a slot no
+;; argument can alias (lower-rvo-args-cannot-alias-sret?). A body that redefines
+;; the parameter is refused by the shape gate (opt-inline-shape-sret-param-def).
+;; Every other parameter is staged into a callee-private slot, so the three
+;; places -- source arguments, staging slots, the result place -- stay distinct.
 (define (opt-inline-staged-arg
   [params : ir.CompilerIrParamSeq]
   [args : (& args ir.CompilerIrCallArgs)]
   [base : i64]
-  [index : i64]
-  [stage-all? : bool]) : ir.CompilerIrValue
-  (if (or stage-all? (not (opt-inline-param-is-sret? params index)))
-    (opt-inline-stage-arg-var base index)
-    (opt-inline-clone-arg-at args index)))
+  [index : i64]) : ir.CompilerIrValue
+  (if (opt-inline-param-is-sret? params index)
+    (opt-inline-clone-arg-at args index)
+    (opt-inline-stage-arg-var base index)))
 
 (define (opt-inline-staged-args-array-fill!
   [out : (&mut out (__tl_dyn-array ir.CompilerIrValue))]
   [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [base : i64]
-  [stage-all? : bool]
   [index : i64]) : unit
   (if (>= index (array-length out))
     unit
@@ -108415,55 +108452,38 @@
           (compiler-opt-global-shared-view params)
           args
           base
-          index
-          stage-all?))
-      (opt-inline-staged-args-array-fill!
-        out
-        params
-        args
-        base
-        stage-all?
-        (+ index 1)))))
+          index))
+      (opt-inline-staged-args-array-fill! out params args base (+ index 1)))))
 
 (define (opt-inline-staged-args
   [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [np : i64]
-  [base : i64]
-  [stage-all? : bool]) : ir.CompilerIrCallArgs
+  [base : i64]) : ir.CompilerIrCallArgs
   (cond
     [(= np 0) (ir.CompilerIrCallArgs.Nil)]
     [(= np 1)
-      (ir.CompilerIrCallArgs.One
-        (opt-inline-staged-arg params args base 0 stage-all?))]
+      (ir.CompilerIrCallArgs.One (opt-inline-staged-arg params args base 0))]
     [(= np 2)
       (ir.CompilerIrCallArgs.Two
         (opt-inline-staged-arg
           (compiler-opt-global-shared-view params)
           args
           base
-          0
-          stage-all?)
-        (opt-inline-staged-arg params args base 1 stage-all?))]
+          0)
+        (opt-inline-staged-arg params args base 1))]
     [else
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue np)]
         (begin
-          (opt-inline-staged-args-array-fill!
-            (&mut out)
-            params
-            args
-            base
-            stage-all?
-            0)
+          (opt-inline-staged-args-array-fill! (&mut out) params args base 0)
           (ir.CompilerIrCallArgs.Array out)))]))
 
 (define (opt-inline-stage-param-instrs-into!
   [params : ir.CompilerIrParamSeq]
   [args : (& args ir.CompilerIrCallArgs)]
   [base : i64]
-  [stage-all? : bool]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index params.len)
@@ -108471,42 +108491,31 @@
     (match (ir.compiler-ir-param-seq-ref params index)
       [(ir.CompilerIrParam.Param name ty _)
         (begin
-          (if (or
-            stage-all?
-            (not (string.eq name (ir.compiler-ir-hidden-sret-param-name))))
+          (if (string.eq name (ir.compiler-ir-hidden-sret-param-name))
+            unit
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
               (ir.CompilerIrInstr.Mov
                 (+ base index)
                 (opt-inline-clone-arg-at args index)
-                (clone ty)))
-            unit)
+                (clone ty))))
           (opt-inline-stage-param-instrs-into!
             params
             args
             base
-            stage-all?
             (+ index 1)
             (&mut builder)))])))
 
 (define (opt-inline-stage-param-instrs
   [params : ir.CompilerIrParamSeq]
   [args : (& args ir.CompilerIrCallArgs)]
-  [base : i64]
-  [stage-all? : bool]
-  [index : i64]) : ir.CompilerIrInstrSeq
+  [base : i64]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity
         (opt-inline-param-count params))]
     (begin
-      (opt-inline-stage-param-instrs-into!
-        params
-        args
-        base
-        stage-all?
-        index
-        (&mut builder))
+      (opt-inline-stage-param-instrs-into! params args base 0 (&mut builder))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (opt-inline-clone-arg-at [sa : (& sa ir.CompilerIrCallArgs)] [id : i64]) : ir.CompilerIrValue
@@ -110441,53 +110450,17 @@
 ;; address-taken, not `main`, and not the caller itself -- see
 ;; opt-inline-census-absorb-class. An extern has no entry in the program's
 ;; function sequence, so the census resolves no slot for it and its class is 0.
-;; The staged-argument clause is the fail-closed refusal documented under this
-;; function; the clauses shared with the band below live in
+;; A staged or sret-returning body needs no clause of its own: the clone keeps
+;; the caller's result place and staging slots distinct (opt-inline-staged-arg).
+;; The clauses shared with the band below live in
 ;; opt-inline-single-site-absorb-ok?.
 (define (opt-inline-sole-call-absorb-ok?
   [absorb-class : i64]
-  [stage-args? : bool]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
-  (and
-    (= absorb-class 1)
-    (not stage-args?)
-    (opt-inline-sole-call-pressure-ok? blocks)))
+  (and (= absorb-class 1) (opt-inline-sole-call-pressure-ok? blocks)))
 
-;; --- why the staged-argument clause above is FAIL-CLOSED, not a cost rule ---
-;;
-;; `stage-args?` is true when the callee writes its own parameter slots
-;; (opt-inline-param-mutating-blocks?) or returns through an sret pointer
-;; (opt-inline-params-have-sret?). Both make the clone stage the arguments into
-;; fresh slots before the body runs. Every band above reaches that path only at
-;; shapes it has separately bounded; this tier, admitting at any size and any
-;; arity, is the first thing in the file that reaches it for a CALL-CARRYING
-;; body at a STRAIGHT-LINE site, and that combination produces WRONG CODE.
-;;
-;; The reproducer, recorded here because the defect is not in this file and
-;; outlives this tier. Build a compiler with this tier and no staged-argument
-;; clause, have it compile src/main.tl at --opt-level 2, assemble and link that
-;; assembly, and ask the result to compile ANY program at --opt-level 2: it
-;; aborts with "tl: array index out of bounds", raised from
-;; opt-gep-split-seed-params! indexing `defs[var]` past the `frame` the caller
-;; sized from the function's var count. Bisecting the tier by the callee's
-;; block count puts the boundary at exactly 15 blocks (a cap of 14 passes, 15
-;; fails), and excluding one leaf by name isolates it completely:
-;; `opt-bce-version-function-with-context-result` -- 15 blocks, acyclic,
-;; call-carrying, and returning the two-field `OptFunctionCtxResult` through an
-;; sret pointer -- absorbed into its sole caller
-;; `optimize-function-once-with-summaries`, whose result the caller then reads
-;; through two separate shared views. Excluding either of the other two 15-block
-;; leaves absorbed at the same cap changes nothing.
-;;
-;; So the clause is not "staged arguments do not pay". It is "the clone's staged
-;; path is not proven at this tier's shapes, so this tier does not go there".
-;; It costs the corpus nothing measurable, because the bodies this tier profits
-;; from return scalars and leave their parameters alone. Removing it must wait
-;; for the underlying defect to be found and fixed, and re-measuring it is a
-;; one-line change plus the reproducer above.
 (define (opt-inline-single-site-absorb-ok?
   [absorb-class : i64]
-  [stage-args? : bool]
   [has-bounds? : bool]
   [param-count : i64]
   [callee-instrs : i64]
@@ -110506,7 +110479,7 @@
         (+ added-so-far opt-inline-caller-absorb-blocks)
         added-blocks))
     (or
-      (opt-inline-sole-call-absorb-ok? absorb-class stage-args? blocks)
+      (opt-inline-sole-call-absorb-ok? absorb-class blocks)
       (and
         (opt-inline-single-site-arity-ok?
           param-count
@@ -115436,7 +115409,6 @@
   (np i64)
   (added-blocks i64)
   (tail-slots i64)
-  (stage-all-args? bool)
   (stage-args? bool)
   (callee-instrs i64)
   (absorb-class i64)
@@ -115490,10 +115462,16 @@
                 (opt-inline-blocks-have-tail-call? cblocks))
                 (- added-blocks 1)
                 0)]
-            [stage-all-args? : bool
-              (opt-inline-param-mutating-blocks? cblocks np)]
+            ;; A body that writes its parameter slots, and an sret callee, stage
+            ;; their arguments into callee-private slots. The sret parameter is
+            ;; never one of them (see opt-inline-staged-arg), and the shape gate
+            ;; refuses a body that redefines it. Admission prices the staging:
+            ;; one move per argument, and never the tiny-predicate band.
             [stage-args? : bool
-              (or stage-all-args? (opt-inline-params-have-sret? cparams))]
+              (or
+                (opt-inline-param-mutating-blocks? cblocks np)
+                (opt-inline-params-have-sret?
+                  (compiler-opt-global-shared-view cparams)))]
             [callee-instrs : i64
               (+
                 (opt-inline-multiblock-cost-instrs cblocks)
@@ -115560,7 +115538,6 @@
             [single-site-absorb? : bool
               (opt-inline-single-site-absorb-ok?
                 absorb-class
-                stage-args?
                 has-bounds?
                 np
                 callee-instrs
@@ -115740,7 +115717,6 @@
                   np
                   added-blocks
                   tail-slots
-                  stage-all-args?
                   stage-args?
                   callee-instrs
                   absorb-class
@@ -116348,18 +116324,11 @@
                     (opt-inline-stage-param-instrs
                       (compiler-opt-global-shared-view cparams)
                       cargs
-                      prefix-vars
-                      plan.stage-all-args?
-                      0)
+                      prefix-vars)
                     (opt-inline-empty-instr-seq))]
                 [staged-args : ir.CompilerIrCallArgs
                   (if plan.stage-args?
-                    (opt-inline-staged-args
-                      cparams
-                      cargs
-                      plan.np
-                      prefix-vars
-                      plan.stage-all-args?)
+                    (opt-inline-staged-args cparams cargs plan.np prefix-vars)
                     cargs)]
                 [clone-base : i64
                   (if plan.stage-args?

@@ -191,16 +191,20 @@ grep -F "after total_switch @main" "$WORKDIR/optimizer_fold.after-total_switch.i
 test -s "$WORKDIR/optimizer_fold.s"
 
 # The source-level hash loop exercises distinct, equivalent length
-# operands in a widened bounds-check run. Verify both supported target routes;
-# native manifests separately execute its empty/short/full-loop cases.
-for HASH_TARGET in linux-x86_64 windows-x86_64; do
-    "$COMPILER" compile "$ROOT/tests/integration/hash_length_chain.tl" \
-        --verify-ir --opt-level 2 --target "$HASH_TARGET" \
-        -o "$WORKDIR/hash-length-chain-$HASH_TARGET.s" \
-        --stdlib-root "$ROOT/stdlib" \
-        >"$WORKDIR/hash-length-chain-$HASH_TARGET.stdout" \
-        2>"$WORKDIR/hash-length-chain-$HASH_TARGET.stderr"
-    test -s "$WORKDIR/hash-length-chain-$HASH_TARGET.s"
+# operands in a widened bounds-check run; the sret fixture absorbs sole-call
+# producers whose results the clone writes through the caller's result place
+# (#7144). Verify both supported target routes, whose internal hidden-result
+# mapping is shared; native manifests separately execute both fixtures.
+for VERIFY_FIXTURE in hash_length_chain inline_sret_result_place; do
+    for HASH_TARGET in linux-x86_64 windows-x86_64; do
+        "$COMPILER" compile "$ROOT/tests/integration/$VERIFY_FIXTURE.tl" \
+            --verify-ir --opt-level 2 --target "$HASH_TARGET" \
+            -o "$WORKDIR/$VERIFY_FIXTURE-$HASH_TARGET.s" \
+            --stdlib-root "$ROOT/stdlib" \
+            >"$WORKDIR/$VERIFY_FIXTURE-$HASH_TARGET.stdout" \
+            2>"$WORKDIR/$VERIFY_FIXTURE-$HASH_TARGET.stderr"
+        test -s "$WORKDIR/$VERIFY_FIXTURE-$HASH_TARGET.s"
+    done
 done
 
 if "$COMPILER" compile "$SOURCE" \

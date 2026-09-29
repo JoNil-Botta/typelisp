@@ -3357,10 +3357,22 @@
     "the same body stays out at an in-loop site two deciding branches below the header: the import lands inside a region already priced, for a boundary the loop rarely retires"))
 
 (test
-  inline-sole-call-staged-args-refusal
+  inline-sole-call-sret-absorb
   (test.assert-true
-    (ot.compiler-optimize-inline-sole-call-staged-args-refusal-ok?)
-    "an sret callee stays out: the clone's staged path is fail-closed at this tier"))
+    (ot.compiler-optimize-inline-sole-call-sret-absorb-ok?)
+    "an sret callee absorbs at its one straight-line site: the clone keeps the caller's result place"))
+
+(test
+  inline-sret-result-place
+  (test.assert-true
+    (ot.compiler-optimize-inline-sret-result-place-ok?)
+    "inlined writes through the hidden sret parameter address the caller's own result place, never a staged copy of it"))
+
+(test
+  inline-sret-param-def-shape
+  (test.assert-true
+    (ot.compiler-optimize-inline-sret-param-def-shape-ok?)
+    "the shape gate finds the hidden sret parameter first or last and refuses a body that redefines it"))
 
 (test
   inline-sole-call-two-reference-refusal

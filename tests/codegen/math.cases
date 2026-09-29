@@ -117,7 +117,9 @@ case log
 source {{work}}/log_codegen.tl
 contains tl_test_math_log_f64
 contains tl_test_math_log_f32
-contains math_log_f64_table_entry
+# The exact musl binary64 table is compiled in: interval 0's invc bits
+# (1.4504249240398293), wherever the table's sole caller absorbs its lookup.
+contains $4609210952320081567
 not-match global_init.*math_log|call[[:space:]]+.*tl_alloc
 not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?logf?([[:space:]]|$)
 not-match-i ^[[:space:]]*(fyl2x|fyl2xp1|fldln2|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]
@@ -126,7 +128,9 @@ case pow
 source {{work}}/pow_codegen.tl
 contains tl_test_math_pow_f64
 contains tl_test_math_pow_f32
-contains math_pow_f64_table_entry
+# The exact musl binary64 pow-log table is compiled in: interval 0's invc bits
+# (1.4140625), wherever the table's sole caller absorbs its lookup.
+contains $4609047190520725504
 contains math_powf_table_entry
 not-match global_init.*math_pow|call[[:space:]]+.*tl_alloc
 not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?powf?([[:space:]]|$)

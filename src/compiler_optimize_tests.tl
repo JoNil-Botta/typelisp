@@ -21059,12 +21059,9 @@
 ;; The middle link: a straight-line, single-site, multiblock caller that itself
 ;; calls the acyclic leaf, at the tier's arity and with an acyclic body of its
 ;; own.
-;; The fail-closed staged-argument refusal. The identical leaf with an `__sret`
-;; parameter stays out of line: the clone's staged path is where the recorded
-;; wrong-code reproducer lives (see the note under
-;; opt-inline-sole-call-absorb-ok?), so this tier does not go there. A callee
-;; that writes its own parameter slots is refused by the same clause.
-(define (compiler-optimize-inline-sole-call-staged-args-refusal-ok?) : bool
+;; The identical leaf with an `__sret` parameter absorbs too (#7144): the clone
+;; keeps the caller's result place, so the tier needs no staged-argument clause.
+(define (compiler-optimize-inline-sole-call-sret-absorb-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -21073,7 +21070,243 @@
         (opt-inline-wide-two-function-optimized
           (opt-inline-sole-call-caller symbols.main callee-name)
           (opt-inline-sole-call-sret-leaf callee-name)))
-      1)))
+      0)))
+
+;; --- #7144: the caller-owned result place ----------------------------------
+;;
+;; An sret callee fills its result through the hidden pointer across two arms
+;; and a join, with a call in its body, and returns the pointer. The caller
+;; reserves the result place (`alloc` run closed by `addr_of` %3), passes it as
+;; the sret argument and reads the result through two views. Inlining must
+;; leave every write addressed through %3 itself -- never through a staged
+;; copy -- while the other parameters are staged into callee-private slots,
+;; whether or not the body writes one. `sret-first?` puts the parameter where a structural result
+;; carries it (first), otherwise where a nominal one does (last).
+(define (opt-inline-sret-place-var
+  [sret-first? : bool]
+  [first : i64]
+  [last : i64]) : String
+  (str_cat.str-cat
+    "%"
+    (string.int->string
+      (if sret-first?
+        first
+        last))
+    ""))
+
+(define (opt-inline-sret-place-callee
+  [callee-name : i64]
+  [sret-first? : bool]
+  [mutate? : bool]) : ir.CompilerIrFunction
+  (let
+    [sret-param : ir.CompilerIrParam
+      (ir.CompilerIrParam.Param
+        (ir.compiler-ir-hidden-sret-param-name)
+        (ast.AstType.U64)
+        (if sret-first?
+          0
+          2))]
+    [x-param : ir.CompilerIrParam
+      (ir.CompilerIrParam.Param
+        "x"
+        (ast.AstType.I64)
+        (if sret-first?
+          1
+          0))]
+    [y-param : ir.CompilerIrParam
+      (ir.CompilerIrParam.Param
+        "y"
+        (ast.AstType.I64)
+        (if sret-first?
+          2
+          1))]
+    [params : ir.CompilerIrParamSeq
+      (if sret-first?
+        (ir.compiler-ir-param-seq-prepend
+          sret-param
+          (ir.compiler-ir-param-seq-prepend
+            x-param
+            (ir.compiler-ir-param-seq-prepend
+              y-param
+              (ir.compiler-ir-param-seq-empty))))
+        (ir.compiler-ir-param-seq-prepend
+          x-param
+          (ir.compiler-ir-param-seq-prepend
+            y-param
+            (ir.compiler-ir-param-seq-prepend
+              sret-param
+              (ir.compiler-ir-param-seq-empty)))))]
+    [text : String
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "sret_place.entry:\n"
+          (if mutate?
+            (str_cat.str-cat
+              "  "
+              (opt-inline-sret-place-var sret-first? 1 0)
+              (str_cat.str-cat
+                " = add "
+                (opt-inline-sret-place-var sret-first? 1 0)
+                ", 1 : i64\n"))
+            "")
+          (str_cat.str-cat
+            "  %3 = call opaque("
+            (opt-inline-sret-place-var sret-first? 1 0)
+            ") : i64\n"))
+        (str_cat.str-cat
+          (str_cat.str-cat
+            "  %4 = gt %3, "
+            (opt-inline-sret-place-var sret-first? 2 1)
+            " : i64\n")
+          "  branch %4, sret_place.big, sret_place.small\n"
+          (str_cat.str-cat
+            "sret_place.big:\n  %5 = gep "
+            (opt-inline-sret-place-var sret-first? 0 2)
+            ", 0 : u8\n"))
+        (str_cat.str-cat
+          "  store_ptr %5, %3 : i64\n  jump sret_place.join\n"
+          (str_cat.str-cat
+            "sret_place.small:\n  %6 = gep "
+            (opt-inline-sret-place-var sret-first? 0 2)
+            ", 0 : u8\n")
+          (str_cat.str-cat
+            "  store_ptr %6, "
+            (opt-inline-sret-place-var sret-first? 2 1)
+            " : i64\n  jump sret_place.join\n"))
+        (str_cat.str-cat
+          (str_cat.str-cat
+            "sret_place.join:\n  %7 = gep "
+            (opt-inline-sret-place-var sret-first? 0 2)
+            ", 8 : u8\n")
+          (str_cat.str-cat
+            "  store_ptr %7, "
+            (opt-inline-sret-place-var sret-first? 1 0)
+            " : i64\n")
+          (str_cat.str-cat
+            "  return "
+            (opt-inline-sret-place-var sret-first? 0 2)
+            "\n")))]
+    (ir.CompilerIrFunction.Function
+      callee-name
+      params
+      (ast.AstType.U64)
+      8
+      (irt.blocks text)
+      ir.CompilerIrFunctionAbi.Ordinary)))
+
+(define (opt-inline-sret-place-caller [func-name : i64] [sret-first? : bool]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    func-name
+    (irt.params "a=%0:i64")
+    (ast.AstType.I64)
+    10
+    (irt.blocks
+      (str_cat.str-cat
+        "entry:
+           %1 = alloc i64
+           %2 = alloc i64
+           %3 = addr_of %2
+"
+        (if sret-first?
+          "  %4 = call inline_switch([sret arg 0] %3, %0, 7) : u64\n"
+          "  %4 = call inline_switch([sret arg 2] %0, 7, %3) : u64\n")
+        "  %5 = gep %4, 0 : u8
+           %6 = load %5 : i64
+           %7 = gep %4, 8 : u8
+           %8 = load %7 : i64
+           %9 = add %6, %8 : i64
+           return %9"))
+    ir.CompilerIrFunctionAbi.Ordinary))
+
+;; The merged caller's text, or "" when the call survived or `main` is gone.
+(define (opt-inline-sret-place-merged [sret-first? : bool] [mutate? : bool]) : String
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : ir.CompilerIrFunctionSeq
+      (opt-inline-wide-two-function-optimized
+        (opt-inline-sret-place-caller symbols.main sret-first?)
+        (opt-inline-sret-place-callee symbols.inline-switch sret-first? mutate?))]
+    (if (=
+      (opt-inline-wide-remaining-calls
+        (opt.compiler-opt-global-shared-view optimized))
+      0)
+      (match (opt-function-seq-find optimized "main")
+        [(opt.OptMaybeFunction.Some main)
+          (irt.blocks-text (opt.opt-function-blocks main))]
+        [(opt.OptMaybeFunction.No) ""])
+      "")))
+
+(define (opt-inline-sret-place-ok? [sret-first? : bool] [mutate? : bool]) : bool
+  (let
+    [text : String (opt-inline-sret-place-merged sret-first? mutate?)]
+    (and
+      (string.contains (& text) "= gep %3, 0 : u8")
+      (string.contains (& text) "= gep %3, 8 : u8")
+      (string.contains (& text) "= mov %0 : i64")
+      (string.contains (& text) "= mov 7 : i64"))))
+
+(define (compiler-optimize-inline-sret-result-place-ok?) : bool
+  (and
+    (opt-inline-sret-place-ok? true false)
+    (opt-inline-sret-place-ok? false false)
+    (opt-inline-sret-place-ok? true true)
+    (opt-inline-sret-place-ok? false true)))
+
+;; The shape gate finds the hidden parameter wherever it sits and refuses a
+;; body that redefines it: the clone substitutes the result place for it, so a
+;; redefinition would have nowhere to land.
+(define (compiler-optimize-inline-sret-param-def-shape-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [leading : ir.CompilerIrFunction
+      (opt-inline-sret-place-callee symbols.inline-switch true false)]
+    [trailing : ir.CompilerIrFunction
+      (opt-inline-sret-place-callee symbols.inline-switch false false)]
+    [redefining-blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "sret_def.entry:
+           %0 = add %0, 8 : u64
+           %3 = gt %1, %2 : i64
+           branch %3, sret_def.big, sret_def.small
+         sret_def.big:
+           %5 = gep %0, 0 : u8
+           store_ptr %5, %1 : i64
+           jump sret_def.join
+         sret_def.small:
+           %6 = gep %0, 0 : u8
+           store_ptr %6, %2 : i64
+           jump sret_def.join
+         sret_def.join:
+           return %0")]
+    [redefining : i64
+      (match (opt.compiler-opt-global-shared-view leading)
+        [(ir.CompilerIrFunction.Function _ params _ _ _ _)
+          (opt.opt-inline-multiblock-callee-shape-reason
+            params
+            (ast.AstType.U64)
+            8
+            redefining-blocks)])]
+    (and
+      (match leading
+        [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
+          (and
+            (=
+              (opt.opt-inline-sret-param-var
+                (opt.compiler-opt-global-shared-view params))
+              0)
+            (=
+              (opt.opt-inline-multiblock-callee-shape-reason
+                params
+                (ast.AstType.U64)
+                8
+                blocks)
+              (opt.opt-inline-shape-ok)))])
+      (match trailing
+        [(ir.CompilerIrFunction.Function _ params _ _ _ _)
+          (= (opt.opt-inline-sret-param-var params) 2)])
+      (= (opt.opt-inline-sret-param-var (irt.params "a=%0:i64")) (- 0 1))
+      (= redefining (opt.opt-inline-shape-sret-param-def))
+      (string.eq (opt.opt-inline-shape-reason-text redefining) "sret-param-def"))))
 
 (define (opt-inline-sole-call-middle [func-name : i64] [leaf-name : i64]) : ir.CompilerIrFunction
   (let

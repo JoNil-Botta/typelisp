@@ -1225,3 +1225,21 @@ count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
 match ^[[:space:]]+addq \$3, %r[a-z0-9]+$
 count = 0 ^[[:space:]]+addq \$1, %r[a-z0-9]+$
+
+# #7144: every sole-call sret producer is absorbed at opt2 -- the parameter-
+# writing one through the staged clone included -- so none keeps a symbol. The
+# fixture's exit code proves each absorbed result lands in the caller's place.
+case inline-sret-result-place
+source tests/integration/inline_sret_result_place.tl
+in asm
+not-contains _tl_inline_sret_result_place_srp_direct
+not-contains _tl_inline_sret_result_place_srp_branches
+not-contains _tl_inline_sret_result_place_srp_early
+not-contains _tl_inline_sret_result_place_srp_mutating
+not-contains _tl_inline_sret_result_place_srp_named
+not-contains _tl_inline_sret_result_place_srp_tuple
+not-contains _tl_inline_sret_result_place_srp_inner
+not-contains _tl_inline_sret_result_place_srp_outer
+not-contains _tl_inline_sret_result_place_srp_shape
+not-contains _tl_inline_sret_result_place_srp_bump
+not-match _tl_inline_sret_result_place_srp_forward([^a-z_]|$)

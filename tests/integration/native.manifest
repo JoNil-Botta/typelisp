@@ -342,6 +342,7 @@ tail_aggregate_return|all|-|tests/integration/tail_aggregate_return.tl|42|-|-|-|
 group_split_loops|all|0,1,2|tests/integration/group_split_loops.tl|42|-|-|-|-
 aggregate_return_no_alloc|all|-|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
 aggregate_return_no_alloc|all|0,2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|stage-stdlib
+inline_sret_result_place|all|-,0,2|tests/integration/inline_sret_result_place.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
 # Borrowed bytes views are two-word values that never allocate, and an
 # out-of-range view traps before a pointer is formed (#8089). The trap rows take
 # a negative start, a negative length, an overflowing length, a range past the

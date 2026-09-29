@@ -2286,7 +2286,11 @@
         [_ false])
       (match (tc_core.tc-lookup-id cached (ci.intern "missing"))
         [(tc_core.ResultTcType.Err message)
-          (string.eq message "typecheck: unbound name missing")]
+          (string.eq
+            message
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (cdiag.CompilerTypecheckKind.UnboundName)
+              "typecheck: unbound name missing"))]
         [_ false])
       (match (tc_core.tc-current-return-type cached)
         [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
@@ -2951,7 +2955,11 @@
           [_ false])
         (match (tc_core.tc-lookup-id layer missing-id)
           [(tc_core.ResultTcType.Err message)
-            (string.eq message "typecheck: unbound name missing")]
+            (string.eq
+              message
+              (cdiag.compiler-diagnostic-typecheck-tagged
+                (cdiag.CompilerTypecheckKind.UnboundName)
+                "typecheck: unbound name missing"))]
           [_ false])))))
 
 (cfg
@@ -3050,7 +3058,9 @@
         [(tc_core.ResultTcUnit.Err message)
           (string.eq
             message
-            "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")]
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (cdiag.CompilerTypecheckKind.RegionEscape)
+              "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
         [_ false])
       (match (tc_core.tc-check-lambda-region-captures-allow-refs
         expr-bases
@@ -4467,7 +4477,9 @@
             [(tc_core.ResultTcType.Err message)
               (string.eq
                 message
-                "typecheck: non-finite f32 literal is not supported")]
+                (cdiag.compiler-diagnostic-typecheck-tagged
+                  (cdiag.CompilerTypecheckKind.TypeMismatch)
+                  "typecheck: non-finite f32 literal is not supported"))]
             [_ false])
           (match (ast_tests.ast-node-pool-context-expr-canonical-span
             pools-c
@@ -6037,7 +6049,9 @@
             [(tc_core.ResultTcType.Err message)
               (string.eq
                 message
-                "typecheck: unknown struct field ExprList.items")]
+                (cdiag.compiler-diagnostic-typecheck-tagged
+                  (cdiag.CompilerTypecheckKind.UnknownStructField)
+                  "typecheck: unknown struct field ExprList.items"))]
             [_ false]))))))
 
 (cfg

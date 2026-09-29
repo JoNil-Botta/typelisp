@@ -94,7 +94,7 @@ windows_nt_create_file_boundary|windows|-|tests/integration/windows_nt_create_fi
 array_compat_aliases|all|-|tests/integration/array_compat_aliases.tl|42|-|-|-|-
 private_array_data|all|-|tests/integration/private_array_data.tl|42|-|-|-|-
 dynamic_array_literal|all|-|tests/integration/dynamic_array_literal.tl|42|-|-|-|-
-dyn_array_reference_elements|all|-|tests/integration/dyn_array_reference_elements.tl|42|-|-|stdlib/string.tl|-
+dyn_array_reference_elements|all|0,1,2|tests/integration/dyn_array_reference_elements.tl|42|-|-|stdlib/string.tl|-
 array_qualified_macros|all|-|tests/integration/array_qualified_macros.tl|42|-|-|-|-
 fixed_array_core_ops|all|-|tests/integration/fixed_array_core_ops.tl|42|-|-|-|-
 array_stride_24byte|all|-|tests/integration/array_stride_24byte.tl|42|-|-|-|-
@@ -130,6 +130,10 @@ macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_sh
 macro_module_local_shadow|all|-|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl|-
 macro_template_variant_provider|all|-|tests/integration/macro_template_variant_provider.tl|42|-|-|-|-
 macro_template_variant|all|-|tests/integration/macro_template_variant.tl|42|-|-|macro_template_variant_provider.tl|-
+# A macro's qualified call of another module's helper- or builtin-spelled
+# function calls that function, with and without stdlib.string (#8129).
+macro_qualified_helpers|all|-,0,2|tests/integration/macro_qualified_helpers.tl|42|-|-|macro_qualified_helper_defs.tl macro_qualified_helper_int_defs.tl macro_qualified_helper_macros.tl|-
+macro_qualified_helpers_no_string_import|all|-|tests/integration/macro_qualified_helpers_no_string_import.tl|42|-|-|macro_qualified_helper_defs.tl macro_qualified_helper_int_defs.tl macro_qualified_helper_macros.tl|-
 macro_template_pattern|all|-|tests/integration/macro_template_pattern.tl|42|-|-|macro_template_pattern_user.tl macro_template_variant_provider.tl|-
 compile_profile_macro_detach_unchanged|all|-|tests/integration/compile_profile_macro_detach_unchanged.tl|42|-|-|compile_profile_macro_detach_unchanged_dep.tl|-
 compile_profile_macro_detail|all|-|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl|-
@@ -327,6 +331,9 @@ control_flow|all|-|tests/integration/control_flow.tl|15|-|-|-|-
 scalar_while_break_continue|all|-|tests/integration/scalar_while_break_continue.tl|42|-|-|stdlib/string.tl|-
 tail_call_stack_args|all|-|tests/integration/tail_call_stack_args.tl|42|-|-|-|-
 tail_aggregate_return|all|-|tests/integration/tail_aggregate_return.tl|42|-|-|-|-
+# Register groups reassigned in loops, swapped, and carried by tail calls keep
+# every word through the per-word split and SSA (#7913).
+group_split_loops|all|0,1,2|tests/integration/group_split_loops.tl|42|-|-|-|-
 aggregate_return_no_alloc|all|-|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
 aggregate_return_no_alloc|all|0,2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|stage-stdlib
 c_abi_aggregate_no_alloc|all|-|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|-
@@ -526,6 +533,12 @@ stdlib_test_char_failure|all|-|tests/integration/stdlib_test.tl|134|-|char|stdli
 stdlib_test_string_failure|all|-|tests/integration/stdlib_test.tl|134|-|string|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:name mismatch: expected "right", found "left"
 string_append|all|-|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl|-
 string_concat_deep|all|-|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.tl|-
+bare_string_helpers|all|-|tests/integration/bare_string_helpers.tl|42|-|-|stdlib/string.tl|-
+bare_string_helpers|all|0,2|tests/integration/bare_string_helpers.tl|42|-|-|stdlib/string.tl|stage-stdlib
+bare_string_helper_shadow|all|-|tests/integration/bare_string_helper_shadow.tl|42|-|-|stdlib/string.tl|-
+bare_string_helper_modules|all|-|tests/integration/bare_string_helper_modules.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
+bare_string_helper_wildcard|all|-|tests/integration/bare_string_helper_wildcard.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
+bare_string_helper_selected|all|-|tests/integration/bare_string_helper_selected.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
 string_eq|all|-|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl|-
 core_string_length|all|-|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl|-
 stdlib_math_ieee|all|-|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl|-

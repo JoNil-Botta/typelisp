@@ -147,13 +147,28 @@
 "
     (compiler-typecheck-with-alloc-string-helper-source src)))
 
+;; `want` is plain message text, or a message a typecheck builder tagged with
+;; its kind; a tagged one must also match the diagnostic's code.
+(define (compiler-typecheck-diagnostic-matches?
+  [diag : (& diag cdiag.CompilerDiagnostic)]
+  [want : String]) : bool
+  (if (cdiag.compiler-diagnostic-typecheck-tagged? (& want))
+    (and
+      (string.eq
+        (cdiag.compiler-diagnostic-code-or-empty diag)
+        (cdiag.compiler-diagnostic-typecheck-tag-code (& want)))
+      (string.eq
+        (cdiag.compiler-diagnostic-message diag)
+        (cdiag.compiler-diagnostic-untagged-message want)))
+    (string.eq (cdiag.compiler-diagnostic-message diag) want)))
+
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first (deref diag))]
-        (string.eq (cdiag.compiler-diagnostic-message first) want))]
+        (compiler-typecheck-diagnostic-matches? (& first) want))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-error-count-ok?
@@ -170,7 +185,7 @@
           (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
           (= count want-count)
-          (string.eq (cdiag.compiler-diagnostic-message first) want)))]
+          (compiler-typecheck-diagnostic-matches? (& first) want)))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-error-location-ok?

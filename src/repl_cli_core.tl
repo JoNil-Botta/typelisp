@@ -637,7 +637,10 @@
               (repl-run-scratch-source scratch-source)]
             [(ResultReplString.Err message) (repl-print-error-line message)])]
         [(tc.ResultTcType.Err message)
-          (repl-print-error-line (str_cat.str-cat "Error: " message))])]
+          (repl-print-error-line
+            (str_cat.str-cat
+              "Error: "
+              (cdiag.compiler-diagnostic-untagged-message message)))])]
     [(ResultReplDeclList.Err message)
       (repl-print-error-line (str_cat.str-cat "Error: " message))]))
 
@@ -661,7 +664,10 @@
                   [(tc.ResultTcType.Ok ty)
                     (repl-stdout-write-line (repl-type-render ty))]
                   [(tc.ResultTcType.Err message)
-                    (repl-print-error-line (str_cat.str-cat "Error: " message))])]
+                    (repl-print-error-line
+                      (str_cat.str-cat
+                        "Error: "
+                        (cdiag.compiler-diagnostic-untagged-message message)))])]
               [(ResultReplDeclList.Err message)
                 (repl-print-error-line (str_cat.str-cat "Error: " message))])])]
       [(parser.ResultAstReplItem.Err message)

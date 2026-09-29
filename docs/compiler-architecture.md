@@ -178,6 +178,23 @@ and runnable/failure metadata. Ordinary
 payloads require the loader's pool-aware compaction or an explicitly owned
 pool lifetime.
 
+Every source file a load session consumes is read through the session's source
+provider (`compiler-load-session-state-read-source-text`), which normally reads
+the file. An overlay check (`compiler-check-file-with-overlay`,
+`compiler-check-package-entry-file-with-overlay`) installs one admitted
+[`compiler_source_overlay`](../src/compiler_source_overlay.tl) generation on the
+serial session for the duration of the check. Imports and packages resolve
+exactly as before; only an admitted resolved path is then answered from the
+overlay's bytes. Overlays replace `.tl` sources outside every stdlib root, never
+manifests, so they cannot change which file an import names. While a provider is
+active the program caches are bypassed, and every consumed source (disk,
+embedded stdlib or overlay) is recorded once, in first-read order, in a ledger
+allocated in the caller's arena, together with the other disk inputs that decide
+what the check sees (manifests, a dependency's TLCI image). A source read twice
+with different bytes or a ledger over its limit rejects the check, and so does
+an admitted source a passing check never read. Re-reading the ledger's disk entries (`compiler-source-ledger-stale-paths`)
+lets a caller that later writes files detect inputs that changed in between.
+
 Package runtime emission uses `CompilerDriverPackageRuntimeScope`: its carrier
 lives in an outer job arena, while source pools, parser allocations, interner,
 analysis state and derived dependency surfaces have explicit temporary owners.

@@ -13565,8 +13565,10 @@
 
 ;; Structural borrowed-slice references use two integer words end-to-end while
 ;; ordinary references, including references to raw-pointer values, retain
-;; their one-word pointer representation. Build the types directly in a private
-;; pool so this test does not depend on public Slice syntax.
+;; their one-word pointer representation. A dynamic array of supported
+;; references lowers by value like a fixed array; borrowing one stays
+;; unsupported. Build the types directly in a private pool so this test does
+;; not depend on public Slice syntax.
 (define (compiler-lower-slice-reference-layout-ok?) : bool
   (let
     [active-before : ast.AstNodePoolContext
@@ -13599,6 +13601,17 @@
     [pointer-ref : ast.AstType (ast.AstType.Ref 1 pointer-id)]
     [mutable-pointer-ref : ast.AstType (ast.AstType.Ref 1 mutable-pointer-id)]
     [nested-ref : ast.AstType (ast.AstType.Ref 1 nested-slice-id)]
+    [nested-ref-id : i64
+      (ast.ast-node-pool-context-type-push
+        pools
+        (ast.AstType.Ref 1 nested-slice-id))]
+    [ref-dyn-array-id : i64
+      (ast.ast-node-pool-context-type-push
+        pools
+        (ast.AstType.DynArray nested-ref-element-id))]
+    [ref-dyn-array : ast.AstType (ast.AstType.DynArray nested-ref-element-id)]
+    [nested-ref-dyn-array : ast.AstType (ast.AstType.DynArray nested-ref-id)]
+    [borrowed-ref-dyn-array : ast.AstType (ast.AstType.Ref 1 ref-dyn-array-id)]
     [bare-slice : ast.AstType (ast.AstType.Slice elem-id)]
     [ctx : tc_core.TcContext
       (tc_core.tc-context-new
@@ -13674,6 +13687,10 @@
               ctx
               (owned_view.compiler-owned-shared-view bare-slice)))
           (not (lower.lower-supported-reference-type? ctx nested-ref))
+          (lower.lower-supported-reference-type? ctx ref-dyn-array)
+          (not (lower.lower-supported-reference-type? ctx nested-ref-dyn-array))
+          (not
+            (lower.lower-supported-reference-type? ctx borrowed-ref-dyn-array))
           (=
             (ctfe.ctfe-type-size-with-pools
               pools

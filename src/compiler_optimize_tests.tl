@@ -29867,6 +29867,281 @@
         (opt.compiler-opt-global-shared-view func))]
     (opt.opt-function-eq bases func b)))
 
+;; --- register-group word split (group_split) ----------------------------------
+;;
+;; Fixtures for compiler_optimize's `group_split`. Each is a whole function whose
+;; register-group evidence is its own `pack`s, as in the pipeline. An accepted
+;; function verifies after the split and SSA construction, and does not after
+;; SSA construction alone; a refused one is left exactly as it was.
+(define (opt-gsplit-ssa [func : ir.CompilerIrFunction] [split? : bool]) : ir.CompilerIrFunction
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [representations : ir.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-function (& func))]
+    [input : ir.CompilerIrFunction
+      (if split?
+        (opt.opt-group-split-function
+          bases
+          (opt.compiler-opt-global-shared-view representations)
+          func)
+        func)]
+    (opt.opt-ssa-construct-function-with-representations
+      bases
+      representations
+      input)))
+
+(define (opt-gsplit-accepted? [text : String]) : bool
+  (and
+    (opt.opt-verify-ok?
+      (opt.opt-verify-function
+        (opt-gsplit-ssa (irt.func (string.copy (& text))) true)))
+    (not
+      (opt.opt-verify-ok?
+        (opt.opt-verify-function (opt-gsplit-ssa (irt.func text) false))))))
+
+(define (opt-gsplit-refused? [text : String]) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [func : ir.CompilerIrFunction (irt.func text)]
+    [representations : ir.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-function (& func))]
+    [split : ir.CompilerIrFunction
+      (opt.opt-group-split-function
+        bases
+        representations
+        (opt.compiler-opt-global-shared-view func))]
+    (opt.opt-function-eq bases func split)))
+
+;; How many `word` instructions the split writes, of float type or not.
+(define (opt-gsplit-word-count [text : String] [float? : bool]) : i64
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [func : ir.CompilerIrFunction (irt.func text)]
+    [representations : ir.CompilerIrRepresentationIndex
+      (opt-ssa-representation-index-for-function (& func))]
+    [split : ir.CompilerIrFunction
+      (opt.opt-group-split-function bases representations func)]
+    [flat : opt.OptSplitFlat
+      (opt.opt-aggregate-split-flatten (opt.opt-function-blocks split))]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index flat.count)
+        (begin
+          (match (opt.opt-aggregate-split-at (& flat) index)
+            [(ir.CompilerIrInstr.Word _ _ _ ty)
+              (if (=
+                (match ty
+                  [(ast.AstType.F64) true]
+                  [_ false])
+                float?)
+                (set! count (+ count 1))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      count)))
+
+;; A two-word enum reassigned in a loop: the `Maybe` shape.
+(define (opt-gsplit-loop-text) : String
+  "function @gsplit_loop(n=%0:i64) -> MaybeId vars 7 {
+   entry:
+     %1 = pack [0, 0] : MaybeId
+     %2 = mov %1 : MaybeId
+     %3 = mov 0 : i64
+     jump header
+   header:
+     %4 = lt %3, %0 : i64
+     branch %4, body, exit
+   body:
+     %5 = pack [1, %3] : MaybeId
+     %2 = mov %5 : MaybeId
+     %6 = add %3, 1 : i64
+     %3 = mov %6 : i64
+     jump header
+   exit:
+     return %2
+   }")
+
+(define (opt-gsplit-three-word-text) : String
+  "function @gsplit_three(n=%0:i64) -> Tri vars 7 {
+   entry:
+     %1 = pack [0, 0, 0] : Tri
+     %2 = mov %1 : Tri
+     %3 = mov 0 : i64
+     jump header
+   header:
+     %4 = lt %3, %0 : i64
+     branch %4, body, exit
+   body:
+     %5 = pack [%3, 1, %3] : Tri
+     %2 = mov %5 : Tri
+     %6 = add %3, 1 : i64
+     %3 = mov %6 : i64
+     jump header
+   exit:
+     return %2
+   }")
+
+;; Word 1 is a float, so its split words are f64 and word 0's stay i64.
+(define (opt-gsplit-mixed-text) : String
+  "function @gsplit_mixed(n=%0:i64, x=%1:f64) -> Mix vars 8 {
+   entry:
+     %2 = pack [0, %1] : Mix
+     %3 = mov %2 : Mix
+     %4 = mov 0 : i64
+     jump header
+   header:
+     %5 = lt %4, %0 : i64
+     branch %5, body, exit
+   body:
+     %6 = pack [%4, %1] : Mix
+     %3 = mov %6 : Mix
+     %7 = add %4, 1 : i64
+     %4 = mov %7 : i64
+     jump header
+   exit:
+     return %3
+   }")
+
+;; A group parameter the loop reassigns, as tail recursion leaves it: its words
+;; start the entry block, which has no predecessors.
+(define (opt-gsplit-param-text) : String
+  "function @gsplit_param(g=%0:MaybeId, n=%1:i64) -> MaybeId vars 5 {
+   entry:
+     jump header
+   header:
+     %2 = lt %1, 10 : i64
+     branch %2, body, exit
+   body:
+     %3 = pack [1, %1] : MaybeId
+     %0 = mov %3 : MaybeId
+     %4 = add %1, 1 : i64
+     %1 = mov %4 : i64
+     jump header
+   exit:
+     return %0
+   }")
+
+;; Nested loops, a join, the group as a call argument, and the group as the
+;; input of a pre-existing phi on both edges.
+(define (opt-gsplit-uses-text) : String
+  "function @gsplit_uses(n=%0:i64) -> MaybeId vars 15 {
+   entry:
+     %1 = pack [0, 0] : MaybeId
+     %2 = mov %1 : MaybeId
+     %3 = mov 0 : i64
+     jump outer
+   outer:
+     %4 = lt %3, %0 : i64
+     branch %4, inner_init, done
+   inner_init:
+     %5 = mov 0 : i64
+     jump inner
+   inner:
+     %6 = lt %5, %3 : i64
+     branch %6, inner_body, outer_next
+   inner_body:
+     %7 = eq %5, 2 : i64
+     branch %7, hit, miss
+   hit:
+     %8 = pack [1, %5] : MaybeId
+     %2 = mov %8 : MaybeId
+     jump inner_join
+   miss:
+     %9 = call gsplit_use(%2) : i64
+     jump inner_join
+   inner_join:
+     %10 = add %5, 1 : i64
+     %5 = mov %10 : i64
+     jump inner
+   outer_next:
+     %11 = add %3, 1 : i64
+     %3 = mov %11 : i64
+     jump outer
+   done:
+     %12 = eq %3, 0 : i64
+     branch %12, left, right
+   left:
+     jump join
+   right:
+     jump join
+   join:
+     %13 = phi [%2, left], [%2, right] : MaybeId
+     return %13
+   }")
+
+(define (opt-gsplit-address-text) : String
+  "function @gsplit_address(n=%0:i64) -> MaybeId vars 7 {
+   entry:
+     %1 = pack [0, 0] : MaybeId
+     %2 = mov %1 : MaybeId
+     %6 = addr_of %2
+     branch %0, then, exit
+   then:
+     %5 = pack [1, %0] : MaybeId
+     %2 = mov %5 : MaybeId
+     jump exit
+   exit:
+     return %2
+   }")
+
+;; No `pack` gives `Opaque` any word evidence, so its representation is unknown.
+(define (opt-gsplit-unknown-text) : String
+  "function @gsplit_unknown(n=%0:i64) -> Opaque vars 3 {
+   entry:
+     %1 = call gsplit_make() : Opaque
+     branch %0, then, exit
+   then:
+     %1 = call gsplit_make() : Opaque
+     jump exit
+   exit:
+     return %1
+   }")
+
+(define (opt-gsplit-over-limit-text) : String
+  "function @gsplit_big(n=%0:i64) -> Big vars 4 {
+   entry:
+     %1 = pack [0, 0, 0, 0, 0, 0, 0, 0, 0] : Big
+     %2 = mov %1 : Big
+     branch %0, then, exit
+   then:
+     %3 = pack [1, 1, 1, 1, 1, 1, 1, 1, 1] : Big
+     %2 = mov %3 : Big
+     jump exit
+   exit:
+     return %2
+   }")
+
+;; An indirect call is not a definition the split rewrites.
+(define (opt-gsplit-foreign-def-text) : String
+  "function @gsplit_foreign(n=%0:i64) -> MaybeId vars 4 {
+   entry:
+     %1 = pack [0, 0] : MaybeId
+     %2 = mov %1 : MaybeId
+     branch %0, then, exit
+   then:
+     %2 = call* fn@gsplit_callee() : MaybeId
+     jump exit
+   exit:
+     return %2
+   }")
+
+(define (compiler-optimize-group-split-self-test) : i64
+  (cond
+    [(not (opt-gsplit-accepted? (opt-gsplit-loop-text))) 1]
+    [(not (opt-gsplit-accepted? (opt-gsplit-three-word-text))) 2]
+    [(not (= (opt-gsplit-word-count (opt-gsplit-three-word-text) false) 6)) 3]
+    [(not (opt-gsplit-accepted? (opt-gsplit-mixed-text))) 4]
+    [(not (= (opt-gsplit-word-count (opt-gsplit-mixed-text) true) 2)) 5]
+    [(not (= (opt-gsplit-word-count (opt-gsplit-mixed-text) false) 2)) 6]
+    [(not (opt-gsplit-accepted? (opt-gsplit-param-text))) 7]
+    [(not (opt-gsplit-accepted? (opt-gsplit-uses-text))) 8]
+    [(not (opt-gsplit-refused? (opt-gsplit-address-text))) 9]
+    [(not (opt-gsplit-refused? (opt-gsplit-unknown-text))) 10]
+    [(not (opt-gsplit-refused? (opt-gsplit-over-limit-text))) 11]
+    [(not (opt-gsplit-refused? (opt-gsplit-foreign-def-text))) 12]
+    [else 42]))
+
 (define (opt-ssa-over-budget-function) : ir.CompilerIrFunction
   (let
     [count : i64 (+ (opt.opt-ssa-block-budget) 1)]

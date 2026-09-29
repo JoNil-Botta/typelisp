@@ -3,6 +3,7 @@
 (import compiler_ast_types as ast)
 (import stdlib.io)
 (import stdlib.string)
+(import compiler_diagnostic as cdiag)
 
 (define (tc-lifetime-subst-must-bind
   [subst : tc_core.TcLifetimeSubst]
@@ -139,7 +140,11 @@
       (match (tc_core.tc-lifetime-subst-bind left 30 999)
         [(tc_core.ResultTcLifetimeSubst.Ok _) false]
         [(tc_core.ResultTcLifetimeSubst.Err message)
-          (string.eq message "typecheck: constructor lifetime mismatch")])
+          (string.eq
+            message
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+              "typecheck: constructor lifetime mismatch"))])
       (tc-lifetime-subst-list-ok?)
       (tc-lifetime-subst-wide-and-order-ok?))))
 

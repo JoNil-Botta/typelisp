@@ -1,73 +1,99 @@
-;; Dense borrowed storage preserves checked references through anchored opaque
-;; words without enabling general DynArray-of-reference lowering. The fixed
-;; one-element arrays at the conversion boundaries make the audited one-word
-;; compatibility representation explicit while the u64 DynArray grows.
+;; Private dynamic arrays of shared references: a borrowed element is one
+;; pointer word, so init, push through several reallocations, element reads and
+;; writes, length, struct storage, parameter and return passing, and copying
+;; into a fresh array behave as for any other one-word element.
 (import stdlib.string)
 
-(define (borrowed-word [value : (& text str)]) : u64
-  (let
-    [cell : (Array (& text str) 1) (array value)]
-    (unsafe
-      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr u64))))))
+(defstruct Views
+  (:lifetimes text)
+  (items (__tl_dyn-array (& text str)))
+  (len i64))
 
-(define (borrowed-from-word [_anchor : (& text str)] [word : u64]) : (&
-    text
-    str)
+;; Append in place only when this value is the backing array's frontier;
+;; otherwise copy the live prefix so a retained shorter value never sees it.
+(define (views-push [views : (Views text)] [value : (& text str)]) : (Views
+    text)
   (let
-    [cell : (Array u64 1) (array word)]
-    (unsafe
-      (ptr-read (ptr-cast (__tl_array-data cell) : (Ptr (& text str)))))))
+    [items : (__tl_dyn-array (& text str)) views.items]
+    [len : i64 views.len]
+    (if (= (array-length items) len)
+      (begin
+        (__tl_array-push! items value)
+        (Views items (+ len 1)))
+      (let
+        [fresh : (__tl_dyn-array (& text str))
+          (init : (__tl_dyn-array (& text str)))]
+        [index : i64 0]
+        (begin
+          (while (< index len)
+            (begin
+              (__tl_array-push! fresh (array-ref items index))
+              (set! index (+ index 1))))
+          (__tl_array-push! fresh value)
+          (Views fresh (+ len 1)))))))
+
+(define (total-length [views : (& views (Views text))]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index views.len)
+        (begin
+          (set!
+            total
+            (+ total (string.string-length (array-ref views.items index))))
+          (set! index (+ index 1))))
+      total)))
+
+(define (pick-refs [a : (& cell i64)] [b : (& cell i64)]) : (__tl_dyn-array
+    (& cell i64))
+  (let
+    [refs : (__tl_dyn-array (& cell i64))
+      (init : (__tl_dyn-array (& cell i64)))]
+    (begin
+      (__tl_array-push! refs a)
+      (__tl_array-push! refs a)
+      (set! (array-ref refs 1) b)
+      refs)))
 
 (define (main) : i64
   (let
-    [owner : String "left-right"]
-    [left : (& owner str) (string.substring-view (& owner) 0 4)]
-    [right : (& owner str) (string.substring-view (& owner) 5 5)]
-    [left-word : u64 (borrowed-word left)]
-    [right-word : u64 (borrowed-word right)]
-    [words : (__tl_dyn-array u64) (init : (__tl_dyn-array u64))]
-    [i : i64 0]
-    [ok : bool true]
+    [owner : String "abcdefghijklmnopqrstuvwxyz"]
+    [empty : (Views owner) (Views (init : (__tl_dyn-array (& owner str))) 0)]
+    [grown : (Views owner) (Views (init : (__tl_dyn-array (& owner str))) 0)]
+    [index : i64 0]
+    [y : i64 2]
+    [z : i64 40]
     (begin
-      (__tl_array-push! words left-word)
-      (__tl_array-push! words right-word)
-      ;; Repeated pushes force several reallocations while retaining both
-      ;; distinct substring words in their original order.
-      (while (< i 32)
-        (begin
-          (__tl_array-push!
-            words
-            (if (= (% i 2) 0)
-              left-word
-              right-word))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 32)
+      ;; 26 one-byte views force the backing array through several reallocations.
+      (while (< index 26)
         (begin
           (set!
-            ok
-            (and
-              ok
-              (if (= (% i 2) 0)
-                (string.eq
-                  (borrowed-from-word (& owner) (array-ref words (+ i 2)))
-                  left)
-                (string.eq
-                  (borrowed-from-word (& owner) (array-ref words (+ i 2)))
-                  right))))
-          (set! i (+ i 1))))
-      (if (and
-        ok
-        (>= (array-length words) 34)
-        (=
-          (string.string-length
-            (borrowed-from-word (& owner) (array-ref words 0)))
-          4)
-        (=
-          (string.string-length
-            (borrowed-from-word (& owner) (array-ref words 1)))
-          5)
-        (string.eq (borrowed-from-word (& owner) (array-ref words 0)) left)
-        (string.eq (borrowed-from-word (& owner) (array-ref words 1)) right))
-        42
-        1))))
+            grown
+            (views-push grown (string.substring-view (& owner) index 1)))
+          (set! index (+ index 1))))
+      (let
+        [grown-ok : bool
+          (and
+            (= empty.len 0)
+            (= (array-length empty.items) 0)
+            (= grown.len 26)
+            (= (array-length grown.items) 26)
+            (= (total-length (& grown)) 26)
+            (string.eq (array-ref grown.items 0) "a")
+            (string.eq (array-ref grown.items 25) "z"))]
+        [prefix : (Views owner) (Views grown.items 3)]
+        ;; `prefix` is not the frontier, so this push copies into fresh storage
+        ;; and the shared backing array keeps "d" at index 3.
+        [branch : (Views owner)
+          (views-push prefix (string.substring-view (& owner) 10 16))]
+        [refs (pick-refs (& y) (& z))]
+        (if (and
+          grown-ok
+          (= branch.len 4)
+          (string.eq (array-ref branch.items 2) "c")
+          (string.eq (array-ref branch.items 3) "klmnopqrstuvwxyz")
+          (= (array-length refs) 2)
+          (= (+ (deref (array-ref refs 0)) (deref (array-ref refs 1))) 42))
+          42
+          1)))))

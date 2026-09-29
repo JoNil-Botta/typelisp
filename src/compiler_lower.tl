@@ -19003,6 +19003,11 @@
                 ctx
                 (tc_core.tc-context-type-get ctx elem)
                 stack)]
+            [(ast.AstType.DynArray elem)
+              (lower-supported-reference-type-with-stack?
+                ctx
+                (tc_core.tc-context-type-get ctx elem)
+                stack)]
             [(ast.AstType.Box elem)
               (lower-supported-reference-type-with-stack?
                 ctx

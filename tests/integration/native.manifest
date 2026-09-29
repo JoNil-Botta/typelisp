@@ -94,7 +94,7 @@ windows_nt_create_file_boundary|windows|-|tests/integration/windows_nt_create_fi
 array_compat_aliases|all|-|tests/integration/array_compat_aliases.tl|42|-|-|-|-
 private_array_data|all|-|tests/integration/private_array_data.tl|42|-|-|-|-
 dynamic_array_literal|all|-|tests/integration/dynamic_array_literal.tl|42|-|-|-|-
-dyn_array_reference_elements|all|-|tests/integration/dyn_array_reference_elements.tl|42|-|-|stdlib/string.tl|-
+dyn_array_reference_elements|all|0,1,2|tests/integration/dyn_array_reference_elements.tl|42|-|-|stdlib/string.tl|-
 array_qualified_macros|all|-|tests/integration/array_qualified_macros.tl|42|-|-|-|-
 fixed_array_core_ops|all|-|tests/integration/fixed_array_core_ops.tl|42|-|-|-|-
 array_stride_24byte|all|-|tests/integration/array_stride_24byte.tl|42|-|-|-|-

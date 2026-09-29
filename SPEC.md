@@ -1702,7 +1702,17 @@ boundary, an explicit fixed-array borrow may unsize to a Slice formal while
 preserving mutability: `(& array)` can satisfy `(& lifetime (Slice T))`, and
 `(&mut array)` can satisfy `(&mut lifetime (Slice T))`. The conversion is only
 for a fixed-array borrow at that boundary; there is no bare-array auto-borrow,
-and no cross-mutability strengthening or weakening.
+and no cross-mutability strengthening or weakening. The element type must match
+the formal's `T` exactly, except that through a shared borrow it may shorten
+the lifetimes it stores, as the variance rules in section 3.10.3 allow for a
+shared Slice: an `(Array (Item text) N)` borrow satisfies
+`(& source (Slice (Item source)))` with `source` the shorter borrow. Through a
+mutable borrow the element type is exact, because the referent of `&mut` is
+invariant. The array's elements may store shared references, directly or in
+lifetime-parameterized records, tuples and nested arrays; the borrow keeps the
+array owner and every stored lifetime, so neither the view nor a reference read
+through it outlives its owner. An array whose elements store mutable references
+cannot be borrowed as a whole.
 
 **Checked Slice subviews.** `slice-view source start len` and
 `slice-mut-view source start len` accept a fixed array, a private dynamic

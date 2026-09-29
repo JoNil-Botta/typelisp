@@ -18700,10 +18700,15 @@
         ctx
         (deref elems)
         (lower-id-set-empty))]
+    ;; A fixed array stores its elements inline, so it is borrowable whenever
+    ;; one element is a lowerable value: reference-bearing elements (shared
+    ;; `str`/scalar views, lifetime-parameterized records) keep the layout they
+    ;; have as struct fields (#8111). A dynamic array stays reference-free.
     [(ast.AstType.Array elem-ty _)
-      (not
-        (tc_core.tc-type-contains-reference?
-          (tc_core.tc-context-type-get ctx elem-ty)))]
+      (lower-supported-reference-type-with-stack?
+        ctx
+        (tc_core.tc-context-type-get ctx elem-ty)
+        (lower-id-set-empty))]
     [(ast.AstType.DynArray elem-ty)
       (not
         (tc_core.tc-type-contains-reference?
@@ -18718,12 +18723,13 @@
         (lower-id-set-empty))]
     ;; A Slice is supported only when it is the immediate referent of a
     ;; borrowed reference; bare Slice remains unsized and has no by-value
-    ;; borrow layout.  As with fixed/dynamic arrays, the element itself must
-    ;; not contain references.
+    ;; borrow layout.  Its elements follow the fixed-array rule above: a Slice
+    ;; views an array's inline elements.
     [(ast.AstType.Slice elem-ty)
-      (not
-        (tc_core.tc-type-contains-reference?
-          (tc_core.tc-context-type-get ctx elem-ty)))]
+      (lower-supported-reference-type-with-stack?
+        ctx
+        (tc_core.tc-context-type-get ctx elem-ty)
+        (lower-id-set-empty))]
     [(ast.AstType.Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -25454,7 +25460,7 @@
         type-env
         (lower-global-shared-view effective-arg))
         [(tc_core.ResultTcType.Ok actual-ty)
-          (if (tc_core.tc-call-array-ref-to-slice-ref-compatible?
+          (if (tc_core.tc-call-array-ref-to-slice-ref-shape?
             ctx
             (lower-global-shared-view arg-ty)
             (lower-global-shared-view actual-ty))

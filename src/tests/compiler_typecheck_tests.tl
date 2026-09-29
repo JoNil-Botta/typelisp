@@ -4201,6 +4201,52 @@
       region-contains-ok
       inner-region-contains-ok)))
 
+;; A fixed array of lifetime-parameterized records, or of shared references,
+;; borrows as a shared Slice (#8111). The shared Slice may shorten the element
+;; lifetime; a mutable one may not, and the borrow still keeps its owners.
+(define (compiler-typecheck-slice-borrowed-records-source [body : String]) : String
+  (str_cat.str-cat
+    "(defstruct Item (:lifetimes source) (text (& source str)))
+(define (count [items : (& source (Slice (Item source)))]) : i64
+  (array-length items))
+(define (count-mut [items : (&mut source (Slice (Item source)))]) : i64
+  (array-length items))
+"
+    body))
+
+(define (compiler-typecheck-slice-borrowed-records-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-slice-borrowed-records-source
+        "(define (main) : i64
+  (let
+    [text : String \"payload\"]
+    [items : (Array (Item text) 1) (array (Item (& text)))]
+    (+ (count (& items)) (count (slice-view items 0 1)))))"))
+    (compiler-typecheck-ok?
+      "(define (count-refs [r : (& s (Slice (& s i64)))]) : i64 (array-length r))
+(define (main) : i64
+  (let
+    [a : i64 1]
+    [refs : (Array (& a i64) 2) (array (& a) (& a))]
+    (count-refs (& refs))))")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-slice-borrowed-records-source
+        "(define (main) : i64
+  (let
+    [text : String \"payload\"]
+    [items : (Array (Item text) 1) (array (Item (& text)))]
+    (count-mut (&mut items))))")
+      "typecheck: call `count-mut` argument 1 (parameter `items`) type mismatch: expected (&mut source (Slice (Item source))), found (&mut items (Array (Item text) 1)); source lifetime `text` cannot satisfy required lifetime `source` because mutable reference referent type is invariant")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-slice-borrowed-records-source
+        "(define (bad [s : (& s str)]) : (& s (Slice (Item s)))
+  (let
+    [items : (Array (Item s) 1) (array (Item s))]
+    (slice-view items 0 1)))
+(define (main) : i64 0)")
+      "typecheck: reference value would escape lexical scope")))
+
 (define (compiler-typecheck-reference-tests-ok?) : bool
   (let
     [render-ok : bool (compiler-typecheck-reference-render-ok?)]
@@ -10096,6 +10142,9 @@
     (if (compiler-typecheck-reference-tests-ok?)
       unit
       (io.panic "typecheck: reference tests failed"))
+    (if (compiler-typecheck-slice-borrowed-records-tests-ok?)
+      unit
+      (io.panic "typecheck: slice borrowed-record tests failed"))
     (if (compiler-typecheck-located-ok?)
       unit
       (io.panic "typecheck: located diagnostic test failed"))

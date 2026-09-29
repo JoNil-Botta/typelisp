@@ -84,6 +84,14 @@ slice_cross_mutability_reject|check-fail|tests/safety/slice_cross_mutability_rej
 slice_shared_write_reject|check-fail|tests/safety/slice_shared_write_reject.tl|-|mutable array access
 slice_extern_ref_reject|check-fail|tests/safety/slice_extern_ref_reject.tl|-|extern/native Slice references are unsupported
 slice_explicit_unsize_ok|check-ok|tests/safety/slice_explicit_unsize_ok.tl|-|-
+# Arrays of lifetime-parameterized records unsize to shared Slices (#8111); the
+# borrow keeps the array owner's and every stored referent's lifetime.
+slice_record_shared_borrow_ok|run-exit|tests/safety/slice_record_shared_borrow_ok.tl|1|-
+slice_scalar_refs_ok|run-exit|tests/safety/slice_scalar_refs_ok.tl|42|-
+slice_record_view_escape_reject|check-fail|tests/safety/slice_record_view_escape_reject.tl|-|reference value would escape lexical scope
+slice_record_text_escape_reject|check-fail|tests/safety/slice_record_text_escape_reject.tl|-|reference value would escape lexical scope
+slice_record_mut_alias_reject|check-fail|tests/safety/slice_record_mut_alias_reject.tl|-|cannot read mutably borrowed place `items`
+slice_record_mut_shorten_reject|check-fail|tests/safety/slice_record_mut_shorten_reject.tl|-|mutable reference referent type is invariant
 slice_macro_kind_reject|check-fail|tests/safety/slice_macro_kind_reject.tl|-|macro slice-only type operand S rejects i64: expected one of :kind slice
 slice_macro_nested_element_reject|check-fail|tests/safety/slice_macro_nested_element_reject.tl|-|bare Slice type is unsized; borrow it
 

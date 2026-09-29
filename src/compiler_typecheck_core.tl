@@ -34845,11 +34845,18 @@
 ;; Closed, call-local whole-array unsizing.  This is intentionally separate
 ;; from tc-type-compatible?/tc-match-inferred-type-for-expected: a fixed Array
 ;; reference can become a Slice reference only at a typed call boundary, with
-;; exact element type and matching mutability.
-(define (tc-call-array-ref-to-slice-ref-compatible?
+;; matching mutability. The decomposition names the two element types and the
+;; mutability; the typecheck predicate below decides compatibility and lowering
+;; asks only for the shape, because typecheck has already proven the call.
+(defenum TcArraySliceUnsize
+  (No)
+  (Shared ast.AstType ast.AstType)
+  (Mutable ast.AstType ast.AstType))
+
+(define (tc-call-array-ref-to-slice-ref-unsize
   [ctx : TcContext]
   [expected : ast.AstType]
-  [actual : ast.AstType]) : bool
+  [actual : ast.AstType]) : TcArraySliceUnsize
   (let
     [want : ast.AstType (tc-type-strip-region (tc-resolve-type ctx expected))]
     [got : ast.AstType (tc-type-strip-region (tc-resolve-type ctx actual))]
@@ -34857,34 +34864,63 @@
       [(ast.AstType.Ref _ want-inner)
         (match got
           [(ast.AstType.Ref _ got-inner)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (tc-context-type-get ctx want-inner)))
-              [(ast.AstType.Slice want-elem)
-                (match (tc-type-strip-region
-                  (tc-resolve-type ctx (tc-context-type-get ctx got-inner)))
-                  [(ast.AstType.Array got-elem _)
-                    (tc-type-eq
-                      (tc-resolve-type ctx (ast.ty-node-get want-elem))
-                      (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
-                  [_ false])]
-              [_ false])]
-          [_ false])]
+            (match (tc-call-slice-and-array-elems ctx want-inner got-inner)
+              [(TcArraySliceUnsize.Mutable want-elem got-elem)
+                (TcArraySliceUnsize.Shared want-elem got-elem)]
+              [_ TcArraySliceUnsize.No])]
+          [_ TcArraySliceUnsize.No])]
       [(ast.AstType.MutRef _ want-inner)
         (match got
           [(ast.AstType.MutRef _ got-inner)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (tc-context-type-get ctx want-inner)))
-              [(ast.AstType.Slice want-elem)
-                (match (tc-type-strip-region
-                  (tc-resolve-type ctx (tc-context-type-get ctx got-inner)))
-                  [(ast.AstType.Array got-elem _)
-                    (tc-type-eq
-                      (tc-resolve-type ctx (ast.ty-node-get want-elem))
-                      (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
-                  [_ false])]
-              [_ false])]
-          [_ false])]
-      [_ false])))
+            (tc-call-slice-and-array-elems ctx want-inner got-inner)]
+          [_ TcArraySliceUnsize.No])]
+      [_ TcArraySliceUnsize.No])))
+
+;; The resolved element types of a `Slice` referent and an `Array` referent,
+;; tagged `Mutable`; the shared caller retags them.
+(define (tc-call-slice-and-array-elems
+  [ctx : TcContext]
+  [want-inner : i64]
+  [got-inner : i64]) : TcArraySliceUnsize
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-context-type-get ctx want-inner)))
+    [(ast.AstType.Slice want-elem)
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx got-inner)))
+        [(ast.AstType.Array got-elem _)
+          (TcArraySliceUnsize.Mutable
+            (tc-resolve-type ctx (ast.ty-node-get want-elem))
+            (tc-resolve-type ctx (ast.ty-node-get got-elem)))]
+        [_ TcArraySliceUnsize.No])]
+    [_ TcArraySliceUnsize.No]))
+
+;; Through a shared reference the element type may shorten the lifetimes it
+;; stores, exactly as a shared borrow of one element may (#8111): the elements
+;; are only read, and `tc-type-coercible-core?` admits structural lifetime
+;; subtyping, never a representation change. Through a mutable reference the
+;; element type must be exact, because a write through the Slice could store a
+;; shorter-lived reference into the array.
+(define (tc-call-array-ref-to-slice-ref-compatible?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  (match (tc-call-array-ref-to-slice-ref-unsize ctx expected actual)
+    [(TcArraySliceUnsize.No) false]
+    [(TcArraySliceUnsize.Shared want-elem got-elem)
+      (tc-type-coercible-core? ctx env want-elem got-elem)]
+    [(TcArraySliceUnsize.Mutable want-elem got-elem)
+      (tc-type-eq want-elem got-elem)]))
+
+;; Lowering's question: is this call argument a whole-array unsize? Typecheck
+;; has already checked the element types against the instantiated formal.
+(define (tc-call-array-ref-to-slice-ref-shape?
+  [ctx : TcContext]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : bool
+  (match (tc-call-array-ref-to-slice-ref-unsize ctx expected actual)
+    [(TcArraySliceUnsize.No) false]
+    [_ true]))
 
 (define (tc-call-mutable-ref-formal? [ctx : TcContext] [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-global-shared-view ty))
@@ -37686,6 +37722,7 @@
       (if (or
         (tc-call-array-ref-to-slice-ref-compatible?
           ctx
+          env
           (tc-global-shared-view expected)
           (tc-global-shared-view actual))
         (tc-call-string-temporary-ref-compatible?
@@ -51055,6 +51092,21 @@
     ;; tuple shape recursively, so borrowing the tuple's storage is no less
     ;; representable than borrowing a lifetime-parameterized nominal below.
     [(ast.AstType.Tuple _) true]
+    ;; A fixed array stores its elements inline, so its borrowed referent type
+    ;; keeps every element lifetime exactly as the element type spells it (the
+    ;; `Slice` unsizing of `(& items)` carries the same element type). Admit it
+    ;; when a borrow of one element would be admitted, or when the elements are
+    ;; shared references. An element that stores a mutable reference is not
+    ;; admitted: a shared view of several `&mut` would need a lending contract.
+    [(ast.AstType.Array elem _)
+      (let
+        [elem-ty : ast.AstType (tc-type-strip-region (ast.ty-node-get elem))]
+        (and
+          (not
+            (tc-type-contains-mut-reference? (tc-global-shared-view elem-ty)))
+          (match (tc-global-shared-view elem-ty)
+            [(ast.AstType.Ref _ _) true]
+            [_ (tc-reference-containing-place-borrow-ok? elem-ty)])))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)

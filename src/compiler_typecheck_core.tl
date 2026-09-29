@@ -5356,9 +5356,10 @@
 ;; changed. No splice falls back to a whole-environment rebuild, so
 ;; `walk_splice_env_fallbacks` stays zero.
 (cfg
-  compile-profile
-  (counters.defcounters
+  (any compile-profile test)
+  (counters.defslots
     compiler-tc-splice-profile
+    18
     (tc-profile-splice-registry-invalidated
       "typecheck.macro.walk_splice_registry_invalidated")
     (tc-profile-splice-ctfe-cleared "typecheck.macro.walk_splice_ctfe_cleared")
@@ -5391,6 +5392,11 @@
       "typecheck.macro.walk_segment_fallback_file_flattens")
     (tc-profile-segment-final-flattens
       "typecheck.macro.walk_segment_final_flattens")))
+
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-splice-profile-first : i64
+    tc-profile-splice-registry-invalidated))
 
 ;; Marker-path probes. Every marker batch flushes a delta cache, so the bounded
 ;; fallback environment build never runs and its rows stay zero.
@@ -5544,15 +5550,26 @@
 ;; An intermediate segmented-program flatten names its conservative reason:
 ;; 1 = an alias import, 2 = a file import.
 (cfg
-  compile-profile
-  (define (compiler-tc-walk-segment-fallback-flatten-note! [reason : i64]) : unit
+  (any compile-profile test)
+  (define (compiler-tc-walk-segment-fallback-flatten-note!
+    [state : TcMacroState]
+    [reason : i64]) : unit
     (begin
-      (counters.bump! tc-profile-segment-fallback-flattens)
+      (compiler-tc-macro-profile-metric-add!
+        state
+        tc-profile-segment-fallback-flattens
+        1)
       (cond
         [(= reason 1)
-          (counters.bump! tc-profile-segment-fallback-alias-flattens)]
+          (compiler-tc-macro-profile-metric-add!
+            state
+            tc-profile-segment-fallback-alias-flattens
+            1)]
         [(= reason 2)
-          (counters.bump! tc-profile-segment-fallback-file-flattens)]
+          (compiler-tc-macro-profile-metric-add!
+            state
+            tc-profile-segment-fallback-file-flattens
+            1)]
         [else unit]))))
 
 ;; Per-decl sampler for the expansion walk's decl loop. Each iteration notes
@@ -6098,9 +6115,10 @@
 
 ;; Packed job-owned view (CompilerProfileState slots 242-373): four reinference
 ;; columns followed by the body-fact hit/miss columns, one slot per profiled
-;; site. Relative slots 108-118 and 126-127 map to the driver/loader lifetime
-;; ledger; relative slots 120-125 and 128-131 retain macro lifetime boundary
-;; starts. Keeping the six equal-width families contiguous makes reset/render
+;; site, then the macro walk's splice counters (compiler-tc-splice-profile,
+;; relative 18-35). Relative slots 108-118 and 126-127 map to the driver/loader
+;; lifetime ledger; relative slots 120-125 and 128-131 retain macro lifetime
+;; boundary starts. Keeping the six equal-width families contiguous makes reset/render
 ;; order deterministic without reintroducing array owners in this leaf module.
 (cfg
   (any compile-profile test)
@@ -6159,12 +6177,15 @@
 
 (cfg
   (any compile-profile test)
-  (define (compiler-tc-profile-metrics-address [state : TcJobState]) : u64
+  (define (compiler-tc-macro-profile-metrics-address [state : TcMacroState]) : u64
     (cast
-      (tc-macro-state-slot-address
-        (tc-job-state-macro-state state)
-        tc-macro-state-slot-profile-metrics)
+      (tc-macro-state-slot-address state tc-macro-state-slot-profile-metrics)
       : u64)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-profile-metrics-address [state : TcJobState]) : u64
+    (compiler-tc-macro-profile-metrics-address (tc-job-state-macro-state state))))
 
 (cfg
   (any compile-profile test)
@@ -6199,6 +6220,39 @@
       metrics-address
       metric
       (+ (compiler-tc-profile-metric-value metrics-address metric) value))))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-macro-profile-metric-add!
+    [state : TcMacroState]
+    [metric : i64]
+    [value : i64]) : unit
+    (compiler-tc-profile-metric-add!
+      (compiler-tc-macro-profile-metrics-address state)
+      metric
+      value)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-profile-metric-reset-range!
+    [metrics-address : u64]
+    [start : i64]
+    [end : i64]) : unit
+    (let
+      [metric : i64 start]
+      (while (< metric end)
+        (begin
+          (compiler-tc-profile-metric-set! metrics-address metric 0)
+          (set! metric (+ metric 1)))))))
+
+;; The splice counters reset with each macro-expansion program.
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-splice-profile-reset [state : TcJobState]) : unit
+    (compiler-tc-profile-metric-reset-range!
+      (compiler-tc-profile-metrics-address state)
+      compiler-tc-splice-profile-first
+      compiler-tc-splice-profile-end)))
 
 (cfg
   (any compile-profile test)
@@ -6592,12 +6646,13 @@
 ;; The macro-expansion program's counters; the walk tables keep accumulating.
 (cfg
   compile-profile
-  (define (compiler-tc-macro-profile-reset-program-counters) : unit
+  (define (compiler-tc-macro-profile-reset-program-counters
+    [state : TcJobState]) : unit
     (begin
       (compiler-tc-resolve-profile-reset!)
       (compiler-tc-unbound-profile-reset!)
       (compiler-tc-macro-program-profile-reset!)
-      (compiler-tc-splice-profile-reset!)
+      (compiler-tc-splice-profile-reset state)
       (set! compiler-tc-macro-splice-generation-rotations 0))))
 
 (cfg
@@ -6677,7 +6732,8 @@
       (compiler-tc-unbound-profile-emit!)
       (compiler-tc-macro-program-profile-emit!)
       (compiler-tc-walk-profile-emit!)
-      (compiler-tc-splice-profile-emit!)
+      (compiler-tc-splice-profile-emit!
+        (compiler-tc-profile-metrics-address state))
       (compiler-tc-walk-probe-profile-emit!)
       (compiler-tc-reinfer-profile-emit state)
       (compiler-tc-body-fact-profile-emit state)
@@ -81689,7 +81745,12 @@
   [state : TcMacroState]
   [_reason : i64]) : unit
   (begin
-    (cfg compile-profile (counters.bump! tc-profile-splice-ctfe-cleared))
+    (cfg
+      compile-profile
+      (compiler-tc-macro-profile-metric-add!
+        state
+        tc-profile-splice-ctfe-cleared
+        1))
     (tc-macro-walk-set! state macro-expand-ctfe-env-ready false)
     (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata false)
     (tc-macro-walk-set! state macro-expand-ctfe-env-rebuild-pending true)
@@ -81997,22 +82058,34 @@
                     (if grew?
                       (cfg
                         compile-profile
-                        (counters.bump! tc-profile-splice-ctfe-capacity-grows))
+                        (compiler-tc-macro-profile-metric-add!
+                          state
+                          tc-profile-splice-ctfe-capacity-grows
+                          1))
                       unit)
                     (cfg
                       compile-profile
-                      (counters.bump! tc-profile-splice-ctfe-extensions))
+                      (compiler-tc-macro-profile-metric-add!
+                        state
+                        tc-profile-splice-ctfe-extensions
+                        1))
                     CompilerCtfeSpliceExtensionResult.Extended))))
             (begin
               (cfg
                 compile-profile
-                (counters.bump! tc-profile-splice-ctfe-semantic-rejections))
+                (compiler-tc-macro-profile-metric-add!
+                  state
+                  tc-profile-splice-ctfe-semantic-rejections
+                  1))
               CompilerCtfeSpliceExtensionResult.SemanticRejected)))]
       [else
         (begin
           (cfg
             compile-profile
-            (counters.bump! tc-profile-splice-ctfe-cache-unavailable))
+            (compiler-tc-macro-profile-metric-add!
+              state
+              tc-profile-splice-ctfe-cache-unavailable
+              1))
           CompilerCtfeSpliceExtensionResult.CacheUnavailable)])))
 
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
@@ -82075,11 +82148,19 @@
               state
               macro-expand-ctfe-env-rebuild-pending
               false)
-            (cfg compile-profile (counters.bump! tc-profile-splice-ctfe-builds))
+            (cfg
+              compile-profile
+              (compiler-tc-macro-profile-metric-add!
+                state
+                tc-profile-splice-ctfe-builds
+                1))
             (cfg
               compile-profile
               (if _rebuild?
-                (counters.bump! tc-profile-splice-ctfe-rebuilds)
+                (compiler-tc-macro-profile-metric-add!
+                  state
+                  tc-profile-splice-ctfe-rebuilds
+                  1)
                 unit)
               unit)))))))
 
@@ -84568,8 +84649,14 @@
       (cfg
         compile-profile
         (begin
-          (counters.bump! tc-profile-segment-splits)
-          (counters.add! tc-profile-segment-delta-decls middle-count)))
+          (compiler-tc-macro-profile-metric-add!
+            (tc-job-state-macro-state state)
+            tc-profile-segment-splits
+            1)
+          (compiler-tc-macro-profile-metric-add!
+            (tc-job-state-macro-state state)
+            tc-profile-segment-delta-decls
+            middle-count)))
       (set! data.head next-head)
       (set! data.cursor 0)
       (set! data.queue-len (+ (- data.queue-len 1) middle-count))
@@ -84918,7 +85005,9 @@
     (begin
       (cfg
         compile-profile
-        (compiler-tc-walk-segment-fallback-flatten-note! _reason))
+        (compiler-tc-walk-segment-fallback-flatten-note!
+          (tc-job-state-macro-state state)
+          _reason))
       out)))
 
 (define (macro-segmented-program-current-starts-module-import-placeholder?
@@ -104720,8 +104809,10 @@
                     (begin
                       (cfg
                         compile-profile
-                        (counters.bump!
-                          tc-profile-splice-env-reresolve-candidates))
+                        (compiler-tc-macro-profile-metric-add!
+                          (tc-context-macro-state ctx)
+                          tc-profile-splice-env-reresolve-candidates
+                          1))
                       (if (ast.ast-type-eq?
                         before
                         (tc-global-shared-view after))
@@ -104730,8 +104821,10 @@
                           (set! (array-ref values value-slot) after)
                           (cfg
                             compile-profile
-                            (counters.bump!
-                              tc-profile-splice-env-reresolve-updates))))
+                            (compiler-tc-macro-profile-metric-add!
+                              (tc-context-macro-state ctx)
+                              tc-profile-splice-env-reresolve-updates
+                              1))))
                       (if (tc-type-needs-resolution-for-context? ctx after)
                         (begin
                           (set!
@@ -104759,7 +104852,10 @@
     (begin
       (cfg
         compile-profile
-        (counters.bump! tc-profile-splice-env-reresolve-calls))
+        (compiler-tc-macro-profile-metric-add!
+          (tc-context-macro-state ctx)
+          tc-profile-splice-env-reresolve-calls
+          1))
       ;; A batch of consecutive module markers can leave a small raw prefix.
       ;; Skip it to the first explicit layer, then follow only partial `below`
       ;; links, exactly like the lookup chain being invalidated.
@@ -105016,7 +105112,10 @@
                 (begin
                   (cfg
                     compile-profile
-                    (counters.bump! tc-profile-segment-final-flattens))
+                    (compiler-tc-macro-profile-metric-add!
+                      macro-state
+                      tc-profile-segment-final-flattens
+                      1))
                   (set!
                     result
                     (ResultMacroDeclsWithPaths.Ok final-decls final-paths))
@@ -105304,8 +105403,10 @@
                                           compile-profile
                                           (if incremental?
                                             unit
-                                            (counters.bump!
-                                              tc-profile-splice-registry-invalidated))
+                                            (compiler-tc-macro-profile-metric-add!
+                                              macro-state
+                                              tc-profile-splice-registry-invalidated
+                                              1))
                                           unit)
                                         ;; Generated Module catalogs are usually
                                         ;; inert additions, but a full catalog can
@@ -106744,7 +106845,9 @@
       (cfg
         embedded-stdlib-tlci
         (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-      (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-reset-program-counters job-state))
       (cfg
         (all embedded-stdlib-tlci tlci-native-route-stress)
         (compiler-tc-tlci-native-stress-pass-start!

@@ -724,6 +724,120 @@
             (<= tc_core.compiler-tc-splice-profile-end 108))
           "splice slots do not overlap another family")))))
 
+(cfg
+  test
+  (test
+    compiler-tc-macro-program-profile-job-isolation
+    (let
+      [left-metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 tc_core.compiler-tc-profile-metric-count)]
+      [right-metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 tc_core.compiler-tc-profile-metric-count)]
+      [left : tc_core.TcJobState
+        (tc_core.tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data left-metrics) : (Ptr i64)))))]
+      [right : tc_core.TcJobState
+        (tc_core.tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data right-metrics) : (Ptr i64)))))]
+      [left-macro : tc_core.TcMacroState
+        (tc_core.tc-job-state-macro-state left)]
+      [right-macro : tc_core.TcMacroState
+        (tc_core.tc-job-state-macro-state right)]
+      [left-address : u64 (tc_core.compiler-tc-profile-metrics-address left)]
+      [right-address : u64 (tc_core.compiler-tc-profile-metrics-address right)]
+      (begin
+        (tc_core.compiler-tc-macro-program-profile-reset left)
+        (tc_core.compiler-tc-macro-program-profile-reset right)
+        ;; Interleave the two jobs' counts and maxima on the same slot names.
+        (tc_core.compiler-tc-macro-profile-metric-add!
+          left-macro
+          tc_core.tc-profile-generated-decl-checks
+          2)
+        (tc_core.compiler-tc-macro-profile-metric-max!
+          right-macro
+          tc_core.tc-profile-live-symbols-max-bytes
+          7)
+        (tc_core.compiler-tc-macro-profile-metric-max!
+          left-macro
+          tc_core.tc-profile-live-symbols-max-bytes
+          100)
+        (tc_core.compiler-tc-macro-profile-metric-max!
+          left-macro
+          tc_core.tc-profile-live-symbols-max-bytes
+          40)
+        (tc_core.compiler-tc-macro-profile-metric-add!
+          right-macro
+          tc_core.tc-profile-stdlib-catalog-hits
+          1)
+        (tc_core.compiler-tc-macro-profile-metric-add!
+          left-macro
+          tc_core.tc-profile-splice-generation-rotations
+          3)
+        (tc_core.compiler-tc-profile-metric-set!
+          right-address
+          tc_core.tc-profile-stdlib-entry-invoke-start-ns
+          9)
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-generated-decl-checks)
+          2
+          "left counts its own generated declaration checks")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            right-address
+            tc_core.tc-profile-generated-decl-checks)
+          0
+          "left's checks are not right's")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-live-symbols-max-bytes)
+          100
+          "a smaller sample does not lower left's maximum")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            right-address
+            tc_core.tc-profile-live-symbols-max-bytes)
+          7
+          "right keeps its own maximum")
+        (tc_core.compiler-tc-macro-program-profile-reset right)
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            right-address
+            tc_core.tc-profile-stdlib-entry-invoke-start-ns)
+          0
+          "right reset clears the family's last, unreported slot")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            right-address
+            tc_core.tc-profile-stdlib-catalog-hits)
+          0
+          "right reset clears its catalog hits")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-splice-generation-rotations)
+          3
+          "right reset leaves left's splice rotations")
+        (test.assert-i64-eq
+          (tc_core.compiler-tc-profile-metric-value
+            left-address
+            tc_core.tc-profile-live-symbols-max-bytes)
+          100
+          "right reset leaves left's maximum")
+        ;; The family follows the splice counters and ends before the driver
+        ;; ledger's first slot.
+        (test.assert-true
+          (and
+            (>=
+              tc_core.compiler-tc-macro-program-profile-first
+              tc_core.compiler-tc-splice-profile-end)
+            (<= tc_core.compiler-tc-macro-program-profile-end 108))
+          "macro-program slots do not overlap another family")))))
+
 ;; Every span-bearing diagnostic builder below a typecheck error, rendered for
 ;; one expression root through one expression segment-bases token.
 (define (tc-diagnostic-span-isolation-transcript

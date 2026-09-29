@@ -223,8 +223,11 @@ The important project rules are:
 - Compiler and performance changes must include the appropriate tests and
   deterministic measurements.
 
-Run `scripts/ci-verify.sh` to execute the full local verification gate. The
-repository's [scripts README](scripts/README.md) explains which gates run in CI.
+Run `scripts/ci-verify.sh` to execute the full local verification gate. Its
+host prerequisites are listed under Development Setup in
+[CONTRIBUTING.md](CONTRIBUTING.md), and it checks them before the first gate
+starts. The repository's [scripts README](scripts/README.md) explains which
+gates run in CI.
 
 ## License
 

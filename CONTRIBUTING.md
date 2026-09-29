@@ -13,7 +13,22 @@ Thanks for your interest! This is a learning project — all contributions welco
    bridges for older seeds.
 3. You also need a native toolchain: `as` + `ld` on Linux, or `clang` + MSVC
    `link.exe` + a Windows SDK on Windows, for build/run.
-4. Run the verification gate: `scripts/ci-verify.sh`.
+4. The verification gate also runs these host tools; none is a build input:
+   - Linux: the rest of GNU binutils (`readelf`, `objdump`), a C compiler
+     (`cc`) and `clang` for the C fixtures and baselines, `valgrind` for the
+     Cachegrind instruction counts, GNU `time` with `-v` at `/usr/bin/time` (or
+     set `TLCI_NATIVE_ROUTE_TIME_BIN` and `DOC_SITE_TIME_BIN` to one), and
+     `jq`. On Debian or Ubuntu:
+     `sudo apt install binutils gcc clang valgrind time jq`. The memory-bounded
+     gates also need a user systemd manager (`systemd-run --user`) that
+     enforces `MemoryMax`.
+   - Windows: PowerShell 7 (`pwsh`) and `jq`.
+
+   [`scripts/ci-host-tools.tsv`](scripts/ci-host-tools.tsv) lists each tool
+   with the gates that run it. `scripts/ci-verify.sh` checks the tools of the
+   gates it will run before the first one starts, and names every missing tool
+   with its install hint.
+5. Run the verification gate: `scripts/ci-verify.sh`.
 
 TypeLisp is **fully self-hosted**: the compiler compiles itself. There is no
 Rust (or other-language) compiler — see the self-perpetuating bootstrap in

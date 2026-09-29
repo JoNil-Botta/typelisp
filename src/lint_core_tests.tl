@@ -720,14 +720,16 @@
             "lint: core.cond call should produce transitional qualifier finding")])
       unit)))
 
-(define (compiler-lint-self-test) : i64
+;; Nested else-`if` ladders: length math, the head finding's depth, rule id
+;; and value/guard/generic message, the threshold boundary, all-exit ladders
+;; that stay unflagged, and ladders reached through begin, let and a source
+;; view.
+(define (lint-ladder-smoke
+  [vx : i64]
+  [one : i64]
+  [unit-expr : i64]
+  [return-one : i64]) : unit
   (let
-    [vx : i64 (lint-test-var "x")]
-    [vy : i64 (lint-test-var "y")]
-    [vz : i64 (lint-test-var "z")]
-    [one : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [unit-expr : i64
-      (ast.ast-node-push (ast.AstExpr.Literal ast.AstLiteral.Unit))]
     [ladder3 : i64
       (ast.ast-expr-if
         vx
@@ -742,12 +744,6 @@
           vx
           one
           (ast.ast-expr-if vx one (ast.ast-expr-if vx one one))))]
-    [return-chain3 : i64
-      (ast.ast-expr-if
-        vx
-        (ast.ast-expr-if vx (ast.ast-expr-if vx one one) one)
-        one)]
-    [return-one : i64 (ast.ast-expr-return one)]
     [break-expr : i64 (ast_tests.ast-expr-break)]
     [continue-expr : i64 (ast_tests.ast-expr-continue)]
     [all-return-ladder3 : i64
@@ -779,15 +775,6 @@
         vx
         return-one
         (ast.ast-expr-if vx one (ast.ast-expr-if vx one one)))]
-    [not-vx : i64 (ast.ast-expr-unary (ast.AstUnOp.Not) vx)]
-    [set-ok-false : i64
-      (ast.ast-expr-set-id
-        (ci.intern-generated-name "ok")
-        (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Bool false))))]
-    [unit-then-guard : i64 (ast.ast-expr-if vx unit-expr return-one)]
-    [unit-else-guard : i64 (ast.ast-expr-if vx return-one unit-expr)]
-    [unit-value-guard : i64 (ast.ast-expr-if vx one unit-expr)]
-    [unit-not-set-guard : i64 (ast.ast-expr-if not-vx unit-expr set-ok-false)]
     [nested : i64
       (ast.ast-node-push
         (ast.AstExpr.Begin
@@ -803,53 +790,9 @@
             ladder3)
           (ast.ast-let-binding-list-new))
         vx)]
-    [nested-a-id : i64 (ci.intern-generated-name "a")]
-    [outer-let-bindings : ast.AstLetBindingList
-      (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id nested-a-id (ast.AstMaybeType.No) one)
-        (ast.ast-let-binding-list-new))]
-    [inner-let-bindings : ast.AstLetBindingList
-      (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id
-          (ci.intern-generated-name "b")
-          (ast.AstMaybeType.No)
-          vx)
-        (ast.ast-let-binding-list-new))]
-    [shadowing-let-bindings : ast.AstLetBindingList
-      (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id nested-a-id (ast.AstMaybeType.No) one)
-        (ast.ast-let-binding-list-new))]
-    [nested-let : i64
-      (ast.ast-expr-let
-        (ast.ast-global-shared-view outer-let-bindings)
-        (ast.ast-expr-let (ast.ast-global-shared-view inner-let-bindings) vx))]
-    [shadowing-nested-let : i64
-      (ast.ast-expr-let
-        (ast.ast-global-shared-view outer-let-bindings)
-        (ast.ast-expr-let shadowing-let-bindings vx))]
-    [begin-inner-let : i64
-      (ast.ast-expr-let
-        outer-let-bindings
-        (ast.ast-node-push
-          (ast.AstExpr.Begin
-            (ast.ast-expr-cons
-              (ast.ast-expr-let inner-let-bindings vx)
-              (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
     [spanned : i64
       (lint-test-source-view ladder3 (ast.ast-source-span 7 3 9 4))]
-    [spanned-nested-let : i64
-      (lint-test-source-view nested-let (ast.ast-source-span 11 5 15 6))]
-    [single-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
-    [spanned-single-begin : i64
-      (lint-test-source-view single-begin (ast.ast-source-span 51 3 51 13))]
-    [empty-begin : i64
-      (ast.ast-node-push (ast.AstExpr.Begin (ast.ast-expr-list-new)))]
     (begin
-      (unless
-        (lint-name-set-smoke-ok?)
-        (io.panic "lint: dense name set empty/one/many/duplicate smoke failed"))
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)
         unit
@@ -963,6 +906,66 @@
         0)
         unit
         (io.panic "lint: break/continue ladder should not be ladder-flagged"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            nested
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: ladder nested in begin should be flagged once"))
+      ;; ... and into let-binding initializers
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            in-let
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: ladder in a let binding should be flagged once"))
+      ;; Longer ladders are flagged once at the head with their full depth.
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            ladder4
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: 4-deep ladder should be flagged once"))
+      ;; A spanned ladder carries its head wrapper span on the finding.
+      (match (lint-findings-get
+        (lint-test-walk
+          spanned
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (let
+            [fspan : ast.AstSourceSpan finding.span]
+            (if (and
+              (= (ast.ast-source-span-start-line fspan) 7)
+              (string.eq
+                finding.rule-id
+                (lint_core.lint-rule-nested-if-ladder-id)))
+              unit
+              (io.panic
+                "lint: spanned ladder finding should carry rule id and span")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic "lint: spanned ladder should produce a finding")])
+      unit)))
+
+;; Return-path chains are reported only in tail position.
+(define (lint-return-path-chain-smoke [vx : i64] [one : i64]) : unit
+  (let
+    [return-chain3 : i64
+      (ast.ast-expr-if
+        vx
+        (ast.ast-expr-if vx (ast.ast-expr-if vx one one) one)
+        one)]
+    (begin
       ;; return-path chains are only reported in tail contexts, where replacing
       ;; nested failure values with `(return ...)` preserves semantics.
       (if (=
@@ -997,6 +1000,23 @@
             (io.panic "lint: return-path chain should report its rule id"))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: return-path chain should produce a finding")])
+      unit)))
+
+;; Unit-branch `if` guards, including the inverted `set!` guard and value
+;; branches that the rule skips.
+(define (lint-unit-if-guard-smoke
+  [vx : i64]
+  [one : i64]
+  [unit-expr : i64]
+  [return-one : i64]
+  [set-ok-false : i64]) : unit
+  (let
+    [not-vx : i64 (ast.ast-expr-unary (ast.AstUnOp.Not) vx)]
+    [unit-then-guard : i64 (ast.ast-expr-if vx unit-expr return-one)]
+    [unit-else-guard : i64 (ast.ast-expr-if vx return-one unit-expr)]
+    [unit-value-guard : i64 (ast.ast-expr-if vx one unit-expr)]
+    [unit-not-set-guard : i64 (ast.ast-expr-if not-vx unit-expr set-ok-false)]
+    (begin
       (if (=
         (lint_core.lint-findings-count
           (lint-test-walk
@@ -1036,15 +1056,20 @@
         1)
         unit
         (io.panic "lint: inverted unit set! guard should be flagged"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            nested
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: ladder nested in begin should be flagged once"))
+      unit)))
+
+;; Single-expression `begin` in value and tail position, the empty `begin`
+;; boundary, and the finding span.
+(define (lint-single-begin-smoke [vx : i64]) : unit
+  (let
+    [single-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
+    [spanned-single-begin : i64
+      (lint-test-source-view single-begin (ast.ast-source-span 51 3 51 13))]
+    [empty-begin : i64
+      (ast.ast-node-push (ast.AstExpr.Begin (ast.ast-expr-list-new)))]
+    (begin
       (if (=
         (lint_core.lint-findings-count
           (lint-test-walk
@@ -1089,46 +1114,47 @@
                 "lint: single-begin finding should carry rule id and span")))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: spanned single begin should produce a finding")])
-      ;; ... and into let-binding initializers
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            in-let
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: ladder in a let binding should be flagged once"))
-      ;; Longer ladders are flagged once at the head with their full depth.
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            ladder4
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: 4-deep ladder should be flagged once"))
-      ;; A spanned ladder carries its head wrapper span on the finding.
-      (match (lint-findings-get
-        (lint-test-walk
-          spanned
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [fspan : ast.AstSourceSpan finding.span]
-            (if (and
-              (= (ast.ast-source-span-start-line fspan) 7)
-              (string.eq
-                finding.rule-id
-                (lint_core.lint-rule-nested-if-ladder-id)))
-              unit
-              (io.panic
-                "lint: spanned ladder finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned ladder should produce a finding")])
+      unit)))
+
+;; Body-only nested `let`: the flagged shape, shadowing and non-trivial
+;; `begin` bodies that stay unflagged, and the finding span.
+(define (lint-nested-let-smoke [vx : i64] [one : i64]) : unit
+  (let
+    [nested-a-id : i64 (ci.intern-generated-name "a")]
+    [outer-let-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-cons
+        (ast.ast-let-binding-id nested-a-id (ast.AstMaybeType.No) one)
+        (ast.ast-let-binding-list-new))]
+    [inner-let-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-cons
+        (ast.ast-let-binding-id
+          (ci.intern-generated-name "b")
+          (ast.AstMaybeType.No)
+          vx)
+        (ast.ast-let-binding-list-new))]
+    [shadowing-let-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-cons
+        (ast.ast-let-binding-id nested-a-id (ast.AstMaybeType.No) one)
+        (ast.ast-let-binding-list-new))]
+    [nested-let : i64
+      (ast.ast-expr-let
+        (ast.ast-global-shared-view outer-let-bindings)
+        (ast.ast-expr-let (ast.ast-global-shared-view inner-let-bindings) vx))]
+    [shadowing-nested-let : i64
+      (ast.ast-expr-let
+        (ast.ast-global-shared-view outer-let-bindings)
+        (ast.ast-expr-let shadowing-let-bindings vx))]
+    [begin-inner-let : i64
+      (ast.ast-expr-let
+        outer-let-bindings
+        (ast.ast-node-push
+          (ast.AstExpr.Begin
+            (ast.ast-expr-cons
+              (ast.ast-expr-let inner-let-bindings vx)
+              (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
+    [spanned-nested-let : i64
+      (lint-test-source-view nested-let (ast.ast-source-span 11 5 15 6))]
+    (begin
       (if (=
         (lint_core.lint-findings-count
           (lint-test-walk
@@ -1173,6 +1199,33 @@
                 "lint: nested-let finding should carry rule id and span")))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: spanned nested let should produce a finding")])
+      unit)))
+
+;; Builds the leaf fixtures the families share and runs every family. Each
+;; family builds its own fixtures beside its assertions, and every assertion
+;; panics with its own message.
+(define (compiler-lint-self-test) : i64
+  (let
+    [vx : i64 (lint-test-var "x")]
+    [vy : i64 (lint-test-var "y")]
+    [vz : i64 (lint-test-var "z")]
+    [one : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [unit-expr : i64
+      (ast.ast-node-push (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [return-one : i64 (ast.ast-expr-return one)]
+    [set-ok-false : i64
+      (ast.ast-expr-set-id
+        (ci.intern-generated-name "ok")
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Bool false))))]
+    (begin
+      (unless
+        (lint-name-set-smoke-ok?)
+        (io.panic "lint: dense name set empty/one/many/duplicate smoke failed"))
+      (lint-ladder-smoke vx one unit-expr return-one)
+      (lint-return-path-chain-smoke vx one)
+      (lint-unit-if-guard-smoke vx one unit-expr return-one set-ok-false)
+      (lint-single-begin-smoke vx)
+      (lint-nested-let-smoke vx one)
       (lint-operator-smoke vx vy vz)
       (lint-no-effect-smoke vx one unit-expr set-ok-false)
       (lint-reachability-smoke vx vy one unit-expr return-one)

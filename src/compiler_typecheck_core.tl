@@ -64803,6 +64803,121 @@
               (- remaining 1)
               origin)])])))
 
+;; The innermost live `with` cleanup owner whose binding carries the brands
+;; being invalidated, or -1: the brands `owner` owns when `owner` >= 0 (safe
+;; destroy), otherwise the phase generation `region` (safe rewind). Such an
+;; owner cannot simply be marked moved: its cleanup runs when its `with` scope
+;; ends, after the arena is gone, whether or not the body mentions it again.
+;; A marker directly follows its owner's binding, so `prev-key`/`prev-ty` is
+;; the binding the marker belongs to. A shadowed owner is still live; a wholly
+;; moved one is not, and a partially moved one still cleans up the rest.
+(define (tc-move-live-cleanup-owner-in-region-scan
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [owner : i64]
+  [region : i64]
+  [prev-key : i64]
+  [prev-ty : ast.AstType]
+  [later : TcNameIdList]) : i64
+  (match (tc-type-env-marker-step env)
+    [(TcTypeEnvMarkerStep.Done) -1]
+    [(TcTypeEnvMarkerStep.Cache rest-env)
+      (tc-move-live-cleanup-owner-in-region-scan
+        root
+        rest-env
+        moved
+        owner
+        region
+        prev-key
+        prev-ty
+        later)]
+    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
+      (cond
+        [(= key (tc-default-boundary-id)) -1]
+        [(and
+            (tc-cleanup-owner-marker-for?
+              key
+              (tc-global-shared-view ty)
+              prev-key)
+            (if (>= owner 0)
+              (tc-type-contains-arena-owner-region?
+                root
+                (tc-global-shared-view prev-ty)
+                owner)
+              (tc-type-contains-region (tc-global-shared-view prev-ty) region))
+            (or
+              (tc-name-id-list-contains later prev-key)
+              (not (tc-moved-contains? moved prev-key))))
+          prev-key]
+        [else
+          (tc-move-live-cleanup-owner-in-region-scan
+            root
+            rest-env
+            moved
+            owner
+            region
+            key
+            ty
+            (if (>= prev-key 0)
+              (tc-name-id-list-add later prev-key)
+              later))])]))
+
+(define (tc-move-live-cleanup-owner-in-region
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [owner : i64]
+  [region : i64]) : i64
+  (if (tc-cleanup-owner-markers-possible?)
+    (tc-move-live-cleanup-owner-in-region-scan
+      (tc-global-shared-view env)
+      env
+      moved
+      owner
+      region
+      -1
+      (ast.AstType.Unit)
+      TcNameIdList.Nil)
+    -1))
+
+(define (tc-move-safe-invalidation-cleanup-owner-message
+  [expr-bases : i64]
+  [origin : ast.AstExpr]
+  [operation : String]
+  [arena : String]
+  [name : String]) : String
+  (let
+    [message : String
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.ArenaOwnership))
+        "typecheck: "
+        operation
+        " cannot invalidate `"
+        arena
+        "` while `with` cleanup owner `"
+        name
+        "` holds values from it; the owner's cleanup runs when its `with` scope ends")]
+    ;; A call node carries no span of its own; its arena argument does.
+    (match (match (tc-expr-maybe-span expr-bases (tc-global-shared-view origin))
+      [(TcMaybeAstSourceSpan.Some span) (TcMaybeAstSourceSpan.Some span)]
+      [(TcMaybeAstSourceSpan.No)
+        (match origin
+          [(ast.AstExpr.Call _ args)
+            (if (ast.ast-expr-list-empty? (& args))
+              TcMaybeAstSourceSpan.No
+              (tc-expr-id-maybe-span
+                expr-bases
+                (ast.ast-expr-list-get (& args) 0 0)))]
+          [_ TcMaybeAstSourceSpan.No])])
+      [(TcMaybeAstSourceSpan.Some span)
+        (tc-rich-error-with-help
+          span
+          message
+          "end the `with` scope before invalidating the arena, or allocate the owner in an arena that outlives the scope")]
+      [(TcMaybeAstSourceSpan.No) message])))
+
+;; `arena` names the invalidated owner or phase in the diagnostic.
 (define (tc-move-mark-region-locals
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -64810,17 +64925,33 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [region : i64]
+  [arena : String]
   [origin : ast.AstExpr]) : TcMoveResult
-  (tc-move-mark-region-locals-scan
-    expr-bases
-    env
-    (tc-global-shared-view locals)
-    loop-carried
-    moved
-    region
-    TcNameIdList.Nil
-    (tc-moved-len locals)
-    origin))
+  (let
+    [live-owner : i64
+      (tc-move-live-cleanup-owner-in-region
+        (tc-global-shared-view env)
+        (tc-global-shared-view moved)
+        -1
+        region)]
+    (if (>= live-owner 0)
+      (TcMoveResult.Err
+        (tc-move-safe-invalidation-cleanup-owner-message
+          expr-bases
+          origin
+          "arena.rewind-safe!"
+          arena
+          (tc-env-key-name-text live-owner)))
+      (tc-move-mark-region-locals-scan
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        loop-carried
+        moved
+        region
+        TcNameIdList.Nil
+        (tc-moved-len locals)
+        origin))))
 
 (define (tc-move-mark-owner-region-locals-scan
   [expr-bases : i64]
@@ -64917,16 +65048,31 @@
   [moved : TcMovedSet]
   [owner : i64]
   [origin : ast.AstExpr]) : TcMoveResult
-  (tc-move-mark-owner-region-locals-scan
-    expr-bases
-    env
-    (tc-global-shared-view locals)
-    loop-carried
-    moved
-    owner
-    TcNameIdList.Nil
-    (tc-moved-len locals)
-    origin))
+  (let
+    [live-owner : i64
+      (tc-move-live-cleanup-owner-in-region
+        (tc-global-shared-view env)
+        (tc-global-shared-view moved)
+        owner
+        -1)]
+    (if (>= live-owner 0)
+      (TcMoveResult.Err
+        (tc-move-safe-invalidation-cleanup-owner-message
+          expr-bases
+          origin
+          "arena.destroy-safe!"
+          (tc-env-key-name-text owner)
+          (tc-env-key-name-text live-owner)))
+      (tc-move-mark-owner-region-locals-scan
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        loop-carried
+        moved
+        owner
+        TcNameIdList.Nil
+        (tc-moved-len locals)
+        origin))))
 
 (define (tc-moved-add-hidden-atomic-user [set : TcMovedSet] [owner-id : i64]) : TcMovedSet
   (let
@@ -65119,6 +65265,7 @@
                           loop-carried
                           moved2
                           region
+                          (tc-env-key-name-text owner)
                           origin)]
                       [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
@@ -65138,6 +65285,7 @@
                       loop-carried
                       moved2
                       region
+                      (tc-env-key-name-text pid)
                       origin)]
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
           [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])
@@ -66369,8 +66517,10 @@
                             (tc-cleanup-owner-marker-id)
                             (ast.AstType.Var name))
                           name
-                          (tc-type-without-regions
-                            (tc-global-shared-view init-ty)))
+                          ;; Keep the initializer's arena brands, as a `let`
+                          ;; binding does: a safe destroy or rewind of that
+                          ;; arena must find this owner.
+                          (tc-global-shared-view init-ty))
                         (tc-moved-add locals name)
                         (tc-moved-remove-root-state loop-carried name)
                         (tc-param-storage-rebind-from-init

@@ -3188,7 +3188,7 @@
 (define (main) : i64
   (let [h : FileHandle (FileHandle 1)]
     0))"
-      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+      "typecheck: cleanup obligation of `h` is not discharged at the end of its let scope")
     (compiler-typecheck-error-ok?
       "(define (close [h : i64]) : unit unit)
 (define (main) : i64
@@ -8824,6 +8824,102 @@
 ;; aggregate/projection sharing, one-shot owner transfers, branch isolation,
 ;; and conservative repeated-loop owner moves pass. Creating a closure moves
 ;; each move-only capture even though execution of its body remains deferred.
+;; --- ordinary `let` cleanup obligations (#6947) ----------------------------
+(define (compiler-typecheck-let-obligation-source [src : String]) : String
+  (str_cat.str-cat
+    "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Pair
+  (:cleanup cleanup-pair)
+  (a FileHandle (:owned))
+  (b i64))
+(define (open [fd : i64]) : FileHandle (FileHandle fd))
+(define (peek [h : (& h FileHandle)]) : i64 h.fd)
+(define (take [h : FileHandle]) : unit unit)
+(define (same-shape [h : FileHandle]) : unit unit)
+(defenum Outcome (Ok i64) (Err i64))
+(define (fail) : Outcome (Outcome.Err 1))
+"
+    src))
+
+(define (compiler-typecheck-let-obligation-tests-ok?) : bool
+  (and
+    ;; Discharged by the declared cleanup function, on every path.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f [bad : bool]) : i64
+  (let [h : FileHandle (open 1)]
+    (begin
+      (if bad (begin (cleanup-file-handle h) (return -1)) unit)
+      (let [fd : i64 (peek (& h))]
+        (begin (cleanup-file-handle h) fd)))))"))
+    ;; Transferred to another `let`, a cleanup-owning aggregate, a `with`
+    ;; owner, or the function result.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f) : i64
+  (let [h : FileHandle (open 1)]
+    (let [g : FileHandle h]
+      (let [p : Pair (Pair g 2)]
+        (with ([w p cleanup-pair]) w.b)))))
+(define (g) : FileHandle
+  (let [h : FileHandle (open 1)]
+    (begin (peek (& h)) h)))"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f) : i64
+  (let [h : FileHandle (open 1)]
+    (peek (& h))))")
+      "typecheck: cleanup obligation of `h` is not discharged at the end of its let scope")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f [bad : bool]) : i64
+  (let [h : FileHandle (open 1)]
+    (begin
+      (if bad (return -1) unit)
+      (cleanup-file-handle h)
+      0)))")
+      "typecheck: cleanup obligation of `h` is not discharged before this return")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f [c : bool]) : i64
+  (let [h : FileHandle (open 1)]
+    (begin
+      (if c (cleanup-file-handle h) unit)
+      0)))")
+      "typecheck: cleanup obligation of `h` is discharged on only some paths through this branch")
+    ;; A same-shaped function is not the declared disposer.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f) : i64
+  (let [h : FileHandle (open 1)]
+    (begin (same-shape h) 0)))")
+      "typecheck: cleanup obligation of `h` is lost where it is moved without being discharged")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f [n : i64]) : i64
+  (begin
+    (while (< n 3)
+      (let [h : FileHandle (open n)]
+        (break)))
+    0))")
+      "typecheck: cleanup obligation of `h` is not discharged before this break leaves its loop")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f) : Outcome
+  (let [h : FileHandle (open 1)]
+    (let [v : i64 (try (fail))]
+      (begin (cleanup-file-handle h) (Outcome.Ok v)))))")
+      "typecheck: cleanup obligation of `h` is not discharged before this try can propagate an error")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-let-obligation-source
+        "(define (f) : i64
+  (let [p : Pair (Pair (open 1) 2)]
+    (begin (cleanup-file-handle p.a) 0)))")
+      "typecheck: cleanup obligation of `p` is only partly discharged at the end of its let scope")))
+
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
     (compiler-typecheck-moved-set-metrics-ok?)
@@ -9410,7 +9506,7 @@
 (define (bad-owner-dyn-array-ref-bind [items : (__tl_dyn-array FileHandle)] [i : i64]) : i64
   (let [h : FileHandle (array-ref items i)]
     h.fd))"
-      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+      "typecheck: cannot move owner-consuming value out of dynamic array element")
     (compiler-typecheck-ok?
       "(define (main) : i64
   (let
@@ -9432,7 +9528,7 @@
 (define (bad-owner-box-get-bind [cell : (Box FileHandle)]) : i64
   (let [h : FileHandle (deref cell)]
     h.fd))"
-      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+      "typecheck: cleanup obligation of `h` is not discharged at the end of its let scope")
     (compiler-typecheck-ok?
       "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -9602,8 +9698,8 @@
   (begin
     (if c (return (take-handle (begin 0 x))) unit)
     (take-handle x)))")
-    ;; A diverging arm leaves the join, but not the enclosing with scope's
-    ;; fallthrough-only owner check.
+    ;; A diverging arm leaves the join; the edge it leaves through checks the
+    ;; enclosing with scope's owner.
     (compiler-typecheck-ok?
       "(defstruct Token (id i64) (name String))
 (defenum Mode (Fast) (Slow))
@@ -10036,6 +10132,9 @@
     (if (compiler-typecheck-move-tests-ok?)
       unit
       (io.panic "typecheck: move checker tests failed"))
+    (if (compiler-typecheck-let-obligation-tests-ok?)
+      unit
+      (io.panic "typecheck: let cleanup obligation tests failed"))
     (if (compiler-typecheck-live-borrow-tests-ok?)
       unit
       (io.panic "typecheck: live borrow checker tests failed"))

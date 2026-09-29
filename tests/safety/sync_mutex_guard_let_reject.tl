@@ -1,4 +1,4 @@
-;: Mutex guards must be owned by `with`, not ordinary `let`.
+;: A mutex guard held by an ordinary `let` must be released or handed on before the scope ends.
 (import stdlib.sync)
 (import (sync.mutex i64) as mutex_i64)
 

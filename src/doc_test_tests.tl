@@ -1129,6 +1129,9 @@ typecheck: return type mismatch"))]
       (build_run_tests.source-tool-link-inputs-dedupe-smoke-ok?)
       (return (io.panic "source-tool: link input dedupe smoke regressed")))
     (unless
+      (build_run_tests.source-tool-link-dependency-section-smoke-ok?)
+      (return (io.panic "source-tool: link dependency section smoke regressed")))
+    (unless
       (build_run_tests.source-tool-windows-stack-reserve-smoke-ok?)
       (return (io.panic "source-tool: windows stack reserve smoke regressed")))
     (unless

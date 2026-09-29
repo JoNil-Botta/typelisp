@@ -47,10 +47,25 @@
   (Ok backend.CompilerBackendMode)
   (Err String))
 
+;; Who declared each link input, in declaration order: its kind ("library",
+;; "search-path", "arg" or "archive"), the value the linker sees, and the
+;; declaration, such as "package `w` (w/typelisp.pkg) field `linux-libraries`".
+(defstruct SourceToolLinkOrigins
+  (kinds process.ProcessStringList)
+  (values process.ProcessStringList)
+  (declared-by process.ProcessStringList))
+
 (defstruct SourceToolLinkInputs
   (libs process.ProcessStringList)
   (search-dirs process.ProcessStringList)
-  (raw-args process.ProcessStringList))
+  (raw-args process.ProcessStringList)
+  ;; Package dependency static archives, in link order. They follow the raw
+  ;; arguments; on Linux they, the libraries and the raw arguments form one
+  ;; linker group, so an archive may need a library named before it and two
+  ;; archives may reference each other.
+  (archives process.ProcessStringList)
+  ;; Every declaration, kept even when a merge drops its input as a duplicate.
+  (origins SourceToolLinkOrigins))
 
 (defenum ResultSourceToolLinkInputs
   (Ok SourceToolLinkInputs)
@@ -220,18 +235,37 @@
       count
       (source-tool-args-append args (io.arg idx)))))
 
-(define (source-tool-link-inputs-empty) : SourceToolLinkInputs
-  (SourceToolLinkInputs
+(define (source-tool-link-origins-empty) : SourceToolLinkOrigins
+  (SourceToolLinkOrigins
     (process.args-empty)
     (process.args-empty)
     (process.args-empty)))
 
-;; Wrap a list of fully-resolved archive/object paths (e.g. package dependency
-;; static archives) as link inputs. They are passed verbatim as raw args
-;; so both `ld` and MSVC `link.exe` treat them as positional inputs.
+(define (source-tool-link-origins-append
+  [left : SourceToolLinkOrigins]
+  [right : SourceToolLinkOrigins]) : SourceToolLinkOrigins
+  (SourceToolLinkOrigins
+    (process.args-append left.kinds right.kinds)
+    (process.args-append left.values right.values)
+    (process.args-append left.declared-by right.declared-by)))
+
+(define (source-tool-link-inputs-empty) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (process.args-empty)
+    (process.args-empty)
+    (process.args-empty)
+    (process.args-empty)
+    (source-tool-link-origins-empty)))
+
+;; Wrap fully-resolved package dependency static archives as link inputs.
 (define (source-tool-link-inputs-from-archives
   [archives : process.ProcessStringList]) : SourceToolLinkInputs
-  (SourceToolLinkInputs (process.args-empty) (process.args-empty) archives))
+  (SourceToolLinkInputs
+    (process.args-empty)
+    (process.args-empty)
+    (process.args-empty)
+    archives
+    (source-tool-link-origins-empty)))
 
 (define (source-tool-link-inputs-libs
   [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
@@ -247,15 +281,49 @@
       (owned_view.compiler-owned-reference-shared-view inputs)]
     inputs.search-dirs))
 
-(define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  inputs.raw-args)
+(define (source-tool-link-inputs-raw-args
+  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.raw-args))
+
+(define (source-tool-link-inputs-archives
+  [inputs : (& inputs SourceToolLinkInputs)]) : process.ProcessStringList
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.archives))
+
+(define (source-tool-link-inputs-origins
+  [inputs : (& inputs SourceToolLinkInputs)]) : SourceToolLinkOrigins
+  (let
+    [inputs : SourceToolLinkInputs
+      (owned_view.compiler-owned-reference-shared-view inputs)]
+    inputs.origins))
+
+(define (source-tool-link-inputs-add-origin
+  [inputs : SourceToolLinkInputs]
+  [kind : String]
+  [value : String]
+  [declared-by : String]) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    inputs.libs
+    inputs.search-dirs
+    inputs.raw-args
+    inputs.archives
+    (SourceToolLinkOrigins
+      (source-tool-args-append inputs.origins.kinds kind)
+      (source-tool-args-append inputs.origins.values value)
+      (source-tool-args-append inputs.origins.declared-by declared-by))))
 
 (define (source-tool-link-inputs-empty?
   [inputs : (& inputs SourceToolLinkInputs)]) : bool
   (and
     (= (process.args-count inputs.libs) 0)
     (= (process.args-count inputs.search-dirs) 0)
-    (= (process.args-count inputs.raw-args) 0)))
+    (= (process.args-count inputs.raw-args) 0)
+    (= (process.args-count inputs.archives) 0)))
 
 (define (source-tool-linux-crt-entry?
   [target : backend.CompilerBackendTarget]
@@ -271,7 +339,9 @@
   (SourceToolLinkInputs
     (source-tool-args-append (source-tool-link-inputs-libs inputs) name)
     (source-tool-link-inputs-search-dirs inputs)
-    (source-tool-link-inputs-raw-args inputs)))
+    (source-tool-link-inputs-raw-args inputs)
+    (source-tool-link-inputs-archives inputs)
+    (source-tool-link-inputs-origins inputs)))
 
 (define (source-tool-link-inputs-add-search-dir
   [inputs : SourceToolLinkInputs]
@@ -279,7 +349,9 @@
   (SourceToolLinkInputs
     (source-tool-link-inputs-libs inputs)
     (source-tool-args-append (source-tool-link-inputs-search-dirs inputs) dir)
-    (source-tool-link-inputs-raw-args inputs)))
+    (source-tool-link-inputs-raw-args inputs)
+    (source-tool-link-inputs-archives inputs)
+    (source-tool-link-inputs-origins inputs)))
 
 (define (source-tool-link-inputs-add-raw-arg
   [inputs : SourceToolLinkInputs]
@@ -289,7 +361,9 @@
     (source-tool-link-inputs-search-dirs inputs)
     (source-tool-args-append
       (source-tool-link-inputs-raw-args inputs)
-      arg-value)))
+      arg-value)
+    (source-tool-link-inputs-archives inputs)
+    (source-tool-link-inputs-origins inputs)))
 
 (define (source-tool-string-list-contains?
   [items : (& items process.ProcessStringList)]
@@ -332,9 +406,16 @@
           (set! i (+ i 1))))
       out)))
 
-(define (source-tool-link-inputs-merge
+;; Libraries, search directories and archives merge first-seen with exact
+;; duplicates removed, which never changes what the linker resolves: a search
+;; directory applies to every library, and libraries and archives form one
+;; group or are searched repeatedly. Raw arguments are removed only when
+;; `dedup-raw?`: a raw argument may be one half of a positional pair such as
+;; `--whole-archive`, so another package's copy must stay.
+(define (source-tool-link-inputs-merge-with
   [left : SourceToolLinkInputs]
-  [right : SourceToolLinkInputs]) : SourceToolLinkInputs
+  [right : SourceToolLinkInputs]
+  [dedup-raw? : bool]) : SourceToolLinkInputs
   (SourceToolLinkInputs
     (source-tool-string-list-merge-unique
       (source-tool-link-inputs-libs left)
@@ -342,9 +423,24 @@
     (source-tool-string-list-merge-unique
       (source-tool-link-inputs-search-dirs left)
       (source-tool-link-inputs-search-dirs right))
+    (if dedup-raw?
+      (source-tool-string-list-merge-unique
+        (source-tool-link-inputs-raw-args left)
+        (source-tool-link-inputs-raw-args right))
+      (process.args-append
+        (source-tool-link-inputs-raw-args left)
+        (source-tool-link-inputs-raw-args right)))
     (source-tool-string-list-merge-unique
-      (source-tool-link-inputs-raw-args left)
-      (source-tool-link-inputs-raw-args right))))
+      (source-tool-link-inputs-archives left)
+      (source-tool-link-inputs-archives right))
+    (source-tool-link-origins-append
+      (source-tool-link-inputs-origins left)
+      (source-tool-link-inputs-origins right))))
+
+(define (source-tool-link-inputs-merge
+  [left : SourceToolLinkInputs]
+  [right : SourceToolLinkInputs]) : SourceToolLinkInputs
+  (source-tool-link-inputs-merge-with left right true))
 
 (define (source-tool-link-inputs-add-ast
   [inputs : SourceToolLinkInputs]
@@ -356,21 +452,27 @@
           (source-tool-link-inputs-libs inputs)
           name)
         (source-tool-link-inputs-search-dirs inputs)
-        (source-tool-link-inputs-raw-args inputs))]
+        (source-tool-link-inputs-raw-args inputs)
+        (source-tool-link-inputs-archives inputs)
+        (source-tool-link-inputs-origins inputs))]
     [(ast.AstExternLinkInput.Search dir)
       (SourceToolLinkInputs
         (source-tool-link-inputs-libs inputs)
         (source-tool-args-append-unique
           (source-tool-link-inputs-search-dirs inputs)
           dir)
-        (source-tool-link-inputs-raw-args inputs))]
+        (source-tool-link-inputs-raw-args inputs)
+        (source-tool-link-inputs-archives inputs)
+        (source-tool-link-inputs-origins inputs))]
     [(ast.AstExternLinkInput.Arg arg-value)
       (SourceToolLinkInputs
         (source-tool-link-inputs-libs inputs)
         (source-tool-link-inputs-search-dirs inputs)
         (source-tool-args-append-unique
           (source-tool-link-inputs-raw-args inputs)
-          arg-value))]))
+          arg-value)
+        (source-tool-link-inputs-archives inputs)
+        (source-tool-link-inputs-origins inputs))]))
 
 (define (source-tool-link-inputs-add-ast-list
   [inputs : SourceToolLinkInputs]
@@ -850,10 +952,170 @@
     (source-tool-stdout-write (process.output-stdout output))
     (source-tool-stderr-write (process.output-stderr output))))
 
+;; The library a linker reported missing in `line`, or "": GNU ld's
+;; `cannot find -lNAME`, lld's `unable to find library -lNAME`, and link.exe's
+;; LNK1181 `cannot open input file 'NAME.lib'`.
+(define (source-tool-missing-library-in-line [line : (& line str)]) : String
+  (let
+    [n : i64 (string.string-length line)]
+    [gnu : i64
+      (backend.compiler-backend-string-find-from line "cannot find -l" 0)]
+    [lld : i64
+      (backend.compiler-backend-string-find-from
+        line
+        "unable to find library -l"
+        0)]
+    [msvc : i64
+      (backend.compiler-backend-string-find-from
+        line
+        "cannot open input file '"
+        0)]
+    [start : i64
+      (cond
+        [(>= gnu 0) (+ gnu 14)]
+        [(>= lld 0) (+ lld 25)]
+        [(>= msvc 0) (+ msvc 24)]
+        [else -1])]
+    [end : i64 start]
+    (if (< start 0)
+      ""
+      (begin
+        (while (and
+          (< end n)
+          (not (= (string.string-ref line end) ':'))
+          (not (= (string.string-ref line end) '\''))
+          (not (= (string.string-ref line end) ' ')))
+          (set! end (+ end 1)))
+        (let
+          [name : String (string.substring line start (- end start))]
+          (if (and
+            (>= msvc 0)
+            (< gnu 0)
+            (< lld 0)
+            (> (string.string-length name) 4)
+            (string.is-string-prefix-at
+              (& name)
+              ".lib"
+              (- (string.string-length name) 4)))
+            (string.substring (& name) 0 (- (string.string-length name) 4))
+            name))))))
+
+;; POSIX-shell single quoting, so a search path prints unambiguously.
+(define (source-tool-quote [value : (& value str)]) : String
+  (let
+    [n : i64 (string.string-length value)]
+    [index : i64 0]
+    [out : String "'"]
+    (begin
+      (while (< index n)
+        (let
+          [c : char (string.string-ref value index)]
+          (begin
+            (set!
+              out
+              (if (= c '\'')
+                (str_cat.str-cat out "'\\''")
+                (str_cat.str-cat out (string.substring value index 1))))
+            (set! index (+ index 1)))))
+      (str_cat.str-cat out "'"))))
+
+;; For each library the linker reported missing, the declarations that
+;; requested it and the search paths it was looked for in.
+(define (source-tool-link-failure-notes
+  [stderr : (& stderr str)]
+  [inputs : (& inputs SourceToolLinkInputs)]) : String
+  (let
+    [origins : SourceToolLinkOrigins (source-tool-link-inputs-origins inputs)]
+    [dirs : process.ProcessStringList
+      (source-tool-link-inputs-search-dirs inputs)]
+    [n : i64 (string.string-length stderr)]
+    [line-start : i64 0]
+    [out : String ""]
+    (begin
+      (while (< line-start n)
+        (let
+          [newline : i64 (string.index-of-byte stderr line-start 10)]
+          [line-end : i64
+            (if (< newline 0)
+              n
+              newline)]
+          [line : String
+            (string.substring stderr line-start (- line-end line-start))]
+          [name : String (source-tool-missing-library-in-line (& line))]
+          [origin-index : i64 0]
+          [named : bool false]
+          (begin
+            (if (= (string.string-length name) 0)
+              unit
+              (begin
+                (while (< origin-index (process.args-count origins.kinds))
+                  (begin
+                    (if (and
+                      (string.eq
+                        (process.args-ref origins.kinds origin-index)
+                        "library")
+                      (string.eq
+                        (process.args-ref origins.values origin-index)
+                        (owned_view.compiler-owned-shared-view name)))
+                      (begin
+                        (set!
+                          out
+                          (str_cat.str-cat
+                            out
+                            "\nnote: native library `"
+                            (owned_view.compiler-owned-shared-view name)
+                            "` is required by "
+                            (process.args-ref origins.declared-by origin-index)))
+                        (set! named true))
+                      unit)
+                    (set! origin-index (+ origin-index 1))))
+                (if named
+                  (let
+                    [dir-index : i64 0]
+                    [searched : String ""]
+                    (begin
+                      (while (< dir-index (process.args-count dirs))
+                        (begin
+                          (set!
+                            searched
+                            (str_cat.str-cat
+                              searched
+                              " "
+                              (let
+                                [dir : String (process.args-ref dirs dir-index)]
+                                (source-tool-quote (& dir)))))
+                          (set! dir-index (+ dir-index 1))))
+                      (set!
+                        out
+                        (str_cat.str-cat
+                          out
+                          "\nnote: search paths:"
+                          (if (= (string.string-length searched) 0)
+                            " none besides the linker's defaults"
+                            (str_cat.str-cat
+                              searched
+                              " and the linker's defaults"))))))
+                  unit)))
+            (set! line-start (+ line-end 1)))))
+      out)))
+
 (define (source-tool-run-command
   [role : String]
   [target : backend.CompilerBackendTarget]
   [command : process.ProcessCommand]) : SourceToolCommandStatus
+  (source-tool-run-command-for
+    role
+    target
+    command
+    (source-tool-link-inputs-empty)))
+
+;; Run `command`; a failed linker names the declarations behind the libraries
+;; it could not find (source-tool-link-failure-notes).
+(define (source-tool-run-command-for
+  [role : String]
+  [target : backend.CompilerBackendTarget]
+  [command : process.ProcessCommand]
+  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (let
     [tool : String (process.command-executable command)]
     [command-to-run : process.ProcessCommand
@@ -873,7 +1135,10 @@
                 "' failed for target "
                 (source-tool-target-name target)
                 " with status "
-                (string.int->string (process.output-status output))))))]
+                (string.int->string (process.output-status output))
+                (let
+                  [stderr : String (process.output-stderr output)]
+                  (source-tool-link-failure-notes (& stderr) (& link-inputs)))))))]
       [(process.ErrProcessOutput error)
         (SourceToolCommandStatus.Err
           (str_cat.str-cat
@@ -938,12 +1203,24 @@
   (source-tool-decorated-args libs "-l" "" 0))
 
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (process.args-append
-    (source-tool-linux-link-search-args
-      (source-tool-link-inputs-search-dirs inputs))
+  (let
+    [archives : process.ProcessStringList
+      (source-tool-link-inputs-archives inputs)]
+    [grouped? : bool (> (process.args-count archives) 0)]
+    [inputs-in-order : process.ProcessStringList
+      (process.args-append
+        (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
+        (process.args-append (source-tool-link-inputs-raw-args inputs) archives))]
     (process.args-append
-      (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
-      (source-tool-link-inputs-raw-args inputs))))
+      (source-tool-linux-link-search-args
+        (source-tool-link-inputs-search-dirs inputs))
+      (if grouped?
+        (process.args-cons
+          "-Wl,--start-group"
+          (process.args-append
+            inputs-in-order
+            (process.args-single "-Wl,--end-group")))
+        inputs-in-order))))
 
 (define (source-tool-linker-command
   [obj-path : String]
@@ -1007,13 +1284,17 @@
 (define (source-tool-windows-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
   (source-tool-decorated-args libs "" ".lib" 0))
 
+;; `link.exe` resolves a symbol from any library on the command line, so the
+;; archives need no group.
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
     (source-tool-windows-link-search-args
       (source-tool-link-inputs-search-dirs inputs))
     (process.args-append
       (source-tool-windows-link-lib-args (source-tool-link-inputs-libs inputs))
-      (source-tool-link-inputs-raw-args inputs))))
+      (process.args-append
+        (source-tool-link-inputs-raw-args inputs)
+        (source-tool-link-inputs-archives inputs)))))
 
 (define (source-tool-windows-linker-args
   [obj-path : String]
@@ -1245,14 +1526,21 @@
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match target
     [(backend.CompilerBackendTarget.Linux)
-      (source-tool-run-command
+      (source-tool-run-command-for
         "linker"
         target
-        (source-tool-linker-command obj-path bin-path link-inputs))]
+        (source-tool-linker-command
+          obj-path
+          bin-path
+          (owned_view.compiler-owned-shared-view link-inputs))
+        link-inputs)]
     [(backend.CompilerBackendTarget.Windows)
-      (match (source-tool-windows-linker-command obj-path bin-path link-inputs)
+      (match (source-tool-windows-linker-command
+        obj-path
+        bin-path
+        (owned_view.compiler-owned-shared-view link-inputs))
         [(ResultSourceToolCommand.Ok command)
-          (source-tool-run-command "linker" target command)]
+          (source-tool-run-command-for "linker" target command link-inputs)]
         [(ResultSourceToolCommand.Err message)
           (SourceToolCommandStatus.Err message)])]))
 

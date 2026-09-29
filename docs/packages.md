@@ -211,10 +211,17 @@ whose leading segment is a dependency alias, such as `(import math.src.lib)`,
 resolves from that dependency root.
 
 The optional `(link ...)` section declares native link inputs per target and is
-not a TypeLisp package edge, so it is valid in a `staticlib` manifest. Today
-those inputs affect only a `bin` artifact and are not propagated from a wrapper
-library; repeat required native inputs in the consuming executable until
-exported native requirements land. On Linux any non-empty active link input
+not a TypeLisp package edge, so it is valid in a `staticlib` manifest. A
+wrapper library's section states what its consumers need: an executable that
+depends on it links with the wrapper's all-target inputs and its inputs for the
+executable's target, so the executable's manifest does not repeat them. The
+wrapper's relative search paths resolve against its own manifest, and a
+fetched wrapper's must stay inside its locked checkout. Libraries and search
+paths requested by several packages link once, raw arguments stay with each
+package, and on Linux the dependency section is one linker group, so vendored
+archives may reference each other. A missing native library is reported with
+the manifest field that requested it, and the runtime-inputs sidecar records
+who declared each link input. On Linux any non-empty active link input
 switches the package to linking through `cc` instead of freestanding `ld`.
 
 Test/dev-only and target-specific dependency contexts are future syntax. If

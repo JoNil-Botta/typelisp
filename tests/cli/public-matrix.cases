@@ -529,6 +529,214 @@ exit 42
 stdout empty
 stderr empty
 
+# A staticlib's `(link ...)` section reaches the executables that depend on it
+# (#6982): the root manifest names no native input, the wrapper's relative
+# search path resolves against the wrapper's manifest, only the target's scope
+# applies, and the runtime-inputs sidecar records who declared each input.
+case package-link-propagation
+hosts linux
+file ffi_add7.s
+    .globl ffi_add7
+ffi_add7:
+    movq %rdi, %rax
+    addq $7, %rax
+    ret
+    .section .note.GNU-stack,"",@progbits
+end-file
+file wrap/typelisp.pkg
+(package
+  (name "wrap")
+  (version "0.1.0")
+  (kind staticlib)
+  (link
+    (search-paths "vendor")
+    (linux-libraries "ffi_add7")
+    (windows-libraries "wrap_missing_on_linux")))
+end-file
+file wrap/src/lib.tl
+(extern (ffi_add7 [x : i64]) : i64)
+(define (wrap-add [x : i64]) : i64 (ffi_add7 x))
+end-file
+file app/typelisp.pkg
+(package
+  (name "wrap_app")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (wrap "../wrap")))
+end-file
+file app/src/main.tl
+(import wrap.src.lib as w)
+(define (main) : i64 (w.wrap-add 35))
+end-file
+sh mkdir -p "{{dir}}/wrap/vendor"
+exec as "{{dir}}/ffi_add7.s" -o "{{dir}}/ffi_add7.o"
+exec ar rcs "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/ffi_add7.o"
+step propagated-build
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
+stderr empty
+stdout contains Built {{dir}}/app/target/release/wrap_app
+step propagated-run
+exec "{{dir}}/app/target/release/wrap_app"
+exit 42
+in file {{dir}}/app/target/release/wrap_app.runtime-inputs
+contains native-link-value 8:ffi_add7
+contains field `linux-libraries`
+match ^native-link-value [0-9]+:.*/wrap/vendor$
+not-contains wrap_missing_on_linux
+# The other target's scope is not a runtime input.
+step inactive-scope-change
+sh sed -i 's/wrap_missing_on_linux/wrap_still_missing_on_linux/' "{{dir}}/wrap/typelisp.pkg"
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
+stderr empty
+stdout contains Fresh {{dir}}/app/target/release/wrap_app
+# A library the linker cannot find names the manifest field that asked for it.
+step missing-library
+sh sed -i 's/(linux-libraries "ffi_add7")/(linux-libraries "ffi_add7" "wrap_no_such_native_lib")/' "{{dir}}/wrap/typelisp.pkg"
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
+exit nonzero
+stderr contains note: native library `wrap_no_such_native_lib` is required by package `wrap` ({{dir}}/wrap/typelisp.pkg) field `linux-libraries`
+stderr contains note: search paths: '{{dir}}/wrap/vendor' and the linker's defaults
+# Two wrappers whose vendored archives call each other: liba1's a_entry needs
+# libb1's b_helper, which needs liba1's a_helper, from another member. No
+# single order of archives and libraries links this; the dependency section is
+# one linker group. Both wrappers also name `m`, which links once, and the same
+# raw argument, which each keeps.
+file a_entry.c
+long b_helper(long x);
+long a_entry(long x) { return b_helper(x) + 1; }
+end-file
+file a_helper.c
+long a_helper(long x) { return x * 2; }
+end-file
+file b_helper.c
+long a_helper(long x);
+long b_helper(long x) { return a_helper(x) + 3; }
+end-file
+file wa/typelisp.pkg
+(package
+  (name "wa")
+  (version "0.1.0")
+  (kind staticlib)
+  (link
+    (search-paths "vendor")
+    (libraries "m")
+    (args "-Wl,--as-needed")
+    (linux-libraries "a1")))
+end-file
+file wa/src/lib.tl
+(extern (a_entry [x : i64]) : i64)
+(define (wa-entry [x : i64]) : i64 (a_entry x))
+end-file
+file wb/typelisp.pkg
+(package
+  (name "wb")
+  (version "0.1.0")
+  (kind staticlib)
+  (link
+    (search-paths "vendor")
+    (libraries "m")
+    (args "-Wl,--as-needed")
+    (linux-libraries "b1")))
+end-file
+file wb/src/lib.tl
+(define (wb-marker) : i64 0)
+end-file
+file mutual/typelisp.pkg
+(package
+  (name "mutual_app")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (wa "../wa")
+    (wb "../wb")))
+end-file
+file mutual/src/main.tl
+(import wa.src.lib as wa)
+(import wb.src.lib as wb)
+(define (main) : i64 (+ (wa.wa-entry 5) (wb.wb-marker)))
+end-file
+sh mkdir -p "{{dir}}/wa/vendor" "{{dir}}/wb/vendor"
+exec cc -c "{{dir}}/a_entry.c" -o "{{dir}}/a_entry.o"
+exec cc -c "{{dir}}/a_helper.c" -o "{{dir}}/a_helper.o"
+exec cc -c "{{dir}}/b_helper.c" -o "{{dir}}/b_helper.o"
+exec ar rcs "{{dir}}/wa/vendor/liba1.a" "{{dir}}/a_entry.o" "{{dir}}/a_helper.o"
+exec ar rcs "{{dir}}/wb/vendor/libb1.a" "{{dir}}/b_helper.o"
+step mutual-build
+run build --manifest-path "{{dir}}/mutual/typelisp.pkg" --target linux-x86_64 --opt-level 0
+stderr empty
+step mutual-run
+exec "{{dir}}/mutual/target/release/mutual_app"
+exit 14
+in file {{dir}}/mutual/target/release/mutual_app.runtime-inputs
+count-fixed = 1 arg 3:-lm
+count-fixed = 2 arg 15:-Wl,--as-needed
+count-fixed = 1 arg 17:-Wl,--start-group
+# A fetched wrapper's relative search path resolves inside its locked checkout
+# and may not leave it.
+file fetched/typelisp.pkg
+(package
+  (name "fetched_app")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+end-file
+file fetched/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-add 35))
+end-file
+file fetched/target/typelisp/git-deps/remote/typelisp.pkg
+(package
+  (name "fetched_wrap")
+  (version "0.1.0")
+  (kind staticlib)
+  (link
+    (linux-search-paths "vendor")
+    (linux-libraries "ffi_add7")))
+end-file
+file fetched/target/typelisp/git-deps/remote/src/lib.tl
+(extern (ffi_add7 [x : i64]) : i64)
+(define (remote-add [x : i64]) : i64 (ffi_add7 x))
+end-file
+sh mkdir -p "{{dir}}/fetched/target/typelisp/git-deps/remote/vendor" && cp "{{dir}}/wrap/vendor/libffi_add7.a" "{{dir}}/fetched/target/typelisp/git-deps/remote/vendor/"
+step fetched-build
+run build --manifest-path "{{dir}}/fetched/typelisp.pkg" --target linux-x86_64 --opt-level 0
+stderr empty
+step fetched-run
+exec "{{dir}}/fetched/target/release/fetched_app"
+exit 42
+file escape/typelisp.pkg
+(package
+  (name "escape_app")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+end-file
+file escape/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.remote-add 35))
+end-file
+file escape/target/typelisp/git-deps/remote/typelisp.pkg
+(package
+  (name "escape_wrap")
+  (version "0.1.0")
+  (kind staticlib)
+  (link
+    (linux-search-paths "../..")
+    (linux-libraries "ffi_add7")))
+end-file
+file escape/target/typelisp/git-deps/remote/src/lib.tl
+(extern (ffi_add7 [x : i64]) : i64)
+(define (remote-add [x : i64]) : i64 (ffi_add7 x))
+end-file
+step fetched-escape
+run build --manifest-path "{{dir}}/escape/typelisp.pkg" --target linux-x86_64 --opt-level 0
+exit nonzero
+stderr contains field `linux-search-paths` path `../..` is not confined to locked checkout
+test ! -e "{{dir}}/escape/target/release/escape_app"
+
 case selfhost-run-tool
 if-host windows
 step selfhost-run-tool-windows

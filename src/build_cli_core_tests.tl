@@ -571,6 +571,19 @@
       node
       (backend.CompilerBackendTarget.Linux))))
 
+;; The dependency archives of `nodes`' link inputs for `target`.
+(define (build-package-graph-test-archives
+  [nodes : build.BuildPackageGraphNodeVec]
+  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
+  (match (build.build-package-graph-link-inputs
+    nodes
+    (build.BuildProfile.Release)
+    target)
+    [(build_run_core.ResultSourceToolLinkInputs.Ok inputs)
+      (build_run_core.source-tool-link-inputs-archives inputs)]
+    [(build_run_core.ResultSourceToolLinkInputs.Err _)
+      (process.args-single "error")]))
+
 (define (build-package-graph-test-tlci-arg
   [node : (& node build.BuildPackageGraphNode)]) : process.ProcessStringList
   (let
@@ -644,14 +657,12 @@
               (owned_view.compiler-owned-shared-view second))
             (owned_view.compiler-owned-shared-view third))]
         [libs : process.ProcessStringList
-          (build.build-package-graph-link-libs
+          (build-package-graph-test-archives
             (owned_view.compiler-owned-shared-view nodes)
-            (build.BuildProfile.Release)
             (backend.CompilerBackendTarget.Linux))]
         [windows-libs : process.ProcessStringList
-          (build.build-package-graph-link-libs
+          (build-package-graph-test-archives
             (owned_view.compiler-owned-shared-view nodes)
-            (build.BuildProfile.Release)
             (backend.CompilerBackendTarget.Windows))]
         [tlcis : process.ProcessStringList
           (build-package-graph-tlci-paths
@@ -1543,3 +1554,190 @@
         (build_run_core.source-tool-args-append expected4 "../local")]
       (build_run_tests.source-tool-string-list-eq? actual expected))
     (io.panic "build package worker resolved deps args smoke failed")))
+
+;; A `(link ...)` scope with at most one value per field ("" omits it).
+(cfg
+  test
+  (define (build-package-graph-test-link-set
+    [library : String]
+    [search-path : String]
+    [arg : String]) : load.CompilerPkgLinkSet
+    (let
+      [libraries : fs.FsStringVector (fs.string-vector-new)]
+      [search-paths : fs.FsStringVector (fs.string-vector-new)]
+      [args : fs.FsStringVector (fs.string-vector-new)]
+      (begin
+        (if (> (string.string-length library) 0)
+          (fs.string-vector-push! (&mut libraries) library)
+          unit)
+        (if (> (string.string-length search-path) 0)
+          (fs.string-vector-push! (&mut search-paths) search-path)
+          unit)
+        (if (> (string.string-length arg) 0)
+          (fs.string-vector-push! (&mut args) arg)
+          unit)
+        (load.CompilerPkgLinkSet libraries search-paths args)))))
+
+(cfg
+  test
+  (define (build-package-graph-test-link-node
+    [manifest-path : String]
+    [name : String]
+    [link : load.CompilerPkgLink]
+    [provenance : build.BuildPackageSourceProvenance]) : build.BuildPackageGraphNode
+    (build.BuildPackageGraphNode
+      manifest-path
+      (load.CompilerPkgManifest
+        name
+        "0.1.0"
+        (CompilerPkgKindLib)
+        "src/lib.tl"
+        (load.compiler-pkg-deps-empty)
+        link)
+      provenance)))
+
+;; wa and wb each export `m` for every target, their own vendored library and
+;; search path, and one raw argument.
+(cfg
+  test
+  (define (build-package-graph-test-wrapper
+    [dir : String]
+    [name : String]
+    [linux-library : String]
+    [windows-library : String]) : build.BuildPackageGraphNode
+    (build-package-graph-test-link-node
+      (str_cat.str-cat dir "/typelisp.pkg")
+      name
+      (load.CompilerPkgLink
+        (build-package-graph-test-link-set "m" "vendor" "-Wl,--as-needed")
+        (build-package-graph-test-link-set linux-library "" "")
+        (build-package-graph-test-link-set windows-library "" ""))
+      (build.BuildPackageSourceProvenance.Local))))
+
+(cfg
+  test
+  (define (build-package-graph-test-link-inputs
+    [nodes : build.BuildPackageGraphNodeVec]
+    [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
+    (match (build.build-package-graph-link-inputs
+      nodes
+      (build.BuildProfile.Release)
+      target)
+      [(build_run_core.ResultSourceToolLinkInputs.Ok inputs) inputs]
+      [(build_run_core.ResultSourceToolLinkInputs.Err _)
+        (build_run_core.source-tool-link-inputs-add-lib
+          (build_run_core.source-tool-link-inputs-empty)
+          "error")])))
+
+(cfg
+  test
+  (define (build-package-graph-test-link-error
+    [node : build.BuildPackageGraphNode]) : String
+    (match (build.build-package-graph-link-inputs
+      (build.build-package-graph-node-vec-push
+        (build.build-package-graph-node-vec-with-capacity 1)
+        node)
+      (build.BuildProfile.Release)
+      (backend.CompilerBackendTarget.Linux))
+      [(build_run_core.ResultSourceToolLinkInputs.Ok _) ""]
+      [(build_run_core.ResultSourceToolLinkInputs.Err message) message])))
+
+(cfg
+  test
+  (define (build-package-graph-test-fetched-wrapper
+    [linux-search-path : String]) : build.BuildPackageGraphNode
+    (build-package-graph-test-link-node
+      (str_cat.str-cat (fs.current-dir) "/typelisp.pkg")
+      "fetched"
+      (load.CompilerPkgLink
+        (build-package-graph-test-link-set "" "" "")
+        (build-package-graph-test-link-set "" linux-search-path "")
+        (build-package-graph-test-link-set "" "" ""))
+      (build.BuildPackageSourceProvenance.Fetched "fetched" (fs.current-dir)))))
+
+;; A direct dependency's `(link ...)` section reaches the binary's link (#6982):
+;; archives, then libraries and search paths merged once across wrappers, raw
+;; arguments kept per wrapper, the target's scope only, relative search paths
+;; anchored at the declaring manifest, and every declaration's origin.
+(test
+  build-package-graph-link-propagation
+  (let
+    [nodes : build.BuildPackageGraphNodeVec
+      (build.build-package-graph-node-vec-push
+        (build.build-package-graph-node-vec-push
+          (build.build-package-graph-node-vec-with-capacity 2)
+          (build-package-graph-test-wrapper "root/wa" "wa" "a1" "a1win"))
+        (build-package-graph-test-wrapper "root/wb" "wb" "b1" ""))]
+    [linux : build_run_core.SourceToolLinkInputs
+      (build-package-graph-test-link-inputs
+        (owned_view.compiler-owned-shared-view nodes)
+        (backend.CompilerBackendTarget.Linux))]
+    [windows : build_run_core.SourceToolLinkInputs
+      (build-package-graph-test-link-inputs
+        (owned_view.compiler-owned-shared-view nodes)
+        (backend.CompilerBackendTarget.Windows))]
+    [origins : build_run_core.SourceToolLinkOrigins
+      (build_run_core.source-tool-link-inputs-origins (& linux))]
+    [expected-libs : process.ProcessStringList
+      (process.args-cons
+        "m"
+        (process.args-cons "b1" (process.args-single "a1")))]
+    (unless
+      (and
+        (build_run_tests.source-tool-string-list-eq?
+          (build_run_core.source-tool-link-inputs-libs (& linux))
+          expected-libs)
+        (build_run_tests.source-tool-string-list-eq?
+          (build_run_core.source-tool-link-inputs-search-dirs (& linux))
+          (process.args-cons
+            "root/wb/vendor"
+            (process.args-single "root/wa/vendor")))
+        (build_run_tests.source-tool-string-list-eq?
+          (build_run_core.source-tool-link-inputs-raw-args (& linux))
+          (process.args-cons
+            "-Wl,--as-needed"
+            (process.args-single "-Wl,--as-needed")))
+        (build_run_tests.source-tool-string-list-eq?
+          (build_run_core.source-tool-link-inputs-archives (& linux))
+          (process.args-cons
+            "root/wb/target/release/libwb.a"
+            (process.args-single "root/wa/target/release/libwa.a")))
+        (build_run_tests.source-tool-string-list-eq?
+          (build_run_core.source-tool-link-inputs-libs (& windows))
+          (process.args-cons "m" (process.args-single "a1win")))
+        (= (process.args-count origins.kinds) 10)
+        (string.eq (process.args-ref origins.kinds 0) "archive")
+        (string.eq
+          (process.args-ref origins.declared-by 0)
+          "package `wb` (root/wb/typelisp.pkg)")
+        (string.eq (process.args-ref origins.values 4) "b1")
+        (string.eq
+          (process.args-ref origins.declared-by 4)
+          "package `wb` (root/wb/typelisp.pkg) field `linux-libraries`")
+        (string.eq (process.args-ref origins.values 2) "root/wb/vendor"))
+      (io.panic "build: dependency link propagation smoke failed"))))
+
+;; A fetched dependency's relative search path must exist inside its locked
+;; checkout; an absolute search path is a system location, used as written.
+(test
+  build-package-graph-link-fetched-confinement
+  (let
+    [escaping : String
+      (build-package-graph-test-link-error
+        (build-package-graph-test-fetched-wrapper "../outside"))]
+    [missing : String
+      (build-package-graph-test-link-error
+        (build-package-graph-test-fetched-wrapper "no-such-vendor-dir"))]
+    (unless
+      (and
+        (string.contains
+          (& escaping)
+          "field `linux-search-paths` path `../outside` is not confined to locked checkout")
+        (string.contains
+          (& missing)
+          "path `no-such-vendor-dir` is not confined")
+        (string.eq
+          (build-package-graph-test-link-error
+            (build-package-graph-test-fetched-wrapper "/usr/lib"))
+          ""))
+      (io.panic "build: fetched dependency link confinement smoke failed"))))

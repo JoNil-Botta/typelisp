@@ -175,7 +175,11 @@ exercise_nested_backend() {
     case "$_nested_peak" in
         '' | *[!0-9]*) fail "nested outer OOM lost peak evidence" ;;
     esac
-    [ "$_nested_peak" -ge 33554432 ] || fail "nested outer OOM underreported its peak"
+    [ "$_nested_peak" -ge 33554432 ] || {
+        cat "$_nested_prefix.outer" >&2 || true
+        tail -n 20 "$_nested_prefix.stderr" >&2 || true
+        fail "nested outer OOM underreported its peak"
+    }
     assert_no_nested_scratch
     for _nested_marker in outer-before inner-marker outer-after; do
         [ "$(grep -Fxc "$_nested_marker" "$_nested_prefix.stderr")" -eq 1 ] || \

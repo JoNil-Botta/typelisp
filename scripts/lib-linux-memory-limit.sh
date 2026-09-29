@@ -96,15 +96,18 @@ linux_memory_limit_run_systemd() {
     # in-cgroup sampler along with the workload, and systemd's summary can lack
     # the final peak once the cgroup is gone. ExecStopPost runs inside the
     # unit's cgroup after the kill and before systemd removes it, so it records
-    # the cgroup's exact memory.peak. The ':' prefix keeps systemd from
-    # expanding the script's variables.
+    # the cgroup's exact memory.peak and memory.events oom_kill count. The
+    # count also catches an OOM kill whose unit systemd finished with
+    # `result: signal`, because it handled the main process's exit before the
+    # OOM notification. The ':' prefix keeps systemd from expanding the
+    # script's variables.
     _linux_memory_limit_cgroup_peak=$(mktemp \
         "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.cgroup-peak.XXXXXX") || {
         rm -f "$_linux_memory_limit_systemd_stderr"
         echo "Linux memory limiting failed to create cgroup peak evidence" >&2
         return 2
     }
-    _linux_memory_limit_record_peak='{ while read -r line; do case $line in 0::*) read -r peak < "/sys/fs/cgroup${line#0::}/memory.peak" && echo "$peak" > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" ;; esac; done < /proc/self/cgroup; } 2>/dev/null || true'
+    _linux_memory_limit_record_peak='{ while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/memory.events"; read -r peak < "$cgroup/memory.peak" && echo "$peak $kills" > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" ;; esac; done < /proc/self/cgroup; } 2>/dev/null || true'
     _linux_memory_limit_status=0
     TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak \
         LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
@@ -123,9 +126,22 @@ linux_memory_limit_run_systemd() {
         "$@" 2> "$_linux_memory_limit_systemd_stderr" ||
         _linux_memory_limit_status=$?
     cat "$_linux_memory_limit_systemd_stderr" >&2
+    _linux_memory_limit_cgroup_bytes=0
+    _linux_memory_limit_cgroup_kills=0
+    if [ -s "$_linux_memory_limit_cgroup_peak" ]; then
+        read -r _linux_memory_limit_cgroup_bytes _linux_memory_limit_cgroup_kills \
+            < "$_linux_memory_limit_cgroup_peak" || true
+    fi
+    case "$_linux_memory_limit_cgroup_bytes" in
+        "" | *[!0-9]*) _linux_memory_limit_cgroup_bytes=0 ;;
+    esac
+    case "$_linux_memory_limit_cgroup_kills" in
+        "" | *[!0-9]*) _linux_memory_limit_cgroup_kills=0 ;;
+    esac
     _linux_memory_limit_oom=0
-    if grep -Eq 'result: oom-kill|result .oom-kill.' \
-        "$_linux_memory_limit_systemd_stderr"; then
+    if [ "$_linux_memory_limit_cgroup_kills" -gt 0 ] ||
+        grep -Eq 'result: oom-kill|result .oom-kill.' \
+            "$_linux_memory_limit_systemd_stderr"; then
         _linux_memory_limit_oom=1
     fi
     _linux_memory_limit_peak_bytes=$(awk '
@@ -159,19 +175,18 @@ linux_memory_limit_run_systemd() {
     case "$_linux_memory_limit_peak_bytes" in
         "" | *[!0-9]*) _linux_memory_limit_peak_bytes=0 ;;
     esac
+    _linux_memory_limit_summary_bytes=$_linux_memory_limit_peak_bytes
     if [ "$_linux_memory_limit_sampled_bytes" -gt "$_linux_memory_limit_peak_bytes" ]; then
         _linux_memory_limit_peak_bytes=$_linux_memory_limit_sampled_bytes
     fi
     # After an OOM kill the recorded cgroup peak is the evidence the killed
-    # sampler could not write.
+    # sampler could not write. Name every source, so a short OOM peak shows
+    # which one fell short.
     if [ "$_linux_memory_limit_oom" -eq 1 ]; then
-        _linux_memory_limit_cgroup_bytes=$(sed -n '1p' "$_linux_memory_limit_cgroup_peak")
-        case "$_linux_memory_limit_cgroup_bytes" in
-            "" | *[!0-9]*) _linux_memory_limit_cgroup_bytes=0 ;;
-        esac
         if [ "$_linux_memory_limit_cgroup_bytes" -gt "$_linux_memory_limit_peak_bytes" ]; then
             _linux_memory_limit_peak_bytes=$_linux_memory_limit_cgroup_bytes
         fi
+        echo "[memory-limit] OOM peak sources: cgroup memory.peak $_linux_memory_limit_cgroup_bytes (oom_kill $_linux_memory_limit_cgroup_kills), systemd summary $_linux_memory_limit_summary_bytes, sampler $_linux_memory_limit_sampled_bytes" >&2
     fi
     rm -f "$_linux_memory_limit_systemd_stderr" "$_linux_memory_limit_cgroup_peak"
     printf '%s\n' "$_linux_memory_limit_peak_bytes" \

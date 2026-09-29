@@ -110,6 +110,17 @@ fail. `command` is shell text evaluated from the checkout root; it may use
 not fit one line is a `gate_*` function in `ci-verify.sh`. A new gate is one
 row, plus a function only when it needs one.
 
+`ci-host-tools.tsv` lists the host tools gates run beyond the native assembler
+and linker: `tool`, `hosts`, the `gates` that run it there, a `check` (shell
+text that succeeds when the tool is usable) and an `install` hint. Before the
+first gate starts, and before the seed is fetched, `ci-verify.sh` runs the
+checks of every selected gate and fails with each missing tool, its gates and
+its hint, so a host without GNU `time` fails at once instead of after the
+bootstrap and every gate before the two RSS guards. A missing tool never skips
+a gate. A gate that starts running a new host tool adds its ID to that tool's
+row. The listing validates this table too: its header, five fields, hosts, and
+that each gate exists and runs on every host of its row.
+
 Producers hand their outputs to later gates through plain path files under
 `target/` (the bootstrap compilers, build-invariance's opt1 reference
 assembly, the compile-profile CLI). A gate receives an output only from a

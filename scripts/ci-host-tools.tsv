@@ -1,0 +1,19 @@
+# Host tools the CI gates run beyond the native assembler and linker that
+# CONTRIBUTING.md names. Before the first gate starts, scripts/ci-verify.sh
+# checks the rows of every selected gate, so a host that lacks a tool fails at
+# once, naming the tool, its gates and how to install it, rather than after the
+# gates before it. A missing tool is never a reason to skip a gate: install it.
+# tool: the display name. hosts: all, linux or windows. gates: the IDs of the
+# scripts/ci-gates.tsv rows that run the tool on those hosts, each of which runs
+# on all of them. check: shell text evaluated in the checkout root, succeeding
+# when the tool is usable. install: how to get the tool.
+tool	hosts	gates	check	install
+GNU binutils (as, ld, readelf)	linux	bootstrap-fixpoint,no-libc-dependency-guard,stage2-pic-relocation-verifier	command -v as && command -v ld && command -v readelf	install GNU binutils (Debian/Ubuntu: apt install binutils; Fedora: dnf install binutils; Arch: pacman -S binutils)
+objdump (GNU, or llvm-readobj and llvm-objdump)	linux	stage2-coff-relocation-overflow-verifier	command -v objdump || { command -v llvm-readobj && command -v llvm-objdump; }	install GNU binutils or LLVM (Debian/Ubuntu: apt install binutils; Fedora: dnf install binutils; Arch: pacman -S binutils)
+C compiler (cc)	linux	stage2-native-integration-corpus	command -v cc	install GCC or Clang so that cc is on PATH (Debian/Ubuntu: apt install gcc; Fedora: dnf install gcc; Arch: pacman -S gcc)
+clang	linux	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,stage2-benchmark-comparison-correctness,stage2-optimization-corpus-correctness,stage2-optimization-corpus-opt2-runtime-correctness	command -v clang	install Clang, which compiles the C baselines (Debian/Ubuntu: apt install clang; Fedora: dnf install clang; Arch: pacman -S clang)
+valgrind	linux	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,linux-compiler-scaling-budgets	command -v valgrind	install Valgrind, whose Cachegrind counts instructions (Debian/Ubuntu: apt install valgrind; Fedora: dnf install valgrind; Arch: pacman -S valgrind)
+GNU time with -v	linux	tlci-native-route-sustained-stress	ci_host_gnu_time "${TLCI_NATIVE_ROUTE_TIME_BIN:-/usr/bin/time}"	install GNU time at /usr/bin/time (Debian/Ubuntu: apt install time; Fedora: dnf install time; Arch: pacman -S time) or set TLCI_NATIVE_ROUTE_TIME_BIN to a GNU time binary
+GNU time with -v	linux	stage2-docs-pages-build-path	ci_host_gnu_time "${DOC_SITE_TIME_BIN:-/usr/bin/time}"	install GNU time at /usr/bin/time (Debian/Ubuntu: apt install time; Fedora: dnf install time; Arch: pacman -S time) or set DOC_SITE_TIME_BIN to a GNU time binary
+jq	all	stage0-release-publication-verifier-self-tests	command -v jq	install jq (Debian/Ubuntu: apt install jq; Fedora: dnf install jq; Arch: pacman -S jq; Windows: winget install jqlang.jq)
+PowerShell 7 (pwsh)	windows	stage2-compile-profile-verifier,tlci-native-route-sustained-stress	command -v pwsh	install PowerShell 7 (winget install Microsoft.PowerShell)

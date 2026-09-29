@@ -246,11 +246,17 @@ fi
 
 # Sets the global `expected` to 1 when the (rc,out) pair matches the witness
 # expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic
-# substring; a positive witness must pass cleanly.
+# substring; a positive witness must pass cleanly. The substring test is a
+# pattern match, not a pipe into `grep -q`: under pipefail, grep exiting at an
+# early match makes the writer of a large output fail with EPIPE.
 witness_expected() {
     expected=0
     if [ -n "$2" ]; then
-        if [ "$1" -ne 0 ] && printf '%s' "$3" | grep -qF "$2"; then expected=1; fi
+        if [ "$1" -ne 0 ]; then
+            case $3 in
+                *"$2"*) expected=1 ;;
+            esac
+        fi
     elif [ "$1" -eq 0 ]; then
         expected=1
     fi

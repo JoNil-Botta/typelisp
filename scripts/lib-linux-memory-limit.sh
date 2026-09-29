@@ -52,7 +52,8 @@ linux_memory_limit_run_systemd() {
     # A metrics destination belongs to this invocation, not to its workload.
     # The bounded runner's explicit sampler re-establishes its own destination
     # from an argument; ordinary nested helpers must choose a fresh one.
-    set -- env -u TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE "$@"
+    set -- env -u TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE \
+        -u TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE "$@"
 
     # Transient user services inherit the user manager's environment, not the
     # invoking gate's exports. Prepend one --setenv=name option per valid
@@ -91,8 +92,22 @@ linux_memory_limit_run_systemd() {
         echo "Linux memory limiting failed to create invocation stderr evidence" >&2
         return 2
     }
+    # OOMPolicy=kill sets memory.oom.group, so a cgroup OOM kill takes the
+    # in-cgroup sampler along with the workload, and systemd's summary can lack
+    # the final peak once the cgroup is gone. ExecStopPost runs inside the
+    # unit's cgroup after the kill and before systemd removes it, so it records
+    # the cgroup's exact memory.peak. The ':' prefix keeps systemd from
+    # expanding the script's variables.
+    _linux_memory_limit_cgroup_peak=$(mktemp \
+        "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.cgroup-peak.XXXXXX") || {
+        rm -f "$_linux_memory_limit_systemd_stderr"
+        echo "Linux memory limiting failed to create cgroup peak evidence" >&2
+        return 2
+    }
+    _linux_memory_limit_record_peak='{ while read -r line; do case $line in 0::*) read -r peak < "/sys/fs/cgroup${line#0::}/memory.peak" && echo "$peak" > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" ;; esac; done < /proc/self/cgroup; } 2>/dev/null || true'
     _linux_memory_limit_status=0
-    LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
+    TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak \
+        LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
         --user \
         --wait \
         --pipe \
@@ -103,9 +118,16 @@ linux_memory_limit_run_systemd() {
         --property="MemoryMax=$_linux_memory_limit_bytes" \
         --property=MemorySwapMax=0 \
         --property=OOMPolicy=kill \
+        --setenv=TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE \
+        "--property=ExecStopPost=:/bin/sh -c '$_linux_memory_limit_record_peak'" \
         "$@" 2> "$_linux_memory_limit_systemd_stderr" ||
         _linux_memory_limit_status=$?
     cat "$_linux_memory_limit_systemd_stderr" >&2
+    _linux_memory_limit_oom=0
+    if grep -Eq 'result: oom-kill|result .oom-kill.' \
+        "$_linux_memory_limit_systemd_stderr"; then
+        _linux_memory_limit_oom=1
+    fi
     _linux_memory_limit_peak_bytes=$(awk '
         /^[[:space:]]*Memory peak: / { raw = $3 }
         END {
@@ -140,14 +162,23 @@ linux_memory_limit_run_systemd() {
     if [ "$_linux_memory_limit_sampled_bytes" -gt "$_linux_memory_limit_peak_bytes" ]; then
         _linux_memory_limit_peak_bytes=$_linux_memory_limit_sampled_bytes
     fi
+    # After an OOM kill the recorded cgroup peak is the evidence the killed
+    # sampler could not write.
+    if [ "$_linux_memory_limit_oom" -eq 1 ]; then
+        _linux_memory_limit_cgroup_bytes=$(sed -n '1p' "$_linux_memory_limit_cgroup_peak")
+        case "$_linux_memory_limit_cgroup_bytes" in
+            "" | *[!0-9]*) _linux_memory_limit_cgroup_bytes=0 ;;
+        esac
+        if [ "$_linux_memory_limit_cgroup_bytes" -gt "$_linux_memory_limit_peak_bytes" ]; then
+            _linux_memory_limit_peak_bytes=$_linux_memory_limit_cgroup_bytes
+        fi
+    fi
+    rm -f "$_linux_memory_limit_systemd_stderr" "$_linux_memory_limit_cgroup_peak"
     printf '%s\n' "$_linux_memory_limit_peak_bytes" \
         > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
-    if grep -Eq 'result: oom-kill|result .oom-kill.' \
-        "$_linux_memory_limit_systemd_stderr"; then
-        rm -f "$_linux_memory_limit_systemd_stderr"
+    if [ "$_linux_memory_limit_oom" -eq 1 ]; then
         return 137
     fi
-    rm -f "$_linux_memory_limit_systemd_stderr"
     return "$_linux_memory_limit_status"
 }
 

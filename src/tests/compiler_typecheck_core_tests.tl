@@ -6495,8 +6495,21 @@
       [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
       [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
       [first : i64 (tc_core.macro-decl-generation-enter! state)]
+      [empty-mark : i64 (tc-macro-walk-field state macro-decl-generation-mark)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      [_batch-one-garbage : unit
+        (begin
+          (unsafe
+            (arena.tl_arena_set first))
+          (__tl_make-array i64 512)
+          (unsafe
+            (arena.tl_arena_set enclosing)))]
+      [batch-one-mark : i64 (tc_core.macro-generation-base-mark first)]
       [second : i64 (tc_core.macro-decl-generation-enter! state)]
       [third : i64 (tc_core.macro-decl-generation-enter! state)]
+      [third-batch-used : i64
+        (tc-macro-walk-field state macro-decl-generation-batch-used)]
+      [rewound-mark : i64 (tc_core.macro-generation-base-mark third)]
       (begin
         (tc_core.macro-decl-generations-release! state)
         (test.assert-i64-eq
@@ -6504,9 +6517,20 @@
           2
           "declaration generations use the global batch-two cadence")
         (test.assert-i64-eq second first "second declaration stays in batch")
+        (test.assert-i64-eq
+          third-batch-used
+          1
+          "third declaration starts a new batch without a source-specific first batch")
+        ;; The new batch rewinds the same arena instead of mapping another one,
+        ;; reclaiming everything the first batch allocated (#7934).
+        (test.assert-i64-eq third first "a new batch reuses the arena")
         (test.assert-true
-          (!= third first)
-          "third declaration rotates without a source-specific first batch")))))
+          (> batch-one-mark empty-mark)
+          "the first batch allocated in its generation")
+        (test.assert-i64-eq
+          rewound-mark
+          empty-mark
+          "the new batch starts from the empty arena")))))
 
 (cfg
   test
@@ -9140,10 +9164,12 @@
             (tc_core.macro-decl-generation-enter! state-a)]
           [decl-arena-a-next : i64
             (tc_core.macro-decl-generation-enter! state-a)]
+          ;; A rotation rewinds the job's one declaration arena; it maps no
+          ;; new one.
           [a-decl-rotation-reclaimed? : bool
             (and
               (= decl-arena-a decl-arena-a-same)
-              (not (= decl-arena-a decl-arena-a-next))
+              (= decl-arena-a decl-arena-a-next)
               (=
                 (tc-macro-walk-field state-a macro-decl-generation-arena)
                 decl-arena-a-next)
@@ -9159,10 +9185,12 @@
             (tc_core.macro-splice-generation-enter! state-a)]
           [splice-arena-a-third : i64
             (tc_core.macro-splice-generation-enter! state-a)]
+          ;; The third splice rewinds the generation two behind it.
           [a-splice-ring-ok? : bool
             (and
               (not (= splice-arena-a splice-arena-a-next))
               (not (= splice-arena-a-next splice-arena-a-third))
+              (= splice-arena-a splice-arena-a-third)
               (=
                 (tc-macro-walk-field state-a macro-splice-generation-arena)
                 splice-arena-a-third)

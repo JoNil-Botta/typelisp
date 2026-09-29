@@ -5231,6 +5231,8 @@
       "typecheck.macro.retention_active_generation_rotations")
     (tc-profile-retired-generation-rotations
       "typecheck.macro.retention_retired_generation_rotations")
+    (tc-profile-generation-arenas-mapped
+      "typecheck.macro.retention_generation_arenas_mapped")
     (tc-profile-live-symbols-max-bytes
       "typecheck.macro.retention_live_symbols_max_bytes")
     (tc-profile-retired-symbols-max-bytes
@@ -32084,7 +32086,8 @@
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env-for-comptime ctx (tc-global-shared-view inner))]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           ctfe-env
@@ -50050,6 +50053,62 @@
                 ;; geometrically; reserve only the known program surface.
                 (ctfe_support.ctfe-metadata-decl-capacity decls)))))])))
 
+;; The comptime evaluator has no import scope, so each type literal of a
+;; comptime expression is resolved here, in the module being checked, to the
+;; declaration identity an ordinary annotation names: `(type other.Point)`
+;; reaches the layout and reflection entries of `size_dep/Point` (#8112).
+;; Literals whose resolution is their written type stay out of the table, so
+;; an unknown type still reaches the evaluator's own diagnostic.
+(define (tc-ctfe-type-literal-resolutions-into
+  [ctx : TcContext]
+  [resolutions : (&mut resolutions ctfe_support.CtfeTypeLiteralResolutions)]
+  [expr : ast.AstExpr]) : unit
+  (let
+    [children : ast.AstExprList
+      (ast.ast-expr-child-ids (tc-global-shared-view expr))]
+    [count : i64 (ast.ast-expr-list-len (& children))]
+    [index : i64 0]
+    (begin
+      (match (tc-global-shared-view expr)
+        [(ast.AstExpr.TypeLiteral ty-id)
+          (let
+            [written : ast.AstType (tc-context-type-get ctx ty-id)]
+            [resolved : ast.AstType
+              (tc-resolve-type ctx (tc-global-shared-view written))]
+            (if (ast.ast-type-eq?
+              (tc-global-shared-view written)
+              (tc-global-shared-view resolved))
+              unit
+              (begin
+                (ast.ast-type-list-push (&mut resolutions.written) ty-id)
+                (ast.ast-type-list-push
+                  (&mut resolutions.resolved)
+                  (ast.ast-node-pool-context-type-push
+                    (tc-context-pools ctx)
+                    resolved)))))]
+        [_ unit])
+      (while (< index count)
+        (begin
+          (tc-ctfe-type-literal-resolutions-into
+            ctx
+            resolutions
+            (tc-context-expr-get
+              ctx
+              (ast.ast-expr-list-get (& children) index -1)))
+          (set! index (+ index 1)))))))
+
+;; The CTFE environment for evaluating the source comptime expression `expr`.
+(define (tc-ctfe-env-for-comptime [ctx : TcContext] [expr : ast.AstExpr]) : ctfe_support.CtfeEnv
+  (let
+    [env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+    [resolutions : ctfe_support.CtfeTypeLiteralResolutions
+      (ctfe_support.ctfe-type-literal-resolutions-empty)]
+    (begin
+      (tc-ctfe-type-literal-resolutions-into ctx (&mut resolutions) expr)
+      (if (ast.ast-type-list-empty? (& resolutions.written))
+        env
+        (ctfe_support.ctfe-env-with-type-literals env resolutions)))))
+
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
 ;; times per compile -- once in macro expansion plus once per comptime evaluation
@@ -55952,7 +56011,8 @@
   [elem : ast.AstType]
   [len : ast.AstExpr]) : ResultTcType
   (let
-    [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+    [ctfe-env : ctfe_support.CtfeEnv
+      (tc-ctfe-env-for-comptime ctx (tc-global-shared-view len))]
     (match (ctfe_support.compiler-ctfe-eval
       len
       ctfe-env
@@ -58171,7 +58231,8 @@
     [(ast.AstExpr.Comptime inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env-for-comptime ctx (tc-global-shared-view inner))]
         (match (ctfe_support.compiler-ctfe-eval
           inner
           ctfe-env
@@ -81050,6 +81111,12 @@
   (macro-decl-generation-batch-used i64)
   (macro-splice-generation-arena i64)
   (macro-splice-generation-retired-arena i64)
+  ;; The empty-arena marks of the three generations above, recorded when each
+  ;; was mapped, so a finished generation is rewound for reuse instead of
+  ;; being unmapped and a fresh one mapped (see macro-generation-recycle!).
+  (macro-decl-generation-mark i64)
+  (macro-splice-generation-mark i64)
+  (macro-splice-generation-retired-mark i64)
   (macro-decl-generation-escape-capacity i64)
   (macro-decl-generation-escape-kinds (__tl_dyn-array i64))
   (macro-decl-generation-escape-keys (__tl_dyn-array i64))
@@ -81169,6 +81236,9 @@
     0
     0
     2
+    0
+    0
+    0
     0
     0
     0
@@ -82348,18 +82418,36 @@
 ;; source-growth headroom that declaration ordering cannot immediately move a
 ;; large batch back across the gate.
 ;;
-;; Retention is bounded by one batch, not by the walk. Make `next` the live
-;; generation and destroy the completed batch at this next-entry handoff.
-;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
-;; flag that disables the virgin-arena zero-fill elision permanently for
-;; everything later allocated in it (#5599). `macro-decl-generation-arena`
-;; tracks the generation's newest HEAD, not its `make` root, so the destroy
-;; walks the whole overflow chain instead of leaking every grown segment.
-(define (macro-decl-generation-rotate! [state : TcMacroState] [next : i64]) : unit
+;; Retention is bounded by one batch, not by the walk. The completed batch is
+;; reclaimed at this next-entry handoff: its arena is rewound to the mark it
+;; had when mapped (macro-generation-recycle!) and becomes the live generation
+;; again. Rewinding reclaims exactly what destroying would, and nothing reads a
+;; completed batch after the handoff. It keeps the mapping, so the walk maps
+;; one arena for its whole run rather than one per batch; each fresh mapping
+;; cost a reserve, a first-touch page fault and a release, most of the walk's
+;; kernel time (#7934). A rewound arena is marked reused, so array
+;; zero-fills in it are no longer elided (#5599); that is cheaper than the
+;; fresh mappings were.
+(define (macro-decl-generation-rotate! [state : TcMacroState]) : i64
   (let
     [previous : i64 (tc-macro-walk-field state macro-decl-generation-arena)]
     [retired : i64
       (tc-macro-walk-field state macro-decl-generation-retired-arena)]
+    [next : i64
+      (if (= previous 0)
+        (let
+          [fresh : i64 (macro-generation-map!)]
+          (begin
+            (tc-macro-walk-set!
+              state
+              macro-decl-generation-mark
+              (macro-generation-base-mark fresh))
+            fresh))
+        (begin
+          (macro-generation-recycle!
+            previous
+            (tc-macro-walk-field state macro-decl-generation-mark))
+          previous))]
     (begin
       (cfg
         compile-profile
@@ -82368,18 +82456,15 @@
           (counters.bump! tc-profile-decl-generation-rotations)))
       (tc-macro-walk-set! state macro-decl-generation-arena next)
       (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
-      (if (= previous 0)
-        unit
-        (macro-generation-destroy! previous))
       ;; Drain a legacy/test-injected retired slot without ever publishing two
       ;; retired owners or destroying the same arena twice.
       (if (or (= retired 0) (= retired previous))
         unit
-        (macro-generation-destroy! retired)))))
+        (macro-generation-destroy! retired))
+      next)))
 
 ;: The arena this declaration's expansion runs in: the live generation while
-;: its batch has room, otherwise a fresh one (which retires the batch before
-;: last).
+;: its batch has room, otherwise the same arena rewound for a new batch.
 (define (macro-decl-generation-enter! [state : TcMacroState]) : i64
   (if (and
     (not (= (tc-macro-walk-field state macro-decl-generation-arena) 0))
@@ -82393,9 +82478,8 @@
         (+ (tc-macro-walk-field state macro-decl-generation-batch-used) 1))
       (tc-macro-walk-field state macro-decl-generation-arena))
     (let
-      [next : i64 (arena.tl_arena_make)]
+      [next : i64 (macro-decl-generation-rotate! state)]
       (begin
-        (macro-decl-generation-rotate! state next)
         (tc-macro-walk-set! state macro-decl-generation-batch-used 1)
         next))))
 
@@ -82422,27 +82506,82 @@
 ;; State that outlives the reset -- the two generated-module/decls memos, which
 ;; are per-RUN, not per-splice -- is not covered by the cadence argument and is
 ;; handled explicitly by the escape list below.
-;: R3-P2c backstop. Every generation destroy in the walk goes through here
-;: first: if the process-global pool context still aliases cells this
-;: generation owns, reseat it into base-arena-owned cells before the pages go
-;: away. See `ast-node-pool-active-context-reseat!` for why the guard lives at
-;: the destroy rather than at the producers.
+;: R3-P2c backstop. Every generation destroy or rewind in the walk goes
+;: through here first: if the process-global pool context still aliases cells
+;: this generation owns, reseat it into base-arena-owned cells before the pages
+;: are reclaimed. See `ast-node-pool-active-context-reseat!` for why the guard
+;: lives at the reclaim rather than at the producers.
+(define (macro-generation-release-pool-context! [generation : i64]) : unit
+  (if (ast.ast-node-pool-active-context-owned-by? generation)
+    (ast.ast-node-pool-active-context-reseat!)
+    unit))
+
 (define (macro-generation-destroy! [generation : i64]) : unit
   (if (= generation 0)
     unit
     (begin
-      (if (ast.ast-node-pool-active-context-owned-by? generation)
-        (ast.ast-node-pool-active-context-reseat!)
-        unit)
+      (macro-generation-release-pool-context! generation)
       (unsafe
         (arena.tl_arena_destroy generation)))))
 
+;: A fresh generation arena. Every one the walk maps is counted, so the
+;: compile profile can pin the number of mappings to a small constant.
+(define (macro-generation-map!) : i64
+  (begin
+    (cfg compile-profile (counters.bump! tc-profile-generation-arenas-mapped))
+    (arena.tl_arena_make)))
+
+;: The mark of `generation` while it is still empty.
+(define (macro-generation-base-mark [generation : i64]) : i64
+  (let
+    [saved : i64 (arena.tl_arena_current)]
+    [mark : i64
+      (begin
+        (unsafe
+          (arena.tl_arena_set generation))
+        (arena.tl_region_mark))]
+    (begin
+      (unsafe
+        (arena.tl_arena_set saved))
+      mark)))
+
+;: Reclaim everything a finished generation allocated by rewinding it to its
+;: empty `mark`, keeping the mapping for the next generation. Grown overflow
+;: segments are released, and poisoning builds poison the reclaimed bytes
+;: exactly as a destroy does.
+(define (macro-generation-recycle! [generation : i64] [mark : i64]) : unit
+  (let
+    [saved : i64 (arena.tl_arena_current)]
+    (begin
+      (macro-generation-release-pool-context! generation)
+      (unsafe
+        (begin
+          (arena.tl_arena_set generation)
+          (arena.tl_region_reset mark)
+          (arena.tl_arena_set saved))))))
+
+;: The splice ring keeps two generations: the live one and the one retired
+;: behind it. Entering a splice reclaims the generation two behind, rewinding
+;: its arena to become the live one.
 (define (macro-splice-generation-enter! [state : TcMacroState]) : i64
   (let
     [previous : i64 (tc-macro-walk-field state macro-splice-generation-arena)]
+    [previous-mark : i64
+      (tc-macro-walk-field state macro-splice-generation-mark)]
     [retired : i64
       (tc-macro-walk-field state macro-splice-generation-retired-arena)]
-    [next : i64 (arena.tl_arena_make)]
+    [retired-mark : i64
+      (tc-macro-walk-field state macro-splice-generation-retired-mark)]
+    [next : i64
+      (if (= retired 0)
+        (macro-generation-map!)
+        (begin
+          (macro-generation-recycle! retired retired-mark)
+          retired))]
+    [next-mark : i64
+      (if (= retired 0)
+        (macro-generation-base-mark next)
+        retired-mark)]
     (begin
       (cfg
         compile-profile
@@ -82455,10 +82594,12 @@
             unit
             (counters.bump! tc-profile-retired-generation-rotations))))
       (tc-macro-walk-set! state macro-splice-generation-arena next)
+      (tc-macro-walk-set! state macro-splice-generation-mark next-mark)
       (tc-macro-walk-set! state macro-splice-generation-retired-arena previous)
-      (if (= retired 0)
-        unit
-        (macro-generation-destroy! retired))
+      (tc-macro-walk-set!
+        state
+        macro-splice-generation-retired-mark
+        previous-mark)
       next)))
 
 ;: True while either ring holds a live generation, i.e. while an "allocate into
@@ -82477,6 +82618,8 @@
     (begin
       (tc-macro-walk-set! state macro-splice-generation-arena 0)
       (tc-macro-walk-set! state macro-splice-generation-retired-arena 0)
+      (tc-macro-walk-set! state macro-splice-generation-mark 0)
+      (tc-macro-walk-set! state macro-splice-generation-retired-mark 0)
       (if (= current 0)
         unit
         (macro-generation-destroy! current))
@@ -82547,6 +82690,7 @@
     (begin
       (tc-macro-walk-set! state macro-decl-generation-arena 0)
       (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
+      (tc-macro-walk-set! state macro-decl-generation-mark 0)
       (tc-macro-walk-set! state macro-decl-generation-batch-used 0)
       (tc-macro-walk-set! state macro-decl-generation-active false)
       (macro-decl-generation-escape-reset! state)

@@ -3,7 +3,8 @@
 ;; Builds an IR program with two identical bounds checks in one block, runs the
 ;; optimizer, emits assembly, and requires exactly one OOB trap reference. The
 ;; backend no longer owns the `tl_oob_abort` body; executable driver paths link
-;; it from the runtime prelude.
+;; it from the runtime prelude. The function is not an entry point (it takes
+;; parameters), so the program emits as library code with no entry (#7071).
 (import compiler_backend)
 (import compiler_optimize)
 (import compiler_ir_types as ir)
@@ -64,13 +65,17 @@
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match (compiler_backend.compiler-backend-emit-program-linux
+    (match (compiler_backend.compiler-backend-emit-program-target-with-mode
       (match (compiler_optimize.optimize-program-with-spans-and-level
         (bounds-check-smoke-program)
         (ir.compiler-source-spans-empty)
         2)
         [(compiler_optimize.CompilerOptimizedProgram.Program optimized _)
-          optimized]))
+          optimized])
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_backend.CompilerBackendMode.Scalar)
+      (ir.compiler-source-spans-empty)
+      false)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (let
           [symbol-count : i64

@@ -38301,26 +38301,42 @@
 ;; Program admission before any emission: every same-program private SPMD
 ;; helper and call must satisfy its explicit ABI descriptor (#7405), then the
 ;; symbol tables must be consistent. Both the assembly and object paths admit a
-;; program only through here.
+;; program only through here. An executable (`emit-entry`) must define `main`:
+;; nothing synthesizes one, so a program without it is rejected before any
+;; code is emitted rather than linked against a missing symbol.
 (define (compiler-backend-validate-program
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
-  [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
+  [index : CompilerBackendProgramIndex]
+  [emit-entry : bool]) : ResultCompilerBackendSymbolValidation
   (let
     [spmd-abi-error : String
       (compiler_ir_types.compiler-ir-spmd-private-abi-program-error functions)]
-    (if (> (string.string-length spmd-abi-error) 0)
-      (ResultCompilerBackendSymbolValidation.Err
-        (box
-          (compiler_diagnostic.compiler-diagnostic-at-start "" spmd-abi-error)))
-      (compiler-backend-validate-function-symbols
-        globals
-        functions
-        externs
-        plan
-        index))))
+    (cond
+      [(> (string.string-length spmd-abi-error) 0)
+        (ResultCompilerBackendSymbolValidation.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start "" spmd-abi-error)))]
+      [(and
+          emit-entry
+          (not
+            (compiler-backend-function-seq-defines?
+              (compiler-backend-global-shared-view functions)
+              cbi.compiler-builtin-id-fix-main)))
+        (ResultCompilerBackendSymbolValidation.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
+              ""
+              "executable has no `main`: define `(define (main) : i64 ...)` as its entry point, or emit library code without one (a `staticlib` package or `typelisp compile --no-entry`)")))]
+      [else
+        (compiler-backend-validate-function-symbols
+          globals
+          functions
+          externs
+          plan
+          index)])))
 
 (define (compiler-backend-runtime-param-types-id [name-id : i64]) : compiler_ast_types.AstTypeList
   (cond
@@ -74785,37 +74801,6 @@
       (compiler-backend-clear-function-emit-state! backend-state)
       result)))
 
-(define (compiler-backend-implicit-main-function) : compiler_ir_types.CompilerIrFunction
-  (compiler_ir_types.CompilerIrFunction.Function
-    cbi.compiler-builtin-id-fix-main
-    (compiler_ir_types.compiler-ir-param-seq-empty)
-    (compiler_ast_types.AstType.I64)
-    1
-    (compiler_ir_types.compiler-ir-block-list-compact
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-instr-seq1
-            (compiler_ir_types.CompilerIrInstr.Return
-              (compiler_ir_types.CompilerIrMaybeValue.Some
-                (compiler_ir_types.CompilerIrValue.I64 0)))))
-        compiler_ir_types.CompilerIrBlockList.Nil))
-    compiler_ir_types.CompilerIrFunctionAbi.Ordinary))
-
-(define (compiler-backend-functions-with-implicit-main
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
-  [emit-entry : bool]) : compiler_ir_types.CompilerIrFunctionSeq
-  (if (and
-    emit-entry
-    (not
-      (compiler-backend-function-seq-defines?
-        (compiler-backend-global-shared-view functions)
-        cbi.compiler-builtin-id-fix-main)))
-    (compiler_ir_types.compiler-ir-function-seq-prepend
-      (compiler-backend-implicit-main-function)
-      functions)
-    functions))
-
 (define (compiler-backend-emit-functions-buffer-raw-into
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -79595,19 +79580,14 @@
                   globals
                   functions
                   externs)
-                ;; Build the program index ONCE over the entry function list
-                ;; and share it with the globals emission: each build walks
-                ;; every function body for the register-group counts, so a
-                ;; second build would double both that walk and its transient
-                ;; allocation. The entry list is a superset of
-                ;; `functions` (at most the synthesized implicit main, which
-                ;; no global initializer can reference), so globals resolve
-                ;; identically against the shared index.
+                ;; Build the program index ONCE over the function list and share
+                ;; it with the globals emission: each build walks every
+                ;; function body for the register-group counts, so a second
+                ;; build would double both that walk and its transient
+                ;; allocation.
                 (let
                   [entry-functions : compiler_ir_types.CompilerIrFunctionSeq
-                    (compiler-backend-functions-with-implicit-main
-                      functions
-                      emit-entry)]
+                    functions]
                   [program-index : CompilerBackendProgramIndex
                     (compiler-backend-program-index-build-with-backend-state-and-profile-state
                       backend-state
@@ -79647,7 +79627,8 @@
                               entry-functions)
                             (compiler-backend-global-shared-view externs)
                             plan
-                            program-index)
+                            program-index
+                            emit-entry)
                             [(ResultCompilerBackendSymbolValidation.Ok _)
                               (compiler-backend-emit-program-buffer-after-index
                                 type-segment-bases
@@ -84018,9 +83999,7 @@
               externs)
             (let
               [entry-functions : compiler_ir_types.CompilerIrFunctionSeq
-                (compiler-backend-functions-with-implicit-main
-                  functions
-                  emit-entry)]
+                functions]
               [program-index : CompilerBackendProgramIndex
                 (compiler-backend-program-index-build-with-backend-state-and-profile-state
                   backend-state
@@ -84033,7 +84012,8 @@
                 (compiler-backend-global-shared-view entry-functions)
                 (compiler-backend-global-shared-view externs)
                 plan
-                program-index)
+                program-index
+                emit-entry)
                 [(ResultCompilerBackendSymbolValidation.Ok _)
                   (match (compiler-backend-switch-validate-functions
                     (compiler-backend-global-shared-view entry-functions))

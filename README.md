@@ -119,8 +119,10 @@ line tables, fatal-site descriptors, and the embedded map.
   (area (Rect 5 6)))
 ```
 
-The return value of `main` is the process exit code. If `main` is absent, the
-compiler synthesizes an entry point that returns `0`.
+The return value of `main` is the process exit code. An executable must define
+`main`: a program without one is rejected rather than given an empty entry
+point. Library code (a `staticlib` package, or `typelisp compile --no-entry`)
+needs no `main`.
 
 For a guided introduction, start with the [getting-started
 guide](https://jonil-botta.github.io/typelisp/getting-started.html). The checked

@@ -286,9 +286,9 @@ Output:
 
 (define (cli-compile-help-text) : String
   "Usage:
-    typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
-    typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
-    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic | --no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
+    typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--no-entry] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
     Generate assembly, an IR summary, or a deterministic textual IR dump.
@@ -303,6 +303,7 @@ Options:
     --verify-ir                    Verify optimized IR before writing output
     --trace-passes                 Trace optimizer pass/function sizes to stderr
     --pic                          Emit runtime-free no-entry PIC assembly and <output>.fixups
+    --no-entry                     Emit library assembly with no program entry (for code without main)
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level

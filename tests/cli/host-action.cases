@@ -36,15 +36,67 @@ case compile
 run compile "{{work}}/smoke.tl" -o "{{dir}}/smoke.s"
 test -f "{{dir}}/smoke.s"
 stdout contains Wrote {{dir}}/smoke.s
-# A source without `main` takes the entry-synthesis path, whose generated
-# names need no parser-token provenance.
-step synthesized-entry
-file synthesized-entry.tl
-(define SYNTHETIC-VALUE : i64 7)
+# #7071: an executable needs an explicit `main`; nothing synthesizes one.
+# Executable compile and run reject a source without it before emitting any
+# code; check accepts it, test runs its inline tests under its own harness
+# entry without letting a later executable compile pass, and `--no-entry`
+# compiles it (alone or in a batch) as library assembly with no entry symbol.
+step missing-main
+file missing-main.tl
+(define VALUE : i64 7)
 end-file
-run compile "{{dir}}/synthesized-entry.tl" -o "{{dir}}/synthesized-entry.s"
-test -f "{{dir}}/synthesized-entry.s"
-stdout contains Wrote {{dir}}/synthesized-entry.s
+run compile "{{dir}}/missing-main.tl" -o "{{dir}}/missing-main.s"
+exit nonzero
+stdout empty
+stderr contains {{native-dir}}/missing-main.tl:1:1
+stderr contains executable has no `main`: define `(define (main) : i64 ...)` as its entry point
+test ! -e "{{dir}}/missing-main.s"
+step missing-main-run
+run run "{{dir}}/missing-main.tl"
+exit nonzero
+stderr contains executable has no `main`
+step missing-main-check
+run check "{{dir}}/missing-main.tl"
+stderr empty
+stdout contains Type checking passed!
+step missing-main-test
+file missing-main-tests.tl
+(import stdlib.test)
+(define (add-one [x : i64]) : i64 (+ x 1))
+(test add-one-basic
+  (test.assert-i64-eq (add-one 41) 42 "add-one"))
+end-file
+run test "{{dir}}/missing-main-tests.tl"
+stderr contains ok add-one-basic
+stderr contains 1 passed; 0 failed
+run compile "{{dir}}/missing-main-tests.tl" -o "{{dir}}/missing-main-tests.s"
+exit nonzero
+stderr contains executable has no `main`
+step missing-main-no-entry
+run compile "{{dir}}/missing-main-tests.tl" --no-entry -o "{{dir}}/missing-main-lib.s"
+stderr empty
+in file {{dir}}/missing-main-lib.s
+contains _tl_missing_main_tests_add_one:
+not-contains .globl _tl_start
+not-contains .globl main
+step missing-main-no-entry-batch
+file -x missing-main-batch.txt
+{{dir}}/missing-main.tl|{{dir}}/missing-main-batch.s
+end-file
+run compile --batch "{{dir}}/missing-main-batch.txt" --no-entry
+stderr empty
+in file {{dir}}/missing-main-batch.s
+not-contains .globl _tl_start
+step missing-main-no-entry-conflicts
+run compile "{{dir}}/missing-main.tl" --no-entry --pic -o "{{dir}}/missing-main-pic.s"
+exit nonzero
+stderr contains compile: --no-entry cannot be combined with --pic
+run compile "{{dir}}/missing-main.tl" --no-entry --emit-ir
+exit nonzero
+stderr contains compile: --no-entry selects assembly output
+run compile "{{dir}}/missing-main.tl" --no-entry --no-entry
+exit nonzero
+stderr contains compile: --no-entry was provided more than once
 step cfg
 file cfg-feature.tl
 (import stdlib.string)

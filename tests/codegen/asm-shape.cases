@@ -950,9 +950,10 @@ in asm
 not-contains __tl_float_sqrt
 
 # Inlined allocation sites get unique labels: the whole backend test driver
-# links as one opt2 executable.
+# links as one opt2 executable. The smoke driver supplies its `main` (#7071)
+# and reaches every backend test.
 case inline-alloc-unique-labels-link
-source src/compiler_backend_tests.tl
+source src/tests/compiler_backend_smoke.tl
 do build
 exit 0
 

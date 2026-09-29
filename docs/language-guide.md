@@ -23,8 +23,9 @@ For the complete language contract, see [SPEC.md](../SPEC.md).
        (area (Rect 5 6)))))        ; 30  -> main returns 33
 ```
 
-The entry point is a function named `main` returning `i64` or `unit`. If
-`main` is omitted, the compiler synthesizes one that returns 0.
+The entry point is a function named `main` returning `i64` or `unit`. Every
+executable defines it; a program without `main` is rejected. A library (a
+`staticlib` package) has none.
 
 ## Language overview
 

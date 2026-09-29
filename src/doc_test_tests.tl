@@ -731,23 +731,15 @@
       (doc_test.doc-test-run-report-ok? report)
       false)))
 
-(define (doc-test-run-smoke-runnable-implicit-main-ok?) : bool
-  (let
-    [report : doc_test.DocTestRunReport
-      (doc_test.doc-test-run-source-with-roots
-        "docs/run.tl"
-        ";# ```typelisp run
+;; A runnable block needs its own `main`: none is synthesized (#7071).
+(define (doc-test-run-smoke-runnable-missing-main-ok?) : bool
+  (doc-test-run-single-failure-message-contains?
+    ";# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# (define answer : i64 1)
 ;# ```
 "
-        (doc-test-run-smoke-stdlib-roots))]
-    (if (=
-      (doc_test.doc-test-run-report-count
-        (owned_view.compiler-owned-shared-view report))
-      1)
-      (doc_test.doc-test-run-report-ok? report)
-      false)))
+    "executable has no `main`"))
 
 (define (doc-test-run-single-failure-message-contains?
   [source : String]
@@ -863,7 +855,7 @@
   (if (doc-test-runnable-supported?)
     (begin
       (unless (doc-test-run-smoke-runnable-exec-pass-ok?) (return false))
-      (unless (doc-test-run-smoke-runnable-implicit-main-ok?) (return false))
+      (unless (doc-test-run-smoke-runnable-missing-main-ok?) (return false))
       (doc-test-run-smoke-runnable-failures-ok?))
     (doc-test-run-smoke-runnable-unsupported-ok?)))
 

@@ -170,6 +170,60 @@ end-if
 
 # The root builds its target artifacts and every package's host TLCI image;
 # a metadata-only dependency image carries no code.
+# #7071: a `bin` package whose entry defines no `main` is rejected at its
+# entry file; nothing synthesizes one. Its mainless `lib` dependency still
+# builds, and a mainless `staticlib` builds without any entry symbol.
+case package-bin-missing-main
+file typelisp.pkg
+(package
+  (name "mainless_bin")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (util "vendor/util")))
+end-file
+file src/main.tl
+(import util.src.lib)
+(define answer : i64 (lib.add-one 41))
+end-file
+file vendor/util/typelisp.pkg
+(package
+  (name "util")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file vendor/util/src/lib.tl
+(define (add-one [x : i64]) : i64 (+ x 1))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg"
+exit nonzero
+stderr contains {{native-dir}}/src/main.tl:1:1
+stderr contains executable has no `main`
+test ! -e "{{dir}}/target/release/mainless_bin"
+test ! -e "{{dir}}/target/release/mainless_bin.exe"
+test ! -e "{{dir}}/target/release/mainless_bin.s"
+test -s "{{dir}}/vendor/util/target/release/util.tlci"
+step package-staticlib-mainless
+file archive/typelisp.pkg
+(package
+  (name "mainless_archive")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/lib.tl"))
+end-file
+file archive/src/lib.tl
+(define (archive-add [a : i64] [b : i64]) : i64 (+ a b))
+end-file
+run build --manifest-path "{{dir}}/archive/typelisp.pkg"
+stderr empty
+test -f "{{dir}}/archive/target/release/mainless_archive.s"
+in file {{dir}}/archive/target/release/mainless_archive.s
+contains archive_add
+not-contains .globl main
+not-contains .globl _tl_start
+
 case package-host-target-split
 file typelisp.pkg
 (package

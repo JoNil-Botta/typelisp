@@ -116,7 +116,10 @@
   (paths ast.AstDeclPathList)
   ;; The job's cfg environment: generated declarations are reparsed with it
   ;; while this request is lowered (#7812).
-  (cfgs sym_i64_env.SymI64Env))
+  (cfgs sym_i64_env.SymI64Env)
+  ;; The package entry file: an emission diagnostic without a source span,
+  ;; such as a missing executable `main`, is reported there.
+  (entry-path String))
 
 (define (build-package-direct-object-default-request
   [name : String]
@@ -128,7 +131,8 @@
   [crt-entry : bool]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [cfgs : sym_i64_env.SymI64Env]) : BuildPackageDirectObjectRequest
+  [cfgs : sym_i64_env.SymI64Env]
+  [entry-path : String]) : BuildPackageDirectObjectRequest
   (BuildPackageDirectObjectRequest
     name
     kind
@@ -143,7 +147,8 @@
     crt-entry
     decls
     paths
-    cfgs))
+    cfgs
+    entry-path))
 
 (defenum ResultBuildManifest
   (Ok load.CompilerPkgManifest)
@@ -2724,6 +2729,7 @@
     [else BuildPackageDirectObjectPreflight.Eligible]))
 
 (define (build-package-emit-assembly-fallback
+  [entry-path : String]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
@@ -2732,7 +2738,7 @@
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
   [reason : backend.CompilerDirectObjectFallbackReason]) : ResultBuildPackagePreparedRuntime
   (match (compiler_driver_core.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-    ""
+    entry-path
     lowered
     target
     true
@@ -2754,6 +2760,7 @@
 ;; Route policy is resolved while source declarations are live. Emission owns
 ;; one lowered result and cannot re-enter package loading or lowering.
 (define (build-package-emit-preflighted-runtime
+  [entry-path : String]
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
@@ -2767,7 +2774,7 @@
       (match target
         [(backend.CompilerBackendTarget.Linux)
           (match (compiler_driver_core.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
-            ""
+            entry-path
             lowered
             target
             mode
@@ -2809,10 +2816,11 @@
           ;; the COFF encoding/linkability checks. Its Assembly result is an
           ;; intentional, stable fallback rather than a compilation failure.
           (match (compiler_windows_coff_core.compiler-windows-batch-emit-lowered-result
-            ""
+            entry-path
             lowered
             mode
             opt-level
+            emit-entry
             false
             true)
             [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
@@ -2850,6 +2858,7 @@
                     (deref diag))))])])]
     [(BuildPackageDirectObjectPreflight.Fallback reason)
       (build-package-emit-assembly-fallback
+        entry-path
         target
         opt-level
         mode
@@ -5474,6 +5483,7 @@
           request.cfgs)]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
+          request.entry-path
           request.kind
           request.target
           request.opt-level
@@ -5516,6 +5526,7 @@
     [profile : BuildProfile]
     [mode : backend.CompilerBackendMode]
     [producer-identity : String]
+    [entry-path : String]
     [emit-entry : bool]
     [crt-entry : bool]
     [decls : ast.AstDeclList]
@@ -5559,7 +5570,8 @@
               crt-entry
               decls
               owned-paths
-              cfgs))]
+              cfgs
+              (owned_view.compiler-owned-shared-view entry-path)))]
         [_abort : unit
           (match (owned_view.compiler-owned-shared-view prepared)
             [(ResultBuildPackagePreparedRuntime.Err message)
@@ -5807,7 +5819,7 @@
                   (owned_view.compiler-owned-shared-view manifest.name)
                   (owned_view.compiler-owned-shared-view manifest-dir)
                   stdlib-roots
-                  entry-path
+                  (owned_view.compiler-owned-shared-view entry-path)
                   (owned_view.compiler-owned-shared-view decls)
                   (owned_view.compiler-owned-shared-view paths))]
               [metadata-link-inputs : build_run_core.SourceToolLinkInputs
@@ -5841,6 +5853,7 @@
                 profile
                 mode
                 producer-identity
+                (owned_view.compiler-owned-shared-view entry-path)
                 emit-entry
                 crt-entry
                 decls

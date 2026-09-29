@@ -1,7 +1,7 @@
 ;; compile_cli_core.tl - Main-free selfhost compile/check core.
 ;;
 ;; Wraps compiler_driver_core.tl's input/output API with the selfhost compile CLI:
-;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>]
+;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--no-entry] [--target <target>]
 ;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...] [--profile-allocations]`,
 ;; plus `check <file.tl> [--stdlib-root <dir>...]`.
@@ -13,6 +13,9 @@
 ;; and `--verify-ir` expose optimizer diagnostics without changing normal
 ;; compilation.
 ;; `--pic` writes runtime-free, no-entry PIC assembly plus `<output>.fixups`.
+;; `--no-entry` writes ordinary assembly without a program entry point, for a
+;; module that defines no `main` (#7071); it also applies to every `--batch`
+;; entry.
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
@@ -66,6 +69,10 @@
   (Err i64))
 
 (define compile-cli-allocation-profile-requested : bool
+  false)
+
+;; `--no-entry`: emit library assembly without a program entry point.
+(define compile-cli-no-entry-requested : bool
   false)
 (define compile-cli-dump-ir-requested : bool
   false)
@@ -327,6 +334,13 @@
     (cli_option.cli-args-fail-arg! args "compile: unknown flag ")
     (cli_option.cli-args-fail-arg! args "compile: unexpected argument ")))
 
+(define (compile-cli-no-entry-option! [args : (&mut args cli_option.CliArgs)]) : unit
+  (if compile-cli-no-entry-requested
+    (cli_option.cli-args-fail!
+      args
+      "compile: --no-entry was provided more than once")
+    (set! compile-cli-no-entry-requested true)))
+
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (cond
     [(>= input-idx count)
@@ -341,7 +355,8 @@
             "compile"
             "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
              --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-             -o <file> --pic --emit-ir --dump-ir --verify-ir --trace-passes"
+             -o <file> --pic --no-entry --emit-ir --dump-ir --verify-ir
+             --trace-passes"
             (+ input-idx 1)
             count)]
         [options : CompileCliOptions (compile-cli-options)]
@@ -364,6 +379,8 @@
                       (set! output-path (cli_option.cli-args-value (& args)))
                       (set! has-output true)))]
                 [(string.eq args.name "--pic") (set! pic true)]
+                [(string.eq args.name "--no-entry")
+                  (compile-cli-no-entry-option! (&mut args))]
                 [(and
                     emit-ir
                     (or
@@ -411,6 +428,12 @@
             [(and emit-ir pic)
               (ResultCompileCliConfig.Err
                 "compile: --pic cannot be combined with --emit-ir")]
+            [(and compile-cli-no-entry-requested pic)
+              (ResultCompileCliConfig.Err
+                "compile: --no-entry cannot be combined with --pic, whose assembly never has an entry")]
+            [(and compile-cli-no-entry-requested emit-ir)
+              (ResultCompileCliConfig.Err
+                "compile: --no-entry selects assembly output and cannot be combined with --emit-ir or --dump-ir")]
             [else
               (ResultCompileCliConfig.Ok
                 (CompileCliConfig.Config
@@ -439,7 +462,7 @@
           "compile"
           "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
            --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-           -o --emit-ir --pic --prefix-cache-stats --windows-coff-plan"
+           -o --emit-ir --pic --no-entry --prefix-cache-stats --windows-coff-plan"
           (+ batch-path-idx 1)
           count)]
       [options : CompileCliOptions (compile-cli-options)]
@@ -463,6 +486,8 @@
                 (cli_option.cli-args-fail!
                   (&mut args)
                   "compile: --batch does not support --pic")]
+              [(string.eq args.name "--no-entry")
+                (compile-cli-no-entry-option! (&mut args))]
               [(string.eq args.name "--prefix-cache-stats")
                 (set! prefix-cache-stats true)]
               ;; The result path is taken by hand: a duplicate is reported
@@ -733,7 +758,8 @@
                             stdlib-roots
                             opt-level
                             backend-mode
-                            emit-cfgs)
+                            emit-cfgs
+                            (not compile-cli-no-entry-requested))
                           output-path))))]
                 (begin
                   (compiler_driver_core.compiler-driver-state-capture-session-floors!
@@ -963,6 +989,7 @@
                     opt-level
                     backend-mode
                     emit-cfgs
+                    (not compile-cli-no-entry-requested)
                     force-assembly)
                   object-path
                   assembly-path))]
@@ -1932,6 +1959,7 @@
     [action : CompileCliAction
       (begin
         (set! compile-cli-allocation-profile-requested false)
+        (set! compile-cli-no-entry-requested false)
         (set! compile-cli-dump-ir-requested false)
         (set! compile-cli-dump-ir-pass "")
         (set! compile-cli-verify-ir-requested false)

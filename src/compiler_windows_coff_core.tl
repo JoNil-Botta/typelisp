@@ -176,6 +176,7 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [mode : compiler_backend.CompilerBackendMode]
+  [emit-entry : bool]
   [category : compiler_backend.CompilerDirectObjectFallbackReason]
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
@@ -190,7 +191,7 @@
       (compiler_backend.CompilerBackendTarget.Windows)
       mode
       spans
-      true
+      emit-entry
       false
       profile-state)
       [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
@@ -242,11 +243,14 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [mode : compiler_backend.CompilerBackendMode]
+  [emit-entry : bool]
   [force-assembly : bool]
   [emit-side-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
-  (if force-assembly
+  ;; A direct COFF object is linkable only through the freestanding runtime's
+  ;; `_tl_start`, so a no-entry (library) image takes the assembly route.
+  (if (or force-assembly (not emit-entry))
     (compiler-windows-batch-emit-assembly
       backend-state
       pools
@@ -254,7 +258,10 @@
       program
       spans
       mode
-      compiler_backend.CompilerDirectObjectFallbackReason.ForcedAssembly
+      emit-entry
+      (if force-assembly
+        compiler_backend.CompilerDirectObjectFallbackReason.ForcedAssembly
+        compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)
       profile-state
       typecheck-state)
     (match (compiler-windows-coff-object-program-eligibility
@@ -270,6 +277,7 @@
           program
           spans
           mode
+          emit-entry
           category
           profile-state
           typecheck-state)]
@@ -286,7 +294,7 @@
             (compiler_backend.CompilerBackendTarget.Windows)
             mode
             (owned_view.compiler-owned-shared-view spans)
-            true
+            emit-entry
             false
             profile-state)
             [(compiler_backend.ResultCompilerBackendObject.Ok image)
@@ -369,6 +377,7 @@
                       program
                       spans
                       mode
+                      emit-entry
                       category
                       profile-state
                       typecheck-state)]))]
@@ -395,6 +404,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]
+  [emit-entry : bool]
   [force-assembly : bool]
   [emit-side-assembly : bool]
   [profile-state : profile_state.CompilerProfileState]
@@ -452,6 +462,7 @@
                   optimized
                   optimized-spans
                   mode
+                  emit-entry
                   force-assembly
                   emit-side-assembly
                   profile-state
@@ -462,6 +473,7 @@
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
   [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]
+  [emit-entry : bool]
   [force-assembly : bool]
   [emit-side-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (match lowered
@@ -500,6 +512,7 @@
               emit-spans
               mode
               opt-level
+              emit-entry
               force-assembly
               emit-side-assembly
               profile-state
@@ -523,6 +536,7 @@
   [opt-level : i64]
   [mode : compiler_backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
+  [emit-entry : bool]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (begin
     (cfg
@@ -551,5 +565,6 @@
         lowered
         mode
         opt-level
+        emit-entry
         force-assembly
         false))))

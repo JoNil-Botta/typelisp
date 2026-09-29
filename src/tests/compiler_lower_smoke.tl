@@ -452,6 +452,8 @@
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
+;; A mainless module compiles as library code (no entry, #7071) and keeps
+;; every source function, since no `main` roots reachability.
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
   (let
     [path : String "target/lower_direct_no_main_symbols.tl"]
@@ -473,7 +475,8 @@
         roots
         0
         (backend.CompilerBackendMode.Scalar)
-        (parser.compiler-cfg-empty))
+        (parser.compiler-cfg-empty)
+        false)
         [(driver.ResultCompilerDriverBuffer.Ok buf _)
           (let
             [asm : String (text_buf.render buf)]

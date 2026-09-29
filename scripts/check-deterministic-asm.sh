@@ -64,6 +64,8 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+# NAME SOURCE [no-entry]: a mainless module is library code and compiles with
+# --no-entry, as its compile-manifest case does (#7071).
 corpus() {
     cat <<'EOF'
 arithmetic tests/integration/arithmetic.tl
@@ -92,15 +94,15 @@ string_length tests/integration/string_length.tl
 substring tests/integration/substring.tl
 sym_i64_env tests/integration/sym_i64_env.tl
 tl_alloc tests/integration/tl_alloc.tl
-tl_lex src/lex.tl
-tl_compiler_parse_core src/compiler_parse_core.tl
-tl_compiler_symbols src/compiler_symbols.tl
-tl_doc_extract src/doc_extract.tl
-tl_doc_render src/doc_render.tl
-tl_doc_html src/doc_html.tl
-tl_read src/read.tl
-tl_token src/token.tl
-token tests/integration/token.tl
+tl_lex src/lex.tl no-entry
+tl_compiler_parse_core src/compiler_parse_core.tl no-entry
+tl_compiler_symbols src/compiler_symbols.tl no-entry
+tl_doc_extract src/doc_extract.tl no-entry
+tl_doc_render src/doc_render.tl no-entry
+tl_doc_html src/doc_html.tl no-entry
+tl_read src/read.tl no-entry
+tl_token src/token.tl no-entry
+token tests/integration/token.tl no-entry
 tree tests/integration/tree.tl
 unit_functions tests/integration/unit_functions.tl
 unit_main tests/integration/unit_main.tl
@@ -163,8 +165,10 @@ compile_pass() {
     out_dir=$2
 
     mkdir -p "$out_dir"
-    corpus | while read -r name source; do
+    corpus | while read -r name source kind; do
         [ -n "$name" ] || continue
+        entry_args=
+        [ "$kind" != no-entry ] || entry_args=--no-entry
         if [ ! -f "$source" ]; then
             echo "corpus file not found: $source" >&2
             exit 1
@@ -183,6 +187,7 @@ compile_pass() {
             else
                 echo "[$pass_name] $source -> $out (compile-manifest invocation)"
                 "$COMPILER" compile "$(compiler_input_path "$ROOT/$source")" -o "$out" \
+                    $entry_args \
                     --target linux-x86_64 \
                     --cfg selfhost-compile-manifest \
                     --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
@@ -192,7 +197,7 @@ compile_pass() {
         fi
         compile_source=$(compile_source_for_case "$name" "$source" "$out_dir")
         echo "[$pass_name] $compile_source -> $out"
-        "$COMPILER" compile "$compile_source" -o "$out" \
+        "$COMPILER" compile "$compile_source" -o "$out" $entry_args \
             --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
             --stdlib-root "$(compiler_input_path "$ROOT/src")"
     done

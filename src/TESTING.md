@@ -111,12 +111,15 @@ a lambda defined in it. `move_diverging_reinit_other_arm_ok` keeps an arm that c
 but diverges opposite an arm that reinitializes; skipping unchanged arms
 unconditionally breaks it.
 
-The `with_owner_*_reject` rows are the soundness half. A `with` scope checks
-its owner only against the body's fallthrough state while lowering cleans the
-owner on every exit edge, so dropping a returning or breaking arm's facts
-without `tc-moved-retain-active-cleanup-owners` accepts a double cleanup: with
-the retention disabled all four rows type-check. Keep whole-owner, `(:owned)`
-field, `match` and loop `break` forms when changing either join. The join fast
+The `with_owner_*_reject` rows are the soundness half. Lowering cleans an active
+owner on every normal exit edge, so the move checker validates the owner at
+each `return`, recoverable `try`, `break`, `continue`, and fallthrough before
+dropping diverging arms from joins. Keep whole-owner, `(:owned)` field, `match`
+and loop `break` forms when changing either join. The `let_obligation_*` rows
+also require explicit discharge on every normal exit. Their value-tail cases
+check that transparent scopes and branches return the same visible owner,
+that shadowing cannot discharge an outer binding, and that `never` tails need
+no cleanup. The join fast
 path runs for every branch in a self-compile; measure typecheck-only
 instruction counts on identical source when touching it.
 

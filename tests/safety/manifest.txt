@@ -759,6 +759,10 @@ let_obligation_lost_call_reject|check-fail|tests/safety/let_obligation_lost_call
 let_obligation_lookalike_reject|check-fail|tests/safety/let_obligation_lookalike_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
 let_obligation_partial_reject|check-fail|tests/safety/let_obligation_partial_reject.tl|-|cleanup obligation of `p` is only partly discharged at the end of its let scope
 let_obligation_double_reject|check-fail|tests/safety/let_obligation_double_reject.tl|-|use of moved value `h`
+let_obligation_value_tails_ok|run-exit|tests/safety/let_obligation_value_tails_ok.tl|42|-
+let_obligation_never_ok|run-exit|tests/safety/let_obligation_never_ok.tl|42|-
+let_obligation_value_shadow_reject|check-fail|tests/safety/let_obligation_value_shadow_reject.tl|-|cleanup obligation of `h` is not discharged at the end of its let scope
+let_obligation_lambda_exits_ok|run-exit|tests/safety/let_obligation_lambda_exits_ok.tl|42|-
 vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut_reject.tl|-|typecheck: unbound name tokens.slots-mut
 vector_cleanup_into_iter_vec_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_vec_projection_reject.tl|-|IntoIter.vec; available fields: state
 vector_cleanup_into_iter_state_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_state_projection_reject.tl|-|field projection .slots requires struct, got (MutPtr

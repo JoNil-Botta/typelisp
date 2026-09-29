@@ -3911,6 +3911,11 @@ of the paths that meet at an `if`, `match`, `and`/`or` or loop exit. A path
 that ends in a call of a `never` function, such as a panic, needs no discharge.
 Function parameters do not yet carry an obligation (#6947).
 
+These transfers also recognize transparent value forms (`begin`, `unsafe`,
+and nested scopes) and `if`/`match` arms that all yield the same visible owner
+on their normal paths. A shadowing binding is a different owner. Selecting
+different live owners does not prove that both were discharged.
+
 ```lisp test=run name=let-cleanup-obligation exit=42 stdout=""
 (define (close-fd [_fd : i64]) : unit
   unit)

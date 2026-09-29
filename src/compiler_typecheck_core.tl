@@ -22044,23 +22044,22 @@
   [ctx : TcContext]
   [name-id : i64]
   [handle : i64]) : ast.AstType
-  (match (tc-nominal-owner-name ctx handle)
-    [(ResultTcString.Ok owner-name)
-      (if (string.eq (tc-nominal-name-id-display name-id) owner-name)
-        (tc-resolved-nominal-type-id name-id handle)
-        (let
-          [owner-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-          (if (tc-current-module-owner-name-matches-id?
-            (tc-context-structural-session ctx)
-            name-id
-            owner-id)
-            (tc-resolved-nominal-type-id name-id handle)
-            (if (and
-              (> (string.string-length (tc-context-module ctx)) 0)
-              (tc-current-module-enum-id? ctx name-id))
-              (ast.AstType.Enum name-id)
-              (tc-resolved-nominal-type-id owner-id handle)))))]
-    [(ResultTcString.Err _)
+  (match (tc-nominal-owner-name-match ctx handle name-id)
+    [(TcNominalOwnerMatch.Same) (tc-resolved-nominal-type-id name-id handle)]
+    [(TcNominalOwnerMatch.Different)
+      (let
+        [owner-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+        (if (tc-current-module-owner-name-matches-id?
+          (tc-context-structural-session ctx)
+          name-id
+          owner-id)
+          (tc-resolved-nominal-type-id name-id handle)
+          (if (and
+            (> (string.string-length (tc-context-module ctx)) 0)
+            (tc-current-module-enum-id? ctx name-id))
+            (ast.AstType.Enum name-id)
+            (tc-resolved-nominal-type-id owner-id handle))))]
+    [(TcNominalOwnerMatch.Unnamed)
       (if (and
         (> (string.string-length (tc-context-module ctx)) 0)
         (tc-current-module-enum-id? ctx name-id))
@@ -22072,23 +22071,23 @@
   [name-id : i64]
   [handle : i64]
   [lifetimes : ast.AstLifetimeList]) : ast.AstType
-  (match (tc-nominal-owner-name ctx handle)
-    [(ResultTcString.Ok owner-name)
-      (if (string.eq (tc-nominal-name-id-display name-id) owner-name)
-        (tc-resolved-nominal-type-with-args-id name-id handle lifetimes)
-        (let
-          [owner-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-          (if (tc-current-module-owner-name-matches-id?
-            (tc-context-structural-session ctx)
-            name-id
-            owner-id)
-            (tc-resolved-nominal-type-with-args-id name-id handle lifetimes)
-            (if (and
-              (> (string.string-length (tc-context-module ctx)) 0)
-              (tc-current-module-enum-id? ctx name-id))
-              (ast.ast-ty-enum-args name-id lifetimes)
-              (tc-resolved-nominal-type-with-args-id owner-id handle lifetimes)))))]
-    [(ResultTcString.Err _)
+  (match (tc-nominal-owner-name-match ctx handle name-id)
+    [(TcNominalOwnerMatch.Same)
+      (tc-resolved-nominal-type-with-args-id name-id handle lifetimes)]
+    [(TcNominalOwnerMatch.Different)
+      (let
+        [owner-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+        (if (tc-current-module-owner-name-matches-id?
+          (tc-context-structural-session ctx)
+          name-id
+          owner-id)
+          (tc-resolved-nominal-type-with-args-id name-id handle lifetimes)
+          (if (and
+            (> (string.string-length (tc-context-module ctx)) 0)
+            (tc-current-module-enum-id? ctx name-id))
+            (ast.ast-ty-enum-args name-id lifetimes)
+            (tc-resolved-nominal-type-with-args-id owner-id handle lifetimes))))]
+    [(TcNominalOwnerMatch.Unnamed)
       (if (and
         (> (string.string-length (tc-context-module ctx)) 0)
         (tc-current-module-enum-id? ctx name-id))
@@ -22415,6 +22414,16 @@
       (array-ref data.owner-handles slot)
       (tc-global-array-element-shared-view data.owner-names slot))))
 
+;; Whether `tc-nominal-owner-cache-lookup` would find `handle`.
+(define (tc-nominal-owner-cache-holds? [ctx : TcContext] [handle : i64]) : bool
+  (let
+    [data : TcNominalCacheStateData
+      (tc-nominal-cache-state-data
+        (tc-job-state-nominal-cache (tc-context-job-state ctx)))]
+    (=
+      (array-ref data.owner-handles (tc-nominal-owner-cache-slot handle))
+      handle)))
+
 (define (tc-nominal-owner-cache-store-if-safe!
   [state : TcNominalCacheState]
   [handle : i64]
@@ -22547,6 +22556,36 @@
                 program
                 handle
                 (csym.compiler-symbol-handle-index handle))]))])))
+
+;; How the display of the nominal `name-id` compares with the name of the
+;; declaration that owns `handle`. Unnamed: that owner has no name.
+(defenum TcNominalOwnerMatch
+  (Same)
+  (Different)
+  (Unnamed))
+
+;; Decides exactly as comparing the display with `tc-nominal-owner-name`, but
+;; resolves a module/name owner without rendering its name. A cached owner name
+;; takes precedence, as it does in `tc-nominal-owner-name`.
+(define (tc-nominal-owner-name-match
+  [ctx : TcContext]
+  [handle : i64]
+  [name-id : i64]) : TcNominalOwnerMatch
+  (match (if (tc-nominal-owner-cache-holds? ctx handle)
+    csym.CompilerOwnerNameComparison.Unresolved
+    (csym.compiler-symbols-owner-name-at-index-compare
+      (tc-context-symbols ctx)
+      (csym.compiler-symbol-handle-index handle)
+      name-id))
+    [(csym.CompilerOwnerNameComparison.Equal) TcNominalOwnerMatch.Same]
+    [(csym.CompilerOwnerNameComparison.Different) TcNominalOwnerMatch.Different]
+    [(csym.CompilerOwnerNameComparison.Unresolved)
+      (match (tc-nominal-owner-name ctx handle)
+        [(ResultTcString.Ok owner-name)
+          (if (string.eq (tc-nominal-name-id-display name-id) owner-name)
+            TcNominalOwnerMatch.Same
+            TcNominalOwnerMatch.Different)]
+        [(ResultTcString.Err _) TcNominalOwnerMatch.Unnamed])]))
 
 (define (tc-context-with-owner-name-module [ctx : TcContext] [owner-id : i64]) : TcContext
   (if (tc-name-qualified-id? (tc-context-structural-session ctx) owner-id)

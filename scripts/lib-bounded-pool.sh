@@ -13,12 +13,15 @@ BOUNDED_POOL_LABEL=${BOUNDED_POOL_LABEL:-pool}
 # Worker pool. A queue lists every job once as `job|cap_mib`, optionally
 # followed by `|need,...` (earlier jobs that must succeed before it starts, or
 # `-`) and `|lock,...` (shared resources no two running jobs may hold at once).
+# A fifth field reserves CPU slots (1-16, default 1); `-` means no locks there.
+# An optional fourth init argument budgets these slots. A job larger than that
+# budget runs alone, so a single-CPU caller still runs every pooled job.
 # Workers claim the first job in queue order whose needs have succeeded, whose
 # locks are free, and whose cap fits the pool budget beside the caps of all
 # running jobs. Needs name earlier jobs only, so the first unclaimed job always
 # becomes claimable once the running jobs finish, and one worker runs the queue
 # in order. State lives in directories whose creation is atomic: `claims/` (one
-# per started job), `running/` (its cap and locks while it runs), `held/` (one
+# per started job), `running/` (its cap, locks and CPU slots while it runs), `held/` (one
 # per held lock) and `results/` (its exit status).
 BOUNDED_POOL_LOCK_TRIES=${BOUNDED_POOL_LOCK_TRIES:-600}
 
@@ -41,12 +44,18 @@ bounded_pool_unlock() {
 bounded_pool_require_queue() {
     _bp_queue_budget=$1
     _bp_queue=$2
+    _bp_queue_cpu=${3:-}
     case "$_bp_queue_budget" in
         "" | *[!0-9]* | 0*)
             echo "[$BOUNDED_POOL_LABEL] invalid pool budget: $_bp_queue_budget" >&2
             return 2
             ;;
     esac
+    if [ -n "$_bp_queue_cpu" ] &&
+        ! awk -v slots="$_bp_queue_cpu" 'BEGIN { exit !(slots ~ /^[1-9][0-9]*$/ && slots <= 16384) }'; then
+        echo "[$BOUNDED_POOL_LABEL] invalid CPU slot budget: $_bp_queue_cpu" >&2
+        return 2
+    fi
     # Workers and the completeness check read the queue with `read` and `wc -l`,
     # which both drop a final record that lacks its newline; awk below would
     # still count it, so such a queue must not start a pool.
@@ -61,7 +70,7 @@ bounded_pool_require_queue() {
             exit 2
         }
         {
-            if (NF < 2 || NF > 4 || $1 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+            if (NF < 2 || NF > 5 || $1 !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
                 fail("malformed job record")
             if ($2 !~ /^[1-9][0-9]*$/) fail("malformed cap for " $1)
             if ($2 + 0 > budget + 0) fail("cap of " $1 " exceeds the pool budget")
@@ -73,7 +82,7 @@ bounded_pool_require_queue() {
                     if (!(list[n] in seen) || list[n] == $1)
                         fail($1 " needs an unknown or later job: " list[n])
             }
-            if (NF == 4) {
+            if (NF >= 4 && !(NF == 5 && $4 == "-")) {
                 locks = split($4, list, ",")
                 if (locks == 0) fail("empty locks for " $1)
                 delete lock_seen
@@ -81,6 +90,8 @@ bounded_pool_require_queue() {
                     if (list[n] !~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ || lock_seen[list[n]]++)
                         fail("malformed or duplicate lock for " $1 ": " list[n])
             }
+            if (NF == 5 && $5 !~ /^([1-9]|1[0-6])$/)
+                fail("malformed CPU slots for " $1)
             count++
         }
         END { if (!failed && count == 0) fail("empty queue") }
@@ -91,10 +102,12 @@ bounded_pool_init() {
     _bp_pool=$1
     _bp_pool_budget=$2
     _bp_pool_queue=$3
-    bounded_pool_require_queue "$_bp_pool_budget" "$_bp_pool_queue" || return 2
+    _bp_pool_cpu=${4:-}
+    bounded_pool_require_queue "$_bp_pool_budget" "$_bp_pool_queue" "$_bp_pool_cpu" || return 2
     rm -rf "$_bp_pool"
     mkdir -p "$_bp_pool/claims" "$_bp_pool/running" "$_bp_pool/held" "$_bp_pool/results"
     printf '%s\n' "$_bp_pool_budget" > "$_bp_pool/budget"
+    printf '%s\n' "$_bp_pool_cpu" > "$_bp_pool/cpu-slots"
     cp "$_bp_pool_queue" "$_bp_pool/queue"
 }
 
@@ -155,23 +168,37 @@ bounded_pool_claim() {
     fi
     bounded_pool_lock "$_bp_claim_pool" || return 2
     read -r _bp_claim_budget < "$_bp_claim_pool/budget"
+    read -r _bp_claim_cpu_budget < "$_bp_claim_pool/cpu-slots"
     _bp_claim_used=0
+    _bp_claim_cpu_used=0
     for _bp_claim_running in "$_bp_claim_pool/running"/*; do
         [ -f "$_bp_claim_running" ] || continue
-        read -r _bp_claim_running_cap < "$_bp_claim_running"
+        if ! { read -r _bp_claim_running_cap && read -r _bp_claim_running_locks &&
+            read -r _bp_claim_running_cpu; } < "$_bp_claim_running"; then
+            echo "[$BOUNDED_POOL_LABEL] incomplete running job: $_bp_claim_running" >&2
+            bounded_pool_unlock "$_bp_claim_pool" || return 2
+            return 2
+        fi
         _bp_claim_used=$((_bp_claim_used + _bp_claim_running_cap))
+        _bp_claim_cpu_used=$((_bp_claim_cpu_used + _bp_claim_running_cpu))
     done
     _bp_claim_status=1
-    while IFS='|' read -r _bp_claim_job _bp_claim_cap _bp_claim_needs _bp_claim_locks; do
+    while IFS='|' read -r _bp_claim_job _bp_claim_cap _bp_claim_needs _bp_claim_locks _bp_claim_cpu; do
         [ ! -d "$_bp_claim_pool/claims/$_bp_claim_job" ] || continue
         _bp_claim_status=3
         [ -z "$_bp_claim_needs" ] || [ "$_bp_claim_needs" = - ] ||
             bounded_pool_needs_met "$_bp_claim_pool" "$_bp_claim_needs" || continue
         [ $((_bp_claim_used + _bp_claim_cap)) -le "$_bp_claim_budget" ] || continue
+        _bp_claim_cpu=${_bp_claim_cpu:-1}
+        [ "$_bp_claim_locks" != - ] || _bp_claim_locks=
+        if [ -n "$_bp_claim_cpu_budget" ]; then
+            [ "$_bp_claim_cpu" -le "$_bp_claim_cpu_budget" ] || _bp_claim_cpu=$_bp_claim_cpu_budget
+            [ $((_bp_claim_cpu_used + _bp_claim_cpu)) -le "$_bp_claim_cpu_budget" ] || continue
+        fi
         [ -z "$_bp_claim_locks" ] ||
             bounded_pool_locks_free "$_bp_claim_pool" "$_bp_claim_locks" || continue
         if ! mkdir "$_bp_claim_pool/claims/$_bp_claim_job" ||
-            ! printf '%s\n%s\n' "$_bp_claim_cap" "$_bp_claim_locks" \
+            ! printf '%s\n%s\n%s\n' "$_bp_claim_cap" "$_bp_claim_locks" "$_bp_claim_cpu" \
                 > "$_bp_claim_pool/running/$_bp_claim_job" ||
             ! bounded_pool_locks_update "$_bp_claim_pool" take "$_bp_claim_locks"; then
             _bp_claim_status=2

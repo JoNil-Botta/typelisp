@@ -62,7 +62,7 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 
 `ci-gates.tsv` is the gate table: one row per gate, in run order, with its
 stable `id`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
-ci-timing name), `needs`, `compiler`, `memory`, `locks` and `command`.
+ci-timing name), `needs`, `compiler`, `memory`, `cpu`, `locks` and `command`.
 `ci-verify.sh` runs the rows for its host in table order (under `--jobs`, the
 order in which ready gates start) and starts no gate after the first failure.
 List either host without a compiler or side effects, optionally narrowed to a
@@ -74,10 +74,20 @@ sh scripts/ci-verify.sh --list-gates windows
 sh scripts/ci-verify.sh --list-gates linux --gates stage2-deterministic-assembly
 ```
 
-The listing has `id`, `hosts`, `label`, `needs`, `memory` and `locks` columns,
+The listing has `id`, `hosts`, `label`, `needs`, `memory`, `cpu` and `locks` columns,
 and checks the whole table first: the header, field count, unique IDs, hosts,
-compiler kinds, needs, memory, locks, and that every command's `scripts/` files
+compiler kinds, needs, memory, CPU slots, locks, and that every command's `scripts/` files
 and `gate_*` functions exist.
+
+`--cpu-slots N` adds a CPU admission budget beside the memory budget. The
+`cpu` column (1–16) records a gate's default concurrent compiler workers:
+build-invariance, integration, inline tests and the compile manifest each
+reserve two slots; other gates reserve one. Hosted CI uses four slots for its
+four vCPUs. Dependencies, checkout locks and memory reservations still apply,
+and every selected gate must finish successfully. A gate larger than the CPU
+budget runs alone, including with `--jobs 1`. CPU slots are scheduling
+reservations, not execution quotas; adjust the budget when overriding nested
+worker counts. Omitting this option keeps the existing memory-only admission.
 
 `--gates ID[,ID...]` runs a dependency-closed subset of the same table: the
 named gates of this host plus every gate their `needs` reach, in table order.

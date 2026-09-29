@@ -913,6 +913,23 @@
             (eh.CompilerEhFrameLimits 88 50 3 64 64 100))
           eh.compiler-eh-frame-error-output-limit
           "output limit")
+        ;; FDE 0 covers 4 bytes and FDE 1 0x1b bytes.
+        (set! (array-ref two 0) (eh.CompilerEhFrameSelection 0 0 0x1000))
+        (set! (array-ref two 1) (eh.CompilerEhFrameSelection 0 1 0x1002))
+        (test.assert-i64-eq
+          (eh-frame-test-encode-code (& images) (& two) 0x2000 defaults)
+          eh.compiler-eh-frame-error-header-order
+          "overlapping code ranges")
+        (set! (array-ref two 1) (eh.CompilerEhFrameSelection 0 1 0x1000))
+        (test.assert-i64-eq
+          (eh-frame-test-encode-code (& images) (& two) 0x2000 defaults)
+          eh.compiler-eh-frame-error-header-order
+          "two FDEs at one initial location")
+        (set! (array-ref two 1) (eh.CompilerEhFrameSelection 0 1 0x1004))
+        (test.assert-i64-eq
+          (eh-frame-test-encode-code (& images) (& two) 0x2000 defaults)
+          0
+          "adjacent code ranges")
         (set! (array-ref two 0) (eh.CompilerEhFrameSelection 0 1 0x1000))
         (set! (array-ref two 1) (eh.CompilerEhFrameSelection 0 1 0x3000))
         (test.assert-i64-eq

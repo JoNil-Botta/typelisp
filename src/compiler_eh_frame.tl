@@ -172,6 +172,10 @@
   (Err CompilerEhFrameError)
   (Ok CompilerEhFrameHeader))
 
+(defenum ResultCompilerEhFrameRows
+  (Err CompilerEhFrameError)
+  (Ok (__tl_dyn-array CompilerEhFrameRow)))
+
 (define (compiler-eh-frame-error
   [code : i64]
   [input : i64]
@@ -1688,10 +1692,16 @@
                         (+ section-address fde-offset)))))
                 (set! index (+ index 1)))))
           (compiler-eh-frame-push-u32! (&mut out) 0)
-          (ResultCompilerEhFrameOutput.Ok
-            (CompilerEhFrameOutput
-              (byte_buf_core.byte-buf-builder-finish-array (& out))
-              rows)))))))
+          ;; Two FDEs claiming one code address leave an unwinder no way to
+          ;; choose, whether or not a search header is built.
+          (match (compiler-eh-frame-sorted-rows (& rows))
+            [(ResultCompilerEhFrameRows.Err error)
+              (ResultCompilerEhFrameOutput.Err error)]
+            [(ResultCompilerEhFrameRows.Ok _)
+              (ResultCompilerEhFrameOutput.Ok
+                (CompilerEhFrameOutput
+                  (byte_buf_core.byte-buf-builder-finish-array (& out))
+                  rows))]))))))
 
 ;; --- .eh_frame_hdr -----------------------------------------------------------
 (define (compiler-eh-frame-header-error
@@ -1754,6 +1764,87 @@
                 (set! (array-ref order largest) swap)
                 (set! node largest)))))))))
 
+;; `rows` sorted by initial location, or the first row set a binary search
+;; could not resolve: a range that is empty or leaves the address domain, two
+;; rows at one location, or overlapping ranges.  Both the .eh_frame encoder
+;; (for its own rows) and the header encoder apply it.
+(define (compiler-eh-frame-sorted-rows
+  [rows : (& rows (__tl_dyn-array CompilerEhFrameRow))]) : ResultCompilerEhFrameRows
+  (let
+    [count : i64 (array-length rows)]
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [sorted : (__tl_dyn-array CompilerEhFrameRow)
+      (__tl_make-array CompilerEhFrameRow count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [row : CompilerEhFrameRow (array-ref rows index)]
+          (begin
+            (when
+              (or
+                (<= row.range 0)
+                (not (compiler-eh-frame-address? row.initial-location))
+                (not
+                  (compiler-eh-frame-address?
+                    (+ row.initial-location row.range)))
+                (not (compiler-eh-frame-address? row.fde-address)))
+              (return
+                (ResultCompilerEhFrameRows.Err
+                  (compiler-eh-frame-header-error
+                    compiler-eh-frame-error-address
+                    -1
+                    "eh_frame: FDE range or address outside the supported range"))))
+            (set! (array-ref order index) index)
+            (set! index (+ index 1)))))
+      (set! index (- (/ count 2) 1))
+      (while (>= index 0)
+        (begin
+          (compiler-eh-frame-row-sift! rows (&mut order) index count)
+          (set! index (- index 1))))
+      (set! index (- count 1))
+      (while (> index 0)
+        (let
+          [swap : i64 (array-ref order 0)]
+          (begin
+            (set! (array-ref order 0) (array-ref order index))
+            (set! (array-ref order index) swap)
+            (compiler-eh-frame-row-sift! rows (&mut order) 0 index)
+            (set! index (- index 1)))))
+      (set! index 0)
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref sorted index)
+            (array-ref rows (array-ref order index)))
+          (set! index (+ index 1))))
+      (set! index 1)
+      (while (< index count)
+        (let
+          [previous : CompilerEhFrameRow (array-ref sorted (- index 1))]
+          [current : CompilerEhFrameRow (array-ref sorted index)]
+          (begin
+            (when
+              (= previous.initial-location current.initial-location)
+              (return
+                (ResultCompilerEhFrameRows.Err
+                  (compiler-eh-frame-header-error
+                    compiler-eh-frame-error-header-order
+                    -1
+                    "eh_frame: two FDEs share an initial location"))))
+            (when
+              (>
+                (+ previous.initial-location previous.range)
+                current.initial-location)
+              (return
+                (ResultCompilerEhFrameRows.Err
+                  (compiler-eh-frame-header-error
+                    compiler-eh-frame-error-header-order
+                    -1
+                    "eh_frame: FDE code ranges overlap"))))
+            (set! index (+ index 1)))))
+      (ResultCompilerEhFrameRows.Ok sorted))))
+
 ;; Encode the version-1 search header at `header-address` for `rows` of a
 ;; final `.eh_frame` at `eh-frame-address`.  The eh_frame pointer is relative
 ;; to its own field (the header's fifth byte); both words of every table row
@@ -1804,123 +1895,60 @@
               compiler-eh-frame-error-address
               -1
               "eh_frame_hdr: section address outside the supported range"))))
-      (let
-        [order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [sorted : (__tl_dyn-array CompilerEhFrameRow)
-          (__tl_make-array CompilerEhFrameRow count)]
-        [index : i64 0]
-        [out : byte_buf_core.ByteBufBuilder
-          (byte_buf_core.byte-buf-builder-with-capacity size)]
-        [pointer : i64 (- eh-frame-address (+ header-address 4))]
-        (begin
-          (while (< index count)
-            (let
-              [row : CompilerEhFrameRow (array-ref rows index)]
-              (begin
-                (when
-                  (or
-                    (<= row.range 0)
-                    (not (compiler-eh-frame-address? row.initial-location))
-                    (not
-                      (compiler-eh-frame-address?
-                        (+ row.initial-location row.range)))
-                    (not (compiler-eh-frame-address? row.fde-address)))
-                  (return
-                    (ResultCompilerEhFrameHeaderBytes.Err
-                      (compiler-eh-frame-header-error
-                        compiler-eh-frame-error-address
-                        -1
-                        "eh_frame_hdr: row range or address outside the supported range"))))
-                (set! (array-ref order index) index)
-                (set! index (+ index 1)))))
-          (set! index (- (/ count 2) 1))
-          (while (>= index 0)
+      (match (compiler-eh-frame-sorted-rows rows)
+        [(ResultCompilerEhFrameRows.Err error)
+          (ResultCompilerEhFrameHeaderBytes.Err error)]
+        [(ResultCompilerEhFrameRows.Ok sorted)
+          (let
+            [index : i64 0]
+            [out : byte_buf_core.ByteBufBuilder
+              (byte_buf_core.byte-buf-builder-with-capacity size)]
+            [pointer : i64 (- eh-frame-address (+ header-address 4))]
             (begin
-              (compiler-eh-frame-row-sift! rows (&mut order) index count)
-              (set! index (- index 1))))
-          (set! index (- count 1))
-          (while (> index 0)
-            (let
-              [swap : i64 (array-ref order 0)]
-              (begin
-                (set! (array-ref order 0) (array-ref order index))
-                (set! (array-ref order index) swap)
-                (compiler-eh-frame-row-sift! rows (&mut order) 0 index)
-                (set! index (- index 1)))))
-          (set! index 0)
-          (while (< index count)
-            (begin
-              (set!
-                (array-ref sorted index)
-                (array-ref rows (array-ref order index)))
-              (set! index (+ index 1))))
-          (set! index 1)
-          (while (< index count)
-            (let
-              [previous : CompilerEhFrameRow (array-ref sorted (- index 1))]
-              [current : CompilerEhFrameRow (array-ref sorted index)]
-              (begin
-                (when
-                  (= previous.initial-location current.initial-location)
-                  (return
-                    (ResultCompilerEhFrameHeaderBytes.Err
-                      (compiler-eh-frame-header-error
-                        compiler-eh-frame-error-header-order
-                        -1
-                        "eh_frame_hdr: two FDEs share an initial location"))))
-                (when
-                  (>
-                    (+ previous.initial-location previous.range)
-                    current.initial-location)
-                  (return
-                    (ResultCompilerEhFrameHeaderBytes.Err
-                      (compiler-eh-frame-header-error
-                        compiler-eh-frame-error-header-order
-                        -1
-                        "eh_frame_hdr: FDE code ranges overlap"))))
-                (set! index (+ index 1)))))
-          (when
-            (not (compiler-eh-frame-i32? pointer))
-            (return
-              (ResultCompilerEhFrameHeaderBytes.Err
-                (compiler-eh-frame-header-error
-                  compiler-eh-frame-error-address
-                  4
-                  "eh_frame_hdr: eh_frame pointer displacement overflows sdata4"))))
-          (compiler-eh-frame-push-u8!
-            (&mut out)
-            compiler-eh-frame-header-version)
-          (compiler-eh-frame-push-u8!
-            (&mut out)
-            compiler-eh-frame-pe-pcrel-sdata4)
-          (compiler-eh-frame-push-u8! (&mut out) compiler-eh-frame-pe-udata4)
-          (compiler-eh-frame-push-u8!
-            (&mut out)
-            compiler-eh-frame-pe-datarel-sdata4)
-          (compiler-eh-frame-push-u32! (&mut out) pointer)
-          (compiler-eh-frame-push-u32! (&mut out) count)
-          (set! index 0)
-          (while (< index count)
-            (let
-              [row : CompilerEhFrameRow (array-ref sorted index)]
-              [location : i64 (- row.initial-location header-address)]
-              [fde : i64 (- row.fde-address header-address)]
-              (begin
-                (when
-                  (or
-                    (not (compiler-eh-frame-i32? location))
-                    (not (compiler-eh-frame-i32? fde)))
-                  (return
-                    (ResultCompilerEhFrameHeaderBytes.Err
-                      (compiler-eh-frame-header-error
-                        compiler-eh-frame-error-address
-                        (+ compiler-eh-frame-header-size (* index 8))
-                        "eh_frame_hdr: table displacement overflows sdata4"))))
-                (compiler-eh-frame-push-u32! (&mut out) location)
-                (compiler-eh-frame-push-u32! (&mut out) fde)
-                (set! index (+ index 1)))))
-          (ResultCompilerEhFrameHeaderBytes.Ok
-            (byte_buf_core.byte-buf-builder-finish-array (& out))))))))
+              (when
+                (not (compiler-eh-frame-i32? pointer))
+                (return
+                  (ResultCompilerEhFrameHeaderBytes.Err
+                    (compiler-eh-frame-header-error
+                      compiler-eh-frame-error-address
+                      4
+                      "eh_frame_hdr: eh_frame pointer displacement overflows sdata4"))))
+              (compiler-eh-frame-push-u8!
+                (&mut out)
+                compiler-eh-frame-header-version)
+              (compiler-eh-frame-push-u8!
+                (&mut out)
+                compiler-eh-frame-pe-pcrel-sdata4)
+              (compiler-eh-frame-push-u8!
+                (&mut out)
+                compiler-eh-frame-pe-udata4)
+              (compiler-eh-frame-push-u8!
+                (&mut out)
+                compiler-eh-frame-pe-datarel-sdata4)
+              (compiler-eh-frame-push-u32! (&mut out) pointer)
+              (compiler-eh-frame-push-u32! (&mut out) count)
+              (set! index 0)
+              (while (< index count)
+                (let
+                  [row : CompilerEhFrameRow (array-ref sorted index)]
+                  [location : i64 (- row.initial-location header-address)]
+                  [fde : i64 (- row.fde-address header-address)]
+                  (begin
+                    (when
+                      (or
+                        (not (compiler-eh-frame-i32? location))
+                        (not (compiler-eh-frame-i32? fde)))
+                      (return
+                        (ResultCompilerEhFrameHeaderBytes.Err
+                          (compiler-eh-frame-header-error
+                            compiler-eh-frame-error-address
+                            (+ compiler-eh-frame-header-size (* index 8))
+                            "eh_frame_hdr: table displacement overflows sdata4"))))
+                    (compiler-eh-frame-push-u32! (&mut out) location)
+                    (compiler-eh-frame-push-u32! (&mut out) fde)
+                    (set! index (+ index 1)))))
+              (ResultCompilerEhFrameHeaderBytes.Ok
+                (byte_buf_core.byte-buf-builder-finish-array (& out)))))]))))
 
 ;; Decode a version-1 search header at `header-address`: the eh_frame pointer
 ;; against its own field, each row against the header start.  The table must

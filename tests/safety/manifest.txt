@@ -518,6 +518,16 @@ with_owner_move_in_returning_if_reject|check-fail|tests/safety/with_owner_move_i
 with_owner_move_in_returning_match_reject|check-fail|tests/safety/with_owner_move_in_returning_match_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_field_move_in_returning_if_reject|check-fail|tests/safety/with_owner_field_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_move_in_breaking_if_reject|check-fail|tests/safety/with_owner_move_in_breaking_if_reject.tl|-|cleanup owner `h` moved before with scope exit
+# Shadowing (#8266): a `let` or `with` binding that shadows a local gives the
+# local its move state back where the scope ends. A moved local stays moved,
+# also when the shadowing initializer moved it, and a move of the shadowing
+# binding does not reach the outer local.
+move_shadow_let_reuse_reject|check-fail|tests/safety/move_shadow_let_reuse_reject.tl|-|use of moved value `t`
+move_shadow_let_init_reuse_reject|check-fail|tests/safety/move_shadow_let_init_reuse_reject.tl|-|use of moved value `t`
+move_shadow_loop_let_reuse_reject|check-fail|tests/safety/move_shadow_loop_let_reuse_reject.tl|-|use of moved value `t`
+move_shadow_with_binding_reuse_reject|check-fail|tests/safety/move_shadow_with_binding_reuse_reject.tl|-|use of moved value `t`
+with_owner_moved_then_shadowed_reject|check-fail|tests/safety/with_owner_moved_then_shadowed_reject.tl|-|cleanup owner `h` moved before with scope exit
+move_shadow_inner_move_ok|run-exit|tests/safety/move_shadow_inner_move_ok.tl|42|-
 fixed_array_match_pattern_arity_reject|check-fail|tests/safety/fixed_array_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
 fixed_array_match_pattern_wrong_type_reject|check-fail|tests/safety/fixed_array_match_pattern_wrong_type_reject.tl|-|tuple match requires (tuple ...)
 fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_array_match_pattern_refutable_nested_reject.tl|-|requires binding, wildcard, or nested tuple, struct, or box pattern

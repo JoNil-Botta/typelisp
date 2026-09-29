@@ -9566,6 +9566,38 @@
       "typecheck: cleanup owner `h` moved before with scope exit")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-move-with-cleanup-owner-field-source)
+      "typecheck: cleanup owner `h` moved before with scope exit")
+    ;; A shadowing binding gives the outer local its move state back where its
+    ;; scope ends (#8266).
+    (compiler-typecheck-error-ok?
+      "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (bad-shadow-let-reuse [t : Token]) : i64
+  (let
+    [first : i64 (consume t)]
+    (begin
+      (let [t : i64 1] t)
+      (+ first (consume t)))))"
+      "typecheck: use of moved value `t`")
+    (compiler-typecheck-ok?
+      "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (shadow-inner-move [t : Token] [other : Token]) : i64
+  (let
+    [first : i64 (let [t : Token other] (consume t))]
+    (+ first (consume t))))")
+    (compiler-typecheck-error-ok?
+      "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : i64 0)
+(define (bad-with-cleanup-owner-moved-then-shadowed) : i64
+  (with ([h (FileHandle 3) cleanup-file-handle])
+    (begin
+      (take-handle h)
+      (let [h : i64 1] h)
+      7)))"
       "typecheck: cleanup owner `h` moved before with scope exit")))
 
 ;; --- defdispatch frontend model ---------------------------------------------

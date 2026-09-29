@@ -71,3 +71,16 @@
           (= place.zip 90210)
           (string.eq place.city "Malmo")))]
     [_ false]))
+
+;; A u64 payload, for the full-range JSON integer path.
+(defenum Stamp
+  (Unset)
+  (At u64))
+
+(define (stamp-max) : Stamp
+  (Stamp.At (cast -1 : u64)))
+
+(define (stamp-max? [stamp : Stamp]) : bool
+  (match stamp
+    [(At value) (= value (cast -1 : u64))]
+    [_ false]))

@@ -519,6 +519,51 @@
           -1
           (+ start offset))))))
 
+;; Every read lies inside [0, len). Past the whole words, the last 8 bytes are
+;; read as one word that overlaps what was already compared; below 8 bytes, the
+;; first and the last 4 (or 2) bytes together cover the range, overlapping in
+;; the middle -- two compares where a byte loop spends one per byte.
+;: Expand to whether the `len` bytes at the `(Ptr u8)` variables `lp` and `rp`
+;: are equal. The expansion belongs inside `unsafe` in a function returning
+;: bool: both ranges must hold `len >= 0` readable bytes, and a mismatch in the
+;: word loop returns false from that function.
+(defmacro (string-bytes-eq [lp : Expr] [rp : Expr] [len : Expr]) : bool
+  `(cond
+    [(= (ptr->int ,lp) (ptr->int ,rp)) true]
+    [(>= ,len 8)
+      (let
+        [lw : (Ptr i64) (ptr-cast ,lp : (Ptr i64))]
+        [rw : (Ptr i64) (ptr-cast ,rp : (Ptr i64))]
+        [words : i64 (shr ,len 3)]
+        [i : i64 0]
+        (begin
+          (while (< i words)
+            (if (not
+              (= (ptr-read (ptr-offset lw i)) (ptr-read (ptr-offset rw i))))
+              (return false)
+              (set! i (+ i 1))))
+          (=
+            (ptr-read (ptr-cast (ptr-offset ,lp (- ,len 8)) : (Ptr i64)))
+            (ptr-read (ptr-cast (ptr-offset ,rp (- ,len 8)) : (Ptr i64))))))]
+    [(>= ,len 4)
+      (and
+        (=
+          (ptr-read (ptr-cast ,lp : (Ptr u32)))
+          (ptr-read (ptr-cast ,rp : (Ptr u32))))
+        (=
+          (ptr-read (ptr-cast (ptr-offset ,lp (- ,len 4)) : (Ptr u32)))
+          (ptr-read (ptr-cast (ptr-offset ,rp (- ,len 4)) : (Ptr u32)))))]
+    [(>= ,len 2)
+      (and
+        (=
+          (ptr-read (ptr-cast ,lp : (Ptr u16)))
+          (ptr-read (ptr-cast ,rp : (Ptr u16))))
+        (=
+          (ptr-read (ptr-cast (ptr-offset ,lp (- ,len 2)) : (Ptr u16)))
+          (ptr-read (ptr-cast (ptr-offset ,rp (- ,len 2)) : (Ptr u16)))))]
+    [(= ,len 1) (= (ptr-read ,lp) (ptr-read ,rp))]
+    [else true]))
+
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (eq [left : (& left str)] [right : (& right str)]) : bool
   (let
@@ -530,54 +575,7 @@
         (let
           [lp : (Ptr u8) (string-data left)]
           [rp : (Ptr u8) (string-data right)]
-          ;; Every read below lies inside [0, len). Past the whole words, the
-          ;; last 8 bytes are read as one word that overlaps what was already
-          ;; compared; below 8 bytes, the first and the last 4 (or 2) bytes
-          ;; together cover the string, overlapping in the middle -- two
-          ;; compares where a byte loop spends one per byte.
-          (cond
-            [(= (ptr->int lp) (ptr->int rp)) true]
-            [(>= left-len 8)
-              (let
-                [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
-                [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
-                [words : i64 (shr left-len 3)]
-                [i : i64 0]
-                (begin
-                  (while (< i words)
-                    (if (not
-                      (=
-                        (ptr-read (ptr-offset lw i))
-                        (ptr-read (ptr-offset rw i))))
-                      (return false)
-                      (set! i (+ i 1))))
-                  (=
-                    (ptr-read
-                      (ptr-cast (ptr-offset lp (- left-len 8)) : (Ptr i64)))
-                    (ptr-read
-                      (ptr-cast (ptr-offset rp (- left-len 8)) : (Ptr i64))))))]
-            [(>= left-len 4)
-              (and
-                (=
-                  (ptr-read (ptr-cast lp : (Ptr u32)))
-                  (ptr-read (ptr-cast rp : (Ptr u32))))
-                (=
-                  (ptr-read
-                    (ptr-cast (ptr-offset lp (- left-len 4)) : (Ptr u32)))
-                  (ptr-read
-                    (ptr-cast (ptr-offset rp (- left-len 4)) : (Ptr u32)))))]
-            [(>= left-len 2)
-              (and
-                (=
-                  (ptr-read (ptr-cast lp : (Ptr u16)))
-                  (ptr-read (ptr-cast rp : (Ptr u16))))
-                (=
-                  (ptr-read
-                    (ptr-cast (ptr-offset lp (- left-len 2)) : (Ptr u16)))
-                  (ptr-read
-                    (ptr-cast (ptr-offset rp (- left-len 2)) : (Ptr u16)))))]
-            [(= left-len 1) (= (ptr-read lp) (ptr-read rp))]
-            [else true]))))))
+          (string-bytes-eq lp rp left-len))))))
 
 ;: Alias for `eq`.
 ;; lint-allow: function-name-case -- compatibility API spelling
@@ -740,21 +738,13 @@
   (let
     [hlen : i64 (__tl_string_length haystack)]
     [nlen : i64 (__tl_string_length needle)]
-    (if (< start 0)
+    (if (or (< start 0) (> start (- hlen nlen)))
       false
-      (if (> (+ start nlen) hlen)
-        false
+      (unsafe
         (let
-          [ok : bool true]
-          [j : i64 0]
-          (begin
-            (while (and ok (< j nlen))
-              (if (char-eq
-                (__tl_string_ref haystack (+ start j))
-                (__tl_string_ref needle j))
-                (set! j (+ j 1))
-                (set! ok false)))
-            ok))))))
+          [hp : (Ptr u8) (ptr-offset (string-data haystack) start)]
+          [np : (Ptr u8) (string-data needle)]
+          (string-bytes-eq hp np nlen))))))
 
 (test
   string-borrowed-str-gate
@@ -1279,4 +1269,65 @@
     (test.assert-false
       (string-test-prefix-at "hello" "hello!" 0)
       "too-long prefix")
-    (test.assert-false (string-test-prefix-at "hello" "lo" 4) "prefix past end")))
+    (test.assert-false (string-test-prefix-at "hello" "lo" 4) "prefix past end")
+    (test.assert-true (string-test-prefix-at "" "" 0) "empty prefix of empty")
+    (test.assert-false
+      (string-test-prefix-at "hello" "" 6)
+      "empty prefix past end")
+    (test.assert-false
+      (string-test-prefix-at "hello" "h" 9223372036854775807)
+      "largest prefix position")
+    (let
+      [text : String "0123456789abcdefghijklmnopqrstuvwxyz"]
+      (begin
+        ;; Every width class of the word compare, at an unaligned offset.
+        (test.assert-true (is-string-prefix-at (& text) "3" 3) "1-byte prefix")
+        (test.assert-true (is-string-prefix-at (& text) "34" 3) "2-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "345" 3)
+          "3-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "3456" 3)
+          "4-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "3456789" 3)
+          "7-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "3456789a" 3)
+          "8-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "3456789ab" 3)
+          "9-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "3456789abcdefghij" 3)
+          "17-byte prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) "uvwxyz" 30)
+          "prefix ending at the end")
+        (test.assert-false
+          (is-string-prefix-at (& text) "X" 3)
+          "1-byte mismatch")
+        (test.assert-false
+          (is-string-prefix-at (& text) "3X" 3)
+          "2-byte mismatch")
+        (test.assert-false
+          (is-string-prefix-at (& text) "345X" 3)
+          "4-byte last-byte mismatch")
+        (test.assert-false
+          (is-string-prefix-at (& text) "X456789abcdefghij" 3)
+          "first-byte mismatch")
+        (test.assert-false
+          (is-string-prefix-at (& text) "3456789aXcdefghij" 3)
+          "second-word mismatch")
+        (test.assert-false
+          (is-string-prefix-at (& text) "3456789abcdefghiX" 3)
+          "last-byte mismatch")
+        (test.assert-false
+          (is-string-prefix-at (& text) "3456789abcdefghij" 4)
+          "shifted prefix")
+        (test.assert-true
+          (is-string-prefix-at (& text) (& text) 0)
+          "whole text at start")
+        (test.assert-false
+          (is-string-prefix-at (& text) (& text) 1)
+          "whole text past start")))))

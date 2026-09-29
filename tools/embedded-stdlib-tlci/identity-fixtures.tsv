@@ -139,6 +139,7 @@ stdlib.serialize/serialize	2	fixed	module	tests/integration/stdlib_serialize_jso
 stdlib.sort/vec	1	fixed	module	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.sync/channel	1	fixed	module	tests/integration/sync_channel_thread_runtime.tl	ok	default	assembly
 stdlib.sync/mutex	1	fixed	module	tests/integration/sync_mutex_thread_runtime.tl	ok	default	assembly
+stdlib.string/string-bytes-eq	3	fixed	expr	tests/integration/stdlib_string.tl	ok	default	assembly
 stdlib.str_cat/str-cat	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.str_cat_runtime/str-cat-pack	3	fixed	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
 stdlib.str_cat_runtime/str-cat	1	variadic	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly

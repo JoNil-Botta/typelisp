@@ -107,7 +107,9 @@ linux_memory_limit_run_systemd() {
         echo "Linux memory limiting failed to create cgroup peak evidence" >&2
         return 2
     }
-    _linux_memory_limit_record_peak='{ while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/memory.events"; read -r peak < "$cgroup/memory.peak" && echo "$peak $kills" > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" ;; esac; done < /proc/self/cgroup; } 2>/dev/null || true'
+    # The hook writes labelled lines, and its own errors, so an OOM report can
+    # show what it saw: `ran`, `cgroup PATH`, `kills N` and `peak N`.
+    _linux_memory_limit_record_peak='{ echo ran; while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; echo "cgroup $cgroup"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/memory.events"; echo "kills $kills"; read -r peak < "$cgroup/memory.peak" && echo "peak $peak" ;; esac; done < /proc/self/cgroup; } > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" 2>&1 || true'
     _linux_memory_limit_status=0
     TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak \
         LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
@@ -129,8 +131,12 @@ linux_memory_limit_run_systemd() {
     _linux_memory_limit_cgroup_bytes=0
     _linux_memory_limit_cgroup_kills=0
     if [ -s "$_linux_memory_limit_cgroup_peak" ]; then
-        read -r _linux_memory_limit_cgroup_bytes _linux_memory_limit_cgroup_kills \
-            < "$_linux_memory_limit_cgroup_peak" || true
+        while read -r _linux_memory_limit_hook_key _linux_memory_limit_hook_value; do
+            case "$_linux_memory_limit_hook_key" in
+                peak) _linux_memory_limit_cgroup_bytes=$_linux_memory_limit_hook_value ;;
+                kills) _linux_memory_limit_cgroup_kills=$_linux_memory_limit_hook_value ;;
+            esac
+        done < "$_linux_memory_limit_cgroup_peak"
     fi
     case "$_linux_memory_limit_cgroup_bytes" in
         "" | *[!0-9]*) _linux_memory_limit_cgroup_bytes=0 ;;
@@ -186,7 +192,7 @@ linux_memory_limit_run_systemd() {
         if [ "$_linux_memory_limit_cgroup_bytes" -gt "$_linux_memory_limit_peak_bytes" ]; then
             _linux_memory_limit_peak_bytes=$_linux_memory_limit_cgroup_bytes
         fi
-        echo "[memory-limit] OOM peak sources: cgroup memory.peak $_linux_memory_limit_cgroup_bytes (oom_kill $_linux_memory_limit_cgroup_kills), systemd summary $_linux_memory_limit_summary_bytes, sampler $_linux_memory_limit_sampled_bytes" >&2
+        echo "[memory-limit] OOM peak sources: cgroup memory.peak $_linux_memory_limit_cgroup_bytes (oom_kill $_linux_memory_limit_cgroup_kills), systemd summary $_linux_memory_limit_summary_bytes, sampler $_linux_memory_limit_sampled_bytes; stop-post hook: $(tr '\n' ' ' < "$_linux_memory_limit_cgroup_peak")" >&2
     fi
     rm -f "$_linux_memory_limit_systemd_stderr" "$_linux_memory_limit_cgroup_peak"
     printf '%s\n' "$_linux_memory_limit_peak_bytes" \

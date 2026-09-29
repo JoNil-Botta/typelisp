@@ -108,6 +108,13 @@ exercise_backend() {
 
 exercise_nested_backend() {
     _nested_backend=$1
+    assert_no_nested_scratch() {
+        for _nested_scratch in "$_nested_prefix"*.systemd-stderr* \
+            "$_nested_prefix"*.cgroup-peak*; do
+            [ ! -e "$_nested_scratch" ] || \
+                fail "nested helper left scratch evidence: $_nested_scratch"
+        done
+    }
     for _nested_mode in inherited metrics report; do
         for _nested_exit in 0 23; do
             _nested_prefix="$WORKDIR/$_nested_backend-$_nested_mode-$_nested_exit"
@@ -145,10 +152,7 @@ exercise_nested_backend() {
             case "$_nested_peak" in
                 '' | *[!0-9]* | 0) fail "nested inner report lost peak evidence" ;;
             esac
-            for _nested_scratch in "$_nested_prefix"*.systemd-stderr*; do
-                [ ! -e "$_nested_scratch" ] || \
-                    fail "nested helper left scratch stderr evidence: $_nested_scratch"
-            done
+            assert_no_nested_scratch
         done
     done
     # A nested run must also keep systemd's OOM classification. Terminate the
@@ -172,6 +176,7 @@ exercise_nested_backend() {
         '' | *[!0-9]*) fail "nested outer OOM lost peak evidence" ;;
     esac
     [ "$_nested_peak" -ge 33554432 ] || fail "nested outer OOM underreported its peak"
+    assert_no_nested_scratch
     for _nested_marker in outer-before inner-marker outer-after; do
         [ "$(grep -Fxc "$_nested_marker" "$_nested_prefix.stderr")" -eq 1 ] || \
             fail "nested outer OOM lost or repeated $_nested_marker"

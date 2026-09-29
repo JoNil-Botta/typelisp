@@ -530,6 +530,12 @@ stdlib_test_char_failure|all|-|tests/integration/stdlib_test.tl|134|-|char|stdli
 stdlib_test_string_failure|all|-|tests/integration/stdlib_test.tl|134|-|string|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:name mismatch: expected "right", found "left"
 string_append|all|-|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl|-
 string_concat_deep|all|-|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.tl|-
+bare_string_helpers|all|-|tests/integration/bare_string_helpers.tl|42|-|-|stdlib/string.tl|-
+bare_string_helpers|all|0,2|tests/integration/bare_string_helpers.tl|42|-|-|stdlib/string.tl|stage-stdlib
+bare_string_helper_shadow|all|-|tests/integration/bare_string_helper_shadow.tl|42|-|-|stdlib/string.tl|-
+bare_string_helper_modules|all|-|tests/integration/bare_string_helper_modules.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
+bare_string_helper_wildcard|all|-|tests/integration/bare_string_helper_wildcard.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
+bare_string_helper_selected|all|-|tests/integration/bare_string_helper_selected.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
 string_eq|all|-|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl|-
 core_string_length|all|-|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl|-
 stdlib_math_ieee|all|-|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl|-

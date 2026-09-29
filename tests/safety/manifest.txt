@@ -500,6 +500,19 @@ tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_af
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+# Value forms (#8268): a consumer moves the places at the value tails of the
+# `if`, `match`, `begin`, `let` or `with` it consumes when the value carries a
+# cleanup obligation. Each reject fails on main by acceptance.
+move_value_if_reuse_reject|check-fail|tests/safety/move_value_if_reuse_reject.tl|-|use of moved value `x`
+move_value_match_reuse_reject|check-fail|tests/safety/move_value_match_reuse_reject.tl|-|use of moved value `x`
+move_value_begin_reuse_reject|check-fail|tests/safety/move_value_begin_reuse_reject.tl|-|use of moved value `x`
+move_value_let_body_reuse_reject|check-fail|tests/safety/move_value_let_body_reuse_reject.tl|-|use of moved value `x`
+move_value_with_tail_reuse_reject|check-fail|tests/safety/move_value_with_tail_reuse_reject.tl|-|use of moved value `x`
+move_value_box_reuse_reject|check-fail|tests/safety/move_value_box_reuse_reject.tl|-|use of moved value `x`
+move_value_loop_carried_reject|check-fail|tests/safety/move_value_loop_carried_reject.tl|-|cannot move loop-carried owner value `x`
+with_owner_value_begin_move_reject|check-fail|tests/safety/with_owner_value_begin_move_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_string_value_move_reject|check-fail|tests/safety/with_owner_string_value_move_reject.tl|-|cleanup owner `name` moved before with scope exit
+move_value_tail_shadow_ok|run-exit|tests/safety/move_value_tail_shadow_ok.tl|42|-
 # Branch joins: an arm that never completes normally does not reach the join,
 # but its moves of an active `with` owner still reach that scope's exit check.
 move_diverging_if_return_ok|run-exit|tests/safety/move_diverging_if_return_ok.tl|42|-

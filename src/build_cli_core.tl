@@ -2384,6 +2384,79 @@
     (load.compiler-load-normalize-path
       (load.compiler-load-join-root-path manifest-dir value))))
 
+;; The declaration of a link input: its package, and the manifest field when
+;; there is one.
+(define (build-package-link-declared-by [owner : String] [field : String]) : String
+  (if (= (string.string-length field) 0)
+    owner
+    (str_cat.str-cat owner " field `" field "`")))
+
+;; `package `NAME` (MANIFEST)`, the owner of a manifest's link inputs.
+(define (build-package-link-owner [name : String] [manifest-path : String]) : String
+  (str_cat.str-cat "package `" name "` (" manifest-path ")"))
+
+;; Record the origin of every value of one `(link ...)` field.
+(define (build-package-link-add-field-origins
+  [inputs : build_run_core.SourceToolLinkInputs]
+  [kind : String]
+  [manifest-dir : String]
+  [owner : String]
+  [field : String]
+  [vec : (& vec fs.FsStringVector)]) : build_run_core.SourceToolLinkInputs
+  (let
+    [out : build_run_core.SourceToolLinkInputs inputs]
+    [index : i64 0]
+    (begin
+      (while (< index (fs.string-vector-len vec))
+        (let
+          [value : String (fs.string-vector-get vec index "")]
+          (begin
+            (set!
+              out
+              (build_run_core.source-tool-link-inputs-add-origin
+                out
+                (owned_view.compiler-owned-shared-view kind)
+                (if (string.eq (& kind) "search-path")
+                  (build-package-link-resolve-search-path
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    value)
+                  value)
+                (build-package-link-declared-by
+                  (owned_view.compiler-owned-shared-view owner)
+                  (owned_view.compiler-owned-shared-view field))))
+            (set! index (+ index 1)))))
+      out)))
+
+(define (build-package-link-add-set-origins
+  [inputs : build_run_core.SourceToolLinkInputs]
+  [manifest-dir : String]
+  [owner : String]
+  [prefix : String]
+  [set : load.CompilerPkgLinkSet]) : build_run_core.SourceToolLinkInputs
+  (build-package-link-add-field-origins
+    (build-package-link-add-field-origins
+      (build-package-link-add-field-origins
+        inputs
+        "library"
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view owner)
+        (str_cat.str-cat
+          (owned_view.compiler-owned-shared-view prefix)
+          "libraries")
+        (& set.libraries))
+      "search-path"
+      (owned_view.compiler-owned-shared-view manifest-dir)
+      (owned_view.compiler-owned-shared-view owner)
+      (str_cat.str-cat
+        (owned_view.compiler-owned-shared-view prefix)
+        "search-paths")
+      (& set.search-paths))
+    "arg"
+    manifest-dir
+    owner
+    (str_cat.str-cat prefix "args")
+    (& set.args)))
+
 (define (build-package-link-add-libs
   [inputs : build_run_core.SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
@@ -2447,19 +2520,38 @@
 ;: Convert a manifest `(link ...)` section into link inputs for `target`:
 ;: all-target inputs first, then the per-target (linux / windows) inputs,
 ;: preserving first-seen order and dropping exact duplicates within each class.
+;: `owner` names the declaring package in every input's origin record.
 (define (build-package-manifest-link-inputs
   [link : load.CompilerPkgLink]
   [manifest-dir : String]
+  [owner : String]
   [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
-  (build-package-link-add-set
-    (build-package-link-add-set
-      (build_run_core.source-tool-link-inputs-empty)
-      (owned_view.compiler-owned-shared-view manifest-dir)
-      link.all)
-    manifest-dir
-    (match target
-      [(backend.CompilerBackendTarget.Linux) link.linux]
-      [(backend.CompilerBackendTarget.Windows) link.windows])))
+  (let
+    [selected : load.CompilerPkgLinkSet
+      (match target
+        [(backend.CompilerBackendTarget.Linux) link.linux]
+        [(backend.CompilerBackendTarget.Windows) link.windows])]
+    [prefix : String
+      (match target
+        [(backend.CompilerBackendTarget.Linux) "linux-"]
+        [(backend.CompilerBackendTarget.Windows) "windows-"])]
+    (build-package-link-add-set-origins
+      (build-package-link-add-set-origins
+        (build-package-link-add-set
+          (build-package-link-add-set
+            (build_run_core.source-tool-link-inputs-empty)
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view link.all))
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view selected))
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view owner)
+        ""
+        link.all)
+      manifest-dir
+      owner
+      prefix
+      selected)))
 
 (define (build-package-artifact-status
   [kind : load.CompilerPkgKind]
@@ -2803,27 +2895,117 @@
   [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
   (build-package-validate-graph-checkouts-from nodes 0))
 
-(define (build-package-graph-link-libs
+;; A fetched dependency's relative search paths must stay inside its locked
+;; checkout (#6998); absolute search paths are system locations, used as written.
+(define (build-package-link-confine-search-paths
+  [node : BuildPackageGraphNode]
+  [field : String]
+  [vec : (& vec fs.FsStringVector)]) : ResultBuildString
+  (match node.provenance
+    [(BuildPackageSourceProvenance.Local) (ResultBuildString.Ok "")]
+    [(BuildPackageSourceProvenance.Fetched _ checkout-root)
+      (let
+        [index : i64 0]
+        [result : ResultBuildString (ResultBuildString.Ok "")]
+        (begin
+          (while (< index (fs.string-vector-len vec))
+            (let
+              [value : String (fs.string-vector-get vec index "")]
+              (begin
+                (if (load.compiler-load-absolute-path? value)
+                  unit
+                  (match (package_source_core.package-source-confined-existing-path
+                    (owned_view.compiler-owned-shared-view node.manifest.name)
+                    (owned_view.compiler-owned-shared-view field)
+                    value
+                    (owned_view.compiler-owned-shared-view checkout-root)
+                    (package_source_core.PackageSourceConfinedPathKind.Directory))
+                    [(package_source_core.ResultPackageSourceConfinedPath.Err
+                        message)
+                      (begin
+                        (set! result (ResultBuildString.Err message))
+                        (set! index (fs.string-vector-len vec)))]
+                    [(package_source_core.ResultPackageSourceConfinedPath.Ok _)
+                      unit]))
+                (set! index (+ index 1)))))
+          result))]))
+
+;; The dependency section of a binary's link (#6982): every direct
+;; dependency's static archive, and the native requirements its `(link ...)`
+;; section declares for `target`, anchored at that dependency's manifest.
+;; Libraries, search paths and archives merge once; raw arguments stay with
+;; each package (source-tool-link-inputs-merge-with).
+(define (build-package-graph-link-inputs
   [nodes : BuildPackageGraphNodeVec]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
+  [target : backend.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
   (let
     [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
-    [libs : process.ProcessStringList (process.args-empty)]
+    [out : build_run_core.SourceToolLinkInputs
+      (build_run_core.source-tool-link-inputs-empty)]
+    [error : String ""]
     (begin
       (while (>= index 0)
-        (begin
-          (set!
-            libs
-            (process.args-append
-              libs
-              (process.args-single
-                (build-package-graph-node-artifact-path
-                  (build-package-graph-node-vec-at nodes index)
-                  profile
-                  target))))
-          (set! index (- index 1))))
-      libs)))
+        (let
+          [node : BuildPackageGraphNode
+            (build-package-graph-node-vec-at nodes index)]
+          [link : load.CompilerPkgLink node.manifest.link]
+          [selected : load.CompilerPkgLinkSet
+            (match target
+              [(backend.CompilerBackendTarget.Linux) link.linux]
+              [(backend.CompilerBackendTarget.Windows) link.windows])]
+          [owner : String
+            (build-package-link-owner
+              (owned_view.compiler-owned-shared-view node.manifest.name)
+              (owned_view.compiler-owned-shared-view node.manifest-path))]
+          [archive : String
+            (build-package-graph-node-artifact-path
+              (owned_view.compiler-owned-shared-view node)
+              profile
+              target)]
+          (begin
+            (match (build-package-link-confine-search-paths
+              (owned_view.compiler-owned-shared-view node)
+              "search-paths"
+              (& link.all.search-paths))
+              [(ResultBuildString.Err message) (set! error message)]
+              [(ResultBuildString.Ok _)
+                (match (build-package-link-confine-search-paths
+                  (owned_view.compiler-owned-shared-view node)
+                  (match target
+                    [(backend.CompilerBackendTarget.Linux) "linux-search-paths"]
+                    [(backend.CompilerBackendTarget.Windows)
+                      "windows-search-paths"])
+                  (& selected.search-paths))
+                  [(ResultBuildString.Err message) (set! error message)]
+                  [(ResultBuildString.Ok _) unit])])
+            (set!
+              out
+              (build_run_core.source-tool-link-inputs-merge-with
+                out
+                (build_run_core.source-tool-link-inputs-merge
+                  (build_run_core.source-tool-link-inputs-add-origin
+                    (build_run_core.source-tool-link-inputs-from-archives
+                      (process.args-single
+                        (owned_view.compiler-owned-shared-view archive)))
+                    "archive"
+                    archive
+                    (owned_view.compiler-owned-shared-view owner))
+                  (build-package-manifest-link-inputs
+                    link
+                    (load.compiler-load-dirname
+                      (owned_view.compiler-owned-shared-view node.manifest-path))
+                    owner
+                    target))
+                false))
+            (set!
+              index
+              (if (> (string.string-length error) 0)
+                -1
+                (- index 1))))))
+      (if (> (string.string-length error) 0)
+        (build_run_core.ResultSourceToolLinkInputs.Err error)
+        (build_run_core.ResultSourceToolLinkInputs.Ok out)))))
 
 (define (build-package-catalog-dep-root
   [manifest-dir : String]
@@ -3887,11 +4069,14 @@
             (build-package-transcript-field "link-file-digest" digest)))])
     (ResultBuildString.Ok "")))
 
+;; Digest every raw argument and dependency archive that names a file.
 (define (build-package-link-raw-file-transcript
   [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
   (let
     [args : process.ProcessStringList
-      (build_run_core.source-tool-link-inputs-raw-args inputs)]
+      (process.args-append
+        (build_run_core.source-tool-link-inputs-raw-args inputs)
+        (build_run_core.source-tool-link-inputs-archives inputs))]
     [index : i64 0]
     [count : i64 (process.args-count args)]
     [out : String ""]
@@ -4019,10 +4204,44 @@
     (owned_view.compiler-owned-shared-view inputs))
     [(ResultBuildString.Err message) (ResultBuildString.Err message)]
     [(ResultBuildString.Ok raw-text)
-      (match (build-package-link-library-files-transcript target inputs)
+      (match (build-package-link-library-files-transcript
+        target
+        (owned_view.compiler-owned-shared-view inputs))
         [(ResultBuildString.Err message) (ResultBuildString.Err message)]
         [(ResultBuildString.Ok library-text)
-          (ResultBuildString.Ok (str_cat.str-cat raw-text library-text))])]))
+          (ResultBuildString.Ok
+            (str_cat.str-cat
+              raw-text
+              library-text
+              (build-package-link-origins-transcript inputs)))])]))
+
+;; Each link input's kind, value and declaring package, manifest and field, in
+;; declaration order (source-tool-link-inputs-origins).
+(define (build-package-link-origins-transcript
+  [inputs : build_run_core.SourceToolLinkInputs]) : String
+  (let
+    [origins : build_run_core.SourceToolLinkOrigins
+      (build_run_core.source-tool-link-inputs-origins inputs)]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index (process.args-count origins.kinds))
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (build-package-transcript-field
+                "native-link"
+                (process.args-ref origins.kinds index))
+              (build-package-transcript-field
+                "native-link-value"
+                (process.args-ref origins.values index))
+              (build-package-transcript-field
+                "native-link-declared-by"
+                (process.args-ref origins.declared-by index))))
+          (set! index (+ index 1))))
+      out)))
 
 (define (build-package-assembler-command-for
   [target : backend.CompilerBackendTarget]
@@ -5595,13 +5814,15 @@
                 (build_run_core.source-tool-link-inputs-from-decls
                   (owned_view.compiler-owned-shared-view decls)
                   (build_run_core.source-tool-link-inputs-empty))]
+              ;; The dependency section keeps each package's raw arguments.
               [effective-link-inputs : build_run_core.SourceToolLinkInputs
                 (clone
-                  (build_run_core.source-tool-link-inputs-merge
+                  (build_run_core.source-tool-link-inputs-merge-with
                     (build_run_core.source-tool-link-inputs-merge
                       manifest-link-inputs
                       metadata-link-inputs)
-                    dep-link-inputs))]
+                    dep-link-inputs
+                    false))]
               [crt-entry : bool
                 (and
                   emit-entry
@@ -5648,7 +5869,7 @@
     [mode : backend.CompilerBackendMode]
     [lock-policy : BuildPackageLockPolicy]
     [stdlib-roots : cli_svec.Vec]
-    [dep-libs : process.ProcessStringList]
+    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [catalog-deps : load.CompilerPkgDepList]
     [producer-identity : String]
     [announce : bool]) : i64
@@ -5726,9 +5947,10 @@
             (build-package-manifest-link-inputs
               (owned_view.compiler-owned-shared-view manifest.link)
               (owned_view.compiler-owned-shared-view manifest-dir)
+              (build-package-link-owner
+                (owned_view.compiler-owned-shared-view manifest.name)
+                (owned_view.compiler-owned-shared-view manifest-path))
               target)]
-          [dep-link-inputs : build_run_core.SourceToolLinkInputs
-            (build_run_core.source-tool-link-inputs-from-archives dep-libs)]
           [emit-entry : bool (build-package-kind-entry? kind)]
           [inline-test-status : i64
             (build-inline-test-typecheck-package-sources
@@ -5805,7 +6027,7 @@
     [_mode : backend.CompilerBackendMode]
     [_lock-policy : BuildPackageLockPolicy]
     [_stdlib-roots : cli_svec.Vec]
-    [_dep-libs : process.ProcessStringList]
+    [_dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [_catalog-deps : load.CompilerPkgDepList]
     [_producer-identity : String]
     [_announce : bool]) : i64
@@ -6109,7 +6331,7 @@
                         config.mode
                         config.lock-policy
                         config.stdlib-roots
-                        (process.args-empty)
+                        (build_run_core.source-tool-link-inputs-empty)
                         (load.compiler-pkg-deps-list resolved-manifest.deps)
                         producer-identity
                         true))
@@ -6622,7 +6844,7 @@
                   mode
                   lock-policy
                   (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (process.args-empty)
+                  (build_run_core.source-tool-link-inputs-empty)
                   (load.compiler-pkg-deps-list manifest.deps)
                   (owned_view.compiler-owned-shared-view producer-identity)
                   announce)])]
@@ -6770,27 +6992,36 @@
                           (io.print-error message)
                           1)]
                       [(ResultBuildString.Ok _)
-                        (build-package-emit-one
-                          (owned_view.compiler-owned-shared-view
-                            normalized-path)
-                          (owned_view.compiler-owned-shared-view
-                            resolved-manifest)
-                          target
-                          opt-level
+                        (match (build-package-graph-link-inputs
+                          (owned_view.compiler-owned-shared-view nodes)
                           profile
-                          mode
-                          lock-policy
-                          stdlib-roots
-                          (build-package-graph-link-libs
-                            (owned_view.compiler-owned-shared-view nodes)
-                            profile
-                            target)
-                          (build-package-graph-catalog-deps
-                            nodes
-                            (load.compiler-load-dirname normalized-path)
-                            (load.compiler-pkg-deps-list resolved-manifest.deps))
-                          producer-identity
-                          announce)])
+                          target)
+                          [(build_run_core.ResultSourceToolLinkInputs.Err
+                              message)
+                            (begin
+                              (io.print-error message)
+                              1)]
+                          [(build_run_core.ResultSourceToolLinkInputs.Ok
+                              dep-link-inputs)
+                            (build-package-emit-one
+                              (owned_view.compiler-owned-shared-view
+                                normalized-path)
+                              (owned_view.compiler-owned-shared-view
+                                resolved-manifest)
+                              target
+                              opt-level
+                              profile
+                              mode
+                              lock-policy
+                              stdlib-roots
+                              dep-link-inputs
+                              (build-package-graph-catalog-deps
+                                nodes
+                                (load.compiler-load-dirname normalized-path)
+                                (load.compiler-pkg-deps-list
+                                  resolved-manifest.deps))
+                              producer-identity
+                              announce)])])
                     dep-status))])]))]))
 
 (define (build-package-emit

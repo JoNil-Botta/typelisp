@@ -3648,17 +3648,33 @@ Example:
     with exact duplicates removed within each class (libraries, search paths,
     raw args): all-target manifest inputs, then the selected target's inputs,
     then source `extern` link metadata from the package entry/import graph,
-    then the static archives of package dependencies (kept positional after the
-    requested libraries and arguments). On Linux, any non-empty link input
+    then each direct dependency's static archive and the inputs its own `link`
+    section declares for the target. On Linux, any non-empty link input
     switches the package link from the freestanding `ld` path to the `cc` path
     so the program links against the C runtime and the requested libraries.
   - `link` is native metadata, not a TypeLisp package edge, so a dependency-free
     `staticlib` may declare it without violating the library dependency rule.
-    The current `link` section affects only `bin` artifacts: a `staticlib` emits
-    an archive, and its `link` section is not yet propagated to a dependent
-    `bin`; until exported native requirements are implemented, repeat required
-    native inputs in the binary package's own manifest. Dynamic/shared library
-    output is out of scope for the package layer.
+    A `staticlib`'s `link` section states what its consumers need: an
+    executable that depends on it links with the library's all-target inputs
+    and its inputs for the executable's target, without repeating them in its
+    own manifest. The library's relative search paths resolve against the
+    library's manifest directory. For a fetched library they must name an
+    existing directory inside its locked checkout, like every other
+    package-controlled path; absolute search paths are used as written.
+  - Libraries and search paths that several packages request link once, which
+    never changes what the linker resolves. Raw arguments are kept per package,
+    since one may be half of a positional pair such as `--whole-archive`. On
+    Linux the dependency archives, the libraries and the raw arguments form one
+    linker group (`--start-group` ... `--end-group`), so an archive may use a
+    library named before it and archives and libraries may reference each
+    other; `link.exe` resolves across its inputs without a group.
+  - When the linker reports a library it cannot find, the build names every
+    manifest field that requested it and the quoted search paths. The
+    `<runtime-artifact>.runtime-inputs` sidecar records each link input's kind,
+    value and declaring package, manifest and field. A change to an active
+    input of any package relinks the executable; another target's inputs are
+    not runtime inputs. Dynamic/shared library output is out of scope for the
+    package layer.
 - Dependency modules are imported by dotted identity: an import whose leading
   segment is a dependency alias declared in the manifest resolves from that
   dependency's package root, as specified in §4.4.1.

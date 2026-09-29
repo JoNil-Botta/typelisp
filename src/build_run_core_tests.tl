@@ -40,7 +40,10 @@
       (build_run.source-tool-link-inputs-search-dirs right))
     (source-tool-string-list-eq?
       (build_run.source-tool-link-inputs-raw-args left)
-      (build_run.source-tool-link-inputs-raw-args right))))
+      (build_run.source-tool-link-inputs-raw-args right))
+    (source-tool-string-list-eq?
+      (build_run.source-tool-link-inputs-archives left)
+      (build_run.source-tool-link-inputs-archives right))))
 
 (define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
   (let
@@ -86,7 +89,9 @@
           (process.args-cons "cli" (process.args-empty)))
         (process.args-cons
           "-Wl,a"
-          (process.args-cons "-Wl,b" (process.args-empty))))]
+          (process.args-cons "-Wl,b" (process.args-empty)))
+        (process.args-empty)
+        (build_run.source-tool-link-origins-empty))]
     (source-tool-link-inputs-eq?
       (build_run.source-tool-link-inputs-merge metadata-inputs explicit-inputs)
       expected)))
@@ -279,3 +284,159 @@
         (source-tool-windows-direct-object-relocations-linkable?
           symbols
           blocked-ntdll-relocs)))))
+
+(define (source-tool-test-list [items : cli_svec.Vec]) : process.ProcessStringList
+  (let
+    [out : process.ProcessStringList (process.args-empty)]
+    [index : i64 0]
+    (begin
+      (while (< index (cli_svec.len (& items)))
+        (begin
+          (set!
+            out
+            (process.args-append
+              out
+              (process.args-single (cli_svec.get (& items) index ""))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (source-tool-test-strings2 [a : String] [b : String]) : process.ProcessStringList
+  (process.args-cons a (process.args-single b)))
+
+;; A dependency section: one library, search path, raw argument and two
+;; archives, each declared by a package.
+(define (source-tool-dependency-section-inputs) : build_run.SourceToolLinkInputs
+  (build_run.source-tool-link-inputs-add-origin
+    (build_run.source-tool-link-inputs-merge
+      (build_run.source-tool-link-inputs-add-raw-arg
+        (build_run.source-tool-link-inputs-add-search-dir
+          (build_run.source-tool-link-inputs-add-lib
+            (build_run.source-tool-link-inputs-empty)
+            "m")
+          "native dir")
+        "-Wl,--as-needed")
+      (build_run.source-tool-link-inputs-from-archives
+        (source-tool-test-strings2 "wa.a" "wb.a")))
+    "library"
+    "m"
+    "package `wa` (wa/typelisp.pkg) field `linux-libraries`"))
+
+;; Linux groups the dependency section so archives and libraries resolve in any
+;; order; without archives the command keeps its historical shape. Windows
+;; appends the archives after the raw arguments.
+(define (source-tool-link-dependency-rendering-smoke-ok?) : bool
+  (let
+    [inputs : build_run.SourceToolLinkInputs
+      (source-tool-dependency-section-inputs)]
+    [linux : process.ProcessStringList
+      (build_run.source-tool-link-inputs-linux-args
+        (owned_view.compiler-owned-shared-view inputs))]
+    [windows : process.ProcessStringList
+      (build_run.source-tool-link-inputs-windows-args
+        (owned_view.compiler-owned-shared-view inputs))]
+    [no-archives : process.ProcessStringList
+      (build_run.source-tool-link-inputs-linux-args
+        (build_run.source-tool-link-inputs-add-lib
+          (build_run.source-tool-link-inputs-empty)
+          "m"))]
+    [expected-linux : cli_svec.Vec (cli_svec.new)]
+    [expected-windows : cli_svec.Vec (cli_svec.new)]
+    (begin
+      (cli_svec.push-ref! (&mut expected-linux) "-Lnative dir")
+      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--start-group")
+      (cli_svec.push-ref! (&mut expected-linux) "-lm")
+      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--as-needed")
+      (cli_svec.push-ref! (&mut expected-linux) "wa.a")
+      (cli_svec.push-ref! (&mut expected-linux) "wb.a")
+      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--end-group")
+      (cli_svec.push-ref! (&mut expected-windows) "/LIBPATH:native dir")
+      (cli_svec.push-ref! (&mut expected-windows) "m.lib")
+      (cli_svec.push-ref! (&mut expected-windows) "-Wl,--as-needed")
+      (cli_svec.push-ref! (&mut expected-windows) "wa.a")
+      (cli_svec.push-ref! (&mut expected-windows) "wb.a")
+      (and
+        (source-tool-string-list-eq?
+          linux
+          (source-tool-test-list expected-linux))
+        (source-tool-string-list-eq?
+          windows
+          (source-tool-test-list expected-windows))
+        (source-tool-string-list-eq? no-archives (process.args-single "-lm"))))))
+
+;; Libraries, search paths and archives merge once; raw arguments merge once
+;; only when asked, since another package's copy may be half of a positional
+;; pair; every origin is kept.
+(define (source-tool-link-dependency-merge-smoke-ok?) : bool
+  (let
+    [left : build_run.SourceToolLinkInputs
+      (source-tool-dependency-section-inputs)]
+    [right : build_run.SourceToolLinkInputs
+      (source-tool-dependency-section-inputs)]
+    [kept : build_run.SourceToolLinkInputs
+      (build_run.source-tool-link-inputs-merge-with
+        (owned_view.compiler-owned-shared-view left)
+        (owned_view.compiler-owned-shared-view right)
+        false)]
+    [deduped : build_run.SourceToolLinkInputs
+      (build_run.source-tool-link-inputs-merge-with left right true)]
+    [origins : build_run.SourceToolLinkOrigins
+      (build_run.source-tool-link-inputs-origins (& kept))]
+    (and
+      (source-tool-string-list-eq?
+        (build_run.source-tool-link-inputs-libs (& kept))
+        (process.args-single "m"))
+      (source-tool-string-list-eq?
+        (build_run.source-tool-link-inputs-search-dirs (& kept))
+        (process.args-single "native dir"))
+      (source-tool-string-list-eq?
+        (build_run.source-tool-link-inputs-archives (& kept))
+        (source-tool-test-strings2 "wa.a" "wb.a"))
+      (source-tool-string-list-eq?
+        (build_run.source-tool-link-inputs-raw-args (& kept))
+        (source-tool-test-strings2 "-Wl,--as-needed" "-Wl,--as-needed"))
+      (source-tool-string-list-eq?
+        (build_run.source-tool-link-inputs-raw-args (& deduped))
+        (process.args-single "-Wl,--as-needed"))
+      (= (process.args-count origins.kinds) 2))))
+
+;; A linker's missing-library report names the declarations that asked for it
+;; and the quoted search paths; other failures get no notes.
+(define (source-tool-link-failure-notes-smoke-ok?) : bool
+  (let
+    [inputs : build_run.SourceToolLinkInputs
+      (build_run.source-tool-link-inputs-add-search-dir
+        (source-tool-dependency-section-inputs)
+        "it's")]
+    [gnu : String "/usr/bin/ld: cannot find -lm: No such file or directory\n"]
+    [lld : String "ld.lld: error: unable to find library -lm\n"]
+    [msvc : String
+      "LINK : fatal error LNK1181: cannot open input file 'm.lib'\n"]
+    [other : String "/usr/bin/ld: main.o: undefined reference to `f'\n"]
+    [expected : String
+      "\nnote: native library `m` is required by package `wa` (wa/typelisp.pkg) field `linux-libraries`\nnote: search paths: 'native dir' 'it'\\''s' and the linker's defaults"]
+    (and
+      (string.eq
+        (build_run.source-tool-link-failure-notes (& gnu) (& inputs))
+        (& expected))
+      (string.eq
+        (build_run.source-tool-link-failure-notes (& lld) (& inputs))
+        (& expected))
+      (string.eq
+        (build_run.source-tool-link-failure-notes (& msvc) (& inputs))
+        (& expected))
+      (string.eq
+        (build_run.source-tool-link-failure-notes (& other) (& inputs))
+        "")
+      (string.eq
+        (build_run.source-tool-missing-library-in-line "cannot find -l")
+        "")
+      (string.eq
+        (build_run.source-tool-missing-library-in-line
+          "cannot open input file 'x.obj'")
+        "x.obj"))))
+
+(define (source-tool-link-dependency-section-smoke-ok?) : bool
+  (and
+    (source-tool-link-dependency-rendering-smoke-ok?)
+    (source-tool-link-dependency-merge-smoke-ok?)
+    (source-tool-link-failure-notes-smoke-ok?)))

@@ -1298,6 +1298,46 @@
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
+;; A declaration's fallback error span is the first source-span wrapper around
+;; its body, found through unary, annotation, cast and borrow nodes. With two
+;; wrappers the outer span survives as the outer wrapper's ReSpan view, while
+;; the node-owned canonical span is the inner one.
+(define (compiler-symbols-span-is?
+  [found : csym.CompilerSymbolsMaybeSpan]
+  [want : ast.AstSourceSpan]) : bool
+  (match found
+    [(csym.CompilerSymbolsMaybeSpan.Some span)
+      (ast.ast-source-span-eq? span want)]
+    [(csym.CompilerSymbolsMaybeSpan.No) false]))
+
+(define (compiler-symbols-decl-span-view-ok?) : bool
+  (let
+    [outer-span : ast.AstSourceSpan (ast.ast-source-span 3 1 3 30)]
+    [inner-span : ast.AstSourceSpan (ast.ast-source-span 3 5 3 20)]
+    [value : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
+    [inner : i64 (ast.ast-expr-spanned value inner-span)]
+    [outer : i64 (ast.ast-expr-spanned inner outer-span)]
+    [negated : i64 (ast.ast-expr-unary ast.AstUnOp.Neg inner)]
+    [bare : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 8)))]
+    [name : i64 (ci.intern-generated-name "span_view")]
+    (and
+      (compiler-symbols-span-is?
+        (csym.compiler-symbols-decl-maybe-span
+          (ast.ast-decl-def-id name ast.AstMaybeType.No outer))
+        outer-span)
+      (compiler-symbols-span-is?
+        (csym.compiler-symbols-decl-maybe-span
+          (ast.ast-decl-def-id name ast.AstMaybeType.No negated))
+        inner-span)
+      (match (csym.compiler-symbols-decl-maybe-span
+        (ast.ast-decl-def-id name ast.AstMaybeType.No bare))
+        [(csym.CompilerSymbolsMaybeSpan.Some _) false]
+        [(csym.CompilerSymbolsMaybeSpan.No) true])
+      (match (ast.ast-expr-canonical-span outer)
+        [(ast.AstMaybeSourceSpan.Some span)
+          (ast.ast-source-span-eq? span inner-span)]
+        [(ast.AstMaybeSourceSpan.No) false]))))
+
 (define (compiler-symbols-structural-id-api-ok?) : bool
   (match (parser.parse-ast-source (compiler-symbols-module-scope-source))
     [(parser.ResultAstProgram.Ok program)
@@ -2091,6 +2131,7 @@
                         (compiler-symbols-nominal-decl-ok?)
                         (compiler-symbols-module-scope-ok?)
                         (compiler-symbols-structural-id-api-ok?)
+                        (compiler-symbols-decl-span-view-ok?)
                         (compiler-symbol-map-fast-path-ok?)
                         (compiler-symbols-direct-qualified-add-ok?)
                         (compiler-symbols-import-alias-ok?)

@@ -166,27 +166,29 @@
       (set! compiler-symbols-last-error-span span)
       (set! compiler-symbols-last-error-has-span has-span))))
 
-(define (compiler-symbols-expr-maybe-span [expr : ast.AstExpr]) : CompilerSymbolsMaybeSpan
-  (match expr
-    [(ast.AstExpr.Spanned _ span) (CompilerSymbolsMaybeSpan.Some span)]
-    [(ast.AstExpr.Unary _ inner)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get inner))]
-    [(ast.AstExpr.Ann inner _)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get inner))]
-    [(ast.AstExpr.Cast inner _)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get inner))]
-    [(ast.AstExpr.Borrow _ _ inner)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get inner))]
-    [_ CompilerSymbolsMaybeSpan.No]))
+;; The span of the first source-span wrapper reached from EXPR-ID through
+;; unary, annotation, cast and borrow nodes. A wrapper's own span is its
+;; sidecar view (an outer wrapper keeps its span as a ReSpan).
+(define (compiler-symbols-expr-maybe-span [expr-id : i64]) : CompilerSymbolsMaybeSpan
+  (if (>= (ast.ast-expr-span-wrapper-inner expr-id) 0)
+    (match (ast.ast-expr-view-span expr-id)
+      [(ast.AstMaybeSourceSpan.Some span) (CompilerSymbolsMaybeSpan.Some span)]
+      [(ast.AstMaybeSourceSpan.No) CompilerSymbolsMaybeSpan.No])
+    (match (ast.ast-node-get expr-id)
+      [(ast.AstExpr.Unary _ inner) (compiler-symbols-expr-maybe-span inner)]
+      [(ast.AstExpr.Ann inner _) (compiler-symbols-expr-maybe-span inner)]
+      [(ast.AstExpr.Cast inner _) (compiler-symbols-expr-maybe-span inner)]
+      [(ast.AstExpr.Borrow _ _ inner) (compiler-symbols-expr-maybe-span inner)]
+      [_ CompilerSymbolsMaybeSpan.No])))
 
 (define (compiler-symbols-decl-maybe-span [decl : ast.AstDecl]) : CompilerSymbolsMaybeSpan
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ body)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
+      (compiler-symbols-expr-maybe-span body)]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body _)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
+      (compiler-symbols-expr-maybe-span body)]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body)
-      (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
+      (compiler-symbols-expr-maybe-span body)]
     [(ast.AstDecl.Test _ _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
     [(ast.AstDecl.Unsafe inner-box)
       (compiler-symbols-decl-maybe-span (deref inner-box))]

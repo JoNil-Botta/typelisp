@@ -1898,9 +1898,11 @@
       (selfhost-lint-dead-ref-add-raw refs name))))
 
 (define (selfhost-lint-dead-expr-span [expr-id : i64]) : ast.AstSourceSpan
-  (match (ast.ast-node-get expr-id)
-    [(ast.AstExpr.Spanned _ span) span]
-    [_ (lint_core.lint-no-span)]))
+  (if (< (ast.ast-expr-span-wrapper-inner expr-id) 0)
+    (lint_core.lint-no-span)
+    (match (ast.ast-expr-view-span expr-id)
+      [(ast.AstMaybeSourceSpan.Some span) span]
+      [(ast.AstMaybeSourceSpan.No) (lint_core.lint-no-span)])))
 
 (define (selfhost-lint-dead-find-prefix-from
   [source : (& source str)]

@@ -403,7 +403,8 @@
   (doc-ast-expr-list-source-from ctx exprs 0 (ast.ast-expr-list-len (& exprs))))
 
 (define (doc-ast-expr-source [ctx : DocExpandContext] [expr-id : i64]) : String
-  (match (ast.ast-expr-unspan
+  (match (ast.ast-expr-unspan-with-segment-bases
+    ctx.expr-segment-bases
     (ast.ast-expr-segment-bases-get ctx.expr-segment-bases expr-id))
     [(ast.AstExpr.Literal lit) (doc-ast-literal-source ctx lit)]
     [(ast.AstExpr.Var name) (doc-expand-source-name ctx name)]
@@ -416,7 +417,6 @@
     [(ast.AstExpr.TypeLiteral ty-id)
       (doc-cat3 "(type " (doc-ast-type-id-source ctx ty-id) ")")]
     [(ast.AstExpr.Ann inner _) (doc-ast-expr-source ctx inner)]
-    [(ast.AstExpr.Spanned inner _) (doc-ast-expr-source ctx inner)]
     [_ "..."]))
 
 (define (doc-macro-import-example-fallback) : DocMacroImportExample

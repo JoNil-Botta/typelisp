@@ -20,6 +20,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 GATES_FILE="$ROOT/scripts/ci-gates.tsv"
+HOST_TOOLS_FILE="$ROOT/scripts/ci-host-tools.tsv"
+TAB=$(printf '\t')
 
 usage() {
     cat >&2 <<'EOF'
@@ -43,6 +45,10 @@ gate it needs passed and while the memory column of the running gates, plus
 its own, fits --memory-mib, which --jobs above 1 requires. Each gate's output is
 printed whole when it finishes. Every gate still runs, and the first failure
 stops further starts.
+
+Before the first gate starts, every host tool that scripts/ci-host-tools.tsv
+lists for a selected gate must be usable; a missing one fails the run at once
+with its install hint.
 
 --list-gates prints the host inventory, or with --gates the dependency-closed
 selection, without running CI.
@@ -175,6 +181,97 @@ ci_gates_check_commands() {
 
 ci_verify_error() {
     echo "[ci-verify] ERROR: $*" >&2
+}
+
+# ci_host_tools_plan HOST [ID,...]
+#   Validate the whole host-tool table against the gate table, then print the
+#   HOST rows of the selected gates: tool, the selected gates that run it, check
+#   and install.
+ci_host_tools_plan() {
+    awk -F '\t' -v host="$1" -v selection=",${2:-}," '
+        function fail(message) {
+            print "ci-host-tools.tsv: " message > "/dev/stderr"
+            invalid = 1
+            exit 1
+        }
+        { sub(/\r$/, "") }
+        # ci_gates_plan has validated the gate table; only its hosts are read.
+        FNR == NR {
+            if (/^#/) next
+            if (gates_header++) gate_hosts[$1] = $2
+            next
+        }
+        /^#/ { next }
+        !header {
+            if ($0 != "tool\thosts\tgates\tcheck\tinstall")
+                fail("line " FNR ": expected the tool/hosts/gates/check/install header")
+            header = 1
+            next
+        }
+        {
+            if (NF != 5 || $1 == "" || $3 == "" || $4 == "" || $5 == "")
+                fail("line " FNR ": expected five nonempty fields")
+            if ($2 != "all" && $2 != "linux" && $2 != "windows") fail("line " FNR ": invalid hosts: " $2)
+            count = split($3, list, ",")
+            selected = ""
+            for (n = 1; n <= count; n++) {
+                id = list[n]
+                if (id == "") fail("line " FNR ": empty gate ID in: " $3)
+                if (!(id in gate_hosts)) fail("line " FNR ": unknown gate: " id)
+                if (row_gates[id]++) fail("line " FNR ": duplicate gate: " id)
+                if (gate_hosts[id] != "all" && gate_hosts[id] != $2)
+                    fail("line " FNR ": " id " does not run on every host of the row (" gate_hosts[id] ")")
+                if (($2 == "all" || $2 == host) && index(selection, "," id ","))
+                    selected = (selected == "" ? id : selected ", " id)
+            }
+            delete row_gates
+            if (selected != "") print $1 "\t" selected "\t" $4 "\t" $5
+        }
+        END {
+            if (invalid) exit 1
+            if (!header) fail("missing the tool/hosts/gates/check/install header")
+        }
+    ' "$GATES_FILE" "$HOST_TOOLS_FILE"
+}
+
+# ci_host_gnu_time BIN
+#   BIN is GNU time: it reports a resident-set peak through -f %M, which the
+#   TLCI native-route RSS guard reads, and through -v, which the docs-site one
+#   reads.
+ci_host_gnu_time() {
+    [ -x "$1" ] || return 1
+    _ci_peak_kb=$("$1" -f '%M' true 2>&1 >/dev/null) || return 1
+    case "$_ci_peak_kb" in
+        "" | *[!0-9]*) return 1 ;;
+    esac
+    "$1" -v -o /dev/null true >/dev/null 2>&1
+}
+
+# ci_host_tools_require HOST ID,...
+#   Before any gate starts, fail when this host lacks a tool that a selected
+#   gate runs, listing every missing tool with its gates and install hint.
+ci_host_tools_require() {
+    _ci_tools=$(ci_host_tools_plan "$1" "$2") || exit 1
+    _ci_tools_missing=0
+    while IFS=$TAB read -r _ci_tool _ci_tool_gates _ci_tool_check _ci_tool_install; do
+        [ -n "$_ci_tool" ] || continue
+        if (eval "$_ci_tool_check") >/dev/null 2>&1; then
+            continue
+        fi
+        if [ "$_ci_tools_missing" -eq 0 ]; then
+            echo >&2
+            ci_verify_error "this host lacks tools that selected gates run; install them rather than skipping those gates:"
+        fi
+        _ci_tools_missing=1
+        echo "[ci-verify]   $_ci_tool, for $_ci_tool_gates" >&2
+        echo "[ci-verify]     $_ci_tool_install" >&2
+    done <<EOF
+$_ci_tools
+EOF
+    if [ "$_ci_tools_missing" -ne 0 ]; then
+        ci_verify_error "no gate started; CONTRIBUTING.md lists the host prerequisites"
+        exit 1
+    fi
 }
 
 required_gate_unavailable() {
@@ -440,20 +537,13 @@ gate_optimization_opt2_correctness() {
 }
 
 # check-instruction-counts.sh reports and skips without valgrind; required CI
-# must not, so both instruction-count gates require it here.
-require_valgrind() {
-    command -v valgrind >/dev/null 2>&1 ||
-        required_gate_unavailable "Linux instruction-count baseline" \
-            "valgrind is required on Linux; install valgrind rather than skipping this gate"
-}
-
+# must not, so ci-host-tools.tsv makes valgrind a host tool of both
+# instruction-count gates, required before any gate starts.
 gate_instruction_counts() {
-    require_valgrind
     TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh
 }
 
 gate_heavy_instruction_counts() {
-    require_valgrind
     _ci_cases=$(benchmark_ci_case_csv "$ROOT" instruction-heavy) || return $?
     TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
         --baseline perf/insn-exec-heavy-baseline.tsv \
@@ -482,6 +572,7 @@ case "${1:-}" in
         # Validate the whole table before printing anything.
         ci_gates_check_commands
         CI_VERIFY_PLAN=$(ci_gates_plan "$2" "${4:-}")
+        ci_host_tools_plan "$2" > /dev/null
         printf 'id\thosts\tlabel\tneeds\tmemory\tlocks\n'
         printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1-4,6,7
         exit 0
@@ -560,6 +651,8 @@ if [ -n "$CI_VERIFY_GATES" ]; then
         echo "[ci-verify] --gates $CI_VERIFY_GATES closes over the complete $HOST_OS inventory"
     fi
 fi
+CI_VERIFY_PLAN_IDS=$(printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1 | tr '\n' ',')
+ci_host_tools_require "$HOST_OS" "$CI_VERIFY_PLAN_IDS"
 
 if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
     ci_timing_init "$ROOT/target/ci-timing/$HOST_OS.tsv" "$HOST_OS"
@@ -570,7 +663,7 @@ fi
 
 # Only the bootstrap consumes the seed; a selection without it needs none.
 SEED_TYPELISP_BIN=
-case ",$(printf '%s\n' "$CI_VERIFY_PLAN" | cut -f 1 | tr '\n' ',')" in
+case ",$CI_VERIFY_PLAN_IDS" in
     *,bootstrap-fixpoint,*)
         if [ -z "${TYPELISP_BIN:-}" ]; then
             scripts/fetch-stage0.sh
@@ -663,7 +756,6 @@ echo "[ci-verify] host=$HOST_OS seed=${SEED_TYPELISP_BIN:-<unused by this select
 CI_VERIFY_PLAN_FILE="$ROOT/target/ci-verify-plan.tsv"
 CI_VERIFY_POOL="$ROOT/target/ci-verify-pool"
 printf '%s\n' "$CI_VERIFY_PLAN" > "$CI_VERIFY_PLAN_FILE"
-TAB=$(printf '\t')
 CI_VERIFY_QUEUE="$ROOT/target/ci-verify-queue.txt"
 CI_VERIFY_BUDGET_MIB=0
 : > "$CI_VERIFY_QUEUE"

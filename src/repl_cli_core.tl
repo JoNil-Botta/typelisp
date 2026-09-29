@@ -312,6 +312,16 @@
 (define (repl-report-diagnostic [diag : cdiag.CompilerDiagnostic]) : unit
   (repl-stderr-write-line (cdiag.compiler-diagnostic-render diag)))
 
+;; A parse or type error in the input just read is located in that input: the
+;; report names it `<repl>` and quotes the offending line.
+(define (repl-report-input-diagnostic
+  [diag : cdiag.CompilerDiagnostic]
+  [input : String]) : unit
+  (repl-stderr-write
+    (cdiag.compiler-diagnostic-render-source
+      (cdiag.compiler-diagnostic-with-path diag "<repl>")
+      input)))
+
 (define (repl-report-diagnostics [diagnostics : cdiag.CompilerDiagnosticList]) : unit
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
@@ -637,10 +647,9 @@
               (repl-run-scratch-source scratch-source)]
             [(ResultReplString.Err message) (repl-print-error-line message)])]
         [(tc.ResultTcType.Err message)
-          (repl-print-error-line
-            (str_cat.str-cat
-              "Error: "
-              (cdiag.compiler-diagnostic-untagged-message message)))])]
+          (repl-report-input-diagnostic
+            (tc.tc-diag-at-start message)
+            expr-source)])]
     [(ResultReplDeclList.Err message)
       (repl-print-error-line (str_cat.str-cat "Error: " message))]))
 
@@ -649,7 +658,8 @@
   [expr-source : String]) : unit
   (if (string.eq expr-source "")
     (repl-print-error-line "Error: .type expects an expression")
-    (match (parser.parse-ast-repl-source expr-source)
+    (match (parser.parse-ast-repl-source
+      (owned_view.compiler-owned-shared-view expr-source))
       [(parser.ResultAstReplItem.Ok item)
         (match item
           [(AstReplDecl _)
@@ -664,14 +674,13 @@
                   [(tc.ResultTcType.Ok ty)
                     (repl-stdout-write-line (repl-type-render ty))]
                   [(tc.ResultTcType.Err message)
-                    (repl-print-error-line
-                      (str_cat.str-cat
-                        "Error: "
-                        (cdiag.compiler-diagnostic-untagged-message message)))])]
+                    (repl-report-input-diagnostic
+                      (tc.tc-diag-at-start message)
+                      expr-source)])]
               [(ResultReplDeclList.Err message)
                 (repl-print-error-line (str_cat.str-cat "Error: " message))])])]
-      [(parser.ResultAstReplItem.Err message)
-        (repl-print-error-line (str_cat.str-cat "Error: " message))])))
+      [(parser.ResultAstReplItem.Err diag)
+        (repl-report-input-diagnostic (deref diag) expr-source)])))
 
 (define (repl-session-candidate [session-source : String] [input : String]) : String
   (str_cat.str-cat session-source input "\n"))
@@ -730,9 +739,9 @@
               input
               (ast.ast-node-get expr))
             session-source)])]
-    [(parser.ResultAstReplItem.Err message)
+    [(parser.ResultAstReplItem.Err diag)
       (begin
-        (repl-print-error-line (str_cat.str-cat "REPL parse error: " message))
+        (repl-report-input-diagnostic (deref diag) input)
         session-source)]))
 
 ;; Completeness tracking is a delimiter check: strings, comments, and char

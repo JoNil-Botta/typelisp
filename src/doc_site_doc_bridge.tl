@@ -19,6 +19,12 @@
 (define (bridge-doc-render-anchor [text : (& text str)]) : String
   (doc_render.doc-render-anchor text))
 
+(define (bridge-doc-render-identity-anchor
+  [module-path : (& module-path str)]
+  [kind-name : (& kind-name str)]
+  [name : (& name str)]) : String
+  (doc_render.doc-render-identity-anchor module-path kind-name name))
+
 (define (bridge-doc-html-escape [text : (& text str)]) : String
   (doc_html.doc-html-escape text))
 

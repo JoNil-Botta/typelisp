@@ -1045,7 +1045,7 @@
       (unless
         (md-string-contains?
           (md-render-block (MdBlock.Heading 6 "Deep Heading"))
-          "<h6 id=\"tl-Deep-32Heading\">Deep Heading</h6>\n")
+          "<h6 id=\"tl-Deep_20Heading\">Deep Heading</h6>\n")
         (return 110))
       (unless
         (md-string-contains? html "<p>Paragraph with <em>em</em></p>\n")

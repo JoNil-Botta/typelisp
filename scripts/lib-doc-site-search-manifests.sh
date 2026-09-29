@@ -366,7 +366,7 @@ doc_site_search_manifest_self_test() {
     mkdir -p "$_doc_search_fixture_site" "$_doc_search_fixture_work"
 
     printf '%s\n' \
-        '<meta name="typelisp-compiler-identity" content="compiler-a"><meta name="typelisp-source-identity" content="source-a"><meta name="typelisp-package-identity" content="package@1"><h1 id="tl-z"></h1><div id="tl-doc-search-input"></div><h2 id="tl-A-32value"></h2>' \
+        '<meta name="typelisp-compiler-identity" content="compiler-a"><meta name="typelisp-source-identity" content="source-a"><meta name="typelisp-package-identity" content="package@1"><h1 id="tl-z"></h1><div id="tl-doc-search-input"></div><h2 id="tl-A_20value"></h2>' \
         > "$_doc_search_fixture_site/a.html"
     printf '%s\n' \
         '<meta name="typelisp-compiler-identity" content="compiler-a"><meta name="typelisp-source-identity" content="source-a"><meta name="typelisp-package-identity" content="package@1"><h1 id="tl-b"></h1>' \
@@ -377,7 +377,7 @@ doc_site_search_manifest_self_test() {
         > "$_doc_search_fixture/pages"
 
     _doc_search_fixture_index="$_doc_search_fixture_site/typelisp-docs-search-index.js"
-    printf '%s\n' 'globalThis.TYPELISP_DOC_SEARCH=Object.freeze({"schema":1,"compilerIdentity":"compiler-a","sourceIdentity":"source-a","packageIdentity":"package@1","records":Object.freeze([{"identity":"a.html#tl-z","kind":"heading","label":"z","module":"a","href":"a.html#tl-z","signature":"","docs":"","sourceLine":1},{"identity":"a.html#tl-A-32value","kind":"heading","label":"A","module":"a","href":"a.html#tl-A-32value","signature":"","docs":"escaped \\u0026 value","sourceLine":2},{"identity":"b.html#tl-b","kind":"heading","label":"b","module":"b","href":"b.html#tl-b","signature":"","docs":"","sourceLine":1}])});' \
+    printf '%s\n' 'globalThis.TYPELISP_DOC_SEARCH=Object.freeze({"schema":1,"compilerIdentity":"compiler-a","sourceIdentity":"source-a","packageIdentity":"package@1","records":Object.freeze([{"identity":"a.html#tl-z","kind":"heading","label":"z","module":"a","href":"a.html#tl-z","signature":"","docs":"","sourceLine":1},{"identity":"a.html#tl-A_20value","kind":"heading","label":"A","module":"a","href":"a.html#tl-A_20value","signature":"","docs":"escaped \\u0026 value","sourceLine":2},{"identity":"b.html#tl-b","kind":"heading","label":"b","module":"b","href":"b.html#tl-b","signature":"","docs":"","sourceLine":1}])});' \
         > "$_doc_search_fixture_index"
 
     doc_site_search_validate_manifests \
@@ -386,7 +386,7 @@ doc_site_search_manifest_self_test() {
         "$_doc_search_fixture_index" \
         "$_doc_search_fixture/pages" || return $?
     printf '%s\n' \
-        'a.html#tl-A-32value' \
+        'a.html#tl-A_20value' \
         'a.html#tl-z' \
         'b.html#tl-b' \
         > "$_doc_search_fixture/expected-page-hrefs"

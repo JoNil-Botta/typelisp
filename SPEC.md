@@ -232,7 +232,11 @@ The composed static documentation site emits a deterministic
 documented declarations, declaration signatures and short documentation text,
 guide pages, and guide headings in site order. Declaration identities and
 anchors are derived from module path, declaration kind, and declaration name;
-synthetic generated imports additionally include their generated form. Source
+synthetic generated imports additionally include their generated form. Each
+component is encoded injectively: ASCII letters, digits, and `-` are kept, and
+every other byte becomes `_` followed by two lowercase hexadecimal digits.
+Encoded components are joined with `.`, which no encoded component contains, so
+distinct declarations always receive distinct anchors. Source
 declarations record a one-based source line, and rendered API entries link to
 that exact line at the documented source revision. Every page and the search
 index carry matching compiler, source, and package identities. The client-side

@@ -238,9 +238,28 @@ in file {{dir}}/doc_source.html
 contains <!doctype html>
 contains typelisp-docs.css
 contains data-doc-identity="tl-
-contains -58-58define-58-58answer">
+contains .define.answer">
 not-contains id="tl-answer"
 contains <code class="language-typelisp">(<span class="tl-syn-keyword">define</span> <span class="tl-syn-definition">answer</span> : <span class="tl-syn-type">i64</span> <span class="tl-syn-number">42</span>)</code>
+file doc_anchor_twins.tl
+;: Predicate.
+(define (ready? [x : i64]) : bool (> x 0))
+
+;: Escape-looking twin.
+(define (ready-63 [x : i64]) : i64 x)
+end-file
+step doc-generate-distinct-anchors
+run doc "{{dir}}/doc_anchor_twins.tl" -o "{{dir}}/doc_anchor_twins.md"
+stderr empty
+in file {{dir}}/doc_anchor_twins.md
+contains <a id="tl-ready_3f"></a>
+contains <a id="tl-ready-63"></a>
+step doc-generate-html-distinct-anchors
+run doc --html "{{dir}}/doc_anchor_twins.tl" "{{dir}}/doc_anchor_twins.html"
+stderr empty
+in file {{dir}}/doc_anchor_twins.html
+contains .define-function.ready_3f"
+contains .define-function.ready-63"
 
 # Module docs follow the loader's source order, each module once.
 case doc-generate-module-graph

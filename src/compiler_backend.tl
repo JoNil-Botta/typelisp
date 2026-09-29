@@ -14427,13 +14427,16 @@
       (+ base (* 2 vars))
       base)))
 
+(define (compiler-backend-callee-save-slot-offset [vars : i64] [idx : i64]) : i64
+  (- 0 (* 8 (+ vars (+ idx 1)))))
+
 (define (compiler-backend-callee-save-slot
   [vars : i64]
   [idx : i64]
   [backend-state : CompilerBackendState]) : String
   (compiler-backend-callee-save-frame-offset
     backend-state
-    (- 0 (* 8 (+ vars (+ idx 1))))))
+    (compiler-backend-callee-save-slot-offset vars idx)))
 
 (define (compiler-backend-win64-xmm-callee-slot-offset
   [backend-state : CompilerBackendState]
@@ -14644,6 +14647,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [frame : i64]
+  [end-prologue : bool]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-target-windows? target)
     (str_cat.str-cat
@@ -14662,7 +14666,9 @@
         1
         true
         backend-state)
-      "    .seh_endprologue\n"
+      (if end-prologue
+        "    .seh_endprologue\n"
+        "")
       "")
     ""))
 
@@ -14709,6 +14715,7 @@
   [frame : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
+  [describe-saves : bool]
   [backend-state : CompilerBackendState]) : String
   (let
     [target : CompilerBackendTarget target-policy.target]
@@ -14727,14 +14734,448 @@
         target-policy.linux)
         "    .cfi_def_cfa_register %rbp\n"
         "")
-      (compiler-backend-emit-windows-seh-set-rbp target)
+      ;; A described prologue names no frame register (see
+      ;; compiler-backend-windows-framed-describe-saves?) and leaves its end
+      ;; marker to compiler-backend-windows-framed-save-splice.
+      (if describe-saves
+        ""
+        (compiler-backend-emit-windows-seh-set-rbp target))
       (compiler-backend-emit-stack-sub target-policy frame)
       (compiler-backend-emit-windows-seh-prologue-tail
         target
         assignments
         vars
         frame
+        (not describe-saves)
         backend-state))))
+
+;; ============================================================================
+;; Windows framed prologue: describing the callee-register saves.
+;;
+;; The framed entry is `pushq %rbp; movq %rsp, %rbp; subq $F, %rsp`, and every
+;; callee-register save goes to a slot below %rbp. Under `.seh_setframe %rbp, 0`
+;; the unwinder measures save offsets from the frame register, i.e. from %rsp
+;; before the allocation, where those slots sit at negative offsets that
+;; UWOP_SAVE_NONVOL and UWOP_SAVE_XMM128 cannot encode. A framed function that
+;; saves callee registers therefore names no frame register. Its establisher
+;; frame is the post-allocation %rsp, each save is recorded at FRAME + SLOT, and
+;; the unwind program is PUSH_NONVOL %rbp, the allocation, the XMM saves and the
+;; GP saves. The GP saves keep their machine-code position at the head of the
+;; body and gain `.seh_savereg` rows before `.seh_endprologue`.
+;;
+;; Without a frame register the description holds wherever %rsp is at its
+;; post-allocation value, as on the Win64 FPO path. This scan admits a function
+;; only when every call and every instruction that can fault runs there. A
+;; transient %rsp window (a phi push bracket, a CSR pop-run restore, the
+;; terminal `leave` / `movq %rbp, %rsp` epilogue) may hold only moves, pushes,
+;; pops, `leaq`, `ret` and a terminal `jmp`, with memory operands based on %rsp,
+;; %rbp or %rip. A call or any other instruction inside a window, a `subq` /
+;; `addq` of %rsp, any other write of %rsp, or a push window still open at a
+;; label keeps the frame-register description.
+(define (compiler-backend-windows-framed-frame-operand-ok?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [p : i64 (compiler-backend-peephole-scan-byte-range data start end 40)]
+    [ok : bool true]
+    (begin
+      (while (and ok (< p end))
+        (begin
+          (if (or
+            (> (+ p 5) end)
+            (not
+              (or
+                (compiler-backend-peephole-range-eq?
+                  data
+                  (+ p 1)
+                  (+ p 5)
+                  "%rsp")
+                (compiler-backend-peephole-range-eq?
+                  data
+                  (+ p 1)
+                  (+ p 5)
+                  "%rbp")
+                (compiler-backend-peephole-range-eq?
+                  data
+                  (+ p 1)
+                  (+ p 5)
+                  "%rip"))))
+            (set! ok false)
+            unit)
+          (set!
+            p
+            (compiler-backend-peephole-scan-byte-range data (+ p 1) end 40))))
+      ok)))
+
+(define (compiler-backend-windows-framed-rsp-exact? [text : (& text str)]) : bool
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [delta : i64 0]
+    [tail : bool false]
+    [ok : bool true]
+    (begin
+      (while (and ok (< i n))
+        (let
+          [end : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m end)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (cond
+              [(>= m end) unit]
+              [(= (compiler-backend-peephole-byte-at data (- end 1)) 58)
+                (begin
+                  (if (and (not tail) (not (= delta 0)))
+                    (set! ok false)
+                    unit)
+                  (set! delta 0)
+                  (set! tail false))]
+              [(or
+                  (= (compiler-backend-peephole-byte-at data m) 46)
+                  (= (compiler-backend-peephole-byte-at data m) 35))
+                unit]
+              [else
+                (let
+                  [te : i64
+                    (compiler-backend-peephole-scan-byte-range data m end 32)]
+                  [kind : i64
+                    (compiler-backend-control-mnemonic-kind data m (- te m))]
+                  [window? : bool (or tail (not (= delta 0)))]
+                  [rsp-dst? : bool
+                    (and
+                      (>= (- end te) 6)
+                      (compiler-backend-peephole-range-eq?
+                        data
+                        (- end 6)
+                        end
+                        ", %rsp"))]
+                  (cond
+                    [(= kind compiler-backend-control-mnemonic-push)
+                      (begin
+                        (if (and
+                          window?
+                          (not
+                            (compiler-backend-windows-framed-frame-operand-ok?
+                              data
+                              te
+                              end)))
+                          (set! ok false)
+                          unit)
+                        (set! delta (+ delta 8)))]
+                    [(= kind compiler-backend-control-mnemonic-pop)
+                      (begin
+                        (if (<
+                          (compiler-backend-peephole-scan-byte-range
+                            data
+                            te
+                            end
+                            40)
+                          end)
+                          (set! ok false)
+                          unit)
+                        (set! delta (- delta 8)))]
+                    [(= kind compiler-backend-control-mnemonic-leave)
+                      (set! tail true)]
+                    [rsp-dst?
+                      (if (or
+                        (= kind compiler-backend-control-mnemonic-leaq)
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          m
+                          end
+                          "movq %rbp, %rsp"))
+                        (set! tail true)
+                        (set! ok false))]
+                    [(not window?) unit]
+                    [(or
+                        (= kind compiler-backend-control-mnemonic-ret)
+                        (= kind compiler-backend-control-mnemonic-leaq)
+                        (and
+                          tail
+                          (= kind compiler-backend-control-mnemonic-jmp)))
+                      unit]
+                    [(or
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          m
+                          (+ m 3)
+                          "mov")
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          m
+                          (+ m 4)
+                          "vmov"))
+                      (if (compiler-backend-windows-framed-frame-operand-ok?
+                        data
+                        te
+                        end)
+                        unit
+                        (set! ok false))]
+                    [else (set! ok false)]))])
+            (set! i (+ end 1)))))
+      ok)))
+
+(define (compiler-backend-windows-framed-describe-saves?
+  [target-policy : CompilerBackendTargetPolicy]
+  [fpo-ok : bool]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [body : (& body str)]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    target-policy.seh-unwind
+    (not fpo-ok)
+    (compiler-backend-plan-uses-callee-regs? assignments backend-state)
+    (compiler-backend-windows-framed-rsp-exact? body)))
+
+;; The x64 unwind format records a prologue of at most 255 bytes. Upper bounds
+;; per instruction: pushq %rbp 1, movq %rsp, %rbp 3, the allocation 13 (the
+;; `__chkstk` probe sequence), each XMM `movdqu` save 10, the mode prologue 4,
+;; each GP `movq` save 8.
+(define compiler-backend-windows-prologue-limit : i64
+  255)
+
+(define (compiler-backend-windows-framed-prologue-bound
+  [xmm-count : i64]
+  [mode-prologue? : bool]
+  [gp-count : i64]) : i64
+  (+
+    17
+    (* 10 xmm-count)
+    (if mode-prologue?
+      4
+      0)
+    (* 8 gp-count)))
+
+(define (compiler-backend-windows-framed-save-error
+  [symbol : (& symbol str)]
+  [reg : (& reg str)]
+  [slot : i64]
+  [frame : i64]
+  [what : (& what str)]) : String
+  (str_cat.str-cat
+    "backend: Windows unwind cannot describe the "
+    reg
+    " save of "
+    symbol
+    " (slot "
+    (string.int->string slot)
+    "(%rbp), frame "
+    (string.int->string frame)
+    "): "
+    what))
+
+;; Rewrites BODY, the framed function text, so the GP saves that follow its
+;; prologue at byte BASE are described (see above); BASE is 0 when BODY starts
+;; after the prologue, or the end of the prologue spliced at a shrink-wrap
+;; saving label. Each save must be the first remaining line, in the saving
+;; prologue's order, and store that register to its slot:
+;; `movq REG, SLOT(%rbp)`, or `movq REG, FRAME+SLOT(%rsp)` once rebased, the
+;; same address because %rbp = %rsp + FRAME after the allocation. Its row
+;; `.seh_savereg REG, FRAME+SLOT` follows it; the assembler picks the near or
+;; far encoding from that offset. Every recorded offset, GP and XMM, must lie in
+;; the allocation and be aligned for its encoding.
+(define (compiler-backend-windows-framed-save-splice
+  [body : (& body str)]
+  [base : i64]
+  [mode-prologue : (& mode-prologue str)]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [vars : i64]
+  [frame : i64]
+  [symbol : (& symbol str)]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [error : String ""]
+    [xmm-count : i64 0]
+    [gp-count : i64 0]
+    [idx : i64 0]
+    [k : i64 0]
+    (begin
+      (while (and
+        (string.eq error "")
+        (<
+          idx
+          (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+            (compiler_abi.CompilerRegTargetAbi.Windows))))
+        (let
+          [reg-id : i64
+            (compiler_abi.compiler-abi-callee-saved-xmm-register-id
+              (compiler_abi.CompilerRegTargetAbi.Windows)
+              idx)]
+          (begin
+            (if (compiler-backend-callee-needs-save?
+              backend-state
+              assignments
+              reg-id)
+              (let
+                [slot : i64
+                  (compiler-backend-win64-xmm-callee-slot-offset
+                    backend-state
+                    assignments
+                    vars
+                    idx)]
+                [offset : i64 (+ frame slot)]
+                (begin
+                  (set! xmm-count (+ xmm-count 1))
+                  (if (or
+                    (< offset 0)
+                    (not (= (% offset 16) 0))
+                    (> (+ offset 16) frame))
+                    (set!
+                      error
+                      (compiler-backend-windows-framed-save-error
+                        symbol
+                        (compiler_abi.compiler-abi-register-spelling reg-id)
+                        slot
+                        frame
+                        "the offset is outside the allocation or not 16-byte aligned"))
+                    unit)))
+              unit)
+            (set! idx (+ idx 1)))))
+      (while (< k compiler-backend-callee-save-order-count)
+        (begin
+          (if (compiler-backend-callee-save-order-saved?
+            assignments
+            k
+            backend-state)
+            (set! gp-count (+ gp-count 1))
+            unit)
+          (set! k (+ k 1))))
+      (if (and (string.eq error "") (< base 0))
+        (set!
+          error
+          (str_cat.str-cat
+            "backend: Windows prologue of "
+            symbol
+            " is missing from its shrink-wrapped body"))
+        unit)
+      (let
+        [start : i64
+          (if (and
+            (> gp-count 0)
+            (> (string.string-length mode-prologue) 0)
+            (string.is-string-prefix-at body mode-prologue base))
+            (+ base (string.string-length mode-prologue))
+            base)]
+        [pos : i64 start]
+        [rows : String ""]
+        [bound : i64
+          (compiler-backend-windows-framed-prologue-bound
+            xmm-count
+            (> start 0)
+            gp-count)]
+        (begin
+          (if (and
+            (string.eq error "")
+            (> bound compiler-backend-windows-prologue-limit))
+            (set!
+              error
+              (str_cat.str-cat
+                "backend: Windows prologue of "
+                symbol
+                " may need "
+                (string.int->string bound)
+                " bytes (frame "
+                (string.int->string frame)
+                ", "
+                (string.int->string gp-count)
+                " GP and "
+                (string.int->string xmm-count)
+                " XMM saves); x64 unwind info describes at most 255"))
+            unit)
+          (set! k 0)
+          (while (and
+            (string.eq error "")
+            (< k compiler-backend-callee-save-order-count))
+            (begin
+              (if (compiler-backend-callee-save-order-saved?
+                assignments
+                k
+                backend-state)
+                (let
+                  [reg : String
+                    (compiler_abi.compiler-abi-register-spelling
+                      (compiler-backend-callee-save-order-reg-id k))]
+                  [slot : i64
+                    (compiler-backend-callee-save-slot-offset
+                      vars
+                      (compiler-backend-callee-save-order-slot-index
+                        k
+                        backend-state))]
+                  [offset : i64 (+ frame slot)]
+                  [rbp-line : String
+                    (str_cat.str-cat
+                      "    movq "
+                      reg
+                      ", "
+                      (string.int->string slot)
+                      "(%rbp)\n")]
+                  [rsp-line : String
+                    (str_cat.str-cat
+                      "    movq "
+                      reg
+                      ", "
+                      (string.int->string offset)
+                      "(%rsp)\n")]
+                  (cond
+                    [(or
+                        (< offset 0)
+                        (not (= (% offset 8) 0))
+                        (> (+ offset 8) frame))
+                      (set!
+                        error
+                        (compiler-backend-windows-framed-save-error
+                          symbol
+                          reg
+                          slot
+                          frame
+                          "the offset is outside the allocation or not 8-byte aligned"))]
+                    [(or
+                        (string.is-string-prefix-at body rbp-line pos)
+                        (string.is-string-prefix-at body rsp-line pos))
+                      (let
+                        [line : String
+                          (if (string.is-string-prefix-at body rbp-line pos)
+                            rbp-line
+                            rsp-line)]
+                        (begin
+                          (set! pos (+ pos (string.string-length line)))
+                          (set!
+                            rows
+                            (str_cat.str-cat
+                              rows
+                              line
+                              "    .seh_savereg "
+                              reg
+                              ", "
+                              (string.int->string offset)
+                              "\n"))))]
+                    [else
+                      (set!
+                        error
+                        (compiler-backend-windows-framed-save-error
+                          symbol
+                          reg
+                          slot
+                          frame
+                          "the next prologue line is not that save"))]))
+                unit)
+              (set! k (+ k 1))))
+          (if (string.eq error "")
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                (string.substring body 0 start)
+                rows
+                "    .seh_endprologue\n"
+                (string.substring body pos (- (string.string-length body) pos))))
+            (compiler-backend-instr-error instr-diag error)))))))
 
 ;; M-G3 stage 2: frame-pointer-omission prologue (Linux text path only; the
 ;; body was proven rsp-constant and fully rebased by compiler-backend-rsp-
@@ -16574,29 +17015,48 @@
       assignments
       compiler_abi.compiler-reg-id-r12)))
 
-;; Win64-only callee-save extension: on Win64 %rsi/%rdi are callee-saved (unlike
-;; SysV, where they are caller-saved argument registers), so a function that
-;; homes a value in them must spill/reload across the call boundary. They retain
-;; slots 5/6; Win64 FPO appends %rbp at the non-overlapping slot 7.
-(define (compiler-backend-emit-save-win64-callee-regs
+;; The fixed-slot callee-save order. Position K saves
+;; `compiler-backend-callee-save-order-reg-id K` into slot index
+;; `compiler-backend-callee-save-order-slot-index K`. %rbp is saved like any
+;; other CSR (Linux slot 5, Win64 slot 7); FPO rebases the frame operand before
+;; replacing these moves with unwind-described prologue pushes. Positions 6 and
+;; 7 are the Win64-only %rsi/%rdi: on Win64 they are callee-saved (unlike SysV,
+;; where they are caller-saved argument registers) and keep slots 5/6, so Win64
+;; FPO appends %rbp at the non-overlapping slot 7. The saving prologue and the
+;; Windows unwind description of a framed prologue both walk this order.
+(define compiler-backend-callee-save-order-count : i64
+  8)
+
+(define (compiler-backend-callee-save-order-reg-id [k : i64]) : i64
+  (cond
+    [(= k 0) compiler_abi.compiler-reg-id-r12]
+    [(= k 1) compiler_abi.compiler-reg-id-r13]
+    [(= k 2) compiler_abi.compiler-reg-id-r14]
+    [(= k 3) compiler_abi.compiler-reg-id-r15]
+    [(= k 4) compiler_abi.compiler-reg-id-rbx]
+    [(= k 5) compiler_abi.compiler-reg-id-rbp]
+    [(= k 6) compiler_abi.compiler-reg-id-rsi]
+    [else compiler_abi.compiler-reg-id-rdi]))
+
+(define (compiler-backend-callee-save-order-slot-index
+  [k : i64]
+  [backend-state : CompilerBackendState]) : i64
+  (cond
+    [(< k 5) k]
+    [(= k 5) (compiler-backend-rbp-callee-save-slot-index backend-state)]
+    [else (- k 1)]))
+
+;; The saving prologue stores register K of the order above.
+(define (compiler-backend-callee-save-order-saved?
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [vars : i64]
-  [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-current-fn-win64? backend-state)
-    (str_cat.str-cat
-      (compiler-backend-emit-save-callee-reg
-        assignments
-        vars
-        compiler_abi.compiler-reg-id-rsi
-        5
-        backend-state)
-      (compiler-backend-emit-save-callee-reg
-        assignments
-        vars
-        compiler_abi.compiler-reg-id-rdi
-        6
-        backend-state))
-    ""))
+  [k : i64]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    (or (< k 6) (compiler-backend-current-fn-win64? backend-state))
+    (compiler-backend-callee-needs-save?
+      backend-state
+      assignments
+      (compiler-backend-callee-save-order-reg-id k))))
 
 (define (compiler-backend-emit-restore-win64-callee-regs
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -16622,51 +17082,31 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
-    (compiler-backend-emit-save-callee-reg
-      assignments
-      vars
-      compiler_abi.compiler-reg-id-r12
-      0
-      backend-state)
-    (compiler-backend-emit-save-callee-reg
-      assignments
-      vars
-      compiler_abi.compiler-reg-id-r13
-      1
-      backend-state)
-    (compiler-backend-emit-save-callee-reg
-      assignments
-      vars
-      compiler_abi.compiler-reg-id-r14
-      2
-      backend-state)
-    (compiler-backend-emit-save-callee-reg
-      assignments
-      vars
-      compiler_abi.compiler-reg-id-r15
-      3
-      backend-state)
-    (compiler-backend-emit-save-callee-reg
-      assignments
-      vars
-      compiler_abi.compiler-reg-id-rbx
-      4
-      backend-state)
-    ;; %rbp is saved like any other CSR (Linux slot 5, Win64 slot 7).
-    ;; FPO rebases the frame operand before replacing these moves with
-    ;; unwind-described prologue pushes.
-    (compiler-backend-emit-save-callee-reg
-      assignments
-      vars
-      compiler_abi.compiler-reg-id-rbp
-      (compiler-backend-rbp-callee-save-slot-index backend-state)
-      backend-state)
-    ;; Win64: %rsi/%rdi saves (no-op on Linux).
-    (compiler-backend-emit-save-win64-callee-regs
-      assignments
-      vars
-      backend-state)))
+  (let
+    [text : String ""]
+    [k : i64 0]
+    (begin
+      (while (< k compiler-backend-callee-save-order-count)
+        (begin
+          (if (compiler-backend-callee-save-order-saved?
+            assignments
+            k
+            backend-state)
+            (set!
+              text
+              (str_cat.str-cat
+                text
+                (compiler-backend-emit-save-callee-reg
+                  assignments
+                  vars
+                  (compiler-backend-callee-save-order-reg-id k)
+                  (compiler-backend-callee-save-order-slot-index
+                    k
+                    backend-state)
+                  backend-state)))
+            unit)
+          (set! k (+ k 1))))
+      text)))
 
 (define (compiler-backend-emit-restore-callee-regs
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -73343,6 +73783,11 @@
                                       ;; so it can no more use a slot region than
                                       ;; a leaf can. Its own stack argument space
                                       ;; is in outgoing-frame-space above.
+                                      ;; Windows has no red zone: a function that
+                                      ;; saves callee registers into the slot
+                                      ;; region keeps it, so no save lands below
+                                      ;; %rsp and every save is described at a
+                                      ;; nonnegative offset from the allocation.
                                       (if (or
                                         (compiler-backend-function-state-bool?
                                           function-state
@@ -73350,7 +73795,12 @@
                                         (> outgoing-frame-space 0)
                                         (compiler-backend-blocks-have-returning-call?
                                           (compiler-backend-global-shared-view
-                                            emit-blocks-list)))
+                                            emit-blocks-list))
+                                        (and
+                                          target-policy.windows
+                                          (compiler-backend-plan-uses-callee-regs?
+                                            assignments
+                                            program-index.backend-state)))
                                         (compiler-backend-frame-slots-with-groups
                                           slot-vars
                                           assignments
@@ -73857,6 +74307,13 @@
                                 (if wrap-active?
                                   saving-asm-label
                                   symbol)]
+                              [windows-describe? : bool
+                                (compiler-backend-windows-framed-describe-saves?
+                                  target-policy
+                                  fpo-ok
+                                  assignments
+                                  (compiler-backend-global-shared-view swb-body)
+                                  program-index.backend-state)]
                               [selected-prologue : String
                                 (if fpo-ok
                                   (if target-policy.seh-unwind
@@ -73886,6 +74343,7 @@
                                     frame
                                     assignments
                                     slot-vars
+                                    windows-describe?
                                     program-index.backend-state))]
                               [emitted-body : String
                                 (if wrap-active?
@@ -73895,6 +74353,38 @@
                                     (compiler-backend-global-shared-view
                                       selected-prologue))
                                   swb-body)]
+                              [described-result : ResultCompilerBackend
+                                (if windows-describe?
+                                  (compiler-backend-windows-framed-save-splice
+                                    (compiler-backend-global-shared-view
+                                      emitted-body)
+                                    ;; A shrink-wrapped prologue sits at its
+                                    ;; saving label; its saves follow it.
+                                    (if wrap-active?
+                                      (let
+                                        [at : i64
+                                          (compiler-backend-string-find-from
+                                            (compiler-backend-global-shared-view
+                                              emitted-body)
+                                            (compiler-backend-global-shared-view
+                                              selected-prologue)
+                                            0)]
+                                        (if (< at 0)
+                                          -1
+                                          (+
+                                            at
+                                            (string.string-length
+                                              selected-prologue))))
+                                      0)
+                                    (compiler-backend-mode-prologue mode)
+                                    assignments
+                                    slot-vars
+                                    frame
+                                    (compiler-backend-global-shared-view symbol)
+                                    (compiler-backend-global-shared-view
+                                      func-diag)
+                                    program-index.backend-state)
+                                  (ResultCompilerBackend.Ok emitted-body))]
                               (cond
                                 ;; SW-1: the first emission found a placement.
                                 ;; Re-emit applying it, so the bypass returns
@@ -73993,94 +74483,98 @@
                                     compiler-backend-swb-refused
                                     (__tl_make-array i64 0))]
                                 [else
-                                  (begin
-                                    ;; Publish carry-safe labels transactionally:
-                                    ;; shrinkwrap/FPO attempts may recursively
-                                    ;; retry this function with different final
-                                    ;; blocks but reuse its assembly label scope.
-                                    ;; An abandoned attempt must not leave labels
-                                    ;; that make the accepted body inherit an
-                                    ;; owner map across a non-fallthrough edge.
-                                    (compiler-backend-peephole-collect-carry-safe!
-                                      program-index.backend-state
-                                      (compiler-backend-state-stream-state
-                                        program-index.backend-state)
-                                      (compiler-backend-state-function-state
-                                        program-index.backend-state)
-                                      label-scope
-                                      emit-blocks-list)
-                                    (compiler-backend-commit-frame-layout!
-                                      program-index.backend-state
-                                      target
-                                      assignments
-                                      (compiler-backend-global-shared-view
-                                        symbol)
-                                      frame
-                                      final-push-count
-                                      slot-vars
-                                      outgoing-frame-space
-                                      fpo-ok
-                                      rebase-ok
-                                      wrap-active?)
-                                    (ResultCompilerBackend.Ok
-                                      (str_cat.str-cat
-                                        (compiler-backend-function-symbol-map-comment
-                                          program-index
-                                          name)
-                                        ".globl "
-                                        symbol
-                                        "\n"
-                                        (compiler-backend-debug-function-location
+                                  (match described-result
+                                    [(ResultCompilerBackend.Ok described-body)
+                                      (begin
+                                        ;; Publish carry-safe labels transactionally:
+                                        ;; shrinkwrap/FPO attempts may recursively
+                                        ;; retry this function with different final
+                                        ;; blocks but reuse its assembly label scope.
+                                        ;; An abandoned attempt must not leave labels
+                                        ;; that make the accepted body inherit an
+                                        ;; owner map across a non-fallthrough edge.
+                                        (compiler-backend-peephole-collect-carry-safe!
+                                          program-index.backend-state
+                                          (compiler-backend-state-stream-state
+                                            program-index.backend-state)
+                                          (compiler-backend-state-function-state
+                                            program-index.backend-state)
+                                          label-scope
+                                          emit-blocks-list)
+                                        (compiler-backend-commit-frame-layout!
+                                          program-index.backend-state
                                           target
-                                          program-index
-                                          span-index
+                                          assignments
                                           (compiler-backend-global-shared-view
-                                            spans)
-                                          name)
-                                        ;; Immediately before the entry label:
-                                        ;; the shrinkwrap and ordinary prologues
-                                        ;; both open with `symbol:`.
-                                        (compiler-backend-emit-function-type-directive
-                                          target
-                                          symbol)
-                                        (if wrap-active?
-                                          (str_cat.str-cat symbol ":\n" "")
-                                          selected-prologue)
-                                        ""
-                                        ""
-                                        ;; The text is final here (prologue
-                                        ;; spliced, rsp rebased, FPO decided);
-                                        ;; the fallthrough-`jmp` deletion runs
-                                        ;; later, folded into the streaming
-                                        ;; records parse, over the same bytes.
-                                        emitted-body
-                                        (compiler-backend-debug-function-end-label
-                                          target
-                                          program-index
-                                          name)
-                                        (compiler-backend-backtrace-function-end-label
-                                          program-index
-                                          name)
-                                        (if (and
-                                          (compiler_ir_types.compiler-debug-info-enabled?)
-                                          target-policy.linux)
-                                          "    .cfi_endproc\n"
-                                          "")
-                                        (compiler-backend-emit-windows-seh-endproc
-                                          target)
-                                        ;; Closes the function at its last
-                                        ;; emitted byte, before the next
-                                        ;; function's `.globl`/`.type`.
-                                        (compiler-backend-emit-function-size-directive
-                                          target
-                                          symbol)
-                                        "\n"
-                                        (compiler-backend-backtrace-function-entry
-                                          target
-                                          program-index
-                                          spans
-                                          name
-                                          symbol))))])))))]
+                                            symbol)
+                                          frame
+                                          final-push-count
+                                          slot-vars
+                                          outgoing-frame-space
+                                          fpo-ok
+                                          rebase-ok
+                                          wrap-active?)
+                                        (ResultCompilerBackend.Ok
+                                          (str_cat.str-cat
+                                            (compiler-backend-function-symbol-map-comment
+                                              program-index
+                                              name)
+                                            ".globl "
+                                            symbol
+                                            "\n"
+                                            (compiler-backend-debug-function-location
+                                              target
+                                              program-index
+                                              span-index
+                                              (compiler-backend-global-shared-view
+                                                spans)
+                                              name)
+                                            ;; Immediately before the entry label:
+                                            ;; the shrinkwrap and ordinary prologues
+                                            ;; both open with `symbol:`.
+                                            (compiler-backend-emit-function-type-directive
+                                              target
+                                              symbol)
+                                            (if wrap-active?
+                                              (str_cat.str-cat symbol ":\n" "")
+                                              selected-prologue)
+                                            ""
+                                            ""
+                                            ;; The text is final here (prologue
+                                            ;; spliced, rsp rebased, FPO decided);
+                                            ;; the fallthrough-`jmp` deletion runs
+                                            ;; later, folded into the streaming
+                                            ;; records parse, over the same bytes.
+                                            described-body
+                                            (compiler-backend-debug-function-end-label
+                                              target
+                                              program-index
+                                              name)
+                                            (compiler-backend-backtrace-function-end-label
+                                              program-index
+                                              name)
+                                            (if (and
+                                              (compiler_ir_types.compiler-debug-info-enabled?)
+                                              target-policy.linux)
+                                              "    .cfi_endproc\n"
+                                              "")
+                                            (compiler-backend-emit-windows-seh-endproc
+                                              target)
+                                            ;; Closes the function at its last
+                                            ;; emitted byte, before the next
+                                            ;; function's `.globl`/`.type`.
+                                            (compiler-backend-emit-function-size-directive
+                                              target
+                                              symbol)
+                                            "\n"
+                                            (compiler-backend-backtrace-function-entry
+                                              target
+                                              program-index
+                                              spans
+                                              name
+                                              symbol))))]
+                                    [(ResultCompilerBackend.Err message)
+                                      (ResultCompilerBackend.Err message)])])))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
@@ -74834,6 +75328,7 @@
                   frame
                   (compiler_regalloc.compiler-reg-assignment-table-empty)
                   vars
+                  false
                   program-index.backend-state)
                 ""
                 ""

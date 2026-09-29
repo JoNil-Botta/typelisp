@@ -1,0 +1,24 @@
+seh_oracle_full
+FrameRegister: -
+0x24: SAVE_NONVOL reg=RDI, offset=0x0
+0x20: SAVE_NONVOL reg=RSI, offset=0x8
+0x1C: SAVE_NONVOL reg=RBX, offset=0x10
+0x18: SAVE_NONVOL reg=R15, offset=0x18
+0x14: SAVE_NONVOL reg=R14, offset=0x20
+0x10: SAVE_NONVOL reg=R13, offset=0x28
+0x0C: SAVE_NONVOL reg=R12, offset=0x30
+0x08: ALLOC_SMALL size=80
+0x01: PUSH_NONVOL reg=RBP
+seh_oracle_probed
+FrameRegister: -
+0x29: SAVE_NONVOL reg=RBX, offset=0xB8
+0x22: SAVE_XMM128 reg=XMM15, offset=0x0
+0x19: SAVE_XMM128 reg=XMM6, offset=0x90
+0x11: ALLOC_LARGE size=5024
+0x01: PUSH_NONVOL reg=RBP
+seh_oracle_far
+FrameRegister: -
+0x19: SAVE_NONVOL_FAR reg=RDI, offset=0x92770
+0x15: SAVE_NONVOL_FAR reg=R12, offset=0x927A0
+0x11: ALLOC_LARGE size=600000
+0x01: PUSH_NONVOL reg=RBP

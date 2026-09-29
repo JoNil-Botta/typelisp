@@ -697,6 +697,46 @@ not-contains .seh_setframe
 not-contains movq %rsp, %rbp
 not-match \(%rbp\)
 
+# #7564: a Windows rbp frame that saves callee registers names no frame
+# register, and each GP save is described before the prologue ends. An XMM save
+# with an even GP save count keeps the rbp frame; the FPO victim is the push
+# prologue control. scripts/verify-win64-seh-unwind.sh runs this fixture.
+case win64-seh-framed-saves
+source tests/fixtures/win64-seh/win64_seh_unwind.tl
+target windows-x86_64
+in fn _tl_win64_seh_unwind_seh_victim_framed
+contains movq %rsp, %rbp
+not-contains .seh_setframe
+match ^[[:space:]]+\.seh_savexmm %xmm6, [0-9]+$
+count = 2 ^[[:space:]]+\.seh_savereg %r[a-z0-9]+, [0-9]+$
+after ^[[:space:]]+\.seh_endprologue$
+next-line ^[[:space:]]+movq %rcx, %r[a-z0-9]+$
+in fn _tl_win64_seh_unwind_seh_victim_fpo
+match ^[[:space:]]+\.seh_pushreg %r
+not-contains .seh_savereg
+not-contains movq %rsp, %rbp
+
+# #7564: Windows has no red zone, so a function that saves callee registers
+# keeps an allocation covering them instead of storing them below %rsp, and
+# the saves are described at nonnegative offsets. return-f32 then passes FPO;
+# the shrink-wrapped saving path of reference-bits stays framed.
+case win64-callee-saves-allocated
+source tests/integration/float_comparisons.tl
+target windows-x86_64
+in fn _tl_float_comparisons_return_f32
+match \.seh_stackalloc[ ]
+match ^[[:space:]]+\.seh_savexmm %xmm6, [0-9]+$
+not-match -[0-9]+\(%rbp\)
+
+case win64-shrinkwrap-saves-allocated
+source tests/integration/bit_length_loop.tl
+target windows-x86_64
+in fn _tl_bit_length_loop_reference_bits
+match \.seh_stackalloc[ ]
+count = 1 ^[[:space:]]+\.seh_savereg %r[a-z0-9]+, [0-9]+$
+not-contains .seh_setframe
+not-match -[0-9]+\(%rbp\)
+
 # LICM hoists the array descriptor loads out of the loop.
 case licm-desc-hoist
 source tests/integration/licm_desc_hoist.tl

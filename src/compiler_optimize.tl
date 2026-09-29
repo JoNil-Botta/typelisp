@@ -22464,7 +22464,6 @@
     [(ast.AstType.DynArray _) true]
     [(ast.AstType.String) true]
     [(ast.AstType.Str) true]
-    [(ast.AstType.Bytes) true]
     [(ast.AstType.Ref _ inner)
       (opt-licm-array-header-type?
         type-segment-bases
@@ -25071,7 +25070,6 @@
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [(ast.AstType.String) (OptMaybeAstType.Some (ast.AstType.U8))]
     [(ast.AstType.Str) (OptMaybeAstType.Some (ast.AstType.U8))]
-    [(ast.AstType.Bytes) (OptMaybeAstType.Some (ast.AstType.U8))]
     [(ast.AstType.Ref _ inner)
       (opt-licm-deref-header-element
         type-segment-bases
@@ -25245,7 +25243,8 @@
 ;;    -1  a struct or tuple: fields are stored inline, so every field offset the
 ;;        lowering forms off it -- a chain of literal byte Geps -- stays inside
 ;;        its storage
-;;     0  no evidence: raw pointers, integers, closures, fixed arrays, slices
+;;     0  no evidence: raw pointers, integers, closures, fixed arrays, Slice and
+;;        bytes views (two-word values, not pointers)
 ;; A descriptor is its data and length words. An enum value may be a nullary
 ;; variant, the 8-byte tag object the lowering emits as a global, so only its
 ;; tag word counts. A reference addresses its referent; one to a descriptor is
@@ -25257,7 +25256,6 @@
     [(ast.AstType.DynArray _) 16]
     [(ast.AstType.String) 16]
     [(ast.AstType.Str) 16]
-    [(ast.AstType.Bytes) 16]
     [(ast.AstType.Enum _) 8]
     [(ast.AstType.EnumArgs _ _) 8]
     [(ast.AstType.Struct _) (- 0 1)]
@@ -25287,6 +25285,7 @@
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [(ast.AstType.Slice _) 0]
+    [(ast.AstType.Bytes) 0]
     [(ast.AstType.Array _ _) 0]
     [(ast.AstType.Func _ _) 0]
     [(ast.AstType.CFunc _ _) 0]
@@ -25352,8 +25351,8 @@
         [(opt_i64_i64_map.LookupMissing) 0])]
     [(ir.CompilerIrValue.String _)
       (opt-licm-deref-type-extent type-segment-bases (ast.AstType.String))]
-    [(ir.CompilerIrValue.Bytes _)
-      (opt-licm-deref-type-extent type-segment-bases (ast.AstType.Bytes))]
+    ;; A binary literal is a `(__tl_dyn-array u8)` descriptor.
+    [(ir.CompilerIrValue.Bytes _) 16]
     [_ 0]))
 
 ;; A phi still unresolved by the fixpoint below: it joins nothing yet.
@@ -127942,16 +127941,6 @@
 (defenum OptScratchScopeReport
   (Report i64 i64 OptScratchBlockerReason))
 
-;; Physical-layout mirror used by optimizer analyses that do have the type
-;; segment pool available.  A borrowed Slice reference is the only fat Ref;
-;; Region wrappers around its immediate referent are transparent.
-(define (opt-reference-to-slice? [type-segment-bases : i64] [inner : i64]) : bool
-  (match (ast.ast-type-segment-bases-get type-segment-bases inner)
-    [(ast.AstType.Region _ nested)
-      (opt-reference-to-slice? type-segment-bases nested)]
-    [(ast.AstType.Slice _) true]
-    [_ false]))
-
 (define (opt-scratch-alloc-type-size
   [type-segment-bases : i64]
   [ty : ast.AstType]) : i64
@@ -127982,11 +127971,11 @@
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
     [(ast.AstType.Ref _ inner)
-      (if (opt-reference-to-slice? type-segment-bases inner)
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         16
         8)]
     [(ast.AstType.MutRef _ inner)
-      (if (opt-reference-to-slice? type-segment-bases inner)
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         16
         8)]
     [(ast.AstType.Region _ inner)
@@ -129279,13 +129268,13 @@
   (match (compiler-opt-global-shared-view ty)
     [(ast.AstType.Ref _ inner)
       (or
-        (opt-reference-to-slice? type-segment-bases inner)
+        (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         (opt-licm-array-header-type?
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [(ast.AstType.MutRef _ inner)
       (or
-        (opt-reference-to-slice? type-segment-bases inner)
+        (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         (opt-licm-array-header-type?
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases inner)))]
@@ -129300,9 +129289,9 @@
   [ty : ast.AstType]) : bool
   (match ty
     [(ast.AstType.Ref _ inner)
-      (opt-reference-to-slice? type-segment-bases inner)]
+      (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
     [(ast.AstType.MutRef _ inner)
-      (opt-reference-to-slice? type-segment-bases inner)]
+      (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
     [(ast.AstType.Region _ inner)
       (opt-load-slice-param-type?
         type-segment-bases
@@ -129695,11 +129684,11 @@
     [(ast.AstType.Ptr _) 8]
     [(ast.AstType.MutPtr _) 8]
     [(ast.AstType.Ref _ inner)
-      (if (opt-reference-to-slice? type-segment-bases inner)
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         16
         8)]
     [(ast.AstType.MutRef _ inner)
-      (if (opt-reference-to-slice? type-segment-bases inner)
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         16
         8)]
     [(ast.AstType.Region _ inner)
@@ -129750,11 +129739,11 @@
     [(ast.AstType.MutPtr _) 6]
     [(ast.AstType.Func _ _) 6]
     [(ast.AstType.Ref _ inner)
-      (if (opt-reference-to-slice? type-segment-bases inner)
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         0
         6)]
     [(ast.AstType.MutRef _ inner)
-      (if (opt-reference-to-slice? type-segment-bases inner)
+      (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         0
         6)]
     [_ 0]))

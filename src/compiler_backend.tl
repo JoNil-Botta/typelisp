@@ -17948,22 +17948,6 @@
     [(backend_i64_i64_map.LookupMissing)
       (compiler-backend-state-user-symbol-id index.backend-state name)]))
 
-;; Borrowed Slice references are structural two-word values.  The backend only
-;; has the type-segment-bases pool (rather than a typecheck context), so peel
-;; Region wrappers while walking the referent node directly.  This predicate is
-;; intentionally restricted to an immediate Slice referent; no nominal name is
-;; manufactured for the structural group.
-(define (compiler-backend-reference-to-slice?
-  [type-segment-bases : i64]
-  [inner : i64]) : bool
-  (match (compiler_ast_types.ast-type-segment-bases-get
-    type-segment-bases
-    inner)
-    [(compiler_ast_types.AstType.Region _ nested)
-      (compiler-backend-reference-to-slice? type-segment-bases nested)]
-    [(compiler_ast_types.AstType.Slice _) true]
-    [_ false]))
-
 (define (compiler-backend-type-size
   [type-segment-bases : i64]
   [ty : (& ty compiler_ast_types.AstType)]) : i64
@@ -17998,11 +17982,15 @@
       [(compiler_ast_types.AstType.Ptr _) 8]
       [(compiler_ast_types.AstType.MutPtr _) 8]
       [(compiler_ast_types.AstType.Ref _ inner)
-        (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+        (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
+          type-segment-bases
+          inner)
           16
           8)]
       [(compiler_ast_types.AstType.MutRef _ inner)
-        (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+        (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
+          type-segment-bases
+          inner)
           16
           8)]
       [(compiler_ast_types.AstType.Region _ inner)
@@ -37526,11 +37514,15 @@
   [ty : compiler_ast_types.AstType]) : i64
   (match (compiler-backend-global-shared-view ty)
     [(compiler_ast_types.AstType.Ref _ inner)
-      (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+      (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
+        type-segment-bases
+        inner)
         2
         1)]
     [(compiler_ast_types.AstType.MutRef _ inner)
-      (if (compiler-backend-reference-to-slice? type-segment-bases inner)
+      (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
+        type-segment-bases
+        inner)
         2
         1)]
     [_

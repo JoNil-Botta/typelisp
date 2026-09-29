@@ -339,6 +339,17 @@ tail_aggregate_return|all|-|tests/integration/tail_aggregate_return.tl|42|-|-|-|
 group_split_loops|all|0,1,2|tests/integration/group_split_loops.tl|42|-|-|-|-
 aggregate_return_no_alloc|all|-|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
 aggregate_return_no_alloc|all|0,2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|stage-stdlib
+# Borrowed bytes views are two-word values that never allocate, and an
+# out-of-range view traps before a pointer is formed (#8089). The trap rows take
+# a negative start, a negative length, an overflowing length, a range past the
+# end, and a stdlib subview starting past the end.
+bytes_view_no_alloc|all|-|tests/integration/bytes_view_no_alloc.tl|42|-|-|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|-
+bytes_view_no_alloc|all|0,2|tests/integration/bytes_view_no_alloc.tl|42|-|-|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib
+bytes_view_trap_negative_start|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|1|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_negative_length|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|2|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_overflow|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|3|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_past_end|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|4|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_subview_past_end|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|5|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 c_abi_aggregate_no_alloc|all|-|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|-
 c_abi_aggregate_no_alloc|all|0,2|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|stage-stdlib
 tuple_inline_storage_lifetime|all|-|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|-

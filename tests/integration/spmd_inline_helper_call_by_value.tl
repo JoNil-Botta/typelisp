@@ -107,6 +107,27 @@
     ([i : i64 0 n])
     (set! (array-ref out i) (thrice-over-limit (observe counts i i)))))
 
+;; Reading a variable is effect-free, but its value must be captured before a
+;; later argument changes it. Also require the later argument's write to occur.
+(define (run-variable-snapshot
+  [out : (&mut out (__tl_dyn-array i64))]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i64 (+ i 1)]
+      [result : i64
+        (second-minus-first
+          x
+          (begin
+            (set! x 99)
+            0))]
+      (begin
+        (set! (array-ref out i) result)
+        (if (= x 99)
+          unit
+          (set! (array-ref out i) 1000))))))
+
 (define (all-equal [xs : (& xs (__tl_dyn-array i64))] [n : i64] [want : i64]) : bool
   (let
     [i : i64 0]
@@ -135,6 +156,10 @@
     [at-counts : (__tl_dyn-array i64) (fresh n)]
     [over-counts : (__tl_dyn-array i64) (fresh n)]
     (begin
+      (run-variable-snapshot (&mut out) n)
+      (if (or (!= (array-ref out 0) -1) (!= (array-ref out 6) -7))
+        (return 14)
+        unit)
       (run-twice (&mut twice-counts) (&mut out) n)
       (if (not (all-equal (& twice-counts) n 1))
         1

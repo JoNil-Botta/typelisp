@@ -9180,22 +9180,22 @@
         (ResultLowerSpmdInlineHelper.Err
           (box (lower-diagnostic-at-expr ctx func message))))]))
 
-;; An argument whose evaluation has no effect and cannot fault: substituting it
-;; at every use of its parameter, or at none, is the same as evaluating it once.
-;; Borrowing a variable only names its place.
-(define (lower-spmd-inline-arg-pure?
+;; An argument that can be rematerialized without changing its value or effects.
+;; A variable read needs a snapshot: later arguments or the helper body can
+;; change its value. Borrowing a checked variable only names its stable place.
+(define (lower-spmd-inline-arg-stable?
   [ctx : tc_core.TcContext]
   [arg : ast.AstExpr]) : bool
   (match arg
     [(ast.AstExpr.Spanned inner-box _)
-      (lower-spmd-inline-arg-pure? ctx (lower-context-expr-get ctx inner-box))]
+      (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Ann inner-box _)
-      (lower-spmd-inline-arg-pure? ctx (lower-context-expr-get ctx inner-box))]
+      (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
     [(ast.AstExpr.Borrow _ _ place-box)
       (match (ast.ast-expr-unspan (lower-context-expr-get ctx place-box))
         [(ast.AstExpr.Var _) true]
         [_ false])]
-    [(ast.AstExpr.Var _) true]
+    [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.Literal _) true]
     [(ast.AstExpr.SpmdProgramIndex) true]
     [(ast.AstExpr.SpmdProgramCount) true]
@@ -9220,12 +9220,12 @@
     [(ast.AstType.Bool) (ast.AstMaybeType.Some param-ty)]
     [_ (ast.AstMaybeType.No)]))
 
-;; Call-by-value for an inlined helper (#7541). Every argument that could
-;; have an effect or fault is bound, in argument order, to a fresh hygienic
+;; Call-by-value for an inlined helper (#7541). Every argument that cannot be
+;; rematerialized is bound, in argument order, to a fresh hygienic
 ;; local, and the parameter is substituted by that
 ;; local; `staged` collects those bindings for the `let` that wraps the body.
 ;; So each such argument is evaluated exactly once, left to right, before the
-;; body, whether the body reads its parameter once, twice or not at all. A pure
+;; body, whether the body reads its parameter once, twice or not at all. A stable
 ;; argument is substituted as it is.
 (define (lower-spmd-inline-build-subst-at
   [ctx : tc_core.TcContext]
@@ -9257,7 +9257,7 @@
               params
               args
               (+ index 1)
-              (if (lower-spmd-inline-arg-pure?
+              (if (lower-spmd-inline-arg-stable?
                 ctx
                 (lower-global-shared-view arg))
                 (lower-spmd-inline-subst-cons param-name arg subst)

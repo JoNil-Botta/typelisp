@@ -45,6 +45,14 @@ to this dispatcher (shared traversal macros for analysis walkers are fine), or
 treat this ledger as a line-count target. Update the affected row when a
 family changes, and remove its superseded implementation in the same slice.
 
+The source-known small-helper rewrite inside `foreach` stages argument values
+before substituting the body. A read of a mutable variable needs a fresh local
+even though the read cannot fault; subsequent arguments can change its value.
+The direct-map `Stage` plan preserves binding order and uses the existing
+emitter cache for repeated local reads. Every plan consumer must inspect the
+staged initializer as well as the body, retaining masks, checks and caller
+argument spans even when the body does not read that parameter.
+
 For the operator family, retain contextual numeric/unary tests, short-circuit
 branch tests, aggregate equality, nested exits and source-error fixtures from
 `compiler_lower_tests.tl` and the lowerer smoke. Review also compares fixed-source

@@ -107,6 +107,19 @@ The optimizer's per-call integrity check applies the call-side half. Backend
 and register-allocation decisions still read generated helper and parameter
 spellings; #7493 moves them onto the descriptor.
 
+Source-known small helpers inside `foreach` preserve call-by-value before
+their bodies are substituted. Arguments whose value or effects cannot be
+rematerialized are bound to fresh function-owned locals in source order.
+Variable reads require that snapshot even when the read itself cannot fault:
+a later argument or the helper body can change the variable. Argument
+initializers retain caller spans; body operations retain their original spans.
+The direct-map planner represents these ordered bindings with
+`LowerVectorMapValue.Stage`. Its emitter evaluates the staged value before
+the body, and local reads resolve through the existing value cache. Range
+proofs, masks, gather checks and scalar tails inspect both parts, including an
+unused binding; staging must neither drop an argument's checks nor introduce
+effects on inactive lanes.
+
 SIMD `foreach` plans address their array operands as sequence variables: a
 dynamic-array descriptor, or a native Slice register group (data pointer, then
 length). Fixed arrays reach the same plans through views, not a path of their

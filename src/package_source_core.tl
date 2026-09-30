@@ -17,6 +17,7 @@
 (import compiler_diagnostic)
 (import compiler_load)
 (import tlci_core as tlci)
+(import package_lock_core)
 
 (defstruct PackageSourceSet
   (manifest-path String)
@@ -603,13 +604,47 @@
           (package-source-sort-entries entries)
           (svec.new))])))
 
+;; Classify one listed entry from its no-follow inspection. The listing and
+;; the inspection are separate syscalls, so another process may remove the
+;; entry in between (a concurrent lock writer renames its stage sibling away):
+;; not-found means "vanished since listing" and contributes nothing. Every
+;; other inspection failure stays fatal. A source file that vanishes after it
+;; was selected still fails when it is read.
+(define (package-source-scan-kind
+  [command : String]
+  [root : (& root str)]
+  [child-relative : String]
+  [child-path : String]
+  [inspected : fs.ResultFsFileKind]
+  [acc : svec.Vec]) : ResultPackageSourceList
+  (match inspected
+    [(fs.ErrFsFileKind error)
+      (if (io.error-not-found? (owned_view.compiler-owned-shared-view error))
+        (ResultPackageSourceList.Ok acc)
+        (package-source-entry-error command child-path error))]
+    [(fs.OkFsFileKind kind)
+      (if (fs.file-kind-directory? kind)
+        (if (package-source-dir-has-manifest? child-path)
+          (ResultPackageSourceList.Ok acc)
+          (package-source-scan-dir command root child-relative acc))
+        (if (package-source-include-kind? child-path kind)
+          (ResultPackageSourceList.Ok
+            (package-source-vec-insert
+              acc
+              (compiler_load.compiler-load-normalize-path child-path)))
+          (ResultPackageSourceList.Ok acc)))]))
+
+;; Names are classified before any inspection: skipped directories and lock
+;; stage siblings (at any depth, whatever their kind) are never inspected.
 (define (package-source-scan-one
   [command : String]
   [root : (& root str)]
   [relative : (& relative str)]
   [name : String]
   [acc : svec.Vec]) : ResultPackageSourceList
-  (if (package-source-skip-dir? (owned_view.compiler-owned-shared-view name))
+  (if (or
+    (package-source-skip-dir? (owned_view.compiler-owned-shared-view name))
+    (package_lock_core.package-lock-stage-name? (& name)))
     (ResultPackageSourceList.Ok acc)
     (let
       [child-relative : String (package-source-relative-join relative name)]
@@ -617,20 +652,15 @@
       ;; Do not follow symbolic links or Windows reparse points. Package and
       ;; workspace discovery must stay inside the lexical root and a directory
       ;; link back to an ancestor must not turn traversal into a cycle.
-      (match (fs.try-file-kind-no-follow (& child-path))
-        [(fs.ErrFsFileKind error)
-          (package-source-entry-error command child-path error)]
-        [(fs.OkFsFileKind kind)
-          (if (fs.file-kind-directory? kind)
-            (if (package-source-dir-has-manifest? child-path)
-              (ResultPackageSourceList.Ok acc)
-              (package-source-scan-dir command root child-relative acc))
-            (if (package-source-include-kind? child-path kind)
-              (ResultPackageSourceList.Ok
-                (package-source-vec-insert
-                  acc
-                  (compiler_load.compiler-load-normalize-path child-path)))
-              (ResultPackageSourceList.Ok acc)))]))))
+      [inspected : fs.ResultFsFileKind
+        (fs.try-file-kind-no-follow (& child-path))]
+      (package-source-scan-kind
+        command
+        root
+        child-relative
+        child-path
+        inspected
+        acc))))
 
 (define (package-source-scan-entries-from
   [command : String]

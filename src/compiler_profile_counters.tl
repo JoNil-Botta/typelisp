@@ -24,9 +24,10 @@
 ;; Counters that live in a job's metric array instead of globals are a
 ;; `defslots` table: `(counters.defslots table first entry ...)` numbers the
 ;; entries' slots from `first` in table order and defines `<table>-end`, the
-;; slot after the last. An entry is `(name "row" [kind])`, or `(name)` for a
-;; slot no row reports; in compile-profile builds `<table>-emit!` writes the
-;; rows from the metric array at a job's metrics address.
+;; slot after the last. An entry is `(name "row" [kind])` with the same kinds,
+;; or `(name)` for a slot no row reports; in compile-profile builds
+;; `<table>-emit!` writes the rows from the metric array at a job's metrics
+;; address.
 ;;
 ;; Ordinary builds never load this module: importers, tables and counting sites
 ;; all sit inside `(cfg compile-profile ...)`, or `(any compile-profile test)`
@@ -197,11 +198,13 @@
                         (comptime.expr-list-cons
                           (match kind
                             ["count" `(profile-counter-row! ,row ,value)]
+                            ["us" `(profile-counter-row! ,row (/ ,value 1000))]
+                            ["kb" `(profile-counter-row! ,row (/ ,value 1024))]
                             ["live" `(profile-counter-live-row! ,row ,value)]
                             ["bare" `(profile-counter-bare-row! ,row ,value)]
                             [_
                               (comptime-error
-                                "defslots: a kind must be `live` or `bare`")])
+                                "defslots: a kind must be `us`, `kb`, `live` or `bare`")])
                           rows)))
                     unit)))]
             [_

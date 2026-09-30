@@ -1123,7 +1123,9 @@
           (build-git-dep-error alias "has invalid pin kind"))])))
 
 (define (build-package-lock-path [manifest-dir : String]) : String
-  (load.compiler-load-join-root-path manifest-dir "typelisp.lock"))
+  (load.compiler-load-join-root-path
+    manifest-dir
+    (package_lock_core.package-lock-file-name)))
 
 (define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
   (let

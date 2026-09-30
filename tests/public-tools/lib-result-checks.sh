@@ -184,7 +184,7 @@ function string_value(key,    i, at, rest, value) {
     }
     return ""
 }
-function stream_patterns(key, actual, label, negative,    i, at, rest, active, last, value, n, j, needles, present) {
+function stream_patterns(key, actual, label, negative,    i, at, rest, active, quote, bracket, value, n, j, needles, present) {
     for (i = 1; i <= spec_count; i++) {
         rest = spec[i]
         if (!active) {
@@ -196,9 +196,13 @@ function stream_patterns(key, actual, label, negative,    i, at, rest, active, l
             active = 1
             rest = substr(rest, at + 1)
         }
-        last = index(rest, "]")
-        if (last) rest = substr(rest, 1, last - 1)
-        while (index(rest, "\"")) {
+        # The array ends at the first `]` outside a quoted pattern; a `]`
+        # inside a pattern is part of it.
+        while (1) {
+            quote = index(rest, "\"")
+            bracket = index(rest, "]")
+            if (bracket && (!quote || bracket < quote)) return
+            if (!quote) break
             value = quoted(rest)
             if (!consumed) break
             rest = substr(rest, consumed + 1)
@@ -212,7 +216,6 @@ function stream_patterns(key, actual, label, negative,    i, at, rest, active, l
                     print label (negative ? " unexpectedly contains: " : " missing: ") needles[j]
             }
         }
-        if (last) return
     }
 }
 function indented(text,    n, rows, i) {
@@ -257,6 +260,16 @@ function message_needles(line, key, message, negative,    marker, at, rest, valu
     }
     return 1
 }
+# Whether `message` carries `"id":<id>` as a whole number: 1 never matches 10.
+function has_id(message, id,    marker, rest, at) {
+    marker = "\"id\":" id
+    rest = message
+    while ((at = index(rest, marker))) {
+        rest = substr(rest, at + length(marker))
+        if (substr(rest, 1, 1) !~ /[0-9]/) return 1
+    }
+    return 0
+}
 function message_matches(line,    id, rest, wants_null, i, message) {
     id = ""
     if (line ~ /"jsonpath_id"[[:space:]]*:[[:space:]]*[0-9]+/) {
@@ -268,7 +281,7 @@ function message_matches(line,    id, rest, wants_null, i, message) {
     wants_null = index(line, "\"jsonpath_result\": null") != 0
     for (i = 1; i <= message_rows; i++) {
         message = messages[i]
-        if (id != "" && !index(message, "\"id\":" id)) continue
+        if (id != "" && !has_id(message, id)) continue
         if (wants_null && !index(message, "\"result\":null")) continue
         if (message_needles(line, "raw_contains", message, 0) &&
             message_needles(line, "json_contains", message, 0) &&

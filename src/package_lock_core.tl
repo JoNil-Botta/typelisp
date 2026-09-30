@@ -834,13 +834,55 @@
     (set! package-lock-stage-sequence (+ package-lock-stage-sequence 1))
     package-lock-stage-sequence))
 
+;; The lock file a package root publishes. Replacement goes through a
+;; transient sibling `<lock>.stage.<pid>.<sequence>.<attempt>`; the infix and
+;; the stage-name predicate below are the only spellings of that sibling.
+(define (package-lock-file-name) : String
+  "typelisp.lock")
+
+(define (package-lock-stage-infix) : String
+  ".stage.")
+
+(define (package-lock-decimal-digit? [c : char]) : bool
+  (and (>= c '0') (<= c '9')))
+
+;; True exactly when `name` is spelled like a stage sibling of the package
+;; lock file as `package-lock-stage-path` builds it: the lock file name, the
+;; stage infix, then three nonempty dot-separated decimal runs and nothing
+;; else. Package source discovery never treats such a name as package content.
+(define (package-lock-stage-name? [name : (& name str)]) : bool
+  (let
+    [prefix : String
+      (str_cat.str-cat (package-lock-file-name) (package-lock-stage-infix))]
+    [len : i64 (string.string-length name)]
+    [index : i64 (string.string-length (& prefix))]
+    [runs : i64 0]
+    [ok : bool (string.is-string-prefix-at name (& prefix) 0)]
+    (begin
+      (while (and ok (< runs 3))
+        (let
+          [start : i64 index]
+          (begin
+            (while (and
+              (< index len)
+              (package-lock-decimal-digit? (string.string-ref name index)))
+              (set! index (+ index 1)))
+            (set! runs (+ runs 1))
+            (cond
+              [(= index start) (set! ok false)]
+              [(= runs 3) unit]
+              [(and (< index len) (= (string.string-ref name index) '.'))
+                (set! index (+ index 1))]
+              [else (set! ok false)]))))
+      (and ok (= index len)))))
+
 (define (package-lock-stage-path
   [destination : String]
   [sequence : i64]
   [attempt : i64]) : String
   (str_cat.str-cat
     destination
-    ".stage."
+    (package-lock-stage-infix)
     (string.int->string (fs.process-id))
     "."
     (string.int->string sequence)

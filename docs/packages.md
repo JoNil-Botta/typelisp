@@ -236,6 +236,10 @@ the full contract.
 
 Package source discovery walks `.tl` files below the manifest directory,
 skipping build/VCS state, nested package roots, and `tests` directories
-(reserved for `typelisp test` integration discovery and fixture corpora).
+(reserved for `typelisp test` integration discovery and fixture corpora). Names
+spelled exactly like a lock stage sibling (`typelisp.lock.stage.<pid>.<n>.<n>`)
+are never package content at any depth, and an entry removed between the
+directory listing and its inspection is skipped rather than failing the scan;
+every other inspection failure still fails it.
 Package `check`/`build` validate the entry's reachable import closure;
 package `lint` checks every discovered source.

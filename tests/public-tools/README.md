@@ -32,10 +32,12 @@ A `.spec.json` is read line by line and may contain:
   returns;
 - `stdout_contains`, `stdout_not_contains`, `stderr_contains`,
   `stderr_not_contains`: fixed substrings; a decoded newline splits a string
-  into separate substrings, and empty ones are ignored;
+  into separate substrings, and empty ones are ignored. Every string of the
+  array is checked, including ones that contain `]`, commas or escaped quotes;
 - LSP only: `message_count`, the number of newline-terminated parsed JSON-RPC
   messages, and `message_checks`, one object per line, each of which some
-  message must pass: an optional `jsonpath_id` (the message's `id`), an
+  message must pass: an optional `jsonpath_id` (the message's `id`, matched
+  as a whole number, so 1 never selects 10), an
   optional `"jsonpath_result": null`, and `raw_contains`, `raw_not_contains`
   and `json_contains` strings. A key may repeat within one check and every
   occurrence applies, so a check is not read as a JSON object.

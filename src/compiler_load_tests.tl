@@ -4196,6 +4196,95 @@
           (ci.intern-compat-state-install! active-intern-before)
           ok)))))
 
+;; A stdlib suffix names one file per session (#8430): a root file takes the
+;; name `stdlib/<suffix>`, a path already spelled that way names itself, and a
+;; second file claiming the suffix leaves both on their path-derived names.
+(define (compiler-load-canonical-stdlib-path-claims-ok?) : bool
+  (let
+    [previous-state : load.CompilerLoadSessionState
+      (load.compiler-load-global-shared-view
+        load.compiler-load-active-session-state)]
+    [state : load.CompilerLoadSessionState
+      (load.compiler-load-session-state-new)]
+    [_use : unit (load.compiler-load-session-state-use! state)]
+    [io-id : i64
+      (load.compiler-load-session-state-intern
+        (owned_view.compiler-owned-shared-view state)
+        "io.tl")]
+    [string-id : i64
+      (load.compiler-load-session-state-intern
+        (owned_view.compiler-owned-shared-view state)
+        "string.tl")]
+    [unmapped-empty : bool
+      (string.eq
+        (load.compiler-load-canonical-stdlib-path "/roots/a/io.tl")
+        "/roots/a/io.tl")]
+    [_note-root : unit
+      (load.compiler-load-session-state-note-stdlib-path!
+        (owned_view.compiler-owned-shared-view state)
+        io-id
+        "io.tl"
+        "/roots/a/./io.tl")]
+    [_note-identity : unit
+      (load.compiler-load-session-state-note-stdlib-path!
+        (owned_view.compiler-owned-shared-view state)
+        string-id
+        "string.tl"
+        "stdlib/string.tl")]
+    [claimed : bool
+      (and
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "/roots/a/io.tl")
+          "stdlib/io.tl")
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "stdlib/string.tl")
+          "stdlib/string.tl")
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "/roots/a/main.tl")
+          "/roots/a/main.tl"))]
+    [_note-second-io : unit
+      (load.compiler-load-session-state-note-stdlib-path!
+        (owned_view.compiler-owned-shared-view state)
+        io-id
+        "io.tl"
+        "/roots/b/io.tl")]
+    [_note-second-string : unit
+      (load.compiler-load-session-state-note-stdlib-path!
+        (owned_view.compiler-owned-shared-view state)
+        string-id
+        "string.tl"
+        "/roots/a/string.tl")]
+    [conflicted : bool
+      (and
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "/roots/a/io.tl")
+          "/roots/a/io.tl")
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "/roots/b/io.tl")
+          "/roots/b/io.tl")
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "stdlib/string.tl")
+          "stdlib/string.tl")
+        (string.eq
+          (load.compiler-load-canonical-stdlib-path "/roots/a/string.tl")
+          "/roots/a/string.tl"))]
+    [_reset : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (owned_view.compiler-owned-shared-view state))]
+    [_note-after-reset : unit
+      (load.compiler-load-session-state-note-stdlib-path!
+        (owned_view.compiler-owned-shared-view state)
+        io-id
+        "io.tl"
+        "/roots/b/io.tl")]
+    [reclaimed : bool
+      (string.eq
+        (load.compiler-load-canonical-stdlib-path "/roots/b/io.tl")
+        "stdlib/io.tl")]
+    (begin
+      (load.compiler-load-session-state-restore! previous-state)
+      (and unmapped-empty claimed conflicted reclaimed))))
+
 (define (compiler-load-session-explicit-parse-isolation-ok?) : bool
   (let
     [home : arena.Arena (arena.current)]
@@ -5478,6 +5567,9 @@
       (compiler-load-session-embedded-provenance-isolation-ok?)
       (return
         (io.panic "compiler-load: embedded provenance isolation smoke mismatch")))
+    (unless
+      (compiler-load-canonical-stdlib-path-claims-ok?)
+      (return (io.panic "compiler-load: canonical stdlib path claims mismatch")))
     (unless
       (compiler-load-session-explicit-parse-isolation-ok?)
       (return

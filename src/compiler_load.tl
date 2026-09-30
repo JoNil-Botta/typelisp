@@ -535,6 +535,14 @@
 (defstruct CompilerLoadEmbeddedStdlibProvenanceState
   (module-ids (__tl_dyn-array sym_i64_env.SymI64Env))
   (equivalence-cache (__tl_dyn-array sym_i64_env.SymI64Env))
+  ;; Physical source path -> stdlib suffix, for each stdlib module read from a
+  ;; path not already spelled `stdlib/<suffix>` (#8430). The module's name
+  ;; identity is `stdlib/<suffix>` wherever its root lies relative to the cwd;
+  ;; its path stays physical. -1 marks a path whose suffix another file also
+  ;; claimed.
+  (canonical-paths (__tl_dyn-array sym_i64_env.SymI64Env))
+  ;; Stdlib suffix -> the first physical path noted for it.
+  (suffix-claims (__tl_dyn-array sym_i64_env.SymI64Env))
   (noted (__tl_dyn-array bool)))
 
 ;; A dependency catalog is admitted once for the load job and then selected by
@@ -855,6 +863,8 @@
 
 (define (compiler-load-embedded-stdlib-provenance-state-new) : CompilerLoadEmbeddedStdlibProvenanceState
   (CompilerLoadEmbeddedStdlibProvenanceState
+    (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (compiler-load-session-state-bool-cell false)))
@@ -2853,6 +2863,12 @@
     (set!
       (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
       (sym_i64_env.sym-i64-empty))
+    (set!
+      (array-ref state.embedded-stdlib-provenance.canonical-paths 0)
+      (sym_i64_env.sym-i64-empty))
+    (set!
+      (array-ref state.embedded-stdlib-provenance.suffix-claims 0)
+      (sym_i64_env.sym-i64-empty))
     (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)
     (let
       [owner : i64 (array-ref state.embedded-provenance-owner-arena 0)]
@@ -2900,7 +2916,8 @@
 ;: provenance for the macro route: the source-bound catalog is exact for it
 ;: by construction, and any user modification breaks the equality and keeps
 ;: that module on source interpretation. Cached per suffix; the compare runs
-;: once per module per session.
+;: once per module per session. Every call also notes the module's canonical
+;: name identity, whether or not the source matches.
 (define (compiler-load-session-state-note-embedded-equivalent-if-matching!
   [state : CompilerLoadSessionState]
   [suffix : String]
@@ -2910,6 +2927,12 @@
       (compiler-load-session-state-intern
         (owned_view.compiler-owned-shared-view state)
         (string.copy suffix))]
+    [_canonical : unit
+      (compiler-load-session-state-note-stdlib-path!
+        (owned_view.compiler-owned-shared-view state)
+        key
+        (string.copy suffix)
+        (string.copy disk-path))]
     [cache : sym_i64_env.SymI64Env
       (compiler-load-session-state-embedded-equivalence-cache-shared-view
         (owned_view.compiler-owned-shared-view state))]
@@ -2949,6 +2972,81 @@
                 (str_cat.str-cat "stdlib/" suffix))
               (set! (array-ref state.embedded-stdlib-provenance.noted 0) true))
             unit))))))
+
+;: Record that the stdlib module SUFFIX, interned as SUFFIX-ID, was read from
+;: DISK-PATH. Every stdlib module resolution notes its module here, so the
+;: name identity does not depend on how the root is spelled relative to the
+;: cwd. A path already spelled `stdlib/<suffix>` is its own canonical form and
+;: is not mapped, so the table stays empty unless a root lies elsewhere. A
+;: suffix names one file per session: when a second file claims it, neither
+;: file takes the shared name, and both keep their path-derived names.
+(define (compiler-load-session-state-note-stdlib-path!
+  [state : CompilerLoadSessionState]
+  [suffix-id : i64]
+  [suffix : String]
+  [disk-path : String]) : unit
+  (let
+    [path : String (compiler-load-normalize-path (& disk-path))]
+    [identity? : bool (string.eq path (str_cat.str-cat "stdlib/" suffix))]
+    [path-id : i64
+      (compiler-load-session-state-intern
+        (owned_view.compiler-owned-shared-view state)
+        path)]
+    [claims : sym_i64_env.SymI64Env
+      (array-ref state.embedded-stdlib-provenance.suffix-claims 0)]
+    [paths : sym_i64_env.SymI64Env
+      (array-ref state.embedded-stdlib-provenance.canonical-paths 0)]
+    [claimant : i64 (sym_i64_env.sym-i64-lookup-id-or (& claims) suffix-id -1)]
+    (in-arena
+      (arena.Arena
+        (compiler-load-session-state-embedded-provenance-arena state))
+      (if (< claimant 0)
+        (begin
+          (set!
+            (array-ref state.embedded-stdlib-provenance.suffix-claims 0)
+            (sym_i64_env.sym-i64-bind-id claims suffix-id path-id))
+          (if identity?
+            unit
+            (set!
+              (array-ref state.embedded-stdlib-provenance.canonical-paths 0)
+              (sym_i64_env.sym-i64-bind-id paths path-id suffix-id))))
+        (if (or
+          (= claimant path-id)
+          (= (sym_i64_env.sym-i64-lookup-id-or (& paths) path-id 0) -1))
+          unit
+          (set!
+            (array-ref state.embedded-stdlib-provenance.canonical-paths 0)
+            (sym_i64_env.sym-i64-bind-id
+              (sym_i64_env.sym-i64-bind-id paths claimant -1)
+              path-id
+              -1)))))))
+
+;: The name identity of the module read from PATH: `stdlib/<suffix>` when a
+;: stdlib root resolved it, else PATH itself. The path keeps naming the real
+;: file everywhere else, for diagnostics and reads. The lookup does not intern.
+;: Lowering asks once per declaration, so the table is read in place rather
+;: than through a copy of the whole session. Ids are the active interner's;
+;: the driver installs the session's own table as the active one.
+(define (compiler-load-canonical-stdlib-path [path : String]) : String
+  (let
+    [paths : sym_i64_env.SymI64Env
+      (array-ref
+        (unsafe
+          (ptr-read
+            (ptr-addr-of
+              compiler-load-active-session-state.embedded-stdlib-provenance.canonical-paths)))
+        0)]
+    (if (< paths.head 0)
+      path
+      (match (ci.intern-lookup (compiler-load-normalize-path (& path)))
+        [(ci.InternLookup.InternLookupFound path-id)
+          (let
+            [suffix-id : i64
+              (sym_i64_env.sym-i64-lookup-id-or (& paths) path-id -1)]
+            (if (< suffix-id 0)
+              path
+              (str_cat.str-cat "stdlib/" (ci.intern-str suffix-id))))]
+        [(ci.InternLookup.InternLookupMissing) path]))))
 
 (define (compiler-load-note-embedded-equivalent-if-matching!
   [suffix : String]
@@ -11975,6 +12073,7 @@
   [entry-path : String]
   [decl-path : String]) : String
   (let
+    [decl-path : String (compiler-load-canonical-stdlib-path decl-path)]
     [base : String (compiler-load-dirname entry-path)]
     [base-len : i64 (string.string-length base)]
     [decl-len : i64 (string.string-length decl-path)]

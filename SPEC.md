@@ -3046,6 +3046,19 @@ a compatibility fallback when the embedded payload does not contain that
 prelude. Regardless of the physical source selected, these preludes retain
 their canonical `stdlib.*` module and path identities.
 
+Every other `stdlib.*` module resolved through a stdlib root gets the same
+treatment. Its module identity, its symbol names and its emitted source
+locations (abort messages, debug line tables) name `stdlib/<suffix>`, exactly
+as the embedded payload's copy would, wherever the root lies relative to the
+working directory. Compiler diagnostics still name the physical file. Modules
+imported by any other identity, including files under package roots and
+modules found through a search root such as `--stdlib-root src`, keep
+identities derived from their normalized source path. That path is taken
+relative to the entry file's directory when the file lies below it, and is
+used whole otherwise, so two distinct files never share an identity. If two
+different files resolve for the same stdlib suffix in one compile, neither is
+renamed, and both keep their path-derived identities.
+
 #### 4.4.2 Default visibility
 
 Every top-level item of a module is visible to any module that imports it.

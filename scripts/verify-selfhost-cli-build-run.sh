@@ -22,4 +22,4 @@ CODEGEN_CASES_WORKDIR=${CODEGEN_CASES_WORKDIR:-$ROOT/target}
 export CODEGEN_CASES_WORKDIR
 exec scripts/run-memory-bounded.sh --limit-mib 8192 \
     --report "$ROOT/target/selfhost-build-run.memory" -- \
-    scripts/verify-codegen-cases.sh tests/cli/selfhost-surface.cases tests/cli/selfhost-build-run.cases
+    sh scripts/verify-codegen-cases.sh tests/cli/selfhost-surface.cases tests/cli/selfhost-build-run.cases

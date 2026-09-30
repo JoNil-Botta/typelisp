@@ -38,7 +38,7 @@ stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootst
 embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint	stage2	6144	embedded-image	scripts/verify-embedded-stdlib-tlci.sh
 stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression
 stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fixpoint,embedded-stdlib-tlci-image	stage2	2304	build-stamp,embedded-image	gate_compile_profile
-stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	9984	build-stamp,root-release	scripts/verify-selfhost-cli-build-run.sh
+stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	7424	build-stamp,root-release	scripts/verify-selfhost-cli-build-run.sh
 embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh
 stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh
 linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	-	gate_instruction_counts

@@ -134,6 +134,18 @@ jobs:
           path: target/ci-timing/*.tsv
           if-no-files-found: error
 
+      - name: Upload root build memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-build-memory-${{ runner.os }}
+          path: |
+            target/selfhost-build-run.memory
+            target/opt2-cli-regression/build.memory
+            target/opt2-cli-regression/build.stdout
+            target/opt2-cli-regression/build.stderr
+          if-no-files-found: warn
+
       - name: Upload backend memory evidence
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4

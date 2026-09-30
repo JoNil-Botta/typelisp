@@ -4616,9 +4616,11 @@
               (set! index (+ index 1))))
           (compiler_ir_types.CompilerSourceSpans.Spans
             entries
-            (compiler_ir_types.CompilerSourceSpansInstrEntryList
+            (compiler_ir_types.compiler-source-spans-instr-entry-list-from-slots
               slots
-              instr-entries.len)
+              instr-entries.len
+              (compiler_ir_types.compiler-source-spans-instr-index-function-count
+                instr-entries.shared))
             count)))]))
 
 ;; An emission error reported at the instruction (or function) being emitted.

@@ -5395,7 +5395,8 @@
 (defmacro (compiler-comptime-host-dispatch-row-count [rows : Expr ...]) : i64
   (comptime.expr-int (expr-list-length rows)))
 
-;; A `run-ops` batch is printable ASCII:
+;; A `run-ops` batch is printable ASCII apart from caller bytes, which it
+;; carries verbatim:
 ;;
 ;;   <name-count> (<row> <length> <name bytes>)... <record-count>
 ;;   (<op> <arg> <arg> <arg>)...

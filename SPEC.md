@@ -6109,8 +6109,9 @@ is not a session failure. There is no separate operation-id argument, central
 numeric catalog, or hand-maintained data-operation exception list.
 
 A run of status-returning calls whose arguments are all constants may instead
-be one `run-ops` call whose argument A points at the run encoded as printable
-ASCII data and whose argument B is its byte length. The data names every
+be one `run-ops` call whose argument A points at the run encoded as data
+(printable ASCII framing around caller bytes, which are copied verbatim) and
+whose argument B is its byte length. The data names every
 operation it uses, so it binds callbacks by name exactly as the image's imports
 do; each name carries the producer's row index as a hint that the host trusts
 only after confirming its own row of that index has that name. Each record

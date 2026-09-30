@@ -9,6 +9,7 @@
 (import compiler_ast_types as ast)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
+(import stdlib.hash)
 (import stdlib.hashmap)
 (import stdlib.arena)
 (import stdlib.comptime)
@@ -214,34 +215,106 @@
 ;; CFG map is integer-keyed, which is what the optimizer, register allocator and
 ;; backend want. Only emission and diagnostics ask for the text back. `-1` is
 ;; the absent label, matching the symbol family's negative-id contract.
+;;
+;; Storage (#8409). Each spelling is copied once, into the label arena below,
+;; which is never released: `compiler-ir-label-text` hands out its descriptors.
+;; Everything that grows lives in one generation arena instead: `slots`, the
+;; descriptor of every id, and `index`, an open-addressing table of ids keyed by
+;; the spelling's hash and compared against `slots`. Growing both builds the
+;; replacement in a fresh arena, publishes it, then destroys the previous
+;; generation, so only the current one is live. Nothing holds a generation's
+;; arrays across a call: readers load the globals on every access.
 (define compiler-ir-label-slots : (__tl_dyn-array String)
-  (__tl_make-array String 1024))
+  (__tl_make-array String 0))
+
+;; Twice the capacity of `slots`, so it is at most half full; -1 is empty.
+(define compiler-ir-label-index : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
 (define compiler-ir-label-count : i64
   0)
-(define compiler-ir-label-ids : ir_label_map.Map
-  (ir_label_map.with-capacity 2048))
 (define compiler-ir-label-seeded : bool
   false)
+(define compiler-ir-label-generation-arena-handle : i64
+  0)
 
-(define (compiler-ir-label-grow!) : unit
+(define (compiler-ir-label-generation-arena-handle-value) : i64
+  compiler-ir-label-generation-arena-handle)
+
+;; A generation in its own arena: `capacity` slots holding the current ids'
+;; descriptors, and an index over them.
+(define (compiler-ir-label-generation-install! [capacity : i64]) : unit
   (let
-    [old-len : i64 (array-length compiler-ir-label-slots)]
-    [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
-    [index : i64 0]
+    [retired : i64 compiler-ir-label-generation-arena-handle]
+    [generation : i64 (arena.tl_arena_make)]
     (begin
-      (while (< index old-len)
-        (begin
-          (set!
-            (array-ref next index)
-            (array-ref compiler-ir-label-slots index))
-          (set! index (+ index 1))))
-      (set! compiler-ir-label-slots next))))
+      (in-arena
+        (arena.Arena generation)
+        (let
+          [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
+          [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
+          [position : i64 0]
+          [id : i64 0]
+          (begin
+            (while (< position (array-length index))
+              (begin
+                (set! (array-ref index position) -1)
+                (set! position (+ position 1))))
+            (while (< id compiler-ir-label-count)
+              (let
+                [text : String
+                  (compiler-ir-array-shared-view compiler-ir-label-slots id)]
+                (begin
+                  (set! (array-ref slots id) text)
+                  ;; Spellings are distinct, so each id takes the first empty
+                  ;; position of its probe sequence.
+                  (set! position (compiler-ir-label-home (& text) (& index)))
+                  (while (>= (array-ref index position) 0)
+                    (set!
+                      position
+                      (bit-and (+ position 1) (- (array-length index) 1))))
+                  (set! (array-ref index position) id)
+                  (set! id (+ id 1)))))
+            (set! compiler-ir-label-slots slots)
+            (set! compiler-ir-label-index index))))
+      (set! compiler-ir-label-generation-arena-handle generation)
+      (if (= retired 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
 
-;; The table outlives every lowering/optimizer scratch arena and every intern
-;; floor reset -- an id handed to the backend must still render -- so its slots,
-;; its map and its copies of the spellings are bound in a dedicated arena that
-;; is created once and only grows. This follows CONTRIBUTING.md's
-;; full-lifetime compiler arena ownership rule.
+;; `name`'s first probe position in `index`, whose length is a power of two.
+(define (compiler-ir-label-home
+  [name : (& name str)]
+  [index : (& index (__tl_dyn-array i64))]) : i64
+  (let
+    [hash : i64 (hash.string-key name)]
+    (bit-and (bit-xor hash (shr hash 15)) (- (array-length index) 1))))
+
+;; The index position holding `name`'s id, or the empty position where it
+;; would go.
+(define (compiler-ir-label-position [name : (& name str)]) : i64
+  (let
+    [mask : i64 (- (array-length compiler-ir-label-index) 1)]
+    [position : i64 (compiler-ir-label-home name (& compiler-ir-label-index))]
+    [found : bool false]
+    (begin
+      (while (not found)
+        (let
+          [id : i64 (array-ref compiler-ir-label-index position)]
+          (if (< id 0)
+            (set! found true)
+            (let
+              [text : String
+                (compiler-ir-array-shared-view compiler-ir-label-slots id)]
+              (if (string.eq (& text) name)
+                (set! found true)
+                (set! position (bit-and (+ position 1) mask)))))))
+      position)))
+
+;; The spellings outlive every lowering/optimizer scratch arena and every intern
+;; floor reset -- an id handed to the backend must still render -- so they are
+;; bound in a dedicated arena that is created once and only grows. This follows
+;; CONTRIBUTING.md's full-lifetime compiler arena ownership rule.
 (define compiler-ir-label-arena-handle : i64
   0)
 
@@ -258,13 +331,10 @@
 (define (compiler-ir-label-seed!) : unit
   (if compiler-ir-label-seeded
     unit
-    (in-arena
-      (arena.Arena (compiler-ir-label-arena))
-      (begin
-        (set! compiler-ir-label-slots (__tl_make-array String 1024))
-        (set! compiler-ir-label-ids (ir_label_map.with-capacity 2048))
-        (set! compiler-ir-label-count 0)
-        (set! compiler-ir-label-seeded true)))))
+    (begin
+      (set! compiler-ir-label-count 0)
+      (compiler-ir-label-generation-install! 1024)
+      (set! compiler-ir-label-seeded true))))
 
 (define (compiler-ir-label [name : String]) : i64
   (begin
@@ -272,29 +342,28 @@
     (compiler-ir-label-lookup name)))
 
 (define (compiler-ir-label-lookup [name : String]) : i64
-  (match (ir_label_map.get
-    (& compiler-ir-label-ids)
-    (compiler-ir-global-shared-view name))
-    [(ir_label_map.LookupFound id) id]
-    [(ir_label_map.LookupMissing)
+  (let
+    [position : i64 (compiler-ir-label-position (& name))]
+    [existing : i64 (array-ref compiler-ir-label-index position)]
+    (if (>= existing 0)
+      existing
       (let
         [id : i64 compiler-ir-label-count]
-        (in-arena
-          (arena.Arena (compiler-ir-label-arena))
-          (begin
-            (if (< id (array-length compiler-ir-label-slots))
-              unit
-              (compiler-ir-label-grow!))
-            (let
-              [owned : String (string.copy (& name))]
-              (begin
-                (set! (array-ref compiler-ir-label-slots id) owned)
-                (ir_label_map.insert-ref!
-                  (&mut compiler-ir-label-ids)
-                  (string.copy (& (array-ref compiler-ir-label-slots id)))
-                  id)))
-            (set! compiler-ir-label-count (+ id 1))
-            id)))]))
+        (begin
+          (if (< id (array-length compiler-ir-label-slots))
+            unit
+            (begin
+              (compiler-ir-label-generation-install!
+                (* 2 (array-length compiler-ir-label-slots)))
+              (set! position (compiler-ir-label-position (& name)))))
+          (set!
+            (array-ref compiler-ir-label-slots id)
+            (in-arena
+              (arena.Arena (compiler-ir-label-arena))
+              (string.copy (& name))))
+          (set! (array-ref compiler-ir-label-index position) id)
+          (set! compiler-ir-label-count (+ id 1))
+          id)))))
 
 ;: The id `name` already has, or -1 when it was never interned. Unlike
 ;: `compiler-ir-label` this never creates an id: a query that asks about a
@@ -304,9 +373,7 @@
 (define (compiler-ir-label-existing [name : String]) : i64
   (if (not compiler-ir-label-seeded)
     -1
-    (match (ir_label_map.get (& compiler-ir-label-ids) name)
-      [(ir_label_map.LookupFound id) id]
-      [(ir_label_map.LookupMissing) -1])))
+    (array-ref compiler-ir-label-index (compiler-ir-label-position (& name)))))
 
 ;: Number of distinct labels interned so far. Ids are dense in [0, count),
 ;: so a side table indexed by label id needs exactly this many slots.

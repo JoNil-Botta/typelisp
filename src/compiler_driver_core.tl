@@ -476,6 +476,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "ir-label-index"
+        (compiler_ir_types.compiler-ir-label-generation-arena-handle-value))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "ir-symbols"
         (compiler_ir_types.compiler-ir-symbol-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!

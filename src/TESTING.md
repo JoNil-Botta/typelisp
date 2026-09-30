@@ -239,6 +239,7 @@ transition that can occur before the last use. Use these operational classes:
 | Retained phase data | A dedicated phase arena; it may cross scratch rewinds, but reset or destroy it only at the documented phase boundary after all consumers finish. |
 | AST/type nodes | The installed `AstNodePoolContext`; allocate through the pool APIs and release with that pool context. |
 | State crossing pool installs or intern resets | A separate arena created once for the required lifetime. Never rewind or destroy it during that lifetime; clear the collection logically by rebinding or resetting metadata. |
+| Growable index over such state | A generation arena holding only the current arrays (slots of descriptors, hash index). Growth builds the replacement in a fresh arena, publishes it, then destroys the old one. The values the arrays point to stay in the lifetime arena, and no reader holds a generation's arrays across a call that can grow them. The IR label table (`compiler-ir-label-generation-install!` in `src/compiler_ir_types.tl`) is the reference. |
 
 Do not allocate unrelated long-lived sidecars by temporarily switching to
 `node-pool-base-arena`. An `AstNodePoolContext` captures the base-arena head.
@@ -252,7 +253,8 @@ The intern persistent arena is not a substitute. A floor reset through
 `intern-compat-state-persistent-arena-reset-to-floor!` rewinds allocations
 above its mark, and a full reset replaces or destroys the arena. State that
 must cross either boundary needs its own owner. Allocate the initial collection,
-owned keys/values, and every capacity growth in that same dedicated arena.
+owned keys/values, and every capacity growth in that same dedicated arena, or
+put the growable arrays in a generation arena as described in the table.
 Restore the caller's active arena after each operation, but never reclaim the
 dedicated arena until its complete required lifetime ends.
 

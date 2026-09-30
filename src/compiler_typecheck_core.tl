@@ -11964,6 +11964,13 @@
         " "
         (tc-type-render (ast.ty-node-get inner))
         ")")]
+    [(ast.AstType.Invalidate lifetime inner)
+      (str_cat.str-cat
+        "(:invalidate "
+        (tc-lifetime-name-render lifetime)
+        " "
+        (tc-type-render (ast.ty-node-get inner))
+        ")")]
     [(ast.AstType.Enum name) (tc-nominal-name-id-display name)]
     [(ast.AstType.EnumArgs name lifetimes)
       (tc-render-nominal-lifetime-type
@@ -17014,6 +17021,27 @@
   (match (tc-global-shared-view ty)
     [(ast.AstType.Region _ inner)
       (tc-type-strip-region (ast.ty-node-get inner))]
+    ;; An `:invalidate` parameter wrapper is structurally its inner type; code
+    ;; that needs the effect reads it before stripping (#6670).
+    [(ast.AstType.Invalidate _ inner)
+      (tc-type-strip-region (ast.ty-node-get inner))]
+    [_ ty]))
+
+;; The lifetime an `(:invalidate r T)` parameter type destroys, if it is one.
+(define (tc-type-invalidate-lifetime [ty : ast.AstType]) : TcMaybeNameId
+  (match ty
+    [(ast.AstType.Invalidate lifetime _) (TcMaybeNameId.Some lifetime)]
+    [_ (TcMaybeNameId.No)]))
+
+;; Whether any `(:invalidate r T)` type exists yet. Until one does, the
+;; checkers skip every `:invalidate` scan (see `ast-invalidate-type-count`).
+(defmacro (tc-invalidate-types-present?) : Expr
+  `(not (= ast.ast-invalidate-type-count 0)))
+
+;; A parameter type without its `(:invalidate r T)` wrapper.
+(define (tc-type-strip-invalidate [ty : ast.AstType]) : ast.AstType
+  (match (tc-global-shared-view ty)
+    [(ast.AstType.Invalidate _ inner) (ast.ty-node-get inner)]
     [_ ty]))
 
 (define (tc-type-list-contains-region-tag? [types : ast.AstTypeList]) : bool
@@ -17055,6 +17083,8 @@
     [(ast.AstType.Ref _ inner)
       (tc-type-contains-region-tag? (ast.ty-node-get inner))]
     [(ast.AstType.MutRef _ inner)
+      (tc-type-contains-region-tag? (ast.ty-node-get inner))]
+    [(ast.AstType.Invalidate _ inner)
       (tc-type-contains-region-tag? (ast.ty-node-get inner))]
     [(ast.AstType.Region _ _) true]
     [_ false]))
@@ -17109,6 +17139,10 @@
           (tc-type-without-regions (ast.ty-node-get inner)))]
       [(ast.AstType.Region _ inner)
         (tc-type-without-regions (ast.ty-node-get inner))]
+      [(ast.AstType.Invalidate lifetime inner)
+        (ast.ast-ty-invalidate
+          lifetime
+          (tc-type-without-regions (ast.ty-node-get inner)))]
       [(ast.AstType.EnumArgs name lifetimes)
         (ast.ast-ty-enum-args
           name
@@ -17176,6 +17210,10 @@
       (or
         (= name region)
         (tc-type-contains-region (ast.ty-node-get inner) region))]
+    [(ast.AstType.Invalidate name inner)
+      (or
+        (= name region)
+        (tc-type-contains-region (ast.ty-node-get inner) region))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (tc-lifetime-list-contains
         (ast.ast-lifetime-list-box-shared-view lifetimes)
@@ -17229,6 +17267,7 @@
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Region _ _) true]
+    [(ast.AstType.Invalidate _ _) true]
     [(ast.AstType.EnumArgs _ lifetimes)
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -17291,6 +17330,8 @@
     [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Region _ inner)
       (tc-type-contains-reference? (ast.ty-node-get inner))]
+    [(ast.AstType.Invalidate _ inner)
+      (tc-type-contains-reference? (ast.ty-node-get inner))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -17325,6 +17366,8 @@
       (tc-type-contains-mut-reference? (ast.ty-node-get inner))]
     [(ast.AstType.MutRef _ _) true]
     [(ast.AstType.Region _ inner)
+      (tc-type-contains-mut-reference? (ast.ty-node-get inner))]
+    [(ast.AstType.Invalidate _ inner)
       (tc-type-contains-mut-reference? (ast.ty-node-get inner))]
     [_ false]))
 
@@ -17419,6 +17462,11 @@
         (ast.ast-type-segment-bases-get type-bases elem)
         out)]
     [(ast.AstType.Region _ inner)
+      (tc-signature-input-lifetimes-into
+        type-bases
+        (ast.ast-type-segment-bases-get type-bases inner)
+        out)]
+    [(ast.AstType.Invalidate _ inner)
       (tc-signature-input-lifetimes-into
         type-bases
         (ast.ast-type-segment-bases-get type-bases inner)
@@ -17653,6 +17701,18 @@
               index))]
         (ResultTcElidedType.Ok
           (TcElidedType (ast.ast-ty-region region inner.ty) inner.next-index)))]
+    [(ast.AstType.Invalidate lifetime elem)
+      (let
+        [inner : TcElidedType
+          (try
+            (tc-elide-input-type
+              type-bases
+              (ast.ast-type-segment-bases-get type-bases elem)
+              index))]
+        (ResultTcElidedType.Ok
+          (TcElidedType
+            (ast.ast-ty-invalidate lifetime inner.ty)
+            inner.next-index)))]
     [(ast.AstType.Ref lifetime elem)
       (let
         [next-lifetime : i64
@@ -17958,6 +18018,10 @@
         (tc-name-id-list-add out lifetime))]
     [(ast.AstType.Region _ inner)
       (tc-type-collect-reference-lifetimes-into (ast.ty-node-get inner) out)]
+    [(ast.AstType.Invalidate lifetime inner)
+      (tc-type-collect-reference-lifetimes-into
+        (ast.ty-node-get inner)
+        (tc-name-id-list-add out lifetime))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -18071,6 +18135,10 @@
         (ast.ty-node-get inner)
         (tc-name-id-list-add out name))]
     [(ast.AstType.Region name inner)
+      (tc-type-collect-regions-into
+        (ast.ty-node-get inner)
+        (tc-name-id-list-add out name))]
+    [(ast.AstType.Invalidate name inner)
       (tc-type-collect-regions-into
         (ast.ty-node-get inner)
         (tc-name-id-list-add out name))]
@@ -18484,6 +18552,8 @@
     [(ast.AstType.MutRef _ inner)
       (tc-type-needs-resolution-id-for-state? state inner)]
     [(ast.AstType.Region _ inner)
+      (tc-type-needs-resolution-id-for-state? state inner)]
+    [(ast.AstType.Invalidate _ inner)
       (tc-type-needs-resolution-id-for-state? state inner)]
     [(ast.AstType.VarArgs _ _) true]
     [(ast.AstType.Var _) true]
@@ -22970,6 +23040,7 @@
     [(ast.AstType.Ref _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.MutRef _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Region _ _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Invalidate _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.VarArgs _ _)
       (begin
         (cfg
@@ -23023,6 +23094,10 @@
       (ast.ast-ty-mut-ref region (tc-resolve-type ctx (ast.ty-node-get inner)))]
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate
+        lifetime
+        (tc-resolve-type ctx (ast.ty-node-get inner)))]
     [(ast.AstType.VarArgs name lifetimes)
       (let
         [name-text : String
@@ -23225,6 +23300,10 @@
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region
         region
+        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate
+        lifetime
         (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner)))]
     [(ast.AstType.Enum name)
       (ast.AstType.Enum (tc-source-owned-nominal-name-id ctx name))]
@@ -23626,6 +23705,141 @@
   [types : ast.AstTypeList]) : ResultTcUnit
   (tc-source-type-list-policy-ok-at ctx (& types) 0))
 
+;; `(:invalidate r T)` is valid only as a runtime parameter type. It consumes
+;; an owned, non-reference `T` whose resolved type contains lifetime `r`
+;; (#6670).
+(define (tc-source-param-type-policy-ok
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [comptime? : bool]) : ResultTcUnit
+  (match (tc-global-shared-view ty)
+    [(ast.AstType.Invalidate lifetime inner-id)
+      (let
+        [inner : ast.AstType (ast.ty-node-get inner-id)]
+        (cond
+          [comptime?
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                "typecheck: :invalidate requires a runtime parameter"))]
+          [else
+            (match (tc-source-type-policy-ok ctx (tc-global-shared-view inner))
+              [(ResultTcUnit.Ok)
+                (let
+                  [resolved : ast.AstType (tc-resolve-type ctx inner)]
+                  (cond
+                    [(tc-type-reference?
+                        (tc-type-strip-region (tc-global-shared-view resolved)))
+                      (ResultTcUnit.Err
+                        (tc-kind-message
+                          (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                          "typecheck: :invalidate requires an owned parameter, not a reference"))]
+                    [(not (tc-type-contains-region resolved lifetime))
+                      (ResultTcUnit.Err
+                        (tc-kind-message
+                          (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                          (str_cat.str-cat
+                            "typecheck: :invalidate lifetime `"
+                            (tc-lifetime-name-render lifetime)
+                            "` does not appear in the parameter type")))]
+                    [else ResultTcUnit.Ok]))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
+    [_ (tc-source-type-policy-ok ctx ty)]))
+
+(define (tc-type-reference? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Ref _ _) true]
+    [(ast.AstType.MutRef _ _) true]
+    [_ false]))
+
+;; The signature of a callable with `:invalidate` parameters: no lifetime is
+;; invalidated twice, and the result never carries an invalidated lifetime.
+(define (tc-source-invalidate-lifetimes-policy-ok
+  [lifetimes : TcNameIdList]
+  [ret : ast.AstType]) : ResultTcUnit
+  (let
+    [cursor : TcNameIdList lifetimes]
+    [failure : String ""]
+    (begin
+      (while (and
+        (= (string.string-length failure) 0)
+        (not (tc-name-id-list-empty? cursor)))
+        (let
+          [lifetime : i64 (tc-name-id-list-head cursor)]
+          [rest : TcNameIdList (tc-name-id-list-rest cursor)]
+          (begin
+            (cond
+              [(tc-name-id-list-contains rest lifetime)
+                (set!
+                  failure
+                  (str_cat.str-cat
+                    "typecheck: lifetime `"
+                    (tc-lifetime-name-render lifetime)
+                    "` is invalidated by more than one parameter"))]
+              [(tc-type-contains-region (tc-global-shared-view ret) lifetime)
+                (set!
+                  failure
+                  (str_cat.str-cat
+                    "typecheck: a result cannot contain lifetime `"
+                    (tc-lifetime-name-render lifetime)
+                    "` that its function invalidates"))]
+              [else unit])
+            (set! cursor rest))))
+      (if (= (string.string-length failure) 0)
+        ResultTcUnit.Ok
+        (ResultTcUnit.Err
+          (tc-kind-message (cdiag.CompilerTypecheckKind.ArenaOwnership) failure))))))
+
+(define (tc-param-list-invalidate-lifetimes
+  [params : (& params ast.AstParamList)]) : TcNameIdList
+  (unless (tc-invalidate-types-present?) (return TcNameIdList.Nil))
+  (let
+    [out : TcNameIdList TcNameIdList.Nil]
+    [index : i64 0]
+    (begin
+      (while (< index (ast.ast-param-list-len params))
+        (begin
+          (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+            [(ast.AstParam.Param _ ty _)
+              (match (tc-type-invalidate-lifetime (tc-global-shared-view ty))
+                [(TcMaybeNameId.Some lifetime)
+                  (set! out (tc-name-id-list-cons out lifetime))]
+                [(TcMaybeNameId.No) unit])])
+          (set! index (+ index 1))))
+      out)))
+
+(define (tc-type-list-invalidate-lifetimes [types : (& types ast.AstTypeList)]) : TcNameIdList
+  (unless (tc-invalidate-types-present?) (return TcNameIdList.Nil))
+  (let
+    [out : TcNameIdList TcNameIdList.Nil]
+    [index : i64 0]
+    (begin
+      (while (< index (ast.ast-type-list-len types))
+        (begin
+          (match (tc-type-invalidate-lifetime
+            (ast.ty-node-get
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+            [(TcMaybeNameId.Some lifetime)
+              (set! out (tc-name-id-list-cons out lifetime))]
+            [(TcMaybeNameId.No) unit])
+          (set! index (+ index 1))))
+      out)))
+
+(define (tc-source-param-type-list-policy-ok-at
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (ast.ast-type-list-len types))
+    ResultTcUnit.Ok
+    (match (tc-source-param-type-policy-ok
+      ctx
+      (ast.ty-node-get
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+      false)
+      [(ResultTcUnit.Ok)
+        (tc-source-param-type-list-policy-ok-at ctx types (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
 (define (tc-source-type-list-policy-ok-at
   [ctx : TcContext]
   [types : (& types ast.AstTypeList)]
@@ -23653,12 +23867,20 @@
     [(ResultTcElidedType.Ok normalized)
       (match normalized.ty
         [(ast.AstType.Func normalized-args normalized-ret)
-          (match (tc-source-type-list-policy-ok
-            ctx
-            (ast.ast-type-list-box-shared-view normalized-args))
-            [(ResultTcUnit.Ok)
-              (tc-source-type-policy-ok ctx (ast.ty-node-get normalized-ret))]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+          (let
+            [arg-types : ast.AstTypeList
+              (ast.ast-type-list-box-shared-view normalized-args)]
+            (match (tc-source-param-type-list-policy-ok-at ctx (& arg-types) 0)
+              [(ResultTcUnit.Ok)
+                (match (tc-source-type-policy-ok
+                  ctx
+                  (ast.ty-node-get normalized-ret))
+                  [(ResultTcUnit.Ok)
+                    (tc-source-invalidate-lifetimes-policy-ok
+                      (tc-type-list-invalidate-lifetimes (& arg-types))
+                      (ast.ty-node-get normalized-ret))]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
         [_
           (ResultTcUnit.Err
             (tc-kind-message
@@ -23746,6 +23968,11 @@
                   [_ (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]))]
             [(ast.AstType.Region _ inner)
               (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]
+            [(ast.AstType.Invalidate _ _)
+              (ResultTcUnit.Err
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                  "typecheck: (:invalidate r T) is only valid as a parameter type"))]
             [(ast.AstType.Str)
               (ResultTcUnit.Err (tc-source-str-value-policy-message))]
             [(ast.AstType.Bytes)
@@ -23803,8 +24030,8 @@
   (if (>= index (ast.ast-param-list-len params))
     ResultTcUnit.Ok
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param _ ty _)
-        (match (tc-source-type-policy-ok ctx ty)
+      [(ast.AstParam.Param _ ty comptime?)
+        (match (tc-source-param-type-policy-ok ctx ty comptime?)
           [(ResultTcUnit.Ok)
             (tc-source-param-list-policy-ok-at ctx params (+ index 1))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
@@ -25082,7 +25309,15 @@
         ret)
         [(ResultTcElidedSignature.Ok signature)
           (match (tc-source-param-list-policy-ok ctx signature.params)
-            [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx signature.ret)]
+            [(ResultTcUnit.Ok)
+              (match (tc-source-type-policy-ok
+                ctx
+                (tc-global-shared-view signature.ret))
+                [(ResultTcUnit.Ok)
+                  (tc-source-invalidate-lifetimes-policy-ok
+                    (tc-param-list-invalidate-lifetimes (& signature.params))
+                    signature.ret)]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstMaybeType.No)
@@ -25093,7 +25328,12 @@
         0
         (ast.ast-param-list-new))
         [(ResultTcElidedParams.Ok inputs)
-          (tc-source-param-list-policy-ok ctx inputs.params)]
+          (match (tc-source-param-list-policy-ok ctx inputs.params)
+            [(ResultTcUnit.Ok)
+              (tc-source-invalidate-lifetimes-policy-ok
+                (tc-param-list-invalidate-lifetimes (& inputs.params))
+                (ast.AstType.Unit))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [(ResultTcElidedParams.Err message) (ResultTcUnit.Err message)])]))
 
 (define (tc-source-expr-policy-ok
@@ -25669,9 +25909,15 @@
                 (ast.ast-expr-segment-bases-get expr-bases body-box)]
               (match (tc-source-param-list-policy-ok ctx signature-params)
                 [(ResultTcUnit.Ok)
-                  (match (tc-source-type-policy-ok
+                  (match (match (tc-source-type-policy-ok
                     ctx
                     (tc-global-shared-view signature-ret))
+                    [(ResultTcUnit.Ok)
+                      (tc-source-invalidate-lifetimes-policy-ok
+                        (tc-param-list-invalidate-lifetimes
+                          (& signature-params))
+                        (tc-global-shared-view signature-ret))]
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])
                     [(ResultTcUnit.Ok)
                       (match (tc-reference-return-policy-ok
                         ctx
@@ -26080,6 +26326,13 @@
       (tc-type-eq-core
         (tc-type-without-regions (ast.ty-node-get inner))
         (tc-type-without-regions b))]
+    [(ast.AstType.Invalidate a-lifetime a-inner)
+      (match b
+        [(ast.AstType.Invalidate b-lifetime b-inner)
+          (and
+            (= a-lifetime b-lifetime)
+            (tc-type-eq (ast.ty-node-get a-inner) (ast.ty-node-get b-inner)))]
+        [_ false])]
     [(ast.AstType.Enum a-name)
       (match b
         [(ast.AstType.Enum b-name) (tc-nominal-name-id-eq? a-name b-name)]
@@ -26464,6 +26717,17 @@
           lifetime-id
           stack
           position))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (tc-variance-merge
+        (if (= lifetime lifetime-id)
+          (TcVariance.TcVarianceInvariant)
+          (TcVariance.TcVarianceBivariant))
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get inner)
+          lifetime-id
+          stack
+          position))]
     [(ast.AstType.EnumArgs name lifetimes)
       (tc-nominal-args-lifetime-variance-at
         ctx
@@ -26835,6 +27099,48 @@
         label
         " is invariant"))))
 
+(define (tc-func-invalidate-effects-differ?
+  [want : ast.AstType]
+  [got : ast.AstType]) : bool
+  (match want
+    [(ast.AstType.Func want-params _)
+      (match got
+        [(ast.AstType.Func got-params _)
+          (tc-type-list-invalidate-effects-differ?
+            (ast.ast-type-list-box-shared-view want-params)
+            (ast.ast-type-list-box-shared-view got-params))]
+        [_ false])]
+    [_ false]))
+
+(define (tc-type-list-invalidate-effects-differ?
+  [a : ast.AstTypeList]
+  [b : ast.AstTypeList]) : bool
+  (let
+    [index : i64 0]
+    [differ : bool false]
+    (begin
+      (while (and
+        (not differ)
+        (< index (ast.ast-type-list-len (& a)))
+        (< index (ast.ast-type-list-len (& b))))
+        (begin
+          (if (=
+            (tc-type-invalidate-param?
+              (ast.ty-node-get
+                (ast.ast-type-list-get (& a) index (ast.ast-type-id-fallback))))
+            (tc-type-invalidate-param?
+              (ast.ty-node-get
+                (ast.ast-type-list-get (& b) index (ast.ast-type-id-fallback)))))
+            unit
+            (set! differ true))
+          (set! index (+ index 1))))
+      differ)))
+
+(define (tc-type-invalidate-param? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Invalidate _ _) true]
+    [_ false]))
+
 (define (tc-lifetime-coercion-variance-detail
   [label : String]
   [expected : ast.AstType]
@@ -26978,10 +27284,17 @@
       [(ast.AstType.Func want-params want-ret)
         (match got
           [(ast.AstType.Func got-params got-ret)
-            (tc-lifetime-coercion-variance-detail
-              "function parameter/result variance"
-              (ast.AstType.Func want-params want-ret)
-              (ast.AstType.Func got-params got-ret))]
+            (let
+              [want-fn : ast.AstType (ast.AstType.Func want-params want-ret)]
+              [got-fn : ast.AstType (ast.AstType.Func got-params got-ret)]
+              (if (tc-func-invalidate-effects-differ?
+                (tc-global-shared-view want-fn)
+                (tc-global-shared-view got-fn))
+                "; the function types differ in a parameter's :invalidate effect"
+                (tc-lifetime-coercion-variance-detail
+                  "function parameter/result variance"
+                  want-fn
+                  got-fn)))]
           [_ ""])]
       [(ast.AstType.EnumArgs want-name want-lifetimes)
         (match got
@@ -27626,6 +27939,8 @@
     [(ast.AstType.Ref _ _) (TcMoveKind.Copyable)]
     [(ast.AstType.MutRef _ _) (TcMoveKind.MoveOnly)]
     [(ast.AstType.Region _ inner)
+      (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx inner) stack)]
+    [(ast.AstType.Invalidate _ inner)
       (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx inner) stack)]
     [(ast.AstType.Tuple elems)
       (if (tc-type-move-kind-copyable-type-list?
@@ -28867,6 +29182,13 @@
         (ast.ty-node-get inner)
         skip-id
         out)]
+    [(ast.AstType.Invalidate lifetime inner)
+      (tc-signature-lifetime-type-collect-into
+        (ast.ty-node-get inner)
+        skip-id
+        (if (= lifetime skip-id)
+          out
+          (tc-name-id-list-add out lifetime)))]
     [(ast.AstType.EnumArgs _ lifetimes)
       (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
     [(ast.AstType.StructArgs _ lifetimes)
@@ -28962,15 +29284,132 @@
   [index : i64]
   [lifetimes : TcNameIdList]) : TcTypeEnv
   (if (>= index (ast.ast-param-list-len params))
-    (tc-bind-signature-lifetime-markers env params lifetimes)
+    (tc-bind-invalidate-marker
+      (tc-bind-signature-lifetime-markers env params lifetimes)
+      params)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty _)
         (tc-bind-params-at
           ctx
-          (tc-bind-id env name (tc-resolve-type ctx (tc-global-shared-view ty)))
+          (tc-bind-id
+            env
+            name
+            (if (tc-invalidate-types-present?)
+              (tc-type-strip-invalidate
+                (tc-resolve-type ctx (tc-global-shared-view ty)))
+              (tc-resolve-type ctx (tc-global-shared-view ty))))
           params
           (+ index 1)
           (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
+
+;; --- `(:invalidate r T)` parameters (#6670) --------------------------------
+;;
+;; A function or lambda body binds its parameters as their inner types and
+;; records the lifetimes they invalidate under one marker, a lifetime list of
+;; (lifetime, parameter) pairs. Every later parameter list rebinds the marker,
+;; so a nested lambda never inherits its enclosing function's effect. Until a
+;; parameter list declares an effect, no marker is written.
+(define tc-invalidate-param-bind-count : i64
+  0)
+(define tc-invalidate-marker-id-generation : i64
+  -1)
+(define tc-invalidate-marker-id-cache : i64
+  -1)
+
+(define (tc-invalidate-marker-id) : i64
+  (let
+    [generation : i64 (ci.intern-generation)]
+    (if (= tc-invalidate-marker-id-generation generation)
+      tc-invalidate-marker-id-cache
+      (let
+        [marker-id : i64 (ci.intern "\n__typelisp_invalidate_marker")]
+        (begin
+          (set! tc-invalidate-marker-id-cache marker-id)
+          (set! tc-invalidate-marker-id-generation generation)
+          marker-id)))))
+
+;; The (lifetime, parameter) pairs of a parameter list's `:invalidate` effects.
+(define (tc-param-list-invalidate-pairs [params : (& params ast.AstParamList)]) : ast.AstLifetimeList
+  (let
+    [out : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [index : i64 0]
+    (begin
+      (while (< index (ast.ast-param-list-len params))
+        (begin
+          (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+            [(ast.AstParam.Param name ty _)
+              (match (tc-type-invalidate-lifetime (tc-global-shared-view ty))
+                [(TcMaybeNameId.Some lifetime)
+                  (begin
+                    (ast.ast-lifetime-list-push (&mut out) lifetime)
+                    (ast.ast-lifetime-list-push (&mut out) name))]
+                [(TcMaybeNameId.No) unit])])
+          (set! index (+ index 1))))
+      out)))
+
+;; The marker to bind for a parameter list, or No when none is needed.
+(define (tc-invalidate-marker-type [params : (& params ast.AstParamList)]) : ast.AstMaybeType
+  (unless (tc-invalidate-types-present?) (return (ast.AstMaybeType.No)))
+  (let
+    [pairs : ast.AstLifetimeList (tc-param-list-invalidate-pairs params)]
+    (if (ast.ast-lifetime-list-empty? (& pairs))
+      (if (= tc-invalidate-param-bind-count 0)
+        (ast.AstMaybeType.No)
+        (ast.AstMaybeType.Some
+          (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs)))
+      (begin
+        (set!
+          tc-invalidate-param-bind-count
+          (+ tc-invalidate-param-bind-count 1))
+        (ast.AstMaybeType.Some
+          (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs))))))
+
+(define (tc-bind-invalidate-marker
+  [env : TcTypeEnv]
+  [params : (& params ast.AstParamList)]) : TcTypeEnv
+  (match (tc-invalidate-marker-type params)
+    [(ast.AstMaybeType.Some marker)
+      (tc-bind-runtime-marker-id
+        env
+        (tc-invalidate-marker-id)
+        marker
+        TcTypeEnvScopedMarkerKind.Other)]
+    [(ast.AstMaybeType.No) env]))
+
+;; The (lifetime, parameter) pairs the innermost enclosing function or lambda
+;; body declares.
+(define (tc-invalidate-marker-pairs [env : TcTypeEnv]) : ast.AstLifetimeList
+  (if (= tc-invalidate-param-bind-count 0)
+    (ast.ast-lifetime-list-new)
+    (match (if (tc-type-env-scoped-runtime-active? env)
+      (tc-type-env-scoped-carrier-marker-type
+        (tc-type-env-scoped-runtime-current env)
+        (tc-invalidate-marker-id))
+      (tc-env-marker-type env (tc-invalidate-marker-id)))
+      [(ast.AstMaybeType.Some (ast.AstType.VarArgs _ pairs))
+        (ast.ast-lifetime-list-box-shared-view pairs)]
+      [_ (ast.ast-lifetime-list-new)])))
+
+;; Whether the enclosing body declares `(:invalidate lifetime)` on a parameter,
+;; which lets it destroy the owner of that brand.
+(define (tc-invalidate-lifetime-declared? [env : TcTypeEnv] [lifetime : i64]) : bool
+  (let
+    [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (ast.ast-lifetime-list-len (& pairs))))
+        (begin
+          (if (=
+            (ast.ast-lifetime-list-get
+              (& pairs)
+              index
+              (ast.ast-lifetime-fallback))
+            lifetime)
+            (set! found true)
+            unit)
+          (set! index (+ index 2))))
+      found)))
 
 (define (tc-type-env-scoped-carrier-bind-params
   [ctx : TcContext]
@@ -28990,10 +29429,22 @@
   [index : i64]
   [lifetimes : TcNameIdList]) : TcTypeEnvScopedCarrier
   (if (>= index (ast.ast-param-list-len params))
-    (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
-      carrier
-      params
-      lifetimes)
+    (let
+      [out : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
+          carrier
+          params
+          lifetimes)]
+      (match (tc-invalidate-marker-type params)
+        [(ast.AstMaybeType.Some marker)
+          (tc-type-env-scoped-carrier-with-sidecar
+            (tc-global-shared-view out)
+            (tc-type-env-scoped-sidecar-bind-marker-id
+              out.sidecar
+              (tc-invalidate-marker-id)
+              marker
+              TcTypeEnvScopedMarkerKind.Other))]
+        [(ast.AstMaybeType.No) out]))
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty _)
         (tc-type-env-scoped-carrier-bind-params-at
@@ -29001,7 +29452,10 @@
           (tc-type-env-scoped-carrier-bind-id
             carrier
             name
-            (tc-resolve-type ctx (tc-global-shared-view ty)))
+            (if (tc-invalidate-types-present?)
+              (tc-type-strip-invalidate
+                (tc-resolve-type ctx (tc-global-shared-view ty)))
+              (tc-resolve-type ctx (tc-global-shared-view ty))))
           params
           (+ index 1)
           (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
@@ -34457,6 +34911,10 @@
       (ast.ast-ty-region
         (tc-lifetime-subst-apply subst region)
         (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate
+        (tc-lifetime-subst-apply subst lifetime)
+        (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
         name
@@ -34790,6 +35248,38 @@
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
+      ;; A function value's `:invalidate` lifetime is inferred invariantly with
+      ;; its wrapper; an ordinary argument is inferred from the wrapped type.
+      [(ast.AstType.Invalidate formal-lifetime formal-inner)
+        (match (tc-global-shared-view got)
+          [(ast.AstType.Invalidate actual-lifetime actual-inner)
+            (match (tc-infer-call-lifetime-name
+              env
+              (tc-global-shared-view params)
+              subst
+              formal-lifetime
+              actual-lifetime
+              (TcVariance.TcVarianceInvariant))
+              [(ResultTcLifetimeSubst.Ok next-subst)
+                (tc-infer-lifetime-subst-from-type
+                  ctx
+                  env
+                  params
+                  next-subst
+                  (ast.ty-node-get formal-inner)
+                  (ast.ty-node-get actual-inner)
+                  position)]
+              [(ResultTcLifetimeSubst.Err message)
+                (ResultTcLifetimeSubst.Err message)])]
+          [_
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              env
+              params
+              subst
+              (ast.ty-node-get formal-inner)
+              got
+              position)])]
       [(ast.AstType.EnumArgs formal-name formal-lifetimes)
         (match got
           [(ast.AstType.EnumArgs actual-name actual-lifetimes)
@@ -35694,14 +36184,87 @@
           ctx
           env
           func
-          args
-          resolved-params
+          (tc-global-shared-view args)
+          (tc-global-shared-view resolved-params)
           allow-region-args
           (ast.AstMaybeType.No))
           [(ResultTcUnit.Ok)
-            (ResultTcType.Ok (tc-tag-active-region env resolved-ret))]
+            (match (tc-check-invalidate-call
+              ctx
+              env
+              (tc-global-shared-view args)
+              resolved-params
+              (tc-global-shared-view resolved-ret))
+              [(ResultTcUnit.Ok)
+                (ResultTcType.Ok (tc-tag-active-region env resolved-ret))]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
     [(ResultTcLifetimeSubst.Err message) (ResultTcType.Err message)]))
+
+;; A call through `:invalidate` parameters (#6670). After lifetime
+;; substitution each invalidated brand must be one the caller may end (a local
+;; arena's brand, or a lifetime the caller itself invalidates), no two
+;; arguments may invalidate the same brand, the call cannot run inside that
+;; arena, and its result cannot carry the brand.
+(define (tc-check-invalidate-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]) : ResultTcUnit
+  (unless (tc-invalidate-types-present?) (return ResultTcUnit.Ok))
+  (let
+    [index : i64 0]
+    [seen : TcNameIdList TcNameIdList.Nil]
+    [failure : String ""]
+    [failed? : bool false]
+    (begin
+      (while (and
+        (not failed?)
+        (< index (ast.ast-type-list-len (& params)))
+        (< index args.len))
+        (begin
+          (match (tc-type-invalidate-lifetime
+            (ast.ty-node-get
+              (ast.ast-type-list-get
+                (& params)
+                index
+                (ast.ast-type-id-fallback))))
+            [(TcMaybeNameId.Some brand)
+              (let
+                [message : String
+                  (cond
+                    [(not (tc-invalidate-brand-destroyable? env brand))
+                      "typecheck: an :invalidate argument must be a branded local arena owner or a value the caller itself invalidates"]
+                    [(tc-name-id-list-contains seen brand)
+                      "typecheck: a call cannot invalidate the same arena through two arguments"]
+                    [(tc-active-region-owned-by-arena-id? env brand)
+                      "typecheck: an :invalidate call cannot run inside the arena it destroys"]
+                    [(tc-type-contains-arena-owner-region?
+                        env
+                        (tc-global-shared-view ret)
+                        brand)
+                      "typecheck: an :invalidate call cannot return a value tied to the arena it destroys"]
+                    [else ""])]
+                (if (= (string.string-length message) 0)
+                  (set! seen (tc-name-id-list-add seen brand))
+                  (begin
+                    (set! failed? true)
+                    (set!
+                      failure
+                      (tc-locate-error-at-expr
+                        (tc-context-expr-bases ctx)
+                        (tc-context-expr-get
+                          ctx
+                          (ast.ast-expr-list-get (& args) index 0))
+                        (tc-kind-message
+                          (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                          message))))))]
+            [(TcMaybeNameId.No) unit])
+          (set! index (+ index 1))))
+      (if failed?
+        (ResultTcUnit.Err failure)
+        ResultTcUnit.Ok))))
 
 (define (tc-call-dynamic-c-varargs-abi? [abi : ast.AstExternAbi]) : bool
   (or
@@ -37954,8 +38517,12 @@
         [arg : ast.AstExpr
           (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
         [want : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
+          (if (tc-invalidate-types-present?)
+            (tc-type-strip-invalidate
+              (ast.ty-node-get
+                (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
+            (ast.ty-node-get
+              (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))]
         (match (tc-call-effective-arg-expr
           ctx
           env
@@ -38413,6 +38980,14 @@
         (cdiag.CompilerTypecheckKind.ArityMismatch)
         "typecheck: arena.rewind-safe! expects exactly one argument"))))
 
+;; A brand a safe destroy or an `:invalidate` call may end: a local arena's
+;; generated brand, or a lifetime the enclosing body's parameters invalidate.
+(define (tc-invalidate-brand-destroyable? [env : TcTypeEnv] [brand : i64]) : bool
+  (or
+    (tc-generated-ordinary-arena-brand-id? brand)
+    (tc-generated-atomic-arena-brand-id? brand)
+    (tc-invalidate-lifetime-declared? env brand)))
+
 ;; Safe destroy has two identities to preserve. The normalized expression is
 ;; the exact place consumed by the move checker, while a branded Arena's
 ;; lifetime is the stable owner identity used for region and atomic-user
@@ -38426,9 +39001,7 @@
     [(TcMaybeMovePath.Some place)
       (match (tc-arena-branded-region ctx owner-ty)
         [(TcMaybeNameId.Some brand)
-          (if (or
-            (tc-generated-ordinary-arena-brand-id? brand)
-            (tc-generated-atomic-arena-brand-id? brand))
+          (if (tc-invalidate-brand-destroyable? env brand)
             (TcMaybeNameId.Some brand)
             (TcMaybeNameId.No))]
         [(TcMaybeNameId.No)
@@ -42489,7 +43062,8 @@
                   [(ast.AstParam.Param param-name param-ty _)
                     (let
                       [bound-ty : ast.AstType
-                        (tc-resolve-type helper-ctx param-ty)]
+                        (tc-type-strip-invalidate
+                          (tc-resolve-type helper-ctx param-ty))]
                       (if (and
                         (tc-spmd-varying? arg-class)
                         (not
@@ -49882,6 +50456,11 @@
         (ResultTcLayoutInfo.Ok (tc-inline-aggregate-layout-info 16 8))
         (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info)))]
     [(ast.AstType.Region _ inner)
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (tc-context-type-get ctx inner)
+        stack)]
+    [(ast.AstType.Invalidate _ inner)
       (tc-inline-aggregate-type-layout-with-stack
         ctx
         (tc-context-type-get ctx inner)
@@ -59363,14 +59942,23 @@
 
 (define (tc-check-extern-native-value-type [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (let
-    [resolved : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    [resolved : ast.AstType
+      (tc-type-strip-region (tc-resolve-type ctx (tc-global-shared-view ty)))]
     (match (tc-global-shared-view resolved)
       [(ast.AstType.CFunc signature _)
         (tc-check-extern-c-abi ctx (tc-context-type-get ctx signature))]
       [_
-        (if (tc-extern-native-slice-ref-type? ctx resolved)
-          (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
-          ResultTcUnit.Ok)])))
+        (cond
+          [(tc-extern-native-slice-ref-type? ctx resolved)
+            (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))]
+          ;; An extern body is not checked, so it cannot prove the destroy an
+          ;; `:invalidate` parameter promises (#6670).
+          [(tc-type-invalidate-param? (tc-global-shared-view ty))
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                "typecheck: an extern function cannot declare an :invalidate parameter"))]
+          [else ResultTcUnit.Ok])])))
 
 (define (tc-check-extern-native-signature-args-at
   [ctx : TcContext]
@@ -61488,6 +62076,7 @@
     [(string.eq kind "type-var") (shl 1 27)]
     [(string.eq kind "box") (shl 1 28)]
     [(string.eq kind "c-function") (shl 1 30)]
+    [(string.eq kind "invalidate") (shl 1 31)]
     [else (shl 1 29)]))
 
 (define (tc-macro-abstract-kind-list-mask-from
@@ -63828,6 +64417,46 @@
 (define (tc-move-let-obligation-loop-depth [code : i64]) : i64
   (% (- -2 code) (tc-move-scope-owner-depth-width)))
 
+;; An `(:invalidate r T)` parameter owns the same must-discharge obligation
+;; (#6670). Its code carries the invalidated lifetime (a raw interner id, far
+;; below 2^31) in the initializer lane and a depth no loop reaches, so a
+;; `break` or `continue` never checks it while `return`, `try` and the end of
+;; the body do. Only ending that lifetime's arena discharges it: a canonical
+;; safe destroy of the brand or a call that invalidates it.
+(define (tc-move-invalidate-obligation-depth) : i64
+  2147483647)
+
+(define (tc-move-invalidate-obligation-code? [code : i64]) : bool
+  (and
+    (tc-move-let-obligation-code? code)
+    (=
+      (tc-move-let-obligation-loop-depth code)
+      (tc-move-invalidate-obligation-depth))))
+
+(define (tc-move-invalidate-obligation-lifetime [code : i64]) : i64
+  (tc-move-let-obligation-origin code))
+
+;; The expression a cleanup obligation's diagnostic points back to, if any.
+(define (tc-move-obligation-origin-id [code : i64]) : i64
+  (if (tc-move-invalidate-obligation-code? code)
+    (tc-moved-no-origin-id)
+    (tc-move-let-obligation-origin code)))
+
+(define (tc-move-bind-invalidate-obligation
+  [locals : TcMovedSet]
+  [name-id : i64]
+  [lifetime : i64]) : TcMovedSet
+  (begin
+    (set!
+      tc-move-let-obligation-bind-count
+      (+ tc-move-let-obligation-bind-count 1))
+    (tc-move-bind-scope-owner
+      locals
+      name-id
+      (tc-move-let-obligation-code
+        lifetime
+        (tc-move-invalidate-obligation-depth)))))
+
 ;; A non-move-aware `with` owner's `locals` entry, with its initializer and
 ;; loop depth in the same packing: lowering runs the owner's cleanup on every
 ;; edge that leaves its scope, so no such edge may find it moved.
@@ -63934,7 +64563,10 @@
   (let
     [roots : tc_i64_i64_map.Map (tc-moved-roots locals)]
     (match (tc_i64_i64_map.get (& roots) name-id)
-      [(tc_i64_i64_map.LookupFound code) (tc-move-let-obligation-code? code)]
+      [(tc_i64_i64_map.LookupFound code)
+        (and
+          (tc-move-let-obligation-code? code)
+          (not (tc-move-invalidate-obligation-code? code)))]
       [(tc_i64_i64_map.LookupMissing) false])))
 
 ;; The `locals` of a `let` body whose binding owns a cleanup obligation.
@@ -64198,6 +64830,122 @@
                 tail))])]
       [_ -1])))
 
+(define (tc-move-invalidate-obligation-help) : String
+  "destroy the parameter's arena with arena.destroy-safe! or pass it to another :invalidate parameter exactly once on every path")
+
+;; An `:invalidate` parameter left undischarged on the edge `edge`.
+(define (tc-move-invalidate-obligation-message
+  [expr-bases : i64]
+  [name-id : i64]
+  [lifetime : i64]
+  [edge : ast.AstExpr]
+  [where : String]) : String
+  (let
+    [name : String (tc-hygiene-name-text-id name-id)]
+    (tc-move-rich-owner-message
+      expr-bases
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag
+          (cdiag.CompilerTypecheckKind.ResourceOwnership))
+        "typecheck: invalidation obligation of `"
+        (tc-global-shared-view name)
+        "` (:invalidate "
+        (tc-lifetime-name-render lifetime)
+        ") is not discharged "
+        where)
+      (tc-move-invalidate-obligation-help)
+      (tc-move-obligation-binding-label name)
+      TcMoveConflict.No
+      (tc-moved-no-origin-id)
+      edge)))
+
+;; The normal end of a function or lambda body that binds `:invalidate`
+;; parameters: every one of them must have been discharged.
+(define (tc-move-check-invalidate-body-end
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [body-id : i64]) : ResultTcUnit
+  (if (or
+    (not (tc-invalidate-types-present?))
+    (not (tc-move-owners-in-scope? (tc-global-shared-view locals)))
+    (tc-move-arm-diverges? ctx expr-bases body-id))
+    ResultTcUnit.Ok
+    (let
+      [roots : tc_i64_i64_map.Map (tc-moved-roots locals)]
+      [remaining : i64 (tc_i64_i64_map.len (& roots))]
+      [cursor : i64 0]
+      [failure : String ""]
+      [failed? : bool false]
+      (begin
+        (while (and (not failed?) (> remaining 0))
+          (begin
+            (set! cursor (tc_i64_i64_map.next-occupied (& roots) cursor))
+            (match (tc_i64_i64_map.entry-at (& roots) cursor)
+              [(tc_i64_i64_map.EntrySome key value)
+                (if (and
+                  (tc-move-invalidate-obligation-code? value)
+                  (not
+                    (=
+                      (tc-move-obligation-status
+                        (tc-global-shared-view moved)
+                        key)
+                      1)))
+                  (begin
+                    (set! failed? true)
+                    (set!
+                      failure
+                      (tc-move-invalidate-obligation-message
+                        expr-bases
+                        key
+                        (tc-move-invalidate-obligation-lifetime value)
+                        (ast.ast-expr-segment-bases-get expr-bases body-id)
+                        "at the end of its function")))
+                  unit)]
+              [(tc_i64_i64_map.EntryNone) unit])
+            (set! cursor (+ cursor 1))
+            (set! remaining (- remaining 1))))
+        (if failed?
+          (ResultTcUnit.Err failure)
+          ResultTcUnit.Ok)))))
+
+;; Ending `brand` discharges the enclosing body's `:invalidate` parameter with
+;; that lifetime once the parameter itself has left.
+(define (tc-move-discharge-invalidate
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [brand : i64]) : TcMovedSet
+  (if (not (tc-move-owners-in-scope? (tc-global-shared-view locals)))
+    moved
+    (let
+      [roots : tc_i64_i64_map.Map (tc-moved-roots locals)]
+      [remaining : i64 (tc_i64_i64_map.len (& roots))]
+      [cursor : i64 0]
+      [out : TcMovedSet moved]
+      (begin
+        (while (> remaining 0)
+          (begin
+            (set! cursor (tc_i64_i64_map.next-occupied (& roots) cursor))
+            (match (tc_i64_i64_map.entry-at (& roots) cursor)
+              [(tc_i64_i64_map.EntrySome key value)
+                (if (and
+                  (tc-move-invalidate-obligation-code? value)
+                  (= (tc-move-invalidate-obligation-lifetime value) brand)
+                  (tc-moved-contains? (& out) key))
+                  (set!
+                    out
+                    (tc-moved-add-path-fact
+                      out
+                      (tc-move-obligation-path key)
+                      (TcMovedPathKind.ObligationDischarged)
+                      (tc-moved-no-origin-id)))
+                  unit)]
+              [(tc_i64_i64_map.EntryNone) unit])
+            (set! cursor (+ cursor 1))
+            (set! remaining (- remaining 1))))
+        out))))
+
 (define (tc-move-obligation-help) : String
   "pass the value to its declared cleanup function, return it, or move it into another `let`, a `with` binding or a cleanup-owning aggregate on every path")
 
@@ -64308,14 +65056,21 @@
                         (set! failed? true)
                         (set!
                           failure
-                          (tc-move-obligation-message
-                            expr-bases
-                            (tc-global-shared-view moved)
-                            key
-                            (tc-move-let-obligation-origin value)
-                            status
-                            (tc-global-shared-view edge)
-                            (tc-global-shared-view where))))))]
+                          (if (tc-move-invalidate-obligation-code? value)
+                            (tc-move-invalidate-obligation-message
+                              expr-bases
+                              key
+                              (tc-move-invalidate-obligation-lifetime value)
+                              (tc-global-shared-view edge)
+                              (tc-global-shared-view where))
+                            (tc-move-obligation-message
+                              expr-bases
+                              (tc-global-shared-view moved)
+                              key
+                              (tc-move-let-obligation-origin value)
+                              status
+                              (tc-global-shared-view edge)
+                              (tc-global-shared-view where)))))))]
                 [(and
                     (tc-move-with-owner-code? value)
                     (or
@@ -64427,6 +65182,8 @@
                     unit
                     (let
                       [name : String (tc-hygiene-name-text-id key)]
+                      [invalidate? : bool
+                        (tc-move-invalidate-obligation-code? value)]
                       (begin
                         (set! failed? true)
                         (set!
@@ -64436,14 +65193,18 @@
                             (str_cat.str-cat
                               (cdiag.compiler-diagnostic-typecheck-tag
                                 (cdiag.CompilerTypecheckKind.ResourceOwnership))
-                              "typecheck: cleanup obligation of `"
+                              (if invalidate?
+                                "typecheck: invalidation obligation of `"
+                                "typecheck: cleanup obligation of `")
                               (tc-global-shared-view name)
                               "` is discharged on only some paths "
                               (tc-global-shared-view where))
-                            (tc-move-obligation-help)
+                            (if invalidate?
+                              (tc-move-invalidate-obligation-help)
+                              (tc-move-obligation-help))
                             (tc-move-obligation-binding-label name)
                             TcMoveConflict.No
-                            (tc-move-let-obligation-origin value)
+                            (tc-move-obligation-origin-id value)
                             (if (= a-status 1)
                               (tc-global-shared-view b-site)
                               (tc-global-shared-view a-site))))))))]
@@ -65257,8 +66018,16 @@
   (if (>= index (ast.ast-param-list-len params))
     acc
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name _ _)
-        (tc-move-params-locals-at params (+ index 1) (tc-moved-add acc name))])))
+      [(ast.AstParam.Param name ty _)
+        (tc-move-params-locals-at
+          params
+          (+ index 1)
+          (if (tc-invalidate-types-present?)
+            (match (tc-type-invalidate-lifetime (tc-global-shared-view ty))
+              [(TcMaybeNameId.Some lifetime)
+                (tc-move-bind-invalidate-obligation acc name lifetime)]
+              [(TcMaybeNameId.No) (tc-moved-add acc name)])
+            (tc-moved-add acc name)))])))
 
 (define (tc-param-storage-memory-class-type?
   [ctx : TcContext]
@@ -66085,6 +66854,8 @@
     [(ast.AstType.MutRef _ _) false]
     [(ast.AstType.Region _ inner)
       (tc-move-global-copyable-type? ctx (tc-context-type-get ctx inner) depth)]
+    [(ast.AstType.Invalidate _ inner)
+      (tc-move-global-copyable-type? ctx (tc-context-type-get ctx inner) depth)]
     [(ast.AstType.Tuple elems)
       (tc-move-global-copyable-type-list-at?
         ctx
@@ -66646,7 +67417,8 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [owner : i64]
-  [origin : ast.AstExpr]) : TcMoveResult
+  [origin : ast.AstExpr]
+  [operation : String]) : TcMoveResult
   (let
     [live-owner : i64
       (tc-move-live-cleanup-owner-in-region
@@ -66659,10 +67431,10 @@
         (tc-move-safe-invalidation-cleanup-owner-message
           expr-bases
           origin
-          "arena.destroy-safe!"
+          operation
           (tc-env-key-name-text owner)
           (tc-env-key-name-text live-owner)))
-      (tc-move-mark-owner-region-locals-scan
+      (match (tc-move-mark-owner-region-locals-scan
         expr-bases
         env
         (tc-global-shared-view locals)
@@ -66671,7 +67443,117 @@
         owner
         TcNameIdList.Nil
         (tc-moved-len locals)
-        origin))))
+        origin)
+        [(TcMoveResult.Ok marked)
+          (TcMoveResult.Ok (tc-move-discharge-invalidate locals marked owner))]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)]))))
+
+;; The brand an `(:invalidate r T)` formal ends at one call: `r` after
+;; inferring `T`'s lifetimes from the argument's checked type (#6670).
+(define (tc-invalidate-call-brand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [formal : ast.AstType]
+  [actual : ast.AstType]) : TcMaybeNameId
+  (match (tc-global-shared-view formal)
+    [(ast.AstType.Invalidate lifetime inner)
+      (let
+        [inner-ty : ast.AstType (ast.ty-node-get inner)]
+        [lifetimes : ast.AstLifetimeList
+          (tc-name-id-list-to-lifetime-list
+            (tc-type-collect-reference-lifetimes
+              (tc-global-shared-view inner-ty)))]
+        (match (tc-infer-lifetime-subst-from-type
+          ctx
+          env
+          lifetimes
+          TcLifetimeSubst.Nil
+          inner-ty
+          actual
+          (TcVariance.TcVarianceCovariant))
+          [(ResultTcLifetimeSubst.Ok subst)
+            (TcMaybeNameId.Some (tc-lifetime-subst-apply subst lifetime))]
+          [(ResultTcLifetimeSubst.Err _) (TcMaybeNameId.No)]))]
+    [_ (TcMaybeNameId.No)]))
+
+;; A call's `:invalidate` arguments end their brands in the caller exactly as a
+;; safe destroy does, after the arguments themselves have moved.
+(define (tc-move-check-invalidate-call-effects
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
+  [index : i64]
+  [origin : ast.AstExpr]) : TcMoveResult
+  (if (or (>= index (ast.ast-type-list-len params)) (>= index args.len))
+    (TcMoveResult.Ok moved)
+    (let
+      [formal : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
+      [arg-box : i64 (ast.ast-expr-list-get args index 0)]
+      [brand : TcMaybeNameId
+        (match (tc-type-invalidate-lifetime (tc-global-shared-view formal))
+          [(TcMaybeNameId.Some _)
+            (match (tc-body-type-fact-expr-id
+              "move.invalidate_argument"
+              ctx
+              env
+              arg-box)
+              [(ResultTcType.Ok actual)
+                (tc-invalidate-call-brand ctx env formal actual)]
+              [(ResultTcType.Err _) (TcMaybeNameId.No)])]
+          [(TcMaybeNameId.No) (TcMaybeNameId.No)])]
+      (match brand
+        [(TcMaybeNameId.Some owner)
+          (match (if (tc-atomic-arena-owner-active-id? env owner)
+            (tc-move-check-atomic-arena-users-released
+              ctx
+              env
+              (tc-global-shared-view locals)
+              moved
+              owner)
+            (TcMoveResult.Ok moved))
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-mark-owner-region-locals
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                moved1
+                owner
+                (ast.ast-expr-segment-bases-get expr-bases arg-box)
+                "an :invalidate call")
+                [(TcMoveResult.Ok moved2)
+                  (tc-move-check-invalidate-call-effects
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved2
+                    args
+                    params
+                    (+ index 1)
+                    origin)]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+        [(TcMaybeNameId.No)
+          (tc-move-check-invalidate-call-effects
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            args
+            params
+            (+ index 1)
+            origin)]))))
 
 (define (tc-moved-add-hidden-atomic-user [set : TcMovedSet] [owner-id : i64]) : TcMovedSet
   (let
@@ -66951,7 +67833,8 @@
                               loop-carried
                               moved2
                               owner-id
-                              origin)]
+                              origin
+                              "arena.destroy-safe!")]
                           [(TcMoveResult.Err message)
                             (TcMoveResult.Err message)])]
                       [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
@@ -67812,18 +68695,33 @@
             moved-thread
             (tc-global-shared-view func)
             (tc-global-shared-view args)
-            params)
+            (tc-global-shared-view params))
             [(TcMoveResult.Ok moved-spawn)
-              (match (tc-move-check-safe-arena-call-effects
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved-spawn
-                (tc-global-shared-view func)
-                args
-                (tc-global-shared-view call-expr))
+              (match (match (if (tc-invalidate-types-present?)
+                (tc-move-check-invalidate-call-effects
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved-spawn
+                  (& args)
+                  (& params)
+                  0
+                  (tc-global-shared-view call-expr))
+                (TcMoveResult.Ok moved-spawn))
+                [(TcMoveResult.Ok moved-invalidate)
+                  (tc-move-check-safe-arena-call-effects
+                    ctx
+                    expr-bases
+                    env
+                    (tc-global-shared-view locals)
+                    (tc-global-shared-view loop-carried)
+                    moved-invalidate
+                    (tc-global-shared-view func)
+                    (tc-global-shared-view args)
+                    (tc-global-shared-view call-expr))]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])
                 [(TcMoveResult.Ok moved-call)
                   (tc-move-after-known-closure-call
                     expr-bases
@@ -70734,23 +71632,16 @@
               [(TcMoveResult.Ok lambda-moved)
                 (let
                   [result-check : TcMoveResult
-                    (match maybe-ret
-                      [(ast.AstMaybeType.Some ret)
-                        (tc-move-check-global-result
-                          ctx
-                          expr-bases
-                          lambda-env
-                          lambda-locals
-                          lambda-moved
-                          (tc-global-shared-view body)
-                          ret)]
-                      [(ast.AstMaybeType.No)
-                        (match (tc-body-type-fact-expr-id
-                          "move.lambda_result"
-                          ctx
-                          lambda-env
-                          body-box)
-                          [(ResultTcType.Ok body-ty)
+                    (match (tc-move-check-invalidate-body-end
+                      ctx
+                      expr-bases
+                      (tc-global-shared-view lambda-locals)
+                      (tc-global-shared-view lambda-moved)
+                      body-box)
+                      [(ResultTcUnit.Err message) (TcMoveResult.Err message)]
+                      [(ResultTcUnit.Ok)
+                        (match maybe-ret
+                          [(ast.AstMaybeType.Some ret)
                             (tc-move-check-global-result
                               ctx
                               expr-bases
@@ -70758,8 +71649,24 @@
                               lambda-locals
                               lambda-moved
                               (tc-global-shared-view body)
-                              body-ty)]
-                          [(ResultTcType.Err _) (TcMoveResult.Ok lambda-moved)])])]
+                              ret)]
+                          [(ast.AstMaybeType.No)
+                            (match (tc-body-type-fact-expr-id
+                              "move.lambda_result"
+                              ctx
+                              lambda-env
+                              body-box)
+                              [(ResultTcType.Ok body-ty)
+                                (tc-move-check-global-result
+                                  ctx
+                                  expr-bases
+                                  lambda-env
+                                  lambda-locals
+                                  lambda-moved
+                                  (tc-global-shared-view body)
+                                  body-ty)]
+                              [(ResultTcType.Err _)
+                                (TcMoveResult.Ok lambda-moved)])])])]
                   (match result-check
                     [(TcMoveResult.Ok _)
                       (tc-move-check-lambda-owner-captures
@@ -72386,14 +73293,22 @@
       (tc-param-storage-seed-params ctx params (tc-moved-empty))
       body-id)
       [(TcMoveResult.Ok moved)
-        (match (tc-move-check-global-result
+        (match (match (tc-move-check-invalidate-body-end
           ctx
           expr-bases
-          env
           (tc-global-shared-view locals)
-          moved
-          (tc-global-shared-view body)
-          return-ty)
+          (tc-global-shared-view moved)
+          body-id)
+          [(ResultTcUnit.Ok)
+            (tc-move-check-global-result
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              moved
+              (tc-global-shared-view body)
+              return-ty)]
+          [(ResultTcUnit.Err message) (TcMoveResult.Err message)])
           [(TcMoveResult.Ok _)
             (match (tc-move-check-tail-closure-escape
               ctx
@@ -77091,6 +78006,87 @@
             [(TcMaybeNameId.No) (TcBorrowCheckResult.Ok borrowed)])]
         [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))))
 
+;; A call's `:invalidate` arguments end their brands exactly as a safe destroy
+;; does: no live borrow of the argument place, and no live borrow of a value
+;; tagged with the brand (#6670).
+(define (tc-borrow-check-invalidate-call-effects
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : (& args ast.AstExprList)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [primary : ast.AstExpr]) : TcBorrowCheckResult
+  (if (or (>= index (ast.ast-type-list-len types)) (>= index args.len))
+    (TcBorrowCheckResult.Ok borrowed)
+    (let
+      [formal : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      [arg-box : i64 (ast.ast-expr-list-get args index 0)]
+      [brand : TcMaybeNameId
+        (match (tc-type-invalidate-lifetime (tc-global-shared-view formal))
+          [(TcMaybeNameId.Some _)
+            (match (tc-body-type-fact-expr-id
+              "borrow.invalidate_argument"
+              ctx
+              env
+              arg-box)
+              [(ResultTcType.Ok actual)
+                (tc-invalidate-call-brand ctx env formal actual)]
+              [(ResultTcType.Err _) (TcMaybeNameId.No)])]
+          [(TcMaybeNameId.No) (TcMaybeNameId.No)])]
+      (match brand
+        [(TcMaybeNameId.Some owner)
+          (match (match (tc-move-direct-root-base-path
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases arg-box))
+            [(TcMaybeMovePath.Some owner-place)
+              (tc-borrow-check-assign-conflict
+                expr-bases
+                (tc-global-shared-view borrowed)
+                owner-place
+                (tc-global-shared-view primary))]
+            [(TcMaybeMovePath.No) ResultTcUnit.Ok])
+            [(ResultTcUnit.Ok)
+              (match (tc-borrow-check-owner-invalidation-scan
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                borrowed
+                owner
+                TcNameIdList.Nil
+                (tc-moved-len locals)
+                (tc-global-shared-view primary))
+                [(TcBorrowCheckResult.Ok borrowed1)
+                  (tc-borrow-check-invalidate-call-effects
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed1
+                    args
+                    types
+                    (+ index 1)
+                    primary)]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
+        [(TcMaybeNameId.No)
+          (tc-borrow-check-invalidate-call-effects
+            ctx
+            expr-bases
+            env
+            locals
+            borrowed
+            args
+            types
+            (+ index 1)
+            primary)]))))
+
 (define (tc-borrow-check-safe-arena-call-effects
   [ctx : TcContext]
   [expr-bases : i64]
@@ -77187,16 +78183,31 @@
   [call-expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
+  [types : ast.AstTypeList]
   [return-lifetimes : TcBorrowCallReturnLifetimes]) : TcBorrowCheckResult
-  (match (tc-borrow-check-safe-arena-call-effects
-    ctx
-    expr-bases
-    env
-    (tc-global-shared-view locals)
-    borrowed
-    (tc-global-shared-view call-expr)
-    func
-    (tc-global-shared-view args))
+  (match (match (if (tc-invalidate-types-present?)
+    (tc-borrow-check-invalidate-call-effects
+      ctx
+      expr-bases
+      env
+      (tc-global-shared-view locals)
+      borrowed
+      (& args)
+      (& types)
+      0
+      (tc-global-shared-view call-expr))
+    (TcBorrowCheckResult.Ok borrowed))
+    [(TcBorrowCheckResult.Ok borrowed-invalidated)
+      (tc-borrow-check-safe-arena-call-effects
+        ctx
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        borrowed-invalidated
+        (tc-global-shared-view call-expr)
+        func
+        (tc-global-shared-view args))]
+    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])
     [(TcBorrowCheckResult.Ok borrowed0)
       (tc-borrow-check-after-returning-call
         ctx
@@ -77900,7 +78911,7 @@
             (tc-global-shared-view borrowed2)
             (tc-global-shared-view func)
             (tc-global-shared-view args)
-            types)
+            (tc-global-shared-view types))
             [(TcBorrowCheckResult.Ok borrowed3)
               (match (tc-borrow-check-after-call-effects
                 ctx
@@ -77911,6 +78922,7 @@
                 (tc-global-shared-view call-expr)
                 func
                 args
+                types
                 return-lifetimes)
                 [(TcBorrowCheckResult.Ok borrowed4)
                   ;; Auto-borrows are call temporaries unless the resolved
@@ -77942,7 +78954,7 @@
         borrowed-with-uses
         (tc-global-shared-view func)
         (tc-global-shared-view args)
-        types)
+        (tc-global-shared-view types))
         [(TcBorrowCheckResult.Ok borrowed2)
           (tc-borrow-check-after-call-effects
             ctx
@@ -77953,6 +78965,7 @@
             call-expr
             func
             args
+            types
             return-lifetimes)]
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
 
@@ -80981,6 +81994,7 @@
                           expr
                           func
                           args
+                          (ast.ast-type-list-new)
                           (TcBorrowCallReturnLifetimes.Fallback))]
                       [(TcBorrowCheckResult.Err message)
                         (TcBorrowCheckResult.Err message)])]))]
@@ -90181,6 +91195,21 @@
             (cbi.compiler-builtin-ctfe "in")
             (macro-spanned-symbol-id region span)
             sinner
+            span)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (let
+        [sinner : reader.SpannedSexpr
+          (try
+            (macro-type-to-spanned-sexpr
+              session
+              (ast.ty-node-get inner)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe ":invalidate")
+            (macro-spanned-symbol-id lifetime span)
+            sinner
             span)))]))
 
 (define (macro-child-form1-id
@@ -94580,6 +95609,10 @@
       (ast.ast-ty-region
         (macro-hygiene-rename-lifetime-id env macro-name region)
         (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate
+        (macro-hygiene-rename-lifetime-id env macro-name lifetime)
+        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
         name
@@ -98108,6 +99141,10 @@
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region
         region
+        (macro-type-arg-module-qualify ctx (ast.ty-node-get inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate
+        lifetime
         (macro-type-arg-module-qualify ctx (ast.ty-node-get inner)))]
     [(ast.AstType.Var name)
       (ast.AstType.Var (macro-type-arg-module-qualify-id ctx name))]

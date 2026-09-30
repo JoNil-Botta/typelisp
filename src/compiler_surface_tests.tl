@@ -688,6 +688,26 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-invalidate-param-ok?
+    [pools : ast.AstNodePoolContext]
+    [params : (& params ast.AstParamList)]
+    [index : i64]) : bool
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name (ast.AstType.Invalidate lifetime inner) false)
+        (and
+          (surface_identity.surface-identity-string-eq?
+            (ci.intern-str name)
+            "invalidated-owner")
+          (surface_identity.surface-identity-string-eq?
+            (ci.intern-str lifetime)
+            "invalidated-region")
+          (match (ast.ast-node-pool-context-type-get pools inner)
+            [(ast.AstType.I64) true]
+            [_ false]))]
+      [_ false])))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-c-function-param-ok?
     [pools : ast.AstNodePoolContext]
     [params : (& params ast.AstParamList)]
@@ -764,6 +784,8 @@
       [nonnull-param-id : i64 (ci.intern "nonnull-entry")]
       [unsafe-nullable-param-id : i64 (ci.intern "unsafe-nullable-entry")]
       [unsafe-nonnull-param-id : i64 (ci.intern "unsafe-nonnull-entry")]
+      [invalidate-param-id : i64 (ci.intern "invalidated-owner")]
+      [invalidate-lifetime-id : i64 (ci.intern "invalidated-region")]
       [c-signature : i64
         (ast.ast-node-pool-context-type-push
           source-pools
@@ -831,7 +853,7 @@
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
         (__tl_make-array ast.AstMacroParam 1)]
       [view-param-slots : (__tl_dyn-array ast.AstParam)
-        (__tl_make-array ast.AstParam 5)]
+        (__tl_make-array ast.AstParam 6)]
       [decl-slots : (__tl_dyn-array ast.AstDecl)
         (__tl_make-array ast.AstDecl 4)]
       [path-slots : (__tl_dyn-array String) (__tl_make-array String 4)]
@@ -893,11 +915,20 @@
             (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNonNull)
             false))
         (set!
+          (array-ref view-param-slots 5)
+          (ast.AstParam.Param
+            invalidate-param-id
+            (ast.ast-ty-invalidate-with-pools
+              source-pools
+              invalidate-lifetime-id
+              ast.AstType.I64)
+            false))
+        (set!
           (array-ref decl-slots 0)
           (ast.AstDecl.DefFn
             (ast.ast-decl-meta-runtime-shared-view)
             fn-id
-            (ast.AstParamList view-param-slots 5)
+            (ast.AstParamList view-param-slots 6)
             borrowed-slice
             combined-body
             ast.AstFnMetadata.No))
@@ -1064,6 +1095,11 @@
                                         (=
                                           (ast.ast-param-list-len
                                             (& hydrated-params))
+                                          6)
+                                        (surface-ast-invalidate-param-ok?
+                                          (owned_view.compiler-owned-shared-view
+                                            hydration.pools)
+                                          (& hydrated-params)
                                           5)
                                         (surface-ast-c-function-param-ok?
                                           (owned_view.compiler-owned-shared-view

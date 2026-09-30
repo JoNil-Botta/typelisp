@@ -3976,6 +3976,14 @@
           pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate-with-pools
+        pools
+        lifetime
+        (ctfe-reflect-resolve-type-with-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Struct name)
       (match (ctfe-reflect-info-canonical-type-lookup infos name)
         [(ast.AstMaybeType.Some canonical) canonical]
@@ -4194,6 +4202,15 @@
           pools
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (str_cat.str-cat
+        "invalidate_"
+        (ci.intern-str lifetime)
+        "_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Enum name)
       (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
     [(ast.AstType.EnumArgs name lifetimes)
@@ -4265,6 +4282,7 @@
     [(ast.AstType.Ref _ _) "ref"]
     [(ast.AstType.MutRef _ _) "mut-ref"]
     [(ast.AstType.Region _ _) "region"]
+    [(ast.AstType.Invalidate _ _) "invalidate"]
     [(ast.AstType.Enum _) "enum"]
     [(ast.AstType.EnumArgs _ _) "enum"]
     [(ast.AstType.Struct _) "struct"]
@@ -4856,6 +4874,11 @@
         pools
         layouts
         (ast.ast-node-pool-context-type-get pools inner))]
+    [(ast.AstType.Invalidate _ inner)
+      (ctfe-type-size-with-pools
+        pools
+        layouts
+        (ast.ast-node-pool-context-type-get pools inner))]
     ;; An enum occupies its 8-byte tag plus max-aligned payload storage inline,
     ;; exactly like a struct occupies its fields, so its size comes from the
     ;; recorded layout rather than from the tag width. Returning the tag width
@@ -4908,6 +4931,11 @@
     [(ast.AstType.Ref _ _) 8]
     [(ast.AstType.MutRef _ _) 8]
     [(ast.AstType.Region _ inner)
+      (ctfe-type-align-with-pools
+        pools
+        layouts
+        (ast.ast-node-pool-context-type-get pools inner))]
+    [(ast.AstType.Invalidate _ inner)
       (ctfe-type-align-with-pools
         pools
         layouts
@@ -11252,6 +11280,15 @@
             (ctfe-type-to-expr (ctfe-ty-get env elem) env)
             (ast.ast-expr-list-new)))
         env)]
+    [(ast.AstType.Invalidate lifetime elem)
+      (ctfe-type-syntax-call-id
+        (cbi.compiler-builtin-ctfe ":invalidate")
+        (ast.ast-expr-cons
+          (ctfe-type-syntax-name-id lifetime env)
+          (ast.ast-expr-cons
+            (ctfe-type-to-expr (ctfe-ty-get env elem) env)
+            (ast.ast-expr-list-new)))
+        env)]
     [(ast.AstType.Enum name)
       (ctfe-resolved-nominal-type-to-expr
         (ctfe-internal-resolved-enum-type-marker-id)
@@ -11481,7 +11518,8 @@
   [args : ast.AstExprList]
   [origin : ast.AstExpr]
   [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfeQuoteType
+  [fuel : i64]
+  [invalidate? : bool]) : ResultCtfeQuoteType
   (if (= args.len 2)
     (let
       [region-expr : ast.AstExpr
@@ -11493,10 +11531,15 @@
           (match (ctfe-expr-to-type inner-expr origin env fuel)
             [(ResultCtfeQuoteType.Ok inner-ty next-fuel)
               (ResultCtfeQuoteType.Ok
-                (ast.ast-ty-region-with-pools
-                  (ctfe-env-pools env)
-                  region
-                  inner-ty)
+                (if invalidate?
+                  (ast.ast-ty-invalidate-with-pools
+                    (ctfe-env-pools env)
+                    region
+                    inner-ty)
+                  (ast.ast-ty-region-with-pools
+                    (ctfe-env-pools env)
+                    region
+                    inner-ty))
                 next-fuel)]
             [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
         [(CtfeMaybeLifetimeSyntaxName.None) (ctfe-type-expr-error origin)]))
@@ -11652,7 +11695,9 @@
               [(= name (ctfe-builtin "&mut"))
                 (ctfe-expr-reference-type args origin env fuel true)]
               [(= name (ctfe-builtin "in"))
-                (ctfe-expr-region-type args origin env fuel)]
+                (ctfe-expr-region-type args origin env fuel false)]
+              [(= name (cbi.compiler-builtin-ctfe ":invalidate"))
+                (ctfe-expr-region-type args origin env fuel true)]
               [(= name (ctfe-builtin "Tuple"))
                 (match (ctfe-expr-list-to-type-list args origin env fuel)
                   [(ResultCtfeQuoteTypeList.Ok elems next-fuel)
@@ -11855,6 +11900,16 @@
         [(ResultCtfeQuoteType.Ok quoted next-fuel)
           (ResultCtfeQuoteType.Ok
             (ast.ast-ty-region-with-pools (ctfe-env-pools env) region quoted)
+            next-fuel)]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
+    [(ast.AstType.Invalidate lifetime inner)
+      (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
+            (ast.ast-ty-invalidate-with-pools
+              (ctfe-env-pools env)
+              lifetime
+              quoted)
             next-fuel)]
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(ast.AstType.VarArgs name lifetimes)

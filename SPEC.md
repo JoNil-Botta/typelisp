@@ -450,6 +450,21 @@ are rejected. Borrowed APIs instead declare `(& lifetime T)` or
 `(&mut lifetime T)` parameters. Foreign `extern` declarations retain the FFI
 boundary rules in §5.5; they do not acquire a TypeLisp ownership effect.
 
+A by-value runtime parameter may declare one destruction effect,
+`[owner : T (:invalidate r)]`: the call destroys the arena owner of lifetime
+`r`, which `T` must contain. The parameter's type is recorded as
+`(:invalidate r T)`, which is also how a function type spells it, for example
+`(-> (:invalidate r (arena.Arena r)) unit)`. The effect is part of callable
+identity, so a function type with it neither converts to nor from the same type
+without it, but it has no ABI effect: the argument is passed exactly as `T`.
+Section 5.16 gives the callee obligation and the caller effect. Missing,
+malformed, or repeated `:invalidate` metadata and `:invalidate` on a `comptime`
+parameter are parse errors. The checker rejects the effect on an `extern`
+parameter, on a reference type, on a type that does not contain `r`, and
+anywhere but a parameter type; it also rejects a signature that invalidates
+one lifetime through two parameters or whose result type contains an
+invalidated lifetime.
+
 ### 3.4 Raw pointer types
 
 Raw pointers are the explicit unsafe surface for FFI and low-level memory
@@ -3922,7 +3937,8 @@ naming the binding: passing the value by value to any other function, moving
 only part of it, leaving it on one exit edge, and discharging it on only some
 of the paths that meet at an `if`, `match`, `and`/`or` or loop exit. A path
 that ends in a call of a `never` function, such as a panic, needs no discharge.
-Function parameters do not yet carry an obligation (#6947).
+Function parameters do not yet carry a cleanup obligation (#6947); an
+`(:invalidate r)` parameter carries the destroy obligation of section 5.16.
 
 These transfers also recognize transparent value forms (`begin`, `unsafe`,
 and nested scopes) and `if`/`match` arms that all yield the same visible owner
@@ -5813,14 +5829,66 @@ or otherwise moved through an accepted release point before the rewind.
 local/local-rooted aggregate place of type `(arena.Arena r)`. Branded destroy
 uses `r` as the stable invalidation identity: every current-function local,
 reference, borrow, closure, or aggregate/container value whose resolved type or
-capture provenance contains `r` becomes unusable. Parameter and
-parameter-rooted places are rejected until signatures can declare a
-caller-visible invalidation effect. Atomic brands require the same joined-user
-proof. Both calls are rejected while executing inside the same owner through
+capture provenance contains `r` becomes unusable. A parameter or
+parameter-rooted place of brand `r` is accepted only when a parameter of the
+enclosing function or lambda declares `(:invalidate r)`; a nested lambda never
+inherits its enclosing function's effect. Atomic brands require the same
+joined-user proof. Both calls are rejected while executing inside the same owner through
 `in-arena`, because the active allocation target would be invalidated by the
 operation. They are also rejected while a live `with` cleanup owner (section
 5.19) carries the destroyed brand or the rewound phase generation: that owner
 is not merely made unusable, because its cleanup runs when its scope ends.
+
+**Invalidation effects:** a helper that destroys a branded owner it receives
+declares `(:invalidate r)` on that parameter (section 3.3):
+
+```lisp test=run name=arena-invalidate-effect exit=42 stdout=""
+(import stdlib.arena)
+(import stdlib.string)
+
+(define (release [owner : (arena.Arena r) (:invalidate r)]) : unit
+  (arena.destroy-safe! owner))
+
+(define (main) : i64
+  (let
+    [owner (arena.make)]
+    [kept (arena.make)]
+    [text (in-arena owner (string.append "owned" "-text"))]
+    [other (in-arena kept (string.append "kept" "-text"))]
+    [n : i64 (string.string-length text)]
+    (begin
+      (release owner)
+      (let
+        [m : i64 (string.string-length other)]
+        (begin
+          (arena.destroy-safe! kept)
+          (+ n (+ m 23)))))))
+```
+
+Inside the helper the parameter owns a must-discharge obligation, checked by
+the same path-sensitive engine as a cleanup-owning `let` (section 4.7.1). On
+every normal exit (falling through the body, `return`, and recoverable `try`
+propagation, whichever `if` or `match` arm or loop exit reaches it) exactly one
+of these must have ended brand `r`: a canonical `arena.destroy-safe!` of an
+owner place of that brand, or a call that passes a value of that brand to
+another `:invalidate` parameter. Returning the parameter, moving it or a nested
+owner anywhere else, raw `arena.destroy`, and destroying a different brand do
+not discharge it, and every use of a brand-`r` value after the destroy is a use
+of a moved value. A path that ends in a call of a `never` function needs no
+discharge.
+
+At a call, the checker substitutes `r` from the argument's type and applies the
+same checks as a direct `arena.destroy-safe!` of that brand: it must be a local
+arena's brand or a lifetime the caller itself invalidates, two arguments cannot
+invalidate the same brand, the call cannot run inside that arena through
+`in-arena`, and the call's result type cannot contain the brand. After the
+arguments move, every caller local, reference, borrow, closure capture, and
+aggregate or container value carrying the brand becomes unusable; atomic users
+must already be joined or released and no live `with` cleanup owner may carry
+it. Values of every other brand stay usable, so a helper can invalidate several
+distinct arenas through several parameters. A helper that consumes and returns
+`(arena.Arena r)` or `(State r)` is ordinary ownership transfer and has no
+effect.
 
 ### 5.17 Comptime type reflection
 
@@ -5909,11 +5977,14 @@ diagnostic names the primitive and the expected kind, for example
 - Shapes: `array`, `dyn-array`, `box`, `function`, `c-function`, `tuple`, `struct`, `enum`,
   `slice`.
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
-  `region`, `type-var`.
+  `region`, `invalidate`, `type-var`.
 
 `CFunc` reports `c-function`; its `type-key` retains the signature and mode.
 The `function-param-count`, `function-param-type`, and `function-return-type`
 operations require ordinary TypeLisp function types and reject `CFunc`.
+`function-param-type` returns a parameter declared `(:invalidate r T)` as that
+wrapper, which `type-kind` reports as `invalidate` and whose `type-key` retains
+`r` and `T`.
 
 Reserved/partial shapes are classified by `type-kind` and `type-key`.
 `reference-element-type` additionally exposes the referent of shared and mutable
@@ -7869,7 +7940,8 @@ boundaries. The standard workflows are:
   checker can prove every value from that phase is dead. `arena.destroy-safe!`
   may consume that direct local or its branded handle after it has moved into a
   local aggregate; all current-function values carrying the brand are then
-  invalidated.
+  invalidated. A helper declared with `(:invalidate r)` performs the same
+  destroy for its caller.
 - **Safe atomic arena invalidation:** for a direct local `arena.make-atomic`
   owner, use the same phase/destroy surface, but only after every
   checker-visible task, channel, mutex, or other user of that owner has been
@@ -8123,8 +8195,9 @@ through that owner. Rewinding consumes the token and causes values allocated in
 that phase generation to be treated as moved. Using the token again, using a
 phase value after rewind, using the owner place after safe destroy, or using any
 current-function value carrying the destroyed brand is rejected. A parameter
-or parameter-rooted field cannot be destroyed directly; cross-function destroy
-requires an explicit signature effect.
+or parameter-rooted field is destroyed only under its signature's
+`(:invalidate r)` effect, which carries the same invalidation to every caller
+(section 5.16).
 
 The safe phase-token proof does not make an ordinary arena a spanning
 task-thread owner. Atomic arenas remain spanning owners only for values

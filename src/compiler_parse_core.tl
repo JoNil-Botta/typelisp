@@ -4074,6 +4074,36 @@
       (ResultAstType.Err
         "parse: CFunc requires exactly a mode and a function signature")]))
 
+;; `(:invalidate r T)`: a callable parameter type whose call destroys the owner
+;; of lifetime `r` (#6670). The checker admits it only as a parameter type.
+(define (parse-ast-invalidate-type
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstType
+  (match (reader.sexpr-view rest)
+    [(reader.SexprView.Cons lifetime-node tail)
+      (match (reader.sexpr-view lifetime-node)
+        [(reader.SexprView.Sym lifetime)
+          (match (reader.sexpr-view tail)
+            [(reader.SexprView.Cons ty end)
+              (match (reader.sexpr-view (compiler-parse-place-shared-view end))
+                [(reader.SexprView.Nil)
+                  (match (parse-ast-type dispatch pools ty)
+                    [(ResultAstType.Ok inner)
+                      (ResultAstType.Ok
+                        (ast.ast-ty-invalidate-with-pools
+                          pools
+                          (ci.intern-syntax-id-value lifetime)
+                          inner))]
+                    [(ResultAstType.Err message) (ResultAstType.Err message)])]
+                [_ (ResultAstType.Err (parse-ast-invalidate-type-message))])]
+            [_ (ResultAstType.Err (parse-ast-invalidate-type-message))])]
+        [_ (ResultAstType.Err (parse-ast-invalidate-type-message))])]
+    [_ (ResultAstType.Err (parse-ast-invalidate-type-message))]))
+
+(define (parse-ast-invalidate-type-message) : String
+  "parse: malformed :invalidate type; expected (:invalidate lifetime type)")
+
 (define (parse-ast-func-type-parts
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -4300,6 +4330,8 @@
               [(= head-id (cbi.compiler-builtin-ctfe ":consume"))
                 (ResultAstType.Err
                   "parse: :consume has been removed; by-value parameters move non-Copy values")]
+              [(= head-id (cbi.compiler-builtin-ctfe ":invalidate"))
+                (parse-ast-invalidate-type dispatch pools rest)]
               [(= tag (compiler-parse-tag-ty-c-func))
                 (parse-ast-c-function-type dispatch pools rest)]
               [(= tag (compiler-parse-tag-ty-func))
@@ -4595,6 +4627,8 @@
                 (compiler-parse-semantic-type-second-origin! dispatch rest)]
               [(= tag (compiler-parse-tag-ty-region))
                 (compiler-parse-semantic-type-second-origin! dispatch rest)]
+              [(= head-id (cbi.compiler-builtin-ctfe ":invalidate"))
+                (compiler-parse-semantic-type-second-origin! dispatch rest)]
               [else
                 (compiler-parse-semantic-origin-push-components!
                   head
@@ -4623,6 +4657,7 @@
 
 (define (parse-ast-runtime-param-result
   [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
   [name : ci.InternSyntaxId]
   [ty : ast.AstType]
   [end : reader.SpannedSexpr]) : ResultAstParam
@@ -4630,7 +4665,61 @@
     [(reader.SexprView.Nil)
       (ResultAstParam.Ok
         (ast.ast-param-id (ci.intern-syntax-id-value name) ty false))]
+    [(reader.SexprView.Cons metadata metadata-rest)
+      (match (parse-ast-param-invalidate-metadata metadata)
+        [(ParseAstInvalidateMetadata.Lifetime lifetime)
+          (match (reader.sexpr-view
+            (compiler-parse-place-shared-view metadata-rest))
+            [(reader.SexprView.Nil)
+              (ResultAstParam.Ok
+                (ast.ast-param-id
+                  (ci.intern-syntax-id-value name)
+                  (ast.ast-ty-invalidate-with-pools pools lifetime ty)
+                  false))]
+            [(reader.SexprView.Cons next _)
+              (match (parse-ast-param-invalidate-metadata next)
+                [(ParseAstInvalidateMetadata.Other)
+                  (ResultAstParam.Err
+                    (parse-ast-param-metadata-error dispatch metadata-rest))]
+                [_
+                  (ResultAstParam.Err
+                    "parse: duplicate :invalidate parameter metadata")])]
+            [_ (ResultAstParam.Err "parse: malformed parameter")])]
+        [(ParseAstInvalidateMetadata.Malformed)
+          (ResultAstParam.Err
+            "parse: malformed :invalidate metadata; expected (:invalidate lifetime)")]
+        [(ParseAstInvalidateMetadata.Other)
+          (ResultAstParam.Err (parse-ast-param-metadata-error dispatch end))])]
     [_ (ResultAstParam.Err (parse-ast-param-metadata-error dispatch end))]))
+
+;; Parameter metadata `(:invalidate r)` (#6670), told apart from any other.
+(defenum ParseAstInvalidateMetadata
+  (Lifetime i64)
+  (Malformed)
+  (Other))
+
+(define (parse-ast-param-invalidate-metadata [metadata : reader.SpannedSexpr]) : ParseAstInvalidateMetadata
+  (match (reader.sexpr-view metadata)
+    [(reader.SexprView.Cons key-node tail)
+      (match (reader.sexpr-view key-node)
+        [(reader.SexprView.Sym key)
+          (if (=
+            (ci.intern-syntax-id-value key)
+            (cbi.compiler-builtin-ctfe ":invalidate"))
+            (match (reader.sexpr-view tail)
+              [(reader.SexprView.Cons lifetime-node end)
+                (match (reader.sexpr-view lifetime-node)
+                  [(reader.SexprView.Sym lifetime)
+                    (match (reader.sexpr-view end)
+                      [(reader.SexprView.Nil)
+                        (ParseAstInvalidateMetadata.Lifetime
+                          (ci.intern-syntax-id-value lifetime))]
+                      [_ ParseAstInvalidateMetadata.Malformed])]
+                  [_ ParseAstInvalidateMetadata.Malformed])]
+              [_ ParseAstInvalidateMetadata.Malformed])
+            ParseAstInvalidateMetadata.Other)]
+        [_ ParseAstInvalidateMetadata.Other])]
+    [_ ParseAstInvalidateMetadata.Other]))
 
 (define (parse-ast-param-metadata-error
   [dispatch : sym_i64_env.SymI64Env]
@@ -4641,20 +4730,26 @@
         [(reader.SexprView.Cons key-node _)
           (match (reader.sexpr-view key-node)
             [(reader.SexprView.Sym key)
-              (if (=
-                (ci.intern-syntax-id-value key)
-                (cbi.compiler-builtin-ctfe ":consume"))
-                "parse: :consume has been removed; by-value parameters move non-Copy values"
-                (let
-                  [key-text : String
-                    (compiler-parse-dispatch-syntax-id-text dispatch key)]
-                  (if (and
-                    (> (string.string-length key-text) 0)
-                    (= (string.string-ref key-text 0) ':'))
-                    (str_cat.str-cat
-                      "parse: unknown parameter metadata "
-                      key-text)
-                    "parse: malformed parameter metadata")))]
+              (cond
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe ":consume"))
+                  "parse: :consume has been removed; by-value parameters move non-Copy values"]
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe ":invalidate"))
+                  "parse: :invalidate requires a runtime parameter"]
+                [else
+                  (let
+                    [key-text : String
+                      (compiler-parse-dispatch-syntax-id-text dispatch key)]
+                    (if (and
+                      (> (string.string-length key-text) 0)
+                      (= (string.string-ref key-text 0) ':'))
+                      (str_cat.str-cat
+                        "parse: unknown parameter metadata "
+                        key-text)
+                      "parse: malformed parameter metadata"))])]
             [_ "parse: malformed parameter metadata"])]
         [_ "parse: malformed parameter metadata"])]
     [_ "parse: malformed parameter"]))
@@ -4709,6 +4804,7 @@
                         [(ResultAstType.Ok parsed-ty)
                           (parse-ast-runtime-param-result
                             dispatch
+                            pools
                             first-name
                             parsed-ty
                             end)]
@@ -4789,7 +4885,8 @@
       (= name-id (cbi.compiler-builtin-ctfe "type-var"))
       (= name-id (cbi.compiler-builtin-ctfe "box"))
       (= name-id (cbi.compiler-builtin-ctfe "slice"))
-      (= name-id (cbi.compiler-builtin-ctfe "c-function")))))
+      (= name-id (cbi.compiler-builtin-ctfe "c-function"))
+      (= name-id (cbi.compiler-builtin-ctfe "invalidate")))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]

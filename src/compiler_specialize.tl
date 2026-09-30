@@ -1425,6 +1425,14 @@
         (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
         "_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (str_cat.str-cat
+        "invalidate_"
+        (spec_ci.intern-compat-state-str
+          (spec-owner-intern-state owner)
+          lifetime)
+        "_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner inner)))]
     [(ast.AstType.Enum name)
       (str_cat.str-cat
         "enum_"
@@ -1834,6 +1842,21 @@
             (spec_ci.intern-compat-state-str
               (spec-owner-intern-state owner)
               region))
+          (spec-structural-key-raw inner-key)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (let
+        [inner-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner inner))]
+        (spec-structural-node-with-owner
+          owner
+          -139
+          (spec-structural-content-atom-with-owner
+            owner
+            (spec_ci.intern-compat-state-str
+              (spec-owner-intern-state owner)
+              lifetime))
           (spec-structural-key-raw inner-key)))]
     [(ast.AstType.Enum name)
       (spec-structural-node-with-owner
@@ -4529,6 +4552,14 @@
       (ast.ast-ty-region-with-pools
         (spec-owner-pools owner)
         region
+        (spec-substitute-type-with-owner
+          owner
+          (spec-owner-type-get owner inner)
+          subs))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate-with-pools
+        (spec-owner-pools owner)
+        lifetime
         (spec-substitute-type-with-owner
           owner
           (spec-owner-type-get owner inner)

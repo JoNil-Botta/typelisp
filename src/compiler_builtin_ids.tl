@@ -1346,7 +1346,7 @@
         ,@statements))))
 
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 300))
+  (__tl_make-array i64 302))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -1358,7 +1358,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 323)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 300)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 302)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -1370,7 +1370,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 300)
+      (while (< i 302)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -1445,7 +1445,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 300)
+    (while (< i 302)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -1453,7 +1453,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 300)
+    (while (< i 302)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1527,7 +1527,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index 300)
+    (while (< index 302)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
@@ -1827,6 +1827,8 @@
       ["non-null" 297]
       ["unsafe-nullable" 298]
       ["unsafe-non-null" 299]
+      [":invalidate" 300]
+      ["invalidate" 301]
       [_
         (comptime.comptime-error
           "compiler-builtin-ctfe-slot: not a CTFE builtin spelling")])))
@@ -2150,7 +2152,9 @@
     (compiler-builtin-load-ctfe! insert-missing "nullable")
     (compiler-builtin-load-ctfe! insert-missing "non-null")
     (compiler-builtin-load-ctfe! insert-missing "unsafe-nullable")
-    (compiler-builtin-load-ctfe! insert-missing "unsafe-non-null")))
+    (compiler-builtin-load-ctfe! insert-missing "unsafe-non-null")
+    (compiler-builtin-load-ctfe! insert-missing ":invalidate")
+    (compiler-builtin-load-ctfe! insert-missing "invalidate")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin

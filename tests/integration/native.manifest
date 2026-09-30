@@ -693,6 +693,9 @@ arena_phase_rewind_destroy|all|-|tests/integration/arena_phase_rewind_destroy.tl
 arena_branded_handle|all|-|tests/integration/arena_branded_handle.tl|42|-|-|stdlib/arena.tl|-
 arena_branded_in_arena|all|-|tests/integration/arena_branded_in_arena.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_branded_place_destroy|all|-|tests/integration/arena_branded_place_destroy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+arena_invalidate_effect|all|-,0,1,2|tests/integration/arena_invalidate_effect.tl|42|-|-|stdlib/arena.tl stdlib/string.tl stdlib/test.tl|-
+arena_invalidate_reflection|all|-,0,1,2|tests/integration/arena_invalidate_reflection.tl|42|-|-|stdlib/arena.tl stdlib/comptime.tl|-
+arena_invalidate_exits|all|0,1,2|tests/integration/arena_invalidate_exits.tl|42|-|-|stdlib/arena.tl stdlib/io.tl|stage-stdlib
 arena_rewind_make_array_zero|all|-|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-|-
 make_array_default_reads_zero|all|-|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl|-
 mem_fill8_runtime_contract|all|-|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl|-

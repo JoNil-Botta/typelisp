@@ -6211,6 +6211,14 @@
           (compiler-ir-clone-type
             pools
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.AstType.Invalidate
+        lifetime
+        (ast.ast-node-pool-context-type-push
+          pools
+          (compiler-ir-clone-type
+            pools
+            (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.Ref region inner)
       (ast.AstType.Ref
         region
@@ -6742,6 +6750,16 @@
       (str_cat.str-cat
         "(Region "
         (compiler-ir-lifetime-render structural-session region)
+        " "
+        (compiler-ir-type-render
+          structural-session
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases inner))
+        ")")]
+    [(ast.AstType.Invalidate lifetime inner)
+      (str_cat.str-cat
+        "(Invalidate "
+        (compiler-ir-lifetime-render structural-session lifetime)
         " "
         (compiler-ir-type-render
           structural-session
@@ -9660,6 +9678,17 @@
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases inner))
         ")")]
+    [(ast.AstType.Invalidate lifetime inner)
+      (str_cat.str-cat
+        "(:invalidate "
+        (compiler-ir-lifetime-render
+          (cis.InternStructuralSessionHandle 0)
+          lifetime)
+        " "
+        (compiler-ir-type-name
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases inner))
+        ")")]
     [(ast.AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
@@ -9793,6 +9822,10 @@
         name
         -1)]
     [(ast.AstType.Region _ inner)
+      (compiler-ir-representation-owned-aggregate-name
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.Invalidate _ inner)
       (compiler-ir-representation-owned-aggregate-name
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
@@ -10292,6 +10325,11 @@
       ;; Region was already transparently classified by the canonical-key
       ;; query; recurse only to discover nested container types.
       [(ast.AstType.Region _ inner)
+        (compiler-ir-representation-collect-one-type
+          type-segment-bases
+          with-nominal
+          (ast.ast-type-segment-bases-get type-segment-bases inner))]
+      [(ast.AstType.Invalidate _ inner)
         (compiler-ir-representation-collect-one-type
           type-segment-bases
           with-nominal

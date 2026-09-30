@@ -18616,6 +18616,13 @@
               type-segment-bases
               inner)]
           (compiler-backend-type-size type-segment-bases ty))]
+      [(compiler_ast_types.AstType.Invalidate _ inner)
+        (let
+          [ty
+            (compiler_ast_types.ast-type-segment-bases-get
+              type-segment-bases
+              inner)]
+          (compiler-backend-type-size type-segment-bases ty))]
       [(compiler_ast_types.AstType.Enum _) 8]
       [(compiler_ast_types.AstType.EnumArgs _ _) 8]
       [(compiler_ast_types.AstType.Struct _) 8]

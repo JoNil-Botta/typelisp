@@ -1348,6 +1348,89 @@
           [_ false]))]
     [(parser.ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-type-invalidate? [ty : ast.AstType] [lifetime : i64]) : bool
+  (match ty
+    [(ast.AstType.Invalidate actual inner)
+      (and
+        (= actual lifetime)
+        (match (ast.ty-node-get inner)
+          [(ast.AstType.VarArgs _ _) true]
+          [_ false]))]
+    [_ false]))
+
+;; `(:invalidate r)` parameter metadata wraps the parameter type, and the
+;; `(:invalidate r T)` type form spells the same wrapper inside a function
+;; type (#6670).
+(define (compiler-parse-invalidate-ok?) : bool
+  (match (parser.parse-ast-source
+    "(define (release [owner : (Arena r) (:invalidate r)] [f : (-> (:invalidate q (Arena q)) unit)] [n : i64]) : unit unit)")
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (match (ast.ast-decl-list-step (deref decls-box))
+        [(ast.AstDeclListStep.Cons (ast.AstDecl.DefFn _ _ params _ _ _) _)
+          (and
+            (= (ast.ast-param-list-len (& params)) 3)
+            (match (ast.ast-param-list-get
+              (& params)
+              0
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param _ owner-ty false)
+                (compiler-parse-type-invalidate? owner-ty (ci.intern "r"))]
+              [_ false])
+            (match (ast.ast-param-list-get
+              (& params)
+              1
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param _ (ast.AstType.Func args _) false)
+                (compiler-parse-type-invalidate?
+                  (ast.ty-node-get
+                    (ast.ast-type-list-get
+                      (& (deref args))
+                      0
+                      (ast.ast-type-id-fallback)))
+                  (ci.intern "q"))]
+              [_ false])
+            (match (ast.ast-param-list-get
+              (& params)
+              2
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param _ (ast.AstType.I64) false) true]
+              [_ false]))]
+        [_ false])]
+    [(parser.ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-invalidate-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(define (f [a : (Arena r) (:invalidate)]) : unit unit)"
+      "parse: malformed :invalidate metadata; expected (:invalidate lifetime)")
+    (compiler-parse-error-ok?
+      "(define (f [a : (Arena r) (:invalidate r s)]) : unit unit)"
+      "parse: malformed :invalidate metadata; expected (:invalidate lifetime)")
+    (compiler-parse-error-ok?
+      "(define (f [a : (Arena r) (:invalidate 1)]) : unit unit)"
+      "parse: malformed :invalidate metadata; expected (:invalidate lifetime)")
+    (compiler-parse-error-ok?
+      "(define (f [a : (Arena r) (:invalidate r) (:invalidate r)]) : unit unit)"
+      "parse: duplicate :invalidate parameter metadata")
+    (compiler-parse-error-ok?
+      "(define (f [a : (Arena r) (:invalidate r) (:unknown)]) : unit unit)"
+      "parse: unknown parameter metadata :unknown")
+    (compiler-parse-error-ok?
+      "(define (f [comptime a : (Arena r) (:invalidate r)]) : unit unit)"
+      "parse: :invalidate requires a runtime parameter")
+    (compiler-parse-error-ok?
+      "(define (f [g : (-> (:invalidate q) unit)]) : unit unit)"
+      "parse: malformed :invalidate type; expected (:invalidate lifetime type)")
+    (compiler-parse-error-ok?
+      "(define (f [g : (-> (:invalidate 1 (Arena q)) unit)]) : unit unit)"
+      "parse: malformed :invalidate type; expected (:invalidate lifetime type)")
+    (compiler-parse-error-ok?
+      "(define (f [g : (-> (:invalidate q (Arena q) i64) unit)]) : unit unit)"
+      "parse: malformed :invalidate type; expected (:invalidate lifetime type)")
+    (compiler-parse-error-ok?
+      "(define (f [g : (-> (:invalidate q (Ptr)) unit)]) : unit unit)"
+      "parse: Ptr expects exactly one type")))
+
 (define (compiler-parse-borrow-ok?) : bool
   (match (parser.parse-ast-source
     "(define (main [x : i64]) : i64
@@ -2380,6 +2463,7 @@
     [(not (compiler-parse-extern-metadata-error-tests-ok?)) false]
     [(not (compiler-parse-box-error-tests-ok?)) false]
     [(not (compiler-parse-reference-error-tests-ok?)) false]
+    [(not (compiler-parse-invalidate-error-tests-ok?)) false]
     [else true]))
 
 ;; Top-level declaration parsing: accept value/function `define`,
@@ -3297,6 +3381,12 @@
       "box"
       false)
     (compiler-parse-defmacro-type-kind-storage-case-ok?
+      "(defmacro (single [T : type (:kind invalidate c-function)]) : Module unit)"
+      2
+      "invalidate"
+      "c-function"
+      false)
+    (compiler-parse-defmacro-type-kind-storage-case-ok?
       "(defmacro (all-kinds [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char string unit never array dyn-array function tuple struct enum str ptr mut-ptr ref mut-ref region type-var box slice)]) : Module unit)"
       30
       "i64"
@@ -3623,6 +3713,7 @@
         (compiler-parse-array-take-ok?)
         (compiler-parse-replace-ok?)
         (compiler-parse-reference-ok?)
+        (compiler-parse-invalidate-ok?)
         (compiler-parse-borrow-ok?)
         (compiler-parse-resource-with-shape-ok?)
         (compiler-parse-spmd-callable-metadata-ok?)

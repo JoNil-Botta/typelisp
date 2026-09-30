@@ -68,6 +68,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 12: AstType tag 39 carries a lifetime-invalidating parameter (#6670).
+  ;;
   ;; 11: AstExpr tags 87 and 88 add ForeachActive and LaneValue.
   ;;
   ;; 10: AstType tag 38 carries a C callable signature and nullability/effect mode.
@@ -106,7 +108,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  11)
+  12)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

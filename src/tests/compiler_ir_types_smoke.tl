@@ -1696,6 +1696,332 @@
             (compiler_ir_types.compiler-ir-label-text (+ base total)))
           (string.eq (& past-end) ""))))))
 
+;; The instruction-span index answers from one function's entries (#7875).
+(define (compiler-ir-smoke-instr-span-path
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [key : compiler_ir_types.CompilerSourceSpansInstrKey]) : i64
+  (match spans
+    [(compiler_ir_types.CompilerSourceSpans.Spans _ instr-entries _)
+      (match (compiler_ir_types.compiler-source-spans-instr-entry-list-lookup
+        instr-entries
+        key)
+        [(compiler_ir_types.CompilerMaybeSourceLocation.Some
+            (compiler_ir_types.CompilerSourceLocation path-id _))
+          path-id]
+        [(compiler_ir_types.CompilerMaybeSourceLocation.No) -1])]))
+
+;; The path `spans` records for `key`, or -1, leaving `spans` usable.
+(defmacro (compiler-ir-smoke-path [spans : Expr] [key : Expr]) : Expr
+  `(compiler-ir-smoke-instr-span-path
+    (compiler_ir_types.compiler-ir-global-shared-view ,spans)
+    ,key))
+
+(define (compiler-ir-smoke-value
+  [function : compiler_ir_types.CompilerIrSymbolId]
+  [id : i64]) : compiler_ir_types.CompilerSourceSpansInstrKey
+  (compiler_ir_types.CompilerSourceSpansInstrKey.Value function id))
+
+(define (compiler-ir-smoke-fn [id : i64]) : compiler_ir_types.CompilerIrSymbolId
+  (compiler_ir_types.compiler-ir-symbol-typed-id id))
+
+;; `spans` plus `key` recorded at `path`.
+(define (compiler-ir-smoke-add
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [key : compiler_ir_types.CompilerSourceSpansInstrKey]
+  [path : i64]) : compiler_ir_types.CompilerSourceSpans
+  (compiler_ir_types.compiler-source-spans-insert-instr-entry-located
+    spans
+    key
+    path
+    (ast.ast-source-span 1 2 3 4)))
+
+;; The newest binding for a key wins; another function's entries never answer;
+;; an older table keeps its own prefix after a newer one appended in the shared
+;; storage and after it grew; an escaped copy answers the same; cleared and
+;; independent tables share nothing.
+(define (compiler-ir-smoke-source-spans-instr-index-ok?) : bool
+  (let
+    [f : compiler_ir_types.CompilerIrSymbolId (compiler-ir-smoke-fn 7000001)]
+    [g : compiler_ir_types.CompilerIrSymbolId (compiler-ir-smoke-fn 7000002)]
+    [absent : compiler_ir_types.CompilerIrSymbolId
+      (compiler-ir-smoke-fn 7000003)]
+    [older : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler-ir-smoke-add
+          (compiler-ir-smoke-add
+            (compiler_ir_types.compiler-source-spans-empty)
+            (compiler-ir-smoke-value f 1)
+            1)
+          (compiler-ir-smoke-value g 1)
+          2)
+        (compiler_ir_types.CompilerSourceSpansInstrKey.Store f 2)
+        3)]
+    ;; Appended in place: `older` has room for a fourth entry.
+    [newer : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler_ir_types.compiler-ir-global-shared-view older)
+        (compiler-ir-smoke-value f 1)
+        4)]
+    [grown : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-ir-global-shared-view newer)]
+    [index : i64 10]
+    [independent : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler_ir_types.compiler-source-spans-empty)
+        (compiler-ir-smoke-value g 1)
+        9)]
+    (begin
+      ;; Grow well past the shared capacity with entries of both functions.
+      (while (< index 40)
+        (begin
+          (set!
+            grown
+            (compiler-ir-smoke-add
+              grown
+              (if (= (% index 2) 0)
+                (compiler-ir-smoke-value g index)
+                (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds f index))
+              (+ 100 index)))
+          (set! index (+ index 1))))
+      (let
+        [cleared : compiler_ir_types.CompilerSourceSpans
+          (compiler_ir_types.compiler-source-spans-clear-instrs
+            (compiler_ir_types.compiler-ir-global-shared-view grown))]
+        [escaped : compiler_ir_types.CompilerSourceSpans
+          (compiler_ir_types.compiler-source-spans-escape
+            (compiler_ir_types.compiler-ir-global-shared-view grown))]
+        (and
+          ;; `older` keeps its own binding for (f, 1) and its prefix.
+          (= (compiler-ir-smoke-path older (compiler-ir-smoke-value f 1)) 1)
+          (=
+            (compiler-ir-smoke-path
+              older
+              (compiler_ir_types.CompilerSourceSpansInstrKey.Store f 2))
+            3)
+          (= (compiler-ir-smoke-path older (compiler-ir-smoke-value g 10)) -1)
+          ;; The newest binding wins, before and after growth.
+          (= (compiler-ir-smoke-path newer (compiler-ir-smoke-value f 1)) 4)
+          (= (compiler-ir-smoke-path grown (compiler-ir-smoke-value f 1)) 4)
+          (= (compiler-ir-smoke-path grown (compiler-ir-smoke-value g 1)) 2)
+          (= (compiler-ir-smoke-path grown (compiler-ir-smoke-value g 38)) 138)
+          (=
+            (compiler-ir-smoke-path
+              grown
+              (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds f 39))
+            139)
+          ;; Misses: another function's id, a kind never recorded, an absent
+          ;; function.
+          (= (compiler-ir-smoke-path grown (compiler-ir-smoke-value f 38)) -1)
+          (=
+            (compiler-ir-smoke-path
+              grown
+              (compiler_ir_types.CompilerSourceSpansInstrKey.Store g 1))
+            -1)
+          (=
+            (compiler-ir-smoke-path grown (compiler-ir-smoke-value absent 1))
+            -1)
+          ;; An escaped copy rebuilds the index with the same answers.
+          (= (compiler-ir-smoke-path escaped (compiler-ir-smoke-value f 1)) 4)
+          (=
+            (compiler-ir-smoke-path
+              escaped
+              (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds f 39))
+            139)
+          (= (compiler-ir-smoke-path escaped (compiler-ir-smoke-value f 38)) -1)
+          ;; Cleared and independent tables share no state.
+          (= (compiler-ir-smoke-path cleared (compiler-ir-smoke-value f 1)) -1)
+          (=
+            (compiler-ir-smoke-path independent (compiler-ir-smoke-value f 1))
+            -1)
+          (=
+            (compiler-ir-smoke-path independent (compiler-ir-smoke-value g 1))
+            9))))))
+
+;; Lists over one array see its current content, as the plain list did: an
+;; older list re-adding the entries a newer one stored moves forward over them,
+;; and one adding a different entry overwrites in place, which the newer lists
+;; then see too. A run of new functions that grows `heads` while the array
+;; still has room keeps every list's answers.
+(define (compiler-ir-smoke-source-spans-instr-history-ok?) : bool
+  (let
+    [f : compiler_ir_types.CompilerIrSymbolId (compiler-ir-smoke-fn 7000001)]
+    [g : compiler_ir_types.CompilerIrSymbolId (compiler-ir-smoke-fn 7000002)]
+    ;; Room for four entries, so the lists below share one array.
+    [base : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler_ir_types.compiler-source-spans-empty)
+        (compiler-ir-smoke-value f 1)
+        1)]
+    [newer : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler-ir-smoke-add
+          (compiler_ir_types.compiler-ir-global-shared-view base)
+          (compiler-ir-smoke-value f 1)
+          2)
+        (compiler-ir-smoke-value g 1)
+        3)]
+    [replayed : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler-ir-smoke-add
+          (compiler_ir_types.compiler-ir-global-shared-view base)
+          (compiler-ir-smoke-value f 1)
+          2)
+        (compiler-ir-smoke-value g 1)
+        3)]
+    ;; Appends past the replay.
+    [extended : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler_ir_types.compiler-ir-global-shared-view replayed)
+        (compiler-ir-smoke-value f 1)
+        5)]
+    [shared-ok : bool
+      (and
+        (= (compiler-ir-smoke-path base (compiler-ir-smoke-value f 1)) 1)
+        (= (compiler-ir-smoke-path base (compiler-ir-smoke-value g 1)) -1)
+        (= (compiler-ir-smoke-path newer (compiler-ir-smoke-value f 1)) 2)
+        (= (compiler-ir-smoke-path newer (compiler-ir-smoke-value g 1)) 3)
+        (= (compiler-ir-smoke-path replayed (compiler-ir-smoke-value f 1)) 2)
+        (= (compiler-ir-smoke-path replayed (compiler-ir-smoke-value g 1)) 3)
+        (= (compiler-ir-smoke-path extended (compiler-ir-smoke-value f 1)) 5)
+        (= (compiler-ir-smoke-path extended (compiler-ir-smoke-value g 1)) 3))]
+    ;; Overwrites (f, 1) -> 2 at index 1 for the three lists above.
+    [diverged : compiler_ir_types.CompilerSourceSpans
+      (compiler-ir-smoke-add
+        (compiler_ir_types.compiler-ir-global-shared-view base)
+        (compiler-ir-smoke-value g 1)
+        4)]
+    ;; The overwritten lists see the new entry and, past it, the rest of
+    ;; theirs, which are no longer indexed.
+    [overwritten-ok : bool
+      (and
+        (= (compiler-ir-smoke-path newer (compiler-ir-smoke-value f 1)) 1)
+        (= (compiler-ir-smoke-path newer (compiler-ir-smoke-value g 1)) 3)
+        (= (compiler-ir-smoke-path extended (compiler-ir-smoke-value f 1)) 5)
+        (= (compiler-ir-smoke-path extended (compiler-ir-smoke-value g 1)) 3))]
+    [one-function : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-ir-global-shared-view diverged)]
+    [many-functions : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-empty)]
+    [crowded : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-empty)]
+    [index : i64 0]
+    (begin
+      ;; 100 entries of one function: a large storage whose `heads` has two keys.
+      (while (< index 100)
+        (begin
+          (set!
+            one-function
+            (compiler-ir-smoke-add
+              one-function
+              (compiler-ir-smoke-value f (+ 100 index))
+              (+ 100 index)))
+          (set! index (+ index 1))))
+      ;; 30 new functions fill `heads` before the array: the ones past its
+      ;; growth limit are stored unindexed until the array is copied.
+      (set!
+        many-functions
+        (compiler_ir_types.compiler-ir-global-shared-view one-function))
+      (set! index 0)
+      (while (< index 30)
+        (begin
+          (set!
+            many-functions
+            (compiler-ir-smoke-add
+              many-functions
+              (compiler-ir-smoke-value
+                (compiler-ir-smoke-fn (+ 7100000 index))
+                1)
+              (+ 1000 index)))
+          (if (= index 19)
+            (set!
+              crowded
+              (compiler_ir_types.compiler-ir-global-shared-view many-functions))
+            unit)
+          (set! index (+ index 1))))
+      (let
+        [after-growth-ok : bool
+          (and
+            ;; Indexed, then unindexed, entries of the still uncopied array.
+            (=
+              (compiler-ir-smoke-path
+                crowded
+                (compiler-ir-smoke-value (compiler-ir-smoke-fn 7100005) 1))
+              1005)
+            (=
+              (compiler-ir-smoke-path
+                crowded
+                (compiler-ir-smoke-value (compiler-ir-smoke-fn 7100019) 1))
+              1019)
+            (=
+              (compiler-ir-smoke-path crowded (compiler-ir-smoke-value f 150))
+              150)
+            (=
+              (compiler-ir-smoke-path
+                many-functions
+                (compiler-ir-smoke-value (compiler-ir-smoke-fn 7100000) 1))
+              1000)
+            (=
+              (compiler-ir-smoke-path
+                many-functions
+                (compiler-ir-smoke-value (compiler-ir-smoke-fn 7100029) 1))
+              1029)
+            (=
+              (compiler-ir-smoke-path
+                many-functions
+                (compiler-ir-smoke-value f 1))
+              1)
+            (=
+              (compiler-ir-smoke-path
+                many-functions
+                (compiler-ir-smoke-value f 150))
+              150))]
+        ;; Overwrites the first entry `many-functions` stored in place.
+        [retaken : compiler_ir_types.CompilerSourceSpans
+          (compiler-ir-smoke-add
+            (compiler_ir_types.compiler-ir-global-shared-view one-function)
+            (compiler-ir-smoke-value g 2)
+            7)]
+        (and
+          shared-ok
+          after-growth-ok
+          (= (compiler-ir-smoke-path base (compiler-ir-smoke-value f 1)) 1)
+          (= (compiler-ir-smoke-path base (compiler-ir-smoke-value g 1)) -1)
+          (= (compiler-ir-smoke-path diverged (compiler-ir-smoke-value f 1)) 1)
+          (= (compiler-ir-smoke-path diverged (compiler-ir-smoke-value g 1)) 4)
+          (=
+            (compiler-ir-smoke-path diverged (compiler-ir-smoke-value f 100))
+            -1)
+          overwritten-ok
+          ;; `one-function` then appended over indexes 2 and 3 as well.
+          (= (compiler-ir-smoke-path newer (compiler-ir-smoke-value g 1)) 4)
+          (= (compiler-ir-smoke-path extended (compiler-ir-smoke-value f 1)) 1)
+          (=
+            (compiler-ir-smoke-path
+              one-function
+              (compiler-ir-smoke-value f 199))
+            199)
+          (=
+            (compiler-ir-smoke-path one-function (compiler-ir-smoke-value g 1))
+            4)
+          (=
+            (compiler-ir-smoke-path one-function (compiler-ir-smoke-value g 2))
+            -1)
+          (=
+            (compiler-ir-smoke-path
+              one-function
+              (compiler-ir-smoke-value (compiler-ir-smoke-fn 7100000) 1))
+            -1)
+          (= (compiler-ir-smoke-path retaken (compiler-ir-smoke-value g 2)) 7)
+          (=
+            (compiler-ir-smoke-path retaken (compiler-ir-smoke-value f 199))
+            199)
+          (= (compiler-ir-smoke-path retaken (compiler-ir-smoke-value g 1)) 4)
+          (=
+            (compiler-ir-smoke-path
+              retaken
+              (compiler-ir-smoke-value (compiler-ir-smoke-fn 7100000) 1))
+            -1))))))
+
 ;; Build a spans table entirely inside a throwaway arena, escape it into the
 ;; enclosing arena, then destroy the throwaway arena and read the escape. Every
 ;; lookup below dereferences the escaped slot arrays, so a shallow escape that
@@ -5431,6 +5757,8 @@
     (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
     (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
     (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
+    (unless (compiler-ir-smoke-source-spans-instr-index-ok?) (return 26))
+    (unless (compiler-ir-smoke-source-spans-instr-history-ok?) (return 27))
     (unless (compiler-ir-smoke-label-table-growth-ok?) (return 28))
     (let
       [representation-failure : i64

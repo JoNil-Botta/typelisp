@@ -8611,7 +8611,20 @@
   (id i64)
   (path-id i64)
   (span ast.AstSourceSpan)
-  (kind i32))
+  (kind i32)
+  ;; The previous entry of this function in the array's index, or -1.
+  (chain i32))
+
+(define (compiler-source-spans-instr-entry-with-chain
+  [entry : CompilerSourceSpansInstrEntry]
+  [chain : i32]) : CompilerSourceSpansInstrEntry
+  (CompilerSourceSpansInstrEntry
+    (CompilerIrSymbolId entry.function.value)
+    entry.id
+    entry.path-id
+    entry.span
+    entry.kind
+    chain))
 
 ;; `kind` values of the key variants.
 (define (compiler-source-spans-instr-kind-value) : i32
@@ -8634,21 +8647,24 @@
         id
         path-id
         span
-        (compiler-source-spans-instr-kind-value))]
+        (compiler-source-spans-instr-kind-value)
+        (cast -1 : i32))]
     [(CompilerSourceSpansInstrKey.Store function id)
       (CompilerSourceSpansInstrEntry
         function
         id
         path-id
         span
-        (compiler-source-spans-instr-kind-store))]
+        (compiler-source-spans-instr-kind-store)
+        (cast -1 : i32))]
     [(CompilerSourceSpansInstrKey.Bounds function id)
       (CompilerSourceSpansInstrEntry
         function
         id
         path-id
         span
-        (compiler-source-spans-instr-kind-bounds))]))
+        (compiler-source-spans-instr-kind-bounds)
+        (cast -1 : i32))]))
 
 (define (compiler-source-spans-instr-entry-key
   [entry : (& entry CompilerSourceSpansInstrEntry)]) : CompilerSourceSpansInstrKey
@@ -8666,9 +8682,42 @@
         (CompilerIrSymbolId entry.function.value)
         entry.id)]))
 
+;; The index of one instruction-entry array, shared by every list over it:
+;; `heads` maps a function symbol id to that function's newest entry below
+;; `valid`.
+(defstruct CompilerSourceSpansInstrIndex
+  (heads ir_i64_i64_map.Map)
+  (valid i64))
+
+;; Instruction entries are appended and the latest binding for a key wins
+;; (#7875). A list appends in place while its array has room, so lists derived
+;; from one another share the array, and an older list appending overwrites
+;; what a newer one stored there; a list sees `slots[0, len)` as they are now.
+;; Only a full array is copied. The index is a cache of that content: the
+;; array's one-element `shared` cell holds `heads`, and `chain[i]` is the
+;; previous entry of entry i's function (or -1), both describing
+;; `slots[0, valid)` exactly. `chain` is i32: a table of 2^31 entries would
+;; not fit in memory.
+;;
+;; An append at `valid` extends the index. Re-appending the entry already at
+;; `len` changes nothing -- `compiler-source-spans-append-new` re-adds the rows
+;; a scratch rewrite stored this way. Any other append below `valid` unlinks
+;; `[len, valid)`, newest first, and indexes the new entry. An append beyond
+;; `valid` is stored unindexed: only an overwritten list makes one, or any list
+;; once `heads` is full.
+;;
+;; Like the plain list, an append allocates only when it copies a full array.
+;; `heads` is sized then, with room for the function count to double; a new
+;; function arriving when it is full is stored unindexed, and `valid` stays
+;; there until the next copy rebuilds the index.
+;;
+;; A lookup scans `[valid, len)` linearly, then starts at its function's head,
+;; steps down the chain past entries at or beyond its own `len`, and walks that
+;; function's entries newest first. It never allocates.
 (defstruct CompilerSourceSpansInstrEntryList
   (slots (__tl_dyn-array CompilerSourceSpansInstrEntry))
-  (len i64))
+  (len i64)
+  (shared (__tl_dyn-array CompilerSourceSpansInstrIndex)))
 
 (defenum CompilerSourceSpans
   (Spans CompilerSourceSpansEntryList CompilerSourceSpansInstrEntryList i64))
@@ -8690,7 +8739,8 @@
 (define (compiler-source-spans-instr-entry-list-empty) : CompilerSourceSpansInstrEntryList
   (CompilerSourceSpansInstrEntryList
     (__tl_make-array CompilerSourceSpansInstrEntry 0)
-    0))
+    0
+    (__tl_make-array CompilerSourceSpansInstrIndex 0)))
 
 (define (compiler-source-spans-empty) : CompilerSourceSpans
   (CompilerSourceSpans.Spans
@@ -8771,30 +8821,168 @@
         (set! (array-ref dst i) (array-ref src i))
         (set! i (+ i 1))))))
 
+(define (compiler-source-spans-instr-entry-function
+  [entry : CompilerSourceSpansInstrEntry]) : i64
+  entry.function.value)
+
+(define (compiler-source-spans-instr-entry-eq?
+  [left : CompilerSourceSpansInstrEntry]
+  [right : CompilerSourceSpansInstrEntry]) : bool
+  (and
+    (= left.path-id right.path-id)
+    (ast.ast-source-span-eq? left.span right.span)
+    (= left.kind right.kind)
+    (= left.id right.id)
+    (= left.function.value right.function.value)))
+
 (define (compiler-source-spans-instr-entry-list-append
   [entries : CompilerSourceSpansInstrEntryList]
   [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
   (let
     [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry) entries.slots]
+    [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex) entries.shared]
     [len : i64 entries.len]
-    [cap : i64 (array-length slots)]
-    (if (< len cap)
-      (begin
-        (set! (array-ref slots len) entry)
-        (CompilerSourceSpansInstrEntryList slots (+ len 1)))
+    (if (>= len (array-length slots))
+      (compiler-source-spans-instr-entry-list-copy-append
+        slots
+        shared
+        len
+        entry)
+      ;; Only `...-from-slots` builds an array with room, and it fills the cell.
       (let
-        [new-cap : i64
-          (compiler-source-spans-entry-list-capacity-for (+ len 1))]
-        [bigger : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-          (__tl_make-array CompilerSourceSpansInstrEntry new-cap)]
+        [index : CompilerSourceSpansInstrIndex
+          (compiler-ir-array-shared-view shared 0)]
+        [valid : i64 index.valid]
+        ;; Binds the cell's own map: updating it updates the cell.
+        [heads : ir_i64_i64_map.Map index.heads]
         (begin
-          (compiler-source-spans-instr-entry-list-copy-array-range!
-            (&mut bigger)
-            (& slots)
-            0
-            len)
-          (set! (array-ref bigger len) entry)
-          (CompilerSourceSpansInstrEntryList bigger (+ len 1)))))))
+          (if (and
+            (< len valid)
+            (compiler-source-spans-instr-entry-eq? (array-ref slots len) entry))
+            unit
+            (if (> len valid)
+              (set! (array-ref slots len) entry)
+              (let
+                [function : i64
+                  (compiler-source-spans-instr-entry-function entry)]
+                [dropped : i64 (- valid 1)]
+                [indexed : i64 (+ len 1)]
+                (begin
+                  ;; Unlink the entries being replaced, newest first: each is
+                  ;; its function's head when reached. The keys exist, so
+                  ;; setting them never grows `heads`; nor does anything below.
+                  (while (>= dropped len)
+                    (let
+                      [unlinked : CompilerSourceSpansInstrEntry
+                        (array-ref slots dropped)]
+                      (begin
+                        (ir_i64_i64_map.mut-entry-set!
+                          (ir_i64_i64_map.get-mut-entry
+                            (&mut heads)
+                            (compiler-source-spans-instr-entry-function
+                              unlinked))
+                          (cast unlinked.chain : i64))
+                        (set! dropped (- dropped 1)))))
+                  (set! (array-ref slots len) entry)
+                  (if (ir_i64_i64_map.contains? (& heads) function)
+                    (begin
+                      (set!
+                        (array-ref slots len)
+                        (compiler-source-spans-instr-entry-with-chain
+                          entry
+                          (cast
+                            (ir_i64_i64_map.get-value-or (& heads) function -1)
+                            : i32)))
+                      (ir_i64_i64_map.mut-entry-set!
+                        (ir_i64_i64_map.get-mut-entry (&mut heads) function)
+                        len))
+                    (if (ir_i64_i64_map.needs-grow? (&mut heads))
+                      ;; Full: leave the entry unindexed.
+                      (set! indexed len)
+                      (begin
+                        (set!
+                          (array-ref slots len)
+                          (compiler-source-spans-instr-entry-with-chain
+                            entry
+                            (cast -1 : i32)))
+                        (ir_i64_i64_map.insert-ref! (&mut heads) function len))))
+                  (set!
+                    (array-ref shared 0)
+                    (CompilerSourceSpansInstrIndex heads indexed))))))
+          (CompilerSourceSpansInstrEntryList slots (+ len 1) shared))))))
+
+;; Append `entry` to a copy of `slots[0, len)` in a new, larger array.
+(define (compiler-source-spans-instr-entry-list-copy-append
+  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
+  [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex)]
+  [len : i64]
+  [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
+  (let
+    [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
+      (__tl_make-array
+        CompilerSourceSpansInstrEntry
+        (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
+    (begin
+      (compiler-source-spans-instr-entry-list-copy-array-range!
+        (&mut copy)
+        (& slots)
+        0
+        len)
+      ;; The new array has room and is indexed up to `len`.
+      (compiler-source-spans-instr-entry-list-append
+        (compiler-source-spans-instr-entry-list-from-slots
+          copy
+          len
+          (compiler-source-spans-instr-index-function-count shared))
+        entry))))
+
+;; The number of functions the index in `shared` has seen, or 0 for an empty
+;; array's missing index: a size hint for rebuilding it.
+(define (compiler-source-spans-instr-index-function-count
+  [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex)]) : i64
+  (if (= (array-length shared) 0)
+    0
+    (let
+      [index : CompilerSourceSpansInstrIndex
+        (compiler-ir-array-shared-view shared 0)]
+      (ir_i64_i64_map.len (& index.heads)))))
+
+;; A list over `slots[0, len)` with its index built from scratch in the current
+;; arena, for constructors that copy or rewrite a whole list. `heads` gets room
+;; for the function count to double. `functions` estimates that count (the
+;; source list's); sizing `heads` from it up front leaves no rehashed arrays
+;; behind.
+(define (compiler-source-spans-instr-entry-list-from-slots
+  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
+  [len : i64]
+  [functions : i64]) : CompilerSourceSpansInstrEntryList
+  (let
+    ;; The growth limit is three quarters of the capacity.
+    [heads : ir_i64_i64_map.Map
+      (ir_i64_i64_map.with-capacity (/ (+ (* 8 (+ functions 1)) 2) 3))]
+    [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex)
+      (__tl_make-array CompilerSourceSpansInstrIndex 1)]
+    [index : i64 0]
+    (begin
+      (while (< index len)
+        (let
+          [function : i64
+            (compiler-source-spans-instr-entry-function (array-ref slots index))]
+          (begin
+            (set!
+              (array-ref slots index)
+              (compiler-source-spans-instr-entry-with-chain
+                (array-ref slots index)
+                (cast (ir_i64_i64_map.get-value-or (& heads) function -1) : i32)))
+            (ir_i64_i64_map.insert-ref! (&mut heads) function index)
+            (set! index (+ index 1)))))
+      ;; The growth limit is three quarters of the capacity.
+      (while (>
+        (* 8 (+ (ir_i64_i64_map.len (& heads)) 1))
+        (* 3 (ir_i64_i64_map.capacity (& heads))))
+        (ir_i64_i64_map.grow! (&mut heads)))
+      (set! (array-ref shared 0) (CompilerSourceSpansInstrIndex heads len))
+      (CompilerSourceSpansInstrEntryList slots len shared))))
 
 ;; --- spans escape -----------------------------------------------------------
 ;;
@@ -8834,7 +9022,10 @@
         (& slots)
         0
         len)
-      (CompilerSourceSpansInstrEntryList copy len))))
+      (compiler-source-spans-instr-entry-list-from-slots
+        copy
+        len
+        (compiler-source-spans-instr-index-function-count entries.shared)))))
 
 (define (compiler-source-spans-escape [spans : CompilerSourceSpans]) : CompilerSourceSpans
   (match spans
@@ -8844,44 +9035,73 @@
         (compiler-source-spans-instr-entry-list-escape instr-entries)
         instr-count)]))
 
-;; The newest entry in `slots[0, index]` whose flat key is `function`, `id`
-;; and `kind`.
-(define (compiler-source-spans-instr-entry-array-lookup-location
-  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
-  [index : i64]
+;; Whether `entry`'s flat key is `function`, `id` and `kind`.
+(define (compiler-source-spans-instr-entry-keyed?
+  [entry : CompilerSourceSpansInstrEntry]
   [function : i64]
   [id : i64]
-  [kind : i32]) : CompilerMaybeSourceLocation
-  (if (< index 0)
-    (CompilerMaybeSourceLocation.No)
-    (let
-      [span-entry : CompilerSourceSpansInstrEntry (array-ref slots index)]
-      (if (and
-        (= span-entry.id id)
-        (= span-entry.function.value function)
-        (= span-entry.kind kind))
-        (CompilerMaybeSourceLocation.Some
-          (CompilerSourceLocation span-entry.path-id span-entry.span))
-        (compiler-source-spans-instr-entry-array-lookup-location
-          slots
-          (- index 1)
-          function
-          id
-          kind)))))
+  [kind : i32]) : bool
+  (and
+    (= entry.id id)
+    (= entry.function.value function)
+    (= entry.kind kind)))
 
 (define (compiler-source-spans-instr-entry-list-lookup
   [entries : CompilerSourceSpansInstrEntryList]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
-  ;; Flatten the key once; the scan compares scalars.
-  (let
-    [probe : CompilerSourceSpansInstrEntry
-      (compiler-source-spans-instr-entry key 0 (ast.ast-source-span 0 0 0 0))]
-    (compiler-source-spans-instr-entry-array-lookup-location
-      entries.slots
-      (- entries.len 1)
-      probe.function.value
-      probe.id
-      probe.kind)))
+  (if (= entries.len 0)
+    (CompilerMaybeSourceLocation.No)
+    ;; A non-empty list's array came from `...-from-slots`, which fills the
+    ;; cell.
+    (let
+      [shared : CompilerSourceSpansInstrIndex
+        (compiler-ir-array-shared-view entries.shared 0)]
+      ;; Flatten the key once; the scans compare scalars.
+      [probe : CompilerSourceSpansInstrEntry
+        (compiler-source-spans-instr-entry key 0 (ast.ast-source-span 0 0 0 0))]
+      [function : i64 probe.function.value]
+      [id : i64 probe.id]
+      [kind : i32 probe.kind]
+      [index : i64 (- entries.len 1)]
+      [found : CompilerMaybeSourceLocation (CompilerMaybeSourceLocation.No)]
+      (begin
+        ;; The unindexed entries this list still sees.
+        (while (>= index shared.valid)
+          (let
+            [span-entry : CompilerSourceSpansInstrEntry
+              (array-ref entries.slots index)]
+            (if (compiler-source-spans-instr-entry-keyed? span-entry function id kind)
+              (begin
+                (set!
+                  found
+                  (CompilerMaybeSourceLocation.Some
+                    (CompilerSourceLocation span-entry.path-id span-entry.span)))
+                (set! index -1))
+              (set! index (- index 1)))))
+        (if (< index 0)
+          unit
+          (set!
+            index
+            (ir_i64_i64_map.get-value-or (& shared.heads) function -1)))
+        ;; Entries past this list's end in the shared array.
+        (while (>= index entries.len)
+          (let
+            [span-entry : CompilerSourceSpansInstrEntry
+              (array-ref entries.slots index)]
+            (set! index (cast span-entry.chain : i64))))
+        (while (>= index 0)
+          (let
+            [span-entry : CompilerSourceSpansInstrEntry
+              (array-ref entries.slots index)]
+            (if (compiler-source-spans-instr-entry-keyed? span-entry function id kind)
+              (begin
+                (set!
+                  found
+                  (CompilerMaybeSourceLocation.Some
+                    (CompilerSourceLocation span-entry.path-id span-entry.span)))
+                (set! index -1))
+              (set! index (cast span-entry.chain : i64)))))
+        found))))
 
 ;; Record `name -> span`. Function names are unique in lowered programs. The
 ;; dense list stores new entries at the end, and lookup scans newest-to-oldest,

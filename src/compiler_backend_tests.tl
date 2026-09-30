@@ -20230,6 +20230,93 @@ g:
       "    vmovdqu 16(%rsp), %ymm14\n"
       "    vpaddq 16(%rsp), %ymm14, %ymm6\n")))
 
+(define (compiler-backend-colored-vector-extent-case?
+  [lanes : i64]
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [body : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.empty)
+        "function @colored_vector_extent() -> f64 vars 10 {\nentry:\n")]
+    [index : i64 0]
+    (begin
+      ;; Nine independent full-width values remain live across an ordinary
+      ;; call. Their final homes exceed the raw ten-variable ID domain.
+      (while (< index 9)
+        (begin
+          (set!
+            body
+            (text_buf.append
+              body
+              (str_cat.str-cat
+                "%"
+                (string.int->string index)
+                " = vector_load 0, "
+                (string.int->string index)
+                " lanes "
+                (string.int->string lanes)
+                " : i64\n")))
+          (set! index (+ index 1))))
+      (set! body (text_buf.append body "%9 = call side_effect() : f64\n"))
+      (set! index 0)
+      (while (< index 9)
+        (begin
+          (set!
+            body
+            (text_buf.append
+              body
+              (str_cat.str-cat
+                "vector_store 0, "
+                (string.int->string index)
+                ", %"
+                (string.int->string index)
+                " lanes "
+                (string.int->string lanes)
+                " : i64\n")))
+          (set! index (+ index 1))))
+      (set! body (text_buf.append body "return %9\n}"))
+      (match (backend.compiler-backend-emit-program-target-with-mode
+        (compiler-backend-vector-home-program (irt.func (text_buf.render body)))
+        target
+        (if (= lanes 4)
+          (backend.CompilerBackendMode.Avx2)
+          (backend.CompilerBackendMode.Avx512))
+        (ir.compiler-source-spans-empty)
+        false)
+        [(backend.ResultCompilerBackend.Ok asm)
+          (and
+            (asm-has? asm "    call _tl_side_effect\n")
+            (>=
+              (backend.compiler-backend-string-count
+                asm
+                (if (= lanes 4)
+                  "vmovdqu "
+                  "vmovdqu64 "))
+              18)
+            (asm-lacks? asm "register home unavailable"))]
+        [(backend.ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-colored-vector-extent-ok?) : bool
+  (and
+    (compiler-backend-colored-vector-extent-case?
+      4
+      (backend.CompilerBackendTarget.Linux))
+    (compiler-backend-colored-vector-extent-case?
+      8
+      (backend.CompilerBackendTarget.Linux))
+    (compiler-backend-colored-vector-extent-case?
+      4
+      (backend.CompilerBackendTarget.Windows))
+    (compiler-backend-colored-vector-extent-case?
+      8
+      (backend.CompilerBackendTarget.Windows))))
+
+(test
+  backend-colored-vector-id-extent
+  (unless
+    (compiler-backend-colored-vector-extent-ok?)
+    (io.panic "wide homes beyond the raw ID count lost final emission facts")))
+
 (define (compiler-backend-vector-load-binop-fold-function
   [name : String]
   [op : ir.CompilerIrBinOp]
@@ -21504,6 +21591,7 @@ g:
     (compiler-backend-byte-vector-shift-spill-ok? true)
     (compiler-backend-avx2-unsigned-compare-alias-ok?)
     (compiler-backend-vector-call-lifetime-spill-ok?)
+    (compiler-backend-colored-vector-extent-ok?)
     (compiler-backend-simd-scratch-requests-ok?)
     (compiler-backend-simd-scratch-census-ok?)
     (compiler-backend-simd-scratch-checks-ok?)))

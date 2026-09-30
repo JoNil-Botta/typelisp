@@ -12561,6 +12561,164 @@
         (and (= slots 1) (= (array-ref remap 0) 0) (= (array-ref remap 1) 1))]
       [(reg.CompilerRegColoring.None) false])))
 
+(define (compiler-reg-color-private-param-ranges-case?
+  [avx2? : bool]
+  [element : (& element str)]
+  [spill? : bool]) : bool
+  (let
+    [suffix : String
+      (if avx2?
+        "avx2_"
+        "")]
+    [func : ir.CompilerIrFunction
+      (irt.func
+        (str_cat.str-cat
+          "function @private_param_ranges(__tl_spmd_active_mask"
+          (if avx2?
+            "_avx2"
+            "")
+          "=%0:bool, __tl_spmd_varying_arg_"
+          (string.copy (& suffix))
+          "a=%1:"
+          (string.copy element)
+          ", __tl_spmd_varying_arg_"
+          (string.copy (& suffix))
+          "b=%2:"
+          (string.copy element)
+          ", uniform=%3:i64, __tl_spmd_varying_arg_"
+          (string.copy (& suffix))
+          "unused=%4:"
+          (string.copy element)
+          ") -> unit vars 5 {
+           entry:
+             return
+           }"))]
+    [types : reg.CompilerRegVarTypes
+      (reg.compiler-reg-function-var-types (& func))]
+    [assignments : reg.CompilerRegAssignmentTable
+      (if spill?
+        (reg.compiler-reg-assignment-insert
+          (reg.compiler-reg-assignment-table-empty)
+          1
+          (reg.CompilerRegLocation.Spill -8))
+        (reg.compiler-reg-assignment-table-empty))]
+    [intervals : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-interval-seq-empty)]
+    [index : i64 0]
+    (begin
+      (while (< index 4)
+        (begin
+          (set!
+            intervals
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval index 0 9)
+              intervals))
+          (set! index (+ index 1))))
+      (match func
+        [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
+          (match (reg.compiler-reg-color-stack-slots-with-stack-only
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (reg.CompilerRegPlan.Plan
+              assignments
+              (live.compiler-live-set-empty)
+              intervals
+              types
+              (reg.compiler-reg-call-split-empty))
+            (live.compiler-live-set-empty)
+            params
+            blocks
+            vars
+            vars
+            (live.compiler-live-set-empty)
+            (not spill?))
+            [(reg.CompilerRegColoring.Remap remap slots)
+              (let
+                [ids : (Array i64 5) (array 0 1 2 3 4)]
+                [widths : (Array i64 5)
+                  (array
+                    (if avx2?
+                      4
+                      1)
+                    (if avx2?
+                      4
+                      8)
+                    (if avx2?
+                      4
+                      8)
+                    1
+                    (if avx2?
+                      4
+                      8))]
+                [a : i64 0]
+                [ok : bool (= (array-ref remap 3) 3)]
+                (begin
+                  (while (< a 5)
+                    (let
+                      [end : i64 (array-ref remap (array-ref ids a))]
+                      [start : i64 (+ (- end (array-ref widths a)) 1)]
+                      [b : i64 (+ a 1)]
+                      (begin
+                        (set! ok (and ok (>= start 0) (< end slots)))
+                        (while (< b 5)
+                          (let
+                            [other-end : i64
+                              (array-ref remap (array-ref ids b))]
+                            [other-start : i64
+                              (+ (- other-end (array-ref widths b)) 1)]
+                            (begin
+                              (set!
+                                ok
+                                (and
+                                  ok
+                                  (or (< end other-start) (< other-end start))))
+                              (set! b (+ b 1)))))
+                        (set! a (+ a 1)))))
+                  ok))]
+            [(reg.CompilerRegColoring.None) false])]))))
+
+(define (compiler-reg-color-private-param-ranges-ok?) : bool
+  (let
+    [elements : (Array String 10)
+      (array "f32" "f64" "i8" "u8" "i16" "u16" "i32" "u32" "i64" "u64")]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index 10)
+        (let
+          [element : String
+            (owned_view.compiler-owned-array-element-shared-view elements index)]
+          (begin
+            (set!
+              ok
+              (and
+                ok
+                (compiler-reg-color-private-param-ranges-case?
+                  true
+                  element
+                  false)
+                (compiler-reg-color-private-param-ranges-case?
+                  true
+                  element
+                  true)
+                (compiler-reg-color-private-param-ranges-case?
+                  false
+                  element
+                  false)
+                (compiler-reg-color-private-param-ranges-case?
+                  false
+                  element
+                  true)))
+            (set! index (+ index 1)))))
+      ok)))
+
+(cfg
+  test
+  (test
+    regalloc-private-parameter-full-width-homes
+    (test.assert-true
+      (compiler-reg-color-private-param-ranges-ok?)
+      "private parameter ranges fit the frame and remain disjoint from each other and uniform homes")))
+
 (define (compiler-reg-color-vector-stack-function) : ir.CompilerIrFunction
   (irt.func
     "function @vector_stack_slots() -> unit vars 3 {
@@ -13903,6 +14061,7 @@
       (cfg test (compiler-reg-color-witness-chain-ok?) true)
       (compiler-reg-color-spill-param-pins-ok?)
       (compiler-reg-color-avx2-param-ranges-ok?)
+      (compiler-reg-color-private-param-ranges-ok?)
       (compiler-reg-color-spill-hole-demand-ok?)
       (compiler-reg-color-spill-scratch-demand-ok?)
       (compiler-reg-color-vector-stack-slots-ok?)

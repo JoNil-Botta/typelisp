@@ -433,6 +433,11 @@ Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only
 allocation lifetime; it never reduces analysis precision or optimizer work.
+Stack coloring admits a value to its one-word walk only when both its type and
+physical SIMD width fit one word. Private varying parameters retain scalar
+element types, but their homes reserve the complete YMM or ZMM width. Entry
+emission initializes formula and explicit spill homes before ordinary calls;
+no live parameter range overlaps another home or the accepted frame boundary.
 Avoid unconditional arenas for small analyses: an arena per analysis
 multiplies arena creation and regresses ordinary compile time.
 Final scavenger intervals still describe the

@@ -62495,13 +62495,19 @@
                 (compiler_diagnostic.compiler-diagnostic-at-start
                   ""
                   "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
-            (match (compiler-backend-emit-assignment-lookup
-              backend-state
+            (match (compiler-backend-vector-var-stack-operand
               assignments
-              var-id)
-              [(compiler_regalloc.CompilerRegMaybeLocation.No)
-                (ResultCompilerBackend.Ok "")]
-              [(compiler_regalloc.CompilerRegMaybeLocation.Some _)
+              var-id
+              backend-state)
+              [(CompilerBackendMaybeStackOperand.Some operand)
+                ;; Formula and explicit spill homes must be initialized from
+                ;; the incoming full-width register before any ordinary call.
+                (ResultCompilerBackend.Ok
+                  (compiler-backend-vector-store-stack-asm
+                    (compiler-backend-avx512-vector-move ty)
+                    incoming
+                    operand))]
+              [(CompilerBackendMaybeStackOperand.No)
                 (match (compiler-backend-vector-var-reg
                   backend-state
                   assignments

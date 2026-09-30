@@ -388,6 +388,16 @@ inline test declarations.
 
 ### src/ reachability
 
+Private SPMD parameter-home changes exercise
+`regalloc-private-parameter-full-width-homes` and
+`backend-private-varying-entry-homes`, also reached by the native self-tests.
+The former checks disjoint full-width ranges for all numeric lane types;
+the latter checks formula, explicit spill, register and unused entry homes
+on both target ABIs. `tests/spmd/private_helper_uniform_calls_*.tl` keeps
+floating-point bits, mask inputs and multiple numeric inputs live across
+ordinary uniform calls. Their executable SIMD cases pin opt0/1/2 and retain
+packed arithmetic and private gang calls, including empty/full gangs and tails.
+
 The package follows the standard layout: `typelisp build` resolves the default
 `src/main.tl` entry (no explicit `entry` in `typelisp.pkg`), and every top-level
 `src/*.tl` is reachable from `main.tl` except:

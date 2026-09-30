@@ -181,6 +181,42 @@ source tests/spmd/private_helper_effects.tl
 mode avx2
 not-match %zmm[0-9]+|%k[0-7]
 
+case private-helper-uniform-calls-float
+source tests/spmd/private_helper_uniform_calls_float.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+if-mode scalar
+else
+match call _tl___tl_spmd_
+match vcmp[ps][sd]
+end-if
+
+case private-helper-uniform-calls-int
+source tests/spmd/private_helper_uniform_calls_int.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+if-mode scalar
+else
+match call _tl___tl_spmd_
+match vpadd[bwdq]
+end-if
+
+case private-helper-uniform-calls-pressure
+source tests/spmd/private_helper_uniform_calls_pressure.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+if-mode scalar
+else
+match call _tl___tl_spmd_
+match vaddpd
+end-if
+
 # --------------------------------------------------------------- reductions
 
 # A sum keeps one vector accumulator in the gang and reduces horizontally only

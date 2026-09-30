@@ -30227,6 +30227,7 @@
 ;; private dense slot if it still needs stack storage.
 (define (compiler-reg-color-flags
   [types : CompilerRegVarTypes]
+  [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]
   [flags : (&mut flags (__tl_dyn-array bool))]) : unit
   (let
     [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
@@ -30242,13 +30243,20 @@
           unit
           (set!
             (array-ref flags index)
-            (or
-              (let
-                [ty (compiler-reg-global-array-element-shared-view items index)]
-                (compiler-reg-scalar-type? ty))
-              (let
-                [ty (compiler-reg-global-array-element-shared-view items index)]
-                (compiler-reg-handle-type? ty)))))
+            ;; Private varying parameters retain their scalar element type in
+            ;; the type table. The physical width census also governs whether
+            ;; a value can enter the one-word coloring walk.
+            (and
+              (<= (array-ref vector-stack-words index) 1)
+              (or
+                (let
+                  [ty
+                    (compiler-reg-global-array-element-shared-view items index)]
+                  (compiler-reg-scalar-type? ty))
+                (let
+                  [ty
+                    (compiler-reg-global-array-element-shared-view items index)]
+                  (compiler-reg-handle-type? ty))))))
         (set! index (+ index 1))))))
 
 ;; Mark every variable with a final liveness interval. Combined with direct IR
@@ -30344,11 +30352,15 @@
         unit
         (set! (array-ref words var) 4)))))
 
-(define (compiler-reg-spmd-avx2-special-param? [name : (& name str)]) : bool
-  (or
-    (compiler-reg-string-prefix? name "__tl_spmd_active_mask_avx2")
-    (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_avx2_")
-    (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_avx2_")))
+(define (compiler-reg-spmd-param-stack-words [name : (& name str)]) : i64
+  (cond
+    [(or
+        (compiler-reg-string-prefix? name "__tl_spmd_active_mask_avx2")
+        (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_avx2_")
+        (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_avx2_"))
+      4]
+    [(compiler-reg-spmd-varying-param? name) 8]
+    [else 0]))
 
 (define (compiler-reg-vector-stack-words-params!
   [params : ir.CompilerIrParamSeq]
@@ -30359,12 +30371,18 @@
       (begin
         (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param name _ var)
-            (if (compiler-reg-spmd-avx2-special-param? name)
-              (compiler-reg-vector-stack-words-set-mask! (&mut words) var)
-              unit)])
+            (let
+              [count : i64 (compiler-reg-spmd-param-stack-words name)]
+              (if (> count 0)
+                (compiler-reg-vector-stack-words-set!
+                  (&mut words)
+                  var
+                  count
+                  (ast.AstType.I64))
+                unit))])
         (set! position (+ position 1))))))
 
-(define (compiler-reg-spmd-avx2-special-param-references!
+(define (compiler-reg-spmd-wide-param-references!
   [params : ir.CompilerIrParamSeq]
   [references : (&mut references (__tl_dyn-array bool))]) : unit
   ;; The backend materializes every private ABI parameter before instruction
@@ -30377,7 +30395,7 @@
         (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param name _ var)
             (if (and
-              (compiler-reg-spmd-avx2-special-param? name)
+              (> (compiler-reg-spmd-param-stack-words name) 0)
               (>= var 0)
               (< var (array-length references)))
               (set! (array-ref references var) true)
@@ -32088,8 +32106,8 @@
 
 ;; Identity-pin scalar parameter variables: the prologue's param spill writes
 ;; each parameter to its remapped formula slot, and ordinary parameters keep
-;; their ids so those slots are never shared. AVX2 private SPMD parameters need
-;; a four-word YMM range, so leave those unpinned for the private-range pass.
+;; their ids so those slots are never shared. Full-width private SPMD parameters
+;; are left unpinned for the private-range pass, which reserves every word.
 (define (compiler-reg-color-param-pins
   [params : ir.CompilerIrParamSeq]
   [remap : (&mut remap (__tl_dyn-array i64))]
@@ -32105,13 +32123,13 @@
             [(ir.CompilerIrParam.Param name _ var-id)
               (begin
                 (if (and
-                  (not (compiler-reg-spmd-avx2-special-param? name))
+                  (= (compiler-reg-spmd-param-stack-words name) 0)
                   (< var-id (array-length remap)))
                   (begin
                     (set! (array-ref remap var-id) var-id)
                     (set! (array-ref slot-ends var-id) 9223372036854775807))
                   unit)
-                (if (compiler-reg-spmd-avx2-special-param? name)
+                (if (> (compiler-reg-spmd-param-stack-words name) 0)
                   unit
                   (set! out (compiler-reg-max out (+ var-id 1)))))])
           (set! position (+ position 1))))
@@ -33809,6 +33827,7 @@
           (begin
             (compiler-reg-color-flags
               (compiler-reg-plan-types (compiler-reg-global-shared-view plan))
+              vector-stack-words
               (&mut colorable))
             ;; Scratch pseudo-vars are consumed through planned registers or
             ;; the scavenger, never through formula stack slots.
@@ -33848,7 +33867,7 @@
               (compiler-reg-ref-marks-blocks!
                 (&mut references)
                 (compiler-reg-global-shared-view blocks)))
-            (compiler-reg-spmd-avx2-special-param-references!
+            (compiler-reg-spmd-wide-param-references!
               (compiler-reg-global-shared-view params)
               (&mut references)))]
         [var-tys : (__tl_dyn-array ast.AstType)

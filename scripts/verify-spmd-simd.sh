@@ -144,6 +144,9 @@ tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl
 tests/spmd/private_helper_mask_arg.tl
 tests/spmd/private_helper_uniform_stack.tl
+tests/spmd/private_helper_uniform_calls_float.tl
+tests/spmd/private_helper_uniform_calls_int.tl
+tests/spmd/private_helper_uniform_calls_pressure.tl
 tests/spmd/private_helper_masked_load.tl
 tests/spmd/private_helper_store.tl
 tests/spmd/private_helper_effects.tl

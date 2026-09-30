@@ -21069,8 +21069,141 @@ g:
     (compiler-backend-spmd-mask-entry-validation-ok?)
     (compiler-backend-spmd-mask-entry-spill-first-ok?)))
 
+(define (compiler-backend-spmd-varying-entry-case?
+  [ty : ast.AstType]
+  [opcode : (& opcode str)]
+  [home-spec : String]
+  [operand : String]
+  [windows? : bool]
+  [unused? : bool]) : bool
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (if (= (string.string-length home-spec) 0)
+        (regalloc.compiler-reg-assignment-table-empty)
+        (reg-homes home-spec))]
+    [_setup : unit
+      (begin
+        (backend.compiler-backend-set-current-mode!
+          (backend.compiler-backend-state-function-state state)
+          (backend.CompilerBackendMode.Avx512))
+        (if windows?
+          (compiler-backend-set-current-fn-win64! state)
+          (compiler-backend-set-current-fn-linux! state))
+        (when
+          unused?
+          (begin
+            (set-state-fuse-use-counts! state (__tl_make-array i64 8))
+            (set-state-fuse-need-ready! state true))))]
+    (match (backend.compiler-backend-emit-spmd-private-special-param
+      assignments
+      "__tl_spmd_varying_arg_value"
+      ty
+      7
+      0
+      0
+      state)
+      [(backend.ResultCompilerBackend.Ok asm)
+        (string.eq
+          asm
+          (if unused?
+            ""
+            (str_cat.str-cat
+              "    "
+              (string.copy opcode)
+              " %zmm17, "
+              operand
+              "\n")))]
+      [(backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-spmd-varying-entry-ok?) : bool
+  (let
+    [types : (Array ast.AstType 10)
+      (array
+        (ast.AstType.F32)
+        (ast.AstType.F64)
+        (ast.AstType.I8)
+        (ast.AstType.U8)
+        (ast.AstType.I16)
+        (ast.AstType.U16)
+        (ast.AstType.I32)
+        (ast.AstType.U32)
+        (ast.AstType.I64)
+        (ast.AstType.U64))]
+    [opcodes : (Array String 10)
+      (array
+        "vmovups"
+        "vmovupd"
+        "vmovdqu8"
+        "vmovdqu8"
+        "vmovdqu16"
+        "vmovdqu16"
+        "vmovdqu32"
+        "vmovdqu32"
+        "vmovdqu64"
+        "vmovdqu64")]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index 10)
+        (let
+          [ty : ast.AstType
+            (owned_view.compiler-owned-array-element-shared-view types index)]
+          [opcode : String
+            (owned_view.compiler-owned-array-element-shared-view opcodes index)]
+          [target : i64 0]
+          (begin
+            (while (< target 2)
+              (begin
+                (set!
+                  ok
+                  (and
+                    ok
+                    (compiler-backend-spmd-varying-entry-case?
+                      (owned_view.compiler-owned-shared-view ty)
+                      opcode
+                      ""
+                      "-64(%rbp)"
+                      (= target 1)
+                      false)
+                    (compiler-backend-spmd-varying-entry-case?
+                      (owned_view.compiler-owned-shared-view ty)
+                      opcode
+                      "%7=spill:-128"
+                      "-128(%rbp)"
+                      (= target 1)
+                      false)
+                    (compiler-backend-spmd-varying-entry-case?
+                      (owned_view.compiler-owned-shared-view ty)
+                      opcode
+                      "%7=%vec6"
+                      "%zmm6"
+                      (= target 1)
+                      false)
+                    (compiler-backend-spmd-varying-entry-case?
+                      (owned_view.compiler-owned-shared-view ty)
+                      opcode
+                      ""
+                      ""
+                      (= target 1)
+                      true)))
+                (set! target (+ target 1))))
+            (set! index (+ index 1)))))
+      ok)))
+
+(cfg
+  test
+  (test
+    backend-private-varying-entry-homes
+    (unless
+      (compiler-backend-spmd-varying-entry-ok?)
+      (io.panic "private varying entry did not initialize its full-width home"))))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
+    (compiler-backend-spmd-varying-entry-ok?)
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
     (compiler-backend-lane-id-rodata-ok?)

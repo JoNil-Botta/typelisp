@@ -20302,9 +20302,9 @@ g:
 
 (test
   backend-colored-vector-id-extent
-  (test.assert-true
+  (unless
     (compiler-backend-colored-vector-extent-ok?)
-    "wide homes beyond the raw ID count retain final liveness, types, use facts and emitted values"))
+    (io.panic "wide homes beyond the raw ID count lost final emission facts")))
 
 (define (compiler-backend-vector-load-binop-fold-function
   [name : String]

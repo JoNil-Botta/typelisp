@@ -501,6 +501,19 @@
         [_
           (io.panic
             "pointer-proof smoke: another program reused the first job's evidence")])
+      (match (owned_view.compiler-owned-shared-view first-result)
+        [(lower.ResultCompilerLower.Ok program _)
+          (match (owned_view.compiler-owned-shared-view second-result)
+            [(lower.ResultCompilerLower.Ok _ spans)
+              (match (lower.lower-compiler-pointer-proof-result
+                (owned_view.compiler-owned-shared-view request)
+                (lower.ResultCompilerLower.Ok program spans))
+                [(lower.ResultCompilerLowerPointerProof.Err _) unit]
+                [_
+                  (io.panic
+                    "pointer-proof smoke: foreign source provenance was admitted")])]
+            [_ (io.panic "pointer-proof smoke: second guard source failed")])]
+        [_ (io.panic "pointer-proof smoke: first guard source failed")])
       (match (lower.lower-compiler-pointer-proof-result
         (proof-smoke-request missing mode)
         (owned_view.compiler-owned-shared-view first-result))

@@ -1969,7 +1969,8 @@
             [error : String
               (pointer_proof.pointer-proof-input-error
                 input
-                (lower-global-shared-view program))]
+                (lower-global-shared-view program)
+                (lower-global-shared-view spans))]
             (if (= (string.string-length (& error)) 0)
               (ResultCompilerLowerPointerProof.Ok program spans input)
               (ResultCompilerLowerPointerProof.Err
@@ -70405,7 +70406,8 @@
                     [(pointer_proof.PointerProofRequest.Requested input)
                       (pointer_proof.pointer-proof-input-bind!
                         input
-                        (lower-global-shared-view program))])
+                        (lower-global-shared-view program)
+                        (lower-global-shared-view success.spans))])
                   (ResultCompilerLower.Ok program success.spans)))]
             [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))
 

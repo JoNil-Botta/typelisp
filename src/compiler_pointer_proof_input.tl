@@ -83,7 +83,11 @@
   (functions u64)
   (function-count i64)
   (externs u64)
-  (extern-count i64))
+  (extern-count i64)
+  (source-spans u64)
+  (source-span-count i64)
+  (instruction-spans u64)
+  (instruction-span-count i64))
 
 (defenum PointerProofProgramBinding
   (Missing)
@@ -328,23 +332,34 @@
       (arena.Arena storage.arena)
       (ref_vec.push-ref! operands reference))))
 
-(define (pointer-proof-program-identity [program : ir.CompilerIrProgram]) : PointerProofProgramIdentity
+(define (pointer-proof-program-identity
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]) : PointerProofProgramIdentity
   (match program
     [(ir.CompilerIrProgram.Program globals functions externs)
-      (PointerProofProgramIdentity
-        (unsafe
-          (ptr->int (__tl_array-data globals.slots)))
-        globals.len
-        (unsafe
-          (ptr->int (__tl_array-data functions.slots)))
-        functions.len
-        (unsafe
-          (ptr->int (__tl_array-data externs.slots)))
-        externs.len)]))
+      (match spans
+        [(ir.CompilerSourceSpans.Spans entries instructions _)
+          (PointerProofProgramIdentity
+            (unsafe
+              (ptr->int (__tl_array-data globals.slots)))
+            globals.len
+            (unsafe
+              (ptr->int (__tl_array-data functions.slots)))
+            functions.len
+            (unsafe
+              (ptr->int (__tl_array-data externs.slots)))
+            externs.len
+            (unsafe
+              (ptr->int (__tl_array-data entries.slots)))
+            entries.len
+            (unsafe
+              (ptr->int (__tl_array-data instructions.slots)))
+            instructions.len)])]))
 
 (define (pointer-proof-input-bind!
   [input : PointerProofInput]
-  [program : ir.CompilerIrProgram]) : unit
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]) : unit
   (let
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
     (begin
@@ -380,7 +395,7 @@
       (set!
         storage.binding
         (PointerProofProgramBinding.Bound
-          (pointer-proof-program-identity program)))
+          (pointer-proof-program-identity program spans)))
       (pointer-proof-input-store! input storage))))
 
 (define (pointer-proof-input-begin-error [input : PointerProofInput]) : String
@@ -400,7 +415,8 @@
 
 (define (pointer-proof-input-error
   [input : PointerProofInput]
-  [program : ir.CompilerIrProgram]) : String
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]) : String
   (if (= (pointer-proof-input-address input) (cast 0 : u64))
     "pointer proof: missing or retired input"
     (let
@@ -413,16 +429,22 @@
           [(PointerProofProgramBinding.Bound expected)
             (let
               [actual : PointerProofProgramIdentity
-                (pointer-proof-program-identity program)]
+                (pointer-proof-program-identity program spans)]
               (if (and
                 (= expected.globals actual.globals)
                 (= expected.global-count actual.global-count)
                 (= expected.functions actual.functions)
                 (= expected.function-count actual.function-count)
                 (= expected.externs actual.externs)
-                (= expected.extern-count actual.extern-count))
+                (= expected.extern-count actual.extern-count)
+                (= expected.source-spans actual.source-spans)
+                (= expected.source-span-count actual.source-span-count)
+                (= expected.instruction-spans actual.instruction-spans)
+                (=
+                  expected.instruction-span-count
+                  actual.instruction-span-count))
                 ""
-                "pointer proof: input belongs to a different lowered program"))])))))
+                "pointer proof: input belongs to a different lowered program or source provenance"))])))))
 
 (define (pointer-proof-input-use
   [input : PointerProofInput]

@@ -617,36 +617,56 @@ EOF
 # Each step records a ci-timing row under the running gate: CASE is the stage
 # whose compiler runs, PHASE the step. Mutation-only steps record only in the
 # mutation bootstrap.
+#
+# When timing is on (hosted CI), ci_timing_run turns errexit off around the
+# command so it can record the row. The steps are shell functions whose checks
+# rely on errexit (cmp, as, readelf | grep, subshell exits), so each runs in its
+# own errexit subshell: any failing command still fails the step, with or
+# without timing. No step sets a variable that later code reads.
+bootstrap_step() {
+    _bs_case=$1
+    _bs_phase=$2
+    shift 2
+    ci_timing_run "$_bs_case" "$_bs_phase" bootstrap_step_errexit "$@"
+}
+
+bootstrap_step_errexit() {
+    (
+        set -e
+        "$@"
+    )
+}
+
 bootstrap_mutation_step() {
     [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ] || return 0
-    ci_timing_run "$@"
+    bootstrap_step "$@"
 }
 
 echo "[bootstrap] stage0 -> stage1.s"
-ci_timing_run stage0 compile run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+bootstrap_step stage0 compile run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 
-ci_timing_run stage1 link assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
+bootstrap_step stage1 link assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
-    ci_timing_run stage1 cli-smoke check_stage1_compile_cli
+    bootstrap_step stage1 cli-smoke check_stage1_compile_cli
 fi
 
-ci_timing_run stage1 image build_bootstrap_embedded_stdlib "$STAGE1_BIN"
+bootstrap_step stage1 image build_bootstrap_embedded_stdlib "$STAGE1_BIN"
 bootstrap_mutation_step stage1 snapshot \
     bootstrap_tlci_mutation_snapshot stage1 "$STAGE1_BIN"
 bootstrap_mutation_step stage1 witness bootstrap_tlci_mutation_source_route
 
 echo "[bootstrap] stage1 -> stage2.s"
-ci_timing_run stage1 compile run_bootstrap_compile "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+bootstrap_step stage1 compile run_bootstrap_compile "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 
-ci_timing_run stage2 link assemble_and_link_stage2
+bootstrap_step stage2 link assemble_and_link_stage2
 bootstrap_mutation_step stage2 witness bootstrap_tlci_mutation_native_route
 
 if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
-    ci_timing_run stage2 cli-smoke check_stage2_embedded_stdlib
+    bootstrap_step stage2 cli-smoke check_stage2_embedded_stdlib
 fi
 
-ci_timing_run stage2 image build_bootstrap_embedded_stdlib "$STAGE2_BIN"
+bootstrap_step stage2 image build_bootstrap_embedded_stdlib "$STAGE2_BIN"
 bootstrap_mutation_step stage2 snapshot \
     bootstrap_tlci_mutation_snapshot stage2 "$STAGE2_BIN"
 
@@ -654,17 +674,17 @@ echo "[bootstrap] stage2 -> stage3.s"
 # stage2+ compile with the embedded stdlib (no stdlib root): the byte-equal
 # fixpoint against stage2.s (built from the on-disk stdlib) is the parity
 # gate for the embedded source payload and the native macro route.
-ci_timing_run stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+bootstrap_step stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 
-ci_timing_run stage3 link assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
+bootstrap_step stage3 link assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
 bootstrap_build_stage4() {
-    ci_timing_run stage3 image build_bootstrap_embedded_stdlib "$STAGE3_BIN"
+    bootstrap_step stage3 image build_bootstrap_embedded_stdlib "$STAGE3_BIN"
     bootstrap_mutation_step stage3 snapshot \
         bootstrap_tlci_mutation_snapshot stage3 "$STAGE3_BIN"
     echo "[bootstrap] stage3 -> stage4.s"
-    ci_timing_run stage3 compile run_bootstrap_compile "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-    ci_timing_run stage4 link assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
+    bootstrap_step stage3 compile run_bootstrap_compile "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+    bootstrap_step stage4 link assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 
 bootstrap_resolve_fixpoint
@@ -681,7 +701,7 @@ bootstrap_mutation_step "$BOOTSTRAP_COMPILER_STAGE" snapshot \
 # native macro route active, and require byte parity with stage3.s.
 echo "[bootstrap] stage2 embedded-provenance parity"
 EMBEDDED_PARITY_ASM="$WORKDIR/stage3-embedded.s"
-ci_timing_run stage2 parity run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC_ABS" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+bootstrap_step stage2 parity run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC_ABS" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 if ! cmp -s "$STAGE3_ASM" "$EMBEDDED_PARITY_ASM"; then
     echo "embedded-provenance stage2 output differs from stage3.s" >&2
     exit 1

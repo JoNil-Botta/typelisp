@@ -661,10 +661,10 @@ if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
     trap 'ci_timing_summary "$TYPELISP_CI_TIMING_FILE" 10' EXIT
 fi
 
-# Only the bootstrap consumes the seed; a selection without it needs none.
+# Only the two bootstraps consume the seed; a selection without them needs none.
 SEED_TYPELISP_BIN=
 case ",$CI_VERIFY_PLAN_IDS" in
-    *,bootstrap-fixpoint,*)
+    *,bootstrap-fixpoint,* | *,tlci-mutation-bootstrap-fixpoint,*)
         if [ -z "${TYPELISP_BIN:-}" ]; then
             scripts/fetch-stage0.sh
             SEED_TYPELISP_BIN="$ROOT/target/stage0/typelisp"

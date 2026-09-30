@@ -20064,11 +20064,145 @@ g:
       7
       "    kmovw -8(%rbp), %k7\n    kmovw %k7, -16(%rbp)\n")))
 
+;; `kind` 0 is no shape, 1 a vector and 2 a mask of `lanes` lanes.
+(define (compiler-backend-simd-copy-shape-is?
+  [shape : backend.CompilerBackendSimdCopyShape]
+  [kind : i64]
+  [lanes : i64]) : bool
+  (match shape
+    [(backend.CompilerBackendSimdCopyShape.No) (= kind 0)]
+    [(backend.CompilerBackendSimdCopyShape.Vector got _)
+      (and (= kind 1) (= got lanes))]
+    [(backend.CompilerBackendSimdCopyShape.Mask got)
+      (and (= kind 2) (= got lanes))]))
+
+;; The query walks a cons block list and a block array separately, so every
+;; graph is asked both ways.
+(define (compiler-backend-simd-copy-shape-case-ok?
+  [text : String]
+  [dst : i64]
+  [vars : i64]
+  [kind : i64]
+  [lanes : i64]) : bool
+  (and
+    (compiler-backend-simd-copy-shape-is?
+      (backend.compiler-backend-simd-copy-shape
+        (irt.blocks (owned_view.compiler-owned-shared-view text))
+        dst
+        vars)
+      kind
+      lanes)
+    (compiler-backend-simd-copy-shape-is?
+      (backend.compiler-backend-simd-copy-shape
+        (ir.CompilerIrBlockList.Array
+          (ir.compiler-ir-block-seq-from-list (irt.blocks text)))
+        dst
+        vars)
+      kind
+      lanes)))
+
+;; `%1 = mov %2` ... `%n = mov 0`, listed in each of two blocks: every variable
+;; has two definitions and no chain reaches a vector, the shape loop-carried
+;; copies take below opt2 (#8394). Re-exploring each definition's chain would
+;; take 2^n steps; following each variable once takes n.
+(define (compiler-backend-simd-copy-shape-branching-text [n : i64]) : String
+  (let
+    [body : String ""]
+    [i : i64 1]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            body
+            (str_cat.str-cat
+              body
+              "  %"
+              (string.int->string i)
+              " = mov %"
+              (string.int->string (+ i 1))
+              " : i64\n"))
+          (set! i (+ i 1))))
+      (str_cat.str-cat
+        "first:\n"
+        body
+        "  %"
+        (string.int->string n)
+        " = mov 0 : i64\n  jump second\nsecond:\n"
+        body
+        "  %"
+        (string.int->string n)
+        " = mov 0 : i64\n  return 0\n"))))
+
+(define (compiler-backend-simd-copy-shape-ok?) : bool
+  (and
+    ;; A mask reached through two copies.
+    (compiler-backend-simd-copy-shape-case-ok?
+      "entry:
+         %3 = vector_compare_lt %1, %2 lanes 4 : i64
+         %4 = mov %3 : i64
+         %5 = mov %4 : i64
+         return 0"
+      5
+      6
+      2
+      4)
+    ;; Self-copies and copy cycles terminate without a shape.
+    (compiler-backend-simd-copy-shape-case-ok?
+      "entry:
+         %1 = mov %1 : i64
+         return 0"
+      1
+      2
+      0
+      0)
+    (compiler-backend-simd-copy-shape-case-ok?
+      "entry:
+         %1 = mov %2 : i64
+         jump back
+       back:
+         %2 = mov %1 : i64
+         jump entry"
+      1
+      3
+      0
+      0)
+    ;; Cutting the cycle back into %1 does not end %2's scan: its later
+    ;; definition in the same block is a vector.
+    (compiler-backend-simd-copy-shape-case-ok?
+      "entry:
+         %1 = mov %2 : i64
+         jump back
+       back:
+         %2 = mov %1 : i64
+         %2 = vector_add %3, %4 lanes 4 : i64
+         jump entry"
+      1
+      5
+      1
+      4)
+    ;; Neither does a scalar-sourced definition earlier in the block.
+    (compiler-backend-simd-copy-shape-case-ok?
+      "entry:
+         %1 = mov 0 : i64
+         %1 = vector_add %2, %3 lanes 8 : i64
+         return 0"
+      1
+      4
+      1
+      8)
+    (compiler-backend-simd-copy-shape-case-ok?
+      (compiler-backend-simd-copy-shape-branching-text 40)
+      1
+      41
+      0
+      0)))
+
 (define (compiler-backend-simd-copy-paths-ok?) : bool
   (and
     (compiler-backend-vector-copy-paths-ok? "ymm")
     (compiler-backend-vector-copy-paths-ok? "zmm")
-    (compiler-backend-mask-copy-paths-ok?)))
+    (compiler-backend-mask-copy-paths-ok?)
+    (compiler-backend-simd-copy-shape-ok?)))
 
 (define (compiler-backend-vector-call-lifetime-spill-ok?) : bool
   (asm-ok?

@@ -504,6 +504,7 @@ spmd_compact_overflow_trap|all|-|tests/integration/spmd_compact_overflow_trap.tl
 spmd_compact_destination_oob_trap|all|-|tests/integration/spmd_compact_destination_oob_trap.tl|134|-|-|-|expected-stderr:tl: $SRC:10:30: array index out of bounds: index=1 length=1\n
 spmd_foreach|all|-|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl|-
 spmd_gather_read|all|-|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl|-
+spmd_loop_carried_copy_shape|all|-|tests/integration/spmd_loop_carried_copy_shape.tl|42|-|-|spmd_vec_support.tl|-
 spmd_gather_oob|all|-|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:31:33: array index out of bounds: index=9223372036854775807 length=8\n
 spmd_gather_lane_offset_oob|all|-|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:28:33: array index out of bounds: index=-9223372036854775808 length=8\n
 spmd_atomic_scatter|all|-|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl|-

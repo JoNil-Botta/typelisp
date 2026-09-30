@@ -44,6 +44,17 @@ exit 134
 in stderr
 contains array index out of bounds
 
+# Below opt2 a loop counter and the slice accessors keep several Mov
+# definitions joined by back edges; the backend's SIMD copy-shape query must
+# visit each variable once instead of exploring those chains exponentially
+# (#8394). Both levels used to exhaust memory in the SIMD modes.
+case loop-carried-copy-shape
+source tests/integration/spmd_loop_carried_copy_shape.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1
+exit 42
+
 # ----------------------------------------------------------------- shuffles
 
 case shuffle-opcodes

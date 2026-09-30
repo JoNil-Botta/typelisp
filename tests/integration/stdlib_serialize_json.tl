@@ -291,8 +291,7 @@
         (serialize-json-make-samples)
         (serialize-json-combo))]
     [json : json.Json (person_json.to-json person)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq
         encoded
@@ -312,8 +311,13 @@
 (define (serialize-json-i64-root-roundtrip-ok?) : bool
   (let
     [json : json.Json (i64_json.to-json 42)]
+    [encoded-source : json.Json (i64_json.to-json 42)]
+    ;; An explicit caller `unsafe` view (#7701): the read consumes
+    ;; `encoded-source`, which is not used again.
     [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+      (stdlib.json.stringify
+        (unsafe
+          (stdlib.json.json-shared-view encoded-source)))]
     (and
       (string.eq encoded "42")
       (match (i64_json.from-json json)
@@ -324,8 +328,7 @@
   (let
     [scores : (Array i64 3) (array 4 5 6)]
     [json : json.Json (fixed_i64_json.to-json scores)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "[4,5,6]")
       (match (fixed_i64_json.from-json json)
@@ -336,8 +339,7 @@
   (let
     [samples : (__tl_dyn-array i64) (serialize-json-make-samples)]
     [json : json.Json (dyn_i64_json.to-json samples)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "[7,8]")
       (match (dyn_i64_json.from-json json)
@@ -348,8 +350,7 @@
   (let
     [previous : (Array Address 2) (serialize-json-previous-addresses)]
     [json : json.Json (address_array_json.to-json previous)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq
         encoded
@@ -361,8 +362,7 @@
 (define (serialize-json-tuple-root-roundtrip-ok?) : bool
   (let
     [json : json.Json (tuple_i64_i64_json.to-json (tuple 11 12))]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "[11,12]")
       (match (tuple_i64_i64_json_again.from-json json)
@@ -373,8 +373,7 @@
 (define (serialize-json-distinct-tuple-root-ok?) : bool
   (let
     [json : json.Json (tuple_i64_bool_json.to-json (tuple 23 true))]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "[23,true]")
       (match (tuple_i64_bool_json.from-json json)
@@ -396,8 +395,7 @@
   (let
     [status : enum_fixture.Status (enum_fixture.moved)]
     [json : json.Json (status_json.to-json status)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "{\"tag\":\"Moved\",\"payload\":[123,[9,10]]}")
       (match (status_json.from-json json)
@@ -408,8 +406,7 @@
   (let
     [status : enum_fixture.Status (enum_fixture.wide)]
     [json : json.Json (status_json.to-json status)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "{\"tag\":\"Wide\",\"payload\":[1,2,3,4,5,6,7,8,9]}")
       (match (status_json.from-json json)
@@ -419,8 +416,7 @@
 (define (serialize-json-status-struct-payload-roundtrip-ok?) : bool
   (let
     [json : json.Json (status_json.to-json (enum_fixture.detailed))]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq
         encoded
@@ -478,8 +474,7 @@
   (let
     [max : u64 (cast -1 : u64)]
     [json : json.Json (u64_json.to-json max)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "18446744073709551615")
       (match (u64_json.from-json json)
@@ -493,8 +488,7 @@
     [ledger : Ledger
       (Ledger top (array high (cast 0 : u64)) (tuple (cast 7 : u64) true))]
     [json : json.Json (ledger_json.to-json ledger)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq
         encoded
@@ -513,8 +507,7 @@
   (let
     [stamp : enum_fixture.Stamp (enum_fixture.stamp-max)]
     [json : json.Json (stamp_json.to-json stamp)]
-    [encoded : String
-      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    [encoded : String (stdlib.json.stringify (clone json))]
     (and
       (string.eq encoded "{\"tag\":\"At\",\"payload\":[18446744073709551615]}")
       (match (stamp_json.from-json json)

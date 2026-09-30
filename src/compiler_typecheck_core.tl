@@ -3525,7 +3525,14 @@
   (Value)
   (ForeachIndex)
   (CompactIndex)
-  (CompactSlot))
+  (CompactSlot)
+  ;; foreach-active (#8306): the read-only lane binding, and the two sentinel
+  ;; bindings the walker pushes. A barrier opens a foreach-active body; an
+  ;; opening starts a lane-value operand. Sentinels carry a name no source
+  ;; binding has.
+  (ActiveLane)
+  (ActiveBarrier)
+  (LaneValueOpen))
 
 (defstruct TcSpmdBinding
   (name i64)
@@ -24254,6 +24261,44 @@
     [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx expr-bases third)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
+;; Where the source scope check below stands relative to SPMD constructs.
+;; Gang operations are valid in every scope but the first; foreach-active only
+;; directly in a foreach body; lane-value only in a foreach-active body.
+(define tc-spmd-scope-outside : i64
+  0)
+
+;; An spmd-reduce value, or an spmd-scan or spmd-compact body.
+(define tc-spmd-scope-gang : i64
+  1)
+(define tc-spmd-scope-foreach : i64
+  2)
+(define tc-spmd-scope-active : i64
+  3)
+
+;; The operand of a lane-value.
+(define tc-spmd-scope-lane-value : i64
+  4)
+
+(define (tc-spmd-scope-gang-op-ok? [scope : i64]) : bool
+  (not (= scope tc-spmd-scope-outside)))
+
+(define (tc-spmd-foreach-active-scope-message [scope : i64]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    (cond
+      [(= scope tc-spmd-scope-active)
+        "typecheck: foreach-active cannot be nested inside foreach-active"]
+      [(= scope tc-spmd-scope-lane-value)
+        "typecheck: foreach-active is not valid inside a lane-value operand"]
+      [else "typecheck: foreach-active is only valid inside a foreach body"])))
+
+(define (tc-spmd-lane-value-scope-message [scope : i64]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Spmd)
+    (if (= scope tc-spmd-scope-lane-value)
+      "typecheck: lane-value cannot be nested inside a lane-value operand"
+      "typecheck: lane-value is only valid inside a foreach-active body")))
+
 (define (tc-spmd-broadcast-scope-message) : String
   (tc-kind-message
     (cdiag.CompilerTypecheckKind.Spmd)
@@ -24273,14 +24318,14 @@
 (define (tc-source-expr-list-spmd-broadcast-scope-ok
   [expr-bases : i64]
   [exprs : ast.AstExprList]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (tc-source-expr-list-spmd-broadcast-scope-ok-at expr-bases (& exprs) 0 allow))
 
 (define (tc-source-expr-list-spmd-broadcast-scope-ok-at
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (if (>= index exprs.len)
     ResultTcUnit.Ok
     (let
@@ -24301,7 +24346,7 @@
   [expr-bases : i64]
   [left : ast.AstExpr]
   [right : ast.AstExpr]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (match (tc-source-expr-spmd-broadcast-scope-ok expr-bases left allow)
     [(ResultTcUnit.Ok)
       (tc-source-expr-spmd-broadcast-scope-ok expr-bases right allow)]
@@ -24312,7 +24357,7 @@
   [first : ast.AstExpr]
   [second : ast.AstExpr]
   [third : ast.AstExpr]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (match (tc-source-expr-pair-spmd-broadcast-scope-ok
     expr-bases
     first
@@ -24325,7 +24370,7 @@
 (define (tc-source-let-binding-list-spmd-broadcast-scope-ok
   [expr-bases : i64]
   [bindings : ast.AstLetBindingList]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
     expr-bases
     (& bindings)
@@ -24335,7 +24380,7 @@
 (define (tc-source-let-binding-list-spmd-broadcast-scope-ok-at
   [expr-bases : i64]
   [bindings : (& bindings ast.AstLetBindingList)]
-  [allow : bool]
+  [allow : i64]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast.ast-let-binding-list-len bindings))
     ResultTcUnit.Ok
@@ -24359,7 +24404,7 @@
 (define (tc-source-resource-binding-list-spmd-broadcast-scope-ok
   [expr-bases : i64]
   [bindings : ast.AstResourceBindingList]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
     expr-bases
     (& bindings)
@@ -24369,7 +24414,7 @@
 (define (tc-source-resource-binding-list-spmd-broadcast-scope-ok-at
   [expr-bases : i64]
   [bindings : (& bindings ast.AstResourceBindingList)]
-  [allow : bool]
+  [allow : i64]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast.ast-resource-binding-list-len bindings))
     ResultTcUnit.Ok
@@ -24399,7 +24444,7 @@
 (define (tc-source-match-arm-list-spmd-broadcast-scope-ok
   [expr-bases : i64]
   [arms : ast.AstMatchArmList]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
     expr-bases
     (& arms)
@@ -24409,7 +24454,7 @@
 (define (tc-source-match-arm-list-spmd-broadcast-scope-ok-at
   [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
-  [allow : bool]
+  [allow : i64]
   [index : i64]) : ResultTcUnit
   (if (>= index arms.len)
     ResultTcUnit.Ok
@@ -24430,7 +24475,7 @@
 (define (tc-source-expr-spmd-broadcast-scope-ok
   [expr-bases : i64]
   [expr : ast.AstExpr]
-  [allow : bool]) : ResultTcUnit
+  [allow : i64]) : ResultTcUnit
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
@@ -24494,7 +24539,10 @@
           (let
             [body : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (tc-source-expr-spmd-broadcast-scope-ok expr-bases body false))])]
+            (tc-source-expr-spmd-broadcast-scope-ok
+              expr-bases
+              body
+              tc-spmd-scope-outside))])]
     [(ast.AstExpr.Tuple exprs)
       (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(ast.AstExpr.TupleRef tuple-box _)
@@ -24637,9 +24685,12 @@
               expr-bases
               start
               end
-              false)
+              tc-spmd-scope-outside)
               [(ResultTcUnit.Ok)
-                (tc-source-expr-spmd-broadcast-scope-ok expr-bases body true)]
+                (tc-source-expr-spmd-broadcast-scope-ok
+                  expr-bases
+                  body
+                  tc-spmd-scope-foreach)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
@@ -24658,9 +24709,12 @@
               start
               end
               init
-              false)
+              tc-spmd-scope-outside)
               [(ResultTcUnit.Ok)
-                (tc-source-expr-spmd-broadcast-scope-ok expr-bases value true)]
+                (tc-source-expr-spmd-broadcast-scope-ok
+                  expr-bases
+                  value
+                  tc-spmd-scope-gang)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdScan scan-box)
       (match (__tl-box-place scan-box)
@@ -24691,17 +24745,17 @@
               start
               end
               init
-              false)
+              tc-spmd-scope-outside)
               [(ResultTcUnit.Ok)
                 (match (tc-source-expr-spmd-broadcast-scope-ok
                   expr-bases
                   value
-                  false)
+                  tc-spmd-scope-outside)
                   [(ResultTcUnit.Ok)
                     (tc-source-expr-spmd-broadcast-scope-ok
                       expr-bases
                       body
-                      true)]
+                      tc-spmd-scope-gang)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdCompact compact-box)
@@ -24732,21 +24786,21 @@
               start
               end
               init
-              false)
+              tc-spmd-scope-outside)
               [(ResultTcUnit.Ok)
                 (match (tc-source-expr-spmd-broadcast-scope-ok
                   expr-bases
                   keep
-                  false)
+                  tc-spmd-scope-outside)
                   [(ResultTcUnit.Ok)
                     (tc-source-expr-spmd-broadcast-scope-ok
                       expr-bases
                       body
-                      true)]
+                      tc-spmd-scope-gang)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (if allow
+      (if (tc-spmd-scope-gang-op-ok? allow)
         (let
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
@@ -24756,10 +24810,10 @@
             expr-bases
             value
             lane
-            true))
+            allow))
         (ResultTcUnit.Err (tc-spmd-broadcast-scope-message)))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (if allow
+      (if (tc-spmd-scope-gang-op-ok? allow)
         (let
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
@@ -24769,14 +24823,28 @@
             expr-bases
             value
             lane
-            true))
+            allow))
         (ResultTcUnit.Err (tc-spmd-shuffle-scope-message)))]
+    [(ast.AstExpr.ForeachActive _ body-box)
+      (if (= allow tc-spmd-scope-foreach)
+        (tc-source-expr-spmd-broadcast-scope-ok
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases body-box)
+          tc-spmd-scope-active)
+        (ResultTcUnit.Err (tc-spmd-foreach-active-scope-message allow)))]
+    [(ast.AstExpr.LaneValue value-box)
+      (if (= allow tc-spmd-scope-active)
+        (tc-source-expr-spmd-broadcast-scope-ok
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases value-box)
+          tc-spmd-scope-lane-value)
+        (ResultTcUnit.Err (tc-spmd-lane-value-scope-message allow)))]
     [(ast.AstExpr.SpmdProgramIndex)
-      (if allow
+      (if (tc-spmd-scope-gang-op-ok? allow)
         ResultTcUnit.Ok
         (ResultTcUnit.Err (tc-spmd-lane-scope-message "program-index")))]
     [(ast.AstExpr.SpmdProgramCount)
-      (if allow
+      (if (tc-spmd-scope-gang-op-ok? allow)
         ResultTcUnit.Ok
         (ResultTcUnit.Err (tc-spmd-lane-scope-message "program-count")))]
     [(ast.AstExpr.StructGet receiver-box _)
@@ -25550,6 +25618,16 @@
         (tc-source-expr-policy-ok ctx expr-bases index))]
     [(ast.AstExpr.Syscall args)
       (tc-source-expr-list-policy-ok ctx expr-bases args)]
+    [(ast.AstExpr.ForeachActive _ body-box)
+      (tc-source-expr-policy-ok
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box))]
+    [(ast.AstExpr.LaneValue value-box)
+      (tc-source-expr-policy-ok
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : ast.AstDecl]) : ResultTcUnit
@@ -25575,7 +25653,7 @@
                     (tc-source-expr-spmd-broadcast-scope-ok
                       expr-bases
                       expr
-                      false)]
+                      tc-spmd-scope-outside)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
       [(ast.AstDecl.DefFn decl-meta _ params ret body-box _)
@@ -25608,7 +25686,7 @@
                               (tc-source-expr-spmd-broadcast-scope-ok
                                 expr-bases
                                 body
-                                false)]
+                                tc-spmd-scope-outside)]
                             [(ResultTcUnit.Err message)
                               (ResultTcUnit.Err message)])]
                         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -25631,7 +25709,7 @@
                       (tc-source-expr-spmd-broadcast-scope-ok
                         expr-bases
                         body
-                        false)]
+                        tc-spmd-scope-outside)]
                     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
@@ -28489,6 +28567,97 @@
         (tc-spmd-env-len right)
         0)
       (tc-spmd-env-new merged left-len))))
+
+;; --- foreach-active scopes (#8306) ---
+;; A foreach-active body runs one lane at a time, so a varying binding from
+;; outside the body is hidden there: the body reads it only through
+;; lane-value. Entering the body pushes a barrier sentinel; a lane-value
+;; operand pushes an opening sentinel that lifts the barrier below it again.
+;; Scope never nests a body inside an operand or another body, so the
+;; innermost sentinel decides.
+(define tc-spmd-env-sentinel-name : i64
+  -1)
+
+(define (tc-spmd-env-push-sentinel [env : TcSpmdEnv] [role : TcSpmdRole]) : TcSpmdEnv
+  (tc-spmd-env-bind-role-id
+    env
+    tc-spmd-env-sentinel-name
+    (ast.AstType.Unit)
+    TcSpmdClass.Uniform
+    TcSpmdScope.Local
+    role))
+
+(define (tc-spmd-env-innermost-sentinel-from [bindings : u64] [index : i64]) : TcSpmdRole
+  (if (< index 0)
+    TcSpmdRole.Value
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
+      (match binding.role
+        [(TcSpmdRole.ActiveBarrier) TcSpmdRole.ActiveBarrier]
+        [(TcSpmdRole.LaneValueOpen) TcSpmdRole.LaneValueOpen]
+        [_ (tc-spmd-env-innermost-sentinel-from bindings (- index 1))]))))
+
+;; True inside a foreach-active body, outside any lane-value operand in it.
+(define (tc-spmd-env-in-active-body? [env : TcSpmdEnv]) : bool
+  (match (tc-spmd-env-innermost-sentinel-from
+    env.bindings
+    (- (tc-spmd-env-len env) 1))
+    [(TcSpmdRole.ActiveBarrier) true]
+    [_ false]))
+
+;; A value bound inside the gang that is not a scalar lane value may carry
+;; per-lane state the SPMD class does not see: a closure can capture varying
+;; values, and a tuple, struct, array or reference can hold such a closure. A
+;; foreach-active body therefore hides every gang-local binding except scalar
+;; lane values, like a varying binding: reading one there could observe the
+;; lane's varying state without lane-value. Values from outside the foreach
+;; are uniform and stay visible.
+(define (tc-spmd-gang-local-opaque?
+  [scope : TcSpmdScope]
+  [ty : (& ty ast.AstType)]) : bool
+  (match scope
+    [(TcSpmdScope.Outer) false]
+    [(TcSpmdScope.Local)
+      (not
+        (tc-spmd-lane-type-supported?
+          (owned_view.compiler-owned-reference-shared-view ty)))]))
+
+(define (tc-spmd-env-hidden-from?
+  [bindings : u64]
+  [index : i64]
+  [name-id : i64]
+  [below-barrier : bool]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
+      (match binding.role
+        [(TcSpmdRole.LaneValueOpen) false]
+        [(TcSpmdRole.ActiveBarrier)
+          (tc-spmd-env-hidden-from? bindings (- index 1) name-id true)]
+        [_
+          (if (= binding.name name-id)
+            (and
+              below-barrier
+              (or
+                (tc-spmd-varying? binding.class)
+                (tc-spmd-gang-local-opaque? binding.scope (& binding.ty))))
+            (tc-spmd-env-hidden-from?
+              bindings
+              (- index 1)
+              name-id
+              below-barrier))]))))
+
+;; True when NAME-ID resolves to a varying binding, or a gang-local value that
+;; is not a scalar lane value, declared outside the innermost foreach-active
+;; body. The body reads a varying binding only through lane-value and cannot
+;; read such a value at all.
+(define (tc-spmd-env-hidden-id? [env : TcSpmdEnv] [name-id : i64]) : bool
+  (tc-spmd-env-hidden-from?
+    env.bindings
+    (- (tc-spmd-env-len env) 1)
+    name-id
+    false))
 
 (define (tc-literal-type [lit : ast.AstLiteral]) : ast.AstType
   (match lit
@@ -32291,6 +32460,7 @@
     [(ast.AstExpr.SpmdReduce _) true]
     [(ast.AstExpr.SpmdScan _) true]
     [(ast.AstExpr.SpmdCompact _) true]
+    [(ast.AstExpr.ForeachActive _ _) true]
     [(ast.AstExpr.WithResource _) true]
     [_ false]))
 
@@ -41315,6 +41485,12 @@
               body
               name
               (tc-resource-binding-list-add-bound-names bindings bound)))])]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (tc-ref-closure-local-uses-ok?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box)
+        name
+        (tc-string-list-add bound (tc-env-key-name-text lane)))]
     ;; These forms may not use the name at all.
     [(ast.AstExpr.Spanned _ _)
       (tc-ref-closure-no-free-use? expr-bases expr name bound)]
@@ -43590,6 +43766,18 @@
             arms)])]
     [(ast.AstExpr.Foreach _)
       (tc-spmd-masked-if-unsupported "nested foreach inside masked branches")]
+    ;; Serializing the active lanes of a masked branch is foreach-active's main
+    ;; use: the body is checked as scalar code, like anywhere else in a gang.
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (match (tc-spmd-foreach-active
+        ctx
+        expr-bases
+        env
+        spmd-env
+        lane
+        (ast.ast-expr-segment-bases-get expr-bases body-box))
+        [(ResultTcSpmdEnv.Ok _) ResultTcUnit.Ok]
+        [(ResultTcSpmdEnv.Err message) (ResultTcUnit.Err message)])]
     [(ast.AstExpr.SpmdReduce _)
       (tc-spmd-masked-if-unsupported
         "nested spmd-reduce inside masked branches")]
@@ -44163,6 +44351,11 @@
         (tc-kind-message
           (cdiag.CompilerTypecheckKind.Spmd)
           "typecheck: program-count is not supported inside spmd-scan body"))]
+    [(ast.AstExpr.ForeachActive _ _)
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: foreach-active is not supported inside spmd-scan body"))]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote _) ResultTcUnit.Ok]
     [(ast.AstExpr.PtrAddrOf _) ResultTcUnit.Ok]
@@ -44826,6 +45019,272 @@
                         (ResultTcSpmdExprInfo.Err
                           "typecheck: scalar for owned step requires fixed-array state")])]))]))])))
 
+;; --- foreach-active (#8306) ---
+(define (tc-spmd-active-hidden-message [name-id : i64]) : String
+  (str_cat.str-cat
+    (tc-kind-message
+      (cdiag.CompilerTypecheckKind.Spmd)
+      "typecheck: foreach-active body reads varying `")
+    (tc-env-key-name-text name-id)
+    "`; read it with (lane-value "
+    (tc-env-key-name-text name-id)
+    ")"))
+
+(define (tc-spmd-active-hidden-opaque-message [name-id : i64]) : String
+  (str_cat.str-cat
+    (tc-kind-message
+      (cdiag.CompilerTypecheckKind.Spmd)
+      "typecheck: foreach-active body reads gang-local value `")
+    (tc-env-key-name-text name-id)
+    "`, which is not a scalar lane value and can carry per-lane state such as a captured varying value; bind it outside the foreach or inside the body"))
+
+(define (tc-spmd-active-unsupported-message [what : String]) : String
+  (str_cat.str-cat
+    (tc-kind-message (cdiag.CompilerTypecheckKind.Spmd) "typecheck: ")
+    what
+    " inside foreach-active is not supported"))
+
+(define (tc-spmd-active-lambda-capture-from
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [index : i64]
+  [below-barrier : bool]
+  [lambda : ast.AstExpr]) : ResultTcUnit
+  (if (< index 0)
+    ResultTcUnit.Ok
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at spmd-env.bindings index)]
+      (match binding.role
+        [(TcSpmdRole.LaneValueOpen) ResultTcUnit.Ok]
+        [(TcSpmdRole.ActiveBarrier)
+          (tc-spmd-active-lambda-capture-from
+            expr-bases
+            spmd-env
+            (- index 1)
+            true
+            lambda)]
+        [_
+          (if (and
+            below-barrier
+            (tc-spmd-env-hidden-id? spmd-env binding.name)
+            (tc-expr-uses-free-name?
+              expr-bases
+              (tc-global-shared-view lambda)
+              (tc-env-key-name-text binding.name)
+              TcStringList.Nil))
+            (ResultTcUnit.Err
+              (if (tc-spmd-varying? binding.class)
+                (str_cat.str-cat
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: a lambda inside foreach-active cannot capture varying `")
+                  (tc-env-key-name-text binding.name)
+                  "`; read it with lane-value outside the lambda")
+                (tc-spmd-active-hidden-opaque-message binding.name)))
+            (tc-spmd-active-lambda-capture-from
+              expr-bases
+              spmd-env
+              (- index 1)
+              below-barrier
+              lambda))]))))
+
+;; A lambda in a foreach-active body must not capture a binding the body can
+;; read only through lane-value.
+(define (tc-spmd-active-lambda-capture-ok
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [lambda : ast.AstExpr]) : ResultTcUnit
+  (if (tc-spmd-env-in-active-body? spmd-env)
+    (tc-spmd-active-lambda-capture-from
+      expr-bases
+      spmd-env
+      (- (tc-spmd-env-len spmd-env) 1)
+      false
+      lambda)
+    ResultTcUnit.Ok))
+
+;; Check a foreach-active body inside a foreach gang. LANE is a uniform,
+;; read-only i64; varying bindings from outside the body are hidden behind a
+;; barrier, so the body is scalar code that may write shared state. The body
+;; runs zero or more times, so the gang environment after it merges the
+;; classes before and after.
+(define (tc-spmd-foreach-active
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [lane : i64]
+  [body : ast.AstExpr]) : ResultTcSpmdEnv
+  (if (tc-spmd-env-in-active-body? spmd-env)
+    (ResultTcSpmdEnv.Err
+      (tc-spmd-foreach-active-scope-message tc-spmd-scope-active))
+    (let
+      [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
+      [body-spmd-env : TcSpmdEnv
+        (tc-spmd-env-bind-role-id
+          (tc-spmd-env-push-sentinel spmd-env TcSpmdRole.ActiveBarrier)
+          lane
+          (ast.AstType.I64)
+          TcSpmdClass.Uniform
+          TcSpmdScope.Local
+          TcSpmdRole.ActiveLane)]
+      (match (tc-spmd-expr
+        ctx
+        expr-bases
+        (tc-bind-id env lane (ast.AstType.I64))
+        body-spmd-env
+        body)
+        [(ResultTcSpmdExprInfo.Ok info)
+          (match info
+            [(TcSpmdExprInfo _ _ after-env)
+              (ResultTcSpmdEnv.Ok
+                (tc-spmd-env-merge-classes
+                  spmd-env
+                  (tc-spmd-env-restore after-env mark)))])]
+        [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdEnv.Err message)]))))
+
+(define (tc-spmd-lane-value-operand-list-ok
+  [expr-bases : i64]
+  [exprs : ast.AstExprList]) : ResultTcUnit
+  (tc-spmd-lane-value-operand-list-ok-at expr-bases (& exprs) 0))
+
+(define (tc-spmd-lane-value-operand-list-ok-at
+  [expr-bases : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index exprs.len)
+    ResultTcUnit.Ok
+    (match (tc-spmd-lane-value-operand-ok
+      expr-bases
+      (ast.ast-expr-segment-bases-get
+        expr-bases
+        (ast.ast-expr-list-get exprs index 0)))
+      [(ResultTcUnit.Ok)
+        (tc-spmd-lane-value-operand-list-ok-at expr-bases exprs (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
+;; A lane-value operand only reads gang values: it neither writes nor calls,
+;; so reading one lane of it has no effect the other lanes could observe.
+(define (tc-spmd-lane-value-operand-ok [expr-bases : i64] [expr : ast.AstExpr]) : ResultTcUnit
+  (let
+    [unspanned : ast.AstExpr
+      (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (tc-global-shared-view expr))]
+    [reads-only : bool
+      (match (tc-global-shared-view unspanned)
+        [(ast.AstExpr.Literal _) true]
+        [(ast.AstExpr.Var _) true]
+        [(ast.AstExpr.SpmdProgramIndex) true]
+        [(ast.AstExpr.SpmdProgramCount) true]
+        [(ast.AstExpr.Binary _ _ _) true]
+        [(ast.AstExpr.Unary _ _) true]
+        [(ast.AstExpr.Ann _ _) true]
+        [(ast.AstExpr.Cast _ _) true]
+        [(ast.AstExpr.If _ _ _) true]
+        [(ast.AstExpr.Let _) true]
+        [(ast.AstExpr.ArrayRef _ _) true]
+        [(ast.AstExpr.StructGet _ _) true]
+        [(ast.AstExpr.TupleRef _ _) true]
+        [(ast.AstExpr.SpmdBroadcast _ _) true]
+        [(ast.AstExpr.SpmdShuffle _ _) true]
+        [(ast.AstExpr.MacroExpansion _ _ _) true]
+        [_ false])]
+    (if reads-only
+      (tc-spmd-lane-value-operand-list-ok
+        expr-bases
+        (ast.ast-expr-child-ids unspanned))
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Spmd)
+          "typecheck: a lane-value operand may only read gang values (bindings, literals, operators, casts, if, let, and array, field and tuple reads); compute a call or write in the gang before foreach-active")))))
+
+;; `(lane-value value)` in a foreach-active body: VALUE is checked under the
+;; gang's rules, with the body's barrier lifted, and the current lane's value
+;; of it is uniform.
+(define (tc-spmd-lane-value
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : ast.AstType]
+  [value : ast.AstExpr]) : ResultTcSpmdExprInfo
+  (if (tc-spmd-env-in-active-body? spmd-env)
+    (match (tc-spmd-lane-value-operand-ok
+      expr-bases
+      (tc-global-shared-view value))
+      [(ResultTcUnit.Ok)
+        (let
+          [info : TcSpmdExprInfo
+            (try
+              (tc-spmd-expr
+                ctx
+                expr-bases
+                env
+                (tc-spmd-env-push-sentinel spmd-env TcSpmdRole.LaneValueOpen)
+                value))]
+          (match info
+            [(TcSpmdExprInfo value-ty _ _)
+              (if (tc-spmd-lane-type-supported?
+                (tc-resolve-type ctx (tc-global-shared-view value-ty)))
+                (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)
+                (ResultTcSpmdExprInfo.Err
+                  (str_cat.str-cat
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.Spmd)
+                      "typecheck: lane-value operand must have a scalar lane type (an integer, float or bool type), found ")
+                    (tc-type-render (tc-type-strip-region value-ty)))))]))]
+      [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])
+    (ResultTcSpmdExprInfo.Err
+      (tc-spmd-lane-value-scope-message tc-spmd-scope-foreach))))
+
+;; `(set! name value)` in a gang, once the target's role is known to allow a
+;; write. A gang may set its own locals; a binding declared outside the gang
+;; only from a foreach-active body, which runs one lane at a time (#8306).
+(define (tc-spmd-set
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : ast.AstType]
+  [name : i64]
+  [value-box : i64]) : ResultTcSpmdExprInfo
+  (let
+    [value : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases value-box)]
+    (if (tc-dotted-place-name-id? ctx env name)
+      (match (tc-dotted-local-field-set-expr-id-after-check
+        (tc-context-structural-session ctx)
+        name
+        value-box)
+        [(ResultTcExprId.Ok virtual-id)
+          (tc-spmd-expr-typed
+            ctx
+            expr-bases
+            env
+            spmd-env
+            (ast.ast-expr-segment-bases-get expr-bases virtual-id)
+            expr-ty)]
+        [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
+      (let
+        [value-info : TcSpmdExprInfo
+          (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
+        (match value-info
+          [(TcSpmdExprInfo _ value-class value-env)
+            (cond
+              [(tc-spmd-env-has-local-id? value-env name)
+                (tc-spmd-finish
+                  expr-ty
+                  TcSpmdClass.Uniform
+                  (tc-spmd-env-set-local-class-id value-env name value-class))]
+              [(and
+                  (tc-spmd-env-has-outer-id? value-env name)
+                  (not (tc-spmd-env-in-active-body? value-env)))
+                (ResultTcSpmdExprInfo.Err
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: foreach cannot set binding declared outside foreach"))]
+              [else (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)])])))))
+
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
   [expr-bases : i64]
@@ -44871,7 +45330,12 @@
         (ast.ast-for-owned-step-body (& payload))
         expr-ty)]
     [(ast.AstExpr.SpmdProgramIndex)
-      (tc-spmd-finish expr-ty TcSpmdClass.Varying spmd-env)]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: foreach-active body reads varying program-index; read it with (lane-value (program-index))"))
+        (tc-spmd-finish expr-ty TcSpmdClass.Varying spmd-env))]
     [(ast.AstExpr.Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check
@@ -44888,7 +45352,12 @@
           [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
         (match (tc-spmd-env-lookup-id spmd-env name)
           [(TcSpmdLookup.Found _ class _ _)
-            (tc-spmd-finish-ctx ctx expr-ty class spmd-env)]
+            (if (tc-spmd-env-hidden-id? spmd-env name)
+              (ResultTcSpmdExprInfo.Err
+                (if (tc-spmd-varying? class)
+                  (tc-spmd-active-hidden-message name)
+                  (tc-spmd-active-hidden-opaque-message name)))
+              (tc-spmd-finish-ctx ctx expr-ty class spmd-env))]
           [(TcSpmdLookup.Missing)
             (tc-spmd-finish-ctx ctx expr-ty TcSpmdClass.Uniform spmd-env)]))]
     [(ast.AstExpr.Ann inner-box _)
@@ -44994,7 +45463,10 @@
               [(ResultTcSpmdLetState.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))])]
     [(ast.AstExpr.Lambda _)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
+      (match (tc-spmd-active-lambda-capture-ok expr-bases spmd-env expr)
+        [(ResultTcUnit.Ok)
+          (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
+        [(ResultTcUnit.Err message) (ResultTcSpmdExprInfo.Err message)])]
     [(ast.AstExpr.ArrayRef array-box index-box)
       (let
         [array : ast.AstExpr
@@ -45261,44 +45733,25 @@
             (tc-kind-message
               (cdiag.CompilerTypecheckKind.Spmd)
               "typecheck: spmd-compact slot binding is read-only"))]
-        [_
-          (let
-            [value : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases value-box)]
-            (if (tc-dotted-place-name-id? ctx env name)
-              (match (tc-dotted-local-field-set-expr-id-after-check
-                (tc-context-structural-session ctx)
-                name
-                value-box)
-                [(ResultTcExprId.Ok virtual-id)
-                  (tc-spmd-expr-typed
-                    ctx
-                    expr-bases
-                    env
-                    spmd-env
-                    (ast.ast-expr-segment-bases-get expr-bases virtual-id)
-                    expr-ty)]
-                [(ResultTcExprId.Err message)
-                  (ResultTcSpmdExprInfo.Err message)])
-              (let
-                [value-info : TcSpmdExprInfo
-                  (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
-                (match value-info
-                  [(TcSpmdExprInfo _ value-class value-env)
-                    (if (tc-spmd-env-has-local-id? value-env name)
-                      (tc-spmd-finish
-                        expr-ty
-                        TcSpmdClass.Uniform
-                        (tc-spmd-env-set-local-class-id
-                          value-env
-                          name
-                          value-class))
-                      (if (tc-spmd-env-has-outer-id? value-env name)
-                        (ResultTcSpmdExprInfo.Err
-                          (tc-kind-message
-                            (cdiag.CompilerTypecheckKind.Spmd)
-                            "typecheck: foreach cannot set binding declared outside foreach"))
-                        (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))]))))])]
+        [(TcSpmdLookup.Found _ _ _ (TcSpmdRole.ActiveLane))
+          (ResultTcSpmdExprInfo.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: foreach-active lane binding is read-only"))]
+        [(TcSpmdLookup.Found _ class _ _)
+          (if (tc-spmd-env-hidden-id? spmd-env name)
+            (ResultTcSpmdExprInfo.Err
+              (if (tc-spmd-varying? class)
+                (str_cat.str-cat
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: foreach-active body cannot set varying binding `")
+                  (tc-env-key-name-text name)
+                  "`")
+                (tc-spmd-active-hidden-opaque-message name)))
+            (tc-spmd-set ctx expr-bases env spmd-env expr-ty name value-box))]
+        [(TcSpmdLookup.Missing)
+          (tc-spmd-set ctx expr-bases env spmd-env expr-ty name value-box)])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -45330,127 +45783,145 @@
                     [(TcSpmdExprListInfo arms-class arms-env)
                       (tc-spmd-finish expr-ty arms-class arms-env)]))]))])]
     [(ast.AstExpr.Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases start-box)]
-            [end : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases end-box)]
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            [start-info : TcSpmdExprInfo
-              (try (tc-spmd-expr ctx expr-bases env spmd-env start))]
-            (match start-info
-              [(TcSpmdExprInfo _ start-class start-env)
-                (match (tc-spmd-require-uniform
-                  start-class
-                  (tc-kind-message
-                    (cdiag.CompilerTypecheckKind.Spmd)
-                    "typecheck: foreach bounds must be uniform"))
-                  [(ResultTcUnit.Ok)
-                    (let
-                      [end-info : TcSpmdExprInfo
-                        (try (tc-spmd-expr ctx expr-bases env start-env end))]
-                      (match end-info
-                        [(TcSpmdExprInfo _ end-class end-env)
-                          (match (tc-spmd-require-uniform
-                            end-class
-                            (tc-kind-message
-                              (cdiag.CompilerTypecheckKind.Spmd)
-                              "typecheck: foreach bounds must be uniform"))
-                            [(ResultTcUnit.Ok)
-                              (match (tc-spmd-check-foreach-body-with-env
-                                ctx
-                                expr-bases
-                                env
-                                end-env
-                                index
-                                (tc-resolve-type ctx index-ty)
-                                body)
-                                [(ResultTcUnit.Ok)
-                                  (tc-spmd-finish
-                                    expr-ty
-                                    TcSpmdClass.Uniform
-                                    end-env)]
-                                [(ResultTcUnit.Err message)
-                                  (ResultTcSpmdExprInfo.Err message)])]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcSpmdExprInfo.Err message)])]))]
-                  [(ResultTcUnit.Err message)
-                    (ResultTcSpmdExprInfo.Err message)])]))])]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "a nested foreach"))
+        (match (__tl-box-place fe-box)
+          [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
+            (let
+              [start : ast.AstExpr
+                (ast.ast-expr-segment-bases-get expr-bases start-box)]
+              [end : ast.AstExpr
+                (ast.ast-expr-segment-bases-get expr-bases end-box)]
+              [body : ast.AstExpr
+                (ast.ast-expr-segment-bases-get expr-bases body-box)]
+              [start-info : TcSpmdExprInfo
+                (try (tc-spmd-expr ctx expr-bases env spmd-env start))]
+              (match start-info
+                [(TcSpmdExprInfo _ start-class start-env)
+                  (match (tc-spmd-require-uniform
+                    start-class
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.Spmd)
+                      "typecheck: foreach bounds must be uniform"))
+                    [(ResultTcUnit.Ok)
+                      (let
+                        [end-info : TcSpmdExprInfo
+                          (try (tc-spmd-expr ctx expr-bases env start-env end))]
+                        (match end-info
+                          [(TcSpmdExprInfo _ end-class end-env)
+                            (match (tc-spmd-require-uniform
+                              end-class
+                              (tc-kind-message
+                                (cdiag.CompilerTypecheckKind.Spmd)
+                                "typecheck: foreach bounds must be uniform"))
+                              [(ResultTcUnit.Ok)
+                                (match (tc-spmd-check-foreach-body-with-env
+                                  ctx
+                                  expr-bases
+                                  env
+                                  end-env
+                                  index
+                                  (tc-resolve-type ctx index-ty)
+                                  body)
+                                  [(ResultTcUnit.Ok)
+                                    (tc-spmd-finish
+                                      expr-ty
+                                      TcSpmdClass.Uniform
+                                      end-env)]
+                                  [(ResultTcUnit.Err message)
+                                    (ResultTcSpmdExprInfo.Err message)])]
+                              [(ResultTcUnit.Err message)
+                                (ResultTcSpmdExprInfo.Err message)])]))]
+                    [(ResultTcUnit.Err message)
+                      (ResultTcSpmdExprInfo.Err message)])]))]))]
     [(ast.AstExpr.SpmdReduce _)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: spmd-reduce inside foreach is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "spmd-reduce"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: spmd-reduce inside foreach is not supported")))]
     [(ast.AstExpr.SpmdScan _)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: spmd-scan inside foreach is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "spmd-scan"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: spmd-scan inside foreach is not supported")))]
     [(ast.AstExpr.SpmdCompact _)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: spmd-compact inside SPMD is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "spmd-compact"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: spmd-compact inside SPMD is not supported")))]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        [value-info : TcSpmdExprInfo
-          (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
-        (match value-info
-          [(TcSpmdExprInfo _ value-class value-env)
-            (let
-              [lane-info : TcSpmdExprInfo
-                (try
-                  (tc-spmd-expr-with-expected-or-actual
-                    ctx
-                    expr-bases
-                    env
-                    value-env
-                    lane
-                    (ast.AstType.I64)))]
-              (match lane-info
-                [(TcSpmdExprInfo lane-ty lane-class lane-env)
-                  (tc-spmd-broadcast-finish
-                    ctx
-                    expr-ty
-                    value-class
-                    lane-ty
-                    lane-class
-                    lane-env)]))]))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "spmd-broadcast"))
+        (let
+          [value : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases value-box)]
+          [lane : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases lane-box)]
+          [value-info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
+          (match value-info
+            [(TcSpmdExprInfo _ value-class value-env)
+              (let
+                [lane-info : TcSpmdExprInfo
+                  (try
+                    (tc-spmd-expr-with-expected-or-actual
+                      ctx
+                      expr-bases
+                      env
+                      value-env
+                      lane
+                      (ast.AstType.I64)))]
+                (match lane-info
+                  [(TcSpmdExprInfo lane-ty lane-class lane-env)
+                    (tc-spmd-broadcast-finish
+                      ctx
+                      expr-ty
+                      value-class
+                      lane-ty
+                      lane-class
+                      lane-env)]))])))]
     [(ast.AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [lane : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-        [value-info : TcSpmdExprInfo
-          (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
-        (match value-info
-          [(TcSpmdExprInfo _ value-class value-env)
-            (let
-              [lane-info : TcSpmdExprInfo
-                (try
-                  (tc-spmd-expr-with-expected-or-actual
-                    ctx
-                    expr-bases
-                    env
-                    value-env
-                    lane
-                    (ast.AstType.I64)))]
-              (match lane-info
-                [(TcSpmdExprInfo lane-ty _ lane-env)
-                  (tc-spmd-shuffle-finish
-                    ctx
-                    expr-ty
-                    value-class
-                    lane-ty
-                    lane-env)]))]))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "spmd-shuffle"))
+        (let
+          [value : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases value-box)]
+          [lane : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases lane-box)]
+          [value-info : TcSpmdExprInfo
+            (try (tc-spmd-expr ctx expr-bases env spmd-env value))]
+          (match value-info
+            [(TcSpmdExprInfo _ value-class value-env)
+              (let
+                [lane-info : TcSpmdExprInfo
+                  (try
+                    (tc-spmd-expr-with-expected-or-actual
+                      ctx
+                      expr-bases
+                      env
+                      value-env
+                      lane
+                      (ast.AstType.I64)))]
+                (match lane-info
+                  [(TcSpmdExprInfo lane-ty _ lane-env)
+                    (tc-spmd-shuffle-finish
+                      ctx
+                      expr-ty
+                      value-class
+                      lane-ty
+                      lane-env)]))])))]
     [(ast.AstExpr.WithRegion region body)
       (tc-spmd-begin-list
         ctx
@@ -45481,25 +45952,53 @@
       (ResultTcSpmdExprInfo.Err
         "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(ast.AstExpr.Try _)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: try inside foreach is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err (tc-spmd-active-unsupported-message "try"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: try inside foreach is not supported")))]
     [(ast.AstExpr.Return _)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: return inside foreach is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err (tc-spmd-active-unsupported-message "return"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: return inside foreach is not supported")))]
     [(ast.AstExpr.Break)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: break inside foreach is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err (tc-spmd-active-unsupported-message "break"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: break inside foreach is not supported")))]
     [(ast.AstExpr.Continue)
-      (ResultTcSpmdExprInfo.Err
-        (tc-kind-message
-          (cdiag.CompilerTypecheckKind.Spmd)
-          "typecheck: continue inside foreach is not supported"))]
+      (if (tc-spmd-env-in-active-body? spmd-env)
+        (ResultTcSpmdExprInfo.Err
+          (tc-spmd-active-unsupported-message "continue"))
+        (ResultTcSpmdExprInfo.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.Spmd)
+            "typecheck: continue inside foreach is not supported")))]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (match (tc-spmd-foreach-active
+        ctx
+        expr-bases
+        env
+        spmd-env
+        lane
+        (ast.ast-expr-segment-bases-get expr-bases body-box))
+        [(ResultTcSpmdEnv.Ok after-env)
+          (tc-spmd-finish expr-ty TcSpmdClass.Uniform after-env)]
+        [(ResultTcSpmdEnv.Err message) (ResultTcSpmdExprInfo.Err message)])]
+    [(ast.AstExpr.LaneValue value-box)
+      (tc-spmd-lane-value
+        ctx
+        expr-bases
+        env
+        spmd-env
+        expr-ty
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]
     [(ast.AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : ast.AstExpr
@@ -46328,6 +46827,13 @@
               names
               (tc-resource-binding-list-add-bound-names bindings bound)
               sets-only?))])]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (tc-expr-uses-free-names?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box)
+        names
+        (tc-string-list-add bound (tc-env-key-name-text lane))
+        sets-only?)]
     [_
       (tc-expr-list-uses-free-names?
         expr-bases
@@ -47125,6 +47631,14 @@
                 session
                 bindings
                 bound)))])]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (tc-expr-uses-free-source-id?
+        session
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box)
+        target-1
+        target-2
+        (tc-name-id-list-add bound (tc-env-key-source-id-or-neg session lane)))]
     [_
       (tc-expr-list-uses-free-source-id?
         session
@@ -47362,6 +47876,18 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (tc-expr-result-uses-cleanup-owner? expr-bases value owners bound))]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (tc-expr-result-uses-cleanup-owner?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box)
+        owners
+        (tc-string-list-add bound (tc-env-key-name-text lane)))]
+    [(ast.AstExpr.LaneValue value-box)
+      (tc-expr-result-uses-cleanup-owner?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases value-box)
+        owners
+        bound)]
     [(ast.AstExpr.Begin exprs)
       (tc-expr-list-result-uses-cleanup-owner? expr-bases exprs owners bound)]
     [(ast.AstExpr.Unsafe exprs)
@@ -58419,6 +58945,22 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.SpmdProgramIndex) (ResultTcType.Ok (ast.AstType.I64))]
     [(ast.AstExpr.SpmdProgramCount) (ResultTcType.Ok (ast.AstType.I64))]
+    ;; The SPMD walker checks where these may appear and what they may read;
+    ;; here they only type. foreach-active runs its body once per active lane,
+    ;; so like foreach it is unit and so is its body.
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (match (tc-expr-id ctx (tc-bind-id env lane (ast.AstType.I64)) body-box)
+        [(ResultTcType.Ok body-ty)
+          (match (tc-expect
+            body-ty
+            (ast.AstType.Unit)
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Spmd)
+              "typecheck: foreach-active body must be unit"))
+            [(ResultTcUnit.Ok) (ResultTcType.Ok (ast.AstType.Unit))]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ast.AstExpr.LaneValue value-box) (tc-expr-id ctx env value-box)]
     [(ast.AstExpr.Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -60188,6 +60730,16 @@
           chain
           "syscall"
           "host syscall"))]
+    [(ast.AstExpr.ForeachActive lane body)
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        (tc-comptime-purity-template-bound template? bound lane)
+        chain
+        seen
+        template?
+        body)]
     [_
       (tc-comptime-purity-expr-list-mode
         ctx
@@ -71703,7 +72255,43 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved index))]
     [(ast.AstExpr.Syscall args)
-      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved args)]))
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved args)]
+    ;; A foreach-active body runs once per active lane, so it is a loop body:
+    ;; a value moved in it must not be one the next lane still needs.
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (let
+        [body-loop-carried : TcMovedSet
+          (tc-moved-union locals (tc-moved-clone loop-carried))]
+        (match (tc-move-check-loop-expr
+          ctx
+          expr-bases
+          (tc-bind-id env lane (ast.AstType.I64))
+          (tc-moved-add (tc-move-enter-loop-body (tc-moved-clone locals)) lane)
+          (tc-moved-remove-root-state body-loop-carried lane)
+          (tc-moved-remove-root-state loop-carried lane)
+          (tc-moved-clone moved)
+          (ast.ast-expr-segment-bases-get expr-bases body-box)
+          true
+          false)
+          [(TcMoveLoopResult.Ok _ _ breaks? break-moved-box)
+            (if breaks?
+              (tc-move-join-loop-exit
+                expr-bases
+                locals
+                moved
+                (tc-moved-set-box-shared-view break-moved-box)
+                (ast.ast-expr-segment-bases-get expr-bases body-box))
+              (TcMoveResult.Ok moved))]
+          [(TcMoveLoopResult.Err message) (TcMoveResult.Err message)]))]
+    [(ast.AstExpr.LaneValue value-box)
+      (tc-move-check-expr
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]))
 
 (define (tc-move-check-body-id
   [ctx : TcContext]
@@ -72254,6 +72842,18 @@
           result-ty
           consume-here)]
       [(ast.AstExpr.SpmdShuffle value-box _)
+        (tc-move-check-global-result-expr-id
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          shadowed
+          moved
+          value-box
+          result-ty
+          consume-here)]
+      [(ast.AstExpr.LaneValue value-box)
         (tc-move-check-global-result-expr-id
           ctx
           expr-bases
@@ -81828,7 +82428,34 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (tc-borrow-check-expr ctx expr-bases env locals borrowed index))]
     [(ast.AstExpr.Syscall args)
-      (tc-borrow-check-read-exprs ctx expr-bases env locals borrowed args)]))
+      (tc-borrow-check-read-exprs ctx expr-bases env locals borrowed args)]
+    ;; A foreach-active body is a loop body, checked like a foreach body.
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (let
+        [body-entry : TcMovedSet
+          (tc-moved-remove-root-state (tc-moved-clone borrowed) lane)]
+        (tc-borrow-loop-result-exit-state
+          ctx
+          env
+          (tc-global-shared-view body-entry)
+          lane
+          (tc-borrow-check-loop-path-expr
+            ctx
+            expr-bases
+            (tc-bind-id env lane (ast.AstType.I64))
+            env
+            (tc-moved-add (tc-moved-clone locals) lane)
+            (tc-global-shared-view body-entry)
+            body-entry
+            (ast.ast-expr-segment-bases-get expr-bases body-box))))]
+    [(ast.AstExpr.LaneValue value-box)
+      (tc-borrow-check-expr
+        ctx
+        expr-bases
+        env
+        locals
+        borrowed
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]))
 
 ;; --- borrow-check relevance gate --------------------------------------------
 ;;
@@ -82459,6 +83086,16 @@
         (ast.ast-expr-segment-bases-get expr-bases index-box))]
     [(ast.AstExpr.Syscall exprs)
       (tc-borrow-gate-exprs-relevant? ctx expr-bases exprs)]
+    [(ast.AstExpr.ForeachActive _ body-box)
+      (tc-borrow-gate-expr-relevant?
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box))]
+    [(ast.AstExpr.LaneValue value-box)
+      (tc-borrow-gate-expr-relevant?
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]
     [_ true]))
 
 ;; Region-typed parameters or results seed borrowed places, so the check must
@@ -93571,6 +94208,18 @@
         expr-bases
         args
         shared-path?)]
+    [(ast.AstExpr.ForeachActive _ body-box)
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        body-box
+        shared-path?)]
+    [(ast.AstExpr.LaneValue value-box)
+      (macro-hygiene-produced-note-id!
+        produced
+        expr-bases
+        value-box
+        shared-path?)]
     [_ unit]))
 
 (define (macro-hygiene-produced-prepare!
@@ -95039,6 +95688,17 @@
       (ast.ast-expr-syscall-with-pools
         env.pools
         (macro-hygiene-expr-list expr-bases args env macro-name depth))]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (match (macro-hygiene-bind-name-id env macro-name depth lane)
+        [(MacroHygieneName.Name nlane-id body-env)
+          (ast.ast-expr-foreach-active-with-pools
+            env.pools
+            nlane-id
+            (macro-hygiene-expr expr-bases body-box body-env macro-name depth))])]
+    [(ast.AstExpr.LaneValue value-box)
+      (ast.ast-expr-lane-value-with-pools
+        env.pools
+        (macro-hygiene-expr expr-bases value-box env macro-name depth))]
     [(ast.AstExpr.Quote _) (macro-hygiene-expr-push env expr)]
     [(ast.AstExpr.Quasiquote _) (macro-hygiene-expr-push env expr)]
     [(ast.AstExpr.Unquote _) (macro-hygiene-expr-push env expr)]
@@ -102984,6 +103644,23 @@
         [(ResultMacroExprList.Ok nargs)
           (ResultMacroExpr.Ok (ast.ast-expr-syscall nargs))]
         [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (match (macro-expand-node
+        ctx
+        (tc-bind-id env lane (ast.AstType.I64))
+        decls
+        depth
+        body-box)
+        [(ResultMacroExpr.Ok nbody)
+          (ResultMacroExpr.Ok
+            (ast.ast-node-push (ast.AstExpr.ForeachActive lane nbody)))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.LaneValue value-box)
+      (match (macro-expand-node ctx env decls depth value-box)
+        [(ResultMacroExpr.Ok nvalue)
+          (ResultMacroExpr.Ok
+            (ast.ast-node-push (ast.AstExpr.LaneValue nvalue)))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [_ (ResultMacroExpr.Ok (ast.ast-node-push expr))]))
 
 (define (macro-expand-module-call-position
@@ -103454,37 +104131,49 @@
   [module-id : i64]
   [decls : ast.AstDeclList]
   [decl-path : String]) : ResultMacroDeclExpansion
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil)
+  ;; Collapse each declaration in order and append its result to the output,
+  ;; so a module of n declarations costs O(n) instead of re-copying the
+  ;; collapsed rest once per declaration. The first failure wins, as before.
+  (let
+    [out-decls : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity (ast.ast-decl-list-len (& decls)))]
+    [out-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-list-with-capacity (ast.ast-decl-list-len (& decls)))]
+    [cursor : ast.AstDeclList decls]
+    [failure : ResultMacroDeclExpansion
       (ResultMacroDeclExpansion.Ok
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new))]
-    [(ast.AstDeclListStep.Cons decl rest-box)
-      (match (macro-collapse-existing-module-import-decl
-        ctx
-        top-env
-        (tc-global-shared-view orig-decls)
-        (tc-global-shared-view module)
-        module-id
-        decl
-        (tc-global-shared-view decl-path))
-        [(ResultMacroDeclExpansion.Ok head-decls head-paths)
-          (match (macro-collapse-existing-module-imports
-            ctx
-            top-env
-            orig-decls
-            module
-            module-id
-            rest-box
-            decl-path)
-            [(ResultMacroDeclExpansion.Ok rest-decls rest-paths)
-              (ResultMacroDeclExpansion.Ok
-                (macro-decl-list-append head-decls rest-decls)
-                (macro-decl-path-list-append head-paths rest-paths))]
-            [(ResultMacroDeclExpansion.Err diag)
-              (ResultMacroDeclExpansion.Err diag)])]
-        [(ResultMacroDeclExpansion.Err diag)
-          (ResultMacroDeclExpansion.Err diag)])]))
+    [failed? : bool false]
+    [more? : bool true]
+    (begin
+      (while more?
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil) (set! more? false)]
+          [(ast.AstDeclListStep.Cons decl rest)
+            (match (macro-collapse-existing-module-import-decl
+              ctx
+              top-env
+              (tc-global-shared-view orig-decls)
+              (tc-global-shared-view module)
+              module-id
+              decl
+              (tc-global-shared-view decl-path))
+              [(ResultMacroDeclExpansion.Ok head-decls head-paths)
+                (begin
+                  (macro-decl-list-append-from (&mut out-decls) (& head-decls))
+                  (macro-decl-path-list-append-from
+                    (&mut out-paths)
+                    (& head-paths))
+                  (set! cursor rest))]
+              [(ResultMacroDeclExpansion.Err diag)
+                (begin
+                  (set! failure (ResultMacroDeclExpansion.Err diag))
+                  (set! failed? true)
+                  (set! more? false))])]))
+      (if failed?
+        failure
+        (ResultMacroDeclExpansion.Ok out-decls out-paths)))))
 
 (define (macro-collapse-existing-module-imports-or-original
   [ctx : TcContext]
@@ -106014,6 +106703,16 @@
         (macro-expr-might-fire? state expr-bases index))]
     [(ast.AstExpr.Syscall args)
       (macro-expr-list-might-fire? state expr-bases args)]
+    [(ast.AstExpr.ForeachActive _ body-box)
+      (macro-expr-might-fire?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases body-box))]
+    [(ast.AstExpr.LaneValue value-box)
+      (macro-expr-might-fire?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]
     [(ast.AstExpr.TypeLiteral _) false]
     [(ast.AstExpr.Init _) false]
     [(ast.AstExpr.PtrNull _) false]
@@ -106337,6 +107036,8 @@
         (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.Xgetbv i) (ctfe-node-has-type-literal? state i)]
     [(ast.AstExpr.Syscall exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.ForeachActive _ b) (ctfe-node-has-type-literal? state b)]
+    [(ast.AstExpr.LaneValue v) (ctfe-node-has-type-literal? state v)]
     [_ true]))
 
 (define (ctfe-decl-has-type-literal?

@@ -153,7 +153,8 @@ The following parts are implemented and actively tested:
 - SPMD `foreach`, `spmd-reduce`, `spmd-scan`, `spmd-compact`, `spmd-broadcast`, and
   `spmd-shuffle`, plus `program-index` / `program-count` lane identity, with
   scalar reference lowering and native AVX2/AVX-512 lowering for eligible
-  shapes.
+  shapes. `foreach-active` serializes a gang's active lanes; it has scalar
+  reference lowering only so far.
 
 Some capabilities remain restricted or experimental:
 

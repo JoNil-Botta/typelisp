@@ -31,30 +31,31 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 
-;; Internal shallow reads used while ordinary by-value parameters own values.
-;: Return a representation-level shared view of a JSON value place.
+;; Raw representation copies. Each expands to raw pointer operations and adds
+;; no `unsafe` of its own, so it compiles only inside the caller's `unsafe`
+;; expression. The caller owes place validity, bounds and ownership: the copy
+;; aliases the source, so the source must be consumed by this read and not
+;; used again as an owner.
+;: Return a representation copy of a JSON value place; requires `unsafe`.
 (defmacro (json-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
+  `(ptr-read (ptr-addr-of ,place)))
 
-;: Return a representation-level shared view of a JSON array element.
+;: Return a representation copy of `items[index]`; requires `unsafe`.
+;: The caller proves `0 <= index < array-length items`.
 (defmacro (json-array-element-shared-view [items : Expr] [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
+  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))
 
-;: Return a representation-level shared view of a boxed JSON value.
+;: Return a representation copy of a boxed JSON value; requires `unsafe`.
 (defmacro (json-box-shared-view [value : Expr]) : Expr
   (let
     ;; Spliced into the generated pointer element type.
     ;; lint-allow: unused-variable
     [inner-ty : comptime.Expr
       (comptime.box-element-type (comptime.expr-type value))]
-    `(let
-      [address : i64
-        (unsafe
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
-      (unsafe
-        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
+    `(ptr-read
+      (int->ptr
+        (cast (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))) : u64)
+        : (Ptr ,inner-ty)))))
 
 ;: Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json
@@ -395,7 +396,12 @@
     [n : i64 (stdlib.json.list-count-ref (& items))]
     (if (or (< index 0) (>= index n))
       JsonMissing
-      (JsonFound (json-array-element-shared-view items.slots index)))))
+      ;; `items` is consumed by this call and `index` is below its checked
+      ;; live prefix, so the copy moves that element out of storage no owner
+      ;; reads again.
+      (JsonFound
+        (unsafe
+          (json-array-element-shared-view items.slots index))))))
 
 ;; Return an owned element for generated decoders that must move the lookup
 ;; result out of a boxed sequence.
@@ -463,50 +469,21 @@
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (json-array-element-shared-view items.slots i)]
-          [item-key : String member.key]
+          ;; `items` is consumed by this call and `i` is below its checked live
+          ;; prefix, so each member is copied out exactly once.
+          [member : JsonMember
+            (unsafe
+              (json-array-element-shared-view items.slots i))]
           (begin
             (when
-              (string.eq (& item-key) key)
+              (string.eq (& member.key) key)
               (return (JsonFound member.value)))
             (set! i (+ i 1)))))
       JsonMissing)))
 
-;: Compare two owned strings with only safe character indexing.
-(define (string-eq-safe? [left : String] [right : String]) : bool
-  (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
-    (if (!= left-len right-len)
-      false
-      (let
-        [i : i64 0]
-        [same : bool true]
-        (begin
-          (while (and same (< i left-len))
-            (if (=
-              (stdlib.json.char-code (string-ref left i))
-              (stdlib.json.char-code (string-ref right i)))
-              (set! i (+ i 1))
-              (set! same false)))
-          same)))))
-
-;: Look up owned `key` in an object member sequence without unsafe helpers.
+;: Look up owned `key` in an object member sequence.
 (define (member-list-get-owned [items : JsonMemberSeq] [key : String]) : JsonLookup
-  (let
-    [n : i64 (stdlib.json.member-list-count-ref (& items))]
-    [i : i64 0]
-    [found : JsonLookup JsonMissing]
-    (begin
-      (while (< i n)
-        (let
-          [member : JsonMember (json-array-element-shared-view items.slots i)]
-          (if (stdlib.json.string-eq-safe? member.key (json-shared-view key))
-            (begin
-              (set! found (JsonFound member.value))
-              (set! i n))
-            (set! i (+ i 1)))))
-      found)))
+  (stdlib.json.member-list-get items (& key)))
 
 ;; Return an owned member value for generated decoders that must move the
 ;; lookup result out of a boxed object.
@@ -550,17 +527,19 @@
 (define (object-get [value : Json] [key : (& key str)]) : JsonLookup
   (match value
     [(JsonObject members)
-      (stdlib.json.member-list-get (json-box-shared-view members) key)]
+      ;; `value` is consumed by this call, so the copy moves its member
+      ;; sequence out of the box.
+      (stdlib.json.member-list-get
+        (unsafe
+          (json-box-shared-view members))
+        key)]
     [_ JsonMissing]))
 
-;: Look up owned `key` in `value` without unsafe helpers.
+;: Look up owned `key` in `value`.
 ;:
 ;: This is useful for generated declarations, whose templates are purity-checked.
 (define (object-get-owned [value : Json] [key : String]) : JsonLookup
-  (match value
-    [(JsonObject members)
-      (stdlib.json.member-list-get-owned (json-box-shared-view members) key)]
-    [_ JsonMissing]))
+  (stdlib.json.object-get value (& key)))
 
 ;: Look up an object member and return an independently owned value.
 (define (object-get-value-owned [value : Json] [key : String]) : JsonLookup
@@ -670,8 +649,11 @@
             out
             (text_buf.append
               out
+              ;; `items` is consumed by this call and `i` is below its checked
+              ;; live prefix, so each element is copied out exactly once.
               (stdlib.json.stringify
-                (json-array-element-shared-view items.slots i))))
+                (unsafe
+                  (json-array-element-shared-view items.slots i)))))
           (set! i (+ i 1))))
       out)))
 
@@ -694,7 +676,11 @@
     (begin
       (while (< i n)
         (let
-          [member : JsonMember (json-array-element-shared-view items.slots i)]
+          ;; `items` is consumed by this call and `i` is below its checked live
+          ;; prefix, so each member is copied out exactly once.
+          [member : JsonMember
+            (unsafe
+              (json-array-element-shared-view items.slots i))]
           [text : String member.key]
           (begin
             (if (> i 0)
@@ -742,15 +728,21 @@
     [(JsonNumber text) text]
     [(JsonString text)
       (str_cat.str-cat "\"" (stdlib.json.escape-string (& text)) "\"")]
+    ;; `value` is consumed by this call, so each copy moves the sequence out of
+    ;; its box.
     [(JsonArray items)
       (str_cat.str-cat
         "["
-        (stdlib.json.stringify-list (json-box-shared-view items))
+        (stdlib.json.stringify-list
+          (unsafe
+            (json-box-shared-view items)))
         "]")]
     [(JsonObject members)
       (str_cat.str-cat
         "{"
-        (stdlib.json.stringify-members (json-box-shared-view members))
+        (stdlib.json.stringify-members
+          (unsafe
+            (json-box-shared-view members)))
         "}")]))
 
 ;: Render an i64 as a JSON number value.
@@ -978,7 +970,7 @@
   (or (= code 101) (= code 69)))
 
 ;: Scan grammar-checked JSON number text for significant digits and exponent.
-(define (number-shape [text : String]) : JsonNumberShapeResult
+(define (number-shape [text : (& text str)]) : JsonNumberShapeResult
   (let
     [n : i64 (string-length text)]
     [index : i64 0]
@@ -1081,7 +1073,7 @@
       [(ErrJsonParseValue message) (ErrJsonNumberText message)])))
 
 ;: Return true when validated JSON number text is an integer spelling.
-(define (number-integer-text? [text : String]) : bool
+(define (number-integer-text? [text : (& text str)]) : bool
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -1107,7 +1099,10 @@
               false)))))))
 
 ;: Return true when `text[start..]` is lexicographically greater than `limit`.
-(define (number-digits-gt-limit? [text : String] [start : i64] [limit : String]) : bool
+(define (number-digits-gt-limit?
+  [text : (& text str)]
+  [start : i64]
+  [limit : String]) : bool
   (let
     [digits-len : i64 (- (string-length text) start)]
     [limit-len : i64 (string-length limit)]
@@ -1134,7 +1129,7 @@
           greater)))))
 
 ;: Return true when integer number text fits in the signed i64 range.
-(define (number-i64-range? [text : String]) : bool
+(define (number-i64-range? [text : (& text str)]) : bool
   (let
     [negative : bool
       (and (> (string-length text) 0) (= (string-ref text 0) '-'))]
@@ -1150,9 +1145,9 @@
 
 ;: Parse owned JSON integer number text into an i64 with recoverable errors.
 (define (number-owned->i64 [owned : String]) : JsonNumberI64Result
-  (if (not (stdlib.json.number-integer-text? (json-shared-view owned)))
+  (if (not (stdlib.json.number-integer-text? (& owned)))
     (ErrJsonNumberI64 "json: expected integer number")
-    (if (not (stdlib.json.number-i64-range? (json-shared-view owned)))
+    (if (not (stdlib.json.number-i64-range? (& owned)))
       (ErrJsonNumberI64 "json: integer outside i64 range")
       (OkJsonNumberI64 (string.>int owned)))))
 
@@ -1171,15 +1166,12 @@
 ;: accumulated in u64, so no value passes through a signed or floating type.
 (define (number-owned->u64 [owned : String]) : JsonNumberU64Result
   (cond
-    [(not (stdlib.json.number-integer-text? (json-shared-view owned)))
+    [(not (stdlib.json.number-integer-text? (& owned)))
       (ErrJsonNumberU64 "json: expected integer number")]
     ;; `-0` is an integer spelling but not an unsigned one.
     [(= (string-ref owned 0) '-')
       (ErrJsonNumberU64 "json: negative number outside u64 range")]
-    [(stdlib.json.number-digits-gt-limit?
-        (json-shared-view owned)
-        0
-        "18446744073709551615")
+    [(stdlib.json.number-digits-gt-limit? (& owned) 0 "18446744073709551615")
       (ErrJsonNumberU64 "json: integer outside u64 range")]
     [else
       (let
@@ -1242,7 +1234,7 @@
 (define (number->f64 [text : (& text str)]) : JsonNumberF64Result
   (match (stdlib.json.number-validated-text text)
     [(OkJsonNumberText owned)
-      (match (stdlib.json.number-shape (json-shared-view owned))
+      (match (stdlib.json.number-shape (& owned))
         [(OkJsonNumberShape decimal-exp significant-digits)
           (stdlib.json.number-decimal-f64-result
             owned
@@ -1771,7 +1763,7 @@
         (stdlib.json.stdlib-inline-test-assert-owned-string-eq
           value
           expected
-          (json-shared-view message))
+          (clone message))
         (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
     [(ErrJsonParseString _) (io.panic message)]))
 
@@ -1787,7 +1779,7 @@
         (stdlib.json.stdlib-inline-test-assert-owned-string-eq
           value
           expected
-          (json-shared-view message))
+          (clone message))
         (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
     [(ErrJsonParseEscape _) (io.panic message)]))
 
@@ -1870,7 +1862,7 @@
             (stdlib.json.stdlib-inline-test-assert-owned-string-eq
               text
               expected
-              (json-shared-view message))
+              (clone message))
             (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -1889,7 +1881,7 @@
             (stdlib.json.stdlib-inline-test-assert-bool-eq
               actual
               expected
-              (json-shared-view message))
+              (clone message))
             (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -1906,9 +1898,9 @@
         [(JsonArray items)
           (begin
             (stdlib.json.stdlib-inline-test-assert-i64-eq
-              (stdlib.json.list-count (json-box-shared-view items))
+              (stdlib.json.list-count-ref (& (__tl-box-place items)))
               expected-count
-              (json-shared-view message))
+              (clone message))
             (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -1925,9 +1917,9 @@
         [(JsonObject members)
           (begin
             (stdlib.json.stdlib-inline-test-assert-i64-eq
-              (stdlib.json.member-list-count (json-box-shared-view members))
+              (stdlib.json.member-list-count-ref (& (__tl-box-place members)))
               expected-count
-              (json-shared-view message))
+              (clone message))
             (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -2045,11 +2037,11 @@
           [(JsonArray items)
             (begin
               (stdlib.json.stdlib-inline-test-assert-i64-eq
-                (stdlib.json.list-count (json-box-shared-view items))
+                (stdlib.json.list-count-ref (& (__tl-box-place items)))
                 5
                 "json array count")
               (stdlib.json.stdlib-inline-test-assert-owned-string-eq
-                (stdlib.json.stringify-list (json-box-shared-view items))
+                (stdlib.json.stringify-list (clone (__tl-box-place items)))
                 "1,-2.5e3,true,false,null"
                 "json array stringify"))]
           [_ (io.panic "json array lookup")])]
@@ -2065,13 +2057,13 @@
           [(JsonObject members)
             (begin
               (stdlib.json.stdlib-inline-test-assert-i64-eq
-                (stdlib.json.member-list-count (json-box-shared-view members))
+                (stdlib.json.member-list-count-ref (& (__tl-box-place members)))
                 2
                 "json nested object count")
               (let
                 [key : String "ok"]
                 (match (stdlib.json.member-list-get
-                  (json-box-shared-view members)
+                  (clone (__tl-box-place members))
                   (& key))
                   [(JsonFound ok-value)
                     (match ok-value
@@ -2455,10 +2447,10 @@
     (match (stdlib.json.parse (& text))
       [(OkJson doc)
         (begin
-          (stdlib.json.stdlib-inline-test-name (json-shared-view doc))
-          (stdlib.json.stdlib-inline-test-numbers (json-shared-view doc))
-          (stdlib.json.stdlib-inline-test-nested (json-shared-view doc))
-          (stdlib.json.stdlib-inline-test-escaped (json-shared-view doc))
+          (stdlib.json.stdlib-inline-test-name (clone doc))
+          (stdlib.json.stdlib-inline-test-numbers (clone doc))
+          (stdlib.json.stdlib-inline-test-nested (clone doc))
+          (stdlib.json.stdlib-inline-test-escaped (clone doc))
           (stdlib.json.stdlib-inline-test-assert-owned-string-eq
             (stdlib.json.stringify doc)
             "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"nested\":{\"ok\":true,\"empty\":[]},\"escaped\":\"a\\nb\\tc\"}"
@@ -2474,9 +2466,7 @@
               [(OkJson dupe-doc)
                 (begin
                   (stdlib.json.stdlib-inline-test-assert-found-number
-                    (stdlib.json.object-get
-                      (json-shared-view dupe-doc)
-                      (& dupe-key))
+                    (stdlib.json.object-get (clone dupe-doc) (& dupe-key))
                     "1"
                     "json duplicate key lookup keeps first source member")
                   (stdlib.json.stdlib-inline-test-assert-owned-string-eq

@@ -17698,10 +17698,13 @@ g:
           16
           (ast.AstType.I16)
           (owned_view.compiler-owned-shared-view diag)
-          (backend.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
-        (has "    vpmovmskb %ymm7, %r11d\n" "_load_skip_15")
-        (lacks "vpmaskmov"))
+          (compiler-backend-simd-staging-state 32))
+        (has
+          "    vpmovmskb %ymm7, %r11d\n"
+          "_load_skip_15"
+          "    vmovdqu %ymm0, -224(%rbp)\n"
+          "    vmovdqu -224(%rbp), %ymm14\n")
+        (lacks "vpmaskmov" "%rsp"))
       (asm-ok?
         (backend.compiler-backend-emit-avx2-predicated-store
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -17715,10 +17718,13 @@ g:
           16
           (ast.AstType.I16)
           diag
-          (backend.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
-        (has "    vpmovmskb %ymm7, %r11d\n" "_store_skip_15")
-        (lacks "vpmaskmov")))))
+          (compiler-backend-simd-staging-state 32))
+        (has
+          "    vpmovmskb %ymm7, %r11d\n"
+          "_store_skip_15"
+          "    vmovdqu %ymm6, -224(%rbp)\n"
+          "    movw -194(%rbp), %r10w\n")
+        (lacks "vpmaskmov" "%rsp")))))
 
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
   (match (backend.compiler-backend-emit-vector-load
@@ -18363,12 +18369,11 @@ g:
         (ci.intern-compat-state-capture-active)))
     (has
       "    vpxord %zmm6, %zmm6, %zmm6\n"
-      "    pushq $1\n"
-      "    vpbroadcastb (%rsp), %zmm7\n"
-      "    addq $8, %rsp\n"
+      "    vpternlogd $255, %zmm7, %zmm7, %zmm7\n"
+      "    vpabsb %zmm7, %zmm7\n"
       "    vmovdqu8 %zmm7, %zmm6{%k1}\n"
       "    vmovdqu8 %zmm6, (%r12){%k2}\n")
-    (lacks "%edx" "%zmm14" "%zmm15")))
+    (lacks "%edx" "%zmm14" "%zmm15" "%rsp")))
 
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
@@ -18792,7 +18797,8 @@ g:
       (backend.compiler-backend-shuffle-vector-check-asm
         false
         2
-        32
+        "-96(%rbp)"
+        "-64(%rbp)"
         "%r10"
         "%r11"
         ".L_abort")]
@@ -18800,7 +18806,8 @@ g:
       (backend.compiler-backend-shuffle-vector-check-asm
         true
         2
-        64
+        "-192(%rbp)"
+        "-128(%rbp)"
         "%r10"
         "%r11"
         ".L_abort")]
@@ -19560,7 +19567,7 @@ g:
     (ir.CompilerIrValue.Var 2)
     lanes
     (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))))
+    (compiler-backend-simd-staging-state 32)))
 
 (define (compiler-backend-avx2-tail-mask-ok?) : bool
   (and
@@ -19584,9 +19591,13 @@ g:
       [(backend.ResultCompilerBackend.Ok asm)
         (and
           (backend.backend-and4
-            (asm-has? asm "    subq $32, %rsp\n")
+            (asm-has?
+              asm
+              "    vmovdqu %ymm0, -224(%rbp)\n"
+              "    movl $-1, -220(%rbp)\n"
+              "    vmovdqu -224(%rbp), %ymm6\n")
             (asm-has? asm "_tail_skip_0")
-            (asm-has? asm "    movl $-1, ")
+            (asm-lacks? asm "%rsp")
             (not
               (let
                 [needle (backend.compiler-backend-avx2-i64-lane-id-label)]
@@ -20403,6 +20414,388 @@ g:
       true
       "vpsubq")))
 
+;; A fresh backend state whose function plans a SIMD staging region of BYTES
+;; below a 192-byte frame base, as compiler-backend-emit-function does for a
+;; body whose largest staged sequence needs BYTES (#7497).
+(define (compiler-backend-simd-staging-state [bytes : i64]) : backend.CompilerBackendState
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (begin
+      (backend.compiler-backend-simd-scratch-plan!
+        (backend.compiler-backend-state-function-state state)
+        bytes
+        192)
+      state)))
+
+;; Byte OFFSET of that region, as the emitters spell it.
+(define (compiler-backend-simd-staging-address [bytes : i64] [offset : i64]) : String
+  (str_cat.str-cat (string.int->string (- offset (+ 192 bytes))) "(%rbp)"))
+
+;; #7497 census fixtures: one instruction of each staged route, operands in
+;; registers %0/%1/%3 and the result in %2.
+(define (compiler-backend-simd-scratch-binop
+  [op : ir.CompilerIrBinOp]
+  [lanes : i64]
+  [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.ir-instr-vector-bin-op
+    2
+    op
+    (ir.CompilerIrValue.Var 0)
+    (ir.CompilerIrValue.Var 1)
+    lanes
+    ty))
+
+(define (compiler-backend-simd-scratch-load [lanes : i64] [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.ir-instr-predicated-load
+    2
+    (ir.CompilerIrValue.Var 0)
+    (ir.CompilerIrValue.I64 0)
+    (ir.CompilerIrValue.Var 1)
+    lanes
+    ty))
+
+(define (compiler-backend-simd-scratch-store [lanes : i64] [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.ir-instr-predicated-store
+    (ir.CompilerIrValue.Var 0)
+    (ir.CompilerIrValue.I64 0)
+    (ir.CompilerIrValue.Var 1)
+    (ir.CompilerIrValue.Var 3)
+    lanes
+    ty))
+
+(define (compiler-backend-simd-scratch-gather [lanes : i64] [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.ir-instr-gather-load
+    2
+    (ir.CompilerIrValue.Var 0)
+    (ir.CompilerIrValue.Var 1)
+    (ir.CompilerIrValue.I64 0)
+    false
+    lanes
+    ty))
+
+(define (compiler-backend-simd-scratch-shuffle [lanes : i64] [ty : ast.AstType]) : ir.CompilerIrInstr
+  (ir.ir-instr-vector-shuffle
+    2
+    (ir.CompilerIrValue.Var 0)
+    (ir.CompilerIrValue.Var 1)
+    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3))
+    (ir.CompilerIrValue.I64 4)
+    lanes
+    ty))
+
+(define (compiler-backend-simd-scratch-tail-mask [lanes : i64]) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.TailMask
+    2
+    (ir.CompilerIrValue.Var 0)
+    (ir.CompilerIrValue.Var 1)
+    lanes))
+
+;; The census sizes each staged route the way its emitter claims it: the
+;; largest request is the AVX-512 byte shift, and a route with a native masked
+;; or register form requests nothing. A vector binop and a shuffle take their
+;; ISA from their own shape; the predicated, gather and tail-mask routes from
+;; the function's mode.
+(define (compiler-backend-simd-scratch-requests-ok?) : bool
+  (and
+    (backend.backend-and8
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-binop
+            (ir.CompilerIrBinOp.Shl (ast.AstType.I8))
+            64
+            (ast.AstType.I8))
+          false)
+        448)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-binop
+            (ir.CompilerIrBinOp.Shr (ast.AstType.U8))
+            32
+            (ast.AstType.U8))
+          true)
+        224)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-binop
+            (ir.CompilerIrBinOp.Shl (ast.AstType.I16))
+            16
+            (ast.AstType.I16))
+          true)
+        128)
+      ;; AVX-512 has vpsllvw.
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-binop
+            (ir.CompilerIrBinOp.Shl (ast.AstType.I16))
+            32
+            (ast.AstType.I16))
+          false)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-binop
+            (ir.CompilerIrBinOp.Add)
+            32
+            (ast.AstType.I8))
+          true)
+        0)
+      ;; A shape neither ISA accepts is diagnosed, not staged.
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-binop
+            (ir.CompilerIrBinOp.Shl (ast.AstType.I8))
+            7
+            (ast.AstType.I8))
+          true)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-load 16 (ast.AstType.I16))
+          true)
+        32)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-load 32 (ast.AstType.Bool))
+          true)
+        32))
+    (backend.backend-and8
+      ;; vpmaskmovq, and AVX-512 masked moves.
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-load 4 (ast.AstType.I64))
+          true)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-load 32 (ast.AstType.I16))
+          false)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-store 32 (ast.AstType.U8))
+          true)
+        32)
+      ;; An AVX2 bool store tests mask bits in GPRs; AVX-512 builds its bytes
+      ;; in registers.
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-store 32 (ast.AstType.Bool))
+          true)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-store 64 (ast.AstType.Bool))
+          false)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-store 8 (ast.AstType.F32))
+          true)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-gather 8 (ast.AstType.I32))
+          true)
+        128)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-gather 4 (ast.AstType.I64))
+          true)
+        32))
+    (backend.backend-and8
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-gather 16 (ast.AstType.F32))
+          false)
+        128)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-gather 8 (ast.AstType.F64))
+          false)
+        0)
+      ;; An AVX2 dword gather is eight lanes.
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-gather 4 (ast.AstType.I32))
+          true)
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-shuffle 4 (ast.AstType.I64))
+          true)
+        96)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-shuffle 8 (ast.AstType.I32))
+          true)
+        128)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-shuffle 8 (ast.AstType.I64))
+          true)
+        192)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-shuffle 16 (ast.AstType.F32))
+          false)
+        256)
+      (=
+        (backend.compiler-backend-simd-scratch-request
+          (compiler-backend-simd-scratch-tail-mask 8)
+          true)
+        32))
+    (=
+      (backend.compiler-backend-simd-scratch-request
+        (compiler-backend-simd-scratch-tail-mask 4)
+        true)
+      0)
+    (=
+      (backend.compiler-backend-simd-scratch-request
+        (compiler-backend-simd-scratch-tail-mask 16)
+        false)
+      0)))
+
+;; A function plans its largest request once, across every block, and a body
+;; that stages nothing plans no region.
+(define (compiler-backend-simd-scratch-census-ok?) : bool
+  (let
+    [mixed : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-seq3
+            (compiler-backend-simd-scratch-tail-mask 8)
+            (compiler-backend-simd-scratch-shuffle 4 (ast.AstType.I64))
+            (compiler-backend-simd-scratch-gather 4 (ast.AstType.I64))))
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "next")
+            (ir.compiler-ir-instr-seq2
+              (compiler-backend-simd-scratch-load 16 (ast.AstType.I16))
+              (compiler-backend-simd-scratch-shuffle 8 (ast.AstType.I32))))
+          ir.CompilerIrBlockList.Nil))]
+    [widest : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-seq2
+            (compiler-backend-simd-scratch-shuffle 16 (ast.AstType.I32))
+            (compiler-backend-simd-scratch-binop
+              (ir.CompilerIrBinOp.Shr (ast.AstType.I8))
+              64
+              (ast.AstType.I8))))
+        ir.CompilerIrBlockList.Nil)]
+    [native : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-seq3
+            (compiler-backend-simd-scratch-load 4 (ast.AstType.I64))
+            (compiler-backend-simd-scratch-tail-mask 4)
+            (compiler-backend-simd-scratch-binop
+              (ir.CompilerIrBinOp.Add)
+              32
+              (ast.AstType.I8))))
+        ir.CompilerIrBlockList.Nil)]
+    (and
+      (=
+        (backend.compiler-backend-simd-scratch-census
+          mixed
+          (backend.CompilerBackendMode.Avx2))
+        128)
+      (=
+        (backend.compiler-backend-simd-scratch-census
+          (owned_view.compiler-owned-shared-view widest)
+          (backend.CompilerBackendMode.Avx512))
+        448)
+      (=
+        (backend.compiler-backend-simd-scratch-census
+          native
+          (backend.CompilerBackendMode.Avx2))
+        0)
+      (=
+        (backend.compiler-backend-simd-scratch-census
+          ir.CompilerIrBlockList.Nil
+          (backend.CompilerBackendMode.Avx2))
+        0)
+      ;; A scalar-mode function is not walked.
+      (=
+        (backend.compiler-backend-simd-scratch-census
+          widest
+          (backend.CompilerBackendMode.Scalar))
+        0))))
+
+;; A claim beyond the plan fails at its instruction, naming both sizes. The
+;; check after the body fails a plan no sequence claimed in full, passes once
+;; the largest claim meets it, and fails again when a reference strays past
+;; the plan without a claim.
+(define (compiler-backend-simd-scratch-checks-ok?) : bool
+  (let
+    [over : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-vector-binop
+        (backend.CompilerBackendMode.Avx2)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (compiler-backend-vector-binop-test-assignments)
+        2
+        (ir.CompilerIrBinOp.Shl (ast.AstType.I8))
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        32
+        (ast.AstType.I8)
+        (cdiag.compiler-diagnostic-at-start "" "")
+        (compiler-backend-simd-staging-state 128))]
+    [state : backend.CompilerBackendState
+      (compiler-backend-simd-staging-state 32)]
+    [unclaimed : bool
+      (backend.compiler-backend-simd-scratch-drift?
+        (backend.compiler-backend-state-function-state state))]
+    [partial : bool
+      (match (backend.compiler-backend-simd-scratch-checked
+        state
+        (cdiag.compiler-diagnostic-at-start "" "")
+        16
+        (backend.ResultCompilerBackend.Ok ""))
+        [(backend.ResultCompilerBackend.Ok _)
+          (backend.compiler-backend-simd-scratch-drift?
+            (backend.compiler-backend-state-function-state state))]
+        [(backend.ResultCompilerBackend.Err _) false])]
+    [full : bool
+      (match (backend.compiler-backend-simd-scratch-checked
+        state
+        (cdiag.compiler-diagnostic-at-start "" "")
+        32
+        (backend.ResultCompilerBackend.Ok ""))
+        [(backend.ResultCompilerBackend.Ok _)
+          (not
+            (backend.compiler-backend-simd-scratch-drift?
+              (backend.compiler-backend-state-function-state state)))]
+        [(backend.ResultCompilerBackend.Err _) false])]
+    [in-plan : bool
+      (begin
+        (backend.compiler-backend-simd-scratch-address state 31)
+        (not
+          (backend.compiler-backend-simd-scratch-drift?
+            (backend.compiler-backend-state-function-state state))))]
+    [stray : bool
+      (begin
+        (backend.compiler-backend-simd-scratch-address state 32)
+        (backend.compiler-backend-simd-scratch-drift?
+          (backend.compiler-backend-state-function-state state)))]
+    (and
+      (match over
+        [(backend.ResultCompilerBackend.Err diag)
+          (string.eq
+            (cdiag.compiler-diagnostic-message (__tl-box-place diag))
+            "backend: SIMD staging needs 224 bytes but the function planned 128")]
+        [(backend.ResultCompilerBackend.Ok _) false])
+      unclaimed
+      partial
+      full
+      in-plan
+      stray)))
+
 (define (compiler-backend-vector-binop-test-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%vec6 %1=%vec7 %2=%vec8"))
 
@@ -20508,8 +20901,7 @@ g:
       lanes
       (owned_view.compiler-owned-shared-view elem-ty)
       (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-simd-staging-state stack-bytes))
     (backend.compiler-backend-emit-vector-binop
       (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -20521,8 +20913,7 @@ g:
       lanes
       (owned_view.compiler-owned-shared-view elem-ty)
       (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))))
+      (compiler-backend-simd-staging-state stack-bytes)))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
@@ -20536,19 +20927,20 @@ g:
           (= (backend.compiler-backend-string-count asm "vpackuswb") 1)
           (= (backend.compiler-backend-string-count asm "vpermd") 1)
           (let
-            [needle
+            [lhs-store
               (str_cat.str-cat
-                "    subq $"
-                (string.int->string stack-bytes)
-                ", %rsp\n")]
-            (asm-has? asm needle))
-          (let
-            [needle
+                "mm6, "
+                (compiler-backend-simd-staging-address stack-bytes 0)
+                "\n")]
+            [rhs-store
               (str_cat.str-cat
-                "    addq $"
-                (string.int->string stack-bytes)
-                ", %rsp\n")]
-            (asm-has? asm needle))
+                "mm7, "
+                (compiler-backend-simd-staging-address
+                  stack-bytes
+                  (/ stack-bytes 7))
+                "\n")]
+            (asm-has? asm lhs-store rhs-store))
+          (asm-lacks? asm "%rsp")
           (= (backend.compiler-backend-string-count asm "vpsrld $24") 1))
         (= (backend.compiler-backend-string-count asm "movl $50462976") 1)
         (= (backend.compiler-backend-string-count asm "movl $117835012") 1)
@@ -20585,8 +20977,7 @@ g:
       64
       (ast.AstType.I8)
       (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-simd-staging-state 448))
     (backend.compiler-backend-emit-vector-binop
       (backend.CompilerBackendMode.Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -20598,20 +20989,23 @@ g:
       32
       (ast.AstType.I8)
       (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))))
+      (compiler-backend-simd-staging-state 224)))
     [(backend.ResultCompilerBackend.Ok asm)
-      (if avx512
-        (asm-has?
-          asm
-          "    vmovdqu8 -64(%rbp), %zmm14\n"
-          "    vmovdqu8 -128(%rbp), %zmm15\n"
-          "    addq $448, %rsp\n    vmovdqu8 %zmm14, -192(%rbp)\n")
-        (asm-has?
-          asm
-          "    vmovdqu -64(%rbp), %ymm14\n"
-          "    vmovdqu -128(%rbp), %ymm15\n"
-          "    addq $224, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n"))]
+      (and
+        (asm-lacks? asm "%rsp")
+        (if avx512
+          (asm-has?
+            asm
+            "    vmovdqu8 -64(%rbp), %zmm14\n"
+            "    vmovdqu8 -128(%rbp), %zmm15\n"
+            "    vmovdqu8 %zmm14, -640(%rbp)\n"
+            "    vpermd %zmm1, %zmm0, %zmm14\n    vmovdqu8 %zmm14, -192(%rbp)\n")
+          (asm-has?
+            asm
+            "    vmovdqu -64(%rbp), %ymm14\n"
+            "    vmovdqu -128(%rbp), %ymm15\n"
+            "    vmovdqu %ymm14, -416(%rbp)\n"
+            "    vpermd %ymm1, %ymm0, %ymm14\n    vmovdqu %ymm14, -192(%rbp)\n")))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-word-vector-shift-shape?
@@ -20630,7 +21024,7 @@ g:
     16
     elem-ty
     (cdiag.compiler-diagnostic-at-start "" "")
-    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active)))
+    (compiler-backend-simd-staging-state 128))
     [(backend.ResultCompilerBackend.Ok asm)
       (and
         (backend.backend-and8
@@ -20638,15 +21032,15 @@ g:
           (= (backend.compiler-backend-string-count asm shift) 2)
           (= (backend.compiler-backend-string-count asm "vpackusdw") 1)
           (= (backend.compiler-backend-string-count asm "vpermq") 1)
-          (asm-has? asm "    subq $128, %rsp\n")
-          (asm-has? asm "    addq $128, %rsp\n")
+          (asm-has? asm "    vmovdqu %ymm7, -288(%rbp)\n")
+          (asm-lacks? asm "%rsp")
           (asm-has? asm "    vpsrld $16, %ymm0, %ymm0\n")
           (asm-has? asm "    vpermq $216, %ymm1, %ymm8\n"))
         (let
-          [needle (str_cat.str-cat "    " widen " (%rsp), %ymm0\n")]
+          [needle (str_cat.str-cat "    " widen " -320(%rbp), %ymm0\n")]
           (asm-has? asm needle))
         (let
-          [needle (str_cat.str-cat "    " widen " 16(%rsp), %ymm0\n")]
+          [needle (str_cat.str-cat "    " widen " -304(%rbp), %ymm0\n")]
           (asm-has? asm needle)))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
@@ -20676,8 +21070,7 @@ g:
       16
       (ast.AstType.I16)
       (cdiag.compiler-diagnostic-at-start "" "")
-      (backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))))
+      (compiler-backend-simd-staging-state 128)))
     [(backend.ResultCompilerBackend.Ok asm)
       (if avx512
         (asm-has?
@@ -20689,7 +21082,7 @@ g:
           asm
           "    vmovdqu -64(%rbp), %ymm14\n"
           "    vmovdqu -128(%rbp), %ymm15\n"
-          "    addq $128, %rsp\n    vmovdqu %ymm14, -192(%rbp)\n"))]
+          "    vpermq $216, %ymm1, %ymm14\n    vmovdqu %ymm14, -192(%rbp)\n"))]
     [(backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool
@@ -21198,7 +21591,10 @@ g:
     (compiler-backend-byte-vector-shift-spill-ok? true)
     (compiler-backend-avx2-unsigned-compare-alias-ok?)
     (compiler-backend-vector-call-lifetime-spill-ok?)
-    (compiler-backend-colored-vector-extent-ok?)))
+    (compiler-backend-colored-vector-extent-ok?)
+    (compiler-backend-simd-scratch-requests-ok?)
+    (compiler-backend-simd-scratch-census-ok?)
+    (compiler-backend-simd-scratch-checks-ok?)))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let

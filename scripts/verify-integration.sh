@@ -456,12 +456,22 @@ integration_batch_run_pool() {
     fi
     ci_timing_set_now_ms
     INTEGRATION_POOL_WALL_MS=$((INTEGRATION_POOL_WALL_MS + CI_TIMING_NOW_MS - _pool_started))
+    _pool_settle_started=$CI_TIMING_NOW_MS
     integration_batch_merge_pool_timing required
+    if ci_timing_enabled; then
+        ci_timing_record_elapsed manifest batch-pool \
+            "$((_pool_settle_started - _pool_started))" 0
+    fi
     while IFS='|' read -r _pool_job _pool_cap; do
         [ "$INTEGRATION_POOL_ENFORCE_CAPS" -eq 1 ] || _pool_cap=
         integration_batch_settle_chunk "$WORKDIR/$_pool_job.list" \
             "${_pool_job#batch-}" "$_pool_cap"
     done < "$_pool_queue"
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        ci_timing_record_elapsed manifest batch-settle \
+            "$((CI_TIMING_NOW_MS - _pool_settle_started))" 0
+    fi
 }
 
 integration_batch_sentinel_entry() {
@@ -686,33 +696,61 @@ deps_or_empty() {
     esac
 }
 
+# Fixture staging is planned, then executed by one native helper (#8395). The
+# path rules below append `source<TAB>destination` lines, relative to ROOT
+# (the working directory), to $STAGE_PLAN instead of forking mkdir/cp and
+# command substitutions per file; tools/integration-staging/stage.tl then
+# creates the directories and writes the files in plan order. Relative paths
+# need no host translation, so Windows converts no path per file.
+STAGE_TAB=$(printf '\t')
+STAGE_NL='
+'
+
+stage_plan_path() {
+    case "$1" in
+        *"$STAGE_TAB"* | *"$STAGE_NL"*)
+            echo "integration staging path contains a tab or newline: $1" >&2
+            return 1
+            ;;
+        "$ROOT"/*) STAGE_PLAN_PATH=${1#"$ROOT"/} ;;
+        *)
+            echo "integration staging path is outside the repository root: $1" >&2
+            return 1
+            ;;
+    esac
+}
+
+stage_plan_copy() {
+    stage_plan_path "$1" || return 1
+    _plan_source=$STAGE_PLAN_PATH
+    stage_plan_path "$2" || return 1
+    printf '%s\t%s\n' "$_plan_source" "$STAGE_PLAN_PATH" >> "$STAGE_PLAN"
+}
+
+# Sets DEP_SOURCE_PATH to the file a manifest dependency names.
 dep_source_path() {
     _dep=$1
     _source_dir=$2
 
     case "$_dep" in
-        stdlib/*)
-            printf '%s\n' "$ROOT/$_dep"
-            return
-            ;;
-        benchmarks/*)
-            printf '%s\n' "$ROOT/$_dep"
+        stdlib/* | benchmarks/*)
+            DEP_SOURCE_PATH="$ROOT/$_dep"
             return
             ;;
         sym_i64_env_core.tl)
-            printf '%s\n' "$ROOT/src/sym_i64_env.tl"
+            DEP_SOURCE_PATH="$ROOT/src/sym_i64_env.tl"
             return
             ;;
     esac
 
     if [ -f "$_source_dir/$_dep" ]; then
-        printf '%s\n' "$_source_dir/$_dep"
+        DEP_SOURCE_PATH="$_source_dir/$_dep"
     elif [ -f "$ROOT/src/$_dep" ]; then
-        printf '%s\n' "$ROOT/src/$_dep"
+        DEP_SOURCE_PATH="$ROOT/src/$_dep"
     elif [ -f "$ROOT/src/tests/$_dep" ]; then
-        printf '%s\n' "$ROOT/src/tests/$_dep"
+        DEP_SOURCE_PATH="$ROOT/src/tests/$_dep"
     elif [ -f "$ROOT/tests/integration/$_dep" ]; then
-        printf '%s\n' "$ROOT/tests/integration/$_dep"
+        DEP_SOURCE_PATH="$ROOT/tests/integration/$_dep"
     else
         echo "missing integration dependency: $_dep" >&2
         return 1
@@ -735,7 +773,12 @@ copy_dep() {
             fi
             ;;
     esac
-    _src=$(dep_source_path "$_dep" "$_source_dir")
+    dep_source_path "$_dep" "$_source_dir" || return 1
+    _src=$DEP_SOURCE_PATH
+    # Case directories are absolute paths without a trailing slash, so
+    # `${dir%/*}` is their parent.
+    _case_parent=${_case_dir%/*}
+    _case_grandparent=${_case_parent%/*}
     # src/ sources import `../stdlib/...`; src/tests/ smoke drivers import
     # `../src_module.tl` and `../../stdlib/...` so they stay directly runnable
     # from the repository root while staged integration copies keep the same
@@ -744,10 +787,10 @@ copy_dep() {
         stdlib/*)
             case "$_source_dir" in
                 "$ROOT/src")
-                    _dst="$(dirname -- "$_case_dir")/$_dep"
+                    _dst="$_case_parent/$_dep"
                     ;;
                 "$ROOT/src/tests")
-                    _dst="$(dirname -- "$(dirname -- "$_case_dir")")/$_dep"
+                    _dst="$_case_grandparent/$_dep"
                     ;;
                 *)
                     _dst="$_case_dir/$_dep"
@@ -761,7 +804,7 @@ copy_dep() {
                         _dst="$_case_dir/$_dep"
                         ;;
                     "$ROOT/src/"*)
-                        _dst="$(dirname -- "$_case_dir")/$_dep"
+                        _dst="$_case_parent/$_dep"
                         ;;
                     *)
                         _dst="$_case_dir/$_dep"
@@ -772,25 +815,23 @@ copy_dep() {
             fi
             ;;
     esac
-    mkdir -p "$(dirname -- "$_dst")"
-    cp "$_src" "$_dst"
+    stage_plan_copy "$_src" "$_dst" || return 1
 
     case "$_dep" in
         stdlib/core_macros.tl) ;;
         stdlib/*)
             case "$_source_dir" in
                 "$ROOT/src")
-                    _core_dst="$(dirname -- "$_case_dir")/stdlib/core_macros.tl"
+                    _core_dst="$_case_parent/stdlib/core_macros.tl"
                     ;;
                 "$ROOT/src/tests")
-                    _core_dst="$(dirname -- "$(dirname -- "$_case_dir")")/stdlib/core_macros.tl"
+                    _core_dst="$_case_grandparent/stdlib/core_macros.tl"
                     ;;
                 *)
                     _core_dst="$_case_dir/stdlib/core_macros.tl"
                     ;;
             esac
-            mkdir -p "$(dirname -- "$_core_dst")"
-            cp "$ROOT/stdlib/core_macros.tl" "$_core_dst"
+            stage_plan_copy "$ROOT/stdlib/core_macros.tl" "$_core_dst" || return 1
             ;;
     esac
 }
@@ -3002,10 +3043,161 @@ manifest_row_split_opt_level() {
     esac
 }
 
-# Stage sources and emit one chunk list per group. Staging repeats what the case
-# loop does; both are plain file copies, so running them twice is idempotent.
-integration_batch_precompile() {
-    [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
+# Stage every case's source and dependencies once, before anything compiles
+# them: the batch pre-pass and the case loop read the same staged tree. The
+# plan is built without forking (see stage_plan_copy), then one helper process
+# creates the directories and writes the files.
+STAGE_PLAN="$WORKDIR/stage.plan"
+
+integration_stage_plan() {
+    : > "$STAGE_PLAN"
+    while IFS='|' read -r _s_name _s_source _s_want _s_stdout _s_args _s_deps _s_extra _s_suite || [ -n "$_s_name" ]; do
+        case "$_s_name" in
+            "" | \#*) continue ;;
+        esac
+        manifest_row_split_opt_level "${_s_extra:-}"
+        _s_stage=0
+        case "$MANIFEST_ROW_EXTRA" in
+            stage-stdlib | stage-stdlib+expected-stderr:*) _s_stage=1 ;;
+        esac
+        _s_source_path="$ROOT/$_s_source"
+        _s_case_dir="$WORKDIR/$_s_name"
+        stage_plan_copy "$_s_source_path" "$_s_case_dir/$_s_name.tl" || return 1
+        case "$_s_deps" in
+            "" | -) continue ;;
+        esac
+        for _s_dep in $_s_deps; do
+            copy_dep "$_s_dep" "${_s_source_path%/*}" "$_s_case_dir" "$_s_stage" \
+                || return 1
+        done
+    done < "$NORMALIZED_MANIFEST"
+}
+
+# Build the staging helper once per run with the host toolchain the manifest
+# programs use, so every plan it executes costs one process, not a compile.
+integration_stage_helper_build() {
+    _helper_dir="$WORKDIR/stage-helper"
+    _helper_asm="$_helper_dir/stage.s"
+    mkdir -p "$_helper_dir"
+    if [ "$HOST_OS" = windows ]; then
+        STAGE_HELPER="$_helper_dir/stage.exe"
+        run_build "$COMPILER" compile tools/integration-staging/stage.tl \
+            --target windows-x86_64 --cfg windows -o "$_helper_asm" \
+            > "$_helper_dir/build.stdout" 2> "$_helper_dir/build.stderr"
+    else
+        STAGE_HELPER="$_helper_dir/stage"
+        run_build "$COMPILER" compile tools/integration-staging/stage.tl \
+            -o "$_helper_asm" \
+            > "$_helper_dir/build.stdout" 2> "$_helper_dir/build.stderr"
+    fi
+    if [ "$build_rc" -ne 0 ]; then
+        echo "FAIL: integration staging helper compile failed" >&2
+        show_build_streams "$_helper_dir/build.stdout" "$_helper_dir/build.stderr"
+        return 1
+    fi
+    if [ "$HOST_OS" = windows ]; then
+        assemble_link_windows "$_helper_asm" "$_helper_dir/stage.obj" \
+            "$STAGE_HELPER" integration-staging
+    else
+        as "$_helper_asm" -o "$_helper_dir/stage.o" &&
+            ld "$_helper_dir/stage.o" -o "$STAGE_HELPER" -e _tl_start || {
+            echo "FAIL: integration staging helper link failed" >&2
+            return 1
+        }
+    fi
+}
+
+integration_stage_copy() {
+    stage_plan_path "$STAGE_PLAN" || return 1
+    "$STAGE_HELPER" "$STAGE_PLAN_PATH"
+}
+
+# The helper's plan contract, checked with the binary the corpus is staged by:
+# order-preserving rewrites (A, B, A ends at A), repeated pairs, empty sources,
+# nested and unusual paths, and a failing line that names its source or
+# destination and stops the plan. The plan writer's own refusals come last.
+integration_stage_self_test() {
+    _t="$WORKDIR/stage-self-test"
+    _tp="${_t#"$ROOT"/}"
+    _odd="sp ace'q$(printf '\303\251')"
+    mkdir -p "$_t/src"
+    printf 'A\n' > "$_t/src/a.tl"
+    printf 'B\n' > "$_t/src/b.tl"
+    : > "$_t/src/empty.tl"
+    printf 'odd\n' > "$_t/src/$_odd.tl"
+    : > "$_t/src/not-a-dir"
+    : > "$_t/empty.plan"
+    "$STAGE_HELPER" "$_tp/empty.plan" || {
+        echo "FAIL: staging helper rejected an empty plan" >&2
+        return 1
+    }
+    printf '%s\t%s\n' \
+        "$_tp/src/a.tl" "$_tp/out/n/d.tl" \
+        "$_tp/src/b.tl" "$_tp/out/n/d.tl" \
+        "$_tp/src/a.tl" "$_tp/out/n/d.tl" \
+        "$_tp/src/b.tl" "$_tp/out/r.tl" \
+        "$_tp/src/b.tl" "$_tp/out/r.tl" \
+        "$_tp/src/empty.tl" "$_tp/out/e.tl" \
+        "$_tp/src/$_odd.tl" "$_tp/out/sp ace/$_odd.tl" \
+        > "$_t/ok.plan"
+    "$STAGE_HELPER" "$_tp/ok.plan" || {
+        echo "FAIL: staging helper rejected a valid plan" >&2
+        return 1
+    }
+    if ! cmp -s "$_t/src/a.tl" "$_t/out/n/d.tl" ||
+        ! cmp -s "$_t/src/b.tl" "$_t/out/r.tl" ||
+        [ ! -f "$_t/out/e.tl" ] || [ -s "$_t/out/e.tl" ] ||
+        ! cmp -s "$_t/src/$_odd.tl" "$_t/out/sp ace/$_odd.tl"; then
+        echo "FAIL: staging helper wrote the wrong bytes for a valid plan" >&2
+        return 1
+    fi
+    for _case in \
+        "missing|$_tp/src/missing.tl|$_tp/out/m.tl|plan line 2: cannot read $_tp/src/missing.tl" \
+        "write|$_tp/src/a.tl|$_tp/src/not-a-dir/x.tl|plan line 2: cannot write $_tp/src/not-a-dir/x.tl"; do
+        _name=${_case%%|*}
+        _rest=${_case#*|}
+        _from=${_rest%%|*}
+        _rest=${_rest#*|}
+        _to=${_rest%%|*}
+        _want=${_rest#*|}
+        printf '%s\t%s\n' \
+            "$_tp/src/a.tl" "$_tp/out/$_name-first.tl" \
+            "$_from" "$_to" \
+            "$_tp/src/a.tl" "$_tp/out/$_name-after.tl" \
+            > "$_t/$_name.plan"
+        if "$STAGE_HELPER" "$_tp/$_name.plan" 2> "$_t/$_name.stderr"; then
+            echo "FAIL: staging helper accepted a plan with a $_name failure" >&2
+            return 1
+        fi
+        if ! grep -F -q -- "$_want" "$_t/$_name.stderr" ||
+            [ ! -f "$_t/out/$_name-first.tl" ] || [ -e "$_t/out/$_name-after.tl" ]; then
+            echo "FAIL: staging helper $_name failure was not reported in plan order" >&2
+            cat "$_t/$_name.stderr" >&2
+            return 1
+        fi
+    done
+    printf 'no tab here\n' > "$_t/malformed.plan"
+    if "$STAGE_HELPER" "$_tp/malformed.plan" 2> "$_t/malformed.stderr" ||
+        ! grep -F -q 'plan line 1: expected `source<TAB>destination`' "$_t/malformed.stderr"; then
+        echo "FAIL: staging helper accepted a malformed plan line" >&2
+        return 1
+    fi
+    if (stage_plan_path "/elsewhere/x.tl") 2> /dev/null ||
+        (stage_plan_path "$ROOT/a${STAGE_TAB}b.tl") 2> /dev/null; then
+        echo "FAIL: the staging plan accepted a path it cannot represent" >&2
+        return 1
+    fi
+}
+
+integration_stage_corpus() {
+    ci_timing_run manifest stage-helper integration_stage_helper_build
+    integration_stage_self_test
+    ci_timing_run manifest stage-plan integration_stage_plan
+    ci_timing_run manifest stage-copy integration_stage_copy
+}
+
+# Emit one chunk list per group from the staged cases.
+integration_batch_queue() {
     _group0="$WORKDIR/batch-embedded.list"
     _group1="$WORKDIR/batch-stage-stdlib.list"
     : > "$_group0"
@@ -3020,12 +3212,6 @@ integration_batch_precompile() {
         case "$MANIFEST_ROW_EXTRA" in
             stage-stdlib | stage-stdlib+expected-stderr:*) _b_stage=1 ;;
         esac
-        _b_case_dir="$WORKDIR/$_b_name"
-        mkdir -p "$_b_case_dir"
-        cp "$ROOT/$_b_source" "$_b_case_dir/$_b_name.tl"
-        for _b_dep in $(deps_or_empty "$_b_deps"); do
-            copy_dep "$_b_dep" "$(dirname -- "$ROOT/$_b_source")" "$_b_case_dir" "$_b_stage"
-        done
         # Staged like every other case, but not batched: its level is its own.
         [ -z "$_b_opt_level" ] || continue
         # Relative to ROOT, which is the working directory: the compiler reads
@@ -3033,7 +3219,7 @@ integration_batch_precompile() {
         _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
         if [ "$HOST_OS" = windows ]; then
             _b_force=
-            if _b_assembly_reason=$(windows_manifest_assembly_reason "$_b_name"); then
+            if windows_manifest_assembly_reason "$_b_name" > /dev/null; then
                 _b_force='|force-assembly'
             fi
             if [ "$_b_stage" -eq 1 ]; then
@@ -3075,6 +3261,12 @@ integration_batch_precompile() {
             _offset=$((_offset + INTEGRATION_BATCH_SIZE))
         done
     done
+}
+
+integration_batch_precompile() {
+    [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
+    ci_timing_run manifest batch-queue integration_batch_queue
+    _pool_queue="$WORKDIR/batch-pool.queue"
     [ ! -s "$_pool_queue" ] || integration_batch_run_pool "$_pool_queue"
     echo "[integration] batched compile: $INTEGRATION_BATCH_CHUNKS chunk(s)" \
         "of up to $INTEGRATION_BATCH_SIZE, $INTEGRATION_BATCH_FAILED_CHUNKS failed"
@@ -3135,7 +3327,13 @@ integration_batch_sentinel() {
     done
 }
 
-ci_timing_run manifest batch-compile integration_batch_precompile
+# Staging stays inside the batch-compile phase row it has always been part of.
+integration_prepare() {
+    integration_stage_corpus
+    integration_batch_precompile
+}
+
+ci_timing_run manifest batch-compile integration_prepare
 integration_batch_sentinel
 
 failed=0
@@ -3170,30 +3368,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     # directory is ROOT.
     work_src_rel="target/integration-verify/$HOST_OS/$name/$name.tl"
 
-    source_path="$ROOT/$source"
-    source_dir=$(dirname -- "$source_path")
+    # integration_stage_corpus staged this case's source and dependencies.
     case_dir="$WORKDIR/$name"
-    mkdir -p "$case_dir"
-    if ci_timing_enabled; then
-        ci_timing_set_now_ms
-        stage_started=$CI_TIMING_NOW_MS
-    fi
     work_src="$case_dir/$name.tl"
-    # The batch pre-pass already staged every case, and staging is a
-    # deterministic file copy, so repeating it here would double the corpus's
-    # I/O for no change in inputs.
-    if [ ! -s "$work_src" ]; then
-        cp "$source_path" "$work_src"
-
-        for dep in $(deps_or_empty "$deps"); do
-            copy_dep "$dep" "$source_dir" "$case_dir" "$stage_stdlib"
-        done
-    fi
-    if ci_timing_enabled; then
-        ci_timing_set_now_ms
-        stage_finished=$CI_TIMING_NOW_MS
-        ci_timing_record_elapsed "$name" stage "$((stage_finished - stage_started))" 0
-    fi
 
     asm="$case_dir/$name.s"
     if [ "$HOST_OS" = windows ]; then

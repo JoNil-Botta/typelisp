@@ -4982,6 +4982,17 @@ every logical access; a nonzero owner offset is therefore invisible to the
 `foreach` body. Empty ranges, sub-gang ranges, full gangs, multiple gangs, and
 partial tails preserve the scalar reference behavior.
 
+Fixed arrays `(Array T N)`, global or local, and references to them are SPMD
+sources and destinations with the same semantics. In SIMD modes a `foreach`
+body reads and writes such an array through a view of its whole storage whose
+length is the static `N`, so contiguous maps, index-array gathers and
+lane-offset gathers from fixed arrays vectorize like their Slice forms, and
+every access keeps its bounds check. This applies when every use of the array's
+name in the body is an element read or an element store; any other use there
+(borrowing the whole array, passing it to a call or to `array-length`, or
+assigning the whole variable) keeps the array itself, and the body is then
+subject to the ordinary SIMD shape diagnostic.
+
 Shared Slice references permit reads. Mutable Slice references permit reads
 and the same statically lane-disjoint contiguous writes as other SPMD buffers.
 The ordinary borrow checker continues to enforce owner provenance, exclusive
@@ -5010,8 +5021,9 @@ Uniform and varying rules:
   reserved and rejected; varying information is inferred inside `foreach`,
   and vector/mask values are internal to lowering.
 - `let` bindings inside the body may be uniform or varying by inference.
-  `set!` to a binding declared outside the `foreach` is rejected; reductions
-  must use `spmd-reduce`.
+  `set!` to a binding declared outside the `foreach` is rejected, except in a
+  `foreach-active` body (see Serialized lanes below); reductions must use
+  `spmd-reduce`.
 - Direct calls to source-known TypeLisp helpers follow the SPMD helper call
   rules below.
 - `if`, `match`, and `while` admit varying conditions and scrutinees under
@@ -5174,7 +5186,8 @@ Masked varying control flow:
   branches. This includes `set!` to bindings declared outside the `foreach`,
   formatted output, file/process I/O, `panic`/`error`, allocation whose result
   escapes the branch, nested `foreach`/`spmd-reduce`, and calls outside the
-  accepted SPMD helper surface.
+  accepted SPMD helper surface. A `foreach-active` body in a masked branch is
+  scalar code and follows the Serialized lanes rules below instead.
 - `match` on a varying scalar lane or enum scrutinee supports literal
   patterns, enum tag arms, wildcard arms, and catch-all or enum payload
   bindings whose bound type is a scalar lane value. A varying `match` creates
@@ -5449,6 +5462,64 @@ Cross-lane operations:
 - IR and backend work may add private horizontal-reduction primitives as
   needed to implement `spmd-reduce`; those primitives are not user-denotable
   source operations.
+
+Serialized lanes:
+
+```lisp test=check name=spmd-foreach-active-histogram
+
+(define (histogram [keys : (& (Slice i64))] [counts : (&mut (Slice i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (foreach-active [lane : i64]
+      (let [key : i64 (lane-value (array-ref keys i))]
+        (set! (array-ref counts key) (+ (array-ref counts key) 1))))))
+```
+
+- `(foreach-active [lane : i64] body...)` runs its body once for each active
+  lane of the current gang, one lane at a time, in increasing lane order. It
+  has type `unit`; the body forms run as a `begin` whose type must be `unit`.
+  The global effect order is the logical index order, gang-major and
+  lane-minor, so `histogram` above counts colliding keys exactly as a scalar
+  loop would.
+- It is valid only directly inside a `foreach` body, including masked `if`,
+  `cond` and `match` arms, varying `while` bodies and nested masks, where it
+  runs only the lanes those regions leave active; serializing the lanes of a
+  masked branch is its main use. It is rejected outside a gang, in
+  `spmd-reduce` values and `spmd-scan`/`spmd-compact` bodies, and nested in
+  another `foreach-active`.
+- `lane` is a read-only uniform `i64`: the running lane's slot in the current
+  gang, numbered like `(program-index)` and `spmd-broadcast` source lanes. In
+  scalar backend modes it is always `0`.
+- Varying values from outside the body are hidden inside it: reading the
+  `foreach` index, a varying `let` binding or `(program-index)` directly is
+  rejected with a diagnostic naming it, as are capturing one in a lambda and
+  `set!` of a varying binding. A value bound inside the gang that is not a
+  scalar lane value, such as a function, tuple, struct, array or reference, is
+  hidden too, since it can hold a closure over varying values; bind it outside
+  the `foreach` or inside the body. `(lane-value v)` gives the running lane's value
+  of `v` as a uniform value. `v` must have a scalar lane type (`i8`, `u8`,
+  `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, `f64` or `bool`) and only
+  read gang values: bindings, literals, operators, casts, `if`, `let`, and
+  array, field and tuple reads, with no writes or calls. `lane-value` is valid
+  only in a `foreach-active` body and does not nest.
+- Since one lane runs at a time, the body is scalar code: array-element
+  writes at any checked index, including colliding ones, `set!` of bindings
+  declared outside the `foreach`, and calls to ordinary helpers and
+  `stdlib/atomic.tl` operations with uniform arguments are accepted.
+  `return`, `break`, `continue`, `try`, nested `foreach`, `spmd-reduce`,
+  `spmd-scan`, `spmd-compact`, `spmd-broadcast` and `spmd-shuffle` are
+  rejected. Every ordinary bounds, ownership, alias and extern-call check
+  applies; the body is a loop body, so it cannot move an owner declared
+  outside it.
+- A fault in the body traps at the first faulting logical index, after the
+  bodies of every earlier index have run. Inactive lanes, both tail lanes and
+  masked-out lanes, run nothing. Cleanup and panics behave as in a scalar loop
+  nested in the gang.
+- Cost: one scalar iteration of the body per active lane.
+- Scalar backend modes run the body once per logical index with `lane` `0`.
+  AVX2 and AVX-512 modes reject a `foreach` whose body contains
+  `foreach-active` with `foreach-active is not yet lowered for AVX2` (or
+  `AVX-512`) until its SIMD lowering lands (#8307); there is no scalar
+  fallback.
 
 Runtime-dispatched SIMD variants:
 
@@ -8393,8 +8464,8 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 
 | Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
 |---------|--------|------|---------|---------------------|
-| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates, including packed `i8`/`u8` multiplication |
-| Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
+| Contiguous `foreach` map/zip, native `Slice` and fixed-array map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates, including packed `i8`/`u8` multiplication and fixed-array operands |
+| Gather-only reads from dynamic buffers, Slices and fixed arrays | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration, fixed-array source and benchmark gates |
 | Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
 | Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates, including packed `i8`/`u8` multiplication |
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
@@ -8402,6 +8473,7 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
+| `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |
 | `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `tests/spmd/gang-width.cases` (lane-identity cases) |
 | Same-program private out-of-line varying helpers | Supported: scalar ABI | Supported: native AVX2 private ABI | Supported: native AVX-512 private ABI | Private-helper differential/shape gates; imported package helpers retain the separately specified scalar/AVX-512 `spmd-call-v1` catalog ABI |
 | `defdispatch` | Supported: scalar variant | Supported: cached runtime AVX2 selection | Supported: cached runtime AVX-512 selection | Runtime-dispatch gate |
@@ -9267,6 +9339,8 @@ expr          ::= literal
                 | "(" "spmd-compact" compact-clause expr expr ")"
                 | "(" "spmd-broadcast" expr expr ")"
                 | "(" "spmd-shuffle" expr expr ")"
+                | "(" "foreach-active" "[" ident ":" "i64" "]" expr+ ")"
+                | "(" "lane-value" expr ")"
                 | "(" spmd-lane-form ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr+ ")"
                 | "(" "return" expr ")"

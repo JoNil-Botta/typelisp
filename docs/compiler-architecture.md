@@ -64,6 +64,25 @@ and emission takes the mask from the scavenger as a third XMM scratch that
 excludes the source, accumulator and sibling. AVX-512 native min/max and the
 other reduction shapes use two scratch registers.
 
+A function's frame is laid out before its body is emitted. Below the slot and
+maximum callee-save area it holds, from the top down: the SIMD staging region,
+the cycle-temp slots, the emergency slots, and, at the bottom, the outgoing
+stack-argument area. A pre-body census (`compiler-backend-simd-scratch-request`
+over every instruction) sizes the staging region to the largest request.
+- Nothing stages outside it: variable-shift fallbacks, gather reassembly,
+  shuffle staging, and AVX2 predicated and tail-mask lanes all address it
+  through `compiler-backend-simd-scratch-address`, and no SIMD sequence moves
+  `%rsp`. The rsp/FPO rebase, red-zone anchoring, CFI and SEH therefore see one
+  frame, and a call from a staged sequence, such as shuffle's selector abort,
+  leaves from the ordinary frame state.
+- The region's size and frame offset are function frame state
+  (`compiler-backend-scratch-i64-simd-scratch-*`), next to the cycle-temp and
+  emergency extras.
+- A function that stages nothing, including every scalar-mode function, plans
+  no region.
+- Each staged route claims its bytes. A claim beyond the plan fails at its
+  instruction, and the region the body used must equal the plan (#7497).
+
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
 same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers
@@ -88,10 +107,54 @@ The optimizer's per-call integrity check applies the call-side half. Backend
 and register-allocation decisions still read generated helper and parameter
 spellings; #7493 moves them onto the descriptor.
 
+SIMD `foreach` plans address their array operands as sequence variables: a
+dynamic-array descriptor, or a native Slice register group (data pointer, then
+length). Fixed arrays reach the same plans through views, not a path of their
+own: after same-program helper inlining, `lower-spmd-array-views` gives every
+fixed array (global, local, or behind `&`/`&mut`) whose each body occurrence is
+an element read or store one Slice view formed in the preheader from its
+storage pointer and static length, and rebinds the name to it for the body.
+The view aliases the array, so element accesses and bounds checks are
+unchanged; any other occurrence keeps the array binding, and a shared reference
+never gets a writable view (#8346).
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance
 contract for those boundaries.
+
+Raw data-pointer return analysis requests a `CompilerLowerRequest` with a
+`PointerProofRequest.Requested` owner. Standalone callers use
+`lower-compiler-source-with-request`; driver callers install the request on
+their explicit lowering state before checked lowering. The specialized,
+typechecked function boundary records a graph of semantic occurrences before
+pointer machine normalization. Parameter ordinals, lexical bindings,
+assignment, branch alternatives, direct-call argument/result uses and function
+results refer to that graph. Pointer casts, pointer/integer conversions, null
+construction and offsets remain visible even when they emit no instruction.
+Function and call identities come from the existing lowering symbol authority;
+source spans use the existing source-location authority. The graph records
+resolved `Ptr`, `MutPtr`, integer and other source categories independently of
+the scalar machine representation.
+
+`lower-compiler-pointer-proof-result` produces the typed
+`ResultCompilerLowerPointerProof` analysis handoff only for complete evidence
+coupled to the exact unoptimized program and its source-span table. Ordinary
+lowering, a reused job owner, a foreign program, missing function metadata and
+an unclassified pointer producer fail closed. Consumers analyze this handoff
+before mutating or optimizing its IR; a later IR result cannot substitute for
+it. This layer
+does not grant nullable ABI permission or admit a return: caller/static origin
+classification, joins, recursion and witnesses belong to the return analysis.
+
+The graph owns copied source paths, spans and source categories in a dedicated
+arena, with no borrowed AST nodes, pooled types or source-interner strings.
+Its caller-owned control cell must remain live throughout analysis. After the
+handoff is consumed, `pointer-proof-input-release!` tombstones that cell and
+retires its data arena; references from another owner or a retired owner are
+rejected. Each job requests a fresh owner; a failed requested source job also
+consumes its owner. Disabled jobs allocate no graph and
+perform no additional expression traversal.
 
 Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
@@ -407,6 +470,14 @@ snapshot, and the table dies before the function's optimizer arena is rewound.
 The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
+
+The level-2 inline stage rewrites each caller inside one phase of a scratch
+arena and keeps only the caller's final body, cloned through the job's explicit
+pools, and the span rows its rewrite added; the phase is rewound before the
+next caller. Tables a rewrite leaves for later callers grow in the IR label
+arena, have fixed capacity, or hold scalars, and the per-walk caller views are
+unpublished before each rewind, so nothing that outlives a caller points into
+its phase.
 
 The checked inliner's literal-argument scan borrows dense block storage directly.
 It visits blocks and instructions in forward order without building linked

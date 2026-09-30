@@ -505,6 +505,7 @@
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : ir.CompilerIrFunctionSeq
   (match (opt.opt-inline-program-functions-with-spans
+    (ast.ast-node-pool-reader-context-current)
     type-segment-bases
     functions
     level
@@ -646,7 +647,10 @@
         (ir.CompilerIrValue.I64 marker)
         (__tl_make-array bool 0)
         (ir.compiler-ir-instr-builder-to-seq builder)
-        (ir.compiler-ir-instr-seq-empty)))))
+        (ir.compiler-ir-instr-seq-empty)
+        0
+        (- 0 1)
+        false))))
 
 (define (opt-bg-test-slow-label-order?
   [blocks : ir.CompilerIrBlockList]
@@ -2988,6 +2992,7 @@
       (irt.instr
         "%0 = phi [%1, inl.entry.0.then], [42, inl.entry.0.else] : i64")]
     (match (opt.opt-inline-program-functions-with-spans
+      (ast.ast-node-pool-reader-context-current)
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-inline-branch-functions symbols)
       2
@@ -3086,6 +3091,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! debug?)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-prepend
             (opt-inline-mb-bounds-caller symbols)
@@ -3137,6 +3143,243 @@
   (and
     (opt-inline-mb-bounds-located-clone-ok? false)
     (opt-inline-mb-bounds-located-clone-ok? true)))
+
+;; The level-2 inline stage rewrites each caller inside a scratch phase and
+;; escapes only its final body, cloned through the job's explicit pools
+;; (#8362). The parameter type below names a nested node past the job pool's
+;; first type segment; the ambient pool installed during the stage is a
+;; different, empty one. Both callers must still absorb the leaf, and their
+;; escaped parameter types must resolve through the job pool.
+(define (opt-inline-job-pool-function
+  [name : String]
+  [param-type : ast.AstType]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (ir.compiler-ir-param-seq-prepend
+      (ir.CompilerIrParam.Param "p" param-type 0)
+      (ir.compiler-ir-param-seq-empty))
+    (ast.AstType.I64)
+    2
+    (ir.compiler-ir-block-cons
+      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
+
+(define (opt-inline-job-pool-caller [name : String] [param-type : ast.AstType]) : ir.CompilerIrFunction
+  (opt-inline-job-pool-function
+    name
+    param-type
+    (opt-test-instrs
+      (ir.CompilerIrInstr.Call
+        1
+        (opt-test-symbol "job_pool_leaf")
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
+        (ast.AstType.I64))
+      (ir.CompilerIrInstr.Return
+        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1))))))
+
+(define (opt-inline-job-pool-leaf-calls [func : (& func ir.CompilerIrFunction)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      (opt-count-direct-call-name-blocks blocks "job_pool_leaf")]))
+
+;; The caller's escaped parameter is `(Ref _ array)` whose array resolves, in
+;; the job pool, to `(Array elem 4)` with `elem` resolving to i64.
+(define (opt-inline-job-pool-param-ok?
+  [bases : i64]
+  [func : (& func ir.CompilerIrFunction)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view func)
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
+      (and
+        (= (opt-count-direct-call-name-blocks blocks "job_pool_leaf") 0)
+        (= (ir.compiler-ir-param-seq-count params) 1)
+        (match (ir.compiler-ir-param-seq-ref params 0)
+          [(ir.CompilerIrParam.Param _ (ast.AstType.Ref _ array-id) _)
+            (match (ast.ast-type-segment-bases-get bases array-id)
+              [(ast.AstType.Array elem-id 4)
+                (match (ast.ast-type-segment-bases-get bases elem-id)
+                  [(ast.AstType.I64) true]
+                  [_ false])]
+              [_ false])]
+          [_ false]))]))
+
+(define (opt-inline-job-pool-caller-ok?
+  [bases : i64]
+  [out : (& out ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (opt-function-seq-find out name)
+    [(opt.OptMaybeFunction.Some func)
+      (opt-inline-job-pool-param-ok? bases (& func))]
+    [(opt.OptMaybeFunction.No) false]))
+
+;; One level-2 inline run on a fresh job pool grown by `fill` distinct type
+;; nodes, with a different, empty pool installed as the ambient context while
+;; it runs. True when the parameter's array node sits past the pool's first
+;; segment, an unoptimized caller calls the leaf once, and both callers absorb
+;; the leaf while keeping their job-pool parameter type.
+(define (opt-inline-job-pool-run-ok? [fill : i64]) : bool
+  (let
+    [job : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [filler : i64 (ast.ast-node-pool-context-type-push job (ast.AstType.Bool))]
+    [i : i64 0]
+    [_fill
+      : unit
+      ;; Distinct nodes, so deduplication cannot collapse them, until the
+      ;; pool has crossed its first 1,024-node segment.
+      (while (< i fill)
+        (begin
+          (set!
+            filler
+            (ast.ast-node-pool-context-type-push
+              job
+              (ast.AstType.Array filler (+ i 1))))
+          (set! i (+ i 1))))]
+    [elem-id : i64 (ast.ast-node-pool-context-type-push job (ast.AstType.I64))]
+    [array-id : i64
+      (ast.ast-node-pool-context-type-push job (ast.AstType.Array elem-id 4))]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases job)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (opt-inline-job-pool-caller "job_pool_a" (ast.AstType.Ref 1 array-id))
+        (ir.compiler-ir-function-seq-prepend
+          (opt-inline-job-pool-caller "job_pool_b" (ast.AstType.Ref 1 array-id))
+          (ir.compiler-ir-function-seq-prepend
+            (opt-inline-job-pool-function
+              "job_pool_leaf"
+              (ast.AstType.Ref 1 array-id)
+              (opt-test-instrs
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))))
+            (ir.compiler-ir-function-seq-empty))))]
+    [ambient : ast.AstNodePoolContext
+      (ast.ast-node-pool-reader-context-current)]
+    [_install-empty : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 4 16))]
+    [inlined : opt.OptInlineSpanProgram
+      (opt.opt-inline-program-functions-with-spans
+        job
+        bases
+        functions
+        2
+        (ir.compiler-source-spans-empty))]
+    [_restore : unit (ast.ast-node-pool-context-install! ambient)]
+    [control : ir.CompilerIrFunction
+      (opt-inline-job-pool-caller "job_pool_c" (ast.AstType.Ref 1 array-id))]
+    (and
+      (> array-id ast.ast-type-node-pool-segment-size)
+      (= (opt-inline-job-pool-leaf-calls (& control)) 1)
+      (match inlined
+        [(opt.OptInlineSpanProgram.Program out _)
+          (and
+            (opt-inline-job-pool-caller-ok? bases (& out) "job_pool_a")
+            (opt-inline-job-pool-caller-ok? bases (& out) "job_pool_b"))]))))
+
+(test
+  optimizer-inline-callers-escape-through-explicit-job-pool
+  (test.assert-true
+    (opt-inline-job-pool-run-ok? 1100)
+    "with an empty ambient pool, both callers absorb the leaf and keep a parameter type that resolves past the explicit job pool's first segment"))
+
+;; Every run destroys its scratch arena before returning. Three runs in one
+;; process, alternating two job pools of different sizes, would read a table
+;; the previous run left pointing into its rewound phases.
+(test
+  optimizer-inline-repeated-interleaved-job-pools
+  (begin
+    (test.assert-true (opt-inline-job-pool-run-ok? 1100) "job A")
+    (test.assert-true (opt-inline-job-pool-run-ok? 1300) "job B")
+    (test.assert-true (opt-inline-job-pool-run-ok? 1100) "job A again")))
+
+;; Each caller's phase escapes only the span rows its own rewrite added
+;; (#8362), so the spans table grows linearly in the number of rewritten
+;; callers: six rewritten callers add exactly six times the rows one adds.
+(define (opt-inline-linear-span-instr-count [callers : i64]) : i64
+  (let
+    [functions : ir.CompilerIrFunctionSeq (ir.compiler-ir-function-seq-empty)]
+    [spans : ir.CompilerSourceSpans (opt-spans-base)]
+    [i : i64 0]
+    (begin
+      ;; Each caller has its own single-site copy of the bounds callee, whose
+      ;; bounds check carries a located span.
+      (while (< i callers)
+        (let
+          [suffix : String (string.int->string i)]
+          [callee-name : String (str_cat.str-cat "lin_callee_" (clone suffix))]
+          (begin
+            (set!
+              spans
+              (ir.compiler-source-spans-insert-instr-located
+                spans
+                (opt-test-span-symbol (clone callee-name))
+                (irt.instr "bounds_check %0, %1 message \"lin_ok\"")
+                613
+                (opt-test-span 57 29)))
+            (set!
+              functions
+              (ir.compiler-ir-function-seq-prepend
+                (ir.CompilerIrFunction.Function
+                  (opt-test-symbol (clone callee-name))
+                  (irt.params "idx=%0:i64, len=%1:i64")
+                  (ast.AstType.I64)
+                  3
+                  (irt.blocks
+                    "entry:
+                       bounds_check %0, %1 message \"lin_ok\"
+                       branch true, then, else
+                     then:
+                       return %0
+                     else:
+                       return 0")
+                  ir.CompilerIrFunctionAbi.Ordinary)
+                (ir.compiler-ir-function-seq-prepend
+                  (ir.CompilerIrFunction.Function
+                    (opt-test-symbol (str_cat.str-cat "lin_caller_" suffix))
+                    (irt.params "a=%0:i64, b=%1:i64")
+                    (ast.AstType.I64)
+                    3
+                    (ir.compiler-ir-block-cons
+                      (ir.CompilerIrBlock.Block
+                        (ir.compiler-ir-label "entry")
+                        (opt-test-instrs
+                          (ir.CompilerIrInstr.Call
+                            2
+                            (opt-test-symbol callee-name)
+                            (ir.CompilerIrCallArgs.Two
+                              (ir.CompilerIrValue.Var 0)
+                              (ir.CompilerIrValue.Var 1))
+                            (ast.AstType.I64))
+                          (irt.instr "return %2")))
+                      ir.CompilerIrBlockList.Nil)
+                    ir.CompilerIrFunctionAbi.Ordinary)
+                  functions)))
+            (set! i (+ i 1)))))
+      (let
+        [input-rows : i64 (ir.compiler-source-spans-instr-count (clone spans))]
+        (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
+          (ast.ast-node-pool-reader-type-segment-bases)
+          functions
+          2
+          spans)
+          [(opt.OptInlineSpanProgram.Program _ out-spans)
+            (- (ir.compiler-source-spans-instr-count out-spans) input-rows)])))))
+
+(test
+  optimizer-inline-span-rows-grow-linearly-with-callers
+  (let
+    [one : i64 (opt-inline-linear-span-instr-count 1)]
+    [six : i64 (opt-inline-linear-span-instr-count 6)]
+    (begin
+      (test.assert-true
+        (> one 0)
+        "an inlined located bounds check adds span rows")
+      (test.assert-i64-eq
+        six
+        (* 6 one)
+        "six rewritten callers add six times one caller's rows"))))
 
 (define (compiler-optimize-spans-non-inline-call-ok?) : bool
   (let
@@ -10631,7 +10874,40 @@
       [(opt_i64_i64_map.contains? (& table) symbols.init-neg) 11]
       ;; a descriptor global is not a scalar i64 candidate at all
       [(opt_i64_i64_map.contains? (& table) symbols.text) 12]
+      ;; the table built in its scratch arena and cloned out holds exactly the
+      ;; six admitted globals
+      [(not (= (opt_i64_i64_map.len (& table)) 6)) 13]
       [else 42])))
+
+;; Two maps with the same length and capacity whose slots hold the same entries
+;; at the same indexes: a layout-exact copy.
+(define (opt-test-i64-map-layout-same?
+  [left : (& left opt_i64_i64_map.Map)]
+  [right : (& right opt_i64_i64_map.Map)]) : bool
+  (let
+    [capacity : i64 (opt_i64_i64_map.capacity left)]
+    [same : bool
+      (and
+        (= (opt_i64_i64_map.len left) (opt_i64_i64_map.len right))
+        (= capacity (opt_i64_i64_map.capacity right)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index capacity))
+        (begin
+          (match (opt_i64_i64_map.entry-at left index)
+            [(opt_i64_i64_map.EntrySome key value)
+              (match (opt_i64_i64_map.entry-at right index)
+                [(opt_i64_i64_map.EntrySome other-key other-value)
+                  (if (and (= key other-key) (= value other-value))
+                    unit
+                    (set! same false))]
+                [(opt_i64_i64_map.EntryNone) (set! same false)])]
+            [(opt_i64_i64_map.EntryNone)
+              (match (opt_i64_i64_map.entry-at right index)
+                [(opt_i64_i64_map.EntrySome _ _) (set! same false)]
+                [(opt_i64_i64_map.EntryNone) unit])])
+          (set! index (+ index 1))))
+      same)))
 
 ;; --- constant-offset runs: widening + ordered subsumption --------------------
 ;;
@@ -22663,6 +22939,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! true)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-switch-functions-named symbols callee-name)
           level
@@ -23021,6 +23298,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! true)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-nonleaf-functions symbols)
           2
@@ -23098,6 +23376,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! false)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-nonleaf-functions-named symbols panic-name)
           2
@@ -54082,6 +54361,20 @@
         [functions (opt-cl-test-functions cl-symbols)]
         [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
         (opt.opt-cl-build type-segment-bases globals functions facts.disq 8))]
+    ;; The same program built in a scratch arena and cloned out, as the
+    ;; program summaries build it.
+    [cl-lengths-scratch : opt.OptConstLengths
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [globals (opt-cl-test-globals cl-symbols)]
+        [functions (opt-cl-test-functions cl-symbols)]
+        [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
+        (opt.opt-cl-build-in-scratch
+          type-segment-bases
+          globals
+          functions
+          facts.disq
+          8))]
     [cl-call-length : i64
       (opt.opt-cl-init-length
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -54524,6 +54817,16 @@
       ;; opaque call cannot receive the fresh descriptor, and the data slot
       ;; must contain the distinct buffer allocation rather than the descriptor
       ;; itself.
+      ;; ...and the scratch-built tables equal the in-place ones slot for slot.
+      [(not
+          (and
+            (opt-test-i64-map-layout-same?
+              (& cl-lengths.lengths)
+              (& cl-lengths-scratch.lengths))
+            (opt-test-i64-map-layout-same?
+              (& cl-lengths.inits)
+              (& cl-lengths-scratch.inits))))
+        247]
       [(not (= cl-call-length (- 0 1))) 245]
       [(not (= cl-self-data-length (- 0 1))) 246]
       [(not (opt-call-memory-summary-is? call-summaries summary-clean 0)) 72]
@@ -65599,6 +65902,275 @@
       (return 4))
     42))
 
+;; --- negative offsets and literal lengths ------------------------------------
+;;
+;; A stack's `sp - 1` / `sp - 2` pair rebases on its smallest offset, and a group
+;; whose lengths are all literals folds `M` at compile time. That group needs no
+;; preheader, so it is taken in straight-line code and in nested loops. `%0` is
+;; the index base and `%1` the array.
+(define (opt-bg-text-function [name : String] [text : String]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-bg-test-params)
+    (ast.AstType.I64)
+    24
+    (irt.blocks text)
+    ir.CompilerIrFunctionAbi.Ordinary))
+
+(define (opt-bg-text-result [name : String] [text : String]) : ir.CompilerIrFunction
+  (match (opt.opt-bg-function-pass (opt-bg-text-function name text))
+    [(opt.OptFunctionPassResult.Result f _) f]))
+
+(define (opt-bg-text-changed? [name : String] [text : String]) : bool
+  (match (opt.opt-bg-function-pass (opt-bg-text-function name text))
+    [(opt.OptFunctionPassResult.Result _ changed) changed]))
+
+;; The filter ends `label`: `t = add %base, shift`, `lt t, bound : u64`, then
+;; the branch to its two arms.
+(define (opt-bg-rebased-filter?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
+  [base : i64]
+  [shift : i64]
+  [bound : i64]) : bool
+  (let
+    [block : ir.CompilerIrBlock (opt-bg-block-of blocks label)]
+    [count : i64 (opt-block-instr-count block)]
+    (and
+      (>= count 3)
+      (match (opt-block-instr-at block (- count 3))
+        [(ir.CompilerIrInstr.BinOp t op lhs rhs _)
+          (and
+            (opt.opt-binop-eq op (ir.CompilerIrBinOp.Add))
+            (opt.opt-value-is-var? lhs base)
+            (opt.opt-value-eq rhs (ir.CompilerIrValue.I64 shift))
+            (match (opt-block-instr-at block (- count 2))
+              [(ir.CompilerIrInstr.BinOp _ lt-op lt-lhs lt-rhs _)
+                (and
+                  (opt.opt-binop-eq lt-op (ir.CompilerIrBinOp.Lt))
+                  (opt.opt-value-is-var? lt-lhs t)
+                  (opt.opt-value-eq lt-rhs (ir.CompilerIrValue.I64 bound)))]
+              [_ false]))]
+        [_ false])
+      (opt-bg-filter-shape?
+        blocks
+        label
+        (opt-bg-label
+          (str_cat.str-cat (ir.compiler-ir-label-text label) "__bg_ok"))
+        (opt-bg-label
+          (str_cat.str-cat (ir.compiler-ir-label-text label) "__bg_slow"))))))
+
+;; The slow arm's instruction at `at` is the check aborting to `ok-label`.
+(define (opt-bg-slow-check-at?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [slow : i64]
+  [at : i64]
+  [ok-label : String]) : bool
+  (match (let
+    [block (opt-bg-block-of blocks slow)]
+    (opt-block-instr-at block at))
+    [(ir.CompilerIrInstr.BoundsCheck _ _ label)
+      (= label (opt-bg-label ok-label))]
+    [_ false]))
+
+(define (opt-bg-stack-pair-text) : String
+  "entry:
+     %2 = sub %0, 1 : i64
+     bounds_check %2, 2 message \"bg_lit_a\"
+     %3 = sub %0, 2 : i64
+     bounds_check %3, 2 message \"bg_lit_b\"
+     %4 = gep %1, %2 : i64
+     %5 = load %4 : i64
+     %6 = gep %1, %3 : i64
+     %7 = load %6 : i64
+     %8 = add %5, %7 : i64
+     return %8")
+
+;; Returns 42 only when negative offsets rebase, literal lengths fold, and both
+;; shapes are taken outside any loop and inside a nested one.
+(define (compiler-optimize-bounds-group-literal-self-test) : i64
+  (let
+    [pair : ir.CompilerIrFunction
+      (opt-bg-text-result "bg_lit_pair" (opt-bg-stack-pair-text))]
+    [pair-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks pair)]
+    [entry : i64 (opt-bg-label "entry")]
+    [slow : i64 (opt-bg-label "entry__bg_slow")]
+    [mixed : ir.CompilerIrFunction
+      (opt-bg-text-result
+        "bg_lit_mixed"
+        "entry:
+           %2 = sub %0, 1 : i64
+           bounds_check %2, 4 message \"bg_mix_a\"
+           %3 = add %0, 1 : i64
+           bounds_check %3, 4 message \"bg_mix_b\"
+           %4 = gep %1, %2 : i64
+           %5 = load %4 : i64
+           %6 = gep %1, %3 : i64
+           %7 = load %6 : i64
+           %8 = add %5, %7 : i64
+           return %8")]
+    [mixed-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks mixed)]
+    [nested : ir.CompilerIrFunction
+      (opt-bg-text-result
+        "bg_lit_nested"
+        "entry:
+           jump outer
+         outer:
+           %2 = phi [0, entry], [%9, latch] : i64
+           jump inner
+         inner:
+           %3 = phi [2, outer], [%7, inner] : i64
+           %4 = sub %3, 1 : i64
+           bounds_check %4, 8 message \"bg_nest_a\"
+           %5 = sub %3, 2 : i64
+           bounds_check %5, 8 message \"bg_nest_b\"
+           %6 = gep %1, %5 : i64
+           store_ptr %6, %4 : i64
+           %7 = add %3, 1 : i64
+           %8 = lt %7, 8 : i64
+           branch %8, inner, latch
+         latch:
+           %9 = add %2, 1 : i64
+           %10 = lt %9, %0 : i64
+           branch %10, outer, exit
+         exit:
+           return 0")]
+    [nested-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks nested)]
+    (begin
+      (unless (opt-bg-verified? pair) (return 1))
+      ;; `sp - 2 <u satsub(2, 1)`: one test for both members, no preheader.
+      (unless (opt-bg-rebased-filter? pair-blocks entry 0 (- 0 2) 1) (return 2))
+      (unless (= (opt-bg-block-checks pair-blocks entry) 0) (return 3))
+      (unless
+        (= (opt-bg-block-checks pair-blocks (opt-bg-label "entry__bg_ok")) 0)
+        (return 4))
+      ;; The slow arm re-forms each negative offset and keeps the checks in
+      ;; their original order with their original abort labels.
+      (unless (= (opt-bg-block-checks pair-blocks slow) 2) (return 5))
+      (unless (opt-bg-slow-check-at? pair-blocks slow 1 "bg_lit_a") (return 6))
+      (unless (opt-bg-slow-check-at? pair-blocks slow 3 "bg_lit_b") (return 7))
+      (unless
+        (match (let
+          [block (opt-bg-block-of pair-blocks slow)]
+          (opt-block-instr-at block 0))
+          [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+            (and
+              (opt.opt-binop-eq op (ir.CompilerIrBinOp.Add))
+              (opt.opt-value-is-var? lhs 0)
+              (opt.opt-value-eq rhs (ir.CompilerIrValue.I64 (- 0 1))))]
+          [_ false])
+        (return 8))
+      ;; `sp - 1` and `sp + 1` against 4: rebased on -1, `M = satsub(4, 2)`.
+      (unless (opt-bg-verified? mixed) (return 9))
+      (unless
+        (opt-bg-rebased-filter? mixed-blocks entry 0 (- 0 1) 2)
+        (return 10))
+      ;; An inner loop whose preheader sits inside the outer loop: the loop
+      ;; walk refuses it, and the literal group is taken anyway.
+      (unless (opt-bg-verified? nested) (return 11))
+      (unless
+        (opt-bg-rebased-filter?
+          nested-blocks
+          (opt-bg-label "inner")
+          3
+          (- 0 2)
+          7)
+        (return 12))
+      ;; Idempotence: the second round finds no group.
+      (unless
+        (not
+          (match (opt.opt-bg-function-pass
+            (opt-bg-text-result "bg_lit_again" (opt-bg-stack-pair-text)))
+            [(opt.OptFunctionPassResult.Result _ changed) changed]))
+        (return 13))
+      42)))
+
+;; Returns 42 only when each neighbour of the literal and negative shapes is
+;; refused.
+(define (compiler-optimize-bounds-group-literal-refusal-self-test) : i64
+  (begin
+    ;; A store between the members ends the group at one negative member,
+    ;; which a filter cannot improve on.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_store"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_st_a\"
+             %4 = gep %1, %2 : i64
+             store_ptr %4, 7 : i64
+             %3 = sub %0, 2 : i64
+             bounds_check %3, 2 message \"bg_st_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 1))
+    ;; So does a call...
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_call"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_call_a\"
+             %4 = call opaque(%0) : i64
+             %3 = sub %0, 2 : i64
+             bounds_check %3, 2 message \"bg_call_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 2))
+    ;; ...and a division, which can abort.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_div"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_div_a\"
+             %4 = safe_mod %1, %0 : i64
+             %3 = sub %0, 2 : i64
+             bounds_check %3, 2 message \"bg_div_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 3))
+    ;; A rebased span over the offset cap.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_span"
+          "entry:
+             %2 = sub %0, 2048 : i64
+             bounds_check %2, 10000 message \"bg_span_a\"
+             %3 = add %0, 2049 : i64
+             bounds_check %3, 10000 message \"bg_span_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 4))
+    ;; `sp - 1` and `sp + 1` against 2 fold to `M = 0`: the fast test could
+    ;; never pass.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_zero"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_zero_a\"
+             %3 = add %0, 1 : i64
+             bounds_check %3, 2 message \"bg_zero_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 5))
+    ;; The admitted shape, for contrast.
+    (unless
+      (opt-bg-text-changed? "bg_lit_base" (opt-bg-stack-pair-text))
+      (return 6))
+    42))
+
 (test
   bounds-group-parallel-array-pair
   (test.assert-i64-eq
@@ -65619,6 +66191,20 @@
     (compiler-optimize-bounds-group-refusal-self-test)
     42
     "a body-defined length, a loopless block and an already-split block are refused"))
+
+(test
+  bounds-group-negative-literal-pairs
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-literal-self-test)
+    42
+    "sp-1/sp-2 and sp-1/sp+1 groups rebase on their smallest offset, and literal lengths fold M with no preheader, in straight-line code and in a nested loop"))
+
+(test
+  bounds-group-negative-literal-refusals
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-literal-refusal-self-test)
+    42
+    "a store, call or division between members, a rebased span over the cap and a bound folding to zero are refused"))
 
 (test
   uniform-phi-collapse

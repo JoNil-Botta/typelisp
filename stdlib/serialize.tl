@@ -61,17 +61,20 @@
 (import stdlib.comptime)
 (import stdlib.string)
 
-;; Read a place without transferring ownership. Serialization consumes each
-;; logical input once, while generated traversal revisits aggregate containers.
-;: Return a representation-level shared view of a serialization input place.
+;; Raw representation copies for generated traversal, which reads a container
+;; it owns more than once. Each expands to raw pointer operations and adds no
+;; `unsafe` of its own, so it compiles only inside the caller's `unsafe`.
+;; Templates here take that `unsafe` only around locals they bound themselves or
+;; the generated function's own parameter, never around a caller expression:
+;; helper macros receive such view expressions and splice them unchanged.
+;: Return a representation copy of an input place; requires `unsafe`.
 (defmacro (serialize-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
+  `(ptr-read (ptr-addr-of ,place)))
 
-;: Return a representation-level shared view of a serialized array element.
+;: Return a representation copy of `items[index]`; requires `unsafe`.
+;: The caller proves `0 <= index < array-length items`.
 (defmacro (serialize-array-element-shared-view [items : Expr] [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
+  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))
 
 ;: Emit the fixed length suffix from array type keys such as `array_i64_3`.
 (defmacro (array-fixed-length [T : type]) : i64
@@ -151,6 +154,8 @@
             (comptime.module-hook format "sequence-element")]
           [format-expr : comptime.Expr
             (comptime.expr-var (comptime.module-name format))]
+          ;; A literal-index element path: the finished expression moves each
+          ;; element out of the tuple `value` owns exactly once, in index order.
           [element-value : comptime.Expr (comptime.expr-tuple-ref value index)]
           [prev-index : comptime.Expr (comptime.expr-int (- index 1))]
           `(stdlib.serialize.encode-tuple-elements
@@ -165,13 +170,15 @@
                 ,format-expr
                 ,element-type
                 ,element-alias
-                (stdlib.serialize.serialize-shared-view ,element-value))
+                ,element-value)
               ,items))))]
     [_
       (comptime.comptime-error
         "serialize: tuple encode index must be an integer literal")]))
 
 ;: Emit a tuple constructor by accumulating decoded element expressions.
+;: `value` is evaluated once per element, so a caller that reads one input
+;: repeatedly passes its own view expression.
 (defmacro (decode-tuple-items
   [format : Module]
   [tuple-type : type]
@@ -206,10 +213,7 @@
               ,format-expr
               ,element-type
               ,element-alias
-              (,element-hook
-                (stdlib.serialize.serialize-shared-view ,value)
-                ,index-expr
-                ,err-ctor)
+              (,element-hook ,value ,index-expr ,err-ctor)
               ,err-ctor)]
           `(let
             [__serialize_decoded_item ,decoded]
@@ -298,90 +302,75 @@
       (comptime.comptime-error
         "serialize: enum variant index must be an integer literal")]))
 
-;: Emit a staged single-variant match for encoding an enum value.
+;: Emit one match over every variant of an enum value. Each arm encodes the
+;: payloads its pattern moves out of `value`, so `value` is consumed once.
 (defmacro (encode-enum-dispatch
   [format : Module]
   [enum-type : type]
   [nested-alias : comptime.Expr]
-  [value : comptime.Expr]
-  [variant-index-expr : comptime.Expr]) : comptime.Expr
-  (match variant-index-expr
-    [(comptime.Expr.Int variant-index)
-      (if (>= variant-index (enum-variant-count enum-type))
-        (let
-          [empty-object-hook : comptime.Expr
-            (comptime.module-hook format "object-empty")]
-          [object-finish-hook : comptime.Expr
-            (comptime.module-hook format "object-finish")]
-          `(,object-finish-hook (,empty-object-hook)))
-        (let
-          [variant-name : String (enum-variant-name enum-type variant-index)]
-          [variant-source-name : String variant-name]
-          [payload-count : i64
-            (enum-variant-payload-count enum-type variant-index)]
-          [payload-prefix : String
-            (comptime.string-append
+  [value : comptime.Expr]) : comptime.Expr
+  (let
+    [variant-count : i64 (enum-variant-count enum-type)]
+    [empty-object-hook : comptime.Expr
+      (comptime.module-hook format "object-empty")]
+    [field-hook : comptime.Expr (comptime.module-hook format "object-field")]
+    [object-finish-hook : comptime.Expr
+      (comptime.module-hook format "object-finish")]
+    [encode-string-hook : comptime.Expr
+      (comptime.module-hook format "encode-string")]
+    [sequence-empty-hook : comptime.Expr
+      (comptime.module-hook format "sequence-empty")]
+    [sequence-finish-hook : comptime.Expr
+      (comptime.module-hook format "sequence-finish")]
+    [format-expr : comptime.Expr
+      (comptime.expr-var (comptime.module-name format))]
+    [variant-index : i64 (- variant-count 1)]
+    [arms : comptime.MatchArmList (comptime.match-arm-list-empty)]
+    (if (= variant-count 0)
+      `(,object-finish-hook (,empty-object-hook))
+      (begin
+        (while (>= variant-index 0)
+          (let
+            [variant-name : String (enum-variant-name enum-type variant-index)]
+            [payload-count : i64
+              (enum-variant-payload-count enum-type variant-index)]
+            [payload-prefix : String
               (comptime.string-append
-                "__serialize_v"
-                (comptime.int->string variant-index))
-              "_p")]
-          [payload-patterns : comptime.PatternList
-            (comptime.pattern-list-bindings payload-prefix payload-count)]
-          [pattern : comptime.Pattern
-            (comptime.pattern-variant variant-source-name payload-patterns)]
-          [empty-object-hook : comptime.Expr
-            (comptime.module-hook format "object-empty")]
-          [field-hook : comptime.Expr
-            (comptime.module-hook format "object-field")]
-          [object-finish-hook : comptime.Expr
-            (comptime.module-hook format "object-finish")]
-          [encode-string-hook : comptime.Expr
-            (comptime.module-hook format "encode-string")]
-          [sequence-empty-hook : comptime.Expr
-            (comptime.module-hook format "sequence-empty")]
-          [sequence-finish-hook : comptime.Expr
-            (comptime.module-hook format "sequence-finish")]
-          [format-expr : comptime.Expr
-            (comptime.expr-var (comptime.module-name format))]
-          [last-payload-index : comptime.Expr
-            (comptime.expr-int (- payload-count 1))]
-          [next-variant-index : comptime.Expr
-            (comptime.expr-int (+ variant-index 1))]
-          [fallback : comptime.Expr
-            `(stdlib.serialize.encode-enum-dispatch
-              ,format-expr
-              ,enum-type
-              ,nested-alias
-              ,value
-              ,next-variant-index)]
-          [body : comptime.Expr
-            `(,object-finish-hook
-              (,field-hook
-                "tag"
-                (,encode-string-hook ,(comptime.expr-string variant-name))
+                (comptime.string-append
+                  "__serialize_v"
+                  (comptime.int->string variant-index))
+                "_p")]
+            [pattern : comptime.Pattern
+              (comptime.pattern-variant
+                variant-name
+                (comptime.pattern-list-bindings payload-prefix payload-count))]
+            [body : comptime.Expr
+              `(,object-finish-hook
                 (,field-hook
-                  "payload"
-                  (,sequence-finish-hook
-                    (stdlib.serialize.encode-enum-payload-elements
-                      ,format-expr
-                      ,enum-type
-                      ,nested-alias
-                      ,variant-index-expr
-                      ,last-payload-index
-                      (,sequence-empty-hook)))
-                  (,empty-object-hook))))]
-          (comptime.expr-match
-            `(stdlib.serialize.serialize-shared-view ,value)
-            (comptime.match-arm-list-cons
-              (comptime.match-arm pattern body)
-              (comptime.match-arm-list-cons
-                (comptime.match-arm (comptime.pattern-wildcard) fallback)
-                (comptime.match-arm-list-empty))))))]
-    [_
-      (comptime.comptime-error
-        "serialize: enum variant index must be an integer literal")]))
+                  "tag"
+                  (,encode-string-hook ,(comptime.expr-string variant-name))
+                  (,field-hook
+                    "payload"
+                    (,sequence-finish-hook
+                      (stdlib.serialize.encode-enum-payload-elements
+                        ,format-expr
+                        ,enum-type
+                        ,nested-alias
+                        ,(comptime.expr-int variant-index)
+                        ,(comptime.expr-int (- payload-count 1))
+                        (,sequence-empty-hook)))
+                    (,empty-object-hook))))]
+            (begin
+              (set!
+                arms
+                (comptime.match-arm-list-cons
+                  (comptime.match-arm pattern body)
+                  arms))
+              (set! variant-index (- variant-index 1)))))
+        (comptime.expr-match value arms)))))
 
 ;: Emit an enum variant constructor from decoded payload expressions.
+;: `payload` is evaluated once per payload element; see `decode-tuple-items`.
 (defmacro (decode-enum-payload-items
   [format : Module]
   [enum-type : type]
@@ -456,10 +445,7 @@
                   ,format-expr
                   ,payload-type
                   ,payload-alias
-                  (,element-hook
-                    (stdlib.serialize.serialize-shared-view ,payload)
-                    ,payload-index-expr
-                    ,err-ctor)
+                  (,element-hook ,payload ,payload-index-expr ,err-ctor)
                   ,err-ctor)]
               `(let
                 [__serialize_decoded_item ,decoded]
@@ -481,6 +467,7 @@
         "serialize: enum variant index must be an integer literal")]))
 
 ;: Emit the runtime decode branch chain for enum tags.
+;: `payload` is evaluated at each use; see `decode-tuple-items`.
 (defmacro (decode-enum-variants
   [format : Module]
   [enum-type : type]
@@ -507,9 +494,7 @@
           `(if (stdlib.string.eq ,tag ,(comptime.expr-string variant-name))
             (let
               [__serialize_payload_count : i64
-                (,length-hook
-                  (stdlib.serialize.serialize-shared-view ,payload)
-                  ,err-ctor)]
+                (,length-hook ,payload ,err-ctor)]
               (begin
                 (if (!= __serialize_payload_count ,payload-count-expr)
                   (return (,err-ctor "serialize: enum payload length mismatch"))
@@ -634,9 +619,13 @@
                             ,format-expr
                             ,element-type
                             ,(comptime.expr-var element-alias)
-                            (stdlib.serialize.serialize-array-element-shared-view
-                              __serialize_value
-                              __serialize_i))
+                            ;; `__serialize_value` owns the consumed input and
+                            ;; the loop visits each index below its length
+                            ;; once, so each element is copied out once.
+                            (unsafe
+                              (stdlib.serialize.serialize-array-element-shared-view
+                                __serialize_value
+                                __serialize_i)))
                           __serialize_items))
                       (set! __serialize_i (- __serialize_i 1))))
                   (,finish-hook __serialize_items))))]
@@ -667,9 +656,13 @@
                             ,format-expr
                             ,element-type
                             ,(comptime.expr-var element-alias)
-                            (stdlib.serialize.serialize-array-element-shared-view
-                              __serialize_value
-                              __serialize_i))
+                            ;; `__serialize_value` owns the consumed input and
+                            ;; the loop visits each index below its length
+                            ;; once, so each element is copied out once.
+                            (unsafe
+                              (stdlib.serialize.serialize-array-element-shared-view
+                                __serialize_value
+                                __serialize_i)))
                           __serialize_items))
                       (set! __serialize_i (- __serialize_i 1))))
                   (,finish-hook __serialize_items))))]
@@ -698,13 +691,14 @@
                 ,format-expr
                 ,value-type
                 ,nested-alias
-                __serialize_value
-                0))]
+                __serialize_value))]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))
 
 ;: Emit the decoded value expression for one supported value type.
+;: Each composite case first consumes `value` into `__serialize_value`; its
+;: explicit views read only that local and pass helpers view expressions.
 (defmacro (decode-value
   [format : Module]
   [value-type : type]
@@ -796,7 +790,8 @@
                 [__serialize_value ,value]
                 [__serialize_count : i64
                   (,length-hook
-                    (stdlib.serialize.serialize-shared-view __serialize_value)
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,err-ctor)]
                 (begin
                   (if (!= __serialize_count ,length-expr)
@@ -814,8 +809,9 @@
                               ,element-type
                               ,(comptime.expr-var element-alias)
                               (,element-hook
-                                (stdlib.serialize.serialize-shared-view
-                                  __serialize_value)
+                                (unsafe
+                                  (stdlib.serialize.serialize-shared-view
+                                    __serialize_value))
                                 __serialize_i
                                 ,err-ctor)
                               ,err-ctor)]
@@ -839,7 +835,8 @@
                 [__serialize_value ,value]
                 [__serialize_count : i64
                   (,length-hook
-                    (stdlib.serialize.serialize-shared-view __serialize_value)
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,err-ctor)]
                 [__serialize_out : ,value-type
                   (__tl_make-array ,element-type __serialize_count)]
@@ -853,8 +850,9 @@
                           ,element-type
                           ,(comptime.expr-var element-alias)
                           (,element-hook
-                            (stdlib.serialize.serialize-shared-view
-                              __serialize_value)
+                            (unsafe
+                              (stdlib.serialize.serialize-shared-view
+                                __serialize_value))
                             __serialize_i
                             ,err-ctor)
                           ,err-ctor)]
@@ -875,7 +873,8 @@
                 [__serialize_value ,value]
                 [__serialize_count : i64
                   (,length-hook
-                    (stdlib.serialize.serialize-shared-view __serialize_value)
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,err-ctor)]
                 (begin
                   (if (!= __serialize_count ,length-expr)
@@ -885,7 +884,8 @@
                     ,format-expr
                     ,value-type
                     ,nested-alias
-                    __serialize_value
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,err-ctor
                     0))))]
           ["enum"
@@ -903,20 +903,23 @@
                 [__serialize_value ,value]
                 (begin
                   (,expect-object-hook
-                    (stdlib.serialize.serialize-shared-view __serialize_value)
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,(comptime.expr-string type-name)
                     ,err-ctor)
                   (let
                     [__serialize_tag_value
                       (,field-value-hook
-                        (stdlib.serialize.serialize-shared-view
-                          __serialize_value)
+                        (unsafe
+                          (stdlib.serialize.serialize-shared-view
+                            __serialize_value))
                         ,(comptime.expr-string "tag")
                         ,err-ctor)]
                     [__serialize_payload_value
                       (,field-value-hook
-                        (stdlib.serialize.serialize-shared-view
-                          __serialize_value)
+                        (unsafe
+                          (stdlib.serialize.serialize-shared-view
+                            __serialize_value))
                         ,(comptime.expr-string "payload")
                         ,err-ctor)]
                     [__serialize_tag : String
@@ -925,7 +928,9 @@
                       ,format-expr
                       ,value-type
                       ,nested-alias
-                      __serialize_payload_value
+                      (unsafe
+                        (stdlib.serialize.serialize-shared-view
+                          __serialize_payload_value))
                       ,err-ctor
                       __serialize_tag
                       0)))))]
@@ -952,11 +957,13 @@
             (comptime.int->string index))]
         [format-expr : comptime.Expr
           (comptime.expr-var (comptime.module-name format))]
+        ;; A field path: `encode-fields` visits each field once, so each moves
+        ;; out of the struct `value` owns exactly once.
         `(stdlib.serialize.encode-value
           ,format-expr
           ,field-type
           ,(comptime.expr-var nested-alias-text)
-          (stdlib.serialize.serialize-shared-view ,field-access)))]
+          ,field-access))]
     [_
       (comptime.comptime-error
         "serialize: field index must be an integer literal")]))
@@ -995,6 +1002,7 @@
         "serialize: field accumulator index must be an integer literal")]))
 
 ;: Emit decode logic for one struct field.
+;: `value` is evaluated once per field; see `decode-tuple-items`.
 (defmacro (decode-field
   [format : Module]
   [T : type]
@@ -1030,10 +1038,7 @@
           (comptime.expr-struct-set out field-name decoded-expr)]
         `(let
           [__serialize_field
-            (,field-value-hook
-              (stdlib.serialize.serialize-shared-view ,value)
-              ,field-key-expr
-              ,err-ctor)]
+            (,field-value-hook ,value ,field-key-expr ,err-ctor)]
           ,set-expr))]
     [_
       (comptime.comptime-error
@@ -1395,10 +1400,13 @@
                       ,T
                       0
                       value)))
+                ;; `decode` owns `value`; every view below reads only that
+                ;; parameter, and no view outlives the call.
                 (define (decode [value : ,value-type]) : Result
                   (begin
                     (,expect-object-hook
-                      (stdlib.serialize.serialize-shared-view value)
+                      (unsafe
+                        (stdlib.serialize.serialize-shared-view value))
                       ,(comptime.expr-string type-name)
                       ,err-ctor)
                     (let
@@ -1408,7 +1416,8 @@
                           ,format-module-expr
                           ,T
                           0
-                          value
+                          (unsafe
+                            (stdlib.serialize.serialize-shared-view value))
                           __serialize_out
                           ,err-ctor)
                         (,ok-ctor __serialize_out)))))

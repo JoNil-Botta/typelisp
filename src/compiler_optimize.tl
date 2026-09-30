@@ -100548,15 +100548,20 @@
 ;; values loaded out of another array, which nothing can bound.
 ;;
 ;; What IS true is that the group has ONE cheapest sufficient test. Write each
-;; member as `i + k_j <u L_j` with `k_j >= 0` literal and `L_j` loop invariant,
-;; and let
+;; member as `i + k_j <u L_j` with `k_j` a small literal of either sign -- a
+;; stack's `sp - 1` / `sp - 2` pair is the negative shape -- and `L_j` loop
+;; invariant. Rebase on `s = min(kmin, 0)`: with `t = i + s` and
+;; `d_j = k_j - s >= 0`, member `j` reads `t + d_j`, the same index modulo
+;; 2^64. A group with no negative offset keeps `t = i`. Let
 ;;
-;;     M = umin_j satsub(L_j, k_j),  satsub(L, k) = L - k if L >=u k else 0.
+;;     M = umin_j satsub(L_j, d_j),  satsub(L, d) = L - d if L >=u d else 0.
 ;;
-;; Then `i <u M` implies every member: `i <u satsub(L_j, k_j)` gives
-;; `0 <= i <= L_j - k_j - 1`, hence `i + k_j < L_j` with no wrap, since `M` is
+;; Then `t <u M` implies every member: `t <u satsub(L_j, d_j)` gives
+;; `0 <= t <= L_j - d_j - 1`, hence `t + d_j < L_j` with no wrap, since `M` is
 ;; clamped at zero and so never reads as a huge unsigned bound. `M` depends only
-;; on loop-invariant lengths, so it is built ONCE in the preheader.
+;; on loop-invariant lengths, so it is built ONCE in the preheader. When every
+;; length is a literal, `M` is a literal too: that group needs no preheader and
+;; is taken in any block, including straight-line code and nested loops.
 ;;
 ;; The rewrite is therefore a pure fast-path FILTER, not a replacement:
 ;;
@@ -100576,7 +100581,8 @@
 ;; the checks are implied; when it fails -- which the wrap cases such as
 ;; `i = -1, k = 1` allow even though every original check passes -- the slow arm
 ;; runs them all and falls through. Nothing observable changes either way, and
-;; the fast path is the same two instructions ONE check used to cost.
+;; the fast path is the same two instructions ONE check used to cost, plus the
+;; Add forming `t` when the smallest offset is not zero.
 ;;
 ;; `B_slow` defines nothing the join needs, so `B_ok` takes no phi: the arm
 ;; recomputes `i + k_j` into its own vars rather than borrowing the block's.
@@ -100614,7 +100620,10 @@
   (Plan ir.CompilerIrInstrSeq ir.CompilerIrValue i64))
 
 ;; One rewritten site. `drop` marks the member checks by position in the
-;; original block, so the rebuild needs no second recognition pass.
+;; original block, so the rebuild needs no second recognition pass. The fast
+;; compare tests `rebased`, which holds `index + shift`; the fast block forms it
+;; first when `rebase-emit` is set. `pre` is -1 for a bound folded to a literal,
+;; which needs no preheader.
 (defstruct OptBgPlan
   (block i64)
   (ok i64)
@@ -100626,7 +100635,10 @@
   (bound ir.CompilerIrValue)
   (drop (__tl_dyn-array bool))
   (pre-instrs ir.CompilerIrInstrSeq)
-  (slow-instrs ir.CompilerIrInstrSeq))
+  (slow-instrs ir.CompilerIrInstrSeq)
+  (shift i64)
+  (rebased i64)
+  (rebase-emit bool))
 
 (defenum OptBgPlanResult
   (No)
@@ -100665,7 +100677,10 @@
         (ir.CompilerIrValue.I64 0)
         (__tl_make-array bool 0)
         (ir.compiler-ir-instr-seq-empty)
-        (ir.compiler-ir-instr-seq-empty))]
+        (ir.compiler-ir-instr-seq-empty)
+        0
+        (- 0 1)
+        false)]
     [(OptBgPlanList.Dense items _ len)
       (compiler-opt-global-array-element-shared-view items (- (- len 1) index))]))
 
@@ -100736,23 +100751,51 @@
     [(ast.AstType.U64) true]
     [_ false]))
 
-;; The (var, literal) split of an Add's operands, in either written order.
-(define (opt-bg-add-operands
+;; The (var, signed literal) split of an offset instruction: an Add with the
+;; literal on either side, or a Sub with the literal on the right, negated. Only
+;; offsets within the cap either way are kept, so the negation cannot overflow.
+(define (opt-bg-offset-operands
+  [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]) : OptBgMaybeIndex
-  (match lhs
-    [(ir.CompilerIrValue.Var v)
-      (match rhs
-        [(ir.CompilerIrValue.I64 k) (OptBgMaybeIndex.Some v k)]
+  (let
+    [split : OptBgMaybeIndex
+      (match op
+        [(ir.CompilerIrBinOp.Add)
+          (match lhs
+            [(ir.CompilerIrValue.Var v)
+              (match rhs
+                [(ir.CompilerIrValue.I64 k) (OptBgMaybeIndex.Some v k)]
+                [_ (OptBgMaybeIndex.No)])]
+            [(ir.CompilerIrValue.I64 k)
+              (match rhs
+                [(ir.CompilerIrValue.Var v) (OptBgMaybeIndex.Some v k)]
+                [_ (OptBgMaybeIndex.No)])]
+            [_ (OptBgMaybeIndex.No)])]
+        [(ir.CompilerIrBinOp.Sub)
+          (match lhs
+            [(ir.CompilerIrValue.Var v)
+              (match rhs
+                [(ir.CompilerIrValue.I64 k)
+                  (if (and (> k 0) (<= k (opt-bg-offset-cap)))
+                    (OptBgMaybeIndex.Some v (- 0 k))
+                    (OptBgMaybeIndex.No))]
+                [_ (OptBgMaybeIndex.No)])]
+            [_ (OptBgMaybeIndex.No)])]
         [_ (OptBgMaybeIndex.No)])]
-    [(ir.CompilerIrValue.I64 k)
-      (match rhs
-        [(ir.CompilerIrValue.Var v) (OptBgMaybeIndex.Some v k)]
-        [_ (OptBgMaybeIndex.No)])]
-    [_ (OptBgMaybeIndex.No)]))
+    (match split
+      [(OptBgMaybeIndex.Some v k)
+        (if (and
+          (not (= k 0))
+          (<= k (opt-bg-offset-cap))
+          (>= k (- 0 (opt-bg-offset-cap))))
+          (OptBgMaybeIndex.Some v k)
+          (OptBgMaybeIndex.No))]
+      [(OptBgMaybeIndex.No) (OptBgMaybeIndex.No)])))
 
-;; `dst = src + k` (k a small positive literal) and `dst = src` copies, as two
-;; var-indexed tables. Anything else keeps `-1`, which stops the walk below.
+;; `dst = src + k` / `dst = src - k` (k a small nonzero literal, recorded
+;; signed) and `dst = src` copies, as two var-indexed tables. Anything else
+;; keeps `-1`, which stops the walk below.
 (define (opt-bg-adds-instrs!
   [instrs : ir.CompilerIrInstrSeq]
   [add-base : (&mut add-base (__tl_dyn-array i64))]
@@ -100778,17 +100821,13 @@
                 [_ unit])
               unit)]
           [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-            (if (and
-              (opt-binop-eq op (ir.CompilerIrBinOp.Add))
-              (opt-bg-index-type? ty))
-              (match (opt-bg-add-operands lhs rhs)
+            (if (opt-bg-index-type? ty)
+              (match (opt-bg-offset-operands op lhs rhs)
                 [(OptBgMaybeIndex.Some src k)
                   (if (and
                     (>= dst 0)
                     (< dst (array-length add-base))
-                    (not (= dst src))
-                    (> k 0)
-                    (<= k (opt-bg-offset-cap)))
+                    (not (= dst src)))
                     (begin
                       (set! (array-ref add-base dst) src)
                       (set! (array-ref add-k dst) k))
@@ -100908,20 +100947,27 @@
           (set! offset (+ offset (array-ref add-k base)))
           (set! base (array-ref add-base base))
           (set! steps (+ steps 1))))
-      (if (and (>= base 0) (<= offset (opt-bg-offset-cap)))
+      (if (and
+        (>= base 0)
+        (<= offset (opt-bg-offset-cap))
+        (>= offset (- 0 (opt-bg-offset-cap))))
         (OptBgMaybeIndex.Some base offset)
         (OptBgMaybeIndex.No)))))
 
-;; A length the preheader can read: a literal, or a value the loop body does not
-;; define. Anything the body defines would make `M` a per-iteration build.
+;; A length the bound can be built from. In a loop's preheader: a literal, or a
+;; value the loop body does not define; anything the body defines would make `M`
+;; a per-iteration build. With no preheader (`literal-only?`) only a
+;; non-negative literal qualifies, because then `M` is folded at compile time.
 (define (opt-bg-invariant-length?
   [len : (& len ir.CompilerIrValue)]
   [def-block : (& def-block (__tl_dyn-array i64))]
-  [body : (& body OptLoopBody)]) : bool
+  [body : (& body OptLoopBody)]
+  [literal-only? : bool]) : bool
   (match len
-    [(ir.CompilerIrValue.I64 _) true]
+    [(ir.CompilerIrValue.I64 n) (or (not literal-only?) (>= (deref n) 0))]
     [(ir.CompilerIrValue.Var w)
       (and
+        (not literal-only?)
         (opt-bg-single-def? (deref w) def-block)
         (not (opt-gep-offset-var-in-loop? (deref w) def-block body)))]
     [_ false]))
@@ -100931,12 +100977,13 @@
   [add-base : (& add-base (__tl_dyn-array i64))]
   [add-k : (& add-k (__tl_dyn-array i64))]
   [def-block : (& def-block (__tl_dyn-array i64))]
-  [body : (& body OptLoopBody)]) : OptBgMaybeCheck
+  [body : (& body OptLoopBody)]
+  [literal-only? : bool]) : OptBgMaybeCheck
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(ir.CompilerIrInstr.BoundsCheck idx len ok)
       (match idx
         [(ir.CompilerIrValue.Var v)
-          (if (opt-bg-invariant-length? len def-block body)
+          (if (opt-bg-invariant-length? len def-block body literal-only?)
             (match (opt-bg-canon v add-base add-k)
               [(OptBgMaybeIndex.Some base offset)
                 (if (opt-bg-single-def? base def-block)
@@ -100987,6 +101034,7 @@
   [add-k : (& add-k (__tl_dyn-array i64))]
   [def-block : (& def-block (__tl_dyn-array i64))]
   [body : (& body OptLoopBody)]
+  [literal-only? : bool]
   [scratch : OptBgScratch]
   [record? : bool]) : i64
   (let
@@ -100998,7 +101046,13 @@
         (let
           [instr : ir.CompilerIrInstr
             (ir.compiler-ir-instr-seq-ref instrs cursor)]
-          (match (opt-bg-check-at instr add-base add-k def-block body)
+          (match (opt-bg-check-at
+            instr
+            add-base
+            add-k
+            def-block
+            body
+            literal-only?)
             [(OptBgMaybeCheck.Some member-base offset len ok)
               (if (= member-base base)
                 (begin
@@ -101025,12 +101079,13 @@
   [add-k : (& add-k (__tl_dyn-array i64))]) : bool
   (match (opt-bg-canon var add-base add-k)
     [(OptBgMaybeIndex.Some canon-base offset)
-      (and (= canon-base base) (> offset 0))]
+      (and (= canon-base base) (not (= offset 0)))]
     [(OptBgMaybeIndex.No) false]))
 
 ;; Pull the split point back over the offset arithmetic that only exists to form
-;; a member's index: in the fast block those Adds keep Gep-index uses only,
-;; which is what lets the backend fold them into the addressing displacement.
+;; a member's index: in the fast block those Adds and Subs keep Gep-index uses
+;; only, which is what lets the backend fold them into the addressing
+;; displacement (GAP9 takes both).
 (define (opt-bg-cut-of
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [first : i64]
@@ -101045,7 +101100,10 @@
         (match (ir.compiler-ir-instr-seq-ref instrs (- cut 1))
           [(ir.CompilerIrInstr.BinOp dst op _ _ _)
             (if (and
-              (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+              (match op
+                [(ir.CompilerIrBinOp.Add) true]
+                [(ir.CompilerIrBinOp.Sub) true]
+                [_ false])
               (>= dst 0)
               (< dst (array-length add-base))
               (opt-bg-canon-offset-of? dst base add-base add-k))
@@ -101077,7 +101135,12 @@
           (set! cursor (+ cursor 1))))
       slot)))
 
-(define (opt-bg-dedup-terms! [count : i64] [scratch : OptBgScratch]) : i64
+;; Offsets are taken relative to `shift`, the group's smallest member offset, so
+;; every term offset is non-negative.
+(define (opt-bg-dedup-terms!
+  [count : i64]
+  [shift : i64]
+  [scratch : OptBgScratch]) : i64
   (let
     [terms : i64 0]
     [cursor : i64 0]
@@ -101086,7 +101149,7 @@
         (let
           [len : ir.CompilerIrValue
             (compiler-opt-global-array-element-shared-view scratch.lens cursor)]
-          [k : i64 (array-ref scratch.ks cursor)]
+          [k : i64 (- (array-ref scratch.ks cursor) shift)]
           [slot : i64
             (opt-bg-find-term
               (compiler-opt-global-shared-view scratch.term-lens)
@@ -101104,96 +101167,152 @@
             (set! cursor (+ cursor 1)))))
       terms)))
 
+;; A length that is a non-negative literal, or -1.
+(define (opt-bg-literal-length [len : (& len ir.CompilerIrValue)]) : i64
+  (match len
+    [(ir.CompilerIrValue.I64 n)
+      (if (>= (deref n) 0)
+        (deref n)
+        (- 0 1))]
+    [_ (- 0 1)]))
+
 ;; `M = umin_j satsub(len_j, k_j)`, in the unsigned domain the checks use. A
 ;; zero offset contributes its length unchanged, so the common all-zero group
-;; costs one compare and one select per extra length and nothing else.
+;; costs one compare and one select per extra length and nothing else. Terms
+;; whose length is a non-negative literal fold into one constant at compile
+;; time (their signed and unsigned orders agree), so a group of only such terms
+;; builds nothing and its bound is that literal.
 (define (opt-bg-bound-plan
   [terms : i64]
   [scratch : (& scratch OptBgScratch)]
   [next-var : i64]) : OptBgBoundPlan
   (let
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (* terms 5))]
+      (ir.compiler-ir-instr-builder-with-capacity (+ (* terms 5) 2))]
     [cursor : i64 0]
     [var : i64 next-var]
     [sat : i64 (- 0 1)]
     [acc : ir.CompilerIrValue (ir.CompilerIrValue.I64 0)]
+    [built : i64 0]
+    [folded : i64 (- 0 1)]
     (begin
       (while (< cursor terms)
         (let
           [k : i64 (array-ref scratch.term-ks cursor)]
+          [literal : i64
+            (let
+              [len
+                (compiler-opt-global-array-element-shared-view
+                  scratch.term-lens
+                  cursor)]
+              (opt-bg-literal-length (& len)))]
           (begin
-            (if (> k 0)
+            (if (>= literal 0)
+              (let
+                [term : i64
+                  (if (>= literal k)
+                    (- literal k)
+                    0)]
+                (if (or (< folded 0) (< term folded))
+                  (set! folded term)
+                  unit))
               (begin
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.CompilerIrInstr.BinOp
-                    var
-                    (ir.CompilerIrBinOp.Ge)
-                    (compiler-opt-global-array-element-shared-view
-                      scratch.term-lens
-                      cursor)
-                    (ir.CompilerIrValue.I64 k)
-                    (ast.AstType.U64)))
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.CompilerIrInstr.BinOp
-                    (+ var 1)
-                    (ir.CompilerIrBinOp.Sub)
-                    (compiler-opt-global-array-element-shared-view
-                      scratch.term-lens
-                      cursor)
-                    (ir.CompilerIrValue.I64 k)
-                    (ast.AstType.I64)))
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.ir-instr-select
-                    (+ var 2)
-                    (ir.CompilerIrValue.Var var)
-                    (ir.CompilerIrValue.Var (+ var 1))
-                    (ir.CompilerIrValue.I64 0)
-                    0
-                    (ast.AstType.I64)))
-                (set! sat (+ var 2))
-                (set! var (+ var 3)))
-              (set! sat (- 0 1)))
-            (if (= cursor 0)
-              (set!
-                acc
-                (if (>= sat 0)
-                  (ir.CompilerIrValue.Var sat)
-                  (compiler-opt-global-array-element-shared-view
-                    scratch.term-lens
-                    cursor)))
-              (begin
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.CompilerIrInstr.BinOp
-                    var
-                    (ir.CompilerIrBinOp.Lt)
+                (if (> k 0)
+                  (begin
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.BinOp
+                        var
+                        (ir.CompilerIrBinOp.Ge)
+                        (compiler-opt-global-array-element-shared-view
+                          scratch.term-lens
+                          cursor)
+                        (ir.CompilerIrValue.I64 k)
+                        (ast.AstType.U64)))
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.BinOp
+                        (+ var 1)
+                        (ir.CompilerIrBinOp.Sub)
+                        (compiler-opt-global-array-element-shared-view
+                          scratch.term-lens
+                          cursor)
+                        (ir.CompilerIrValue.I64 k)
+                        (ast.AstType.I64)))
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.ir-instr-select
+                        (+ var 2)
+                        (ir.CompilerIrValue.Var var)
+                        (ir.CompilerIrValue.Var (+ var 1))
+                        (ir.CompilerIrValue.I64 0)
+                        0
+                        (ast.AstType.I64)))
+                    (set! sat (+ var 2))
+                    (set! var (+ var 3)))
+                  (set! sat (- 0 1)))
+                (if (= built 0)
+                  (set!
+                    acc
                     (if (>= sat 0)
                       (ir.CompilerIrValue.Var sat)
                       (compiler-opt-global-array-element-shared-view
                         scratch.term-lens
-                        cursor))
-                    (compiler-opt-global-shared-view acc)
-                    (ast.AstType.U64)))
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut builder)
-                  (ir.ir-instr-select
-                    (+ var 1)
-                    (ir.CompilerIrValue.Var var)
-                    (if (>= sat 0)
-                      (ir.CompilerIrValue.Var sat)
-                      (compiler-opt-global-array-element-shared-view
-                        scratch.term-lens
-                        cursor))
-                    (compiler-opt-global-shared-view acc)
-                    0
-                    (ast.AstType.I64)))
-                (set! acc (ir.CompilerIrValue.Var (+ var 1)))
-                (set! var (+ var 2))))
+                        cursor)))
+                  (begin
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrInstr.BinOp
+                        var
+                        (ir.CompilerIrBinOp.Lt)
+                        (if (>= sat 0)
+                          (ir.CompilerIrValue.Var sat)
+                          (compiler-opt-global-array-element-shared-view
+                            scratch.term-lens
+                            cursor))
+                        (compiler-opt-global-shared-view acc)
+                        (ast.AstType.U64)))
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (ir.ir-instr-select
+                        (+ var 1)
+                        (ir.CompilerIrValue.Var var)
+                        (if (>= sat 0)
+                          (ir.CompilerIrValue.Var sat)
+                          (compiler-opt-global-array-element-shared-view
+                            scratch.term-lens
+                            cursor))
+                        (compiler-opt-global-shared-view acc)
+                        0
+                        (ast.AstType.I64)))
+                    (set! acc (ir.CompilerIrValue.Var (+ var 1)))
+                    (set! var (+ var 2))))
+                (set! built (+ built 1))))
             (set! cursor (+ cursor 1)))))
+      (if (< folded 0)
+        unit
+        (if (= built 0)
+          (set! acc (ir.CompilerIrValue.I64 folded))
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.BinOp
+                var
+                (ir.CompilerIrBinOp.Lt)
+                (ir.CompilerIrValue.I64 folded)
+                (compiler-opt-global-shared-view acc)
+                (ast.AstType.U64)))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.ir-instr-select
+                (+ var 1)
+                (ir.CompilerIrValue.Var var)
+                (ir.CompilerIrValue.I64 folded)
+                (compiler-opt-global-shared-view acc)
+                0
+                (ast.AstType.I64)))
+            (set! acc (ir.CompilerIrValue.Var (+ var 1)))
+            (set! var (+ var 2)))))
       (OptBgBoundPlan.Plan
         (ir.compiler-ir-instr-builder-to-seq builder)
         acc
@@ -101201,7 +101320,9 @@
 
 ;; The slow arm: the original checks, in order, with their original abort
 ;; labels. Offsets are recomputed here rather than read from the fast block so
-;; the arm needs no value the split would have to phi back.
+;; the arm needs no value the split would have to phi back. A negative offset
+;; is re-formed as an Add of its negative literal: the same wrapped value the
+;; member's own Sub produced, so each check aborts with the same index.
 (define (opt-bg-slow-plan
   [count : i64]
   [scratch : OptBgScratch]
@@ -101218,7 +101339,7 @@
         (let
           [k : i64 (array-ref scratch.ks cursor)]
           (begin
-            (if (> k 0)
+            (if (not (= k 0))
               (begin
                 (ir.compiler-ir-instr-builder-push!
                   (&mut builder)
@@ -101393,6 +101514,7 @@
 (define (opt-bg-best-start
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [body : (& body OptLoopBody)]
+  [literal-only? : bool]
   [single-exit? : bool]
   [analysis : OptBgAnalysis]) : i64
   (let
@@ -101410,7 +101532,8 @@
               analysis.add-base
               analysis.add-k
               analysis.def-block
-              body))
+              body
+              literal-only?))
             [(OptBgMaybeCheck.Some base offset _ _)
               (let
                 [found : i64
@@ -101422,6 +101545,7 @@
                     analysis.add-k
                     analysis.def-block
                     body
+                    literal-only?
                     analysis.scratch
                     false)]
                 [worth? : bool
@@ -101455,12 +101579,120 @@
     (not (opt-cfg-instr-seq-can-fallthrough? instrs))
     (not (opt-bg-check-run-block? instrs))))
 
+(define (opt-bg-min-offset [count : i64] [scratch : (& scratch OptBgScratch)]) : i64
+  (let
+    [cursor : i64 1]
+    [least : i64 (array-ref scratch.ks 0)]
+    (begin
+      (while (< cursor count)
+        (begin
+          (if (< (array-ref scratch.ks cursor) least)
+            (set! least (array-ref scratch.ks cursor))
+            unit)
+          (set! cursor (+ cursor 1))))
+      least)))
+
+(define (opt-bg-max-offset [count : i64] [scratch : (& scratch OptBgScratch)]) : i64
+  (let
+    [cursor : i64 1]
+    [most : i64 (array-ref scratch.ks 0)]
+    (begin
+      (while (< cursor count)
+        (begin
+          (if (> (array-ref scratch.ks cursor) most)
+            (set! most (array-ref scratch.ks cursor))
+            unit)
+          (set! cursor (+ cursor 1))))
+      most)))
+
+;; How the fast compare gets `base + shift`. A member index already defined as
+;; exactly that, in one Add or Sub of `base`, is used as it is: in place when
+;; its definition sits in an earlier block or ahead of the cut, and otherwise by
+;; moving that one definition ahead of the compare. Only a group with no such
+;; member forms a fresh value, so a rebase never computes the index twice.
+(defenum OptBgRebase
+  ;; The var, already available at the compare.
+  (Reuse i64)
+  ;; The var and the block position of its definition, which moves.
+  (Move i64 i64)
+  (Fresh))
+
+(define (opt-bg-def-position
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [var : i64]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (< cursor count)
+        (match (let
+          [instr (ir.compiler-ir-instr-seq-ref instrs cursor)]
+          (opt-instr-def-var instr))
+          [(option_i64.Some dst)
+            (if (= dst var)
+              (begin
+                (set! found cursor)
+                (set! cursor count))
+              (set! cursor (+ cursor 1)))]
+          [(option_i64.None) (set! cursor (+ cursor 1))]))
+      found)))
+
+(define (opt-bg-rebase-choice
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [drop : (& drop (__tl_dyn-array bool))]
+  [start : i64]
+  [cut : i64]
+  [base : i64]
+  [shift : i64]
+  [add-base : (& add-base (__tl_dyn-array i64))]
+  [add-k : (& add-k (__tl_dyn-array i64))]) : OptBgRebase
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [cursor : i64 start]
+    [member : i64 (- 0 1)]
+    (begin
+      (while (< cursor count)
+        (begin
+          (if (array-ref drop cursor)
+            (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+              [(ir.CompilerIrInstr.BoundsCheck idx _ _)
+                (match idx
+                  [(ir.CompilerIrValue.Var v)
+                    (if (and
+                      (< member 0)
+                      (>= v 0)
+                      (< v (array-length add-base))
+                      (= (array-ref add-base v) base)
+                      (= (array-ref add-k v) shift))
+                      (set! member v)
+                      unit)]
+                  [_ unit])]
+              [_ unit])
+            unit)
+          (set! cursor (+ cursor 1))))
+      (if (< member 0)
+        (OptBgRebase.Fresh)
+        (let
+          [at : i64 (opt-bg-def-position instrs member)]
+          (if (< at cut)
+            (OptBgRebase.Reuse member)
+            (OptBgRebase.Move member at)))))))
+
+;; `pre` is the preheader the bound is built in, or -1 when `literal-only?`
+;; restricts the group to literal lengths, whose bound folds to a constant.
+;; A group with a negative offset is rebased on its smallest one. A group with
+;; none keeps its base: rebasing it would only add the Add forming `t`. Its
+;; rebased span stays within the offset cap, like a canonical offset. A bound
+;; that folds to zero would send every execution down the slow arm, so it is
+;; refused.
 (define (opt-bg-plan-block
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [pre : i64]
   [body : (& body OptLoopBody)]
+  [literal-only? : bool]
   [single-exit? : bool]
   [analysis : OptBgAnalysis]
   [next-var : i64]) : OptBgPlanResult
@@ -101473,6 +101705,7 @@
           (opt-bg-best-start
             instrs
             body
+            literal-only?
             single-exit?
             (compiler-opt-global-shared-view analysis))]
         (if (< start 0)
@@ -101484,7 +101717,8 @@
               analysis.add-base
               analysis.add-k
               analysis.def-block
-              body))
+              body
+              literal-only?))
             [(OptBgMaybeCheck.No) (OptBgPlanResult.No)]
             [(OptBgMaybeCheck.Some base _ _ _)
               (let
@@ -101507,44 +101741,97 @@
                     analysis.add-k
                     analysis.def-block
                     body
+                    literal-only?
                     (compiler-opt-global-shared-view marked)
                     true)]
-                [terms : i64
-                  (opt-bg-dedup-terms!
-                    members
-                    (compiler-opt-global-shared-view marked))]
-                [ok-label : i64
-                  (opt-ubound-fresh-label blocks label "__bg_ok" 0)]
-                [slow-label : i64
-                  (opt-ubound-fresh-label blocks label "__bg_slow" 0)]
-                (match (opt-bg-bound-plan terms marked next-var)
-                  [(OptBgBoundPlan.Plan pre-instrs bound bound-var)
-                    (match (opt-bg-slow-plan
-                      members
-                      marked
-                      base
-                      ok-label
-                      (+ bound-var 1))
-                      [(OptBgSeqPlan.Plan slow-instrs slow-var)
-                        (OptBgPlanResult.Some
-                          (OptBgPlan
-                            label
-                            ok-label
-                            slow-label
-                            pre
-                            (opt-bg-cut-of
-                              instrs
-                              start
+                [least : i64 (opt-bg-min-offset members (& marked))]
+                [shift : i64
+                  (if (< least 0)
+                    least
+                    0)]
+                (if (>
+                  (- (opt-bg-max-offset members (& marked)) shift)
+                  (opt-bg-offset-cap))
+                  (OptBgPlanResult.No)
+                  (let
+                    [terms : i64
+                      (opt-bg-dedup-terms!
+                        members
+                        shift
+                        (compiler-opt-global-shared-view marked))]
+                    (match (opt-bg-bound-plan terms marked next-var)
+                      [(OptBgBoundPlan.Plan pre-instrs bound bound-var)
+                        (if (or
+                          (opt-value-eq
+                            (compiler-opt-global-shared-view bound)
+                            (ir.CompilerIrValue.I64 0))
+                          (and
+                            (< pre 0)
+                            (> (ir.compiler-ir-instr-seq-count pre-instrs) 0)))
+                          (OptBgPlanResult.No)
+                          (let
+                            [ok-label : i64
+                              (opt-ubound-fresh-label blocks label "__bg_ok" 0)]
+                            [slow-label : i64
+                              (opt-ubound-fresh-label
+                                blocks
+                                label
+                                "__bg_slow"
+                                0)]
+                            [cut : i64
+                              (opt-bg-cut-of
+                                instrs
+                                start
+                                base
+                                analysis.add-base
+                                analysis.add-k)]
+                            [rebase : OptBgRebase
+                              (if (= shift 0)
+                                (OptBgRebase.Reuse base)
+                                (opt-bg-rebase-choice
+                                  instrs
+                                  (& drop)
+                                  start
+                                  cut
+                                  base
+                                  shift
+                                  analysis.add-base
+                                  analysis.add-k))]
+                            (match (opt-bg-slow-plan
+                              members
+                              marked
                               base
-                              analysis.add-base
-                              analysis.add-k)
-                            bound-var
-                            base
-                            bound
-                            drop
-                            pre-instrs
-                            slow-instrs)
-                          slow-var)])]))]))))))
+                              ok-label
+                              (+ bound-var 1))
+                              [(OptBgSeqPlan.Plan slow-instrs slow-var)
+                                (let
+                                  [rebased : i64
+                                    (match rebase
+                                      [(OptBgRebase.Reuse v) v]
+                                      [(OptBgRebase.Move v at)
+                                        (begin
+                                          (set! (array-ref drop at) true)
+                                          v)]
+                                      [(OptBgRebase.Fresh) slow-var])]
+                                  (OptBgPlanResult.Some
+                                    (OptBgPlan
+                                      label
+                                      ok-label
+                                      slow-label
+                                      pre
+                                      cut
+                                      bound-var
+                                      base
+                                      bound
+                                      drop
+                                      pre-instrs
+                                      slow-instrs
+                                      shift
+                                      rebased
+                                      (match rebase
+                                        [(OptBgRebase.Reuse _) false]
+                                        [_ true]))
+                                    (+ slow-var 1)))])))]))))]))))))
 
 ;; --- loop choice -------------------------------------------------------------
 ;;
@@ -101660,6 +101947,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [pre : i64]
   [body : (& body OptLoopBody)]
+  [literal-only? : bool]
   [single-exit? : bool]
   [analysis : OptBgAnalysis]
   [state : OptBgPlanState]) : OptBgPlanState
@@ -101679,6 +101967,7 @@
               instrs
               pre
               body
+              literal-only?
               single-exit?
               analysis
               next-var)
@@ -101687,7 +101976,9 @@
                 (OptBgPlanState.State
                   (opt-bg-plan-list-prepend plan plans)
                   (opt-label-add taken label)
-                  (opt-label-add pre-used pre)
+                  (if (< pre 0)
+                    pre-used
+                    (opt-label-add pre-used pre))
                   plan-var)]))])]))
 
 (define (opt-bg-plan-loop-body
@@ -101717,6 +102008,7 @@
             blocks
             pre
             body
+            false
             single-exit?
             (compiler-opt-global-shared-view analysis)
             state)]
@@ -101768,6 +102060,46 @@
           blocks
           index
           marks
+          analysis
+          next-state))]))
+
+;; Groups whose every length is a literal need no preheader: their bound is a
+;; compile-time constant, so they are taken in any block the loop walk left
+;; alone -- straight-line code, and blocks of any loop however deeply nested.
+;; Only groups of two or more members pay there. A lone member saves one `lea`
+;; per execution only in a loop of many trips, which the loop walk decides.
+;; `body` is empty and never consulted: a literal length needs no invariance.
+(define (opt-bg-plan-literal-blocks
+  [remaining : ir.CompilerIrBlockList]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [body : OptLoopBody]
+  [analysis : OptBgAnalysis]
+  [state : OptBgPlanState]) : OptBgPlanState
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) state]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bg-plan-literal-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        blocks
+        body
+        analysis
+        state)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        [next-state : OptBgPlanState
+          (opt-bg-plan-one
+            block
+            blocks
+            (- 0 1)
+            (& body)
+            true
+            false
+            (compiler-opt-global-shared-view analysis)
+            state)]
+        (opt-bg-plan-literal-blocks
+          (deref rest)
+          blocks
+          body
           analysis
           next-state))]))
 
@@ -101901,19 +102233,29 @@
 (define (opt-bg-fast-instrs [instrs : ir.CompilerIrInstrSeq] [plan : OptBgPlan]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (+ plan.cut 2))]
+      (ir.compiler-ir-instr-builder-with-capacity (+ plan.cut 3))]
     (begin
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
         instrs
         0
         plan.cut)
+      (if plan.rebase-emit
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.BinOp
+            plan.rebased
+            (ir.CompilerIrBinOp.Add)
+            (ir.CompilerIrValue.Var plan.index)
+            (ir.CompilerIrValue.I64 plan.shift)
+            (ast.AstType.I64)))
+        unit)
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
         (ir.CompilerIrInstr.BinOp
           plan.cmp
           (ir.CompilerIrBinOp.Lt)
-          (ir.CompilerIrValue.Var plan.index)
+          (ir.CompilerIrValue.Var plan.rebased)
           plan.bound
           (ast.AstType.U64)))
       (ir.compiler-ir-instr-builder-push!
@@ -102126,6 +102468,7 @@
                 (opt-bg-best-start
                   instrs
                   body
+                  false
                   single-exit?
                   (compiler-opt-global-shared-view analysis))
                 0))
@@ -102273,18 +102616,27 @@
         [marks : (__tl_dyn-array bool)
           (__tl_make-array bool (ir.compiler-ir-block-list-count blocks))]
         [_marks : unit (opt-bg-loop-marks! loops (&mut marks))]
-        (match (opt-bg-plan-loops
-          (opt-bg-loops-widest-first (compiler-opt-global-shared-view loops))
-          loops
+        [analysis : OptBgAnalysis (opt-bg-analysis-build blocks frame width)]
+        (match (opt-bg-plan-literal-blocks
+          (compiler-opt-global-shared-view blocks)
           blocks
-          context.index
-          marks
-          (opt-bg-analysis-build blocks frame width)
-          (OptBgPlanState.State
-            (OptBgPlanList.Nil)
+          (OptLoopBody
             (OptLabelSet.Nil)
-            (OptLabelSet.Nil)
-            frame))
+            (__tl_make-array bool 0)
+            (ir.CompilerIrBlockList.Nil))
+          (compiler-opt-global-shared-view analysis)
+          (opt-bg-plan-loops
+            (opt-bg-loops-widest-first (compiler-opt-global-shared-view loops))
+            loops
+            blocks
+            context.index
+            marks
+            (compiler-opt-global-shared-view analysis)
+            (OptBgPlanState.State
+              (OptBgPlanList.Nil)
+              (OptLabelSet.Nil)
+              (OptLabelSet.Nil)
+              frame)))
           [(OptBgPlanState.State plans _ _ next-var)
             (match (& plans)
               [(OptBgPlanList.Nil)
@@ -109613,6 +109965,19 @@
     (set! opt-inline-caller-checked-blocks 0)
     (set! opt-inline-caller-checked-taken? false)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
+
+;; Unpublish the per-walk caller views -- the facts block list, its loop
+;; labels, and the phi-predecessor renames -- so no global names a caller's
+;; rewrite storage once that storage is released. The next walk reinstalls
+;; them (opt-inline-caller-facts-install!) before reading any of them.
+(define (opt-inline-caller-walk-unpublish!) : unit
+  (begin
+    (set!
+      (array-ref opt-inline-caller-facts-blocks 0)
+      (ir.CompilerIrBlockList.Nil))
+    (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
+    (set! opt-inline-caller-facts-ready? false)
+    (set! (array-ref opt-inline-pred-renames 0) (OptInlinePredRenameList.Nil))))
 
 (define (opt-inline-caller-facts-ensure!) : unit
   (if opt-inline-caller-facts-ready?
@@ -117987,6 +118352,7 @@
         current-spans))))
 
 (define (opt-inline-process-scc-order-with-spans
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -118001,38 +118367,63 @@
     [index-pos : i64 0]
     [slot-count : i64 (array-length slot-order)]
     [current-spans : ir.CompilerSourceSpans spans]
+    ;; Each caller's rewrite -- its intermediate generations and working
+    ;; state -- is dead once its final body is known, so it runs in one phase
+    ;; of this scratch arena. Only the final body (cloned through the job's
+    ;; explicit pools) and the span rows the rewrite added escape into the
+    ;; stage arena before the phase is rewound. Every table a rewrite leaves
+    ;; for later callers either grows in the IR label arena (census, synth,
+    ;; reach stamps, callee-cost memo), has fixed capacity (checked tier), or
+    ;; holds scalars (owned state); the memo's function views point at index
+    ;; bodies, which live in the stage arena. The per-walk caller globals are
+    ;; unpublished below before each rewind.
+    [scratch : arena.Arena (arena.make)]
     (begin
       (while (< index-pos slot-count)
         (begin
           (let
             [slot : i64 (array-ref slot-order index-pos)]
             [caller-scc : i64 (array-ref scc-of slot)]
-            (match (opt-inline-function-with-spans
-              type-segment-bases
-              (compiler-opt-global-array-element-shared-view values slot)
-              (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view census)
-              (compiler-opt-global-shared-view scc-result)
-              caller-scc
-              (compiler-opt-global-shared-view current-spans)
-              (compiler-opt-global-shared-view current-spans))
-              [(OptInlineSpanProgram.Program one next-spans)
-                (begin
-                  (if (> one.len 0)
+            [phase : arena.ArenaPhase (arena.phase scratch)]
+            (begin
+              (match (in-arena
+                scratch
+                (opt-inline-function-with-spans
+                  type-segment-bases
+                  (compiler-opt-global-array-element-shared-view values slot)
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view census)
+                  (compiler-opt-global-shared-view scc-result)
+                  caller-scc
+                  (compiler-opt-global-shared-view current-spans)
+                  (compiler-opt-global-shared-view current-spans)))
+                [(OptInlineSpanProgram.Program one next-spans)
+                  (begin
+                    (if (> one.len 0)
+                      (set!
+                        (array-ref values slot)
+                        (ir.compiler-ir-clone-function
+                          pools
+                          (compiler-opt-global-array-element-shared-view
+                            one.slots
+                            0)))
+                      unit)
                     (set!
-                      (array-ref values slot)
-                      (compiler-opt-global-array-element-shared-view
-                        one.slots
-                        0))
-                    unit)
-                  (set! current-spans next-spans))]))
+                      current-spans
+                      (ir.compiler-source-spans-append-new
+                        (compiler-opt-global-shared-view current-spans)
+                        (compiler-opt-global-shared-view next-spans))))])
+              (opt-inline-caller-walk-unpublish!)
+              (arena.rewind-safe! phase)))
           (set! index-pos (+ index-pos 1))))
+      (arena.destroy-safe! scratch)
       current-spans)))
 
 ;; Inline small single-block leaf callees across the whole program. Level 2
 ;; (the register-allocated quality build) runs the full census/SCC pipeline;
 ;; level 1 runs only the call-free tiny-leaf pass above.
 (define (opt-inline-program-functions-with-spans
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]
@@ -118066,6 +118457,7 @@
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans
+          pools
           type-segment-bases
           (compiler-opt-global-shared-view index)
           census
@@ -119914,10 +120306,10 @@
 ;; WHY THE OCCURRENCE COUNT. The one thing the qualification must rule out is
 ;; the handle escaping into a position the walk cannot follow -- a call
 ;; argument, a store of the handle, a `Mov` alias. Counting every `Global g`
-;; operand in the program (opt-cl-count-instr, the cell scan's value walk with
-;; the saturation taken out) and every literal-offset `Gep` off it separately
-;; makes "used only as such a base" an equality of two integers rather than a
-;; second value walk with an allow-list.
+;; operand in the program (opt-cl-count-instr-into!, the cell scan's value walk
+;; with the saturation taken out) and every literal-offset `Gep` off it
+;; separately makes "used only as such a base" an equality of two integers
+;; rather than a second value walk with an allow-list.
 (defstruct OptConstLengths
   ;; global symbol id -> the literal length.
   (lengths opt_i64_i64_map.Map)
@@ -119928,19 +120320,6 @@
   (match (opt_i64_i64_map.get map id)
     [(opt_i64_i64_map.LookupFound n) n]
     [(opt_i64_i64_map.LookupMissing) 0]))
-
-;; Like opt-reach-instr, this skips Pack words.
-(define (opt-cl-count-instr
-  [counts : opt_i64_i64_map.Map]
-  [instr : (& instr ir.CompilerIrInstr)]) : opt_i64_i64_map.Map
-  (match instr
-    [(ir.CompilerIrInstr.Pack _ _ _) counts]
-    [_
-      (let
-        [out : opt_i64_i64_map.Map counts]
-        (begin
-          (opt-note-uses! (OptUseNote.GlobalCount) (&mut out) instr)
-          out))]))
 
 (define (opt-cl-blocks-to-list [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (match (owned_view.compiler-owned-reference-shared-view blocks)
@@ -119985,26 +120364,16 @@
           [_ unit])]
       [_ unit])))
 
-;; The value walk threads its map by value; this is the in-place entry the
-;; scans use, so one program-wide map accumulates every occurrence.
+;; The in-place entry the scans use: one program-wide map accumulates every
+;; occurrence; like opt-reach-instr, this skips Pack words. `GlobalCount`
+;; increments, so counting straight into `counts`
+;; equals summing a per-instruction map into it, without allocating one.
 (define (opt-cl-count-instr-into!
   [counts : (&mut counts opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (let
-    [local : opt_i64_i64_map.Map
-      (opt-cl-count-instr (opt_i64_i64_map.with-capacity 2) instr)]
-    [capacity : i64 (opt_i64_i64_map.capacity (& local))]
-    [i : i64 (opt_i64_i64_map.next-occupied (& local) 0)]
-    (while (< i capacity)
-      (begin
-        (match (opt_i64_i64_map.entry-at (& local) i)
-          [(opt_i64_i64_map.EntrySome id n)
-            (opt_i64_i64_map.insert-ref!
-              counts
-              id
-              (+ n (opt-cl-map-count counts id)))]
-          [(opt_i64_i64_map.EntryNone) unit])
-        (set! i (opt_i64_i64_map.next-occupied (& local) (+ i 1)))))))
+  (match instr
+    [(ir.CompilerIrInstr.Pack _ _ _) unit]
+    [_ (opt-note-uses! (OptUseNote.GlobalCount) counts instr)]))
 
 ;; Second walk of the same function: a gep-of-global temp used by anything but
 ;; a `Load` whose source it is refuses the global. Every use is read through
@@ -120414,11 +120783,16 @@
                     (&mut gep-base)
                     (&mut gep-vars)
                     (&mut bad))
-                  (opt-blocks-visit
-                    blocks
-                    opt-cl-escape-instr!
-                    gep-vars
-                    (&mut bad))))])
+                  ;; The escape walk only flags `gep-vars` entries, so a
+                  ;; function that recorded none skips its per-instruction
+                  ;; use maps.
+                  (if (= (opt_i64_i64_map.len (& gep-vars)) 0)
+                    unit
+                    (opt-blocks-visit
+                      blocks
+                      opt-cl-escape-instr!
+                      gep-vars
+                      (&mut bad)))))])
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index globals.len)
@@ -120759,6 +121133,29 @@
       (opt_i64_i64_map.with-capacity 1)
       (opt_i64_i64_map.with-capacity 1))))
 
+;; CL-1 builds in a scratch arena of its own: its working storage (per-function
+;; gep maps, the program-wide occurrence counts) dies with the scratch, and
+;; only the result is cloned into the caller's arena, slot layout included.
+;; The build writes no module state, so nothing else can point into the
+;; scratch.
+(define (opt-cl-build-in-scratch
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [disq : (& disq opt_i64_i64_map.Map)]
+  [capacity : i64]) : OptConstLengths
+  (let
+    [scratch : i64 (arena.tl_arena_make)]
+    [built : OptConstLengths
+      (in-arena
+        (arena.Arena scratch)
+        (opt-cl-build type-segment-bases globals functions disq capacity))]
+    [out : OptConstLengths (clone built)]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      out)))
+
 ;; Build the per-program summaries: the function-count-gated call maps
 ;; plus the const-divisor, constant-length and global-cell tables. Only the
 ;; level-2 pipeline reads any of them (the level-1 pipeline reads the profile
@@ -120795,7 +121192,7 @@
                 (compiler-opt-global-shared-view globals)
                 facts.disq))]
           [lengths : OptConstLengths
-            (opt-cl-build
+            (opt-cl-build-in-scratch
               type-segment-bases
               (compiler-opt-global-shared-view globals)
               reachable-functions
@@ -126696,6 +127093,27 @@
       facts
       (opt_i64_i64_map.with-capacity 1))))
 
+;; The non-negativity table builds in a scratch arena of its own, like CL-1:
+;; the candidate/edge fixpoint's working storage dies with the scratch and only
+;; the result map is cloned into the caller's arena. The build writes no module
+;; state.
+(define (opt-nonneg-globals-build-in-scratch
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [cell : OptGlobalCellSummary]) : opt_i64_i64_map.Map
+  (let
+    [scratch : i64 (arena.tl_arena_make)]
+    [built : opt_i64_i64_map.Map
+      (in-arena
+        (arena.Arena scratch)
+        (opt-nonneg-globals-build type-segment-bases globals functions cell))]
+    [out : opt_i64_i64_map.Map (clone built)]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      out)))
+
 (define (opt-global-cell-summary-build-with-call-memory
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
@@ -126750,7 +127168,7 @@
             (opt-global-mod-ref-none)
             (opt_i64_i64_map.with-capacity 1))]
         [nonneg : opt_i64_i64_map.Map
-          (opt-nonneg-globals-build
+          (opt-nonneg-globals-build-in-scratch
             type-segment-bases
             (compiler-opt-global-shared-view globals)
             functions
@@ -127974,6 +128392,7 @@
             [_arm-checked : unit (opt-inline-checked-set-active! true)]
             [inlined : OptInlineSpanProgram
               (opt-inline-program-functions-with-spans
+                pools
                 type-segment-bases
                 functions
                 level

@@ -452,6 +452,44 @@ spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_rej
 spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
 spmd_shuffle_masked_if_reject|check-fail|tests/safety/spmd_shuffle_masked_if_reject.tl|-|SPMD masked if does not support spmd-shuffle inside masked branches
 
+# foreach-active (#8306): scope, the hidden varying rule, the body's effect
+# rules and lane-value's operand; ordinary ownership and bounds checks still
+# apply in the serialized body.
+foreach_active_outside_reject|check-fail|tests/safety/foreach_active_outside_reject.tl|-|foreach-active is only valid inside a foreach body
+foreach_active_reduce_value_reject|check-fail|tests/safety/foreach_active_reduce_value_reject.tl|-|foreach-active is only valid inside a foreach body
+foreach_active_nested_reject|check-fail|tests/safety/foreach_active_nested_reject.tl|-|foreach-active cannot be nested inside foreach-active
+foreach_active_lane_type_reject|check-fail|tests/safety/foreach_active_lane_type_reject.tl|-|foreach-active lane binding must have type i64
+foreach_active_missing_body_reject|check-fail|tests/safety/foreach_active_missing_body_reject.tl|-|foreach-active requires a body
+foreach_active_malformed_binding_reject|check-fail|tests/safety/foreach_active_malformed_binding_reject.tl|-|malformed foreach-active binding; expected [lane : i64]
+foreach_active_body_type_reject|check-fail|tests/safety/foreach_active_body_type_reject.tl|-|foreach-active body must be unit
+foreach_active_varying_read_reject|check-fail|tests/safety/foreach_active_varying_read_reject.tl|-|foreach-active body reads varying `i`; read it with (lane-value i)
+foreach_active_varying_let_read_reject|check-fail|tests/safety/foreach_active_varying_let_read_reject.tl|-|foreach-active body reads varying `twice`; read it with (lane-value twice)
+foreach_active_program_index_reject|check-fail|tests/safety/foreach_active_program_index_reject.tl|-|foreach-active body reads varying program-index
+foreach_active_lambda_capture_reject|check-fail|tests/safety/foreach_active_lambda_capture_reject.tl|-|a lambda inside foreach-active cannot capture varying `i`
+foreach_active_gang_function_reject|check-fail|tests/safety/foreach_active_gang_function_reject.tl|-|foreach-active body reads gang-local value `lane-index`
+foreach_active_gang_tuple_closure_reject|check-fail|tests/safety/foreach_active_gang_tuple_closure_reject.tl|-|foreach-active body reads gang-local value `pair`
+foreach_active_lane_set_reject|check-fail|tests/safety/foreach_active_lane_set_reject.tl|-|foreach-active lane binding is read-only
+foreach_active_set_varying_reject|check-fail|tests/safety/foreach_active_set_varying_reject.tl|-|foreach-active body cannot set varying binding `v`
+foreach_active_return_reject|check-fail|tests/safety/foreach_active_return_reject.tl|-|return inside foreach-active is not supported
+foreach_active_break_reject|check-fail|tests/safety/foreach_active_break_reject.tl|-|break inside foreach-active is not supported
+foreach_active_continue_reject|check-fail|tests/safety/foreach_active_continue_reject.tl|-|continue inside foreach-active is not supported
+foreach_active_try_reject|check-fail|tests/safety/foreach_active_try_reject.tl|-|try inside foreach-active is not supported
+foreach_active_nested_foreach_reject|check-fail|tests/safety/foreach_active_nested_foreach_reject.tl|-|a nested foreach inside foreach-active is not supported
+foreach_active_spmd_reduce_reject|check-fail|tests/safety/foreach_active_spmd_reduce_reject.tl|-|spmd-reduce inside foreach-active is not supported
+foreach_active_spmd_scan_reject|check-fail|tests/safety/foreach_active_spmd_scan_reject.tl|-|spmd-scan inside foreach-active is not supported
+foreach_active_spmd_compact_reject|check-fail|tests/safety/foreach_active_spmd_compact_reject.tl|-|spmd-compact inside foreach-active is not supported
+foreach_active_broadcast_reject|check-fail|tests/safety/foreach_active_broadcast_reject.tl|-|spmd-broadcast inside foreach-active is not supported
+foreach_active_move_reject|check-fail|tests/safety/foreach_active_move_reject.tl|-|cannot move loop-carried owner value `items`
+lane_value_outside_active_reject|check-fail|tests/safety/lane_value_outside_active_reject.tl|-|lane-value is only valid inside a foreach-active body
+lane_value_nested_reject|check-fail|tests/safety/lane_value_nested_reject.tl|-|lane-value cannot be nested inside a lane-value operand
+lane_value_call_reject|check-fail|tests/safety/lane_value_call_reject.tl|-|a lane-value operand may only read gang values
+lane_value_enum_reject|check-fail|tests/safety/lane_value_enum_reject.tl|-|lane-value operand must have a scalar lane type (an integer, float or bool type), found Color
+foreach_active_effects_defined|run-exit|tests/safety/foreach_active_effects_defined.tl|42|-
+foreach_active_outer_function_defined|run-exit|tests/safety/foreach_active_outer_function_defined.tl|42|-
+foreach_active_gang_scalar_defined|run-exit|tests/safety/foreach_active_gang_scalar_defined.tl|42|-
+foreach_active_masked_defined|run-exit|tests/safety/foreach_active_masked_defined.tl|42|-
+foreach_active_bounds_trap|run-trap|tests/safety/foreach_active_bounds_trap.tl|134|array index out of bounds: index=4 length=4
+
 # SPMD v1 private-call ABI policy: public vector/mask/varying source types
 # stay rejected, and function-value calls remain outside the direct helper ABI.
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
@@ -567,6 +605,17 @@ serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_o
 serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
 serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
 serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
+
+# Serialize view macros add no `unsafe` of their own, and generator helpers
+# check a caller's value expression in the caller's context.
+serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_helper_caller_index_reject|check-fail|tests/safety/serialize_helper_caller_index_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_views_explicit_unsafe_ok|run-exit|tests/safety/serialize_views_explicit_unsafe_ok.tl|42|-
 module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch: expected i64, found bool
 
 # Every declaration of every generated-module identity gets the normal
@@ -972,6 +1021,19 @@ foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_define
 
 # JSON live-prefix validation and checked arithmetic, including strategy hooks.
 json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-
+
+# JSON view macros add no `unsafe` of their own: safe callers reject at the raw
+# read however they reach the macro, and explicit caller `unsafe` compiles.
+json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_ok.tl|42|-
 
 # A typecheck code follows the raise site's kind, not words in the message.
 typecheck_kind_ignores_binding_name_reject|check-fail|tests/safety/typecheck_kind_ignores_binding_name_reject.tl|-|error[E0206]: typecheck: let binding `cleanup` type mismatch: expected i64, found bool

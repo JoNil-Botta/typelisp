@@ -1353,6 +1353,14 @@
   (Ok ParseAstSpmdStateBinding)
   (Err String))
 
+(defstruct ParseAstSpmdTypedBinding
+  (name i64)
+  (ty ast.AstType))
+
+(defenum ResultParseAstSpmdTypedBinding
+  (Ok ParseAstSpmdTypedBinding)
+  (Err String))
+
 (defenum ResultAstFuncTypeParts
   (Ok ast.AstTypeList ast.AstType)
   (Err String))
@@ -2552,6 +2560,12 @@
 (define (compiler-parse-tag-expr-spmd-program-count) : i64
   296)
 
+(define (compiler-parse-tag-expr-foreach-active) : i64
+  319)
+
+(define (compiler-parse-tag-expr-lane-value) : i64
+  320)
+
 (define (compiler-parse-tag-expr-try) : i64
   251)
 
@@ -3334,6 +3348,18 @@
           out
           "program-count"
           (compiler-parse-tag-expr-spmd-program-count)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "foreach-active"
+          (compiler-parse-tag-expr-foreach-active)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "lane-value"
+          (compiler-parse-tag-expr-lane-value)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -7493,6 +7519,47 @@
         [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
     [_ (ResultParseAstSpmdStateBinding.Err malformed-message)]))
 
+;; `[name : T]`, the binding shape with no range or initializer.
+(define (parse-ast-spmd-typed-binding
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [binding : reader.SpannedSexpr]
+  [expected-colon-message : String]
+  [malformed-message : String]) : ResultParseAstSpmdTypedBinding
+  (match (reader.spanned-sexpr-view binding)
+    [(reader.SpannedSexprView.BracketList items _)
+      (parse-ast-spmd-typed-binding
+        dispatch
+        pools
+        items
+        expected-colon-message
+        malformed-message)]
+    [(reader.SpannedSexprView.Cons name-node colon-tail _)
+      (match (reader.spanned-sexpr-view name-node)
+        [(reader.SpannedSexprView.Sym name _)
+          (match (reader.spanned-sexpr-view colon-tail)
+            [(reader.SpannedSexprView.Cons colon ty-tail _)
+              (match (reader.spanned-sexpr-view ty-tail)
+                [(reader.SpannedSexprView.Cons ty finish _)
+                  (match (reader.spanned-sexpr-view finish)
+                    [(reader.SpannedSexprView.Nil _)
+                      (if (sexpr-colon? colon)
+                        (match (parse-ast-type-spanned dispatch pools ty)
+                          [(ResultAstType.Ok parsed-ty)
+                            (ResultParseAstSpmdTypedBinding.Ok
+                              (ParseAstSpmdTypedBinding
+                                (ci.intern-syntax-id-value name)
+                                parsed-ty))]
+                          [(ResultAstType.Err message)
+                            (ResultParseAstSpmdTypedBinding.Err message)])
+                        (ResultParseAstSpmdTypedBinding.Err
+                          expected-colon-message))]
+                    [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+                [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+            [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+        [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)])]
+    [_ (ResultParseAstSpmdTypedBinding.Err malformed-message)]))
+
 (define (parse-ast-spmd-reduce-binding
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -7828,6 +7895,60 @@
             [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")])]
         [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")])]
     [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")]))
+
+;; `(foreach-active [lane : i64] body...)`. Like a `let` body, several body
+;; forms become one `begin`, so the node keeps a single body expression.
+(define (parse-ast-foreach-active
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons binding body-tail _)
+      (match (parse-ast-spmd-typed-binding
+        dispatch
+        pools
+        binding
+        "parse: expected ':' in foreach-active binding"
+        "parse: malformed foreach-active binding; expected [lane : i64]")
+        [(ResultParseAstSpmdTypedBinding.Err message)
+          (ResultAstExpr.Err message)]
+        [(ResultParseAstSpmdTypedBinding.Ok parsed-binding)
+          (match parsed-binding.ty
+            [(ast.AstType.I64)
+              (match (parse-ast-body-tail
+                dispatch
+                pools
+                body-tail
+                "parse: foreach-active requires a body")
+                [(ResultAstExpr.Ok body)
+                  (ResultAstExpr.Ok
+                    (ast.ast-expr-foreach-active-with-pools
+                      pools
+                      parsed-binding.name
+                      body))]
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err
+                "parse: foreach-active lane binding must have type i64")])])]
+    [_
+      (ResultAstExpr.Err
+        "parse: malformed foreach-active; expected (foreach-active [lane : i64] body...)")]))
+
+(define (parse-ast-lane-value
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons value-node end _)
+      (match (reader.spanned-sexpr-view end)
+        [(reader.SpannedSexprView.Nil _)
+          (match (parse-ast-expr-with-pools dispatch pools value-node)
+            [(ResultAstExpr.Ok value)
+              (ResultAstExpr.Ok
+                (ast.ast-expr-lane-value-with-pools pools value))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+        [_ (ResultAstExpr.Err "parse: lane-value takes exactly one expression")])]
+    [_ (ResultAstExpr.Err "parse: lane-value takes exactly one expression")]))
 
 (define (parse-ast-try
   [dispatch : sym_i64_env.SymI64Env]
@@ -8875,6 +8996,10 @@
       (parse-ast-spmd-broadcast dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-shuffle))
       (parse-ast-spmd-shuffle dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-foreach-active))
+      (parse-ast-foreach-active dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-lane-value))
+      (parse-ast-lane-value dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-program-index))
       (parse-ast-no-arg-low-level
         rest

@@ -175,6 +175,69 @@
         out
         "error[E1234]: metadata\n  --> meta.tl:1:2\n   |\n 1 | (define x true)\n   |  ^^^^^^\n  --> meta.tl:2:11\n   |\n 2 | (define y 42)\n   |           ^^ first related\n  --> meta.tl:3:4\n   |\n 3 | (+ x y)\n   |    ^ second related\n   = help: inspect references\n   = note: first note\n"))))
 
+;; The line index answers exactly what a scan from byte 0 answered: lines
+;; between `\n` bytes, CR kept, one more line than there are newlines.
+(define (compiler-diagnostic-source-line-is?
+  [text : String]
+  [line : i64]
+  [expected : String]) : bool
+  (let
+    [source : cdiag.CompilerDiagnosticSource
+      (cdiag.compiler-diagnostic-source-index text)]
+    (match (cdiag.compiler-diagnostic-source-line (& source) line)
+      [(cdiag.CompilerDiagnosticSomeString got) (string.eq got expected)]
+      [cdiag.CompilerDiagnosticNoString false])))
+
+(define (compiler-diagnostic-source-line-none? [text : String] [line : i64]) : bool
+  (let
+    [source : cdiag.CompilerDiagnosticSource
+      (cdiag.compiler-diagnostic-source-index text)]
+    (match (cdiag.compiler-diagnostic-source-line (& source) line)
+      [(cdiag.CompilerDiagnosticSomeString _) false]
+      [cdiag.CompilerDiagnosticNoString true])))
+
+(define (compiler-diagnostic-source-index-ok?) : bool
+  (and
+    ;; First line, and a last line with no trailing newline.
+    (compiler-diagnostic-source-line-is? "ab\ncd" 1 "ab")
+    (compiler-diagnostic-source-line-is? "ab\ncd" 2 "cd")
+    ;; A trailing newline leaves an empty last line; one past it is absent.
+    (compiler-diagnostic-source-line-is? "ab\n" 2 "")
+    (compiler-diagnostic-source-line-none? "ab\n" 3)
+    ;; The empty text has one empty line.
+    (compiler-diagnostic-source-line-is? "" 1 "")
+    (compiler-diagnostic-source-line-none? "" 2)
+    ;; Lines past the end, and before the first.
+    (compiler-diagnostic-source-line-none? "ab\ncd" 3)
+    (compiler-diagnostic-source-line-none? "ab\ncd" 0)
+    ;; CRLF: the CR stays on its line, as a byte scan leaves it.
+    (compiler-diagnostic-source-line-is? "a\r\nb\r\n" 1 "a\r")
+    (compiler-diagnostic-source-line-is? "a\r\nb\r\n" 2 "b\r")
+    (compiler-diagnostic-source-line-is? "a\r\nb\r\n" 3 "")
+    (compiler-diagnostic-source-line-is? "x\n\n\ny" 3 "")
+    (compiler-diagnostic-source-line-is? "x\n\n\ny" 4 "y")))
+
+;; A secondary label on a line before the primary one, and on the primary's
+;; own line, both quote the right source line from the one index.
+(define (compiler-diagnostic-source-render-earlier-secondary-ok?) : bool
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-secondary
+        (cdiag.compiler-diagnostic-with-secondary
+          (cdiag.compiler-diagnostic-from-span
+            "back.tl"
+            (token.SourceSpan 3 2 3 3)
+            "late use")
+          (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
+          (cdiag.CompilerDiagnosticSomeString "same line"))
+        (cdiag.CompilerDiagnosticSpan "" 1 9 1 10)
+        (cdiag.CompilerDiagnosticSomeString "defined here"))]
+    [source : String "(define x true)\n(define y 42)\n(+ x y)"]
+    [out : String (cdiag.compiler-diagnostic-render-source diag source)]
+    (compiler-diagnostic-string-eq?
+      out
+      "error: late use\n  --> back.tl:3:2\n   |\n 3 | (+ x y)\n   |  ^\n  --> back.tl:1:9\n   |\n 1 | (define x true)\n   |         ^ defined here\n  --> back.tl:3:4\n   |\n 3 | (+ x y)\n   |    ^ same line\n")))
+
 (define (compiler-diagnostic-end-span-ok?) : bool
   (let
     [diag : cdiag.CompilerDiagnostic
@@ -725,6 +788,10 @@
       test
       (unless (compiler-diagnostic-source-render-secondary-ok?) (return 4))
       unit)
+    (unless (compiler-diagnostic-source-index-ok?) (return 4))
+    (unless
+      (compiler-diagnostic-source-render-earlier-secondary-ok?)
+      (return 4))
     (unless (compiler-diagnostic-end-span-ok?) (return 4))
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
     (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))

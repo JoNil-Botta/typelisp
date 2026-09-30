@@ -647,7 +647,10 @@
         (ir.CompilerIrValue.I64 marker)
         (__tl_make-array bool 0)
         (ir.compiler-ir-instr-builder-to-seq builder)
-        (ir.compiler-ir-instr-seq-empty)))))
+        (ir.compiler-ir-instr-seq-empty)
+        0
+        (- 0 1)
+        false))))
 
 (define (opt-bg-test-slow-label-order?
   [blocks : ir.CompilerIrBlockList]
@@ -65842,6 +65845,275 @@
       (return 4))
     42))
 
+;; --- negative offsets and literal lengths ------------------------------------
+;;
+;; A stack's `sp - 1` / `sp - 2` pair rebases on its smallest offset, and a group
+;; whose lengths are all literals folds `M` at compile time. That group needs no
+;; preheader, so it is taken in straight-line code and in nested loops. `%0` is
+;; the index base and `%1` the array.
+(define (opt-bg-text-function [name : String] [text : String]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-bg-test-params)
+    (ast.AstType.I64)
+    24
+    (irt.blocks text)
+    ir.CompilerIrFunctionAbi.Ordinary))
+
+(define (opt-bg-text-result [name : String] [text : String]) : ir.CompilerIrFunction
+  (match (opt.opt-bg-function-pass (opt-bg-text-function name text))
+    [(opt.OptFunctionPassResult.Result f _) f]))
+
+(define (opt-bg-text-changed? [name : String] [text : String]) : bool
+  (match (opt.opt-bg-function-pass (opt-bg-text-function name text))
+    [(opt.OptFunctionPassResult.Result _ changed) changed]))
+
+;; The filter ends `label`: `t = add %base, shift`, `lt t, bound : u64`, then
+;; the branch to its two arms.
+(define (opt-bg-rebased-filter?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
+  [base : i64]
+  [shift : i64]
+  [bound : i64]) : bool
+  (let
+    [block : ir.CompilerIrBlock (opt-bg-block-of blocks label)]
+    [count : i64 (opt-block-instr-count block)]
+    (and
+      (>= count 3)
+      (match (opt-block-instr-at block (- count 3))
+        [(ir.CompilerIrInstr.BinOp t op lhs rhs _)
+          (and
+            (opt.opt-binop-eq op (ir.CompilerIrBinOp.Add))
+            (opt.opt-value-is-var? lhs base)
+            (opt.opt-value-eq rhs (ir.CompilerIrValue.I64 shift))
+            (match (opt-block-instr-at block (- count 2))
+              [(ir.CompilerIrInstr.BinOp _ lt-op lt-lhs lt-rhs _)
+                (and
+                  (opt.opt-binop-eq lt-op (ir.CompilerIrBinOp.Lt))
+                  (opt.opt-value-is-var? lt-lhs t)
+                  (opt.opt-value-eq lt-rhs (ir.CompilerIrValue.I64 bound)))]
+              [_ false]))]
+        [_ false])
+      (opt-bg-filter-shape?
+        blocks
+        label
+        (opt-bg-label
+          (str_cat.str-cat (ir.compiler-ir-label-text label) "__bg_ok"))
+        (opt-bg-label
+          (str_cat.str-cat (ir.compiler-ir-label-text label) "__bg_slow"))))))
+
+;; The slow arm's instruction at `at` is the check aborting to `ok-label`.
+(define (opt-bg-slow-check-at?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [slow : i64]
+  [at : i64]
+  [ok-label : String]) : bool
+  (match (let
+    [block (opt-bg-block-of blocks slow)]
+    (opt-block-instr-at block at))
+    [(ir.CompilerIrInstr.BoundsCheck _ _ label)
+      (= label (opt-bg-label ok-label))]
+    [_ false]))
+
+(define (opt-bg-stack-pair-text) : String
+  "entry:
+     %2 = sub %0, 1 : i64
+     bounds_check %2, 2 message \"bg_lit_a\"
+     %3 = sub %0, 2 : i64
+     bounds_check %3, 2 message \"bg_lit_b\"
+     %4 = gep %1, %2 : i64
+     %5 = load %4 : i64
+     %6 = gep %1, %3 : i64
+     %7 = load %6 : i64
+     %8 = add %5, %7 : i64
+     return %8")
+
+;; Returns 42 only when negative offsets rebase, literal lengths fold, and both
+;; shapes are taken outside any loop and inside a nested one.
+(define (compiler-optimize-bounds-group-literal-self-test) : i64
+  (let
+    [pair : ir.CompilerIrFunction
+      (opt-bg-text-result "bg_lit_pair" (opt-bg-stack-pair-text))]
+    [pair-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks pair)]
+    [entry : i64 (opt-bg-label "entry")]
+    [slow : i64 (opt-bg-label "entry__bg_slow")]
+    [mixed : ir.CompilerIrFunction
+      (opt-bg-text-result
+        "bg_lit_mixed"
+        "entry:
+           %2 = sub %0, 1 : i64
+           bounds_check %2, 4 message \"bg_mix_a\"
+           %3 = add %0, 1 : i64
+           bounds_check %3, 4 message \"bg_mix_b\"
+           %4 = gep %1, %2 : i64
+           %5 = load %4 : i64
+           %6 = gep %1, %3 : i64
+           %7 = load %6 : i64
+           %8 = add %5, %7 : i64
+           return %8")]
+    [mixed-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks mixed)]
+    [nested : ir.CompilerIrFunction
+      (opt-bg-text-result
+        "bg_lit_nested"
+        "entry:
+           jump outer
+         outer:
+           %2 = phi [0, entry], [%9, latch] : i64
+           jump inner
+         inner:
+           %3 = phi [2, outer], [%7, inner] : i64
+           %4 = sub %3, 1 : i64
+           bounds_check %4, 8 message \"bg_nest_a\"
+           %5 = sub %3, 2 : i64
+           bounds_check %5, 8 message \"bg_nest_b\"
+           %6 = gep %1, %5 : i64
+           store_ptr %6, %4 : i64
+           %7 = add %3, 1 : i64
+           %8 = lt %7, 8 : i64
+           branch %8, inner, latch
+         latch:
+           %9 = add %2, 1 : i64
+           %10 = lt %9, %0 : i64
+           branch %10, outer, exit
+         exit:
+           return 0")]
+    [nested-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks nested)]
+    (begin
+      (unless (opt-bg-verified? pair) (return 1))
+      ;; `sp - 2 <u satsub(2, 1)`: one test for both members, no preheader.
+      (unless (opt-bg-rebased-filter? pair-blocks entry 0 (- 0 2) 1) (return 2))
+      (unless (= (opt-bg-block-checks pair-blocks entry) 0) (return 3))
+      (unless
+        (= (opt-bg-block-checks pair-blocks (opt-bg-label "entry__bg_ok")) 0)
+        (return 4))
+      ;; The slow arm re-forms each negative offset and keeps the checks in
+      ;; their original order with their original abort labels.
+      (unless (= (opt-bg-block-checks pair-blocks slow) 2) (return 5))
+      (unless (opt-bg-slow-check-at? pair-blocks slow 1 "bg_lit_a") (return 6))
+      (unless (opt-bg-slow-check-at? pair-blocks slow 3 "bg_lit_b") (return 7))
+      (unless
+        (match (let
+          [block (opt-bg-block-of pair-blocks slow)]
+          (opt-block-instr-at block 0))
+          [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+            (and
+              (opt.opt-binop-eq op (ir.CompilerIrBinOp.Add))
+              (opt.opt-value-is-var? lhs 0)
+              (opt.opt-value-eq rhs (ir.CompilerIrValue.I64 (- 0 1))))]
+          [_ false])
+        (return 8))
+      ;; `sp - 1` and `sp + 1` against 4: rebased on -1, `M = satsub(4, 2)`.
+      (unless (opt-bg-verified? mixed) (return 9))
+      (unless
+        (opt-bg-rebased-filter? mixed-blocks entry 0 (- 0 1) 2)
+        (return 10))
+      ;; An inner loop whose preheader sits inside the outer loop: the loop
+      ;; walk refuses it, and the literal group is taken anyway.
+      (unless (opt-bg-verified? nested) (return 11))
+      (unless
+        (opt-bg-rebased-filter?
+          nested-blocks
+          (opt-bg-label "inner")
+          3
+          (- 0 2)
+          7)
+        (return 12))
+      ;; Idempotence: the second round finds no group.
+      (unless
+        (not
+          (match (opt.opt-bg-function-pass
+            (opt-bg-text-result "bg_lit_again" (opt-bg-stack-pair-text)))
+            [(opt.OptFunctionPassResult.Result _ changed) changed]))
+        (return 13))
+      42)))
+
+;; Returns 42 only when each neighbour of the literal and negative shapes is
+;; refused.
+(define (compiler-optimize-bounds-group-literal-refusal-self-test) : i64
+  (begin
+    ;; A store between the members ends the group at one negative member,
+    ;; which a filter cannot improve on.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_store"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_st_a\"
+             %4 = gep %1, %2 : i64
+             store_ptr %4, 7 : i64
+             %3 = sub %0, 2 : i64
+             bounds_check %3, 2 message \"bg_st_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 1))
+    ;; So does a call...
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_call"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_call_a\"
+             %4 = call opaque(%0) : i64
+             %3 = sub %0, 2 : i64
+             bounds_check %3, 2 message \"bg_call_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 2))
+    ;; ...and a division, which can abort.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_div"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_div_a\"
+             %4 = safe_mod %1, %0 : i64
+             %3 = sub %0, 2 : i64
+             bounds_check %3, 2 message \"bg_div_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 3))
+    ;; A rebased span over the offset cap.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_span"
+          "entry:
+             %2 = sub %0, 2048 : i64
+             bounds_check %2, 10000 message \"bg_span_a\"
+             %3 = add %0, 2049 : i64
+             bounds_check %3, 10000 message \"bg_span_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 4))
+    ;; `sp - 1` and `sp + 1` against 2 fold to `M = 0`: the fast test could
+    ;; never pass.
+    (unless
+      (not
+        (opt-bg-text-changed?
+          "bg_lit_zero"
+          "entry:
+             %2 = sub %0, 1 : i64
+             bounds_check %2, 2 message \"bg_zero_a\"
+             %3 = add %0, 1 : i64
+             bounds_check %3, 2 message \"bg_zero_b\"
+             %6 = gep %1, %3 : i64
+             %7 = load %6 : i64
+             return %7"))
+      (return 5))
+    ;; The admitted shape, for contrast.
+    (unless
+      (opt-bg-text-changed? "bg_lit_base" (opt-bg-stack-pair-text))
+      (return 6))
+    42))
+
 (test
   bounds-group-parallel-array-pair
   (test.assert-i64-eq
@@ -65862,6 +66134,20 @@
     (compiler-optimize-bounds-group-refusal-self-test)
     42
     "a body-defined length, a loopless block and an already-split block are refused"))
+
+(test
+  bounds-group-negative-literal-pairs
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-literal-self-test)
+    42
+    "sp-1/sp-2 and sp-1/sp+1 groups rebase on their smallest offset, and literal lengths fold M with no preheader, in straight-line code and in a nested loop"))
+
+(test
+  bounds-group-negative-literal-refusals
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-literal-refusal-self-test)
+    42
+    "a store, call or division between members, a rebased span over the cap and a bound folding to zero are refused"))
 
 (test
   uniform-phi-collapse

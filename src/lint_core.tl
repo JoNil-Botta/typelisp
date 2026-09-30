@@ -1572,6 +1572,7 @@
   (or
     (string.eq name "while")
     (string.eq name "foreach")
+    (string.eq name "foreach-active")
     (string.eq name "spmd-reduce")
     (string.eq name "spmd-scan")
     (string.eq name "spmd-shuffle")))
@@ -3609,6 +3610,10 @@
         (match (__tl-box-place resource-box)
           [(ast.AstWithResource.WithResource bindings body)
             (lint-unsafe-scan-resource-bindings bindings body scope 0)])]
+      [(ast.AstExpr.ForeachActive lane body)
+        (let
+          [scope-arg (lint-unsafe-scope-add-id scope lane)]
+          (lint-unsafe-scan-node body scope-arg))]
       [(ast.AstExpr.ProgramArgv)
         (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
       [(ast.AstExpr.ProgramEnvp)
@@ -4499,6 +4504,26 @@
     [(ast.AstExpr.Syscall _) state]
     [(ast.AstExpr.ForOwnedState _) state]
     [(ast.AstExpr.ForOwnedStep _) state]
+    [(ast.AstExpr.ForeachActive lane body)
+      (let
+        [outer-locals : LintCopyOnUpdateLocalList
+          (owned_view.compiler-owned-shared-view state.locals)]
+        [with-local : LintCopyOnUpdateState
+          (lint-copy-on-update-state-with
+            (owned_view.compiler-owned-shared-view state)
+            (lint-copy-on-update-local-add
+              (owned_view.compiler-owned-shared-view outer-locals)
+              (ci.intern-str lane)
+              (lint-copy-on-update-struct-name-from-type
+                state.shapes
+                (ast.AstType.I64)))
+            state.findings)]
+        [with-body : LintCopyOnUpdateState
+          (lint-copy-on-update-expr body with-local span)]
+        (lint-copy-on-update-state-with
+          (owned_view.compiler-owned-shared-view with-body)
+          outer-locals
+          with-body.findings))]
     [_
       (let
         [ids : ast.AstExprList
@@ -5741,6 +5766,7 @@
     [(ast.AstExpr.SpmdReduce _) true]
     [(ast.AstExpr.SpmdScan _) true]
     [(ast.AstExpr.SpmdCompact _) true]
+    [(ast.AstExpr.ForeachActive _ _) true]
     [_ false]))
 
 (define (lint-unused-assignment-note-reads
@@ -8528,6 +8554,17 @@
         (lint-unused-unsafe-block-mark-unknown!)
         state)]
     [(ast.AstExpr.Syscall args) (lint-unused-variable-expr-list args state)]
+    [(ast.AstExpr.ForeachActive lane body)
+      (let
+        [scanned : LintNameCaseLocalScan
+          (if state.name-case
+            (lint-unused-variable-scan-form-local-name
+              state
+              (ci.intern-str lane)
+              span
+              "(foreach-active")
+            (LintNameCaseLocalScan state 0))]
+        (lint-unused-variable-index-scope lane body scanned.state span))]
     [_ (lint-unused-variable-children node-id state span)]))
 
 (define (lint-unused-variable-decl-param-cursor

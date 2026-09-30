@@ -46,6 +46,11 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   checked contiguous output `slot` only to selected bodies, and returns the
   final cursor. It intentionally uses the same ordered scalar reference in
   scalar, AVX2, and AVX-512 modes.
+- `(foreach-active [lane : i64] body...)` runs its body once per active lane,
+  one lane at a time in lane order, so a masked branch or a colliding update
+  can be written as scalar code; `(lane-value v)` reads the running lane's
+  value of a varying `v`. It has scalar reference lowering only for now:
+  AVX2 and AVX-512 reject it with a diagnostic until #8307.
 - Masked varying `if` (including nested masks and value-producing selects),
   varying `while` with loop-carried active masks, and varying `match`
   (including AVX2/AVX-512 enum tags and scalar-lane payload bindings) run in the

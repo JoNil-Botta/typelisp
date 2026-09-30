@@ -261,7 +261,9 @@
     [(ast.AstExpr.CpuIdEcx _ _) 57]
     [(ast.AstExpr.CpuIdEdx _ _) 58]
     [(ast.AstExpr.Xgetbv _) 59]
-    [(ast.AstExpr.Syscall _) 60]))
+    [(ast.AstExpr.Syscall _) 60]
+    [(ast.AstExpr.ForeachActive _ _) 83]
+    [(ast.AstExpr.LaneValue _) 84]))
 
 (define (ast-decl-tag [decl : ast.AstDecl]) : i64
   (match decl

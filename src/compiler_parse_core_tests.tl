@@ -2554,6 +2554,12 @@
       "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ (program-index) (program-count)))) 0))")
     (compiler-parse-ok?
       "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-compact ([i : i64 0 n] [slot : i64 2]) (= (% i 2) 0) (set! (array-ref out slot) i)))")
+    ;; foreach-active takes the shared bare typed binding and several body
+    ;; forms; the shared grammar also accepts a parenthesized binding.
+    (compiler-parse-ok?
+      "(define (main [n : i64]) : i64 (let [t : i64 0] (begin (foreach ([i : i64 0 n]) (foreach-active [lane : i64] (set! t (+ t (lane-value i))) unit)) t)))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (foreach ([i : i64 0 3]) (foreach-active (lane : i64) unit)) 0))")
     ;; An empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
@@ -2679,6 +2685,42 @@
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-shuffle 1))"
       "parse: malformed spmd-shuffle")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane : i32] unit) 0))"
+      "parse: foreach-active lane binding must have type i64")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane : i64]) 0))"
+      "parse: foreach-active requires a body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane i64] unit) 0))"
+      "parse: malformed foreach-active binding; expected [lane : i64]")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane nope i64] unit) 0))"
+      "parse: expected ':' in foreach-active binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [0 : i64] unit) 0))"
+      "parse: malformed foreach-active binding; expected [lane : i64]")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane : i64 0] unit) 0))"
+      "parse: malformed foreach-active binding; expected [lane : i64]")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active) 0))"
+      "parse: malformed foreach-active; expected (foreach-active [lane : i64] body...)")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane : (Ptr)] unit) 0))"
+      "parse: Ptr expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach-active [lane : i64] unit (if)) 0))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (lane-value))"
+      "parse: lane-value takes exactly one expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (lane-value 1 2))"
+      "parse: lane-value takes exactly one expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (lane-value (if)))"
+      "parse: if expects condition, then branch, and else branch")
     (compiler-parse-error-ok?
       "(define (main) : i64 (program-index 0))"
       "parse: program-index expects no arguments")

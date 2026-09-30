@@ -2865,6 +2865,8 @@
     [(ast.AstExpr.SpmdShuffle _ _) "spmd-shuffle"]
     [(ast.AstExpr.SpmdProgramIndex) "program-index"]
     [(ast.AstExpr.SpmdProgramCount) "program-count"]
+    [(ast.AstExpr.ForeachActive _ _) "foreach-active"]
+    [(ast.AstExpr.LaneValue _) "lane-value"]
     [(ast.AstExpr.StructGet _ _) "struct-get"]
     [(ast.AstExpr.StructSet _ _ _) "set!"]
     [(ast.AstExpr.WithRegion _ _) "with-arena"]
@@ -13390,6 +13392,24 @@
         quasiquote
         ast.ast-expr-syscall-with-pools
         args)]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (match (ctfe-quote-expr (ctfe-ast-get env body-box) env fuel quasiquote)
+        [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
+          (ResultCtfeQuoteExpr.Ok
+            (ast.ast-expr-foreach-active-with-pools
+              (ctfe-env-pools env)
+              (ctfe-quote-name-id env lane)
+              quoted-body)
+            (ast.AstType.Expr)
+            body-fuel)]
+        [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+    [(ast.AstExpr.LaneValue value-box)
+      (ctfe-quote-children-1
+        env
+        fuel
+        quasiquote
+        ast.ast-expr-lane-value-with-pools
+        value-box)]
     [(ast.AstExpr.Unquote inner-box)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]

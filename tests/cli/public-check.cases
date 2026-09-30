@@ -44,7 +44,9 @@ file main.tl
 
 (define (main) : i64
   (begin
-    (set! cap missing-replacement)
+    (set!
+      cap
+      missing-replacement)
     42))
 end-file
 run check "{{dir}}/main.tl"

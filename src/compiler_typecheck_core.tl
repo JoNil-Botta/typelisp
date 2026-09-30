@@ -34081,7 +34081,13 @@
             span
             message)])]
     [(and
-        (tc-message-text-prefix? (& message) "typecheck: unknown struct field ")
+        (or
+          (tc-message-text-prefix?
+            (& message)
+            "typecheck: unknown struct field ")
+          (tc-message-text-prefix?
+            (& message)
+            "typecheck: cannot assign to function `"))
         (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(ast.AstExpr.Set _ _)

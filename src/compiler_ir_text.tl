@@ -315,7 +315,11 @@
         (begin
           (ir-text-expect! cur ")")
           (ast.ast-ty-array elem count)))]
-    [(or (string.eq head "Region") (string.eq head "&") (string.eq head "&mut"))
+    [(or
+        (string.eq head "Region")
+        (string.eq head "Invalidate")
+        (string.eq head "&")
+        (string.eq head "&mut"))
       (let
         [region : i64 (ir-text-lifetime! cur)]
         [inner : ast.AstType (ir-text-type! cur)]
@@ -323,6 +327,7 @@
           (ir-text-expect! cur ")")
           (cond
             [(string.eq head "Region") (ast.ast-ty-region region inner)]
+            [(string.eq head "Invalidate") (ast.ast-ty-invalidate region inner)]
             [(string.eq head "&") (ast.ast-ty-ref region inner)]
             [else (ast.ast-ty-mut-ref region inner)])))]
     [(or

@@ -414,6 +414,11 @@
           (surface-ast-write-i64! out 26)
           (surface-ast-write-name! out context region)
           (surface-ast-write-i64! out inner))]
+      [(ast.AstType.Invalidate lifetime inner)
+        (begin
+          (surface-ast-write-i64! out 39)
+          (surface-ast-write-name! out context lifetime)
+          (surface-ast-write-i64! out inner))]
       [(ast.AstType.Enum name)
         (begin
           (surface-ast-write-i64! out 27)
@@ -504,6 +509,10 @@
           (surface-ast-read-i64! reader))]
       [(= tag 26)
         (ast.AstType.MutRef
+          (surface-ast-read-name! reader)
+          (surface-ast-read-i64! reader))]
+      [(= tag 39)
+        (ast.ast-ty-invalidate-id
           (surface-ast-read-name! reader)
           (surface-ast-read-i64! reader))]
       [(= tag 27) (ast.AstType.Enum (surface-ast-read-name! reader))]

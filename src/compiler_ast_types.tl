@@ -502,7 +502,12 @@
   ;; The signature id names a Func node used only for its parameter/result
   ;; structure. The wrapper is never equivalent to an ordinary Func value.
   ;; Keeping two scalar operands preserves the existing AstType node footprint.
-  (CFunc i64 AstCFunctionMode))
+  (CFunc i64 AstCFunctionMode)
+  ;; `(:invalidate r T)`: a callable parameter of type T whose call destroys
+  ;; the owner of lifetime `r` (#6670). The first operand is the lifetime name,
+  ;; the second the inner type id. It is part of the callable's identity but
+  ;; lowers exactly as T. Appended so every established AstType tag is stable.
+  (Invalidate i64 i64))
 
 (defstruct AstTypeList
   (slots (__tl_dyn-array i64))
@@ -2888,6 +2893,7 @@
       [(AstType.Region name inner) (AstType.Region name inner)]
       [(AstType.Ref name inner) (AstType.Ref name inner)]
       [(AstType.MutRef name inner) (AstType.MutRef name inner)]
+      [(AstType.Invalidate name inner) (AstType.Invalidate name inner)]
       [(AstType.EnumArgs name lifetimes)
         (AstType.EnumArgs
           name
@@ -3355,7 +3361,9 @@
       (hash.combine (hash.combine 38 signature) (ast-c-function-mode-key mode))]
     [(AstType.Ptr inner) (hash.combine 33 inner)]
     [(AstType.MutPtr inner) (hash.combine 34 inner)]
-    [(AstType.Slice elem) (hash.combine 37 elem)]))
+    [(AstType.Slice elem) (hash.combine 37 elem)]
+    [(AstType.Invalidate name inner)
+      (hash.combine (hash.combine 39 name) inner)]))
 
 ;; Shallow structural equality between a stored node and a candidate node. Child
 ;; ids compare as plain integers because children are themselves deduplicated.
@@ -5192,6 +5200,20 @@
 (define (ast-ty-ref [region : i64] [inner : AstType]) : AstType
   (AstType.Ref region (ast-node-pool-reader-type-push inner)))
 
+;; How many `(:invalidate r T)` nodes this process has built or decoded (#6670).
+;; Every such node starts at one of the constructors below; the rest are copies.
+;; While it is zero no type carries the effect, so checkers skip its work.
+(define ast-invalidate-type-count : i64
+  0)
+
+(define (ast-ty-invalidate-id [lifetime : i64] [inner : i64]) : AstType
+  (begin
+    (set! ast-invalidate-type-count (+ ast-invalidate-type-count 1))
+    (AstType.Invalidate lifetime inner)))
+
+(define (ast-ty-invalidate [lifetime : i64] [inner : AstType]) : AstType
+  (ast-ty-invalidate-id lifetime (ast-node-pool-reader-type-push inner)))
+
 (define (ast-ty-mut-ref [region : i64] [inner : AstType]) : AstType
   (AstType.MutRef region (ast-node-pool-reader-type-push inner)))
 
@@ -5241,6 +5263,12 @@
   [region : i64]
   [inner : AstType]) : AstType
   (AstType.Ref region (ast-node-pool-context-type-push pools inner)))
+
+(define (ast-ty-invalidate-with-pools
+  [pools : AstNodePoolContext]
+  [lifetime : i64]
+  [inner : AstType]) : AstType
+  (ast-ty-invalidate-id lifetime (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-mut-ref-with-pools
   [pools : AstNodePoolContext]
@@ -8048,7 +8076,8 @@
       [(AstType.EnumArgs _ _) ,s]
       [(AstType.StructArgs _ _) ,s]
       [(AstType.VarArgs _ _) ,s]
-      [(AstType.CFunc signature _) (,c ,s (,t ,@x signature))])))
+      [(AstType.CFunc signature _) (,c ,s (,t ,@x signature))]
+      [(AstType.Invalidate _ inner) (,c ,s (,t ,@x inner))])))
 
 (defmacro (ast-type-for-each-child
   [ty : Expr]
@@ -8130,7 +8159,8 @@
           (box (ast-lifetime-list-copy (deref lifetimes))))]
       [(AstType.VarArgs name lifetimes)
         (AstType.VarArgs name (box (ast-lifetime-list-copy (deref lifetimes))))]
-      [(AstType.CFunc signature mode) (AstType.CFunc (,t ,@x signature) mode)])))
+      [(AstType.CFunc signature mode) (AstType.CFunc (,t ,@x signature) mode)]
+      [(AstType.Invalidate name inner) (AstType.Invalidate name (,t ,@x inner))])))
 
 ;; `ast-type-children-eq?` is structural equality of two nodes: the same
 ;; variant, equal non-child payloads, and child ids equal pairwise by the hook.
@@ -8333,6 +8363,11 @@
             (and
               (ast-c-function-mode-eq? a-mode b-mode)
               (,t ,@x a-signature b-signature))]
+          [_ false])]
+      [(AstType.Invalidate a-name a-inner)
+        (match ,r
+          [(AstType.Invalidate b-name b-inner)
+            (and (= a-name b-name) (,t ,@x a-inner b-inner))]
           [_ false])])))
 
 ;; Hooks: child ids compare equal as ids (hash-consed pools), or by structure
@@ -11253,7 +11288,8 @@
     [(AstType.EnumArgs _ _) 32]
     [(AstType.StructArgs _ _) 33]
     [(AstType.VarArgs _ _) 34]
-    [(AstType.Slice _) 37]))
+    [(AstType.Slice _) 37]
+    [(AstType.Invalidate _ _) 39]))
 
 ;; The expression a source-span wrapper at ID wraps, or -1 when the node at ID
 ;; is not one. Readers peel a wrapper through this and read its span from the

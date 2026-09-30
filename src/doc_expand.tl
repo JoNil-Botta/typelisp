@@ -320,6 +320,13 @@
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
+    [(ast.AstType.Invalidate lifetime elem)
+      (doc-cat5
+        "(:invalidate "
+        (doc-symbol-text ctx lifetime)
+        " "
+        (doc-ast-type-id-source ctx elem)
+        ")")]
     [(ast.AstType.Ref lifetime elem)
       (doc-cat5
         "(& "

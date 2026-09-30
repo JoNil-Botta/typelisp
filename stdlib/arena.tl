@@ -250,10 +250,12 @@
 ;: Safely destroy a direct-local owner or branded local aggregate owner place.
 ;:
 ;: The compiler consumes the exact owner place and rejects later use of every
-;: current-function value carrying its brand. Parameters and parameter-rooted
-;: places require a future caller-visible invalidation effect and are rejected.
-;: Atomic owners additionally require all checker-visible thread users to be
-;: joined or released before destruction.
+;: current-function value carrying its brand. A parameter or parameter-rooted
+;: place of brand `r` is accepted only when the enclosing function declares
+;: `(:invalidate r)` on a parameter; such a helper must destroy that brand exactly
+;: once on every normal exit, and each call invalidates the caller's values of
+;: the argument's brand. Atomic owners additionally require all checker-visible
+;: thread users to be joined or released before destruction.
 (define (destroy-safe! [arena : Arena]) : unit
   (unsafe
     (tl_arena_destroy (raw-handle arena))))

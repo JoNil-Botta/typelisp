@@ -13705,6 +13705,8 @@
       (lower-used-types-add-type-id session pools used module elem)]
     [(ast.AstType.Region _ inner)
       (lower-used-types-add-type-id session pools used module inner)]
+    [(ast.AstType.Invalidate _ inner)
+      (lower-used-types-add-type-id session pools used module inner)]
     [(ast.AstType.Ref _ inner)
       (lower-used-types-add-type-id session pools used module inner)]
     [(ast.AstType.MutRef _ inner)
@@ -16320,6 +16322,10 @@
         (let
           [ty (tc_core.tc-context-type-get ctx inner)]
           (lower-type-size ctx ty))]
+      [(ast.AstType.Invalidate _ inner)
+        (let
+          [ty (tc_core.tc-context-type-get ctx inner)]
+          (lower-type-size ctx ty))]
       [(ast.AstType.Enum name)
         (lower-inline-layout-size-or ctx (ast.AstType.Enum name) 8)]
       [(ast.AstType.EnumArgs name lifetimes)
@@ -16372,6 +16378,10 @@
       [(ast.AstType.Ref _ _) 8]
       [(ast.AstType.MutRef _ _) 8]
       [(ast.AstType.Region _ inner)
+        (let
+          [ty (tc_core.tc-context-type-get ctx inner)]
+          (lower-type-align ctx ty))]
+      [(ast.AstType.Invalidate _ inner)
         (let
           [ty (tc_core.tc-context-type-get ctx inner)]
           (lower-type-align ctx ty))]
@@ -25820,7 +25830,8 @@
         [expected : ast.AstType (tc_core.tc-context-type-get ctx expected-id)]
         [arg-ty : ast.AstType
           (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type ctx (lower-global-shared-view expected)))]
+            (tc_core.tc-type-strip-invalidate
+              (tc_core.tc-resolve-type ctx (lower-global-shared-view expected))))]
         (match (lower-call-arg-as ctx state env type-env arg expected arg-ty)
           [(ResultLowerCallArg.Ok lowered-arg)
             (match lowered-arg
@@ -33874,7 +33885,8 @@
   [ty : ast.AstType]) : ast.AstType
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-type-strip-invalidate (tc_core.tc-resolve-type ctx ty)))]
     (lower-internal-transport-type
       ctx
       (lower-global-shared-view resolved)
@@ -60026,7 +60038,8 @@
                   (let
                     [ty-arg
                       (tc_core.tc-type-without-regions
-                        (tc_core.tc-resolve-type ctx ty))]
+                        (tc_core.tc-type-strip-invalidate
+                          (tc_core.tc-resolve-type ctx ty)))]
                     (lower-one-word-register-storage-type ctx ty-arg))
                   idx))
               (lower-spmd-private-param-list-into!
@@ -67717,7 +67730,8 @@
               (let
                 [ty-arg
                   (tc_core.tc-type-without-regions
-                    (tc_core.tc-resolve-type ctx ty))]
+                    (tc_core.tc-type-strip-invalidate
+                      (tc_core.tc-resolve-type ctx ty)))]
                 (lower-one-word-register-storage-type ctx ty-arg))
               idx))
           (lower-param-list-into! ctx params (+ index 1) (+ idx 1) builder))])))

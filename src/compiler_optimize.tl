@@ -7344,6 +7344,13 @@
               (= a-region b-region)
               (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
           [_ false])]
+      [(ast.AstType.Invalidate a-lifetime a-inner)
+        (match b
+          [(ast.AstType.Invalidate b-lifetime b-inner)
+            (and
+              (= a-lifetime b-lifetime)
+              (opt-type-ids-eq? type-segment-bases a-inner b-inner))]
+          [_ false])]
       [(ast.AstType.Enum a-name)
         (match b
           [(ast.AstType.Enum b-name) (= a-name b-name)]
@@ -7610,6 +7617,14 @@
         28
         (hash.combine
           (hash.i64 region)
+          (opt-type-hash
+            type-segment-bases
+            (ast.ast-type-segment-bases-get type-segment-bases inner))))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (hash.combine
+        39
+        (hash.combine
+          (hash.i64 lifetime)
           (opt-type-hash
             type-segment-bases
             (ast.ast-type-segment-bases-get type-segment-bases inner))))]
@@ -129527,6 +129542,10 @@
       (opt-scratch-alloc-type-size
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.Invalidate _ inner)
+      (opt-scratch-alloc-type-size
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
     [(ast.AstType.Enum _) 8]
     [(ast.AstType.EnumArgs _ _) 8]
     [(ast.AstType.Struct _) 8]
@@ -131237,6 +131256,10 @@
         16
         8)]
     [(ast.AstType.Region _ inner)
+      (opt-load-loc-type-size
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(ast.AstType.Invalidate _ inner)
       (opt-load-loc-type-size
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]

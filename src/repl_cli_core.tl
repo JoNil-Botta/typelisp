@@ -284,6 +284,13 @@
         " "
         (repl-type-render (ast.ty-node-get inner))
         ")")]
+    [(ast.AstType.Invalidate lifetime inner)
+      (str_cat.str-cat
+        "(:invalidate "
+        (tc.tc-hygiene-name-text-id lifetime)
+        " "
+        (repl-type-render (ast.ty-node-get inner))
+        ")")]
     [(ast.AstType.Enum name) (ast.ast-nominal-name-id-display name)]
     [(ast.AstType.EnumArgs name lifetimes)
       (str_cat.str-cat

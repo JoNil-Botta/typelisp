@@ -520,6 +520,213 @@
           (ast.ty-node-pool-reset!)
           (and (not exhausted) (= id capacity) (= len (+ capacity 1)) grew))))))
 
+;; Use a small real descriptor to reach the load boundary without changing
+;; production limits or hash/equality rules.
+(define (ast-type-probe-test-pools [capacity : i64] [base-arena : i64]) : ast.AstNodePoolContext
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena 1 1 base-arena)]
+    [pool : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [slots : (__tl_dyn-array i64)
+      (in-arena (arena.Arena pool.base-arena) (__tl_make-array i64 capacity))]
+    (begin
+      (ast.ast-type-pool-cell-write!
+        pools.type-pool
+        (ast.AstTypeNodePoolState
+          pool.segment-bases
+          pool.count
+          pool.base-arena
+          pool.exhausted
+          slots
+          0
+          pool.storage-arena
+          pool.segment-count))
+      pools)))
+
+(define (ast-type-probe-golden?
+  [pools : ast.AstNodePoolContext]
+  [active : bool]) : bool
+  (let
+    [nodes
+      (array
+        (ast.AstType.I64)
+        (ast.AstType.Char)
+        (ast.AstType.Var 0)
+        (ast.AstType.Var 131072)
+        (ast.AstType.Var 131072)
+        (ast.AstType.Var 0)
+        (ast.AstType.Array 0 4)
+        (ast.AstType.Array 0 4)
+        (ast.AstType.Array 0 5)
+        (ast.AstType.Array 1 4)
+        (ast.AstType.Tuple
+          (box (ast.ast-type-list-cons-id 0 (ast.ast-type-list-new))))
+        (ast.AstType.Tuple
+          (box (ast.ast-type-list-cons-id 0 (ast.ast-type-list-new))))
+        (ast.AstType.Tuple
+          (box (ast.ast-type-list-cons-id 1 (ast.ast-type-list-new))))
+        (ast.AstType.Tuple
+          (box
+            (ast.ast-type-list-cons-id
+              0
+              (ast.ast-type-list-cons-id 1 (ast.ast-type-list-new)))))
+        (ast.AstType.Ref 1 0)
+        (ast.AstType.Ref 2 0)
+        (ast.AstType.Ref 1 1)
+        (ast.AstType.Func
+          (box (ast.ast-type-list-cons-id 0 (ast.ast-type-list-new)))
+          0)
+        (ast.AstType.Func
+          (box (ast.ast-type-list-cons-id 0 (ast.ast-type-list-new)))
+          0)
+        (ast.AstType.Func
+          (box (ast.ast-type-list-cons-id 0 (ast.ast-type-list-new)))
+          1)
+        (ast.AstType.Func (box (ast.ast-type-list-new)) 0)
+        (ast.AstType.CFunc 13 ast.AstCFunctionMode.Nullable)
+        (ast.AstType.CFunc 13 ast.AstCFunctionMode.Nullable)
+        (ast.AstType.CFunc 13 ast.AstCFunctionMode.NonNull))]
+    [expected : (Array i64 24)
+      (array 0 1 2 3 3 2 4 4 5 6 7 7 8 9 10 11 12 13 13 14 15 16 16 17)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index (array-length nodes))
+        (let
+          [node : ast.AstType
+            (owned_view.compiler-owned-array-element-shared-view nodes index)]
+          [id : i64
+            (if active
+              (ast.ty-node-push-active node)
+              (ast.ast-node-pool-context-type-push pools node))]
+          (begin
+            (set! ok (and ok (= id (array-ref expected index))))
+            (set! index (+ index 1)))))
+      (and ok (= (ast.ast-node-pool-context-type-len pools) 18)))))
+
+(define (compiler-ast-type-probe-payloads-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [explicit : ast.AstNodePoolContext
+      (ast-type-probe-test-pools 131072 (arena.tl_arena_current))]
+    [installed : ast.AstNodePoolContext
+      (ast-type-probe-test-pools 131072 (arena.tl_arena_current))]
+    [explicit-ok : bool (ast-type-probe-golden? explicit false)]
+    [_install : unit (ast.ast-node-pool-context-install! installed)]
+    [installed-ok : bool (ast-type-probe-golden? installed true)]
+    (begin
+      (ast.ast-node-pool-context-install! saved)
+      (ast.ast-node-pool-context-destroy-storage! explicit)
+      (ast.ast-node-pool-context-destroy-storage! installed)
+      (and explicit-ok installed-ok))))
+
+(define (compiler-ast-type-probe-load-boundary-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [explicit : ast.AstNodePoolContext
+      (ast-type-probe-test-pools 4 (arena.tl_arena_current))]
+    [installed : ast.AstNodePoolContext
+      (ast-type-probe-test-pools 4 (arena.tl_arena_current))]
+    [e-first : i64
+      (ast.ast-node-pool-context-type-push explicit (ast.AstType.Var 0))]
+    [e-hit : i64
+      (ast.ast-node-pool-context-type-push explicit (ast.AstType.Var 0))]
+    [e-collision : i64
+      (ast.ast-node-pool-context-type-push explicit (ast.AstType.Var 131072))]
+    [e-loaded : i64
+      (ast.ast-node-pool-context-type-push explicit (ast.AstType.Var 0))]
+    [e-state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read explicit.type-pool)]
+    [_install : unit (ast.ast-node-pool-context-install! installed)]
+    [g-first : i64 (ast.ty-node-push-active (ast.AstType.Var 0))]
+    [g-hit : i64 (ast.ty-node-push-active (ast.AstType.Var 0))]
+    [g-collision : i64 (ast.ty-node-push-active (ast.AstType.Var 131072))]
+    [g-loaded : i64 (ast.ty-node-push-active (ast.AstType.Var 0))]
+    [g-state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read installed.type-pool)]
+    [ok : bool
+      (and
+        (= e-first 0)
+        (= e-hit 0)
+        (= e-collision 1)
+        (= e-loaded 2)
+        (= e-state.count 3)
+        (= e-state.dedup-count 2)
+        (= (array-length e-state.dedup-slots) 4)
+        (= g-first 0)
+        (= g-hit 0)
+        (= g-collision 1)
+        (= g-loaded 0)
+        (= g-state.count 2)
+        (= g-state.dedup-count 2)
+        (= (array-length g-state.dedup-slots) 8))]
+    (begin
+      ;; Fresh probes must observe the selected generation after id reuse.
+      (ast.ty-node-pool-reset!)
+      (set! ok (and ok (= (ast.ty-node-push-active (ast.AstType.Char)) 0)))
+      (ast.ast-node-pool-context-install! explicit)
+      (set!
+        ok
+        (and ok (= (ast.ty-node-push-active (ast.AstType.Var 131072)) 1)))
+      (ast.ast-node-pool-context-install! installed)
+      (set! ok (and ok (= (ast.ty-node-push-active (ast.AstType.Char)) 0)))
+      (ast.ast-node-pool-context-install! saved)
+      (ast.ast-node-pool-context-destroy-storage! explicit)
+      (ast.ast-node-pool-context-destroy-storage! installed)
+      ok)))
+
+(define (compiler-ast-type-probe-max-fallback-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [owner : arena.Arena (arena.make)]
+    [pools : ast.AstNodePoolContext
+      (ast-type-probe-test-pools 16777216 (arena.raw-handle owner))]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [first : i64 (ast.ty-node-push-active (ast.AstType.I64))]
+    ;; Exercise the loaded entry directly at the real maximum descriptor.
+    ;; Filling 8M entries would exceed the segmented pool's separate bound.
+    [fallback : i64 (ast.ty-node-push-loaded (ast.AstType.I64))]
+    [state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [ok : bool
+      (and
+        (= first 0)
+        (= fallback 1)
+        (= state.count 2)
+        (= state.dedup-count 1)
+        (= (array-length state.dedup-slots) 16777216))]
+    (begin
+      (ast.ast-node-pool-context-install! saved)
+      (ast.ast-node-pool-context-destroy-storage! pools)
+      (unsafe
+        (arena.destroy owner))
+      ok)))
+
+(cfg
+  test
+  (test
+    compiler-ast-type-probe-payloads
+    (unless
+      (compiler-ast-type-probe-payloads-smoke?)
+      (io.panic "AST type probe payload equality failed"))))
+
+(cfg
+  test
+  (test
+    compiler-ast-type-probe-load-boundary
+    (unless
+      (compiler-ast-type-probe-load-boundary-smoke?)
+      (io.panic "AST type probe load boundary or generation isolation failed"))))
+
+(cfg
+  test
+  (test
+    compiler-ast-type-probe-max-fallback
+    (unless
+      (compiler-ast-type-probe-max-fallback-smoke?)
+      (io.panic "AST type probe maximum-table fallback failed"))))
+
 (define (compiler-ast-type-dedup-smoke?) : bool
   (begin
     (ast.ty-node-pool-reset!)

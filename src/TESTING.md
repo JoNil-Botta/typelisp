@@ -218,6 +218,15 @@ compatibility route, and a clear followed by a restarted recording. Run it at
 opt0/1/2. A key-only check is not enough: keep the seeded-fact phases, which
 show that a wrong owner selects another entry rather than merely missing.
 
+The AST type smoke's probe checks compare golden insertion IDs for colliding
+names, scalar payload differences, independently allocated boxed lists and C
+function modes on both explicit and installed pools. A small real table tests
+their distinct half-load behaviors, then reset and same-ID context switching.
+The maximum-table check uses a real descriptor but calls the loaded entry
+directly: populating half of that table would exceed the separate segment
+bound. Keep the row read inside equality and the incoming owner available for
+miss insertion.
+
 Compiler state must be allocated in an owner whose lifetime covers every state
 transition that can occur before the last use. Use these operational classes:
 

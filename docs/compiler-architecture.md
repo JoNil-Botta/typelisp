@@ -153,6 +153,13 @@ destroys unused destinations, restores a live allocation arena and clears the
 lowerer's handoff. Callers consume the returned result and pool context;
 they must not duplicate these release and adoption decisions.
 
+Type dedup probes compare an occupied row in the slot's own pool generation
+with a checked borrow of the incoming node. The representation-level row read
+is consumed inside canonical, read-only equality; it never survives a push,
+table growth, context install, reset or owner release. A miss retains the
+incoming owned node for persistence. Hashes, collision order and the explicit
+and installed pools' existing load-boundary behavior remain unchanged.
+
 Package inline-test preflight owns AST/type pools and scratch storage per
 source file. Its cfg-name snapshot owns copied strings across per-file intern
 retirement. Pool-backed caches and derived dependency surfaces are cleared

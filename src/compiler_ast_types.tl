@@ -3107,9 +3107,7 @@
                 next.storage-arena
                 next.segment-count)
               id))])
-      (if (ty-node-shallow-value-eq?
-        (ast-type-node-pool-state-get pool (- slot 1))
-        (ast-global-shared-view node))
+      (if (ty-node-shallow-eq? pool.segment-bases (- slot 1) (& node))
         (AstTypeNodePoolPushOk pool (- slot 1))
         (ast-type-node-pool-state-push-dedup
           pool
@@ -3343,8 +3341,26 @@
 (define (ty-node-shallow-value-eq? [a : AstType] [b : AstType]) : bool
   (ast-type-children-eq? a b ast-type-id-same?))
 
-(define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
-  (ty-node-shallow-value-eq? (ty-node-get a-id) b))
+;; The slot id and segment table belong to the same live pool generation.
+;; Consume the stored row only inside read-only equality: neither operand
+;; escapes or grows, replaces, resets, or releases the pool. The candidate's
+;; checked borrow ends before a miss can persist the caller's owned node.
+(define (ty-node-shallow-eq?
+  [segment-bases : i64]
+  [a-id : i64]
+  [b : (& b AstType)]) : bool
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr a-id 10))))]
+    (ty-node-shallow-value-eq?
+      (unsafe
+        (ptr-read
+          (int->ptr
+            (+ biased-base (* a-id (ast-type-node-bytes)))
+            : (Ptr AstType))))
+      (owned_view.compiler-owned-reference-shared-view b))))
 
 ;; Double the dedup table and reinsert every live entry, keeping the index
 ;; effective for the whole compile instead of switching itself off at half load.
@@ -3435,7 +3451,10 @@
                   (ptr-write! (ptr-offset slots idx) (+ id 1)))
                 (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
                 (set! result id)))
-            (if (ty-node-shallow-eq? (- slot 1) (ast-global-shared-view node))
+            (if (ty-node-shallow-eq?
+              ty-node-pool-segment-bases
+              (- slot 1)
+              (& node))
               (set! result (- slot 1))
               (set! idx (bit-and (+ idx 1) mask))))))
       result)))

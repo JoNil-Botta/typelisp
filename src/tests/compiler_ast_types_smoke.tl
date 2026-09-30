@@ -8,6 +8,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
+(import stdlib.io)
 (cfg test (import stdlib.test as tl_test))
 
 (define (compiler-ast-test-fresh-local-id
@@ -2079,6 +2080,15 @@
 (define (main) : i64
   (begin
     (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
+    (unless
+      (ast_tests.compiler-ast-type-probe-payloads-smoke?)
+      (io.panic "AST type probe payload equality failed"))
+    (unless
+      (ast_tests.compiler-ast-type-probe-load-boundary-smoke?)
+      (io.panic "AST type probe load boundary or generation isolation failed"))
+    (unless
+      (ast_tests.compiler-ast-type-probe-max-fallback-smoke?)
+      (io.panic "AST type probe maximum-table fallback failed"))
     (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
     (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
     (unless (compiler-ast-active-context-sync-smoke?) (return 4))

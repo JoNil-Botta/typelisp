@@ -380,7 +380,7 @@ case inline-helper-variable-snapshot
 source {{work}}/inline_helper_variable_snapshot.tl
 do link-run
 mode scalar avx2 avx512
-opt 2
+opt 0 1 2
 exit 42
 in stderr
 empty
@@ -390,7 +390,7 @@ case inline-helper-unit-argument
 source {{work}}/inline_helper_unit_argument.tl
 do link-run
 mode scalar avx2 avx512
-opt 2
+opt 0 1 2
 exit 42
 in stderr
 empty

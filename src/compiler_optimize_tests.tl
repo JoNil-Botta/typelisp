@@ -75144,3 +75144,76 @@
     table-cap
     kinds-cap
     (opt.opt-alias-empty)))
+
+;; flag_exit's skipped path and fill_call/copy_call's run-once body classify a
+;; BinOp through the shared DCE fault rule (#8451): a literal in-range shift is
+;; admissible there, while a dynamic or out-of-range count and a division can
+;; fault. The run-once body also refuses the proven SafeDiv/SafeMod forms.
+(define (opt-fault-rule-case?
+  [op : ir.CompilerIrBinOp]
+  [rhs : ir.CompilerIrValue]
+  [skippable? : bool]
+  [run-once? : bool]) : bool
+  (and
+    (=
+      (opt.opt-flag-exit-pure-instr?
+        (ir.CompilerIrInstr.BinOp
+          1
+          (opt.compiler-opt-global-shared-view op)
+          (ir.CompilerIrValue.I64 1)
+          (opt.compiler-opt-global-shared-view rhs)
+          (ast.AstType.I64)))
+      skippable?)
+    (= (opt.opt-loop-call-binop-ok? op rhs (ast.AstType.I64)) run-once?)))
+
+(test
+  optimizer-loop-rewrites-share-the-binop-fault-rule
+  (let
+    [i64-ty : ast.AstType (ast.AstType.I64)]
+    [dynamic : ir.CompilerIrValue (ir.CompilerIrValue.Var 7)]
+    (begin
+      (test.assert-true
+        (opt-fault-rule-case?
+          (ir.CompilerIrBinOp.Shl (clone i64-ty))
+          (ir.CompilerIrValue.I64 63)
+          true
+          true)
+        "a literal in-range shift cannot fault")
+      (test.assert-true
+        (opt-fault-rule-case?
+          (ir.CompilerIrBinOp.Shl (clone i64-ty))
+          (clone dynamic)
+          false
+          false)
+        "a dynamic shl count can fault")
+      (test.assert-true
+        (opt-fault-rule-case?
+          (ir.CompilerIrBinOp.Shr (clone i64-ty))
+          (clone dynamic)
+          false
+          false)
+        "a dynamic shr count can fault")
+      (test.assert-true
+        (opt-fault-rule-case?
+          (ir.CompilerIrBinOp.Shl (clone i64-ty))
+          (ir.CompilerIrValue.I64 64)
+          false
+          false)
+        "an out-of-range literal count faults")
+      (test.assert-true
+        (opt-fault-rule-case?
+          (ir.CompilerIrBinOp.Div)
+          (clone dynamic)
+          false
+          false)
+        "a division can fault")
+      (test.assert-true
+        (opt-fault-rule-case?
+          (ir.CompilerIrBinOp.SafeDiv)
+          (clone dynamic)
+          true
+          false)
+        "a proven division is skippable but not run once")
+      (test.assert-true
+        (opt-fault-rule-case? (ir.CompilerIrBinOp.Add) dynamic true true)
+        "an addition cannot fault"))))

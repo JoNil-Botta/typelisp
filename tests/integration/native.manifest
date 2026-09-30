@@ -498,6 +498,16 @@ dead_valid_shifts_dynamic|all|2|tests/integration/dead_valid_shifts.tl|42|-|63|-
 dead_shift_dynamic_width|all|2|tests/integration/dead_valid_shifts.tl|129|-|64|-|stage-stdlib+expected-stderr:tl: $SRC:22:5: shift count out of range: count=64 width=64\n
 dead_shift_dynamic_negative|all|2|tests/integration/dead_valid_shifts.tl|129|-|-1|-|stage-stdlib+expected-stderr:tl: $SRC:22:5: shift count out of range: count=-1 width=64\n
 shl_neg_count_trap|all|2,-|tests/safety/shift_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:4:5: shift count out of range: count=-1 width=32\n
+loop_rewrite_shift_flag_exit_trap|all|0,1,2|tests/integration/loop_rewrite_shift_trap.tl|129|-|0 10|-|stage-stdlib+expected-stderr:tl: $SRC:28:11: shift count out of range: count=70 width=64\n
+loop_rewrite_shift_flag_exit_ok|all|2|tests/integration/loop_rewrite_shift_trap.tl|42|-|0 9|-|stage-stdlib
+loop_rewrite_shift_fill_trap|all|0,1|tests/integration/loop_rewrite_shift_trap.tl|129|-|1 10|-|stage-stdlib+expected-stderr:tl: $SRC:39:11: shift count out of range: count=70 width=64\n
+# The versioned fast loop reports the shift trap without its location at opt 2 (#8452).
+loop_rewrite_shift_fill_trap_opt2|all|2|tests/integration/loop_rewrite_shift_trap.tl|129|-|1 10|-|stage-stdlib+expected-stderr:tl: shift count out of range\n
+loop_rewrite_shift_fill_ok|all|2|tests/integration/loop_rewrite_shift_trap.tl|42|-|1 9|-|stage-stdlib
+loop_rewrite_shift_copy_trap|all|0,1|tests/integration/loop_rewrite_shift_trap.tl|129|-|2 10|-|stage-stdlib+expected-stderr:tl: $SRC:53:11: shift count out of range: count=70 width=64\n
+# The versioned fast loop reports the shift trap without its location at opt 2 (#8452).
+loop_rewrite_shift_copy_trap_opt2|all|2|tests/integration/loop_rewrite_shift_trap.tl|129|-|2 10|-|stage-stdlib+expected-stderr:tl: shift count out of range\n
+loop_rewrite_shift_copy_ok|all|2|tests/integration/loop_rewrite_shift_trap.tl|42|-|2 9|-|stage-stdlib
 shr_u64_high_count_trap|all|2,-|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:3:5: shift count out of range: count=18446744073709551615 width=64\n
 valid_scalar_shift_matrix|all|-|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|-|-
 runtime_panic_site_trap|all|-|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: $SRC:4:4: panic: boom\n

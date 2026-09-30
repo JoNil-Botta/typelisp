@@ -466,6 +466,7 @@ foreach_active_varying_read_reject|check-fail|tests/safety/foreach_active_varyin
 foreach_active_varying_let_read_reject|check-fail|tests/safety/foreach_active_varying_let_read_reject.tl|-|foreach-active body reads varying `twice`; read it with (lane-value twice)
 foreach_active_program_index_reject|check-fail|tests/safety/foreach_active_program_index_reject.tl|-|foreach-active body reads varying program-index
 foreach_active_lambda_capture_reject|check-fail|tests/safety/foreach_active_lambda_capture_reject.tl|-|a lambda inside foreach-active cannot capture varying `i`
+foreach_active_gang_function_reject|check-fail|tests/safety/foreach_active_gang_function_reject.tl|-|foreach-active body reads gang-local function `lane-index`
 foreach_active_lane_set_reject|check-fail|tests/safety/foreach_active_lane_set_reject.tl|-|foreach-active lane binding is read-only
 foreach_active_set_varying_reject|check-fail|tests/safety/foreach_active_set_varying_reject.tl|-|foreach-active body cannot set varying binding `v`
 foreach_active_return_reject|check-fail|tests/safety/foreach_active_return_reject.tl|-|return inside foreach-active is not supported
@@ -483,6 +484,7 @@ lane_value_nested_reject|check-fail|tests/safety/lane_value_nested_reject.tl|-|l
 lane_value_call_reject|check-fail|tests/safety/lane_value_call_reject.tl|-|a lane-value operand may only read gang values
 lane_value_enum_reject|check-fail|tests/safety/lane_value_enum_reject.tl|-|lane-value operand must have a scalar lane type (an integer, float or bool type), found Color
 foreach_active_effects_defined|run-exit|tests/safety/foreach_active_effects_defined.tl|42|-
+foreach_active_outer_function_defined|run-exit|tests/safety/foreach_active_outer_function_defined.tl|42|-
 foreach_active_masked_defined|run-exit|tests/safety/foreach_active_masked_defined.tl|42|-
 foreach_active_bounds_trap|run-trap|tests/safety/foreach_active_bounds_trap.tl|134|array index out of bounds: index=4 length=4
 

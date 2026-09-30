@@ -1,4 +1,4 @@
 # stage0-size-policy-schema	1
 kind	host	ceiling_bytes	target_bytes	change_ref	evidence_url
-ceiling	linux	11060396	10000000	#8277	https://github.com/JoNil-Botta/typelisp/issues/8277
-ceiling	windows	12022005	10000000	#8277	https://github.com/JoNil-Botta/typelisp/issues/8277
+ceiling	linux	11060396	10000000	#8277	https://github.com/JoNil-Botta/typelisp/actions/runs/36644364597
+ceiling	windows	12022522	10000000	#8277	https://github.com/JoNil-Botta/typelisp/actions/runs/36644364597

@@ -661,6 +661,8 @@ Capture runs in a disposable scratch arena: collectors, temporary rendering and
 AST-backed macro captures do not survive it. Only the final metadata text, each
 catalog name, transformer source or diagnostic is copied into the caller owner.
 This prevents capture intermediates from remaining live through opt2 inlining.
+Transformer source is appended in catalog order to a geometric byte builder;
+rendering an entry must not copy the already completed catalog prefix.
 Later TLCI finishing reads only the captured text/catalog and checked surface;
 it must not revisit source declarations or dereference source intern IDs.
 The native producer's capture-based adapter and

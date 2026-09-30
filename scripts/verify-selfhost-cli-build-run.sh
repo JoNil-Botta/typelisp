@@ -20,4 +20,6 @@ fi
 # longest is 215 on the CI runner (D:/a/typelisp/typelisp).
 CODEGEN_CASES_WORKDIR=${CODEGEN_CASES_WORKDIR:-$ROOT/target}
 export CODEGEN_CASES_WORKDIR
-exec scripts/verify-codegen-cases.sh tests/cli/selfhost-surface.cases tests/cli/selfhost-build-run.cases
+exec scripts/run-memory-bounded.sh --limit-mib 8192 \
+    --report "$ROOT/target/selfhost-build-run.memory" -- \
+    sh scripts/verify-codegen-cases.sh tests/cli/selfhost-surface.cases tests/cli/selfhost-build-run.cases

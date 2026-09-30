@@ -23,6 +23,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import stdlib.comptime)
+(import stdlib.byte_buf_core as source_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
@@ -8427,13 +8428,13 @@
   (tlci_core.tlci-host-callback-table embedded-native-host-extern-text))
 
 ;; Full source for the native package: the host extern plus one entry function
-;; per identity in catalog order.
+;; per identity in catalog order. Append fragments without copying completed
+;; entries; their temporary strings share the capture scratch lifetime.
 (define (embedded-native-source
   [names : (__tl_dyn-array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : String
   (let
-    [out : String
-      (str_cat.str-cat "(module tlci-entries)\n" (embedded-native-host-externs))]
+    [out : source_buf.ByteBufBuilder (source_buf.byte-buf-builder-new)]
     [count : i64 (array-length names)]
     [index : i64 0]
     [native-count : i64 0]
@@ -8444,6 +8445,12 @@
     [_full-reasons-reset : unit
       (set! (array-ref embedded-stdlib-tlci-native-report-full-reasons 0) "")]
     (begin
+      (source_buf.byte-buf-builder-append-string
+        (&mut out)
+        "(module tlci-entries)\n")
+      (source_buf.byte-buf-builder-append-string
+        (&mut out)
+        (embedded-native-host-externs))
       (while (< index count)
         (let
           [slot : i64
@@ -8465,10 +8472,9 @@
                     body)))
               "")]
           (begin
-            (set!
-              out
+            (source_buf.byte-buf-builder-append-string
+              (&mut out)
               (str_cat.str-cat
-                out
                 "(define (macro-entry-"
                 (string.int->string index)
                 " [image-ctx : i64] [host : i64] [session : i64]"
@@ -8512,10 +8518,9 @@
                       (owned_view.compiler-owned-array-element-shared-view
                         names
                         index))))
-                (set!
-                  out
+                (source_buf.byte-buf-builder-append-string
+                  (&mut out)
                   (str_cat.str-cat
-                    out
                     "  (if (= count -"
                     (string.int->string (+ index 2))
                     ") 1 0))\n")))
@@ -8530,13 +8535,13 @@
                   (when
                     (> arm-sites 0)
                     (set! partial-count (+ partial-count 1)))
-                  (set!
-                    out
-                    (str_cat.str-cat
-                      out
-                      (embedded-native-fuel-open)
-                      body-text
-                      ")))\n")))))
+                  (source_buf.byte-buf-builder-append-string
+                    (&mut out)
+                    (embedded-native-fuel-open))
+                  (source_buf.byte-buf-builder-append-string
+                    (&mut out)
+                    body-text)
+                  (source_buf.byte-buf-builder-append-string (&mut out) ")))\n"))))
             (set! index (+ index 1)))))
       (set! (array-ref embedded-stdlib-tlci-native-report-count 0) native-count)
       (set!
@@ -8545,7 +8550,7 @@
       (set!
         (array-ref embedded-stdlib-tlci-native-report-interpreted-arms 0)
         interpreted-arms)
-      out)))
+      (source_buf.byte-buf-builder-finish-string (& out)))))
 
 (define (embedded-native-entry-offsets
   [image : cobj.CompilerObjectImage]

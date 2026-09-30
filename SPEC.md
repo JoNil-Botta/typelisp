@@ -9052,7 +9052,10 @@ typechecked against the current session, compiled into a scratch `main`, run
 through the source build/run path, and discarded without becoming session
 declarations. Scalar results are printed directly. Struct, enum, tuple, and
 fixed-array results are evaluated and use the explicit `<value: Type>` fallback
-until runtime aggregate reflection is available.
+until runtime aggregate reflection is available. A rejected input reports
+ordinary diagnostics, each with its code and quoted source line, located in
+what was entered: `<repl>:line:col` counted from the input's first line, or the
+loaded file's own path, line and column for `.load`.
 
 ---
 

@@ -1,0 +1,9 @@
+(define x : i64 1)
+(define (twice [n : i64]) : i64
+  (* n 2))
+(define y : i64 (+ x true))
+(define (bad [n : i64]) : i64
+  (+ n true))
+(define y : i64 (twice x))
+.type y
+.exit

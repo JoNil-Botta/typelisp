@@ -107,6 +107,97 @@
       (= (cdiag.compiler-diagnostic-col preserved) 22)
       (string.eq (cdiag.compiler-diagnostic-path empty-fallback) ""))))
 
+;; A diagnostic in `whole.tl`, a three-line head followed by a tail: pathless
+;; and `whole.tl` spans move to the head or the tail by line, tail lines count
+;; from the tail's first line, and a span in another file stays put.
+(define (compiler-diagnostic-split-at-line-span-is?
+  [span : (& span cdiag.CompilerDiagnosticSpan)]
+  [path : String]
+  [start-line : i64]
+  [end-line : i64]) : bool
+  (and
+    (string.eq (cdiag.compiler-diagnostic-span-path span) path)
+    (= (cdiag.compiler-diagnostic-span-start-line span) start-line)
+    (= (cdiag.compiler-diagnostic-span-end-line span) end-line)))
+
+(define (compiler-diagnostic-split-at-line-ok?) : bool
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-fix
+        (cdiag.compiler-diagnostic-with-secondary
+          (cdiag.compiler-diagnostic-with-secondary
+            (cdiag.compiler-diagnostic-with-secondary
+              (cdiag.compiler-diagnostic-with-primary-span
+                (cdiag.compiler-diagnostic-simple "" 5 2 "in the tail")
+                (cdiag.CompilerDiagnosticSpan "" 5 2 6 4))
+              (cdiag.CompilerDiagnosticSpan "other.tl" 9 1 9 3)
+              cdiag.CompilerDiagnosticNoString)
+            (cdiag.CompilerDiagnosticSpan "whole.tl" 4 1 4 2)
+            cdiag.CompilerDiagnosticNoString)
+          (cdiag.CompilerDiagnosticSpan "" 2 1 2 5)
+          cdiag.CompilerDiagnosticNoString)
+        (cdiag.compiler-diagnostic-fix-new
+          "fix"
+          cdiag.CompilerDiagnosticMachineApplicable
+          (cdiag.compiler-diagnostic-text-edit-single
+            (cdiag.compiler-diagnostic-text-edit-new
+              (cdiag.CompilerDiagnosticSpan "" 6 1 6 1)
+              "x"))))]
+    [split : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-split-at-line
+        diag
+        "whole.tl"
+        3
+        "head.tl"
+        "tail.tl")]
+    [primary : cdiag.CompilerDiagnosticSpan
+      (cdiag.compiler-diagnostic-primary-span split)]
+    [labels : cdiag.CompilerDiagnosticLabelList
+      (cdiag.compiler-diagnostic-secondary-spans split)]
+    [head-label : cdiag.CompilerDiagnosticLabel
+      (cdiag.compiler-diagnostic-label-list-get labels 0)]
+    [tail-label : cdiag.CompilerDiagnosticLabel
+      (cdiag.compiler-diagnostic-label-list-get labels 1)]
+    [other-label : cdiag.CompilerDiagnosticLabel
+      (cdiag.compiler-diagnostic-label-list-get labels 2)]
+    [fixes : cdiag.CompilerDiagnosticFixSeq
+      (cdiag.compiler-diagnostic-fixes split)]
+    [fix : cdiag.CompilerDiagnosticFix
+      (unsafe
+        (ptr-read (ptr-offset (__tl_array-data fixes.slots) 0)))]
+    [edit : cdiag.CompilerDiagnosticTextEdit
+      (unsafe
+        (ptr-read (ptr-offset (__tl_array-data fix.edits.slots) 0)))]
+    [in-head : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-split-at-line
+        (cdiag.compiler-diagnostic-simple "whole.tl" 3 7 "in the head")
+        "whole.tl"
+        3
+        "head.tl"
+        "tail.tl")]
+    (and
+      (compiler-diagnostic-split-at-line-span-is? (& primary) "tail.tl" 2 3)
+      (= (cdiag.compiler-diagnostic-col split) 2)
+      (compiler-diagnostic-split-at-line-span-is?
+        (& head-label.span)
+        "head.tl"
+        2
+        2)
+      (compiler-diagnostic-split-at-line-span-is?
+        (& tail-label.span)
+        "tail.tl"
+        1
+        1)
+      (compiler-diagnostic-split-at-line-span-is?
+        (& other-label.span)
+        "other.tl"
+        9
+        9)
+      (compiler-diagnostic-split-at-line-span-is? (& edit.span) "tail.tl" 3 3)
+      (string.eq (cdiag.compiler-diagnostic-path in-head) "head.tl")
+      (= (cdiag.compiler-diagnostic-line in-head) 3)
+      (= (cdiag.compiler-diagnostic-col in-head) 7))))
+
 (define (compiler-diagnostic-source-render-ok?) : bool
   (let
     [diag : cdiag.CompilerDiagnostic
@@ -781,6 +872,7 @@
     (unless (compiler-diagnostic-source-error-ok?) (return 2))
     (unless (compiler-diagnostic-rewrite-ok?) (return 3))
     (unless (compiler-diagnostic-fallback-path-ok?) (return 3))
+    (unless (compiler-diagnostic-split-at-line-ok?) (return 3))
     (unless (compiler-diagnostic-source-render-ok?) (return 4))
     (unless (compiler-diagnostic-source-render-minimal-ok?) (return 4))
     (unless (compiler-diagnostic-note-render-ok?) (return 4))

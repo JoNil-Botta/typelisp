@@ -62,7 +62,7 @@
 
 (defenum ResultReplDeclList
   (Ok ast.AstDeclList)
-  (Err String))
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (repl-banner) : String
   "TypeLisp REPL. Type .help for commands.\n")
@@ -316,8 +316,8 @@
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))
 
-(define (repl-report-diagnostic [diag : cdiag.CompilerDiagnostic]) : unit
-  (repl-stderr-write-line (cdiag.compiler-diagnostic-render diag)))
+(define (repl-input-path) : String
+  "<repl>")
 
 ;; A parse or type error in the input just read is located in that input: the
 ;; report names it `<repl>` and quotes the offending line.
@@ -326,18 +326,48 @@
   [input : String]) : unit
   (repl-stderr-write
     (cdiag.compiler-diagnostic-render-source
-      (cdiag.compiler-diagnostic-with-path diag "<repl>")
+      (cdiag.compiler-diagnostic-with-path diag (repl-input-path))
       input)))
 
-(define (repl-report-diagnostics [diagnostics : cdiag.CompilerDiagnosticList]) : unit
+;; A candidate is the accepted session followed by new source: typed input,
+;; named `<repl>`, or a loaded file, named by its path. The session already
+;; typechecked on its own, so a candidate error normally lies in the new source
+;; and is reported there, counted from its first line with that line quoted. A
+;; location inside the session stays there, as `<repl-session>`, quoting the
+;; session's own line.
+(define (repl-report-candidate-diagnostics
+  [diagnostics : cdiag.CompilerDiagnosticList]
+  [session-source : String]
+  [source-path : String]
+  [source : String]) : unit
   (let
+    [session-end : source_text.SourceTextLineCol
+      (source_text.source-text-line-col-at-offset
+        (& session-source)
+        (string.string-length session-source)
+        false)]
+    [session-lines : i64 (- session-end.line 1)]
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (repl-report-diagnostic
-          (cdiag.compiler-diagnostic-list-get diagnostics index))
-        (set! index (+ index 1))))))
+      (let
+        [diag : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-split-at-line
+            (cdiag.compiler-diagnostic-list-get diagnostics index)
+            (repl-session-source-path)
+            session-lines
+            "<repl-session>"
+            (owned_view.compiler-owned-shared-view source-path))]
+        [in-source : bool
+          (string.eq (cdiag.compiler-diagnostic-path diag) source-path)]
+        (begin
+          (repl-stderr-write
+            (cdiag.compiler-diagnostic-render-source
+              diag
+              (if in-source
+                (owned_view.compiler-owned-shared-view source)
+                (owned_view.compiler-owned-shared-view session-source))))
+          (set! index (+ index 1)))))))
 
 (define (repl-char-display-helpers-source) : String
   "(define __tl_repl_ascii_printable_table : String
@@ -555,19 +585,16 @@
     (sym_i64_env.sym-i64-empty))
     [(compiler_load.ResultCompilerLoad.Ok decls _)
       (ResultReplDeclList.Ok decls)]
-    [(compiler_load.ResultCompilerLoad.Err diag)
-      (ResultReplDeclList.Err
-        (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]))
+    [(compiler_load.ResultCompilerLoad.Err diag) (ResultReplDeclList.Err diag)]))
 
 (define (repl-typecheck-session-source [session-source : String]) : tc.ResultCompilerTypecheck
   (match (repl-load-session-decls session-source)
     [(ResultReplDeclList.Ok decls)
       (compiler_typecheck_api.typecheck-compiler-program
         (ast.ast-program decls))]
-    [(ResultReplDeclList.Err message)
+    [(ResultReplDeclList.Err diag)
       (tc.ResultCompilerTypecheck.Err
-        (box
-          (cdiag.compiler-diagnostic-list-single (tc.tc-diag-at-start message))))]))
+        (cdiag.compiler-diagnostic-list-box-single diag))]))
 
 (define (repl-run-status-report-text [status : i64]) : String
   (if (= status 0)
@@ -657,8 +684,11 @@
           (repl-report-input-diagnostic
             (tc.tc-diag-at-start message)
             expr-source)])]
-    [(ResultReplDeclList.Err message)
-      (repl-print-error-line (str_cat.str-cat "Error: " message))]))
+    [(ResultReplDeclList.Err diag)
+      (repl-print-error-line
+        (str_cat.str-cat
+          "Error: "
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag))))]))
 
 (define (repl-handle-type-command
   [session-source : String]
@@ -684,8 +714,11 @@
                     (repl-report-input-diagnostic
                       (tc.tc-diag-at-start message)
                       expr-source)])]
-              [(ResultReplDeclList.Err message)
-                (repl-print-error-line (str_cat.str-cat "Error: " message))])])]
+              [(ResultReplDeclList.Err diag)
+                (repl-print-error-line
+                  (str_cat.str-cat
+                    "Error: "
+                    (cdiag.compiler-diagnostic-message (__tl-box-place diag))))])])]
       [(parser.ResultAstReplItem.Err diag)
         (repl-report-input-diagnostic (deref diag) expr-source)])))
 
@@ -704,7 +737,7 @@
           [candidate : String
             (repl-session-candidate
               (owned_view.compiler-owned-shared-view session-source)
-              source)]
+              (owned_view.compiler-owned-shared-view source))]
           (match (repl-typecheck-session-source
             (owned_view.compiler-owned-shared-view candidate))
             [(tc.ResultCompilerTypecheck.Ok _)
@@ -713,7 +746,11 @@
                 candidate)]
             [(tc.ResultCompilerTypecheck.Err diag)
               (begin
-                (repl-report-diagnostics (deref diag))
+                (repl-report-candidate-diagnostics
+                  (deref diag)
+                  (owned_view.compiler-owned-shared-view session-source)
+                  path
+                  source)
                 session-source)]))]
       [(io.ErrIoBytes error)
         (begin
@@ -731,13 +768,17 @@
             [candidate : String
               (repl-session-candidate
                 (owned_view.compiler-owned-shared-view session-source)
-                input)]
+                (owned_view.compiler-owned-shared-view input))]
             (match (repl-typecheck-session-source
               (owned_view.compiler-owned-shared-view candidate))
               [(tc.ResultCompilerTypecheck.Ok _) candidate]
               [(tc.ResultCompilerTypecheck.Err diag)
                 (begin
-                  (repl-report-diagnostics (deref diag))
+                  (repl-report-candidate-diagnostics
+                    (deref diag)
+                    (owned_view.compiler-owned-shared-view session-source)
+                    (repl-input-path)
+                    input)
                   session-source)]))]
         [(AstReplExpr expr)
           (begin

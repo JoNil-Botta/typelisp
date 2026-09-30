@@ -500,11 +500,30 @@
     level)
     [(opt.CompilerOptimizedProgram.Program optimized _) optimized]))
 
+;; The inline stage with no optimizer-input arena: final bodies escape into the
+;; current arena, as they do for every caller that is not the level-2 program
+;; optimizer.
+(define (opt-test-inline-program-with-spans
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]
+  [spans : ir.CompilerSourceSpans]) : opt.OptInlineSpanProgram
+  (let
+    [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new 0 0)]
+    (opt.opt-inline-program-functions-with-spans
+      pools
+      (&mut input)
+      type-segment-bases
+      functions
+      level
+      spans)))
+
 (define (opt-test-inline-program-functions
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : ir.CompilerIrFunctionSeq
-  (match (opt.opt-inline-program-functions-with-spans
+  (match (opt-test-inline-program-with-spans
     (ast.ast-node-pool-reader-context-current)
     type-segment-bases
     functions
@@ -2991,7 +3010,7 @@
     [phi : ir.CompilerIrInstr
       (irt.instr
         "%0 = phi [%1, inl.entry.0.then], [42, inl.entry.0.else] : i64")]
-    (match (opt.opt-inline-program-functions-with-spans
+    (match (opt-test-inline-program-with-spans
       (ast.ast-node-pool-reader-context-current)
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-inline-branch-functions symbols)
@@ -3090,7 +3109,7 @@
     [ok : bool
       (begin
         (ir.compiler-debug-info-set-enabled! debug?)
-        (match (opt.opt-inline-program-functions-with-spans
+        (match (opt-test-inline-program-with-spans
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-prepend
@@ -3259,7 +3278,7 @@
       (ast.ast-node-pool-context-install!
         (ast.ast-node-pool-context-new-with-capacities 4 16))]
     [inlined : opt.OptInlineSpanProgram
-      (opt.opt-inline-program-functions-with-spans
+      (opt-test-inline-program-with-spans
         job
         bases
         functions
@@ -3292,6 +3311,201 @@
     (test.assert-true (opt-inline-job-pool-run-ok? 1100) "job A")
     (test.assert-true (opt-inline-job-pool-run-ok? 1300) "job B")
     (test.assert-true (opt-inline-job-pool-run-ok? 1100) "job A again")))
+
+;; The level-2 per-function loop reads its input from the optimizer-input arena
+;; (#8386). `input_loop` absorbs the leaf, while `main` and `input_leaf` have no
+;; site to rewrite. `input_dead` is rewritten but unreachable, so pruning drops
+;; it together with the fully inlined leaf.
+(define (opt-input-arena-functions) : ir.CompilerIrFunctionSeq
+  (match (irt.program
+    "function @main() -> i64 vars 1 {
+     entry:
+       %0 = call input_loop(1) : i64
+       return %0
+     }
+     function @input_loop(n=%0:i64) -> i64 vars 3 {
+     entry:
+       %1 = call input_leaf(%0) : i64
+       %2 = call input_loop(%1) : i64
+       return %2
+     }
+     function @input_leaf(n=%0:i64) -> i64 vars 1 {
+     entry:
+       return 7
+     }
+     function @input_dead(n=%0:i64) -> i64 vars 2 {
+     entry:
+       %1 = call input_leaf(%0) : i64
+       return %1
+     }")
+    [(ir.CompilerIrProgram.Program _ functions _) functions]))
+
+(define (opt-input-arena-leaf-calls
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [name : String]) : i64
+  (match (opt-function-seq-find functions name)
+    [(opt.OptMaybeFunction.Some func)
+      (let
+        [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks func)]
+        (opt-count-direct-call-name-blocks blocks "input_leaf"))]
+    [(opt.OptMaybeFunction.No) -1]))
+
+(define (opt-input-arena-all-placed?
+  [input : (& input opt.OptOptimizerInput)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i functions.len)
+        (begin
+          (if (opt.opt-optimizer-input-placed?
+            input
+            (ir.compiler-ir-function-seq-ref functions i))
+            unit
+            (set! ok false))
+          (set! i (+ i 1))))
+      ok)))
+
+;; Every index body is placed as the stage finishes it, whether its caller was
+;; rewritten or not, and whether or not it survives pruning. The survivors then
+;; need no copy.
+(test
+  optimizer-input-inline-stage-places-every-body
+  (let
+    [bodies : i64 (opt.opt-optimizer-input-carrier 2)]
+    [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new bodies 4)]
+    [inlined : opt.OptInlineSpanProgram
+      (opt.opt-inline-program-functions-with-spans
+        (ast.ast-node-pool-reader-context-current)
+        (&mut input)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-input-arena-functions)
+        2
+        (ir.compiler-source-spans-empty))]
+    [out : ir.CompilerIrFunctionSeq
+      (match inlined
+        [(opt.OptInlineSpanProgram.Program functions _) functions])]
+    [survivors : ir.CompilerIrFunctionSeq
+      (match (opt.opt-prune-unreachable-program
+        (ir.compiler-ir-global-seq-empty)
+        (owned_view.compiler-owned-shared-view out)
+        (ir.compiler-ir-extern-seq-empty))
+        [(opt.OptPrunedProgram.Program _ functions) functions])]
+    [carried : ir.CompilerIrFunctionSeq
+      (opt.opt-optimizer-input-carry
+        (ast.ast-node-pool-reader-context-current)
+        (& input)
+        (owned_view.compiler-owned-shared-view survivors))]
+    (begin
+      (test.assert-true (> bodies 0) "level 2 has an optimizer-input arena")
+      (test.assert-i64-eq out.len 4 "the stage returns every index body")
+      (test.assert-true
+        (opt-input-arena-all-placed? (& input) (& out))
+        "rewritten, unrewritten and later pruned bodies are all placed")
+      (test.assert-i64-eq
+        (opt-input-arena-leaf-calls (& out) "input_loop")
+        0
+        "the placed input_loop is its rewritten body")
+      (test.assert-i64-eq survivors.len 2 "pruning keeps main and input_loop")
+      (test.assert-i64-eq
+        (opt-input-arena-leaf-calls (& survivors) "input_dead")
+        -1
+        "the pruned caller is not a survivor")
+      (test.assert-i64-eq carried.len 2 "the loop reads both survivors")
+      (test.assert-true
+        (opt-input-arena-all-placed? (& input) (& carried))
+        "the carried survivors are the placed bodies")
+      (unsafe
+        (arena.tl_arena_destroy bodies)))))
+
+;; A survivor the stage never placed is copied into the input arena, so the
+;; loop still reads nothing from the arena that produced it: here the source
+;; arena is destroyed before the carried bodies are read.
+(test
+  optimizer-input-carry-copies-unplaced-survivors
+  (let
+    [bodies : i64 (opt.opt-optimizer-input-carrier 2)]
+    [source : i64 (arena.tl_arena_make)]
+    [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new bodies 4)]
+    [functions : ir.CompilerIrFunctionSeq
+      (in-arena (arena.Arena source) (opt-input-arena-functions))]
+    [placed-before? : bool
+      (opt-input-arena-all-placed? (& input) (& functions))]
+    [carried : ir.CompilerIrFunctionSeq
+      (opt.opt-optimizer-input-carry
+        (ast.ast-node-pool-reader-context-current)
+        (& input)
+        functions)]
+    [_destroy-source : unit
+      (unsafe
+        (arena.tl_arena_destroy source))]
+    (begin
+      (test.assert-false placed-before? "nothing was placed")
+      (test.assert-i64-eq carried.len 4 "every survivor is carried")
+      (test.assert-i64-eq
+        (opt-input-arena-leaf-calls (& carried) "input_loop")
+        1
+        "the copied input_loop is intact")
+      (test.assert-i64-eq
+        (opt-input-arena-leaf-calls (& carried) "input_dead")
+        1
+        "the copied input_dead is intact")
+      (unsafe
+        (arena.tl_arena_destroy bodies)))))
+
+;; Level 1 has no input arena: the stage places nothing and the loop reads the
+;; stage's own sequence in place.
+(test
+  optimizer-input-level-one-reads-stage-output-in-place
+  (let
+    [input : opt.OptOptimizerInput
+      (opt.opt-optimizer-input-new (opt.opt-optimizer-input-carrier 1) 4)]
+    [inlined : opt.OptInlineSpanProgram
+      (opt.opt-inline-program-functions-with-spans
+        (ast.ast-node-pool-reader-context-current)
+        (&mut input)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-input-arena-functions)
+        1
+        (ir.compiler-source-spans-empty))]
+    [out : ir.CompilerIrFunctionSeq
+      (match inlined
+        [(opt.OptInlineSpanProgram.Program functions _) functions])]
+    [carried : ir.CompilerIrFunctionSeq
+      (opt.opt-optimizer-input-carry
+        (ast.ast-node-pool-reader-context-current)
+        (& input)
+        (owned_view.compiler-owned-shared-view out))]
+    (begin
+      (test.assert-i64-eq input.arena 0 "level 1 has no optimizer-input arena")
+      (test.assert-i64-eq input.placed.len 0 "level 1 places nothing")
+      (test.assert-i64-eq carried.len out.len "the loop reads the stage output"))))
+
+;; The production level-2 path destroys the inline arena before its
+;; per-function loop, so every body the loop reads must already be resident in
+;; the input arena.
+(test
+  optimizer-input-level-two-program-reads-resident-bodies
+  (match (opt-test-optimize-program-with-level
+    (ir.CompilerIrProgram.Program
+      (ir.compiler-ir-global-seq-empty)
+      (opt-input-arena-functions)
+      (ir.compiler-ir-extern-seq-empty))
+    2)
+    [(ir.CompilerIrProgram.Program _ functions _)
+      (begin
+        (test.assert-i64-eq
+          (opt-input-arena-leaf-calls (& functions) "input_loop")
+          0
+          "input_loop keeps its absorbed leaf")
+        (test.assert-i64-eq
+          (opt-input-arena-leaf-calls (& functions) "input_dead")
+          -1
+          "the unreachable caller is pruned")
+        (test.assert-true
+          (>= (opt-input-arena-leaf-calls (& functions) "main") 0)
+          "main survives"))]))
 
 ;; Each caller's phase escapes only the span rows its own rewrite added
 ;; (#8362), so the spans table grows linearly in the number of rewritten
@@ -3358,7 +3572,7 @@
             (set! i (+ i 1)))))
       (let
         [input-rows : i64 (ir.compiler-source-spans-instr-count (clone spans))]
-        (match (opt.opt-inline-program-functions-with-spans
+        (match (opt-test-inline-program-with-spans
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           functions
@@ -22938,7 +23152,7 @@
     [code : i64
       (begin
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.opt-inline-program-functions-with-spans
+        (match (opt-test-inline-program-with-spans
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-switch-functions-named symbols callee-name)
@@ -23297,7 +23511,7 @@
     [ok : bool
       (begin
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.opt-inline-program-functions-with-spans
+        (match (opt-test-inline-program-with-spans
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-nonleaf-functions symbols)
@@ -23375,7 +23589,7 @@
     [ok : bool
       (begin
         (ir.compiler-debug-info-set-enabled! false)
-        (match (opt.opt-inline-program-functions-with-spans
+        (match (opt-test-inline-program-with-spans
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-nonleaf-functions-named symbols panic-name)

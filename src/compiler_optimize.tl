@@ -105016,7 +105016,7 @@
     summaries)
     [(OptFunctionPassResult.Result next _) next]))
 
-;; Optimizer input carrier (opt2 only).
+;; Optimizer input arena (opt2 only).
 ;;
 ;; The whole-program inline stage runs in a dedicated arena, and by the time it
 ;; returns only its final rewritten bodies are still read: the devirtualized
@@ -105028,30 +105028,95 @@
 ;; whole arena -- dead generations included -- would otherwise stay resident
 ;; across the loop, which is where the opt2 process peak forms.
 ;;
-;; So copy just the surviving functions into a carrier arena, release the inline
-;; arena before the loop starts, and release the carrier once the loop has
-;; escaped every optimized function into the enclosing arena. The copy costs one
-;; transient overlap of the two arenas before the loop -- cheaper than carrying
-;; the dead generations through it, because the loop's own scratch peak lands on
-;; top of whatever the input costs.
+;; So the inline stage writes each caller's final body once, straight into this
+;; arena (`opt-optimizer-input-place`): the same single clone that escapes the
+;; body from its per-caller scratch phase, retargeted from the stage arena. The
+;; inline arena is then released before the loop starts with no survivor inside
+;; it, and this arena is released once the loop has escaped every optimized
+;; function into the enclosing arena. Placing bodies as they are finished avoids
+;; a second whole-program copy and its overlap with the live inline arena.
 ;;
 ;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
-;; whose arena is a fraction of the level-2 one, and the cheap self-compile path
-;; must not pay for a whole-program copy.
+;; whose arena is a fraction of the level-2 one, and the loop reads it in place.
 (define (opt-optimizer-input-carrier [level : i64]) : i64
   (if (< level 2)
     0
     (arena.tl_arena_make)))
 
+;; The optimizer-input arena of one optimize call (0 below level 2) and the
+;; symbol ids of the bodies placed in it. The record lives in the inline arena
+;; and is read for the last time by `opt-optimizer-input-carry`, before that
+;; arena is released.
+(defstruct OptOptimizerInput
+  (arena i64)
+  (placed opt_i64_i64_map.Map))
+
+(define (opt-optimizer-input-new [arena-handle : i64] [function-count : i64]) : OptOptimizerInput
+  (OptOptimizerInput
+    arena-handle
+    (opt_i64_i64_map.with-capacity
+      (if (= arena-handle 0)
+        1
+        (opt-function-index-capacity function-count)))))
+
+;; Escape one finished body out of its producer's scratch: into the input arena
+;; when there is one, recording its symbol id, otherwise into the current arena.
+(define (opt-optimizer-input-place
+  [pools : ast.AstNodePoolContext]
+  [input : (&mut input OptOptimizerInput)]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (if (= input.arena 0)
+    (ir.compiler-ir-clone-function pools func)
+    (begin
+      (match (compiler-opt-global-shared-view func)
+        [(ir.CompilerIrFunction.Function name _ _ _ _ _)
+          (opt_i64_i64_map.insert-ref!
+            (&mut input.placed)
+            (ir.compiler-ir-symbol-id name)
+            1)])
+      (in-arena
+        (arena.Arena input.arena)
+        (ir.compiler-ir-clone-function pools func)))))
+
+(define (opt-optimizer-input-placed?
+  [input : (& input OptOptimizerInput)]
+  [func : ir.CompilerIrFunction]) : bool
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name _ _ _ _ _)
+      (opt_i64_i64_map.contains?
+        (& input.placed)
+        (ir.compiler-ir-symbol-id name))]))
+
+;; The loop's input sequence, resident in the input arena. Every survivor the
+;; inline stage placed is used as is; any other survivor is copied here, so the
+;; loop never reads a body from the inline or lower-IR arenas.
 (define (opt-optimizer-input-carry
   [pools : ast.AstNodePoolContext]
-  [carrier : i64]
+  [input : (& input OptOptimizerInput)]
   [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (if (= carrier 0)
+  (if (= input.arena 0)
     funcs
     (in-arena
-      (arena.Arena carrier)
-      (ir.compiler-ir-clone-function-seq pools funcs))))
+      (arena.Arena input.arena)
+      (let
+        [out : ir.CompilerIrFunctionSeq
+          (ir.compiler-ir-clone-function-seq-shell funcs)]
+        [i : i64 0]
+        (begin
+          (while (< i out.len)
+            (let
+              [func : ir.CompilerIrFunction
+                (compiler-opt-global-array-element-shared-view out.slots i)]
+              (begin
+                (if (opt-optimizer-input-placed?
+                  input
+                  (compiler-opt-global-shared-view func))
+                  unit
+                  (set!
+                    (array-ref out.slots i)
+                    (ir.compiler-ir-clone-function pools func)))
+                (set! i (+ i 1)))))
+          out)))))
 
 ;; Both optimizer-input arenas report under the same mid-phase label: each is
 ;; read at its high-water mark and destroyed before the "optimize" phase
@@ -118353,6 +118418,7 @@
 
 (define (opt-inline-process-scc-order-with-spans
   [pools : ast.AstNodePoolContext]
+  [input : (&mut input OptOptimizerInput)]
   [type-segment-bases : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -118369,14 +118435,18 @@
     [current-spans : ir.CompilerSourceSpans spans]
     ;; Each caller's rewrite -- its intermediate generations and working
     ;; state -- is dead once its final body is known, so it runs in one phase
-    ;; of this scratch arena. Only the final body (cloned through the job's
-    ;; explicit pools) and the span rows the rewrite added escape into the
-    ;; stage arena before the phase is rewound. Every table a rewrite leaves
+    ;; of this scratch arena. Only the final body and the span rows the rewrite
+    ;; added escape before the phase is rewound: the body, cloned through the
+    ;; job's explicit pools, into the optimizer-input arena when the call has
+    ;; one (`opt-optimizer-input-place`), and the rows into the stage arena.
+    ;; Every visited slot is placed, rewritten or not, so every index body is
+    ;; resident there once the walk ends. Every table a rewrite leaves
     ;; for later callers either grows in the IR label arena (census, synth,
     ;; reach stamps, callee-cost memo), has fixed capacity (checked tier), or
     ;; holds scalars (owned state); the memo's function views point at index
-    ;; bodies, which live in the stage arena. The per-walk caller globals are
-    ;; unpublished below before each rewind.
+    ;; bodies, which live in the optimizer-input or stage arena, both of which
+    ;; outlive the walk. The per-walk caller globals are unpublished below
+    ;; before each rewind.
     [scratch : arena.Arena (arena.make)]
     (begin
       (while (< index-pos slot-count)
@@ -118399,15 +118469,18 @@
                   (compiler-opt-global-shared-view current-spans)))
                 [(OptInlineSpanProgram.Program one next-spans)
                   (begin
-                    (if (> one.len 0)
-                      (set!
-                        (array-ref values slot)
-                        (ir.compiler-ir-clone-function
-                          pools
+                    (set!
+                      (array-ref values slot)
+                      (opt-optimizer-input-place
+                        pools
+                        input
+                        (if (> one.len 0)
                           (compiler-opt-global-array-element-shared-view
                             one.slots
-                            0)))
-                      unit)
+                            0)
+                          (compiler-opt-global-array-element-shared-view
+                            values
+                            slot))))
                     (set!
                       current-spans
                       (ir.compiler-source-spans-append-new
@@ -118424,6 +118497,7 @@
 ;; level 1 runs only the call-free tiny-leaf pass above.
 (define (opt-inline-program-functions-with-spans
   [pools : ast.AstNodePoolContext]
+  [input : (&mut input OptOptimizerInput)]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]
@@ -118458,6 +118532,7 @@
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans
           pools
+          input
           type-segment-bases
           (compiler-opt-global-shared-view index)
           census
@@ -128380,19 +128455,28 @@
                 (compiler-opt-global-shared-view representations))]
             [enclosing : i64 (arena.tl_arena_current)]
             ;; Keep this direct-local owner raw. Level 2 destroys it before
-            ;; summary/function optimization after copying survivors to the
-            ;; carrier, while level 1 must retain it until that optimization
-            ;; has escaped its inputs. The checker merges those mutually
-            ;; exclusive destroy sites as a possible double move; delaying the
-            ;; level-2 destroy would raise the peak memory again.
+            ;; summary/function optimization, once every survivor is resident
+            ;; in the optimizer-input arena, while level 1 must retain it until
+            ;; that optimization has escaped its inputs. The checker merges
+            ;; those mutually exclusive destroy sites as a possible double
+            ;; move; delaying the level-2 destroy would raise the peak memory
+            ;; again.
             [inline-arena : i64 (arena.tl_arena_make)]
+            ;; Level 2's optimizer-input arena, which the inline stage places
+            ;; each final body in; see `opt-optimizer-input-carrier`.
+            [carrier : i64 (opt-optimizer-input-carrier level)]
             [_enter-inline-arena : unit
               (unsafe
                 (arena.tl_arena_set inline-arena))]
+            [optimizer-input : OptOptimizerInput
+              (opt-optimizer-input-new
+                carrier
+                (opt-function-seq-count (& functions)))]
             [_arm-checked : unit (opt-inline-checked-set-active! true)]
             [inlined : OptInlineSpanProgram
               (opt-inline-program-functions-with-spans
                 pools
+                (&mut optimizer-input)
                 type-segment-bases
                 functions
                 level
@@ -128436,13 +128520,16 @@
                       (opt-pruned-program-globals pruned)]
                     [pruned-functions : ir.CompilerIrFunctionSeq
                       (opt-pruned-program-functions pruned)]
-                    ;; Copy the surviving functions out of the inline arena and
-                    ;; release it before the loop; see `opt-optimizer-input-carrier`.
+                    ;; Gather the survivors, already resident in the
+                    ;; optimizer-input arena, and release the inline arena
+                    ;; before the loop; see `opt-optimizer-input-carrier`.
                     ;; `pruned-globals` names the driver's globals, which live in
                     ;; the lower-IR arena and are untouched by this release.
-                    [carrier : i64 (opt-optimizer-input-carrier level)]
                     [optimizer-functions : ir.CompilerIrFunctionSeq
-                      (opt-optimizer-input-carry pools carrier pruned-functions)]
+                      (opt-optimizer-input-carry
+                        pools
+                        (& optimizer-input)
+                        pruned-functions)]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
                         unit
@@ -128481,8 +128568,9 @@
                     ;; out above, and `globals`/`externs` are the driver's program
                     ;; shell, which the inline stage only reads. That leaves
                     ;; `reachable-functions`, `pruned`/`pruned-functions`,
-                    ;; `optimizer-functions`, `summaries`, the function index and
-                    ;; the census as the arena's only referents, and all of them
+                    ;; `optimizer-functions`, `optimizer-input`, `summaries`, the
+                    ;; function index and the census as the arena's only
+                    ;; referents, and all of them
                     ;; are dead from here on: nothing below this binding reads
                     ;; them. `summaries` carries only i64/i64 maps and the
                     ;; profile-state struct, never a body pointer, so the

@@ -787,16 +787,16 @@ The optimizer emits four owners that it reads just before releasing them.
 is the same pattern for the fused post-prune late passes; both are already
 rewound to zero when they are read, so they stay on the `optimize` phase.
 `optimize-inline` is the whole-program inline stage's arena and `optimizer-input`
-is the carrier holding the copy of the surviving functions that the per-function
+is the arena the stage places each caller's final body in, which the per-function
 loop reads; both are read at their high-water mark, so they carry the shared
 `optimize.inline` phase: the arenas they name are already destroyed by the time
 the `optimize` snapshot runs, and folding them into that snapshot's unique-root
 sum would report storage the phase boundary no longer holds. The late scratch and
-the input carrier are only created at `--opt-level 2` -- the level whose inline
+the input arena are only created at `--opt-level 2` -- the level whose inline
 stage is the full census/SCC pipeline, and where the late passes run. So
 `--opt-level 2` emits both `optimize.inline` rows, the inline arena first
-(released before the per-function loop, once its surviving functions have been
-copied into the carrier) and the carrier second (released after the loop). At
+(released before the per-function loop, once every survivor is resident in the
+input arena) and the input arena second (released after the loop). At
 `--opt-level 1` the loop reads the inline arena directly and only the
 `optimize-inline` row is emitted, after the loop.
 

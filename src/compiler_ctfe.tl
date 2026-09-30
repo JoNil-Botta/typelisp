@@ -9707,7 +9707,7 @@
               [lookup-id : i64 raw-id]
               [call-name : String
                 (if (= call-id lookup-id)
-                  lookup-name
+                  (owned_view.compiler-owned-shared-view lookup-name)
                   (ci.intern-str call-id))]
               [string-helper-candidate : bool
                 (ctfe-string-helper-candidate-name-id?

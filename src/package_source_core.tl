@@ -917,7 +917,7 @@
     [normalized-path : String (compiler_load.compiler-load-normalize-path path)]
     [relative : String
       (if (= normalized-root ".")
-        normalized-path
+        (owned_view.compiler-owned-shared-view normalized-path)
         (compiler_load.compiler-load-root-relative-path
           normalized-root
           normalized-path))]

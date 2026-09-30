@@ -559,6 +559,16 @@ move_value_loop_carried_reject|check-fail|tests/safety/move_value_loop_carried_r
 with_owner_value_begin_move_reject|check-fail|tests/safety/with_owner_value_begin_move_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_string_value_move_reject|check-fail|tests/safety/with_owner_string_value_move_reject.tl|-|cleanup owner `name` moved before with scope exit
 move_value_tail_shadow_ok|run-exit|tests/safety/move_value_tail_shadow_ok.tl|42|-
+# Every move-only value moves through those value tails (#8269); a Copy value
+# or a borrow chosen the same way stays usable.
+move_value_plain_if_reuse_reject|check-fail|tests/safety/move_value_plain_if_reuse_reject.tl|-|use of moved value `x`
+move_value_plain_match_reuse_reject|check-fail|tests/safety/move_value_plain_match_reuse_reject.tl|-|use of moved value `z`
+move_value_plain_cond_reuse_reject|check-fail|tests/safety/move_value_plain_cond_reuse_reject.tl|-|use of moved value `x`
+move_value_string_let_reuse_reject|check-fail|tests/safety/move_value_string_let_reuse_reject.tl|-|use of moved value `name`
+move_value_array_begin_reuse_reject|check-fail|tests/safety/move_value_array_begin_reuse_reject.tl|-|use of moved value `items`
+move_value_plain_if_once_defined|run-exit|tests/safety/move_value_plain_if_once_defined.tl|42|-
+move_value_copy_if_reuse_defined|run-exit|tests/safety/move_value_copy_if_reuse_defined.tl|42|-
+move_value_borrow_if_reuse_defined|run-exit|tests/safety/move_value_borrow_if_reuse_defined.tl|42|-
 # Branch joins: an arm that never completes normally does not reach the join;
 # a move of an active `with` owner on it is checked at the edge that leaves the
 # owner's scope.

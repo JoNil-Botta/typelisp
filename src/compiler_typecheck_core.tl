@@ -22891,7 +22891,7 @@
     [source-name : String
       (match (tc-global-shared-view source-result)
         [(ResultTcString.Ok key) key]
-        [(ResultTcString.Err _) name])]
+        [(ResultTcString.Err _) (owned_view.compiler-owned-shared-view name)])]
     [source-id : i64
       (if (>= current-dotted-id 0)
         current-dotted-id
@@ -23350,7 +23350,7 @@
     [source-name : String
       (match (tc-global-shared-view source-result)
         [(ResultTcString.Ok key) key]
-        [(ResultTcString.Err _) name])]
+        [(ResultTcString.Err _) (owned_view.compiler-owned-shared-view name)])]
     [source-id : i64
       (if (>= current-dotted-id 0)
         current-dotted-id
@@ -26073,7 +26073,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) fallback-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view fallback-path)])]
         [rest-paths : ast.AstDeclPathList
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
@@ -60729,7 +60730,7 @@
           expr-bases
           env
           (if template?
-            bound
+            (owned_view.compiler-owned-shared-view bound)
             (tc-pattern-add-bound-names pattern (tc-global-shared-view bound)))
           (tc-global-shared-view chain)
           (tc-global-shared-view seen)
@@ -68174,7 +68175,8 @@
             env
             head)
             [(ResultTcType.Ok actual) actual]
-            [(ResultTcType.Err _) raw-ty])]
+            [(ResultTcType.Err _)
+              (owned_view.compiler-owned-shared-view raw-ty)])]
         (match (if auto-borrow?
           (tc-call-effective-arg-expr
             ctx
@@ -70434,8 +70436,10 @@
             (tc-move-loop-flow-reaches-break? tail-flow continuation-breaks)]
           [active-loop-carried : TcMovedSet
             (cond
-              [tail-repeats loop-carried]
-              [tail-breaks outer-loop-carried]
+              [tail-repeats
+                (owned_view.compiler-owned-shared-view loop-carried)]
+              [tail-breaks
+                (owned_view.compiler-owned-shared-view outer-loop-carried)]
               [else (tc-moved-empty)])]
           (match (tc-move-check-loop-expr
             ctx
@@ -73372,31 +73376,24 @@
   [bindings : ast.AstResourceBindingList]) : TcNameIdList
   (tc-move-add-resource-shadowed-names-at shadowed (& bindings) 0))
 
-;; The consumption mode of an undecided walk at `expr`, which is unspanned. At a
-;; value form it moves every local leaf (2) when the value's type reaches a
-;; cleanup-owning aggregate, otherwise active `with` owners (1) when any may
-;; exist, otherwise none (0); anywhere else it stays undecided (-1).
-(define (tc-move-consume-mode
-  [ctx : TcContext]
-  [expr : ast.AstExpr]
-  [result-ty : ast.AstType]) : i64
-  (if (match expr
-    [(ast.AstExpr.If _ _ _) true]
-    [(ast.AstExpr.Let _) true]
-    [(ast.AstExpr.Match _) true]
-    [(ast.AstExpr.Begin _) true]
-    [(ast.AstExpr.Unsafe _) true]
-    [(ast.AstExpr.WithRegion _ _) true]
-    [(ast.AstExpr.WithEscape _ _) true]
-    [(ast.AstExpr.WithScratch _) true]
-    [(ast.AstExpr.InArena _ _) true]
-    [(ast.AstExpr.WithResource _) true]
-    [_ false])
-    (cond
-      [(tc-type-reaches-cleanup? ctx result-ty) 2]
-      [(tc-cleanup-owner-markers-possible?) 1]
-      [else 0])
-    -1))
+;; The consumption mode of an undecided walk at `expr`, which is unspanned: a
+;; value form moves every local leaf (2); anywhere else the walk stays
+;; undecided (-1). A consumer starts the walk undecided only when it moves a
+;; place in its own position, which it does exactly for a move-only target, so
+;; the value's type needs no second look here.
+(define (tc-move-consume-mode [expr : ast.AstExpr]) : i64
+  (match expr
+    [(ast.AstExpr.If _ _ _) 2]
+    [(ast.AstExpr.Let _) 2]
+    [(ast.AstExpr.Match _) 2]
+    [(ast.AstExpr.Begin _) 2]
+    [(ast.AstExpr.Unsafe _) 2]
+    [(ast.AstExpr.WithRegion _ _) 2]
+    [(ast.AstExpr.WithEscape _ _) 2]
+    [(ast.AstExpr.WithScratch _) 2]
+    [(ast.AstExpr.InArena _ _) 2]
+    [(ast.AstExpr.WithResource _) 2]
+    [_ -1]))
 
 (define (tc-move-check-global-result-expr-list
   [ctx : TcContext]
@@ -73496,11 +73493,9 @@
 ;; is never misclassified as that permanent global place. This deliberately
 ;; avoids cloning the full move-state maps at every result branch. A leaf that
 ;; names an unshadowed local place is also moved, as the consumer would move it
-;; in its own position, when the value carries a cleanup obligation (#8268):
-;; `consume` 2 moves every such leaf (the value's type reaches a cleanup-owning
-;; aggregate), 1 only a leaf that is an active `with` owner, 0 none, and -1 is
-;; decided by `tc-move-consume-mode` at the first value form. The operand of a
-;; nested `return` or `try` is consumed by that form instead.
+;; in its own position (#8268, #8269): `consume` 2 moves every such leaf, 0 none,
+;; and -1 is decided by `tc-move-consume-mode` at the first value form. The
+;; operand of a nested `return` or `try` is consumed by that form instead.
 (define (tc-move-check-global-result-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -73520,7 +73515,10 @@
     loop-carried
     shadowed
     moved
-    (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    (ast.ast-expr-unspan-with-segment-bases
+      expr-bases
+      (tc-global-shared-view expr))
+    expr
     result-ty
     consume))
 
@@ -73533,16 +73531,14 @@
   [shadowed : TcNameIdList]
   [moved : TcMovedSet]
   [expr : ast.AstExpr]
+  [origin : ast.AstExpr]
   [result-ty : ast.AstType]
   [consume : i64]) : TcMoveResult
   (let
     [consume-here : i64
       (if (>= consume 0)
         consume
-        (tc-move-consume-mode
-          ctx
-          (tc-global-shared-view expr)
-          (tc-global-shared-view result-ty)))]
+        (tc-move-consume-mode (tc-global-shared-view expr)))]
     (match (tc-global-shared-view expr)
       [(ast.AstExpr.If _ then-box else-box)
         (match (tc-move-check-global-result-expr-id
@@ -73877,19 +73873,20 @@
                   (tc-global-shared-view result-ty)
                   (tc-global-shared-view result-ty)))
                 [(TcMoveResult.Ok moved1)
-                  (if (or
-                    (= consume-here 2)
-                    (and
-                      (= consume-here 1)
-                      (tc-cleanup-owner-active-id? env root-id)))
-                    (tc-move-after-consuming-projection
+                  (if (= consume-here 2)
+                    ;; `origin` keeps the leaf's span for move diagnostics.
+                    (match (tc-move-after-consuming-projection
                       ctx
                       expr-bases
                       env
                       locals
                       loop-carried
                       moved1
-                      expr)
+                      (tc-global-shared-view origin))
+                      [(TcMoveResult.Ok moved2) (TcMoveResult.Ok moved2)]
+                      [(TcMoveResult.Err message)
+                        (TcMoveResult.Err
+                          (tc-locate-error-at-expr expr-bases origin message))])
                     (TcMoveResult.Ok moved1))]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
           [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])])))
@@ -77382,7 +77379,7 @@
                 (if (tc-borrow-check-has-lending-binding?
                   (tc-global-shared-view borrowed)
                   path)
-                  borrowed
+                  (owned_view.compiler-owned-shared-view borrowed)
                   (tc-borrow-check-remove-borrow-path
                     (tc-global-shared-view borrowed)
                     path))]

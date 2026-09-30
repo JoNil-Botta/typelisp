@@ -36884,7 +36884,7 @@
             [(= variant 30) (ir.CompilerIrValue.Var 0)]
             ;; 31 makes it the same literal the bound is.
             [(= variant 31) (ir.CompilerIrValue.I64 100)]
-            [else check-length])
+            [else (owned_view.compiler-owned-shared-view check-length)])
           (ir.compiler-ir-label "bce_version_ok")))]
     (cond
       [(= variant 2)
@@ -73719,8 +73719,8 @@
         9
         (ir.CompilerIrBinOp.Mul)
         (if left?
-          constant
-          variable)
+          (owned_view.compiler-owned-shared-view constant)
+          (owned_view.compiler-owned-shared-view variable))
         (if left?
           variable
           constant)

@@ -103454,37 +103454,49 @@
   [module-id : i64]
   [decls : ast.AstDeclList]
   [decl-path : String]) : ResultMacroDeclExpansion
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil)
+  ;; Collapse each declaration in order and append its result to the output,
+  ;; so a module of n declarations costs O(n) instead of re-copying the
+  ;; collapsed rest once per declaration. The first failure wins, as before.
+  (let
+    [out-decls : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity (ast.ast-decl-list-len (& decls)))]
+    [out-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-list-with-capacity (ast.ast-decl-list-len (& decls)))]
+    [cursor : ast.AstDeclList decls]
+    [failure : ResultMacroDeclExpansion
       (ResultMacroDeclExpansion.Ok
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new))]
-    [(ast.AstDeclListStep.Cons decl rest-box)
-      (match (macro-collapse-existing-module-import-decl
-        ctx
-        top-env
-        (tc-global-shared-view orig-decls)
-        (tc-global-shared-view module)
-        module-id
-        decl
-        (tc-global-shared-view decl-path))
-        [(ResultMacroDeclExpansion.Ok head-decls head-paths)
-          (match (macro-collapse-existing-module-imports
-            ctx
-            top-env
-            orig-decls
-            module
-            module-id
-            rest-box
-            decl-path)
-            [(ResultMacroDeclExpansion.Ok rest-decls rest-paths)
-              (ResultMacroDeclExpansion.Ok
-                (macro-decl-list-append head-decls rest-decls)
-                (macro-decl-path-list-append head-paths rest-paths))]
-            [(ResultMacroDeclExpansion.Err diag)
-              (ResultMacroDeclExpansion.Err diag)])]
-        [(ResultMacroDeclExpansion.Err diag)
-          (ResultMacroDeclExpansion.Err diag)])]))
+    [failed? : bool false]
+    [more? : bool true]
+    (begin
+      (while more?
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil) (set! more? false)]
+          [(ast.AstDeclListStep.Cons decl rest)
+            (match (macro-collapse-existing-module-import-decl
+              ctx
+              top-env
+              (tc-global-shared-view orig-decls)
+              (tc-global-shared-view module)
+              module-id
+              decl
+              (tc-global-shared-view decl-path))
+              [(ResultMacroDeclExpansion.Ok head-decls head-paths)
+                (begin
+                  (macro-decl-list-append-from (&mut out-decls) (& head-decls))
+                  (macro-decl-path-list-append-from
+                    (&mut out-paths)
+                    (& head-paths))
+                  (set! cursor rest))]
+              [(ResultMacroDeclExpansion.Err diag)
+                (begin
+                  (set! failure (ResultMacroDeclExpansion.Err diag))
+                  (set! failed? true)
+                  (set! more? false))])]))
+      (if failed?
+        failure
+        (ResultMacroDeclExpansion.Ok out-decls out-paths)))))
 
 (define (macro-collapse-existing-module-imports-or-original
   [ctx : TcContext]

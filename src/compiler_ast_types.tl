@@ -2286,29 +2286,39 @@
           (ast-expr-span-slot-biased-segment-base new-span-slots segment-index)))
       (set! pool.segment-count (+ segment-index 1)))))
 
+(define (ast-expr-node-pool-state-canonical-records-reserve-in-place!
+  [pool : (&mut pool AstExprNodePoolState)]
+  [capacity : i64]) : unit
+  (if (<= capacity (array-length pool.canonical-span-records))
+    unit
+    (let
+      [next : (__tl_dyn-array AstExprCanonicalSpanRecord)
+        (in-arena
+          (arena.Arena pool.base-arena)
+          (__tl_make-array AstExprCanonicalSpanRecord capacity))]
+      [count : i64 pool.canonical-span-count]
+      [i : i64 0]
+      (begin
+        ;; Records contain only scalar ids/spans. The exclusive pool borrow
+        ;; keeps both arena-backed arrays alive for this copy, and no element
+        ;; pointer is retained when the new backing array is installed. The old
+        ;; array stays in the base arena: snapshots of this pool may still
+        ;; read it.
+        (while (< i count)
+          (begin
+            (unsafe
+              (ptr-write!
+                (ptr-offset (__tl_array-data next) i)
+                (ptr-read
+                  (ptr-offset (__tl_array-data pool.canonical-span-records) i))))
+            (set! i (+ i 1))))
+        (set! pool.canonical-span-records next)))))
+
 (define (ast-expr-node-pool-state-canonical-records-grow-in-place!
   [pool : (&mut pool AstExprNodePoolState)]) : unit
-  (let
-    [next-capacity : i64 (* (array-length pool.canonical-span-records) 2)]
-    [next : (__tl_dyn-array AstExprCanonicalSpanRecord)
-      (in-arena
-        (arena.Arena pool.base-arena)
-        (__tl_make-array AstExprCanonicalSpanRecord next-capacity))]
-    [count : i64 pool.canonical-span-count]
-    [i : i64 0]
-    (begin
-      ;; Records contain only scalar ids/spans. The exclusive pool borrow keeps
-      ;; both arena-backed arrays alive for this copy, and no element pointer is
-      ;; retained when the new backing array is installed.
-      (while (< i count)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset (__tl_array-data next) i)
-              (ptr-read
-                (ptr-offset (__tl_array-data pool.canonical-span-records) i))))
-          (set! i (+ i 1))))
-      (set! pool.canonical-span-records next))))
+  (ast-expr-node-pool-state-canonical-records-reserve-in-place!
+    pool
+    (* (array-length pool.canonical-span-records) 2)))
 
 (define (ast-expr-node-pool-state-respan-records-grow-in-place!
   [pool : (&mut pool AstExprNodePoolState)]) : unit
@@ -11045,6 +11055,20 @@
   [program : AstProgram]) : AstProgramCompaction
   (begin
     (ast-node-pool-context-reset-to! dest-pools 0 0)
+    ;; A destination semantic node gets one canonical record, from the first
+    ;; wrapper the traversal reaches, and copies a distinct source node that
+    ;; normally owns one already, so the source's record count is the expected
+    ;; size. Reserving it once replaces the doubling copies, which would stay
+    ;; dead in the destination arena for the rest of the compile. It is only a
+    ;; hint: growth stays checked, and the reserve never exceeds the record
+    ;; count the source already holds.
+    (let
+      [cell : (__tl_dyn-array AstExprNodePoolState)
+        (ast-expr-pool-cell dest-pools.expr-pool)]
+      (ast-expr-node-pool-state-canonical-records-reserve-in-place!
+        (&mut (array-ref cell 0))
+        (ast-node-pool-context-expr-canonical-span-count source-pools)))
+    (ast-node-pool-compat-context-sync-installed!)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
       [map-arena : i64 (arena.tl_arena_make)]

@@ -2076,6 +2076,312 @@
     (compiler-ast-generated-dense-list-operations-smoke?)
     "generated AST dense lists preserve capacity, order, and fallbacks"))
 
+;; Whole-program compaction reserves the destination's canonical span records
+;; from the source's record count, so the records are allocated once instead of
+;; through doubling copies. These rows build `count` literals, each under one
+;; distinct span (line = index + 1), and compact a program that reaches the
+;; first `reach` views.
+(define (compiler-ast-reserve-source-views
+  [pools : ast.AstNodePoolContext]
+  [count : i64]
+  [first-line : i64]) : ast.AstExprList
+  (let
+    [views : ast.AstExprList (ast.ast-expr-list-new)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [literal : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Literal (ast.ast-lit-int index)))]
+          [line : i64 (+ first-line index)]
+          (begin
+            (ast.ast-expr-list-push
+              (&mut views)
+              (ast.ast-expr-spanned-with-pools
+                (& pools)
+                literal
+                (ast.ast-source-span line 1 line 2)))
+            (set! index (+ index 1)))))
+      views)))
+
+(define (compiler-ast-reserve-program
+  [pools : ast.AstNodePoolContext]
+  [views : (& views ast.AstExprList)]
+  [reach : i64]) : ast.AstProgram
+  (let
+    [body : ast.AstExprList (ast.ast-expr-list-new)]
+    [index : i64 0]
+    (begin
+      (while (< index reach)
+        (begin
+          (ast.ast-expr-list-push
+            (&mut body)
+            (ast.ast-expr-list-get views index -1))
+          (set! index (+ index 1))))
+      (ast.ast-program
+        (ast.ast-decl-cons
+          (ast.ast-decl-def-id
+            (ci.intern-generated-name "reserve")
+            ast.AstMaybeType.No
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Unsafe body)))
+          (ast.ast-decl-list-new))))))
+
+;; The compacted views, in program order.
+(define (compiler-ast-reserve-compacted-views
+  [pools : (& pools ast.AstNodePoolContext)]
+  [program : ast.AstProgram]) : ast.AstExprList
+  (match program
+    [(ast.AstProgram.Program decls-box)
+      (match (ast.ast-decl-list-get
+        (& (deref decls-box))
+        0
+        (ast.ast-decl-fallback))
+        [(ast.AstDecl.Def _ _ _ body)
+          (match (ast.ast-node-pool-context-expr-get pools body)
+            [(ast.AstExpr.Unsafe exprs) exprs]
+            [_ (ast.ast-expr-list-new)])]
+        [_ (ast.ast-expr-list-new)])]))
+
+(define (compiler-ast-canonical-span-capacity
+  [pools : (& pools ast.AstNodePoolContext)]) : i64
+  (let
+    [state : ast.AstExprNodePoolState
+      (ast.ast-expr-pool-cell-read pools.expr-pool)]
+    (array-length state.canonical-span-records)))
+
+(define (compiler-ast-reserve-view-line?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [views : (& views ast.AstExprList)]
+  [index : i64]
+  [line : i64]) : bool
+  (compiler-ast-maybe-span-start-line?
+    (ast.ast-node-pool-context-expr-view-span
+      pools
+      (ast.ast-expr-list-get views index -1))
+    line))
+
+;; Every view renders its own line, `first-line` onward.
+(define (compiler-ast-reserve-views-render?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [views : (& views ast.AstExprList)]
+  [first-line : i64]) : bool
+  (let
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index (ast.ast-expr-list-len views)))
+        (begin
+          (set!
+            ok
+            (compiler-ast-reserve-view-line?
+              pools
+              views
+              index
+              (+ first-line index)))
+          (set! index (+ index 1))))
+      ok)))
+
+;; `extra` more spanned literals pushed into the destination after compaction
+;; exercise the checked growth past the reservation.
+(define (compiler-ast-canonical-reserve-row?
+  [count : i64]
+  [reach : i64]
+  [extra : i64]
+  [expected-capacity : i64]) : bool
+  (let
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [views : ast.AstExprList
+      (compiler-ast-reserve-source-views source-pools count 1)]
+    [program : ast.AstProgram
+      (compiler-ast-reserve-program source-pools (& views) reach)]
+    (match (ast.ast-program-compact-with-pools source-pools dest-pools program)
+      [(ast.AstProgramCompaction out-program out-pools)
+        (let
+          [out-views : ast.AstExprList
+            (compiler-ast-reserve-compacted-views (& out-pools) out-program)]
+          [compacted-ok : bool
+            (and
+              (= (ast.ast-expr-list-len (& out-views)) reach)
+              (=
+                (ast.ast-node-pool-context-expr-canonical-span-count out-pools)
+                reach)
+              (= (ast.ast-node-pool-context-expr-respan-count out-pools) 0)
+              (compiler-ast-reserve-views-render? (& out-pools) (& out-views) 1))]
+          [extra-views : ast.AstExprList
+            (compiler-ast-reserve-source-views dest-pools extra (+ reach 1))]
+          (and
+            compacted-ok
+            (=
+              (ast.ast-node-pool-context-expr-canonical-span-count dest-pools)
+              (+ reach extra))
+            (=
+              (compiler-ast-canonical-span-capacity (& dest-pools))
+              expected-capacity)
+            (compiler-ast-reserve-views-render? (& dest-pools) (& out-views) 1)
+            (compiler-ast-reserve-views-render?
+              (& dest-pools)
+              (& extra-views)
+              (+ reach 1))))])))
+
+;; Traversal can pick a different first span than the source's canonical one.
+;; Here the canonical owner (span 1) is unreachable and view B (span 2) comes
+;; first, so the two later span-1 views each need a destination ReSpan: one
+;; canonical record and two ReSpans from a source holding one of each, as the
+;; unreserved compactor produced. The shared view B is copied once.
+(define (compiler-ast-canonical-reserve-reordered-first-span?) : bool
+  (let
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 5)))]
+    [span-a : ast.AstSourceSpan (ast.ast-source-span 1 1 1 2)]
+    [_unreachable-owner : i64
+      (ast.ast-expr-spanned-with-pools source-pools literal span-a)]
+    [view-b : i64
+      (ast.ast-expr-spanned-with-pools
+        source-pools
+        literal
+        (ast.ast-source-span 2 1 2 2))]
+    [view-a1 : i64
+      (ast.ast-expr-spanned-with-pools source-pools literal span-a)]
+    [view-a2 : i64
+      (ast.ast-expr-spanned-with-pools source-pools literal span-a)]
+    [views : ast.AstExprList (ast.ast-expr-list-new)]
+    [_views : unit
+      (begin
+        (ast.ast-expr-list-push (&mut views) view-b)
+        (ast.ast-expr-list-push (&mut views) view-a1)
+        (ast.ast-expr-list-push (&mut views) view-a2)
+        (ast.ast-expr-list-push (&mut views) view-b))]
+    [source-counts-ok : bool
+      (and
+        (= (ast.ast-node-pool-context-expr-canonical-span-count source-pools) 1)
+        (= (ast.ast-node-pool-context-expr-respan-count source-pools) 1))]
+    [program : ast.AstProgram
+      (compiler-ast-reserve-program source-pools (& views) 4)]
+    (match (ast.ast-program-compact-with-pools source-pools dest-pools program)
+      [(ast.AstProgramCompaction out-program out-pools)
+        (let
+          [out : ast.AstExprList
+            (compiler-ast-reserve-compacted-views (& out-pools) out-program)]
+          (and
+            source-counts-ok
+            (=
+              (ast.ast-node-pool-context-expr-canonical-span-count out-pools)
+              1)
+            (= (ast.ast-node-pool-context-expr-respan-count out-pools) 2)
+            (=
+              (ast.ast-expr-list-get (& out) 0 -1)
+              (ast.ast-expr-list-get (& out) 3 -2))
+            (compiler-ast-reserve-view-line? (& out-pools) (& out) 0 2)
+            (compiler-ast-reserve-view-line? (& out-pools) (& out) 1 1)
+            (compiler-ast-reserve-view-line? (& out-pools) (& out) 2 1)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? out-pools)
+            (= (compiler-ast-canonical-span-capacity (& out-pools)) 64)))])))
+
+;; A destination reused for a second, smaller compaction keeps the larger
+;; reservation, and the first generation's dense slots must not leak into the
+;; second. The source lives in its own arena and is destroyed before the
+;; destination is read: the reserved records belong to the destination.
+(define (compiler-ast-canonical-reserve-reuse-and-owners?) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    [dest : arena.Arena (arena.make)]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        8
+        8
+        (arena.raw-handle dest))]
+    [first-ok : bool
+      (let
+        [source-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 8 8)]
+        [views : ast.AstExprList
+          (compiler-ast-reserve-source-views source-pools 150 1)]
+        [program : ast.AstProgram
+          (compiler-ast-reserve-program source-pools (& views) 150)]
+        (match (ast.ast-program-compact-with-pools
+          source-pools
+          dest-pools
+          program)
+          [(ast.AstProgramCompaction _ out-pools)
+            (and
+              (=
+                (ast.ast-node-pool-context-expr-canonical-span-count out-pools)
+                150)
+              (= (compiler-ast-canonical-span-capacity (& out-pools)) 150))]))]
+    [source : arena.Arena (arena.make)]
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        8
+        8
+        (arena.raw-handle source))]
+    [views : ast.AstExprList
+      (compiler-ast-reserve-source-views source-pools 70 1000)]
+    [program : ast.AstProgram
+      (compiler-ast-reserve-program source-pools (& views) 70)]
+    [compacted : ast.AstProgramCompaction
+      (ast.ast-program-compact-with-pools source-pools dest-pools program)]
+    [_destroy-source : unit
+      (begin
+        (ast.ast-node-pool-context-destroy-storage! source-pools)
+        (unsafe
+          (arena.destroy source)))]
+    [ok : bool
+      (match compacted
+        [(ast.AstProgramCompaction out-program out-pools)
+          (let
+            [out : ast.AstExprList
+              (compiler-ast-reserve-compacted-views (& out-pools) out-program)]
+            (and
+              first-ok
+              (= (ast.ast-expr-list-len (& out)) 70)
+              (=
+                (ast.ast-node-pool-context-expr-canonical-span-count out-pools)
+                70)
+              (= (compiler-ast-canonical-span-capacity (& out-pools)) 150)
+              (compiler-ast-reserve-views-render? (& out-pools) (& out) 1000)
+              (ast.ast-node-pool-context-expr-span-oracle-ok? out-pools)))])]
+    (begin
+      (unsafe
+        (arena.set! home))
+      (ast.ast-node-pool-context-destroy-storage! dest-pools)
+      (unsafe
+        (arena.destroy dest))
+      ok)))
+
+(define (compiler-ast-canonical-reserve-smoke?) : bool
+  (and
+    ;; count reach extra capacity: no records keep the initial 64 rows; 64
+    ;; fit them; 65 and 200 are reserved once where doubling gave 128 and
+    ;; 256; an unreachable tail reserves at most the source count; growth past
+    ;; the reservation doubles it.
+    (compiler-ast-canonical-reserve-row? 0 0 0 64)
+    (compiler-ast-canonical-reserve-row? 64 64 0 64)
+    (compiler-ast-canonical-reserve-row? 65 65 0 65)
+    (compiler-ast-canonical-reserve-row? 200 200 0 200)
+    (compiler-ast-canonical-reserve-row? 200 3 0 200)
+    (compiler-ast-canonical-reserve-row? 65 65 1 130)
+    (compiler-ast-canonical-reserve-reordered-first-span?)
+    (compiler-ast-canonical-reserve-reuse-and-owners?)))
+
+(test
+  compiler-ast-canonical-reserve
+  (tl_test.assert-true
+    (compiler-ast-canonical-reserve-smoke?)
+    "compaction reserves canonical span records once and keeps growth checked"))
+
 (define (main) : i64
   (begin
     (unless (= (ast_tests.compiler-ast-smoke) 23) (return 2))
@@ -2109,4 +2415,5 @@
       (compiler-ast-expr-binding-clause-syntax-identity-smoke?)
       (return 23))
     (unless (compiler-ast-generated-dense-list-operations-smoke?) (return 25))
+    (unless (compiler-ast-canonical-reserve-smoke?) (return 27))
     42))

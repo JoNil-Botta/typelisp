@@ -1232,25 +1232,17 @@
 ;; memory corruption, not a type error. `ast-node-stride-pinned?` cross-checks
 ;; both against the layout the compiler actually gives an array slot.
 ;;
-;; These are zero-argument FUNCTIONS, not globals, and that is deliberate.
-;; Two other spellings have been investigated:
-;;
-;;   * A literal-initialised global folds to the same immediate, but naming the
-;;     stride that way perturbs the SEED compiler's inliner: the stage0
-;;     compiler then inlines `ty-node-get` into `ty-node-shallow-eq?`, and the
-;;     resulting stage1 segfaults in `tc-move-check-expr`.
-;;   * A `defmacro` was blocked because the macro expander did not descend into
-;;     `(int->ptr x : (Ptr T))` operands. That traversal gap is fixed; changing
-;;     this performance-sensitive representation still requires its own
-;;     bootstrap check rather than riding that fix.
-;;
-;; A zero-arg function inlines and folds to the same immediate the literal
-;; produced.
-(define (ast-expr-node-bytes) : i64
-  32)
+;; They are macros that expand to the literal, so every use carries an
+;; immediate, not a call. In particular the segment-bases getters' lowered
+;; bodies stay small enough for the single-block inliner, which prices them
+;; before any pass could fold a call away. A literal-initialised global is not
+;; used: naming the stride that way perturbed the seed compiler's inliner, so
+;; that stage1 miscompiled `tc-move-check-expr`.
+(defmacro (ast-expr-node-bytes) : Expr
+  '32)
 
-(define (ast-type-node-bytes) : i64
-  24)
+(defmacro (ast-type-node-bytes) : Expr
+  '24)
 
 (define ast-expr-node-pool-segment-bytes : i64
   ;; Arena allocation per segment, plus the array's separately profiled
@@ -4456,13 +4448,14 @@
 ;; installed-pool fast path, and much less than a per-node
 ;; `AstNodePoolContext` read.
 (define (ast-expr-segment-bases-get [segment-bases : i64] [id : i64]) : AstExpr
-  (let
-    [biased-base : i64
-      (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
-    (unsafe
-      (ptr-read
-        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          (ptr-read
+            (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16)))
+          (* id (ast-expr-node-bytes)))
+        : (Ptr AstExpr)))))
 
 ;; Immediate representation-level view of one row in the current pool
 ;; generation. Segments never relocate, so appending or rewriting other rows
@@ -4609,13 +4602,14 @@
 ;; the context lookup out of recursive walks and pay the same per-node cost as
 ;; the installed-pool fast path.
 (define (ast-type-segment-bases-get [segment-bases : i64] [id : i64]) : AstType
-  (let
-    [biased-base : i64
-      (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
-    (unsafe
-      (ptr-read
-        (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (+
+          (ptr-read
+            (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10)))
+          (* id (ast-type-node-bytes)))
+        : (Ptr AstType)))))
 
 ;; A borrowed Slice or `bytes` is a fat reference: two integer-class words, the
 ;; data pointer and then the signed length, with no referent record in memory.

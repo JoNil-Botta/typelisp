@@ -5,6 +5,79 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
+(import compiler_parse_core as parser)
+(import stdlib.test)
+
+(define (compiler-load-contextual-origin-check
+  [source : String]
+  [fallback : String]
+  [slot : i64]
+  [count : i64]) : unit
+  (match (parser.parse-ast-source source)
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program box))
+      (let
+        [input : ast.AstDeclList (deref box)]
+        [decls : ast.AstDeclList
+          (compiler_load.compiler-load-contextual-moduleless-decls
+            (owned_view.compiler-owned-shared-view input)
+            (owned_view.compiler-owned-shared-view fallback)
+            (ci.intern-generated-name fallback))]
+        (begin
+          (test.assert-i64-eq
+            (ast.ast-decl-list-len (& decls))
+            count
+            "only a missing module gets a prefix")
+          (match (parser.compiler-parse-semantic-origin-run (& decls) slot)
+            [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+              (let
+                [origin : parser.CompilerParseSemanticOrigin
+                  (parser.compiler-parse-semantic-origin-run-get
+                    (& run)
+                    0
+                    (parser.compiler-parse-semantic-origin-fallback))]
+                (begin
+                  (test.assert-string-eq
+                    (ci.intern-str origin.written-name)
+                    "Value"
+                    "the original source name survives")
+                  (test.assert-i64-eq
+                    (ast.ast-source-span-start-line origin.span)
+                    2
+                    "the source token line survives")
+                  (test.assert-i64-eq
+                    (ast.ast-source-span-start-col origin.span)
+                    12
+                    "the source token column survives")))]
+            [_
+              (test.assert-true
+                false
+                "the shifted declaration retains its semantic origin")])
+          (match (parser.compiler-parse-decl-origin-span (& decls) slot)
+            [(parser.CompilerParseMaybeDeclSpan.Some span)
+              (test.assert-i64-eq
+                (ast.ast-source-span-start-line span)
+                2
+                "the declaration span survives")]
+            [_
+              (test.assert-true
+                false
+                "the shifted declaration retains its diagnostic origin")])))]
+    [_ (test.assert-true false "origin fixture parses")]))
+
+(test
+  compiler-load-implicit-module-preserves-declaration-origins
+  (begin
+    (compiler-load-contextual-origin-check
+      "\n(defstruct Value (x i64))"
+      "implicit"
+      1
+      2)
+    (compiler-load-contextual-origin-check "\n(defstruct Value (x i64))" "" 0 1)
+    (compiler-load-contextual-origin-check
+      "(module explicit)\n(defstruct Value (x i64))"
+      "implicit"
+      1
+      2)))
 
 (define (compiler-load-identity-current-ok?) : bool
   (let

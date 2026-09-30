@@ -5449,7 +5449,9 @@
   (if (and
     (> (string.string-length source-module) 0)
     (not (compiler-load-decl-list-has-module? decls)))
-    (ast.ast-decl-cons (ast.ast-decl-module-id source-module-id) decls)
+    (compiler-load-decl-list-prepend
+      (ast.ast-decl-module-id source-module-id)
+      decls)
     decls))
 
 (define (compiler-load-seen-module-with-paths

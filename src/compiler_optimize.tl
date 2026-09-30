@@ -73214,6 +73214,11 @@
 (define (opt-bce-reason-unsatisfiable) : i64
   54)
 
+;; The derivation ran, and the checks it removes do not pay for a clone this
+;; large (opt-bce-mb-clone-instr-budget).
+(define (opt-bce-reason-size-benefit) : i64
+  55)
+
 ;; VERIFY: the rewrite was built and the post-application verifier refused it,
 ;; which retires the loop for the rest of the invocation.
 (define (opt-bce-reason-verify) : i64
@@ -73250,6 +73255,7 @@
     [(= reason (opt-bce-reason-region-inner)) "guard:region-gate"]
     [(= reason (opt-bce-reason-free-cost)) "guard:free-cost"]
     [(= reason (opt-bce-reason-unsatisfiable)) "guard:unsatisfiable"]
+    [(= reason (opt-bce-reason-size-benefit)) "guard:size-benefit"]
     [(= reason (opt-bce-reason-verify)) "verify:rejected"]
     [else "other"]))
 
@@ -73260,6 +73266,8 @@
 (define opt-bce-trace-reason : i64
   0)
 (define opt-bce-trace-derived : i64
+  (- 0 1))
+(define opt-bce-trace-instrs : i64
   (- 0 1))
 (define opt-bce-trace-kept : i64
   (- 0 1))
@@ -73285,6 +73293,7 @@
     (set! opt-bce-trace-reason (opt-bce-reason-none))
     (set! opt-bce-trace-derived (- 0 1))
     (set! opt-bce-trace-kept (- 0 1))
+    (set! opt-bce-trace-instrs (- 0 1))
     (set! opt-bce-trace-guard (- 0 1))
     (set! opt-bce-trace-nested-entry? false)
     (set! opt-bce-trace-free? free?)))
@@ -73308,6 +73317,11 @@
 
 (define (opt-bce-trace-nested-entry-flag) : bool
   opt-bce-trace-nested-entry?)
+
+;; The clone's size in the growth budget's unit (opt-bce-mb-body-instrs), recorded
+;; where the shape measures it so the line reports the number admission read.
+(define (opt-bce-trace-instrs! [instrs : i64]) : unit
+  (set! opt-bce-trace-instrs instrs))
 
 (define (opt-bce-trace-derivation! [derived : i64] [kept : i64]) : unit
   (begin
@@ -73374,6 +73388,9 @@
     (string.int->string opt-bce-trace-derived)
     "|blocks="
     (string.int->string blocks)
+    (if (>= opt-bce-trace-instrs 0)
+      (str_cat.str-cat "|instrs=" (string.int->string opt-bce-trace-instrs))
+      "")
     (if (> opt-bce-trace-kept 0)
       (str_cat.str-cat "|kept=" (string.int->string opt-bce-trace-kept))
       "")
@@ -78669,6 +78686,67 @@
 (define (opt-bce-mb-block-max) : i64
   160)
 
+;; SIZE AND BENEFIT for a FLAT loop (#8259). The flat budget above is what the
+;; clone may cost whatever it removes: a body inside it is admitted on one
+;; derived check, as before. A bigger flat body is not refused on size alone.
+;; It is admitted when its derived checks pay for it, at
+;; (opt-bce-mb-clone-instrs-per-derived) cloned instructions per derived check.
+;;
+;; The rate is a static-code price, in the unit the growth budget counts. A
+;; derived check in a flat body is removed from every trip that reaches it, and
+;; a removal is a compare and a branch per trip. The clone is paid once, in
+;; code. Duplicated code has a cost an instruction count does not show: the
+;; checked inliner measures a caller with its loops versioned, so a clone that
+;; doubles an inlined callee's loop can price that callee out of the inline
+;; (with no size limit at all, `regalloc_greedy`'s pair loop did exactly that,
+;; +6.3% instructions). The rate keeps a big clone to loops that remove many
+;; checks per trip.
+;;
+;; A NEST or a REGION keeps its fixed budget below. There a derived check in
+;; the outer body is removed once per OUTER iteration, which no per-check rate
+;; can price without a trip estimate the IR does not have.
+(define (opt-bce-mb-clone-instrs-per-derived) : i64
+  16)
+
+;; The largest flat body the shape scan measures and hands to the derivation at
+;; all: a bookkeeping and compile-time bound, like the block bound above, not
+;; the growth rule. Nothing is dimensioned by it.
+(define (opt-bce-mb-clone-instr-ceiling) : i64
+  640)
+
+;; What a flat clone of a body deriving `derived` checks may cost.
+(define (opt-bce-mb-clone-instr-budget
+  [region? : bool]
+  [inner : OptLabelSet]
+  [derived : i64]
+  [derived-in-inner? : bool]) : i64
+  (let
+    [flat? : bool (= (opt-label-count inner) 0)]
+    [fixed : i64
+      (if region?
+        (opt-bce-mb-region-instr-max)
+        (if flat?
+          (opt-bce-mb-instr-max)
+          (opt-bce-mb-nest-instr-max)))]
+    [paid : i64
+      (if (or flat? derived-in-inner?)
+        (* derived (opt-bce-mb-clone-instrs-per-derived))
+        0)]
+    (if (> paid fixed)
+      paid
+      fixed)))
+
+;; Is this flat shape's clone bigger than its derived checks pay for? Nests and
+;; regions were already held to their fixed budgets by the shape scan.
+(define (opt-bce-mb-clone-too-big?
+  [region? : bool]
+  [inner : OptLabelSet]
+  [body-instrs : i64]
+  [derived : i64]
+  [derived-in-inner? : bool]) : bool
+  (> body-instrs
+    (opt-bce-mb-clone-instr-budget region? inner derived derived-in-inner?)))
+
 ;; A loop NEST (the candidate body contains another loop's header) clones the
 ;; same way -- the inner loop is just more blocks in the group -- but its
 ;; economics differ: the removed checks are at most one per OUTER iteration
@@ -80276,18 +80354,14 @@
         (opt-bce-mb-preheader-outside-loops?
           (owned_view.compiler-owned-reference-shared-view loops)
           pred))]
-    [block-max : i64
-      (if region?
-        (opt-bce-mb-region-block-max)
-        (if nested?
-          (opt-bce-mb-nest-block-max)
-          (opt-bce-mb-block-max)))]
-    [instr-max : i64
-      (if region?
-        (opt-bce-mb-region-instr-max)
-        (if nested?
-          (opt-bce-mb-nest-instr-max)
-          (opt-bce-mb-instr-max)))]
+    ;; A flat body is measured against the ceiling here and priced against its
+    ;; derived checks once the derivation has run
+    ;; (opt-bce-mb-flat-clone-instr-budget); a nest or region is refused on its
+    ;; fixed budget before any derivation.
+    [block-max : i64 (opt-bce-mb-clone-instr-ceiling)]
+    [instr-max : i64 (opt-bce-mb-clone-instr-ceiling)]
+    [body-instrs : i64 (opt-bce-mb-body-instrs body-blocks 0)]
+    [_trace-instrs : unit (opt-bce-trace-instrs! body-instrs)]
     [reason : i64
       (cond
         [(and
@@ -80301,8 +80375,7 @@
           (opt-bce-reason-none)]
         [(> (opt-label-count body-labels) block-max)
           (opt-bce-reason-body-too-big)]
-        [(> (opt-bce-mb-body-instrs body-blocks 0) instr-max)
-          (opt-bce-reason-body-too-big)]
+        [(> body-instrs instr-max) (opt-bce-reason-body-too-big)]
         ;; The scan's own entry (`opt-bce-mb-loop-shape`) also asks both of
         ;; these before it asks about the preheader, so on that path they are
         ;; already decided. They stay here as this function's own guarantee of
@@ -85846,7 +85919,17 @@
           (opt-bce-mb-derived-in-inner?
             (__tl-project-field shape body-blocks)
             shape.inner
-            dr.keep))))
+            dr.keep)))
+      ;; A flat body past the flat budget must be paid for by what it derives.
+      (opt-bce-mb-clone-too-big?
+        shape.region?
+        shape.inner
+        (opt-bce-mb-body-instrs (__tl-project-field shape body-blocks) 0)
+        dr.derived
+        (opt-bce-mb-derived-in-inner?
+          (__tl-project-field shape body-blocks)
+          shape.inner
+          dr.keep)))
       ;; Which of the two the clause above was: a body that derived NOTHING is
       ;; the pass's oldest rejection and reads differently in a census from a
       ;; body that derived checks and still owed more of them.
@@ -85859,6 +85942,16 @@
                 (opt-bce-mb-body-calls shape.body-blocks 0)
                 (opt-label-count shape.body-labels)))
             (opt-bce-reason-floor)]
+          [(opt-bce-mb-clone-too-big?
+              shape.region?
+              shape.inner
+              (opt-bce-mb-body-instrs (__tl-project-field shape body-blocks) 0)
+              dr.derived
+              (opt-bce-mb-derived-in-inner?
+                (__tl-project-field shape body-blocks)
+                shape.inner
+                dr.keep))
+            (opt-bce-reason-size-benefit)]
           [else (opt-bce-reason-region-inner)]))
       (match (opt-bce-version-guard-finish
         (compiler-opt-global-shared-view first)

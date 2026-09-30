@@ -388,6 +388,16 @@ using that job's original expression IDs and recorded divergence facts.
 Lambda bodies start from their capture locals so their exits cannot discharge
 or require the enclosing function's obligations or inherit its loop depth.
 
+`AstType.Invalidate` retains a parameter's lifetime destruction effect through
+callable identity, substitution, reflection and surface serialization (schema
+12, type tag 39). Parameter binding exposes the inner type while a lexical
+marker records the enclosing callable's effects. Its obligations reuse the
+existing per-exit engine, but only canonical safe destruction or forwarding to
+another effectful parameter discharges them; ordinary ownership transfer does
+not. Calls substitute all effect lifetimes before applying the existing arena
+move, borrow, active-target and atomic-user checks. Lowering erases the wrapper
+from physical parameters without changing their ABI.
+
 The comptime evaluator has no import scope. Before a source `(comptime ...)`
 fold or a fixed `make-array` length is evaluated, typechecking and lowering
 resolve each type literal of the expression in the current module

@@ -581,6 +581,7 @@
       entry-label
       seed-facts
       (__tl_make-array i64 0)
+      (opt.opt-block-expr-tables-new)
       block)))
 
 (define (opt-test-optimize-block-list
@@ -5351,12 +5352,12 @@
     [vector-cse : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-vector-cse-instrs))]
     [vector-reduce-cse : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-vector-reduce-cse-instrs))]
     [vector-stale : ir.CompilerIrInstrSeq
       (opt-test-fold-instrs
@@ -7371,7 +7372,7 @@
     [rewritten : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt.compiler-opt-global-shared-view input))]
     [copied : ir.CompilerIrInstrSeq
       (opt-test-copy-instrs
@@ -7892,37 +7893,37 @@
     [cse : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-self-test-instrs))]
     [sqrt : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-sqrt-instrs))]
     [store : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-store-clears-instrs))]
     [redef : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-operand-redef-instrs))]
     [probe : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-probe-instrs))]
     [probe-different : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-probe-different-instrs))]
     [shift-count-types : ir.CompilerIrInstrSeq
       (opt-test-cse-instrs
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.OptExprTable.Nil)
+        (opt.opt-expr-table-new)
         (opt-cse-shift-count-type-instrs))]
     (begin
       (unless (= (opt-count-arith-instr-seq cse) 1) (return 1))
@@ -10287,7 +10288,7 @@
         (opt.OptCopyEnv.Nil)
         (opt-test-cse-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
-          (opt.OptExprTable.Nil)
+          (opt.opt-expr-table-new)
           (opt-copy-cse-instrs)))]
     [cse-dce : ir.CompilerIrInstrSeq
       (let
@@ -52496,6 +52497,7 @@
           (opt.opt-load-cse-kinds-cap-for-size
             (ir.compiler-ir-instr-seq-count seq))
           (opt.opt-alias-seed-params type-segment-bases params))
+        (opt.opt-expr-table-new)
         (opt.compiler-opt-global-shared-view seq))
       seq)))
 
@@ -64071,6 +64073,90 @@
     (compiler-optimize-simd-local-cse-self-test)
     42
     "local CSE and its fast scan recognize exact Splat/VectorBinOp/VectorCompare duplicates while keeping distinct op, lane and element-type keys"))
+
+;; The block pass shares one CSE table pair across a function's blocks, and each
+;; block walk clears its table first (#5731). A fallthrough block ends without
+;; the terminator that would otherwise clear the table, so this is the case where
+;; a leak would show: `b1` must keep its own first `add` and fold only its
+;; duplicate, never reuse `entry`'s `%1`.
+(define (opt-cse-block-arith-count
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : String]) : i64
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+    [(opt.OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-count-arith-instr-seq (& instrs))])]
+    [(opt.OptMaybeBlock.No) -1]))
+
+(test
+  cse-tables-do-not-cross-a-fallthrough-block
+  (match (opt.optimize-block-list-for-function-pass
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    (ast.ast-node-pool-reader-context-current)
+    (ast.ast-node-pool-reader-type-segment-bases)
+    8
+    (ir.compiler-ir-param-seq-empty)
+    (irt.blocks
+      "entry:
+         %1 = add %0, 1 : i64
+         %4 = add %0, 1 : i64
+       b1:
+         %2 = add %0, 1 : i64
+         %3 = add %0, 1 : i64
+         return %3"))
+    [(opt.OptBlockListPassResult.Result blocks _)
+      (begin
+        (test.assert-i64-eq
+          (opt-cse-block-arith-count (& blocks) "entry")
+          1
+          "entry folds its own duplicate")
+        (test.assert-i64-eq
+          (opt-cse-block-arith-count (& blocks) "b1")
+          1
+          "b1 keeps its first add: no entry reaches it from the fallthrough block"))]))
+
+;; The block-local CSE table compacts in place (#5731). Redefining `%0` drops
+;; exactly the entries that use it, and a survivor between them still matches.
+;; Redefining `%2` drops the entry whose result it was. A call clears the table,
+;; and the same table is filled and read again afterwards.
+(test
+  cse-table-compacts-invalidated-entries-and-reuses-after-clear
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [out : ir.CompilerIrInstrSeq
+      (opt-test-cse-instrs
+        bases
+        (opt.opt-expr-table-new)
+        (opt-test-instrs
+          (irt.instr "%1 = add %0, 1 : i64")
+          (irt.instr "%2 = add %7, 1 : i64")
+          (irt.instr "%3 = mul %0, 2 : i64")
+          (irt.instr "%0 = mov 5 : i64")
+          (irt.instr "%4 = add %0, 1 : i64")
+          (irt.instr "%5 = add %7, 1 : i64")
+          (irt.instr "%2 = mov 9 : i64")
+          (irt.instr "%6 = add %7, 1 : i64")
+          (irt.instr "%8 = call f() : i64")
+          (irt.instr "%9 = add %7, 1 : i64")
+          (irt.instr "%10 = add %7, 1 : i64")))]
+    [expected : ir.CompilerIrInstrSeq
+      (opt-test-instrs
+        (irt.instr "%1 = add %0, 1 : i64")
+        (irt.instr "%2 = add %7, 1 : i64")
+        (irt.instr "%3 = mul %0, 2 : i64")
+        (irt.instr "%0 = mov 5 : i64")
+        (irt.instr "%4 = add %0, 1 : i64")
+        (irt.instr "%5 = mov %2 : i64")
+        (irt.instr "%2 = mov 9 : i64")
+        (irt.instr "%6 = add %7, 1 : i64")
+        (irt.instr "%8 = call f() : i64")
+        (irt.instr "%9 = add %7, 1 : i64")
+        (irt.instr "%10 = mov %9 : i64"))]
+    (test.assert-true
+      (opt.opt-instr-seq-eq bases out expected)
+      "stale operands and results are dropped, survivors still match, and the cleared table is reused")))
 
 (test
   simd-gvn-strict-dominators

@@ -485,11 +485,16 @@ these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
 Block-local CSE (`opt-cse-instr`) and the Slice-word CSE in the load/copy walk
-keep one compact entry vector per block walk (`OptExprTable`). Invalidating a
-var compacts the surviving entries in place. Calls, stores, shuffles and
-control-flow boundaries reset its length and keep the storage. An entry is added
-only after its lookup missed, so live keys are unique and entry order never
-decides a lookup. No caller retains an older table.
+reuse one table pair per function pass (`OptExprTable`), clearing each table
+before its block walk. Keys keep stable positions; parallel integer storage
+records results, live entries and collision links. Power-of-two bucket heads
+index expression hashes, and lookup checks structural equality within the chain.
+The index grows at half occupancy by relinking live positions. Invalidation
+unlinks dead entries and compacts only live positions. Calls, stores, shuffles
+and control-flow boundaries clear lengths and advance the bucket generation,
+retaining capacity without scanning it; generation rollover resets all stamps.
+Entries are added only after a lookup miss, so live keys are unique. No caller
+retains an older table or a view across vector growth.
 
 The level-2 inline stage rewrites each caller inside one phase of a scratch
 arena and keeps only the caller's final body, cloned through the job's explicit

@@ -6789,27 +6789,48 @@
 ;; positions of the entries still valid, oldest first. Invalidating a var
 ;; compacts `live` in place -- integers only -- instead of rebuilding the whole
 ;; list, which made each definition cost an allocation per live entry. A boundary
-;; that clears the table resets all three lengths and keeps their capacity, so the
+;; that clears the table resets the lengths and keeps their capacity, so the
 ;; per-pass tables grow only past the largest block seen and a key is copied only
 ;; by that growth. Live keys are unique -- an entry is added only after its lookup
 ;; missed -- so entry order never decides a lookup.
 (import (vector.vector OptExprKey core) as opt_expr_key_vec)
 
+(defstruct OptExprLink
+  (hash i64)
+  (previous i64)
+  (next i64))
+
+(import (vector.vector OptExprLink core) as opt_expr_link_vec)
+
 (defstruct OptExprState
   (keys opt_expr_key_vec.Vec)
   (vars opt_dense_i64_vec.Vec)
-  (live opt_dense_i64_vec.Vec))
+  (live opt_dense_i64_vec.Vec)
+  (links opt_expr_link_vec.Vec)
+  (heads (__tl_dyn-array i64))
+  (stamps (__tl_dyn-array i64))
+  (generation i64))
 
 (defenum OptExprTable
   (Dense (Box OptExprState)))
 
 (define (opt-expr-table-with-capacity [capacity : i64]) : OptExprTable
-  (OptExprTable.Dense
-    (box
-      (OptExprState
-        (opt_expr_key_vec.with-capacity capacity)
-        (opt_dense_i64_vec.with-capacity capacity)
-        (opt_dense_i64_vec.with-capacity capacity)))))
+  (let
+    [buckets : i64
+      (opt_i64_i64_map.round-capacity
+        (if (< capacity 4)
+          4
+          capacity))]
+    (OptExprTable.Dense
+      (box
+        (OptExprState
+          (opt_expr_key_vec.with-capacity capacity)
+          (opt_dense_i64_vec.with-capacity capacity)
+          (opt_dense_i64_vec.with-capacity capacity)
+          (opt_expr_link_vec.with-capacity capacity)
+          (__tl_make-array i64 buckets)
+          (__tl_make-array i64 buckets)
+          1)))))
 
 (define (opt-expr-table-new) : OptExprTable
   (opt-expr-table-with-capacity 4))
@@ -6824,7 +6845,15 @@
             (begin
               (set! content.keys.len 0)
               (set! content.vars.len 0)
-              (set! content.live.len 0))
+              (set! content.live.len 0)
+              (set! content.links.len 0)
+              (if (= content.generation 9223372036854775807)
+                (begin
+                  (set!
+                    content.stamps
+                    (__tl_make-array i64 (array-length content.heads)))
+                  (set! content.generation 1))
+                (set! content.generation (+ content.generation 1))))
             unit))
         (OptExprTable.Dense state))]))
 
@@ -6839,7 +6868,59 @@
 (define (opt-block-expr-tables-new) : OptBlockExprTables
   (OptBlockExprTables (opt-expr-table-new) (opt-expr-table-new)))
 
+;; A stamp makes ordinary clears independent of the largest earlier block.
+;; Bucket counts are powers of two; only entries from the current generation
+;; belong to a bucket. The explicit rollover reset cannot revive old heads.
+(define (opt-expr-index-head
+  [content : (& content OptExprState)]
+  [key-hash : i64]) : i64
+  (let
+    [bucket : i64 (bit-and key-hash (- (array-length content.heads) 1))]
+    (if (= (array-ref content.stamps bucket) content.generation)
+      (array-ref content.heads bucket)
+      -1)))
+
+(define (opt-expr-index-link!
+  [content : (&mut content OptExprState)]
+  [position : i64]
+  [key-hash : i64]) : unit
+  (let
+    [bucket : i64 (bit-and key-hash (- (array-length content.heads) 1))]
+    [head : i64 (opt-expr-index-head (& content) key-hash)]
+    (begin
+      (set! (array-ref content.links.slots position).previous -1)
+      (set! (array-ref content.links.slots position).next head)
+      (if (>= head 0)
+        (set! (array-ref content.links.slots head).previous position)
+        unit)
+      (set! (array-ref content.heads bucket) position)
+      (set! (array-ref content.stamps bucket) content.generation))))
+
+;; Grow at half occupancy and rebuild integer links from the live positions.
+;; Dead keys neither lengthen lookup chains nor participate in rehashing.
+(define (opt-expr-index-reserve! [content : (&mut content OptExprState)]) : unit
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& content.live))]
+    [capacity : i64 (array-length content.heads)]
+    (when
+      (> (+ count 1) (/ capacity 2))
+      (let
+        [fresh-capacity : i64 (* capacity 2)]
+        [index : i64 0]
+        (begin
+          (set! content.heads (__tl_make-array i64 fresh-capacity))
+          (set! content.stamps (__tl_make-array i64 fresh-capacity))
+          (set! content.generation 1)
+          (while (< index count)
+            (let
+              [position : i64 (array-ref content.live.slots index)]
+              [key-hash : i64 (array-ref content.links.slots position).hash]
+              (begin
+                (opt-expr-index-link! content position key-hash)
+                (set! index (+ index 1))))))))))
+
 (define (opt-expr-table-add
+  [type-segment-bases : i64]
   [table : (& table OptExprTable)]
   [key : OptExprKey]
   [var : i64]) : OptExprTable
@@ -6849,11 +6930,33 @@
         (let
           [content : (&mut state OptExprState) (&mut (__tl-box-place state))]
           [position : i64 (opt_expr_key_vec.len (& content.keys))]
+          [key-hash : i64 (opt-expr-key-hash type-segment-bases (& key))]
           (begin
+            (opt-expr-index-reserve! content)
             (opt_expr_key_vec.push-ref! (&mut content.keys) key)
             (opt_dense_i64_vec.push-ref! (&mut content.vars) var)
-            (opt_dense_i64_vec.push-ref! (&mut content.live) position)))
+            (opt_dense_i64_vec.push-ref! (&mut content.live) position)
+            (opt_expr_link_vec.push-ref!
+              (&mut content.links)
+              (OptExprLink key-hash -1 -1))
+            (opt-expr-index-link! content position key-hash)))
         (OptExprTable.Dense state))]))
+
+;; Only live entries occur in a hash bucket. Unlinking changes integer links,
+;; never keys; even a colliding key remains reachable when its neighbor dies.
+(define (opt-expr-table-unlink!
+  [content : (&mut content OptExprState)]
+  [position : i64]) : unit
+  (let
+    [link : OptExprLink (array-ref content.links.slots position)]
+    [bucket : i64 (bit-and link.hash (- (array-length content.heads) 1))]
+    (begin
+      (if (>= link.previous 0)
+        (set! (array-ref content.links.slots link.previous).next link.next)
+        (set! (array-ref content.heads bucket) link.next))
+      (if (>= link.next 0)
+        (set! (array-ref content.links.slots link.next).previous link.previous)
+        unit))))
 
 (define (opt-binop-tag [op : (& op ir.CompilerIrBinOp)]) : i64
   (match op
@@ -8512,31 +8615,33 @@
     [(OptExprTable.Dense state)
       (let
         [content : (& state OptExprState) (& (deref state))]
-        [count : i64 (opt_dense_i64_vec.len (& content.live))]
-        [index : i64 0]
-        [found : i64 (- 0 1)]
-        (begin
-          (while (and (< index count) (< found 0))
-            (let
-              [position : i64
-                (array-ref (opt_dense_i64_vec.slots (& content.live)) index)]
-              (begin
-                (if (opt-expr-key-eq
-                  type-segment-bases
-                  (compiler-opt-global-array-element-shared-view
-                    content.keys.slots
-                    position)
-                  key)
-                  (set!
-                    found
-                    (array-ref
-                      (opt_dense_i64_vec.slots (& content.vars))
-                      position))
-                  unit)
-                (set! index (+ index 1)))))
-          (if (< found 0)
-            (ir.CompilerIrMaybeValue.No)
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var found)))))]))
+        (if (= (opt_dense_i64_vec.len (& content.live)) 0)
+          (ir.CompilerIrMaybeValue.No)
+          (let
+            [key-hash : i64 (opt-expr-key-hash type-segment-bases key)]
+            [position : i64 (opt-expr-index-head content key-hash)]
+            [found : i64 (- 0 1)]
+            (begin
+              (while (and (>= position 0) (< found 0))
+                (begin
+                  (if (and
+                    (= (array-ref content.links.slots position).hash key-hash)
+                    (opt-expr-key-eq
+                      type-segment-bases
+                      (compiler-opt-global-array-element-shared-view
+                        content.keys.slots
+                        position)
+                      key))
+                    (set!
+                      found
+                      (array-ref
+                        (opt_dense_i64_vec.slots (& content.vars))
+                        position))
+                    unit)
+                  (set! position (array-ref content.links.slots position).next)))
+              (if (< found 0)
+                (ir.CompilerIrMaybeValue.No)
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var found)))))))]))
 
 (define (opt-value-is-var? [value : (& value ir.CompilerIrValue)] [var : i64]) : bool
   (match value
@@ -8582,7 +8687,7 @@
                       (opt-key-uses-var?
                         (& (array-ref content.keys.slots position))
                         var))
-                      unit
+                      (opt-expr-table-unlink! content position)
                       (begin
                         (set! (array-ref content.live.slots write) position)
                         (set! write (+ write 1))))
@@ -8605,7 +8710,9 @@
           [(ir.CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
           [(ir.CompilerIrMaybeValue.No)
-            (OptCseResult.Result (opt-expr-table-add (& t1) key dst) instr)]))]
+            (OptCseResult.Result
+              (opt-expr-table-add type-segment-bases (& t1) key dst)
+              instr)]))]
     [(OptMaybeExprDef.No)
       (match (compiler-opt-global-shared-view instr)
         ;; Calls and shuffles clear all available expressions, as do the stores
@@ -61801,7 +61908,7 @@
                       (ir.CompilerIrInstr.Mov dst earlier ty))]
                   [(ir.CompilerIrMaybeValue.No)
                     (OptCseResult.Result
-                      (opt-expr-table-add (& next) key dst)
+                      (opt-expr-table-add type-segment-bases (& next) key dst)
                       instr)]))
               (OptCseResult.Result next instr))]
           [_ (OptCseResult.Result next instr)]))]

@@ -484,6 +484,13 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+Block-local CSE (`opt-cse-instr`) and the Slice-word CSE in the load/copy walk
+keep one compact entry vector per block walk (`OptExprTable`). Invalidating a
+var compacts the surviving entries in place. Calls, stores, shuffles and
+control-flow boundaries reset its length and keep the storage. An entry is added
+only after its lookup missed, so live keys are unique and entry order never
+decides a lookup. No caller retains an older table.
+
 The level-2 inline stage rewrites each caller inside one phase of a scratch
 arena and keeps only the caller's final body, cloned through the job's explicit
 pools, and the span rows its rewrite added; the phase is rewound before the

@@ -52,8 +52,7 @@
 ;; Repeated reads of the same binding receive different indices.
 (defstruct PointerProofRef
   (owner u64)
-  (index i64)
-  (abi-reserved i64))
+  (index i64))
 
 (import (vector.vector PointerProofRef core) as ref_vec)
 
@@ -300,7 +299,7 @@
             (string.copy (& path))
             span))
         (pointer-proof-input-store! input storage)
-        (PointerProofRef input.control index 0)))))
+        (PointerProofRef input.control index)))))
 
 (define (pointer-proof-input-add-function!
   [input : PointerProofInput]

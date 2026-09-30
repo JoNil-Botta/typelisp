@@ -70,7 +70,7 @@
       (while (< index (proof.pointer-proof-input-use-count input))
         (match (proof.pointer-proof-input-use
           input
-          (proof.PointerProofRef input.control index 0))
+          (proof.PointerProofRef input.control index))
           [(proof.ResultPointerProofUse.Ok use)
             (begin
               (match use.operation
@@ -126,7 +126,7 @@
       (while (< index (proof.pointer-proof-input-use-count input))
         (match (proof.pointer-proof-input-use
           input
-          (proof.PointerProofRef input.control index 0))
+          (proof.PointerProofRef input.control index))
           [(proof.ResultPointerProofUse.Err _)
             (io.panic "pointer-proof smoke: missing mixed use")]
           [(proof.ResultPointerProofUse.Ok use)
@@ -371,9 +371,7 @@
       (while (< index (proof.pointer-proof-input-use-count input))
         (let
           [use : proof.PointerProofUse
-            (proof-smoke-use
-              input
-              (proof.PointerProofRef input.control index 0))]
+            (proof-smoke-use input (proof.PointerProofRef input.control index))]
           (begin
             (match use.operation
               [(proof.PointerProofOperation.DirectCall symbol)
@@ -418,7 +416,7 @@
                   [bound : proof.PointerProofUse
                     (proof-smoke-use
                       input
-                      (proof.PointerProofRef input.control binding 0))]
+                      (proof.PointerProofRef input.control binding))]
                   (match bound.operation
                     [(proof.PointerProofOperation.Binding)
                       (set! assignment true)]

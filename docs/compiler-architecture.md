@@ -129,10 +129,10 @@ the scalar machine representation.
 `lower-compiler-pointer-proof-result` produces the typed
 `ResultCompilerLowerPointerProof` analysis handoff only for complete evidence
 coupled to the exact unoptimized program and its source-span table. Ordinary
-lowering, a reused job
-owner, a foreign program, missing function metadata and an unclassified
-pointer producer fail closed. Consumers analyze this handoff before mutating
-or optimizing its IR; a later IR result cannot substitute for it. This layer
+lowering, a reused job owner, a foreign program, missing function metadata and
+an unclassified pointer producer fail closed. Consumers analyze this handoff
+before mutating or optimizing its IR; a later IR result cannot substitute for
+it. This layer
 does not grant nullable ABI permission or admit a return: caller/static origin
 classification, joins, recursion and witnesses belong to the return analysis.
 

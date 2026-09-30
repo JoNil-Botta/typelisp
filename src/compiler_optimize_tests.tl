@@ -64223,6 +64223,20 @@
         (opt-cse-table-result bases (& table) (& a))
         11
         "unlinking the middle preserves its successor")
+      (set! table (opt.opt-expr-invalidate-var (& table) 11))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        -1
+        "a successor can be removed before any insertion repairs its link")
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        33
+        "removing that successor preserves the live head")
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone a) 11))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 22))
+      (set! table (opt.opt-expr-table-add bases (& table) (clone c) 33))
+      (set! table (opt.opt-expr-invalidate-var (& table) 22))
       (set! table (opt.opt-expr-invalidate-var (& table) 33))
       (test.assert-i64-eq
         (opt-cse-table-result bases (& table) (& c))

@@ -3137,10 +3137,13 @@
     [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
-;; A dead scalar shift is removable when its literal count is in range for
-;; the independently typed count and the shifted operand's width. Unknown or
+;; A scalar shift cannot fault when its literal count is in range for the
+;; independently typed count and the shifted operand's width. Unknown or
 ;; invalid counts keep their language-level abort; other operators retain the
-;; conservative operator-only rule. This proof is used only by dead-code sweeps.
+;; conservative operator-only rule. `opt-dce-binop-traps?` applies this proof
+;; wherever an instruction may be removed, skipped, or run once instead of per
+;; iteration: dead-code sweeps, flag_exit's skipped path and the
+;; fill_call/copy_call bodies.
 (define (opt-dce-shift-count-valid?
   [rhs : ir.CompilerIrValue]
   [count-ty : ast.AstType]
@@ -35099,10 +35102,12 @@
 
 (define (opt-flag-exit-writes-nothing? [instr : ir.CompilerIrInstr]) : bool
   (or
-    (opt-flag-exit-pure-instr? instr)
+    (opt-flag-exit-pure-instr? (compiler-opt-global-shared-view instr))
     (match instr
       [(ir.CompilerIrInstr.Load _ _ _) true]
       [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
+      ;; A fault ends the run before the second read; no operator writes.
+      [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
       [_ false])))
 
 ;; Two reads of one global with nothing between them that could have written
@@ -35410,15 +35415,15 @@
         uses)]))
 
 ;; --- C6: the skipped path -----------------------------------------------------
-(define (opt-flag-exit-pure-instr? [instr : (& instr ir.CompilerIrInstr)]) : bool
+;; The redirect skips these instructions on a cleared path, so an instruction
+;; that can fault is not pure here: `opt-dce-binop-traps?` is the shared fault
+;; classification for division and shift operators.
+(define (opt-flag-exit-pure-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Phi _ _ _) true]
     [(ir.CompilerIrInstr.Mov _ _ _) true]
-    [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-      (match op
-        [(ir.CompilerIrBinOp.Div) false]
-        [(ir.CompilerIrBinOp.Mod) false]
-        [_ true])]
+    [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
+      (not (opt-dce-binop-traps? op rhs ty))]
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
@@ -35437,7 +35442,8 @@
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
         (if (and (= index (- count 1)) (opt-cfg-terminator-instr? instr))
           true
-          (if (opt-flag-exit-pure-instr? instr)
+          (if (opt-flag-exit-pure-instr?
+            (compiler-opt-global-shared-view instr))
             (opt-flag-exit-block-pure? instrs (+ index 1))
             false))))))
 
@@ -35688,7 +35694,7 @@
   [instr : ir.CompilerIrInstr]
   [raw-uses : (& raw-uses (__tl_dyn-array i64))]) : bool
   (and
-    (opt-flag-exit-pure-instr? instr)
+    (opt-flag-exit-pure-instr? (compiler-opt-global-shared-view instr))
     (match (opt-instr-def-var instr)
       [(option_i64.Some dst)
         (and
@@ -67746,23 +67752,26 @@
         (opt-fill-call-scan-body instrs (+ index 1) last iphi found)]
       [(ir.CompilerIrInstr.Gep _ _ _ _)
         (opt-fill-call-scan-body instrs (+ index 1) last iphi found)]
-      [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-        (if (opt-loop-call-binop-ok? op)
+      [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
+        (if (opt-loop-call-binop-ok? op rhs ty)
           (opt-fill-call-scan-body instrs (+ index 1) last iphi found)
           (OptFillCallMaybeSite.No))]
       [_ (OptFillCallMaybeSite.No)])))
 
 ;; The body runs ONCE after the rewrite instead of once per slot, so an
-;; operation that can fault must not appear in it: a division whose divisor
-;; only reaches zero on a later index would fault in the loop and not in the
-;; call. Every other BinOp is total.
-(define (opt-loop-call-binop-ok? [op : ir.CompilerIrBinOp]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Div) false]
-    [(ir.CompilerIrBinOp.Mod) false]
+;; operation that can fault must not appear in it: a division whose divisor, or
+;; a shift whose count, only leaves its valid range on a later index would fault
+;; in the loop and not in the call. `opt-dce-binop-traps?` is the shared fault
+;; classification (a literal in-range shift count cannot fault); the proven
+;; `SafeDiv`/`SafeMod` forms are refused as well.
+(define (opt-loop-call-binop-ok?
+  [op : ir.CompilerIrBinOp]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match (compiler-opt-global-shared-view op)
     [(ir.CompilerIrBinOp.SafeDiv) false]
     [(ir.CompilerIrBinOp.SafeMod) false]
-    [_ true]))
+    [_ (not (opt-dce-binop-traps? op rhs ty))]))
 
 ;; Locate `ptr-var`'s defining `gep base, iphi` and check the base is
 ;; loop-invariant (defined outside the block).
@@ -68415,8 +68424,8 @@
         (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)]
       [(ir.CompilerIrInstr.Gep _ _ _ _)
         (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)]
-      [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-        (if (opt-loop-call-binop-ok? op)
+      [(ir.CompilerIrInstr.BinOp _ op _ rhs ty)
+        (if (opt-loop-call-binop-ok? op rhs ty)
           (opt-copy-call-scan-body instrs (+ index 1) last iphi width found)
           (OptCopyCallMaybeSite.No))]
       [_ (OptCopyCallMaybeSite.No)])))

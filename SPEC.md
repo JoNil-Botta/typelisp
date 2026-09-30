@@ -5113,7 +5113,10 @@ SPMD helper calls:
   body fits the same SPMD-safe expression surface as the containing `foreach`
   or masked branch. The compiler may inline the helper or compile it out of
   line through a compiler-private masked call ABI; observable behavior
-  matches the scalar reference semantics either way.
+  matches the scalar reference semantics either way. In particular each
+  argument is evaluated exactly once per active lane, left to right, before
+  the helper body, whether the body reads its parameter once, several times,
+  or not at all.
 - The private ABI introduces no public `(varying T)`, vector, or mask source
   types and no user-denotable helper symbols; helpers keep their ordinary
   scalar signature outside SPMD contexts. Hidden helper variants receive the

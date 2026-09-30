@@ -773,6 +773,10 @@ step scaffold-new-bin-test
 run test --check --target {{host-target}}
 stderr empty
 stdout contains 1 test(s)
+# The generated source is already in canonical format.
+step scaffold-new-bin-fmt
+run fmt --check
+stderr empty
 cwd .
 step selfhost-cli-scaffold-new-lib
 run new --lib cli_new_lib
@@ -796,6 +800,9 @@ run build --target {{host-target}}
 stderr empty
 stdout match Built[ ]
 test -s "{{dir}}/cli_new_lib/target/release/{{lib-prefix}}cli_new_lib{{lib-suffix}}"
+step scaffold-new-lib-fmt
+run fmt --check
+stderr empty
 file init-bin/.gitignore
 /custom-cache/
 end-file

@@ -286,7 +286,7 @@
     [lib-source : String (scaffold.scaffold-lib-source)]
     [greeting : String "(io.print-format \"{}\" \"Hello, TypeLisp!\\n\")"]
     [test-import : String "(cfg test (import stdlib.test))"]
-    [test-item : String "(test\n  answer-is-42"]
+    [test-item : String "(test answer-is-42 "]
     (unless
       (and
         (string.contains (& bin-source) (& greeting))

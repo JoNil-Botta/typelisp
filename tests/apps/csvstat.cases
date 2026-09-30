@@ -1,0 +1,205 @@
+# csvstat workflows (tests/apps/csvstat): a CSV column summarizer driven
+# through the public CLI. Every case starts from a fresh copy of the project.
+# scripts/verify-app-corpus.sh runs each case outside the checkout and checks
+# that the case IDs match tests/apps/scenarios.tsv exactly. The runner resolves
+# redirections in its own directory, not the step's cwd, so they use absolute
+# paths, and steps avoid pipelines.
+do none
+target -
+opt -
+
+case csvstat-check-fmt-lint
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step check
+run check
+stderr empty
+stdout contains Type checking passed!
+step fmt
+run fmt --check
+stderr empty
+step lint
+run lint --check
+stdout count = 2 ^lint: 0 finding\(s\)$
+
+case csvstat-test-doc
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step inline-tests
+run test
+stderr contains TypeLisp tests: 4 passed; 0 failed
+stdout contains TypeLisp package tests passed: 4 test(s) in 1 file(s)
+step doctests
+run doc --test src/csv.tl
+stdout contains Doc tests passed: 1 example(s)
+step docs-site
+run doc
+stdout contains Wrote
+test -f "{{dir}}/csvstat/target/doc/index.html"
+test -n "$(grep -l 'parse-int' "{{dir}}/csvstat/target/doc/index.html" "{{dir}}/csvstat/target/doc/typelisp-docs-search-index.js")"
+
+case csvstat-build-run
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step build
+run build
+stderr empty
+stdout match ^Built .*csvstat
+test -f "{{dir}}/csvstat/target/release/csvstat{{exe}}"
+step file-input
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/scores.csv
+stderr empty
+same "{{stdout}}" "{{dir}}/csvstat/expected/scores.stdout"
+step stdin-input
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" - < "{{dir}}/csvstat/data/scores.csv"
+stderr empty
+same "{{stdout}}" "{{dir}}/csvstat/expected/scores.stdout"
+step run-command
+run run -- data/scores.csv
+stderr empty
+same "{{stdout}}" "{{dir}}/csvstat/expected/scores.stdout"
+step crlf-input
+sh printf 'x,y\r\n1,2\r\n' > "{{dir}}/crlf.csv"
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" - < "{{dir}}/crlf.csv"
+stderr empty
+stdout contains y	number	1	2	2	2
+
+case csvstat-bad-input
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step build
+run build
+stderr empty
+step ragged-row
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/ragged.csv
+exit 1
+stdout empty
+stderr is data/ragged.csv:3:1: error: expected 2 fields, found 1
+step truncated-quote
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/truncated.csv
+exit 1
+stdout empty
+stderr is data/truncated.csv:2:3: error: unterminated quoted field
+step stray-quote
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/stray.csv
+exit 1
+stdout empty
+stderr is data/stray.csv:2:4: error: quote inside an unquoted field
+step empty-input
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" - < /dev/null
+exit 1
+stdout empty
+stderr is <stdin>: error: no header row
+step missing-input
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/missing.csv
+exit 2
+stdout empty
+stderr match ^csvstat: cannot read data/missing\.csv:
+step usage
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}"
+exit 2
+stderr is usage: csvstat [FILE|-]
+
+# A no-op rebuild reports the artifact fresh; clean removes it; a rebuild from
+# clean produces the same bytes the first build did.
+case csvstat-rebuild-clean
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step first-build
+run build
+stdout match ^Built .*csvstat
+sh cp "{{dir}}/csvstat/target/release/csvstat{{exe}}" "{{dir}}/first-build{{exe}}"
+step no-op-rebuild
+run build
+stdout match ^Fresh .*csvstat
+not-match ^Built
+same "{{dir}}/csvstat/target/release/csvstat{{exe}}" "{{dir}}/first-build{{exe}}"
+step clean
+run clean
+stdout contains Removed:
+test ! -e "{{dir}}/csvstat/target/release/csvstat{{exe}}"
+step rebuild-from-clean
+run build
+stdout match ^Built .*csvstat
+same "{{dir}}/csvstat/target/release/csvstat{{exe}}" "{{dir}}/first-build{{exe}}"
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/scores.csv
+same "{{stdout}}" "{{dir}}/csvstat/expected/scores.stdout"
+
+# A source edit is picked up by the next build and changes the output.
+case csvstat-edit-rebuild
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step first-build
+run build
+stdout match ^Built .*csvstat
+step edit
+sh sed 's/"rows\\t"/"records\\t"/' "{{dir}}/csvstat/src/main.tl" > "{{dir}}/main.tl.edited"
+sh cp "{{dir}}/main.tl.edited" "{{dir}}/csvstat/src/main.tl"
+test -n "$(grep -F '"records\t"' "{{dir}}/csvstat/src/main.tl")"
+step rebuild
+run build
+stdout match ^Built .*csvstat
+not-match ^Fresh .*csvstat
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/scores.csv
+stdout match ^records	4$
+not-match ^rows
+
+# A type error fails check, build and run without running the previous
+# binary. Restoring the source makes the previous artifact current again.
+case csvstat-type-error-recovery
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/csvstat"
+sh rm -rf "{{dir}}/csvstat/target"
+cwd csvstat
+step good-build
+run build
+stdout match ^Built .*csvstat
+sh cp "{{dir}}/csvstat/src/main.tl" "{{dir}}/main.tl.good"
+step break
+sh sed 's/(io.read-stdin-bytes 65536)/(io.read-stdin-bytes true)/' "{{dir}}/main.tl.good" > "{{dir}}/csvstat/src/main.tl"
+step check-fails
+run check
+exit nonzero
+stderr contains error[E0206]
+stderr match ^  --> src[/\\]main\.tl:42:58$
+stderr contains (io.read-stdin-bytes true)
+step build-fails
+run build
+exit nonzero
+stdout not-match ^Built
+stdout not-match ^Fresh
+step run-fails
+run run -- data/scores.csv
+exit nonzero
+stdout not-contains rows	4
+step recover
+sh cp "{{dir}}/main.tl.good" "{{dir}}/csvstat/src/main.tl"
+run build
+stdout match ^Fresh .*csvstat
+exec "{{dir}}/csvstat/target/release/csvstat{{exe}}" data/scores.csv
+same "{{stdout}}" "{{dir}}/csvstat/expected/scores.stdout"
+
+# The project and its input live under directories whose names contain spaces.
+case csvstat-spaced-paths
+sh mkdir -p "{{dir}}/my apps"
+sh cp -R "{{root}}/tests/apps/csvstat" "{{dir}}/my apps/csv stat"
+sh rm -rf "{{dir}}/my apps/csv stat/target"
+sh cp "{{dir}}/my apps/csv stat/data/scores.csv" "{{dir}}/my apps/csv stat/data/my scores.csv"
+step build
+run build --manifest-path "{{native-dir}}/my apps/csv stat/typelisp.pkg"
+stderr empty
+stdout match ^Built .*csvstat
+step run
+exec "{{dir}}/my apps/csv stat/target/release/csvstat{{exe}}" "{{dir}}/my apps/csv stat/data/my scores.csv"
+stderr empty
+same "{{stdout}}" "{{dir}}/my apps/csv stat/expected/scores.stdout"
+step error-names-spaced-path
+cwd my apps/csv stat
+exec "{{dir}}/my apps/csv stat/target/release/csvstat{{exe}}" "data/no such file.csv"
+exit 2
+stderr match ^csvstat: cannot read data/no such file\.csv:

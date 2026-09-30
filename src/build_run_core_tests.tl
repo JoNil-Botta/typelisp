@@ -133,6 +133,15 @@
       linker-args
       (build_run.source-tool-windows-stack-reserve-arg))))
 
+(define (source-tool-windows-reproducible-linker-smoke-ok?) : bool
+  (let
+    [linker-args
+      (build_run.source-tool-windows-linker-args
+        "input.obj"
+        "output.exe"
+        (build_run.source-tool-link-inputs-empty))]
+    (build_run.source-tool-string-list-contains? linker-args "/Brepro")))
+
 (define (source-tool-windows-debug-linker-smoke-ok?) : bool
   (let
     [previous : bool (ir.compiler-debug-info-enabled?)]

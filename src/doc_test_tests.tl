@@ -1133,6 +1133,10 @@ typecheck: return type mismatch"))]
       (build_run_tests.source-tool-windows-debug-linker-smoke-ok?)
       (return (io.panic "source-tool: windows debug linker smoke regressed")))
     (unless
+      (build_run_tests.source-tool-windows-reproducible-linker-smoke-ok?)
+      (return
+        (io.panic "source-tool: windows reproducible linker smoke regressed")))
+    (unless
       (build_run_tests.source-tool-linux-direct-object-linkability-smoke-ok?)
       (return (io.panic "source-tool: linux direct object smoke regressed")))
     (unless

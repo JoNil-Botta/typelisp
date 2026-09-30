@@ -53,6 +53,7 @@ large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint	stage
 typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint	stage2	2048	-	scripts/check-tl-lint.sh
 no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint	stage2	256	-	scripts/verify-no-libc.sh
 stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	stage2	4352	-	scripts/verify-public-tools.sh
+stage2-app-workflow-corpus	all	stage2 application workflow corpus	bootstrap-fixpoint	stage2	512	-	scripts/verify-app-corpus.sh
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	2304	-	scripts/verify-ir-observability.sh
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	2048	-	scripts/verify-compiler-arena-debug.sh
 tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint	stage2	256	-	scripts/verify-tlci-corpus.sh

@@ -1,0 +1,17 @@
+# Application workflow corpus (#7772): one row per scenario, tab-separated.
+#   scenario   the case ID in tests/apps/<app>.cases
+#   app        the project under tests/apps/<app>
+#   hosts      all, linux or windows: where the scenario must run and pass
+#   workflows  the public commands and behaviors it chains
+#   owners     the gates that own each behavior on its own
+# scripts/verify-app-corpus.sh fails when a case is missing here, declared
+# here but absent from the case file, declared twice, or does not report
+# exactly one pass on a host it names.
+csvstat-check-fmt-lint	csvstat	all	check,fmt --check,lint --check	stage2-public-tool-surface
+csvstat-test-doc	csvstat	all	inline tests,doc --test,doc site	stage2-public-tool-surface
+csvstat-build-run	csvstat	all	build,file/stdin/CRLF input,run --	stage2-cli-build-run-and-chooser-smoke
+csvstat-bad-input	csvstat	all	malformed/truncated/missing input,usage exit codes	stage2-cli-build-run-and-chooser-smoke
+csvstat-rebuild-clean	csvstat	all	no-op rebuild (Fresh),clean,rebuild from clean is byte-identical	stage2-public-tool-surface
+csvstat-edit-rebuild	csvstat	all	source edit,rebuild,changed output	stage2-public-tool-surface
+csvstat-type-error-recovery	csvstat	all	type error in check/build/run,no stale run,recovery	stage2-public-tool-surface
+csvstat-spaced-paths	csvstat	all	project and input paths with spaces,--manifest-path	stage2-cli-build-run-and-chooser-smoke

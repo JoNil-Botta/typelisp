@@ -44,10 +44,10 @@
     "\"))\n"))
 
 (define (scaffold-bin-source) : String
-  "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-format \"{}\" \"Hello, TypeLisp!\\n\")\n    0))\n")
+  "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test answer-is-42 (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-format \"{}\" \"Hello, TypeLisp!\\n\")\n    0))")
 
 (define (scaffold-lib-source) : String
-  "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
+  "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test answer-is-42 (test.assert-i64-eq (answer) 42 \"answer should be 42\"))")
 
 (define (scaffold-try-mkdir [path : (& path str)]) : io.ResultIoUnit
   (fs.try-mkdir path))

@@ -6937,6 +6937,10 @@
         [(ir.CompilerIrValue.RuntimeGlobal ib)
           (ir.compiler-ir-symbol-eq? ia ib)]
         [_ false])]
+    [(ir.CompilerIrValue.StaticArray sa)
+      (match b
+        [(ir.CompilerIrValue.StaticArray sb) (string.eq sa sb)]
+        [_ false])]
     [(ir.CompilerIrValue.Unit)
       (match b
         [(ir.CompilerIrValue.Unit) true]
@@ -7221,6 +7225,7 @@
       (hash.combine 11 (hash.string-key (& value)))]
     [(ir.CompilerIrValue.RuntimeGlobal init)
       (hash.combine 12 (opt-symbol-hash init))]
+    [(ir.CompilerIrValue.StaticArray _) (hash.i64 13)]
     [(ir.CompilerIrValue.Unit) (hash.i64 10)]))
 
 (define (opt-expr-key-hash
@@ -8703,7 +8708,8 @@
     [(ir.CompilerIrValue.Global _) false]
     [(ir.CompilerIrValue.GlobalAddr _) false]
     [(ir.CompilerIrValue.Function _) false]
-    [(ir.CompilerIrValue.RuntimeGlobal _) false]))
+    [(ir.CompilerIrValue.RuntimeGlobal _) false]
+    [(ir.CompilerIrValue.StaticArray _) false]))
 
 (define (opt-copy-add-pack-word
   [env : OptCopyEnv]
@@ -52157,7 +52163,8 @@
       [(ir.CompilerIrValue.Global _) false]
       [(ir.CompilerIrValue.GlobalAddr _) false]
       [(ir.CompilerIrValue.Function _) false]
-      [(ir.CompilerIrValue.RuntimeGlobal _) false])))
+      [(ir.CompilerIrValue.RuntimeGlobal _) false]
+      [(ir.CompilerIrValue.StaticArray _) false])))
 
 (define (opt-gvn-sources-params-from
   [params : ir.CompilerIrParamSeq]
@@ -109089,6 +109096,8 @@
     [(ir.CompilerIrValue.RuntimeGlobal init)
       (ir.CompilerIrValue.RuntimeGlobal
         (ir.compiler-ir-symbol-clone (deref init)))]
+    [(ir.CompilerIrValue.StaticArray s)
+      (ir.CompilerIrValue.StaticArray (string.copy s))]
     [(ir.CompilerIrValue.Unit) (ir.CompilerIrValue.Unit)]))
 
 (define (opt-inline-remap-container-value

@@ -632,6 +632,28 @@
 (define (main) : i64
   (+ copy (callback-copy widened)))")
 
+(define (compiler-lower-static-array-global-source) : String
+  "(define wide : (Array u16 3) (array 1 256 65535))
+(define halves : (Array f32 2) (array 1.5 -0.0))
+(define flags : (Array bool 2) (array true false))
+(define letters : (Array char 1) (array 'A'))
+(define negatives : (Array i8 2) (array -1 -128))
+(define empty : (Array i64 0) (array))
+(define (seed) : i64 3)
+(define computed : (Array i64 2) (array (seed) 4))
+(define converted : (Array f64 1) (array (cast 1 : f64)))
+(define nested : (Array (Array i64 2) 1) (array (array 5 6)))
+(define (main) : i64
+  (+
+    (cast (array-ref wide 1) : i64)
+    (cast (array-ref halves 0) : i64)
+    (if (array-ref flags 0) 1 0)
+    (cast (array-ref letters 0) : i64)
+    (cast (array-ref negatives 0) : i64)
+    (array-ref computed 0)
+    (cast (array-ref converted 0) : i64)
+    (array-ref (array-ref nested 0) 1)))")
+
 (define (compiler-lower-mutable-global-function-value-source) : String
   "(define (initial [x : i64]) : i64 x)
 (define (replacement [x : i64]) : i64 (- x 1))
@@ -6862,7 +6884,8 @@
       (lower.CompilerLowerMode.WindowsScalar))))
 
 ;; The initializer of global `global-name`, classified as "i64", "runtime",
-;; "function:<symbol>", "global:<symbol>", "other" or "missing".
+;; "static:<b0>,<b1>,..." (the static array's bytes), "function:<symbol>",
+;; "global:<symbol>", "other" or "missing".
 (define (lower-test-global-initializer-kind-at
   [globals : ir.CompilerIrGlobalSeq]
   [global-name : String]
@@ -6874,6 +6897,8 @@
         (if (string.eq (ir.compiler-ir-symbol-text name) global-name)
           (match initial
             [(ir.CompilerIrValue.I64 _) "i64"]
+            [(ir.CompilerIrValue.StaticArray bytes)
+              (str_cat.str-cat "static:" (lower-test-byte-list bytes 0))]
             [(ir.CompilerIrValue.RuntimeGlobal _) "runtime"]
             [(ir.CompilerIrValue.Function found)
               (str_cat.str-cat "function:" (ir.compiler-ir-symbol-text found))]
@@ -6921,6 +6946,64 @@
               (lower-test-global-initializer-kind globals "callback-copy")
               "runtime"))])]
     [(lower.ResultCompilerLower.Err _) false]))
+
+(define (lower-test-byte-list [bytes : String] [index : i64]) : String
+  (if (>= index (string.string-length (& bytes)))
+    ""
+    (str_cat.str-cat
+      (if (= index 0)
+        ""
+        ",")
+      (string.int->string (cast (string.string-ref (& bytes) index) : i64))
+      (lower-test-byte-list bytes (+ index 1)))))
+
+;; Constant scalar arrays lower to their exact element bytes (#8369); an element
+;; that is not a constant of the element's kind, or a non-scalar element type,
+;; keeps the runtime initializer.
+(define (compiler-lower-static-array-global-mode-shape-ok?
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower.lower-compiler-source-with-mode
+    (compiler-lower-static-array-global-source)
+    mode)
+    [(lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(ir.CompilerIrProgram.Program globals _ _)
+          (and
+            (string.eq
+              (lower-test-global-initializer-kind globals "wide")
+              "static:1,0,0,1,255,255")
+            (string.eq
+              (lower-test-global-initializer-kind globals "halves")
+              "static:0,0,192,63,0,0,0,128")
+            (string.eq
+              (lower-test-global-initializer-kind globals "flags")
+              "static:1,0")
+            (string.eq
+              (lower-test-global-initializer-kind globals "letters")
+              "static:65")
+            (string.eq
+              (lower-test-global-initializer-kind globals "negatives")
+              "static:255,128")
+            (string.eq
+              (lower-test-global-initializer-kind globals "empty")
+              "static:")
+            (string.eq
+              (lower-test-global-initializer-kind globals "computed")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind globals "converted")
+              "runtime")
+            (string.eq
+              (lower-test-global-initializer-kind globals "nested")
+              "runtime"))])]
+    [(lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-static-array-global-shape-ok?) : bool
+  (and
+    (compiler-lower-static-array-global-mode-shape-ok?
+      (lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-static-array-global-mode-shape-ok?
+      (lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-global-reference-initializer-shape-ok?) : bool
   (and

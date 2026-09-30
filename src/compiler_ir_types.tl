@@ -577,7 +577,12 @@
   (Bytes String)
   ;; Runtime-initialized globals name their hidden initializer explicitly.
   (RuntimeGlobal i64)
-  (Unit))
+  (Unit)
+  ;; A global initializer only: a fixed array of constant scalars as its exact
+  ;; little-endian element bytes, laid out as `array-ref` addresses them. The
+  ;; global's cell points at its own writable copy of the bytes; the element
+  ;; type and count are the global's declared `(Array T N)` (#8369).
+  (StaticArray String))
 
 (defenum CompilerIrMaybeValue
   (No)
@@ -6132,6 +6137,8 @@
     [(CompilerIrValue.Char c) (CompilerIrValue.Char c)]
     [(CompilerIrValue.String s) (CompilerIrValue.String (string.copy s))]
     [(CompilerIrValue.Bytes s) (CompilerIrValue.Bytes (string.copy s))]
+    [(CompilerIrValue.StaticArray s)
+      (CompilerIrValue.StaticArray (string.copy s))]
     [(CompilerIrValue.RuntimeGlobal init)
       (CompilerIrValue.RuntimeGlobal (compiler-ir-symbol-clone init))]
     [(CompilerIrValue.Unit) (CompilerIrValue.Unit)]))
@@ -6916,7 +6923,8 @@
         ">")]
     [(CompilerIrValue.RuntimeGlobal init)
       (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init))]
-    [(CompilerIrValue.Unit) "unit"]))
+    [(CompilerIrValue.Unit) "unit"]
+    [(CompilerIrValue.StaticArray _) "<static-array>"]))
 
 (define (compiler-ir-value-seq-render-from
   [values : CompilerIrValueSeq]

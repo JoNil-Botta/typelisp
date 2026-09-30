@@ -19850,12 +19850,13 @@
           reg
           "\n")
         (ResultCompilerBackend.Ok ""))]
-    [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _)
+    ;; `RuntimeGlobal` and `StaticArray` only initialize globals.
+    [_
       (ResultCompilerBackend.Err
         (box
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
-            "backend: runtime-global marker used as an instruction value")))]))
+            "backend: global initializer marker used as an instruction value")))]))
 
 ;; Float argument loads stay on the String emitter (a cold family next to the
 ;; scalar loads); the sequence buffer takes their text in one append.
@@ -78286,6 +78287,19 @@
           "\n"))]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
       (ResultCompilerBackend.Ok (compiler-backend-float-bits-directive ty bits))]
+    ;; A static-array global (#8369) is a cell holding the address of the
+    ;; element bytes that follow it: writable, one copy per global (never
+    ;; deduplicated, so a store through one global's elements cannot show
+    ;; through another's), and padded to 8 bytes so the next global stays
+    ;; aligned. The cell keeps the pointer every `(Array T N)` value is.
+    [(compiler_ir_types.CompilerIrValue.StaticArray bytes)
+      (ResultCompilerBackend.Ok
+        (text_buf.render
+          (text_buf.append
+            (compiler-backend-emit-byte-directives-into
+              bytes
+              (text_buf.append (text_buf.empty) "    .quad .+8\n"))
+            "    .balign 8\n")))]
     [(compiler_ir_types.CompilerIrValue.Global name)
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
@@ -81106,7 +81120,7 @@
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value program-index)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) parts]))
+    [_ parts]))
 
 (define (compiler-backend-object-load-value-to-reg-with-type
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -83997,6 +84011,9 @@
       (and (>= value -2147483648) (<= value 2147483647))]
     ;; This placeholder only records the initializer reference today.
     [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
+    ;; The object encoder has no static-array record yet (#8369): a program with
+    ;; one keeps the assembly path.
+    [(compiler_ir_types.CompilerIrValue.StaticArray _) false]
     [_ true]))
 
 (define (compiler-backend-object-semantic-call-args-array-supported?

@@ -32,6 +32,7 @@ invariant_loop_call_varying|all|0,2|tests/integration/invariant_loop_call.tl|0|7
 loop_call_addr_taken|all|0,2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|stage-stdlib
 hash_length_chain|all|2|tests/integration/hash_length_chain.tl|42|-|-|-|stage-stdlib
 aggregate_globals|all|-|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl|-
+static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_globals.tl|42|-|-|stdlib/math.tl|-
 # IAG-1 inline shapes at every level.
 inline_aggregate_global|all|-|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global|linux|0,1,2|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl|-

@@ -29,8 +29,9 @@ runtime-parity matrix without building the rest of the integration corpus.
 per-chunk timing row without invoking a compiler or native toolchain.
 --self-test-empty-compile-diagnostic exercises the compile-failure diagnostic
 helper without invoking a compiler or native toolchain.
---self-test-signal-notice-capture exercises Linux signal exit and shell-notice
-capture without invoking a compiler or native toolchain.
+--self-test-signal-notice-capture exercises Linux signal exit, shell-notice
+capture and the per-case deadline without invoking a compiler or native
+toolchain.
 --self-test-path-normalization exercises Windows diagnostic checkout-prefix and
 CRLF normalization without invoking a compiler or native toolchain.
 --validate-manifest-only validates the host manifest and exits before builds.
@@ -168,6 +169,17 @@ ensure_linux_signal_exit_diagnostic() {
     fi
 }
 
+# Every manifest case run has this wall-clock deadline, far above the slowest
+# case, so a hung case fails its own row instead of the whole CI job.
+INTEGRATION_CASE_TIMEOUT_SECONDS=300
+case_timed_out=0
+
+# GNU timeout puts the case in a new process group and, at the deadline, sends
+# SIGKILL to that whole group, so neither the case nor a descendant that
+# ignores SIGTERM outlives it. The case execs from an inner shell, so timeout's
+# own diagnostics go to the shell stream, never the compared program stderr.
+# case_timed_out is set when the run ended by SIGKILL (137) no earlier than
+# the deadline, less one tick of the centisecond clock.
 run_linux_manifest_program() {
     _bin=$1
     _stdout=$2
@@ -175,22 +187,39 @@ run_linux_manifest_program() {
     _run_shell_stderr=$4
     shift 4
 
+    ci_timing_set_now_ms
+    _run_started=$CI_TIMING_NOW_MS
     sh -c '
-        _bin=$1
-        _stdout=$2
-        _stderr=$3
-        shift 3
+        _deadline=$1
+        shift
         set +e
-        (
-            exec "$_bin" "$@" > "$_stdout" 2> "$_stderr"
-        )
+        timeout --signal=KILL "$_deadline" sh -c '\''
+            _stdout=$1
+            _stderr=$2
+            shift 2
+            exec "$@" > "$_stdout" 2> "$_stderr"
+        '\'' typelisp-integration-case "$@"
         _rc=$?
         exit "$_rc"
     ' typelisp-integration-run \
-        "$_bin" "$_stdout" "$_stderr" "$@" 2> "$_run_shell_stderr"
+        "$INTEGRATION_CASE_TIMEOUT_SECONDS" "$_stdout" "$_stderr" "$_bin" "$@" \
+        2> "$_run_shell_stderr"
     _rc=$?
+    ci_timing_set_now_ms
+    case_timed_out=0
+    if [ "$_rc" -eq 137 ] &&
+        [ $((CI_TIMING_NOW_MS - _run_started)) -ge $((INTEGRATION_CASE_TIMEOUT_SECONDS * 1000 - 10)) ]; then
+        case_timed_out=1
+    fi
     ensure_linux_signal_exit_diagnostic "$_rc" "$_run_shell_stderr"
     return "$_rc"
+}
+
+# A case stopped at its deadline fails its own row with the output it wrote.
+report_case_timeout() {
+    echo "FAIL: $1 ($2)" >&2
+    show_stream_if_nonempty stdout "$3"
+    show_stream_if_nonempty stderr "$4"
 }
 
 if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
@@ -201,6 +230,10 @@ if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
         }
         command -v ld >/dev/null 2>&1 || {
             echo "missing linker: ld" >&2
+            exit 1
+        }
+        command -v timeout >/dev/null 2>&1 || {
+            echo "missing GNU timeout for the per-case deadline" >&2
             exit 1
         }
     else
@@ -589,7 +622,7 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_COFF_FALLBACK_REASONS="$WORKDIR/windows-coff-fallback-reasons.txt"
     printf 'tlwinlink1\000' > "$WINDOWS_LINK_REQUEST"
     : > "$WINDOWS_LINK_CASES"
-    printf 'tlwinq2\000' > "$WINDOWS_QUEUE"
+    printf 'tlwinq3\000' > "$WINDOWS_QUEUE"
     : > "$WINDOWS_QUEUED_CASES"
     : > "$WINDOWS_COFF_FALLBACK_REASONS"
     # The two queue helpers, lld-link, and their common work root are the only
@@ -1196,7 +1229,7 @@ windows_queue_append_request() {
     _expected_stderr=$9
     shift 9
     if [ ! -s "$_queue" ]; then
-        printf 'tlwinq2\000' > "$_queue"
+        printf 'tlwinq3\000' > "$_queue"
     fi
     printf '%s\000' \
         "$_label" \
@@ -1204,6 +1237,7 @@ windows_queue_append_request() {
         "$_stdout" \
         "$_stderr" \
         "$_code" \
+        "$INTEGRATION_CASE_TIMEOUT_SECONDS" \
         "$_expected_exit" \
         "$_expected_stdout" \
         "$_expected_stderr" \
@@ -1458,6 +1492,11 @@ run_windows_program() {
     fi
     if ! windows_result_for_label "windows_direct_$_direct_id"; then
         echo "Windows direct runner did not report its request" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_RESULT_STATUS" = timeout ]; then
+        report_case_timeout "$_exe_posix" "$WINDOWS_RESULT_ERROR" \
+            "$_stdout_posix" "$_stderr_posix"
         return 1
     fi
     if [ "$WINDOWS_RESULT_STATUS" != ok ]; then
@@ -1753,7 +1792,109 @@ EOF
     ensure_linux_signal_exit_diagnostic 42 "$_ordinary_stderr"
     assert_empty_file "$_ordinary_stderr" signal-notice-capture-ordinary-exit
 
+    run_case_deadline_self_test "$_dir"
+
     printf '%s\n' "verify-integration signal notice capture self-test passed"
+}
+
+# A sleeping case whose TERM-ignoring child outlives it is stopped at a 1 s
+# deadline with its whole process group, fails its own row with its output,
+# and the next case still runs and passes.
+run_case_deadline_self_test() {
+    _deadline_dir="$1/case-deadline"
+    mkdir -p "$_deadline_dir/sleeper" "$_deadline_dir/ordinary"
+    _sleeper="$_deadline_dir/sleeper.sh"
+    _child_pid_file="$_deadline_dir/child.pid"
+    _sleeper_stdout="$_deadline_dir/sleeper/sleeper.stdout"
+    _sleeper_stderr="$_deadline_dir/sleeper/sleeper.stderr"
+    _sleeper_shell="$_deadline_dir/sleeper/sleeper.run-shell.stderr"
+    _ordinary="$_deadline_dir/ordinary.sh"
+    _ordinary_stdout="$_deadline_dir/ordinary/ordinary.stdout"
+    _ordinary_stderr="$_deadline_dir/ordinary/ordinary.stderr"
+    _ordinary_shell="$_deadline_dir/ordinary/ordinary.run-shell.stderr"
+    _report="$_deadline_dir/report.txt"
+    cat > "$_sleeper" <<'EOF'
+#!/bin/sh
+trap '' TERM
+printf 'written before the deadline\n'
+printf 'still waiting\n' >&2
+sleep 60 &
+printf '%s\n' "$!" > "$1"
+wait
+EOF
+    printf '#!/bin/sh\nprintf "ran after the timeout\\n"\nexit 42\n' > "$_ordinary"
+    chmod +x "$_sleeper" "$_ordinary"
+
+    INTEGRATION_CASE_TIMEOUT_SECONDS=1
+    TYPELISP_CI_TIMING=0
+    failed=0
+    ran=0
+    ci_timing_set_now_ms
+    _deadline_started=$CI_TIMING_NOW_MS
+    set +e
+    run_linux_manifest_program \
+        "$_sleeper" "$_sleeper_stdout" "$_sleeper_stderr" "$_sleeper_shell" \
+        "$_child_pid_file"
+    got=$?
+    set -e
+    ci_timing_set_now_ms
+    _deadline_elapsed=$((CI_TIMING_NOW_MS - _deadline_started))
+    if [ "$got" -ne 137 ] || [ "$case_timed_out" -ne 1 ]; then
+        echo "FAIL: case-deadline sleeper exited $got (timed out: $case_timed_out); expected a 1 s timeout" >&2
+        exit 1
+    fi
+    if [ "$_deadline_elapsed" -ge 10000 ]; then
+        echo "FAIL: case-deadline sleeper took $_deadline_elapsed ms to stop at a 1 s deadline" >&2
+        exit 1
+    fi
+    _child_pid=$(cat "$_child_pid_file")
+    _child_polls=0
+    # The killed child is reaped by whichever ancestor adopts it; a zombie
+    # awaiting that reap is already dead.
+    while kill -0 "$_child_pid" 2>/dev/null &&
+        ! grep -q '^[0-9]* (.*) Z ' "/proc/$_child_pid/stat" 2>/dev/null; do
+        _child_polls=$((_child_polls + 1))
+        if [ "$_child_polls" -ge 50 ]; then
+            echo "FAIL: case-deadline sleeper child $_child_pid outlived its deadline" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+
+    assert_manifest_case case_deadline_sleeper 0 - - \
+        "$_deadline_dir/sleeper/none.s" "$_sleeper_stdout" "$_sleeper_stderr" \
+        "$_deadline_dir/sleeper" "$_sleeper_shell" > "$_deadline_dir/report.stdout" 2> "$_report"
+    set +e
+    run_linux_manifest_program \
+        "$_ordinary" "$_ordinary_stdout" "$_ordinary_stderr" "$_ordinary_shell"
+    got=$?
+    set -e
+    assert_manifest_case case_deadline_ordinary 42 'ran after the timeout\n' - \
+        "$_deadline_dir/ordinary/none.s" "$_ordinary_stdout" "$_ordinary_stderr" \
+        "$_deadline_dir/ordinary" "$_ordinary_shell" >> "$_deadline_dir/report.stdout" 2>> "$_report"
+
+    if [ "$failed" -ne 1 ] || [ "$ran" -ne 2 ]; then
+        echo "FAIL: case-deadline rows settled as $failed failed of $ran; expected 1 of 2" >&2
+        cat "$_report" >&2
+        exit 1
+    fi
+    assert_file_text "$_deadline_dir/report.stdout" 'PASS: case_deadline_ordinary' \
+        case-deadline-next-case
+    for _want_line in \
+        'FAIL: case_deadline_sleeper (timeout after 1 s)' \
+        '  written before the deadline' \
+        '  still waiting'; do
+        if ! grep -F -x -q "$_want_line" "$_report"; then
+            echo "FAIL: case-deadline report is missing: $_want_line" >&2
+            cat "$_report" >&2
+            exit 1
+        fi
+    done
+    if grep -q 'expected exit\|mismatch' "$_report"; then
+        echo "FAIL: case-deadline report compared a timed-out case's output" >&2
+        cat "$_report" >&2
+        exit 1
+    fi
 }
 
 run_path_normalization_self_test() {
@@ -1968,6 +2109,88 @@ EOF
     fi
 
     printf '%s\n' "verify-integration batch observability self-test passed"
+}
+
+assert_manifest_case() {
+    _name=$1
+    _want=$2
+    _stdout_spec=$3
+    _stderr_spec=$4
+    _asm=$5
+    _stdout=$6
+    _stderr=$7
+    _case_dir=$8
+    _run_shell_stderr=$9
+    _assert_started=0
+    if [ "$HOST_OS" = windows ] || ci_timing_enabled; then
+        ci_timing_set_now_ms
+        _assert_started=$CI_TIMING_NOW_MS
+    fi
+    _expected_stdout_cmp="$_case_dir/$_name.expected.stdout.cmp"
+    _expected_stderr_cmp="$_case_dir/$_name.expected.stderr.cmp"
+    _stdout_cmp="$_case_dir/$_name.stdout.cmp"
+    _stderr_cmp="$_case_dir/$_name.stderr.cmp"
+    _expected_stdout="$_case_dir/$_name.expected.stdout"
+    _expected_stderr="$_case_dir/$_name.expected.stderr"
+
+    assert_manifest_assembly_requirements "$_name" "$_asm"
+
+    write_expected_stream "$_stdout_spec" "$_expected_stdout"
+    write_expected_stream "$_stderr_spec" "$_expected_stderr"
+    normalized_stream "$_expected_stdout" "$_expected_stdout_cmp"
+    normalized_stream "$_expected_stderr" "$_expected_stderr_cmp"
+    normalized_stream "$_stdout" "$_stdout_cmp"
+    normalized_stream "$_stderr" "$_stderr_cmp"
+
+    _case_failed=0
+    if [ "$case_timed_out" -eq 1 ]; then
+        report_case_timeout "$_name" \
+            "timeout after $INTEGRATION_CASE_TIMEOUT_SECONDS s" "$_stdout" "$_stderr"
+        case_timed_out=0
+        _case_failed=1
+    else
+        if [ "$got" -ne "$_want" ]; then
+            echo "FAIL: $_name expected exit $_want, got $got" >&2
+            _case_failed=1
+        fi
+        if ! cmp -s "$_expected_stdout_cmp" "$_stdout_cmp"; then
+            echo "FAIL: $_name stdout mismatch" >&2
+            if command -v diff >/dev/null 2>&1; then
+                diff -u "$_expected_stdout_cmp" "$_stdout_cmp" >&2 || true
+            fi
+            _case_failed=1
+        fi
+        if ! cmp -s "$_expected_stderr_cmp" "$_stderr_cmp"; then
+            echo "FAIL: $_name stderr mismatch" >&2
+            if command -v diff >/dev/null 2>&1; then
+                diff -u "$_expected_stderr_cmp" "$_stderr_cmp" >&2 || true
+            fi
+            _case_failed=1
+        fi
+    fi
+    if [ "$_case_failed" -ne 0 ] && [ -s "$_run_shell_stderr" ]; then
+        echo "NOTE: $_name shell run diagnostics:" >&2
+        sed 's/^/  /' "$_run_shell_stderr" >&2
+    fi
+
+    if [ "$_case_failed" -eq 0 ]; then
+        echo "PASS: $_name"
+        _assert_status=0
+    else
+        failed=$((failed + 1))
+        _assert_status=1
+    fi
+    ran=$((ran + 1))
+    if [ "$HOST_OS" = windows ] || ci_timing_enabled; then
+        ci_timing_set_now_ms
+        _assert_finished=$CI_TIMING_NOW_MS
+        _assert_elapsed=$((_assert_finished - _assert_started))
+        ci_timing_record_elapsed "$_name" assert "$_assert_elapsed" "$_assert_status"
+    fi
+    if [ "$HOST_OS" = windows ]; then
+        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_elapsed))
+        WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + 1))
+    fi
 }
 
 if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
@@ -2406,81 +2629,6 @@ run_linux_fixture_cases() {
     TYPELISP_BIN=$COMPILER scripts/verify-codegen-cases.sh "$@" tests/codegen/integration-fixtures.cases
 }
 
-assert_manifest_case() {
-    _name=$1
-    _want=$2
-    _stdout_spec=$3
-    _stderr_spec=$4
-    _asm=$5
-    _stdout=$6
-    _stderr=$7
-    _case_dir=$8
-    _run_shell_stderr=$9
-    _assert_started=0
-    if [ "$HOST_OS" = windows ] || ci_timing_enabled; then
-        ci_timing_set_now_ms
-        _assert_started=$CI_TIMING_NOW_MS
-    fi
-    _expected_stdout_cmp="$_case_dir/$_name.expected.stdout.cmp"
-    _expected_stderr_cmp="$_case_dir/$_name.expected.stderr.cmp"
-    _stdout_cmp="$_case_dir/$_name.stdout.cmp"
-    _stderr_cmp="$_case_dir/$_name.stderr.cmp"
-    _expected_stdout="$_case_dir/$_name.expected.stdout"
-    _expected_stderr="$_case_dir/$_name.expected.stderr"
-
-    assert_manifest_assembly_requirements "$_name" "$_asm"
-
-    write_expected_stream "$_stdout_spec" "$_expected_stdout"
-    write_expected_stream "$_stderr_spec" "$_expected_stderr"
-    normalized_stream "$_expected_stdout" "$_expected_stdout_cmp"
-    normalized_stream "$_expected_stderr" "$_expected_stderr_cmp"
-    normalized_stream "$_stdout" "$_stdout_cmp"
-    normalized_stream "$_stderr" "$_stderr_cmp"
-
-    _case_failed=0
-    if [ "$got" -ne "$_want" ]; then
-        echo "FAIL: $_name expected exit $_want, got $got" >&2
-        _case_failed=1
-    fi
-    if ! cmp -s "$_expected_stdout_cmp" "$_stdout_cmp"; then
-        echo "FAIL: $_name stdout mismatch" >&2
-        if command -v diff >/dev/null 2>&1; then
-            diff -u "$_expected_stdout_cmp" "$_stdout_cmp" >&2 || true
-        fi
-        _case_failed=1
-    fi
-    if ! cmp -s "$_expected_stderr_cmp" "$_stderr_cmp"; then
-        echo "FAIL: $_name stderr mismatch" >&2
-        if command -v diff >/dev/null 2>&1; then
-            diff -u "$_expected_stderr_cmp" "$_stderr_cmp" >&2 || true
-        fi
-        _case_failed=1
-    fi
-    if [ "$_case_failed" -ne 0 ] && [ -s "$_run_shell_stderr" ]; then
-        echo "NOTE: $_name shell run diagnostics:" >&2
-        sed 's/^/  /' "$_run_shell_stderr" >&2
-    fi
-
-    if [ "$_case_failed" -eq 0 ]; then
-        echo "PASS: $_name"
-        _assert_status=0
-    else
-        failed=$((failed + 1))
-        _assert_status=1
-    fi
-    ran=$((ran + 1))
-    if [ "$HOST_OS" = windows ] || ci_timing_enabled; then
-        ci_timing_set_now_ms
-        _assert_finished=$CI_TIMING_NOW_MS
-        _assert_elapsed=$((_assert_finished - _assert_started))
-        ci_timing_record_elapsed "$_name" assert "$_assert_elapsed" "$_assert_status"
-    fi
-    if [ "$HOST_OS" = windows ]; then
-        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_elapsed))
-        WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + 1))
-    fi
-}
-
 windows_run_manifest_links() {
     WINDOWS_LINK_POWERSHELL_STARTS=1
     ci_timing_set_now_ms
@@ -2660,8 +2808,9 @@ windows_process_manifest_link_results() {
         0
 }
 
-windows_enqueue_missing_launch_self_test() {
+windows_enqueue_runner_self_tests() {
     WINDOWS_RUNNER_MISSING_LABEL=windows_runner_missing_executable
+    WINDOWS_RUNNER_DEADLINE_LABEL=windows_runner_case_deadline
     _dir="$WORKDIR/windows-runner-self-test"
     mkdir -p "$_dir"
     windows_queue_append_request "$WINDOWS_QUEUE" "$WINDOWS_RUNNER_MISSING_LABEL" \
@@ -2670,11 +2819,23 @@ windows_enqueue_missing_launch_self_test() {
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stderr" \
         "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exit" \
         - - -
-    WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
+    # cmd.exe waits on a ping.exe child that inherits the output pipe, so the
+    # request completes near its 1 s deadline only if the tree kill reaches
+    # the child too.
+    (
+        INTEGRATION_CASE_TIMEOUT_SECONDS=1
+        windows_queue_append_request "$WINDOWS_QUEUE" "$WINDOWS_RUNNER_DEADLINE_LABEL" \
+            cmd.exe \
+            "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\deadline.stdout" \
+            "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\deadline.stderr" \
+            "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\deadline.exit" \
+            - - - /d /c ping -n 60 127.0.0.1
+    )
+    WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 2))
 }
 
 windows_run_manifest_queue() {
-    windows_enqueue_missing_launch_self_test
+    windows_enqueue_runner_self_tests
     WINDOWS_MANIFEST_POWERSHELL_STARTS=1
     if ! windows_run_request_file \
         "$WINDOWS_QUEUE_WIN" \
@@ -2692,6 +2853,7 @@ windows_run_manifest_queue() {
     WINDOWS_SUMMARY_REQUESTS=
     WINDOWS_SUMMARY_CHILD_STARTS=
     WINDOWS_SUMMARY_LAUNCH_FAILURES=
+    WINDOWS_SUMMARY_TIMEOUTS=
     WINDOWS_SUMMARY_ASSERTIONS=
     WINDOWS_SUMMARY_RESULT_PROCESS_MS=
     WINDOWS_SUMMARY_ASSERT_MS=
@@ -2701,6 +2863,7 @@ windows_run_manifest_queue() {
             requests) WINDOWS_SUMMARY_REQUESTS=$_summary_value ;;
             child_starts) WINDOWS_SUMMARY_CHILD_STARTS=$_summary_value ;;
             launch_failures) WINDOWS_SUMMARY_LAUNCH_FAILURES=$_summary_value ;;
+            timeouts) WINDOWS_SUMMARY_TIMEOUTS=$_summary_value ;;
             assertions) WINDOWS_SUMMARY_ASSERTIONS=$_summary_value ;;
             result_process_ms) WINDOWS_SUMMARY_RESULT_PROCESS_MS=$_summary_value ;;
             assert_ms) WINDOWS_SUMMARY_ASSERT_MS=$_summary_value ;;
@@ -2731,6 +2894,21 @@ windows_run_manifest_queue() {
         echo "FAIL: Windows integration queue wrote an exit code for a missing executable" >&2
         return 1
     fi
+    if ! windows_result_for_label "$WINDOWS_RUNNER_DEADLINE_LABEL"; then
+        echo "FAIL: Windows integration queue omitted case-deadline self-test" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_RESULT_STATUS" != timeout ] ||
+        [ "$WINDOWS_RESULT_ERROR" != "timeout after 1 s" ] ||
+        [ "$WINDOWS_RESULT_MS" -ge 10000 ]; then
+        echo "FAIL: Windows integration queue case-deadline self-test settled as" \
+            "$WINDOWS_RESULT_STATUS in $WINDOWS_RESULT_MS ms: $WINDOWS_RESULT_ERROR" >&2
+        return 1
+    fi
+    if [ -e "$WORKDIR/windows-runner-self-test/deadline.exit" ]; then
+        echo "FAIL: Windows integration queue wrote an exit code for a timed-out case" >&2
+        return 1
+    fi
 }
 
 windows_assert_queued_cases() {
@@ -2757,7 +2935,11 @@ windows_assert_queued_cases() {
         assert_manifest_assembly_requirements "$_name" "$_asm"
 
         _case_failed=0
-        if [ "$_status" != ok ]; then
+        if [ "$_status" = timeout ]; then
+            report_case_timeout "$_name" "$(windows_queue_decode "$_error")" \
+                "$_case_dir/$_name.stdout" "$_case_dir/$_name.stderr"
+            _case_failed=1
+        elif [ "$_status" != ok ]; then
             _decoded_error=$(windows_queue_decode "$_error")
             echo "FAIL: $_name Windows launch failed: $_decoded_error" >&2
             _case_failed=1
@@ -2968,7 +3150,7 @@ windows_print_manifest_summary() {
     echo "  cygpath conversions: legacy launch-path lower bound=$_legacy_launch_cygpath, queued manifest=$WINDOWS_MANIFEST_CYGPATH_CONVERSIONS"
     echo "  links: requests=$WINDOWS_LINK_SUMMARY_REQUESTS child_starts=$WINDOWS_LINK_SUMMARY_CHILD_STARTS launch_failures=$WINDOWS_LINK_SUMMARY_LAUNCH_FAILURES failed=$WINDOWS_LINK_SUMMARY_FAILED_PROCESSES missing_outputs=$WINDOWS_LINK_SUMMARY_MISSING_OUTPUTS"
     echo "  link scheduler: jobs=$WINDOWS_LINK_SUMMARY_JOBS peak=$WINDOWS_LINK_SUMMARY_PEAK_CONCURRENCY wall_ms=$WINDOWS_MANIFEST_LINK_WALL_MS child_ms=$WINDOWS_MANIFEST_LINK_MS powershell=$WINDOWS_LINK_POWERSHELL_STARTS"
-    echo "  queue: requests=$WINDOWS_SUMMARY_REQUESTS launch_failures=$WINDOWS_SUMMARY_LAUNCH_FAILURES elapsed_ms=$WINDOWS_SUMMARY_ELAPSED_MS"
+    echo "  queue: requests=$WINDOWS_SUMMARY_REQUESTS launch_failures=$WINDOWS_SUMMARY_LAUNCH_FAILURES timeouts=$WINDOWS_SUMMARY_TIMEOUTS elapsed_ms=$WINDOWS_SUMMARY_ELAPSED_MS"
     echo "  COFF plan: rows=$WINDOWS_MANIFEST_PLAN_ROWS direct_objects=$WINDOWS_MANIFEST_DIRECT_OBJECTS compiler_fallback_assembly=$WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES forced_assertion_assembly=$WINDOWS_MANIFEST_FORCED_ASSEMBLIES"
     echo "  direct-object render: count=$WINDOWS_MANIFEST_DIRECT_OBJECTS timing=included-in-batch-compile batch_compile_ms=$WINDOWS_MANIFEST_BATCH_COMPILE_MS"
     echo "  assembly: compiler_fallback_ms=$WINDOWS_MANIFEST_FALLBACK_ASSEMBLE_MS forced_assertion_ms=$WINDOWS_MANIFEST_FORCED_ASSEMBLE_MS standalone_replay_ms=$WINDOWS_MANIFEST_STANDALONE_ASSEMBLE_MS clang_launches=$WINDOWS_MANIFEST_ASSEMBLES"

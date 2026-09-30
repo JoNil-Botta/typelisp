@@ -917,6 +917,12 @@ end-file
 file claimed.expected
 wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change
 end-file
+file at-cap.expected
+implement issue #7000: Ready issue
+end-file
+file over-cap.expected
+wait: queue saturated; review: 9 PRs in flight; implement: 1 ready issue held back; research/triage: 0 claimed
+end-file
 step selfhost-cli-work-queue-chooser
 run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{dir}}/chooser.json"
 stderr empty
@@ -930,3 +936,13 @@ run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/s
 exit 1
 stdout empty
 stderr contains Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots
+
+step selfhost-cli-work-queue-chooser-at-cap
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/at-cap-ready.json"
+stderr empty
+same "{{dir}}/at-cap.expected" "{{stdout}}"
+
+step selfhost-cli-work-queue-chooser-over-cap
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/over-cap-wait.json"
+stderr empty
+same "{{dir}}/over-cap.expected" "{{stdout}}"

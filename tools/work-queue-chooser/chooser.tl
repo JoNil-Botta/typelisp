@@ -14,7 +14,7 @@
 ;#   research/triage issue #N: Title
 ;#   wait: queue saturated; review: N PRs in flight; implement: M ready issues held back; research/triage: C claimed
 ;#
-;# When the snapshot already holds more than 3 open non-draft PRs the review
+;# When the snapshot already holds more than 8 open non-draft PRs the review
 ;# queue is saturated, so ready-for-implementation issues are dropped from the
 ;# candidate pool and only review/research-triage actions stay eligible. This
 ;# bakes the orchestrator's "don't start new implementations while PRs pile up"
@@ -66,7 +66,7 @@
 ;: queue is saturated: ready-for-implementation issues are dropped so the chooser
 ;: only yields review and research/triage actions. Draft PRs do not count.
 (define implement-pr-cap : i64
-  3)
+  8)
 
 ;: A classified work-queue candidate carrying its display fields and weight.
 (defstruct Candidate
@@ -868,13 +868,13 @@
 (test
   chooser-claimed-prs-keep-backpressure-and-linkage
   (chooser-test-expect-wait
-    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6001\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6002\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6003\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":6000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":6001,\"title\":\"Issue\",\"labels\":[]},{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
-    "wait: queue saturated; review: 4 PRs in flight; implement: 1 ready issue held back; research/triage: 1 claimed; review-claimed: 4; recheck when PR labels, checks, draft/base state, or issue readiness change"))
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6001\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6002\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6003\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6004\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6005\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6006\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6007\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6008\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":6000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":6001,\"title\":\"Issue\",\"labels\":[]},{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    "wait: queue saturated; review: 9 PRs in flight; implement: 1 ready issue held back; research/triage: 1 claimed; review-claimed: 9; recheck when PR labels, checks, draft/base state, or issue readiness change"))
 
 (test
   chooser-claimed-cap-allows-unlinked-triage
   (chooser-test-expect-action
-    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6001\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6002\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6003\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":7001,\"title\":\"Issue\",\"labels\":[]}]}"
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6001\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6002\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6003\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6004\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6005\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6006\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6007\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6008\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":7001,\"title\":\"Issue\",\"labels\":[]}]}"
     kind-triage
     7001))
 
@@ -1119,49 +1119,50 @@
   chooser-caps-implement-when-many-open-prs
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
-            (if (= (cand-count cands) 5)
+            (if (= (cand-count cands) 10)
               unit
               (io.panic
-                "four review PRs plus the surviving triage issue expected"))
+                "nine review PRs plus the surviving triage issue expected"))
             (if (cand-list-has-kind? cands kind-ready)
               (io.panic
-                "ready-for-implementation issues must drop above the PR cap")
+                "ready-for-implementation issues must drop above the eight-PR cap")
               unit)
             (if (cand-list-has-kind? cands kind-pr)
               unit
-              (io.panic "review candidates must stay eligible above the PR cap"))
+              (io.panic
+                "review candidates must stay eligible above the eight-PR cap"))
             (if (cand-list-has-kind? cands kind-triage)
               unit
               (io.panic
-                "research/triage issues must stay eligible above the PR cap"))
-            (if (= (__tl-project-field (cand-nth cands 4) number) 51)
+                "research/triage issues must stay eligible above the eight-PR cap"))
+            (if (= (__tl-project-field (cand-nth cands 9) number) 51)
               unit
-              (io.panic "triage issue should remain after the four review PRs"))))]
+              (io.panic "triage issue should remain after the nine review PRs"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-allows-implement-at-pr-cap-boundary
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
-            (if (= (cand-count cands) 5)
+            (if (= (cand-count cands) 10)
               unit
-              (io.panic "three review PRs plus both issues expected at the cap"))
+              (io.panic "eight review PRs plus both issues expected at the cap"))
             (if (cand-list-has-kind? cands kind-ready)
               unit
-              (io.panic "exactly three open PRs is at the cap, not above it"))
-            (if (= (__tl-project-field (cand-nth cands 3) number) 50)
+              (io.panic "exactly eight open PRs is at the cap, not above it"))
+            (if (= (__tl-project-field (cand-nth cands 8) number) 50)
               unit
               (io.panic "ready issue should remain right at the PR cap"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -1170,21 +1171,21 @@
   chooser-draft-prs-do-not-count-toward-pr-cap
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":48,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[]},{\"number\":49,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
           (begin
-            (if (= (cand-count cands) 4)
+            (if (= (cand-count cands) 9)
               unit
               (io.panic
-                "three non-draft review PRs plus the kept ready issue expected"))
+                "eight non-draft review PRs plus the kept ready issue expected"))
             (if (cand-list-has-kind? cands kind-ready)
               unit
               (io.panic
-                "two draft PRs must not push three open PRs over the cap"))
-            (if (= (__tl-project-field (cand-nth cands 3) number) 50)
+                "two draft PRs must not push eight open PRs over the cap"))
+            (if (= (__tl-project-field (cand-nth cands 8) number) 50)
               unit
               (io.panic "ready issue should sit right after the non-draft PRs"))))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -1193,7 +1194,7 @@
   chooser-implement-cap-can-empty-queue-when-only-ready-issues
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Another ready\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Another ready\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}"]
     (match (json.parse (& text))
       [(json.OkJson root)
         (let
@@ -1208,7 +1209,7 @@
                 (test.assert-true
                   (string.eq
                     message
-                    "wait: queue saturated; review: 4 PRs in flight; implement: 2 ready issues held back; research/triage: 0 claimed")
+                    "wait: queue saturated; review: 9 PRs in flight; implement: 2 ready issues held back; research/triage: 0 claimed")
                   "ready-only saturation should report its empty lanes")]
               [_ (io.panic "saturated queue should return the wait signal")])))]
       [(json.ErrJson _) (io.panic "test JSON should parse")])))
@@ -1217,15 +1218,28 @@
   chooser-saturated-signal-counts-claimed-research
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"headRefName\":\"implement-5053-claimed\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":5050,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":5053,\"title\":\"Claimed research\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"headRefName\":\"implement-5053-claimed\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":5050,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":5053,\"title\":\"Claimed research\",\"labels\":[]}]}"]
     (match (choose-candidate text)
       [(ChooserResult.Wait message)
         (test.assert-true
           (string.eq
             message
-            "wait: queue saturated; review: 4 PRs in flight; implement: 1 ready issue held back; research/triage: 1 claimed")
+            "wait: queue saturated; review: 9 PRs in flight; implement: 1 ready issue held back; research/triage: 1 claimed")
           "saturated queue should report its closed lanes")]
       [_ (io.panic "excluded research issues should produce the wait signal")])))
+
+(test
+  chooser-allows-implementation-with-four-open-prs
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"PR 1\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR 2\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR 3\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR 4\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    kind-ready
+    7000))
+
+(test
+  chooser-over-cap-remains-saturated
+  (chooser-test-expect-wait
+    "{\"prs\":[{\"number\":40,\"title\":\"PR 1\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR 2\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR 3\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR 4\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR 5\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR 6\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR 7\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR 8\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"PR 9\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":49,\"title\":\"PR 10\",\"isDraft\":false,\"baseRefName\":\"main\",\"labels\":[],\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    "wait: queue saturated; review: 10 PRs in flight; implement: 1 ready issue held back; research/triage: 0 claimed"))
 
 (test
   chooser-empty-valid-input-remains-an-error

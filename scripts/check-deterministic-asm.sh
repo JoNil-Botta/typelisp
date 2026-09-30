@@ -64,8 +64,10 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# NAME SOURCE [no-entry]: a mainless module is library code and compiles with
-# --no-entry, as its compile-manifest case does (#7071).
+# NAME SOURCE [no-entry|foreign-cwd]: a mainless module is library code and
+# compiles with --no-entry, as its compile-manifest case does (#7071). A
+# foreign-cwd case compiles run2 from a directory the stdlib root does not lie
+# under: stdlib module identity must not follow the cwd (#8430).
 corpus() {
     cat <<'EOF'
 arithmetic tests/integration/arithmetic.tl
@@ -107,6 +109,7 @@ tree tests/integration/tree.tl
 unit_functions tests/integration/unit_functions.tl
 unit_main tests/integration/unit_main.tl
 char_literals examples/char_literals.tl
+stdlib_root_cwd tests/integration/calc.tl foreign-cwd
 EOF
 }
 
@@ -160,6 +163,35 @@ manifest_case_id_for_source() {
     printf '%s\n' "$_id"
 }
 
+absolute_path() {
+    case "$1" in
+        /* | [A-Za-z]:[\\/]*) printf '%s\n' "$1" ;;
+        *) printf '%s\n' "$ROOT/$1" ;;
+    esac
+}
+
+# Both passes name the entry, the roots and the output absolutely, so only the
+# cwd differs between them.
+compile_foreign_cwd_case() {
+    pass_name=$1
+    source=$2
+    out=$3
+    cwd=$ROOT
+    if [ "$pass_name" != run1 ]; then
+        cwd=$WORKDIR/.inputs/foreign-cwd
+        mkdir -p "$cwd"
+    fi
+    compiler=$(absolute_path "$COMPILER")
+    echo "[$pass_name] $source -> $out (cwd $cwd)"
+    (
+        cd "$cwd"
+        "$compiler" compile "$(compiler_input_path "$ROOT/$source")" \
+            -o "$(compiler_input_path "$(absolute_path "$out")")" \
+            --stdlib-root "$(compiler_input_path "$ROOT/stdlib")" \
+            --stdlib-root "$(compiler_input_path "$ROOT/src")"
+    )
+}
+
 compile_pass() {
     pass_name=$1
     out_dir=$2
@@ -174,6 +206,10 @@ compile_pass() {
             exit 1
         fi
         out="$out_dir/$name.s"
+        if [ "$kind" = foreign-cwd ]; then
+            compile_foreign_cwd_case "$pass_name" "$source" "$out"
+            continue
+        fi
         if case_id=$(manifest_case_id_for_source "$source"); then
             shared_asm="$MANIFEST_SHARE_DIR/$case_id/$case_id.s"
             if [ "$pass_name" = run1 ]; then

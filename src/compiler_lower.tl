@@ -12463,7 +12463,21 @@
           (ast.ast-node-pool-context-expr-get pools index-box)]
         (lower-reach-expr pools all-functions names state index))]
     [(ast.AstExpr.Syscall args)
-      (lower-reach-expr-list pools all-functions names state args)]))
+      (lower-reach-expr-list pools all-functions names state args)]
+    [(ast.AstExpr.ForeachActive _ body-box)
+      (lower-reach-expr
+        pools
+        all-functions
+        names
+        state
+        (ast.ast-node-pool-context-expr-get pools body-box))]
+    [(ast.AstExpr.LaneValue value-box)
+      (lower-reach-expr
+        pools
+        all-functions
+        names
+        state
+        (ast.ast-node-pool-context-expr-get pools value-box))]))
 
 (define (lower-reach-global-decl
   [pools : (& pools ast.AstNodePoolContext)]
@@ -30164,6 +30178,32 @@
         [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
         (lower-xgetbv ctx state env type-env index))]
     [(ast.AstExpr.Syscall args) (lower-syscall ctx state env type-env args)]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (if (lower-mode-simd? (lower-state-mode state))
+        (ResultLowerExpr.Err
+          (box
+            (lower-diagnostic-at-expr
+              ctx
+              origin
+              (lower-foreach-active-simd-message (lower-state-mode state)))))
+        (lower-scalar-foreach-active
+          ctx
+          state
+          env
+          type-env
+          lane
+          (lower-context-expr-get ctx body-box)))]
+    [(ast.AstExpr.LaneValue value-box)
+      (let
+        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
+        (lower-expr-expected
+          ctx
+          state
+          env
+          type-env
+          (lower-global-shared-view value)
+          expr-ty
+          value))]
     [_
       (ResultLowerExpr.Err
         (box
@@ -62643,6 +62683,8 @@
                     [(ast.AstResourceBinding.Binding name _ _ _)
                       (lower-spmd-array-view-note! flags name other)])
                   (set! index (+ index 1)))))])]
+      [(ast.AstExpr.ForeachActive lane _)
+        (lower-spmd-array-view-note! flags lane other)]
       [_ unit])))
 
 (define (lower-spmd-array-view-scan!
@@ -62984,6 +63026,84 @@
       end-value
       body)))
 
+;; --- foreach-active (#8306) ---
+;; The SIMD backends lower foreach-active in #8307; until then a gang that
+;; holds one is rejected in every SIMD mode, never lowered through a scalar
+;; fallback.
+(define (lower-foreach-active-simd-message [mode : CompilerLowerMode]) : String
+  (str_cat.str-cat
+    "lower: foreach-active is not yet lowered for "
+    (if (lower-mode-avx2? mode)
+      "AVX2"
+      "AVX-512")))
+
+;; The first foreach-active in EXPR, as its nearest spanned enclosing node.
+(define (lower-find-foreach-active
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [origin : ast.AstExpr]) : LowerMaybeAstExpr
+  (match (lower-global-shared-view expr)
+    [(ast.AstExpr.Spanned inner-box _)
+      (lower-find-foreach-active
+        ctx
+        (lower-context-expr-get ctx inner-box)
+        expr)]
+    [(ast.AstExpr.ForeachActive _ _) (LowerMaybeAstExpr.Some origin)]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        (lower-find-foreach-active-at ctx (& children) 0 origin))]))
+
+(define (lower-find-foreach-active-at
+  [ctx : tc_core.TcContext]
+  [children : (& children ast.AstExprList)]
+  [index : i64]
+  [origin : ast.AstExpr]) : LowerMaybeAstExpr
+  (if (>= index children.len)
+    LowerMaybeAstExpr.No
+    (match (lower-find-foreach-active
+      ctx
+      (lower-context-expr-get ctx (ast.ast-expr-list-get children index 0))
+      (lower-global-shared-view origin))
+      [(LowerMaybeAstExpr.Some found) (LowerMaybeAstExpr.Some found)]
+      [(LowerMaybeAstExpr.No)
+        (lower-find-foreach-active-at ctx children (+ index 1) origin)])))
+
+;; Scalar reference lowering: the scalar gang is one lane wide, so the body
+;; runs once, for lane 0, the lane program-index reads. A masked-out index
+;; never reaches it.
+(define (lower-scalar-foreach-active
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [lane : i64]
+  [body : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc lane-state lane-var)
+      (match (lower-expr-expected
+        ctx
+        (lower-state-emit
+          lane-state
+          (ir.CompilerIrInstr.Mov
+            lane-var
+            (ir.CompilerIrValue.I64 0)
+            (ast.AstType.I64)))
+        (sym_i64_env.sym-i64-bind-id env lane lane-var)
+        (tc_core.tc-bind-id type-env lane (ast.AstType.I64))
+        (lower-global-shared-view body)
+        (ast.AstType.Unit)
+        body)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr body-state _ _)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  body-state
+                  ir.CompilerIrValue.Unit
+                  (ast.AstType.Unit)))])]
+        [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)])]))
+
 (define (lower-foreach
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -62995,41 +63115,55 @@
   [start : ast.AstExpr]
   [end : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-expr-expected
-    ctx
-    state
-    env
-    type-env
-    (lower-global-shared-view start)
-    (lower-global-shared-view index-ty)
-    start)
-    [(ResultLowerExpr.Ok start-lowered)
-      (match start-lowered
-        [(LowerExpr.Expr start-state start-value _)
-          (match (lower-expr-expected
+  (match (if (lower-mode-simd? (lower-state-mode state))
+    (lower-find-foreach-active
+      ctx
+      (lower-global-shared-view body)
+      (lower-global-shared-view body))
+    LowerMaybeAstExpr.No)
+    [(LowerMaybeAstExpr.Some origin)
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
             ctx
-            start-state
-            env
-            type-env
-            (lower-global-shared-view end)
-            (lower-global-shared-view index-ty)
-            end)
-            [(ResultLowerExpr.Ok end-lowered)
-              (match end-lowered
-                [(LowerExpr.Expr end-state end-value _)
-                  (lower-foreach-lowered
-                    ctx
-                    end-state
-                    env
-                    type-env
-                    index-id
-                    index
-                    index-ty
-                    start-value
-                    end-value
-                    body)])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+            origin
+            (lower-foreach-active-simd-message (lower-state-mode state)))))]
+    [(LowerMaybeAstExpr.No)
+      (match (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        (lower-global-shared-view start)
+        (lower-global-shared-view index-ty)
+        start)
+        [(ResultLowerExpr.Ok start-lowered)
+          (match start-lowered
+            [(LowerExpr.Expr start-state start-value _)
+              (match (lower-expr-expected
+                ctx
+                start-state
+                env
+                type-env
+                (lower-global-shared-view end)
+                (lower-global-shared-view index-ty)
+                end)
+                [(ResultLowerExpr.Ok end-lowered)
+                  (match end-lowered
+                    [(LowerExpr.Expr end-state end-value _)
+                      (lower-foreach-lowered
+                        ctx
+                        end-state
+                        env
+                        type-env
+                        index-id
+                        index
+                        index-ty
+                        start-value
+                        end-value
+                        body)])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]))
 
 ;; Scalar `match` lowering. The scrutinee is lowered once into a fresh
 ;; local, then literal arms become a chain of `CompilerIrBinOp.Eq` tests + `CompilerIrInstr.Branch`

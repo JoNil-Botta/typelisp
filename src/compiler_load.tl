@@ -7780,6 +7780,19 @@
                       locals
                       index)
                     (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
+    [(ast.AstExpr.ForeachActive lane body)
+      (compiler-load-session-state-lazy-expr-demand
+        (owned_view.compiler-owned-shared-view state)
+        body
+        alias
+        summary
+        (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+          state)
+          (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+            state
+            locals
+            lane)
+          (sym_i64_env.sym-i64-bind-id locals lane 1)))]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index ty start end init value)

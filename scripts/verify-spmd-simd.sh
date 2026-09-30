@@ -177,6 +177,7 @@ tests/spmd/varying_while_nested_i64.tl
 tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
 tests/spmd/varying_match_enum_helper_reject.tl
+tests/spmd/foreach_active_simd_reject.tl
 tests/spmd/bool_lanes.tl
 tests/spmd/map_compare_surface.tl
 tests/spmd/map_fused_reduce_i64.tl
@@ -208,6 +209,12 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
+            ;;
+        tests/spmd/foreach_active_simd_reject.tl:avx2)
+            printf '%s\n' "lower: foreach-active is not yet lowered for AVX2"
+            ;;
+        tests/spmd/foreach_active_simd_reject.tl:avx512)
+            printf '%s\n' "lower: foreach-active is not yet lowered for AVX-512"
             ;;
         tests/spmd/fixed_array_whole_use_keeps_array.tl:avx2 | tests/spmd/fixed_array_whole_use_keeps_array.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"

@@ -662,6 +662,32 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-hydrated-foreach-active-ok?
+    [pools : ast.AstNodePoolContext]) : bool
+    (let
+      [id : i64 0]
+      [ok : bool false]
+      (begin
+        (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
+          (begin
+            (match (ast.ast-node-pool-context-expr-get pools id)
+              [(ast.AstExpr.ForeachActive lane body)
+                (set!
+                  ok
+                  (and
+                    (surface_identity.surface-identity-string-eq?
+                      (ci.intern-str lane)
+                      "active-lane")
+                    (match (ast.ast-node-pool-context-expr-get pools body)
+                      [(ast.AstExpr.LaneValue value)
+                        (surface-ast-int-node-value? (& pools) value 20)]
+                      [_ false])))]
+              [_ unit])
+            (set! id (+ id 1))))
+        ok))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-c-function-param-ok?
     [pools : ast.AstNodePoolContext]
     [params : (& params ast.AstParamList)]
@@ -704,6 +730,7 @@
       [macro-type-id : i64 (ci.intern "type")]
       [compact-index-id : i64 (ci.intern "compact-index")]
       [compact-slot-id : i64 (ci.intern "compact-slot")]
+      [active-lane-id : i64 (ci.intern "active-lane")]
       [kind-i64-id : i64 (ci.intern "i64")]
       [kind-struct-id : i64 (ci.intern "struct")]
       [kind-type-var-id : i64 (ci.intern "type-var")]
@@ -786,14 +813,19 @@
           left
           compact-keep
           compact-body)]
-      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+      [active : i64
+        (ast.ast-expr-foreach-active-with-pools
+          source-pools
+          active-lane-id
+          (ast.ast-expr-lane-value-with-pools source-pools left))]
+      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
           (ast.AstExpr.Begin
             (ast.AstExprList
               (owned_view.compiler-owned-shared-view body-items)
-              3)))]
+              4)))]
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
@@ -810,6 +842,7 @@
         (set! (array-ref body-items 0) body)
         (set! (array-ref body-items 1) tuple-set)
         (set! (array-ref body-items 2) compact)
+        (set! (array-ref body-items 3) active)
         (ast.ast-macro-type-kind-list-set!
           (&mut macro-type-kinds)
           0
@@ -994,7 +1027,7 @@
                                   (=
                                     (ast.ast-node-pool-context-expr-len
                                       hydration.pools)
-                                    11)
+                                    13)
                                   (ast.ast-node-pool-context-expr-span-oracle-ok?
                                     hydration.pools)
                                   (=
@@ -1247,6 +1280,9 @@
                                     (owned_view.compiler-owned-shared-view
                                       hydration.pools))
                                   (surface-ast-hydrated-spmd-compact-ok?
+                                    (owned_view.compiler-owned-shared-view
+                                      hydration.pools))
+                                  (surface-ast-hydrated-foreach-active-ok?
                                     hydration.pools))]))])))])]))))))
 
 (cfg

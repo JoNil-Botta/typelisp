@@ -1080,7 +1080,16 @@
   ;; The enclosing `Spanned` node supplies the invocation span. Keeping this
   ;; append-only preserves every established AstExpr tag and costs one node only
   ;; at an actual expansion boundary.
-  (MacroExpansion i64 i64 i64))
+  (MacroExpansion i64 i64 i64)
+  ;; `(foreach-active [lane : i64] body...)`: inside a foreach gang, run BODY
+  ;; once per active lane in increasing lane order, with the lane-number
+  ;; binding LANE (interned name) uniform. The body is one expression id; the
+  ;; parser wraps several body forms in a `Begin`. Appended so every
+  ;; established AstExpr tag ordinal stays stable.
+  (ForeachActive i64 i64)
+  ;; `(lane-value expr)`: inside a foreach-active body, the current lane's
+  ;; value of the varying EXPR, as a uniform value.
+  (LaneValue i64))
 
 ;; Tuple-place writes reuse `StructSet` internally so the public place syntax
 ;; can land without changing the serialized AstExpr ABI. Interned struct field
@@ -6811,7 +6820,9 @@
         (ast-for-owned-slots-fold items ,c ,s ,e ,@x)]
       [(AstExpr.ForOwnedStep items)
         (ast-for-owned-slots-fold items ,c ,s ,e ,@x)]
-      [(AstExpr.MacroExpansion a _ _) (ast-fold-1 ,c ,s ,e a ,@x)])))
+      [(AstExpr.MacroExpansion a _ _) (ast-fold-1 ,c ,s ,e a ,@x)]
+      [(AstExpr.ForeachActive _ a) (ast-fold-1 ,c ,s ,e a ,@x)]
+      [(AstExpr.LaneValue a) (ast-fold-1 ,c ,s ,e a ,@x)])))
 
 (defmacro (ast-expr-for-each-child
   [expr : Expr]
@@ -7181,7 +7192,9 @@
       [(AstExpr.ForOwnedStep items)
         (AstExpr.ForOwnedStep (ast-for-owned-slots-map items ,e ,@x))]
       [(AstExpr.MacroExpansion a provenance name)
-        (AstExpr.MacroExpansion (,e ,@x a) provenance name)])))
+        (AstExpr.MacroExpansion (,e ,@x a) provenance name)]
+      [(AstExpr.ForeachActive lane a) (AstExpr.ForeachActive lane (,e ,@x a))]
+      [(AstExpr.LaneValue a) (AstExpr.LaneValue (,e ,@x a))])))
 
 ;; The expression-child schema as two functions, for walkers that treat a
 ;; node's expression children uniformly: `ast-expr-child-ids` lists them in
@@ -7929,6 +7942,14 @@
         (match ,r
           [(AstExpr.MacroExpansion b0 p1 n1)
             (and (,e ,@x a0 b0) (= p0 p1) (= n0 n1))]
+          [_ false])]
+      [(AstExpr.ForeachActive n0 a0)
+        (match ,r
+          [(AstExpr.ForeachActive n1 b0) (and (= n0 n1) (,e ,@x a0 b0))]
+          [_ false])]
+      [(AstExpr.LaneValue a0)
+        (match ,r
+          [(AstExpr.LaneValue b0) (,e ,@x a0 b0)]
           [_ false])])))
 
 (define (ast-expr-for-owned? [expr : (& expr AstExpr)]) : bool
@@ -8847,6 +8868,17 @@
 
 (define (ast-expr-spmd-program-count-with-pools [pools : AstNodePoolContext]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.SpmdProgramCount)))
+
+(define (ast-expr-foreach-active-with-pools
+  [pools : AstNodePoolContext]
+  [lane : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.ForeachActive lane body)))
+
+(define (ast-expr-lane-value-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.LaneValue value)))
 
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]

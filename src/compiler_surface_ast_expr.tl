@@ -564,6 +564,15 @@
           (codec.surface-ast-write-i64! out lane))]
       [(ast.AstExpr.SpmdProgramIndex) (codec.surface-ast-write-i64! out 32)]
       [(ast.AstExpr.SpmdProgramCount) (codec.surface-ast-write-i64! out 33)]
+      [(ast.AstExpr.ForeachActive lane body)
+        (begin
+          (codec.surface-ast-write-i64! out 87)
+          (codec.surface-ast-write-name! out context lane)
+          (codec.surface-ast-write-i64! out body))]
+      [(ast.AstExpr.LaneValue value)
+        (begin
+          (codec.surface-ast-write-i64! out 88)
+          (codec.surface-ast-write-i64! out value))]
       [(ast.AstExpr.StructGet target field)
         (begin
           (codec.surface-ast-write-i64! out 34)
@@ -874,6 +883,11 @@
               (codec.surface-ast-read-i64! reader)
               (codec.surface-ast-read-i64! reader)
               (codec.surface-ast-read-i64! reader))))]
+      [(= tag 87)
+        (ast.AstExpr.ForeachActive
+          (codec.surface-ast-read-name! reader)
+          (codec.surface-ast-read-i64! reader))]
+      [(= tag 88) (ast.AstExpr.LaneValue (codec.surface-ast-read-i64! reader))]
       [(= tag 13)
         (ast.AstExpr.MakeArray
           (codec.surface-ast-read-i64! reader)

@@ -1038,3 +1038,18 @@ json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_o
 # A typecheck code follows the raise site's kind, not words in the message.
 typecheck_kind_ignores_binding_name_reject|check-fail|tests/safety/typecheck_kind_ignores_binding_name_reject.tl|-|error[E0206]: typecheck: let binding `cleanup` type mismatch: expected i64, found bool
 typecheck_kind_ignores_spmd_word_reject|check-fail|tests/safety/typecheck_kind_ignores_spmd_word_reject.tl|-|error[E0206]: typecheck: let binding `foreach-total` type mismatch: expected i64, found bool
+
+# Function declarations have no storage; function-valued storage stays mutable.
+function_set_same_type_reject|check-fail|tests/safety/function_set_same_type_reject.tl|-|typecheck: cannot assign to function
+function_set_mismatch_reject|check-fail|tests/safety/function_set_mismatch_reject.tl|-|typecheck: cannot assign to function
+function_set_rhs_missing_reject|check-fail|tests/safety/function_set_rhs_missing_reject.tl|-|typecheck: cannot assign to function
+function_set_extern_reject|check-fail|tests/safety/function_set_extern_reject.tl|-|typecheck: cannot assign to function
+function_set_unsafe_reject|check-fail|tests/safety/function_set_unsafe_reject.tl|-|typecheck: cannot assign to function
+function_set_alias_reject|check-fail|tests/safety/function_set_alias_reject.tl|-|typecheck: cannot assign to function
+function_set_canonical_reject|check-fail|tests/safety/function_set_canonical_reject.tl|-|typecheck: cannot assign to function
+function_set_selected_reject|check-fail|tests/safety/function_set_selected_reject.tl|-|typecheck: cannot assign to function
+function_set_selected_as_reject|check-fail|tests/safety/function_set_selected_as_reject.tl|-|typecheck: cannot assign to function
+function_set_wildcard_reject|check-fail|tests/safety/function_set_wildcard_reject.tl|-|typecheck: cannot assign to function
+function_set_imported_extern_reject|check-fail|tests/safety/function_set_imported_extern_reject.tl|-|typecheck: cannot assign to function
+function_set_macro_reject|check-fail|tests/safety/function_set_macro_reject.tl|-|typecheck: cannot assign to function
+function_storage_assignment|run-exit|tests/safety/function_storage_assignment.tl|42|-

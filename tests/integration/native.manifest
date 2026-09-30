@@ -55,6 +55,9 @@ content_bounds_induction|all|-|tests/integration/content_bounds_induction.tl|42|
 content_bounds_induction_abort|all|-|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:35:29: array index out of bounds: index=8 length=8\n
 content_bounds_checked|all|-|tests/integration/content_bounds_checked.tl|42|32\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 content_bounds_checked_abort|all|-|tests/integration/content_bounds_checked_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:48:35: array index out of bounds: index=8 length=8\n
+bounds_group_stack_pair|all|0,2|tests/integration/bounds_group_stack_pair.tl|42|-|2|stdlib/io.tl stdlib/string.tl|-
+bounds_group_stack_pair_first_abort|all|0,2|tests/integration/bounds_group_stack_pair.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:31: array index out of bounds: index=-1 length=2\n
+bounds_group_stack_pair_second_abort|all|0,2|tests/integration/bounds_group_stack_pair.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:31: array index out of bounds: index=-1 length=2\n
 ck_local_len_eq|all|-|tests/integration/ck_local_len_eq.tl|42|272\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 ck_local_len_eq_abort|all|-|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:30:63: array index out of bounds: index=8 length=8\n
 # IT-2 bypass-edge guard dedup (PRE + CSE) runs only at opt2; opt0/opt1 are the

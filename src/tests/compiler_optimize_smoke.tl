@@ -3949,6 +3949,20 @@
     "a body-defined length, a loopless block and an already-split block are refused"))
 
 (test
+  bounds-group-negative-literal-coalescing
+  (test.assert-i64-eq
+    (ot.compiler-optimize-bounds-group-literal-self-test)
+    42
+    "stack pairs rebase on their smallest offset and literal lengths fold the bound, outside loops and in nested ones"))
+
+(test
+  bounds-group-negative-literal-refusals
+  (test.assert-i64-eq
+    (ot.compiler-optimize-bounds-group-literal-refusal-self-test)
+    42
+    "a store, call or division between members, an over-cap span and a zero bound are refused"))
+
+(test
   ubound-tangled-phi-web
   (test.assert-i64-eq
     (ot.compiler-optimize-ubound-tangled-self-test)

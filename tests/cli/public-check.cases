@@ -53,7 +53,7 @@ run check "{{dir}}/main.tl"
 exit nonzero
 stdout empty
 stderr contains error[E0215]
-stderr contains {{native-dir}}/main.tl:6:
+stderr contains {{native-dir}}/main.tl:7:7
 stderr contains typecheck: cannot assign to function
 stderr not-contains typecheck: unbound name missing-replacement
 stderr not-contains assignment type mismatch

@@ -75228,3 +75228,47 @@
     (test.assert-true
       (opt-fault-rule-case? (Add) dynamic true true)
       "an addition cannot fault")))
+
+;; #8259: a clone past its fixed budget whose guard runs once per call is
+;; admitted at opt-bce-mb-clone-instrs-per-derived cloned instructions per
+;; derived check: every one of a flat loop's, a region's only when one sits in
+;; its inner loop. A candidate entered inside another loop never is.
+(test
+  optimizer-bce-size-benefit-boundary
+  (let
+    [flat : opt.OptLabelSet (Nil)]
+    [inner : opt.OptLabelSet (opt.opt-label-cons 7 (Nil))]
+    [rate : i64 (opt.opt-bce-mb-clone-instrs-per-derived)]
+    [flat-max : i64 (opt.opt-bce-mb-instr-max)]
+    [region-max : i64 (opt.opt-bce-mb-region-instr-max)]
+    (test.assert-true
+      (not (opt.opt-bce-mb-clone-too-big? false false flat flat-max 1 false))
+      "a flat body inside its fixed budget needs one derived check")
+    (test.assert-true
+      (opt.opt-bce-mb-clone-too-big? false false flat (+ flat-max 1) 1 false)
+      "one derived check does not pay past the flat budget")
+    (test.assert-true
+      (not
+        (opt.opt-bce-mb-clone-too-big? false false flat (* 12 rate) 12 false))
+      "twelve derived checks pay for twelve rates of cloned instructions")
+    (test.assert-true
+      (opt.opt-bce-mb-clone-too-big?
+        false
+        false
+        flat
+        (+ (* 12 rate) 1)
+        12
+        false)
+      "and not one instruction more")
+    (test.assert-true
+      (opt.opt-bce-mb-clone-too-big? true false inner (* 12 rate) 12 false)
+      "a region's outer-body checks do not pay past its fixed budget")
+    (test.assert-true
+      (not (opt.opt-bce-mb-clone-too-big? true false inner (* 12 rate) 12 true))
+      "a region pays with derived checks in its inner loop")
+    (test.assert-true
+      (not (opt.opt-bce-mb-clone-too-big? true false inner region-max 1 false))
+      "a region inside its fixed budget is not priced")
+    (test.assert-true
+      (not (opt.opt-bce-mb-clone-too-big? false true flat (* 100 rate) 1 false))
+      "a nested entry is held to its fixed budget by the shape scan, not here")))

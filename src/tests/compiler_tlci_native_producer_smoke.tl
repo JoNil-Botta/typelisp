@@ -262,8 +262,8 @@
   (let
     [_empty : i64 (producer-test-source-allocated-bytes 0)]
     [_warm : i64 (producer-test-source-allocated-bytes 1)]
-    [small : i64 (producer-test-source-allocated-bytes 64)]
-    [large : i64 (producer-test-source-allocated-bytes 128)]
+    [small : i64 (producer-test-source-allocated-bytes 256)]
+    [large : i64 (producer-test-source-allocated-bytes 512)]
     (begin
       (unless
         (> small 0)

@@ -722,6 +722,7 @@ specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|4
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
 float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib
 decls_generated_imports|all|-|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl|-
+decls_module_env_carry|all|-|tests/integration/decls_module_env_carry.tl|42|-|-|decls_module_env_carry_dep.tl|-
 decls_generated_import_nested|all|-|tests/integration/decls_generated_import_nested.tl|42|-|-|decls_generated_import_dep.tl|-
 generated_import_alias_scopes|all|-|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|-
 source_selected_generated_export|all|-|tests/integration/source_selected_generated_export.tl|42|-|-|source_selected_generated_dep.tl source_selected_generated_macro_dep.tl|-

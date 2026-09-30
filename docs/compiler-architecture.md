@@ -150,9 +150,17 @@ at which it last re-resolved its unresolved signatures. Only a new walk, a
 splice with a nominal type, import or module row, an import marker, or a lazy
 import stub advances the generation, so function-only splices skip the pass. A
 splice that keeps the context's flat program keeps its module declaration
-index. The `macro-segmented-program-events` test and the generated-declaration
-typecheck cases cover the event index and the re-resolution boundary; the
-`expansions` compiler-scaling row measures expansions within one module.
+index. A module's cached view is its overlay, the bindings its rows decided,
+on the top env under one explicit cache, plus the `seen` map that decided them.
+A function-only splice into a non-root module carries that view instead of
+re-walking the module: it replays the overlay onto the new top env and decides
+only the spliced rows with the continued `seen` map. A splice that names an
+already decided name, changes type resolution, or meets an overlay type that
+still needs resolution rebuilds the view. The `macro-segmented-program-events`
+test and the generated-declaration typecheck cases cover the event index and
+the re-resolution boundary; `decls_module_env_carry` covers carried views
+across repeated splices, and the `expansions` compiler-scaling row measures
+expansions within one module.
 
 Lexer tokens are scan scratch. Their geometric growth replaces dedicated
 storage after moving the live prefix, then retires the superseded owner and

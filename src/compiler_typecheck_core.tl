@@ -10980,6 +10980,12 @@
   (macro-cache-capacity i64)
   (macro-cache-module-ids (__tl_dyn-array i64))
   (macro-cache-values (__tl_dyn-array TcTypeEnv))
+  ;; The `seen` map each segmented module view was built with, in the owner
+  ;; arena of the view's store, which a function-only splice into that module
+  ;; continues; see macro-module-env-carry!. Flat-path entries have `carry`
+  ;; false.
+  (macro-cache-seen (__tl_dyn-array tc_i64_i64_map.Map))
+  (macro-cache-carry (__tl_dyn-array bool))
   (macro-cache-len i64)
   (hygiene-cache-arena i64)
   (hygiene-cache-arena-root i64)
@@ -10995,6 +11001,8 @@
     256
     (__tl_make-array i64 0)
     (__tl_make-array TcTypeEnv 0)
+    (__tl_make-array tc_i64_i64_map.Map 0)
+    (__tl_make-array bool 0)
     0
     0
     0
@@ -86905,10 +86913,24 @@
             (set! start 0))))
       cur-env)))
 
+(defenum ResultMacroModuleEnvWithSeen
+  (Ok TcTypeEnv tc_i64_i64_map.Map)
+  (Err String))
+
 (define (macro-segmented-module-local-env-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [target-module-id : i64]) : ResultTcEnv
+  (match (macro-segmented-module-local-env-and-seen ctx env target-module-id)
+    [(ResultMacroModuleEnvWithSeen.Ok local-env _) (ResultTcEnv.Ok local-env)]
+    [(ResultMacroModuleEnvWithSeen.Err message) (ResultTcEnv.Err message)]))
+
+;; The module view and the `seen` map its passes left: root shadows plus every
+;; name the target module's rows decided. A carry continues that map.
+(define (macro-segmented-module-local-env-and-seen
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-module-id : i64]) : ResultMacroModuleEnvWithSeen
   (let
     [data : MacroSegmentedProgramViewData
       (macro-segmented-prefix-events-sync! (tc-context-job-state ctx))]
@@ -86941,8 +86963,8 @@
     [local-env : TcTypeEnv
       (macro-segmented-module-walk! ctx (& data) (&mut adds) (&mut seen) env)]
     (if adds.ok
-      (ResultTcEnv.Ok local-env)
-      (ResultTcEnv.Err adds.message))))
+      (ResultMacroModuleEnvWithSeen.Ok local-env seen)
+      (ResultMacroModuleEnvWithSeen.Err adds.message))))
 
 (define (macro-expand-scratch-program
   [state : TcMacroState]
@@ -103128,6 +103150,12 @@
             (set!
               data.macro-cache-values
               (__tl_make-array TcTypeEnv data.macro-cache-capacity))
+            (set!
+              data.macro-cache-seen
+              (__tl_make-array tc_i64_i64_map.Map data.macro-cache-capacity))
+            (set!
+              data.macro-cache-carry
+              (__tl_make-array bool data.macro-cache-capacity))
             (tc-macro-module-env-state-data-set! state data)))))))
 
 (define (tc-macro-module-env-cache-lookup
@@ -103142,10 +103170,29 @@
         (TcMaybeTypeEnv.Some (array-ref data.macro-cache-values index))
         (tc-macro-module-env-cache-lookup state module-id (+ index 1))))))
 
+(define (tc-macro-module-env-cache-index
+  [state : TcMacroState]
+  [module-id : i64]) : i64
+  (let
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< index data.macro-cache-len))
+        (begin
+          (if (= (array-ref data.macro-cache-module-ids index) module-id)
+            (set! found index)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; `seen` must already live in the owner arena of `env`'s store when `carry`.
 (define (tc-macro-module-env-cache-insert!
   [state : TcMacroState]
   [module-id : i64]
-  [env : TcTypeEnv]) : unit
+  [env : TcTypeEnv]
+  [seen : tc_i64_i64_map.Map]
+  [carry : bool]) : unit
   (let
     [_ensure : unit (tc-macro-module-env-cache-storage-ensure! state)]
     [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
@@ -103155,9 +103202,23 @@
           (array-ref data.macro-cache-module-ids data.macro-cache-len)
           module-id)
         (set! (array-ref data.macro-cache-values data.macro-cache-len) env)
+        (set! (array-ref data.macro-cache-seen data.macro-cache-len) seen)
+        (set! (array-ref data.macro-cache-carry data.macro-cache-len) carry)
         (set! data.macro-cache-len (+ data.macro-cache-len 1))
         (tc-macro-module-env-state-data-set! state data))
       unit)))
+
+;; A copy of `seen` in the owner arena of the store the cached view's nodes
+;; live in, so it outlives the expansion generation the walk allocated it in
+;; and dies with the view. Never the shared empty map: a carry inserts into it.
+(define (tc-macro-module-env-seen-own
+  [env : TcTypeEnv]
+  [seen : (& seen tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
+  (in-arena
+    (arena.Arena (tc-chain-store-owner env.store))
+    (if (= (tc_i64_i64_map.len seen) 0)
+      (tc_i64_i64_map.with-capacity 64)
+      (tc-moved-clone-id-map seen))))
 
 (define (tc-macro-module-local-env-id
   [ctx : TcContext]
@@ -103186,12 +103247,36 @@
           ;; top environment's owner arena. Do not switch the ambient
           ;; macro-generation arena here: doing so breaks the generation's
           ;; allocator bookkeeping.
-          (match (tc-module-local-env-id ctx top-env module module-id)
-            [(ResultTcEnv.Ok env)
-              (begin
-                (tc-macro-module-env-cache-insert! state module-id env)
-                (ResultTcEnv.Ok env))]
-            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))))
+          (if (macro-segmented-program-active? (tc-context-job-state ctx))
+            (match (macro-segmented-module-local-env-and-seen
+              (tc-context-with-module-id ctx module module-id)
+              top-env
+              module-id)
+              [(ResultMacroModuleEnvWithSeen.Ok local-env seen)
+                (let
+                  [env : TcTypeEnv
+                    (tc-env-with-cache-layer-over-explicit local-env)]
+                  (begin
+                    (tc-macro-module-env-cache-insert!
+                      state
+                      module-id
+                      env
+                      (tc-macro-module-env-seen-own top-env (& seen))
+                      true)
+                    (ResultTcEnv.Ok env)))]
+              [(ResultMacroModuleEnvWithSeen.Err message)
+                (ResultTcEnv.Err message)])
+            (match (tc-module-local-env-id ctx top-env module module-id)
+              [(ResultTcEnv.Ok env)
+                (begin
+                  (tc-macro-module-env-cache-insert!
+                    state
+                    module-id
+                    env
+                    (tc_i64_i64_map.with-capacity 1)
+                    false)
+                  (ResultTcEnv.Ok env))]
+              [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]))))
 
 (define (macro-env-for-module
   [ctx : TcContext]
@@ -106593,6 +106678,218 @@
             module-id))]
       (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit splice-env)))))
 
+;; The first name a declaration binds in a module view, or -1 for a declaration
+;; the view does not bind (macros, tests, includes).
+(define (macro-module-env-decl-name [decl : ast.AstDecl]) : i64
+  (match decl
+    [(ast.AstDecl.Unsafe inner-box)
+      (macro-module-env-decl-name (ast.ast-decl-box-shared-view inner-box))]
+    [(ast.AstDecl.Def _ name _ _) name]
+    [(ast.AstDecl.DefFn _ name _ _ _ _) name]
+    [(ast.AstDecl.DefDispatch _ name _) name]
+    [(ast.AstDecl.Extern _ name _ _ _) name]
+    [_ -1]))
+
+(define (macro-splice-decls-seen?
+  [ctx : TcContext]
+  [seen : (& seen tc_i64_i64_map.Map)]
+  [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) false]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [name : i64 (macro-module-env-decl-name (tc-global-shared-view decl))]
+        (or
+          (and
+            (>= name 0)
+            (tc_i64_i64_map.contains?
+              seen
+              (tc-env-name-key-id (tc-context-structural-session ctx) name)))
+          (macro-splice-decls-seen? ctx seen rest)))]))
+
+(define (macro-module-env-add-rows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decls : ast.AstDeclList]) : ResultTcEnv
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) (ResultTcEnv.Ok env)]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (match (tc-module-local-env-add-decl ctx env seen decl)
+        [(ResultTcEnv.Ok next-env)
+          (macro-module-env-add-rows ctx next-env seen rest)]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
+
+;; The overlay a module view added over the top env it was built on: every
+;; binding on its full spine (caches followed through `rest`) above `base`.
+;; Returns their count, or -1 when `base` is not on the spine; with `fill`, it
+;; also stores them newest first.
+(define (macro-module-env-overlay-scan
+  [view : TcTypeEnv]
+  [base : TcTypeEnv]
+  [keys : (&mut keys (__tl_dyn-array i64))]
+  [types : (&mut types (__tl_dyn-array ast.AstType))]
+  [fill : bool]) : i64
+  (let
+    [cur : TcTypeEnv view]
+    [count : i64 0]
+    [result : i64 -2]
+    (begin
+      (while (= result -2)
+        (if (and (= cur.store base.store) (= cur.head base.head))
+          (set! result count)
+          (match (tc-type-env-spine-step cur)
+            [(TcTypeEnvSpineStep.Done) (set! result -1)]
+            [(TcTypeEnvSpineStep.Cache rest) (set! cur rest)]
+            [(TcTypeEnvSpineStep.Bind key ty rest)
+              (begin
+                (if fill
+                  (begin
+                    (set! (array-ref keys count) key)
+                    (set! (array-ref types count) ty))
+                  unit)
+                (set! count (+ count 1))
+                (set! cur rest))])))
+      result)))
+
+;; Carry a module's cached view across a function-only splice into it (#8120)
+;; instead of re-walking every row of the module after each splice. A view is
+;; its overlay (the bindings its rows decided) on the top env, under one
+;; explicit cache. A function-only splice changes no type resolution and adds
+;; only module-qualified top-env keys, so the overlay the rebuild would decide
+;; for the module's existing rows is the one already cached: the carry replays
+;; it, in order, onto the new top env, decides only the spliced rows with the
+;; view's continued `seen` map, and publishes the same explicit cache a
+;; rebuild would. None of the spliced names is in `seen`, so no other row of
+;; the module decides differently because a rebuild visits the new rows between
+;; them. Type-resolution-relevant splices, the root module, flat views, splices
+;; naming an already decided name, and any failure keep the rebuild.
+(define (macro-module-env-carry!
+  [ctx : TcContext]
+  [base-env : TcTypeEnv]
+  [top-env : TcTypeEnv]
+  [splice : ast.AstDeclList]
+  [module : String]
+  [module-id : i64]) : unit
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [data : TcMacroModuleEnvStateData (tc-macro-module-env-state-data state)]
+    [index : i64
+      (if (and
+        (= data.macro-cache-store base-env.store)
+        (= data.macro-cache-head base-env.head))
+        (tc-macro-module-env-cache-index state module-id)
+        -1)]
+    (if (or
+      (< index 0)
+      (= module-id cbi.compiler-builtin-id-fix-empty)
+      (csym.compiler-symbol-root-module-id? module-id)
+      (not (array-ref data.macro-cache-carry index))
+      (macro-decls-type-resolution-relevant? (tc-global-shared-view splice)))
+      unit
+      (let
+        [module-ctx : TcContext
+          (tc-context-with-module-id
+            ctx
+            (tc-global-shared-view module)
+            module-id)]
+        [seen : tc_i64_i64_map.Map
+          (tc-global-array-element-shared-view data.macro-cache-seen index)]
+        [capacity : i64 (tc_i64_i64_map.capacity (& seen))]
+        [view : TcTypeEnv (array-ref data.macro-cache-values index)]
+        [no-keys : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [no-types : (__tl_dyn-array ast.AstType)
+          (__tl_make-array ast.AstType 0)]
+        [count : i64
+          (macro-module-env-overlay-scan
+            view
+            base-env
+            (&mut no-keys)
+            (&mut no-types)
+            false)]
+        (if (or
+          (< count 0)
+          (macro-splice-decls-seen?
+            module-ctx
+            (& seen)
+            (tc-global-shared-view splice)))
+          unit
+          (let
+            [keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+            [types : (__tl_dyn-array ast.AstType)
+              (__tl_make-array ast.AstType count)]
+            [_fill : i64
+              (macro-module-env-overlay-scan
+                view
+                base-env
+                (&mut keys)
+                (&mut types)
+                true)]
+            ;; An overlay type recorded before one of its names could resolve
+            ;; would be stale in the carried view; a rebuild resolves it again.
+            [resolved? : bool
+              (let
+                [probe : i64 0]
+                [ok : bool true]
+                (begin
+                  (while (and ok (< probe count))
+                    (begin
+                      (if (tc-type-needs-resolution-for-context?
+                        module-ctx
+                        (tc-global-array-element-shared-view types probe))
+                        (set! ok false)
+                        unit)
+                      (set! probe (+ probe 1))))
+                  ok))]
+            [replayed : TcTypeEnv top-env]
+            [position : i64
+              (if resolved?
+                count
+                0)]
+            (begin
+              (while (> position 0)
+                (begin
+                  (set! position (- position 1))
+                  (set!
+                    replayed
+                    (tc-bind-id
+                      replayed
+                      (array-ref keys position)
+                      (tc-global-array-element-shared-view types position)))))
+              (match (if resolved?
+                (macro-module-env-add-rows
+                  module-ctx
+                  replayed
+                  (&mut seen)
+                  (tc-global-shared-view splice))
+                (ResultTcEnv.Err "overlay needs resolution"))
+                [(ResultTcEnv.Err _) unit]
+                [(ResultTcEnv.Ok rows-env)
+                  (let
+                    [carried : TcTypeEnv
+                      (tc-env-with-cache-layer-over-explicit rows-env)]
+                    [owned-seen
+                      : tc_i64_i64_map.Map
+                      ;; A grown map allocated its new slots in the ambient
+                      ;; generation arena, and a new store has its own owner
+                      ;; arena; own it again in either case.
+                      (if (and
+                        (= (tc_i64_i64_map.capacity (& seen)) capacity)
+                        (= top-env.store base-env.store))
+                        seen
+                        (tc-macro-module-env-seen-own top-env (& seen)))]
+                    (begin
+                      (set! data.macro-cache-store top-env.store)
+                      (set! data.macro-cache-head top-env.head)
+                      (set! data.macro-cache-len 0)
+                      (tc-macro-module-env-state-data-set! state data)
+                      (tc-macro-module-env-cache-insert!
+                        state
+                        module-id
+                        carried
+                        owned-seen
+                        true)))]))))))))
+
 (define (macro-splice-top-env
   [ctx : TcContext]
   [_program : ast.AstProgram]
@@ -106703,9 +107000,19 @@
                     next-decls
                     (tc-global-shared-view module)
                     module-id
-                    env-plan)
+                    (tc-global-shared-view env-plan))
                     [(ResultTcEnv.Ok top-env)
                       (begin
+                        (match env-plan
+                          [(MacroSpliceEnvPlan.Extend base-env splice)
+                            (macro-module-env-carry!
+                              next-ctx
+                              base-env
+                              top-env
+                              splice
+                              (tc-global-shared-view module)
+                              module-id)]
+                          [_ unit])
                         (tc-hygiene-reset-active-top-env! state top-env)
                         (tc-context-capture-active-pools! next-ctx)
                         (macro-expand-ctfe-env-build-once! next-ctx)

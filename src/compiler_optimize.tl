@@ -119954,10 +119954,10 @@
 ;; WHY THE OCCURRENCE COUNT. The one thing the qualification must rule out is
 ;; the handle escaping into a position the walk cannot follow -- a call
 ;; argument, a store of the handle, a `Mov` alias. Counting every `Global g`
-;; operand in the program (opt-cl-count-instr, the cell scan's value walk with
-;; the saturation taken out) and every literal-offset `Gep` off it separately
-;; makes "used only as such a base" an equality of two integers rather than a
-;; second value walk with an allow-list.
+;; operand in the program (opt-cl-count-instr-into!, the cell scan's value walk
+;; with the saturation taken out) and every literal-offset `Gep` off it
+;; separately makes "used only as such a base" an equality of two integers
+;; rather than a second value walk with an allow-list.
 (defstruct OptConstLengths
   ;; global symbol id -> the literal length.
   (lengths opt_i64_i64_map.Map)
@@ -119968,19 +119968,6 @@
   (match (opt_i64_i64_map.get map id)
     [(opt_i64_i64_map.LookupFound n) n]
     [(opt_i64_i64_map.LookupMissing) 0]))
-
-;; Like opt-reach-instr, this skips Pack words.
-(define (opt-cl-count-instr
-  [counts : opt_i64_i64_map.Map]
-  [instr : (& instr ir.CompilerIrInstr)]) : opt_i64_i64_map.Map
-  (match instr
-    [(ir.CompilerIrInstr.Pack _ _ _) counts]
-    [_
-      (let
-        [out : opt_i64_i64_map.Map counts]
-        (begin
-          (opt-note-uses! (OptUseNote.GlobalCount) (&mut out) instr)
-          out))]))
 
 (define (opt-cl-blocks-to-list [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (match (owned_view.compiler-owned-reference-shared-view blocks)
@@ -120025,26 +120012,16 @@
           [_ unit])]
       [_ unit])))
 
-;; The value walk threads its map by value; this is the in-place entry the
-;; scans use, so one program-wide map accumulates every occurrence.
+;; The in-place entry the scans use: one program-wide map accumulates every
+;; occurrence; like opt-reach-instr, this skips Pack words. `GlobalCount`
+;; increments, so counting straight into `counts`
+;; equals summing a per-instruction map into it, without allocating one.
 (define (opt-cl-count-instr-into!
   [counts : (&mut counts opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (let
-    [local : opt_i64_i64_map.Map
-      (opt-cl-count-instr (opt_i64_i64_map.with-capacity 2) instr)]
-    [capacity : i64 (opt_i64_i64_map.capacity (& local))]
-    [i : i64 (opt_i64_i64_map.next-occupied (& local) 0)]
-    (while (< i capacity)
-      (begin
-        (match (opt_i64_i64_map.entry-at (& local) i)
-          [(opt_i64_i64_map.EntrySome id n)
-            (opt_i64_i64_map.insert-ref!
-              counts
-              id
-              (+ n (opt-cl-map-count counts id)))]
-          [(opt_i64_i64_map.EntryNone) unit])
-        (set! i (opt_i64_i64_map.next-occupied (& local) (+ i 1)))))))
+  (match instr
+    [(ir.CompilerIrInstr.Pack _ _ _) unit]
+    [_ (opt-note-uses! (OptUseNote.GlobalCount) counts instr)]))
 
 ;; Second walk of the same function: a gep-of-global temp used by anything but
 ;; a `Load` whose source it is refuses the global. Every use is read through
@@ -120454,11 +120431,16 @@
                     (&mut gep-base)
                     (&mut gep-vars)
                     (&mut bad))
-                  (opt-blocks-visit
-                    blocks
-                    opt-cl-escape-instr!
-                    gep-vars
-                    (&mut bad))))])
+                  ;; The escape walk only flags `gep-vars` entries, so a
+                  ;; function that recorded none skips its per-instruction
+                  ;; use maps.
+                  (if (= (opt_i64_i64_map.len (& gep-vars)) 0)
+                    unit
+                    (opt-blocks-visit
+                      blocks
+                      opt-cl-escape-instr!
+                      gep-vars
+                      (&mut bad)))))])
           (set! index (+ index 1))))
       (set! index 0)
       (while (< index globals.len)
@@ -120799,6 +120781,29 @@
       (opt_i64_i64_map.with-capacity 1)
       (opt_i64_i64_map.with-capacity 1))))
 
+;; CL-1 builds in a scratch arena of its own: its working storage (per-function
+;; gep maps, the program-wide occurrence counts) dies with the scratch, and
+;; only the result is cloned into the caller's arena, slot layout included.
+;; The build writes no module state, so nothing else can point into the
+;; scratch.
+(define (opt-cl-build-in-scratch
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [disq : (& disq opt_i64_i64_map.Map)]
+  [capacity : i64]) : OptConstLengths
+  (let
+    [scratch : i64 (arena.tl_arena_make)]
+    [built : OptConstLengths
+      (in-arena
+        (arena.Arena scratch)
+        (opt-cl-build type-segment-bases globals functions disq capacity))]
+    [out : OptConstLengths (clone built)]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      out)))
+
 ;; Build the per-program summaries: the function-count-gated call maps
 ;; plus the const-divisor, constant-length and global-cell tables. Only the
 ;; level-2 pipeline reads any of them (the level-1 pipeline reads the profile
@@ -120835,7 +120840,7 @@
                 (compiler-opt-global-shared-view globals)
                 facts.disq))]
           [lengths : OptConstLengths
-            (opt-cl-build
+            (opt-cl-build-in-scratch
               type-segment-bases
               (compiler-opt-global-shared-view globals)
               reachable-functions
@@ -126736,6 +126741,27 @@
       facts
       (opt_i64_i64_map.with-capacity 1))))
 
+;; The non-negativity table builds in a scratch arena of its own, like CL-1:
+;; the candidate/edge fixpoint's working storage dies with the scratch and only
+;; the result map is cloned into the caller's arena. The build writes no module
+;; state.
+(define (opt-nonneg-globals-build-in-scratch
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [cell : OptGlobalCellSummary]) : opt_i64_i64_map.Map
+  (let
+    [scratch : i64 (arena.tl_arena_make)]
+    [built : opt_i64_i64_map.Map
+      (in-arena
+        (arena.Arena scratch)
+        (opt-nonneg-globals-build type-segment-bases globals functions cell))]
+    [out : opt_i64_i64_map.Map (clone built)]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      out)))
+
 (define (opt-global-cell-summary-build-with-call-memory
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
@@ -126790,7 +126816,7 @@
             (opt-global-mod-ref-none)
             (opt_i64_i64_map.with-capacity 1))]
         [nonneg : opt_i64_i64_map.Map
-          (opt-nonneg-globals-build
+          (opt-nonneg-globals-build-in-scratch
             type-segment-bases
             (compiler-opt-global-shared-view globals)
             functions

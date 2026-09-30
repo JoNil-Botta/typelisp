@@ -1172,26 +1172,58 @@
       (> edits.len 0)
       (compiler-diagnostic-edit-list-valid? diagnostic-path edits))))
 
-(define (compiler-diagnostic-repath-text-edit
-  [edit : CompilerDiagnosticTextEdit]
-  [path : (& path str)]) : CompilerDiagnosticTextEdit
+;; Where SPAN lies in a text, named TEXT-PATH or left pathless, that is made of
+;; a head of HEAD-LINES lines followed by a tail. A span starting in the head
+;; takes HEAD-PATH, and a later span takes TAIL-PATH with its lines counted from
+;; the tail's first line. A span in any other file is left alone. With no head
+;; lines this only renames the text.
+(define (compiler-diagnostic-span-split-at-line
+  [span : CompilerDiagnosticSpan]
+  [text-path : (& text-path str)]
+  [head-lines : i64]
+  [head-path : (& head-path str)]
+  [tail-path : (& tail-path str)]) : CompilerDiagnosticSpan
   (let
-    [span : CompilerDiagnosticSpan edit.span]
-    [edit-path : String (compiler-diagnostic-span-path span)]
-    (CompilerDiagnosticTextEdit
-      (if (string.eq edit-path "")
+    [start-line : i64 (compiler-diagnostic-span-start-line span)]
+    [path : String (compiler-diagnostic-span-path span)]
+    (cond
+      [(not (or (string.eq path "") (string.eq path text-path))) span]
+      [(> start-line head-lines)
         (CompilerDiagnosticSpan
-          (string.copy path)
-          (compiler-diagnostic-span-start-line span)
+          (string.copy tail-path)
+          (- start-line head-lines)
+          (compiler-diagnostic-span-start-col span)
+          (- (compiler-diagnostic-span-end-line span) head-lines)
+          (compiler-diagnostic-span-end-col span))]
+      [else
+        (CompilerDiagnosticSpan
+          (string.copy head-path)
+          start-line
           (compiler-diagnostic-span-start-col span)
           (compiler-diagnostic-span-end-line span)
-          (compiler-diagnostic-span-end-col span))
-        span)
-      edit.replacement)))
+          (compiler-diagnostic-span-end-col span))])))
 
-(define (compiler-diagnostic-repath-text-edit-list
+(define (compiler-diagnostic-split-text-edit
+  [edit : CompilerDiagnosticTextEdit]
+  [text-path : (& text-path str)]
+  [head-lines : i64]
+  [head-path : (& head-path str)]
+  [tail-path : (& tail-path str)]) : CompilerDiagnosticTextEdit
+  (CompilerDiagnosticTextEdit
+    (compiler-diagnostic-span-split-at-line
+      edit.span
+      text-path
+      head-lines
+      head-path
+      tail-path)
+    edit.replacement))
+
+(define (compiler-diagnostic-split-text-edit-list
   [edits : CompilerDiagnosticTextEditSeq]
-  [path : (& path str)]) : CompilerDiagnosticTextEditSeq
+  [text-path : (& text-path str)]
+  [head-lines : i64]
+  [head-path : (& head-path str)]
+  [tail-path : (& tail-path str)]) : CompilerDiagnosticTextEditSeq
   (let
     [count : i64 edits.len]
     [src : (__tl_dyn-array CompilerDiagnosticTextEdit) edits.slots]
@@ -1203,16 +1235,22 @@
         (begin
           (set!
             (array-ref dst index)
-            (compiler-diagnostic-repath-text-edit
+            (compiler-diagnostic-split-text-edit
               (unsafe
                 (ptr-read (ptr-offset (__tl_array-data src) index)))
-              path))
+              text-path
+              head-lines
+              head-path
+              tail-path))
           (set! index (+ index 1))))
       (CompilerDiagnosticTextEditSeq dst count))))
 
-(define (compiler-diagnostic-repath-fix-list
+(define (compiler-diagnostic-split-fix-list
   [fixes : CompilerDiagnosticFixSeq]
-  [path : (& path str)]) : CompilerDiagnosticFixSeq
+  [text-path : (& text-path str)]
+  [head-lines : i64]
+  [head-path : (& head-path str)]
+  [tail-path : (& tail-path str)]) : CompilerDiagnosticFixSeq
   (let
     [count : i64 fixes.len]
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
@@ -1231,7 +1269,12 @@
               (CompilerDiagnosticFix
                 fix.title
                 fix.applicability
-                (compiler-diagnostic-repath-text-edit-list fix.edits path)))
+                (compiler-diagnostic-split-text-edit-list
+                  fix.edits
+                  text-path
+                  head-lines
+                  head-path
+                  tail-path)))
             (set! index (+ index 1)))))
       (CompilerDiagnosticFixSeq dst count))))
 
@@ -1316,7 +1359,78 @@
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
     (compiler-diagnostic-notes diag)
-    (compiler-diagnostic-repath-fix-list (compiler-diagnostic-fixes diag) path)))
+    (compiler-diagnostic-split-fix-list
+      (compiler-diagnostic-fixes diag)
+      ""
+      0
+      path
+      path)))
+
+(define (compiler-diagnostic-split-label-list
+  [labels : CompilerDiagnosticLabelList]
+  [text-path : (& text-path str)]
+  [head-lines : i64]
+  [head-path : (& head-path str)]
+  [tail-path : (& tail-path str)]) : CompilerDiagnosticLabelList
+  (let
+    [count : i64 labels.len]
+    [dst : (__tl_dyn-array CompilerDiagnosticLabel)
+      (__tl_make-array CompilerDiagnosticLabel count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [entry : CompilerDiagnosticLabel
+            (compiler-diagnostic-label-list-get (& labels) index)]
+          (begin
+            (set!
+              (array-ref dst index)
+              (CompilerDiagnosticLabel
+                (compiler-diagnostic-span-split-at-line
+                  entry.span
+                  text-path
+                  head-lines
+                  head-path
+                  tail-path)
+                entry.label))
+            (set! index (+ index 1)))))
+      (CompilerDiagnosticLabelList dst count))))
+
+;; A diagnostic located in a text made of a head of HEAD-LINES lines followed
+;; by a tail, relocated span by span with
+;; `compiler-diagnostic-span-split-at-line`: the primary span, the secondary
+;; spans and the fix edits.
+(define (compiler-diagnostic-split-at-line
+  [diag : CompilerDiagnostic]
+  [text-path : String]
+  [head-lines : i64]
+  [head-path : String]
+  [tail-path : String]) : CompilerDiagnostic
+  (CompilerDiagnostic
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-span-split-at-line
+      (compiler-diagnostic-primary-span diag)
+      (& text-path)
+      head-lines
+      (& head-path)
+      (& tail-path))
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-split-label-list
+      (compiler-diagnostic-secondary-spans diag)
+      (& text-path)
+      head-lines
+      (& head-path)
+      (& tail-path))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-split-fix-list
+      (compiler-diagnostic-fixes diag)
+      (& text-path)
+      head-lines
+      (& head-path)
+      (& tail-path))))
 
 (define (compiler-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]

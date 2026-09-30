@@ -6420,7 +6420,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) entry-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view entry-path)])]
         [rest-paths : ast.AstDeclPathList
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest)
@@ -12594,7 +12595,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) entry-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view entry-path)])]
         [rest-paths : ast.AstDeclPathList
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
@@ -12850,7 +12852,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) entry-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view entry-path)])]
         [rest-paths : ast.AstDeclPathList
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
@@ -13060,7 +13063,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) entry-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view entry-path)])]
         [logical-module-id : i64
           (lower-decl-owner-module-id
             lower-state
@@ -14459,7 +14463,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) entry-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view entry-path)])]
         [rest-paths : ast.AstDeclPathList
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
@@ -15145,7 +15150,8 @@
         [decl-path : String
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons path _) path]
-            [(ast.AstDeclPathListStep.Nil) entry-path])]
+            [(ast.AstDeclPathListStep.Nil)
+              (owned_view.compiler-owned-shared-view entry-path)])]
         [rest-paths : ast.AstDeclPathList
           (match (ast.ast-decl-path-list-step paths)
             [(ast.AstDeclPathListStep.Cons _ path-rest) path-rest]
@@ -19730,7 +19736,7 @@
               (tc_core.tc-context-type-get ctx referent-ty)]
             [(ast.AstType.MutRef _ referent-ty)
               (tc_core.tc-context-type-get ctx referent-ty)]
-            [_ arr-ty])]
+            [_ (owned_view.compiler-owned-shared-view arr-ty)])]
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx (lower-global-shared-view container-ty)))
           [(ast.AstType.Slice elem-ty)
@@ -29188,7 +29194,8 @@
                                               (if (ir.compiler-ir-binop-compare?
                                                 (lower-binop op right-ty))
                                                 left-ty
-                                                result-ty))
+                                                (owned_view.compiler-owned-shared-view
+                                                  result-ty)))
                                             origin)
                                           (ir.CompilerIrValue.Var var-id)
                                           result-ty))]))])]
@@ -37633,7 +37640,7 @@
                                 ctx
                                 type-env
                                 raw-name)])
-                          name)]
+                          (owned_view.compiler-owned-shared-view name))]
                       [name-id : i64 source-key-id]
                       [builtin-available : bool
                         (lower-top-level-builtin-available-id?
@@ -47710,7 +47717,7 @@
               enum-locals
               (lower-global-shared-view init))
               (lower-id-set-insert (lower-global-shared-view enum-locals) name)
-              enum-locals)]
+              (owned_view.compiler-owned-shared-view enum-locals))]
           (or
             (lower-masked-vector-body-has-varying-enum-match-with-locals?
               ctx
@@ -56806,7 +56813,7 @@
             (lower-global-shared-view source)
             (if (spmd_numeric.compiler-spmd-numeric-comparison-op? op)
               (ast.AstType.Bool)
-              source)
+              (owned_view.compiler-owned-shared-view source))
             (if (>
               (compiler-lower-function-state-inline-helper-stack
                 (lower-state-function-state state)).len
@@ -63633,7 +63640,7 @@
                           scrut-value
                           (if resident
                             (ast.AstType.U64)
-                            enum-ty)))
+                            (owned_view.compiler-owned-shared-view enum-ty))))
                       "match_merge")
                       [(LowerLabel.Label merge-state merge-label)
                         (lower-match-enum
@@ -70814,7 +70821,8 @@
                                 (if (= (string.string-length cur-module) 0)
                                   (compiler-lower-state-spmd-package-name
                                     lower-state)
-                                  cur-module)
+                                  (owned_view.compiler-owned-shared-view
+                                    cur-module))
                                 (lower-name-id-text lower-state name))
                               (csym.compiler-symbols-lookup-value-id-or
                                 (tc_core.tc-context-symbols decl-ctx)
@@ -71916,7 +71924,7 @@
                         (unsafe
                           (arena.tl_arena_set enclosing))]
                       built)
-                    names)]
+                    (owned_view.compiler-owned-shared-view names))]
                 ;; Typecheck remains complete and whole-program while lower,
                 ;; optimize, and codegen are gated on reachability. This up-front
                 ;; walk records the dense declaration selection consumed both by

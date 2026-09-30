@@ -8252,7 +8252,7 @@
         [(lsp_vector_families.LspWorkspaceRootLookup.Missing) ""])]
     [module : String
       (if (> (string.string-length explicit) 0)
-        explicit
+        (owned_view.compiler-owned-shared-view explicit)
         (lsp-workspace-source-module root-path normalized-path text))]
     (lsp_vector_families.LspWorkspaceSource
       (string.copy (& root-uri))
@@ -16095,8 +16095,8 @@
           [found-first : bool (< found-idx target-idx)]
           [first-entry : lsp_vector_families.LspDeclEntry
             (if found-first
-              found-entry
-              target-entry)]
+              (owned_view.compiler-owned-shared-view found-entry)
+              (owned_view.compiler-owned-shared-view target-entry))]
           [second-entry : lsp_vector_families.LspDeclEntry
             (if found-first
               target-entry

@@ -5108,11 +5108,11 @@
     [out-starts : (__tl_dyn-array i64)
       (if tighten-hull?
         (__tl_make-array i64 n)
-        cons-starts)]
+        (owned_view.compiler-owned-shared-view cons-starts))]
     [out-ends : (__tl_dyn-array i64)
       (if tighten-hull?
         (__tl_make-array i64 n)
-        cons-ends)]
+        (owned_view.compiler-owned-shared-view cons-ends))]
     [v : i64 0]
     (begin
       (while (< v n)
@@ -5120,14 +5120,18 @@
           (let
             [cons-row : CompilerRegIntervalSeq
               (if (< v (array-length cons-segs))
-                (array-ref cons-segs v)
+                (owned_view.compiler-owned-array-element-shared-view
+                  cons-segs
+                  v)
                 (compiler-reg-interval-seq-empty))]
             [ep-row : CompilerRegIntervalSeq
               (if (if (< v (array-length mask))
                 (= (array-ref mask v) 1)
                 false)
                 (if (< v (array-length ep-segs))
-                  (array-ref ep-segs v)
+                  (owned_view.compiler-owned-array-element-shared-view
+                    ep-segs
+                    v)
                   (compiler-reg-interval-seq-empty))
                 (compiler-reg-interval-seq-empty))]
             [old-start : i64 (array-ref cons-starts v)]
@@ -8069,11 +8073,11 @@
       [left-segments : CompilerRegIntervalSeq
         (if (or (< left 0) (>= left (array-length segments)))
           (compiler-reg-interval-seq-empty)
-          (array-ref segments left))]
+          (owned_view.compiler-owned-array-element-shared-view segments left))]
       [right-segments : CompilerRegIntervalSeq
         (if (or (< right 0) (>= right (array-length segments)))
           (compiler-reg-interval-seq-empty)
-          (array-ref segments right))]
+          (owned_view.compiler-owned-array-element-shared-view segments right))]
       (if (and
         (not (compiler-reg-interval-seq-empty? left-segments))
         (not (compiler-reg-interval-seq-empty? right-segments)))
@@ -8678,7 +8682,7 @@
     [ends : (__tl_dyn-array i64) ctx.ends]
     [segs : CompilerRegIntervalSeq
       (if (and (>= v 0) (< v (array-length segments)))
-        (array-ref segments v)
+        (owned_view.compiler-owned-array-element-shared-view segments v)
         (compiler-reg-interval-seq-empty))]
     (if (compiler-reg-interval-seq-empty? segs)
       (if (and (>= v 0) (< v (array-length starts)))
@@ -9103,7 +9107,7 @@
         (let
           [segs : CompilerRegIntervalSeq
             (if (< var (array-length segments))
-              (array-ref segments var)
+              (owned_view.compiler-owned-array-element-shared-view segments var)
               (compiler-reg-interval-seq-empty))]
           [low : i64 (- 0 1)]
           [high : i64 (- 0 1)]
@@ -13415,7 +13419,7 @@
     [var-segments : CompilerRegIntervalSeq
       (if (or (< var 0) (>= var (array-length segments)))
         (compiler-reg-interval-seq-empty)
-        (array-ref segments var))]
+        (owned_view.compiler-owned-array-element-shared-view segments var))]
     (if (not (compiler-reg-interval-seq-empty? var-segments))
       (compiler-reg-interval-seq-overlaps? var-segments region-intervals)
       (match (compiler-reg-interval-index-lookup intervals var)
@@ -21391,7 +21395,7 @@
       (let
         [segs : CompilerRegIntervalSeq
           (if (< v (array-length segments))
-            (array-ref segments v)
+            (owned_view.compiler-owned-array-element-shared-view segments v)
             (compiler-reg-interval-seq-empty))]
         (if (not (compiler-reg-interval-seq-empty? segs))
           (compiler-reg-call-region-var-overlaps-segs? segs lo hi)
@@ -25098,7 +25102,9 @@
           regs)]
       [scratch-forbidden : CompilerRegIdSeq
         (if (and (>= var 0) (< var (array-length scratch-excluded)))
-          (array-ref scratch-excluded var)
+          (owned_view.compiler-owned-array-element-shared-view
+            (owned_view.compiler-owned-reference-shared-view scratch-excluded)
+            var)
           (compiler-reg-id-seq-empty))]
       ;; The entry-copy schedule constraint. Empty for every non-param class and
       ;; for every class in a function that got the empty (callee-saved-only)
@@ -25109,7 +25115,10 @@
           param-entry-scheduled?
           (>= var 0)
           (< var (array-length param-entry-forbidden)))
-          (array-ref param-entry-forbidden var)
+          (owned_view.compiler-owned-array-element-shared-view
+            (owned_view.compiler-owned-reference-shared-view
+              param-entry-forbidden)
+            var)
           (compiler-reg-id-seq-empty))]
       [forbidden : CompilerRegIdSeq
         (let
@@ -28892,7 +28901,7 @@
     ;; coalesce into one interval without weakening that defensive exclusion.
     [coalesce-index : CompilerRegIntervalIndex
       (if (compiler-reg-move-list-empty? moves)
-        interval-index
+        (owned_view.compiler-owned-shared-view interval-index)
         (if allow-caller-saved-zero-call
           ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
           ;; by the coalescing segment index AND the live-out-input phi exclusion.
@@ -28919,7 +28928,7 @@
             ;; the conservative index this gate is specified against.
             [cons-index : CompilerRegIntervalIndex
               (if ignore-single-cold-call?
-                interval-index
+                (owned_view.compiler-owned-shared-view interval-index)
                 (match (compiler-reg-live-interval-selection
                   (compiler-reg-global-shared-view func)
                   liveness-handle.baseline)
@@ -28935,7 +28944,7 @@
               cons-index
               ep-coalesce-segs
               ep-phi-touched))
-          interval-index))]
+          (owned_view.compiler-owned-shared-view interval-index)))]
     ;; LP-1: the index the GREEDY, its eviction logic, the rescue rounds and the
     ;; spill machinery see. Mode 0 hands back `interval-index` unchanged.
     [alloc-index : CompilerRegIntervalIndex
@@ -28945,7 +28954,7 @@
           ep-alloc-segs
           ep-phi-touched
           (> (compiler-reg-ep-alloc-mode) 1))
-        interval-index)]
+        (owned_view.compiler-owned-shared-view interval-index))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -28964,7 +28973,7 @@
     [eff-index : CompilerRegIntervalIndex
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index coalesce alloc-index)
-        interval-index)]
+        (owned_view.compiler-owned-shared-view interval-index))]
     ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
     ;; the GAP3c pin demotion below and the greedy share that one computation.
     ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
@@ -28994,11 +29003,12 @@
         assignment-table
         allow-caller-saved-zero-call)]
     [allocation-index : CompilerRegIntervalIndex
-      early-scratch-model.interval-index]
+      (owned_view.compiler-owned-shared-view early-scratch-model.interval-index)]
     [early-scratch-base : i64 early-scratch-model.scratch-base]
     [early-scratch-count : i64 early-scratch-model.scratch-count]
     [early-scratch-weights : (__tl_dyn-array i64)
-      early-scratch-model.scratch-weights]
+      (owned_view.compiler-owned-shared-view
+        early-scratch-model.scratch-weights)]
     [eff-intervals : CompilerRegIntervalSeq
       (if allow-caller-saved-zero-call
         (compiler-reg-interval-arrays-to-seq
@@ -29006,10 +29016,10 @@
           eff-index.ends
           (- (array-length eff-index.starts) 1)
           (compiler-reg-interval-seq-empty))
-        intervals)]
+        (owned_view.compiler-owned-shared-view intervals))]
     [allocation-intervals : CompilerRegIntervalSeq
       (if (= early-scratch-count 0)
-        eff-intervals
+        (owned_view.compiler-owned-shared-view eff-intervals)
         (compiler-reg-interval-arrays-to-seq
           allocation-index.starts
           allocation-index.ends
@@ -29060,7 +29070,7 @@
         (compiler-reg-coalesce-root-set-from-vars
           coalesce
           (compiler-reg-global-shared-view blocked))
-        blocked)]
+        (owned_view.compiler-owned-shared-view blocked))]
     ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
     ;; allocates class roots. Under R3S-1 a class containing a param is not
     ;; restricted to callee-saved homes; this set marks the classes
@@ -35989,14 +35999,17 @@
                                   [out-instr : ir.CompilerIrInstr
                                     (if (> active-n 0)
                                       (match (& instr)
-                                        [(ir.CompilerIrInstr.Phi _ _ _) instr]
+                                        [(ir.CompilerIrInstr.Phi _ _ _)
+                                          (owned_view.compiler-owned-shared-view
+                                            instr)]
                                         [_
                                           (compiler-reg-remap-instr
                                             (compiler-reg-global-shared-view
                                               remap)
                                             (compiler-reg-global-shared-view
                                               instr))])
-                                      instr)]
+                                      (owned_view.compiler-owned-shared-view
+                                        instr))]
                                   [cf : bool
                                     (compiler-reg-call-region-control-flow-instr?
                                       instr)]

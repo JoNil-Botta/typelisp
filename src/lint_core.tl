@@ -1052,7 +1052,7 @@
     [short-name : String
       (if (> name-len (+ module-len 1))
         (string.substring name (+ module-len 1) (- name-len (+ module-len 1)))
-        name)]
+        (owned_view.compiler-owned-shared-view name))]
     (LintFinding
       (str_cat.str-cat
         "redundant function name: "
@@ -3704,7 +3704,7 @@
         (owned_view.compiler-owned-shared-view decl))
         (lint-unsafe-scope-with-ambiguous
           (owned_view.compiler-owned-shared-view scope))
-        scope)]
+        (owned_view.compiler-owned-shared-view scope))]
     (match decl
       [(ast.AstDecl.Module _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.ModuleBody _ body)
@@ -5424,7 +5424,7 @@
                   (lint-prefer-dynamic-array-literal-finding
                     name
                     (lint-no-effect-span-id init))
-                  state.findings))
+                  (owned_view.compiler-owned-shared-view state.findings)))
               state)]
           (lint-prefer-dynamic-array-literals-in-let-bindings-at
             bindings
@@ -5883,9 +5883,9 @@
               (lint-unused-assignment-state-with
                 (owned_view.compiler-owned-shared-view after-init)
                 (lint-pending-assignment-remove
-                  after-init.pending
+                  (owned_view.compiler-owned-shared-view after-init.pending)
                   (owned_view.compiler-owned-shared-view text))
-                after-init.findings)
+                (owned_view.compiler-owned-shared-view after-init.findings))
               after-init)]
           [with-local : LintUnusedAssignmentState
             (lint-unused-assignment-with-locals
@@ -6724,7 +6724,7 @@
             [(= kind 0) (lint-global-name-case-finding name span)]
             [(= kind 1) (lint-function-name-case-finding name span)]
             [else (lint-type-name-case-finding name span)])
-          state.findings))]
+          (owned_view.compiler-owned-shared-view state.findings)))]
     (LintNameCaseDeclState state.source found.next-index next)))
 
 (define (lint-name-case-decl-state-after-body
@@ -7495,7 +7495,7 @@
             (owned_view.compiler-owned-array-element-shared-view
               frames.slots
               top)
-            state.findings)
+            (owned_view.compiler-owned-shared-view state.findings))
           state.findings)))))
 
 (define (lint-unused-variable-param-bindings

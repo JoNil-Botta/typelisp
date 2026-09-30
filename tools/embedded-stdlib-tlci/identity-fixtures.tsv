@@ -120,7 +120,7 @@ stdlib.serialize/array-fixed-length	1	fixed	expr	tests/integration/stdlib_serial
 stdlib.serialize/encode-tuple-elements	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/decode-tuple-items	7	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/encode-enum-payload-elements	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
-stdlib.serialize/encode-enum-dispatch	5	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-enum-dispatch	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/decode-enum-payload-items	8	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/decode-enum-variants	7	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/encode-value	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

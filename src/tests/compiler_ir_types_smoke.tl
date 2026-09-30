@@ -3935,6 +3935,102 @@
         (ast.AstType.I64))
       compiler_ir_types.CompilerIrEffect.MemoryWrite)))
 
+;; Fault rows (#7274). The exhaustive matches already force a row for a new
+;; instruction or operator; these tables pin what each row says, one letter per
+;; entry: N none, O operands, K check, C call. The instruction table follows
+;; `compiler-ir-smoke-operand-sample` 1..54; the operator table follows the
+;; `CompilerIrBinOp` declaration order.
+(define (compiler-ir-smoke-fault-letter
+  [fault : compiler_ir_types.CompilerIrFault]) : String
+  (match fault
+    [(compiler_ir_types.CompilerIrFault.None) "N"]
+    [(compiler_ir_types.CompilerIrFault.Operands) "O"]
+    [(compiler_ir_types.CompilerIrFault.Check) "K"]
+    [(compiler_ir_types.CompilerIrFault.Call) "C"]))
+
+(define (compiler-ir-smoke-instr-fault-rows) : String
+  (let
+    [index : i64 1]
+    [out : String ""]
+    (begin
+      (while (<= index 54)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (compiler-ir-smoke-fault-letter
+                (compiler_ir_types.compiler-ir-instr-fault
+                  (compiler-ir-smoke-operand-sample index)))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-ir-smoke-binop-fault-rows) : String
+  (let
+    [i64-ty : ast.AstType (ast.AstType.I64)]
+    [ops : (Array compiler_ir_types.CompilerIrBinOp 22)
+      (array
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrBinOp.Sub)
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrBinOp.Div)
+        (compiler_ir_types.CompilerIrBinOp.Mod)
+        (compiler_ir_types.CompilerIrBinOp.SafeDiv)
+        (compiler_ir_types.CompilerIrBinOp.SafeMod)
+        (compiler_ir_types.CompilerIrBinOp.Eq)
+        (compiler_ir_types.CompilerIrBinOp.Ne)
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrBinOp.Le)
+        (compiler_ir_types.CompilerIrBinOp.Gt)
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrBinOp.BitTestEq)
+        (compiler_ir_types.CompilerIrBinOp.BitTestNe)
+        (compiler_ir_types.CompilerIrBinOp.And)
+        (compiler_ir_types.CompilerIrBinOp.Or)
+        (compiler_ir_types.CompilerIrBinOp.BitAnd)
+        (compiler_ir_types.CompilerIrBinOp.BitOr)
+        (compiler_ir_types.CompilerIrBinOp.BitXor)
+        (compiler_ir_types.CompilerIrBinOp.Shl (clone i64-ty))
+        (compiler_ir_types.CompilerIrBinOp.Shr (clone i64-ty)))]
+    [index : i64 0]
+    [out : String ""]
+    (begin
+      (while (< index 22)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (compiler-ir-smoke-fault-letter
+                (compiler_ir_types.compiler-ir-binop-fault
+                  (clone (array-ref ops index))))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-ir-fault-rows-ok?) : bool
+  (and
+    (string.eq
+      (compiler-ir-smoke-instr-fault-rows)
+      "NNNNNNNNKNNNNNNNNNNNNNNNNNNNKNNNNNNCCCCCCCCNNNNNNNNCNN")
+    (string.eq (compiler-ir-smoke-binop-fault-rows) "NNNOONNNNNNNNNNNNNNNOO")
+    ;; A vector operator carries the scalar operator's row.
+    (string.eq
+      (compiler-ir-smoke-fault-letter
+        (compiler_ir_types.compiler-ir-instr-fault
+          (compiler_ir_types.ir-instr-vector-bin-op
+            1
+            (compiler_ir_types.CompilerIrBinOp.Div)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            4
+            (ast.AstType.I64))))
+      "O")
+    (compiler_ir_types.compiler-ir-binop-may-fault?
+      (compiler_ir_types.CompilerIrBinOp.Mod))
+    (not
+      (compiler_ir_types.compiler-ir-binop-may-fault?
+        (compiler_ir_types.CompilerIrBinOp.SafeMod)))))
+
 (define (compiler-ir-effect-predicates-ok?) : bool
   (and
     (not
@@ -5211,6 +5307,7 @@
     (unless (compiler-ir-instruction-effects-ok?) (return 1))
     (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
     (unless (compiler-ir-effect-predicates-ok?) (return 1))
+    (unless (compiler-ir-fault-rows-ok?) (return 1))
     (unless (compiler-ir-display-self-test-ok?) (return 1))
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
     (unless (compiler-ir-switch-render-ok?) (return 1))

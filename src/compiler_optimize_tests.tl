@@ -55915,7 +55915,7 @@
         (opt.opt-function-blocks word-func))]
     (cond
       ;; The exact compose folds: one i64 load, the chain elements deleted by
-      ;; the pass itself (shifts are trapping per `opt-binop-traps?`, so DCE
+      ;; the pass itself (shifts are trapping per `ir.compiler-ir-binop-may-fault?`, so DCE
       ;; could never retire them), and ALL eight bounds checks retained.
       [(not (= (opt-lc-test-count-blocks m0 1) 1)) 1]
       [(not (= (opt-lc-test-count-blocks m0 0) 0)) 2]

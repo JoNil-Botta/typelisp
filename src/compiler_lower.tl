@@ -15977,13 +15977,7 @@
 (define (lower-runtime-abort-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
-    [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-      (match op
-        [(ir.CompilerIrBinOp.Div) true]
-        [(ir.CompilerIrBinOp.Mod) true]
-        [(ir.CompilerIrBinOp.Shl _) true]
-        [(ir.CompilerIrBinOp.Shr _) true]
-        [_ false])]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? op)]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let
         [text : String (ir.compiler-ir-symbol-text name)]

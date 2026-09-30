@@ -8304,6 +8304,117 @@
     [(CompilerIrInstr.Switch _ _ _ _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) CompilerIrEffect.ControlFlow]))
 
+;; Safe-language faults an instruction can raise. A pass that deletes, skips,
+;; duplicates, reorders or runs an instruction once has to preserve them. This
+;; is orthogonal to `CompilerIrEffect`: a division is effect-free but can fault.
+;; Resource exhaustion is not a preserved fault, so `Alloc` is `None` and a dead
+;; allocation may be deleted. Both matches below are exhaustive on purpose: a
+;; new instruction or operator does not compile until it has a fault row.
+(defenum CompilerIrFault
+  ;; Cannot fault.
+  (None)
+  ;; Faults for some operand values: a zero or MIN / -1 divisor, or a shift
+  ;; count outside the shifted width. A pass may prove particular operands safe.
+  (Operands)
+  ;; A checked failure site, which faults exactly when its check fails.
+  (Check)
+  ;; May fault, or not return, inside a callee.
+  (Call))
+
+(define (compiler-ir-binop-fault [op : CompilerIrBinOp]) : CompilerIrFault
+  (match op
+    [(CompilerIrBinOp.Add) CompilerIrFault.None]
+    [(CompilerIrBinOp.Sub) CompilerIrFault.None]
+    [(CompilerIrBinOp.Mul) CompilerIrFault.None]
+    [(CompilerIrBinOp.Div) CompilerIrFault.Operands]
+    [(CompilerIrBinOp.Mod) CompilerIrFault.Operands]
+    ;; Emitted only once the divisor is proven neither zero nor MIN / -1.
+    [(CompilerIrBinOp.SafeDiv) CompilerIrFault.None]
+    [(CompilerIrBinOp.SafeMod) CompilerIrFault.None]
+    [(CompilerIrBinOp.Eq) CompilerIrFault.None]
+    [(CompilerIrBinOp.Ne) CompilerIrFault.None]
+    [(CompilerIrBinOp.Lt) CompilerIrFault.None]
+    [(CompilerIrBinOp.Le) CompilerIrFault.None]
+    [(CompilerIrBinOp.Gt) CompilerIrFault.None]
+    [(CompilerIrBinOp.Ge) CompilerIrFault.None]
+    [(CompilerIrBinOp.BitTestEq) CompilerIrFault.None]
+    [(CompilerIrBinOp.BitTestNe) CompilerIrFault.None]
+    [(CompilerIrBinOp.And) CompilerIrFault.None]
+    [(CompilerIrBinOp.Or) CompilerIrFault.None]
+    [(CompilerIrBinOp.BitAnd) CompilerIrFault.None]
+    [(CompilerIrBinOp.BitOr) CompilerIrFault.None]
+    [(CompilerIrBinOp.BitXor) CompilerIrFault.None]
+    [(CompilerIrBinOp.Shl _) CompilerIrFault.Operands]
+    [(CompilerIrBinOp.Shr _) CompilerIrFault.Operands]))
+
+;; Whether some operands make OP fault. This is the operator-level answer every
+;; pass shares; a pass that proves the operands safe may still admit it.
+(define (compiler-ir-binop-may-fault? [op : CompilerIrBinOp]) : bool
+  (match (compiler-ir-binop-fault op)
+    [(CompilerIrFault.None) false]
+    [_ true]))
+
+(define (compiler-ir-instr-fault [instr : CompilerIrInstr]) : CompilerIrFault
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.AddrOf _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Gep _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Cast _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Bitcast _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.BinOp _ op _ _ _) (compiler-ir-binop-fault op)]
+    [(CompilerIrInstr.UnOp _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Phi _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.LaneId _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Splat _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (compiler-ir-binop-fault
+        (compiler-ir-box-field-shared-view payload-box op))]
+    [(CompilerIrInstr.VectorPrefix _) CompilerIrFault.None]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.VectorCompare _) CompilerIrFault.None]
+    [(CompilerIrInstr.MaskBinOp _ _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.MaskNot _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.MaskReduce _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Select _) CompilerIrFault.None]
+    [(CompilerIrInstr.TailMask _ _ _ _) CompilerIrFault.None]
+    ;; Safe code reaches a memory access only through its explicit checks.
+    [(CompilerIrInstr.Load _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.StoreOwned _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.VectorLoad _ _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.PredicatedLoad _) CompilerIrFault.None]
+    [(CompilerIrInstr.GatherLoad _) CompilerIrFault.None]
+    ;; Selector validation takes the out-of-bounds abort path.
+    [(CompilerIrInstr.VectorShuffle _) CompilerIrFault.Check]
+    [(CompilerIrInstr.EntryArgc _) CompilerIrFault.None]
+    [(CompilerIrInstr.EntryArgv _) CompilerIrFault.None]
+    [(CompilerIrInstr.EntryEnvp _) CompilerIrFault.None]
+    [(CompilerIrInstr.CpuId _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Xgetbv _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Syscall _ _) CompilerIrFault.Call]
+    [(CompilerIrInstr.Alloc _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.StorePtr _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.CopyBytes _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Store _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.VectorStore _) CompilerIrFault.None]
+    [(CompilerIrInstr.PredicatedStore _) CompilerIrFault.None]
+    [(CompilerIrInstr.Call _ _ _ _) CompilerIrFault.Call]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) CompilerIrFault.Call]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) CompilerIrFault.Call]
+    [(CompilerIrInstr.CallCAbiStoreResult _) CompilerIrFault.Call]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) CompilerIrFault.Call]
+    [(CompilerIrInstr.SpmdCall _) CompilerIrFault.Call]
+    [(CompilerIrInstr.BoundsCheck _ _ _) CompilerIrFault.Check]
+    [(CompilerIrInstr.TailCall _ _ _) CompilerIrFault.Call]
+    [(CompilerIrInstr.Jump _) CompilerIrFault.None]
+    [(CompilerIrInstr.Branch _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.TotalEnumBranch _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Return _) CompilerIrFault.None]
+    [(CompilerIrInstr.Pack _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.Word _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) CompilerIrFault.Call]
+    [(CompilerIrInstr.Switch _ _ _ _) CompilerIrFault.None]
+    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) CompilerIrFault.None]))
+
 ;; Source provenance side table for the lowered IR. Kept OUTSIDE
 ;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged.
 ;; It maps an IR function's name (including generated global-init functions) to

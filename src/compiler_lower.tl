@@ -66495,6 +66495,22 @@
                   (lower-resolve-call-name-id state bindings name)))
               pointer_proof.PointerProofOperation.IndirectCall))]
         [_ pointer_proof.PointerProofOperation.IndirectCall])]
+    ;; Binder forms other than let and parameters are not modelled. A read of
+    ;; one of their bindings would miss the capture's bindings and could
+    ;; resolve to a same-named global, so they fail closed at any type.
+    [(ast.AstExpr.Match _) pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.Lambda _) pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.Foreach _) pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.ForOwnedState _)
+      pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.ForOwnedStep _)
+      pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.SpmdReduce _) pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.SpmdScan _) pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.SpmdCompact _)
+      pointer_proof.PointerProofOperation.Unsupported]
+    [(ast.AstExpr.WithResource _)
+      pointer_proof.PointerProofOperation.Unsupported]
     [_
       (if (lower-pointer-proof-scalar-type? ty)
         pointer_proof.PointerProofOperation.Scalar

@@ -269,14 +269,33 @@
           target)
         (set! index (+ index 1))))))
 
-(define (proof-smoke-unsupported [mode : lower.CompilerLowerMode]) : unit
+(define (proof-smoke-unsupported-producer-source) : String
+  "(define (main [p : (Ptr i64)] [b : bool]) : (Ptr i64) (match b [true p] [false (ptr-null : (Ptr i64))]))")
+
+;; The pattern binder `g` shadows the global `g`. The capture does not model
+;; pattern bindings, so a read of `g` must not resolve to the global: the
+;; arm assigns the round-tripped scrutinee to `r`, not the global's value.
+(define (proof-smoke-unmodelled-binder-source) : String
+  "(define g : (Ptr i64) (ptr-null : (Ptr i64)))
+(defenum Holder (H (Ptr i64)))
+(define (main [p : (Ptr i64)]) : (Ptr i64)
+  (let
+    [r : (Ptr i64) p]
+    (begin
+      (match (Holder.H (unsafe (int->ptr (ptr->int p) : (Ptr i64))))
+        [(Holder.H g) (set! r g)])
+      r)))")
+
+(define (proof-smoke-unsupported
+  [mode : lower.CompilerLowerMode]
+  [source : String]) : unit
   (let
     [input : proof.PointerProofInput (proof.pointer-proof-input-new)]
     [request : lower.CompilerLowerRequest (proof-smoke-request input mode)]
     [lowered : lower.ResultCompilerLower
       (lower.lower-compiler-source-with-request
         "unsupported-proof.tl"
-        "(define (main [p : (Ptr i64)] [b : bool]) : (Ptr i64) (match b [true p] [false (ptr-null : (Ptr i64))]))"
+        source
         (owned_view.compiler-owned-shared-view request))]
     (begin
       (match (lower.lower-compiler-pointer-proof-result request lowered)
@@ -667,8 +686,18 @@
     (proof-smoke-interactions
       lower.CompilerLowerMode.WindowsScalar
       backend.CompilerBackendTarget.Windows)
-    (proof-smoke-unsupported lower.CompilerLowerMode.LinuxScalar)
-    (proof-smoke-unsupported lower.CompilerLowerMode.WindowsScalar)
+    (proof-smoke-unsupported
+      lower.CompilerLowerMode.LinuxScalar
+      (proof-smoke-unsupported-producer-source))
+    (proof-smoke-unsupported
+      lower.CompilerLowerMode.WindowsScalar
+      (proof-smoke-unsupported-producer-source))
+    (proof-smoke-unsupported
+      lower.CompilerLowerMode.LinuxScalar
+      (proof-smoke-unmodelled-binder-source))
+    (proof-smoke-unsupported
+      lower.CompilerLowerMode.WindowsScalar
+      (proof-smoke-unmodelled-binder-source))
     (proof-smoke-bindings lower.CompilerLowerMode.LinuxScalar)
     (proof-smoke-bindings lower.CompilerLowerMode.WindowsScalar)
     (proof-smoke-missing-location)

@@ -31,7 +31,7 @@
 (define (twice [value : i64]) : i64
   (+ value value))
 
-(define (ignore [value : i64]) : i64
+(define (ignore [_value : i64]) : i64
   7)
 
 (define (second-minus-first [a : i64] [b : i64]) : i64

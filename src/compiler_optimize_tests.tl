@@ -10874,7 +10874,40 @@
       [(opt_i64_i64_map.contains? (& table) symbols.init-neg) 11]
       ;; a descriptor global is not a scalar i64 candidate at all
       [(opt_i64_i64_map.contains? (& table) symbols.text) 12]
+      ;; the table built in its scratch arena and cloned out holds exactly the
+      ;; six admitted globals
+      [(not (= (opt_i64_i64_map.len (& table)) 6)) 13]
       [else 42])))
+
+;; Two maps with the same length and capacity whose slots hold the same entries
+;; at the same indexes: a layout-exact copy.
+(define (opt-test-i64-map-layout-same?
+  [left : (& left opt_i64_i64_map.Map)]
+  [right : (& right opt_i64_i64_map.Map)]) : bool
+  (let
+    [capacity : i64 (opt_i64_i64_map.capacity left)]
+    [same : bool
+      (and
+        (= (opt_i64_i64_map.len left) (opt_i64_i64_map.len right))
+        (= capacity (opt_i64_i64_map.capacity right)))]
+    [index : i64 0]
+    (begin
+      (while (and same (< index capacity))
+        (begin
+          (match (opt_i64_i64_map.entry-at left index)
+            [(opt_i64_i64_map.EntrySome key value)
+              (match (opt_i64_i64_map.entry-at right index)
+                [(opt_i64_i64_map.EntrySome other-key other-value)
+                  (if (and (= key other-key) (= value other-value))
+                    unit
+                    (set! same false))]
+                [(opt_i64_i64_map.EntryNone) (set! same false)])]
+            [(opt_i64_i64_map.EntryNone)
+              (match (opt_i64_i64_map.entry-at right index)
+                [(opt_i64_i64_map.EntrySome _ _) (set! same false)]
+                [(opt_i64_i64_map.EntryNone) unit])])
+          (set! index (+ index 1))))
+      same)))
 
 ;; --- constant-offset runs: widening + ordered subsumption --------------------
 ;;
@@ -54328,6 +54361,20 @@
         [functions (opt-cl-test-functions cl-symbols)]
         [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
         (opt.opt-cl-build type-segment-bases globals functions facts.disq 8))]
+    ;; The same program built in a scratch arena and cloned out, as the
+    ;; program summaries build it.
+    [cl-lengths-scratch : opt.OptConstLengths
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [globals (opt-cl-test-globals cl-symbols)]
+        [functions (opt-cl-test-functions cl-symbols)]
+        [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
+        (opt.opt-cl-build-in-scratch
+          type-segment-bases
+          globals
+          functions
+          facts.disq
+          8))]
     [cl-call-length : i64
       (opt.opt-cl-init-length
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -54770,6 +54817,16 @@
       ;; opaque call cannot receive the fresh descriptor, and the data slot
       ;; must contain the distinct buffer allocation rather than the descriptor
       ;; itself.
+      ;; ...and the scratch-built tables equal the in-place ones slot for slot.
+      [(not
+          (and
+            (opt-test-i64-map-layout-same?
+              (& cl-lengths.lengths)
+              (& cl-lengths-scratch.lengths))
+            (opt-test-i64-map-layout-same?
+              (& cl-lengths.inits)
+              (& cl-lengths-scratch.inits))))
+        247]
       [(not (= cl-call-length (- 0 1))) 245]
       [(not (= cl-self-data-length (- 0 1))) 246]
       [(not (opt-call-memory-summary-is? call-summaries summary-clean 0)) 72]

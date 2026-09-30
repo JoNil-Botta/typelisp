@@ -6835,7 +6835,7 @@
           false)))))
 
 (define (opt-expr-table-new) : OptExprTable
-  (opt-expr-table-with-capacity 4))
+  (opt-expr-table-with-capacity 0))
 
 (define (opt-expr-table-clear [table : (& table OptExprTable)]) : OptExprTable
   (match (owned_view.compiler-owned-reference-shared-view table)

@@ -64239,8 +64239,12 @@
         "a removed successor stays absent when a second live key restores indexed lookup")
       (set! table (opt.opt-expr-table-clear (& table)))
       (set! table (opt.opt-expr-table-add bases (& table) (clone a) 11))
-      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 22))
       (set! table (opt.opt-expr-table-add bases (& table) (clone c) 33))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& b))
+        -1
+        "a prior generation cannot leak a missing colliding key into the new index")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 22))
       (set! table (opt.opt-expr-invalidate-var (& table) 22))
       (set! table (opt.opt-expr-invalidate-var (& table) 33))
       (test.assert-i64-eq
@@ -64252,6 +64256,10 @@
         11
         "unlinking the head advances the bucket")
       (set! table (opt.opt-expr-table-add bases (& table) (clone b) 44))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        -1
+        "a removed head stays absent when indexed lookup resumes")
       (set! table (opt.opt-expr-invalidate-var (& table) 11))
       (test.assert-i64-eq
         (opt-cse-table-result bases (& table) (& a))

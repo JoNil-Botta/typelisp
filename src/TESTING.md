@@ -925,10 +925,11 @@ deterministic output, one-byte source mutation propagation, and byte-for-byte
 decoding with a branch-built compiler.
 
 CI's isolated TLCI mutation bootstrap enables the deterministic same-commit
-mutation witness. It copies `src/` and `stdlib/` below that bootstrap's target
-workdir, changes only the zero-body sentinel in the already-native
-`stdlib.core_macros/when` transformer, and builds every generation from that
-tree. Stage1 must emit exact package-qualified source-route evidence and the
+mutation witness. It starts from the same published stage0 seed as the main
+bootstrap and runs beside it rather than after it. It copies `src/` and
+`stdlib/` below that bootstrap's target workdir, changes only the zero-body
+sentinel in the already-native `stdlib.core_macros/when` transformer, and
+builds every generation from that tree. Stage1 must emit exact package-qualified source-route evidence and the
 changed diagnostic. Stage2, with the newly produced image embedded, must emit
 the matching native-route evidence with no contradictory source record and the
 same changed diagnostic. Stage1, stage2, and the final converged producer must
@@ -1278,7 +1279,7 @@ host bootstraps the full `src/main.tl` CLI as described under
 [Stage0 and the bootstrap](#stage0-and-the-bootstrap); all downstream gates
 receive the converged compiler, and the previous bootstrap generation is
 retained for the cross-mode differential. The separate TLCI mutation bootstrap
-keeps its independent build. Other producers hand their compilers and
+keeps its independent build from the same seed. Other producers hand their compilers and
 references to later gates through path files under `target/` (see
 `scripts/README.md`). Both hosts must run every applicable gate. Linux-only
 obligations include build invariance, instruction counts and Linux runtime

@@ -146,10 +146,13 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
     [index : i64 0]
+    [sources : compiler_driver_core.CompilerDriverDiagnosticSources
+      (compiler_driver_core.compiler-driver-diagnostic-sources-new)]
     (while (< index count)
       (begin
         (io.print-error
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
+          (compiler_driver_core.compiler-driver-render-source-diagnostic-from
+            (&mut sources)
             (cdiag.compiler-diagnostic-list-get diagnostics index)))
         (set! index (+ index 1))))))
 

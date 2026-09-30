@@ -157,7 +157,8 @@
     [over-counts : (__tl_dyn-array i64) (fresh n)]
     (begin
       (run-variable-snapshot (&mut out) n)
-      (when (or (!= (array-ref out 0) -1) (!= (array-ref out 6) -7))
+      (when
+        (or (!= (array-ref out 0) -1) (!= (array-ref out 6) -7))
         (return 14))
       (run-twice (&mut twice-counts) (&mut out) n)
       (if (not (all-equal (& twice-counts) n 1))

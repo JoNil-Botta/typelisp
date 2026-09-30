@@ -3137,10 +3137,13 @@
     [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
-;; A dead scalar shift is removable when its literal count is in range for
-;; the independently typed count and the shifted operand's width. Unknown or
+;; A scalar shift cannot fault when its literal count is in range for the
+;; independently typed count and the shifted operand's width. Unknown or
 ;; invalid counts keep their language-level abort; other operators retain the
-;; conservative operator-only rule. This proof is used only by dead-code sweeps.
+;; conservative operator-only rule. `opt-dce-binop-traps?` applies this proof
+;; wherever an instruction may be removed, skipped, or run once instead of per
+;; iteration: dead-code sweeps, flag_exit's skipped path and the
+;; fill_call/copy_call bodies.
 (define (opt-dce-shift-count-valid?
   [rhs : ir.CompilerIrValue]
   [count-ty : ast.AstType]

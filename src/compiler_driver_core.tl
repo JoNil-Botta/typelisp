@@ -5764,22 +5764,108 @@
 (define (compiler-driver-render-source-diagnostic
   [diag : compiler_diagnostic.CompilerDiagnostic]) : String
   (let
-    [path : String (compiler_diagnostic.compiler-diagnostic-path diag)]
+    [sources : CompilerDriverDiagnosticSources
+      (compiler-driver-diagnostic-sources-new)]
+    (compiler-driver-render-source-diagnostic-from (&mut sources) diag)))
+
+;; The source texts a batch of diagnostics renders against. Each path is read
+;; and line-indexed once, the first time a diagnostic names it, however many
+;; diagnostics follow and in whatever order their files interleave (#7895). A
+;; path that cannot be read is kept as the empty text, as a one-shot render
+;; treats it.
+(defstruct CompilerDriverDiagnosticSources
+  (paths (__tl_dyn-array String))
+  (sources (__tl_dyn-array compiler_diagnostic.CompilerDiagnosticSource))
+  (count i64))
+
+(define (compiler-driver-diagnostic-sources-new) : CompilerDriverDiagnosticSources
+  (CompilerDriverDiagnosticSources
+    (__tl_make-array String 4)
+    (__tl_make-array compiler_diagnostic.CompilerDiagnosticSource 4)
+    0))
+
+(define (compiler-driver-diagnostic-source-read [path : (& path str)]) : compiler_diagnostic.CompilerDiagnosticSource
+  (compiler_diagnostic.compiler-diagnostic-source-index
     (if (string.eq path "")
-      (compiler_diagnostic.compiler-diagnostic-render-source diag "")
-      (match (io.try-read-file (& path))
-        [(io.OkIoBytes source)
-          (compiler_diagnostic.compiler-diagnostic-render-source
-            diag
-            (byte_buf.to-string source))]
-        [(io.ErrIoBytes _)
-          (compiler_diagnostic.compiler-diagnostic-render-source diag "")]))))
+      ""
+      (match (io.try-read-file path)
+        [(io.OkIoBytes source) (byte_buf.to-string source)]
+        [(io.ErrIoBytes _) ""]))))
+
+;; The slot holding `path`'s indexed text, reading and indexing it first when
+;; no earlier diagnostic named it.
+(define (compiler-driver-diagnostic-sources-slot
+  [sources : (&mut sources CompilerDriverDiagnosticSources)]
+  [path : String]) : i64
+  (let
+    [slot : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (< slot sources.count)
+        (if (string.eq (array-ref sources.paths slot) path)
+          (begin
+            (set! found slot)
+            (set! slot sources.count))
+          (set! slot (+ slot 1))))
+      (if (>= found 0)
+        found
+        (begin
+          (if (= sources.count (array-length sources.paths))
+            (let
+              [capacity : i64 (* 2 (array-length sources.paths))]
+              [paths : (__tl_dyn-array String)
+                (__tl_make-array String capacity)]
+              [texts : (__tl_dyn-array
+                compiler_diagnostic.CompilerDiagnosticSource)
+                (__tl_make-array
+                  compiler_diagnostic.CompilerDiagnosticSource
+                  capacity)]
+              [index : i64 0]
+              (begin
+                (while (< index sources.count)
+                  (begin
+                    (set!
+                      (array-ref paths index)
+                      (owned_view.compiler-owned-array-element-shared-view
+                        sources.paths
+                        index))
+                    (set!
+                      (array-ref texts index)
+                      (owned_view.compiler-owned-array-element-shared-view
+                        sources.sources
+                        index))
+                    (set! index (+ index 1))))
+                (set! sources.paths paths)
+                (set! sources.sources texts)))
+            unit)
+          (set!
+            (array-ref sources.sources sources.count)
+            (compiler-driver-diagnostic-source-read (& path)))
+          (set! (array-ref sources.paths sources.count) path)
+          (set! sources.count (+ sources.count 1))
+          (- sources.count 1))))))
+
+;; `compiler-driver-render-source-diagnostic` for one diagnostic of a batch,
+;; reusing the batch's already read and indexed texts.
+(define (compiler-driver-render-source-diagnostic-from
+  [sources : (&mut sources CompilerDriverDiagnosticSources)]
+  [diag : compiler_diagnostic.CompilerDiagnostic]) : String
+  (let
+    [slot : i64
+      (compiler-driver-diagnostic-sources-slot
+        sources
+        (compiler_diagnostic.compiler-diagnostic-path diag))]
+    (compiler_diagnostic.compiler-diagnostic-render-indexed-source
+      diag
+      (& (array-ref sources.sources slot)))))
 
 (define (compiler-driver-print-advisories
   [advisories : (& advisories compiler_diagnostic.CompilerAdvisoryList)]) : unit
   (let
     [index : i64 0]
     [count : i64 (compiler_diagnostic.compiler-advisory-list-count advisories)]
+    [sources : CompilerDriverDiagnosticSources
+      (compiler-driver-diagnostic-sources-new)]
     (while (< index count)
       (let
         [advisory : compiler_diagnostic.CompilerAdvisory
@@ -5787,7 +5873,10 @@
         [diagnostic : compiler_diagnostic.CompilerDiagnostic
           (compiler_diagnostic.compiler-advisory-diagnostic (& advisory))]
         (begin
-          (io.print-error (compiler-driver-render-source-diagnostic diagnostic))
+          (io.print-error
+            (compiler-driver-render-source-diagnostic-from
+              (&mut sources)
+              diagnostic))
           (set! index (+ index 1)))))))
 
 (define (compiler-driver-write-result

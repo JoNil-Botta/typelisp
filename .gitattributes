@@ -11,6 +11,8 @@ tests/tlci/corpus/*.stderr text eol=lf
 tests/tlci/corpus/SHA256SUMS text eol=lf
 tests/tlci/corpus/*.tlci binary
 tests/integration/include_str_comptime_payload.txt text eol=lf
+# Application corpus inputs, expected outputs and manifests are byte oracles.
+tests/apps/** text eol=lf
 
 # ci-verify.sh reads the CI gate table on both hosts; keep it LF.
 scripts/ci-gates.tsv text eol=lf

@@ -21839,6 +21839,97 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-collect-defs-blocks (ir.compiler-ir-block-seq-to-list seq) set)]))
 
+;; Address-taken locals of the function LICM is rewriting (#7974). A write
+;; through the address -- in the loop body, or in a callee handed the address
+;; -- redefines the var without naming it as a dst, so no loop's def scan sees
+;; it, and a single `mov` outside the loop does not make its value invariant.
+;; LICM therefore counts every such var as defined in every loop
+;; (`opt-licm-loop-defs`): an instruction reading one is never invariant and a
+;; condition on one never unswitches. An instruction writing one is never
+;; hoisted either (`opt-licm-writes-addr-taken?`). Each LICM function entry
+;; installs the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
+;; before it examines one; a function without loops never reads it. `ids` lists
+;; the marked vars, so a loop pays for the few there are rather than for the
+;; whole frame.
+(defstruct OptLicmAddrTaken
+  (marks (__tl_dyn-array bool))
+  (ids opt_dense_i64_vec.Vec))
+
+(define opt-licm-addr-taken : OptLicmAddrTaken
+  (OptLicmAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
+
+;; One walk of the function: each `addr_of` source is marked and listed once.
+;; The mark array is allocated at the first `addr_of`, so a function with none
+;; allocates nothing and never scans its frame.
+(defstruct OptLicmAddrTakenScan
+  (frame i64)
+  (marks (__tl_dyn-array bool))
+  (ids opt_dense_i64_vec.Vec))
+
+(define (opt-licm-addr-taken-scan-instr!
+  [scan : (&mut scan OptLicmAddrTakenScan)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.AddrOf _ src)
+      (if (and (>= src 0) (< src scan.frame))
+        (begin
+          (if (= (array-length scan.marks) 0)
+            (set! scan.marks (__tl_make-array bool scan.frame))
+            unit)
+          (if (array-ref scan.marks src)
+            unit
+            (begin
+              (set! (array-ref scan.marks src) true)
+              (opt_dense_i64_vec.push-ref! (&mut scan.ids) src))))
+        unit)]
+    [_ unit]))
+
+(define (opt-licm-addr-taken-install!
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (let
+    [scan : OptLicmAddrTakenScan
+      (OptLicmAddrTakenScan
+        frame
+        (__tl_make-array bool 0)
+        (opt_dense_i64_vec.new))]
+    (begin
+      (opt-blocks-visit blocks opt-licm-addr-taken-scan-instr! (&mut scan))
+      (set! opt-licm-addr-taken (OptLicmAddrTaken scan.marks scan.ids)))))
+
+(define (opt-licm-addr-taken-install-for-loops!
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [loops : (& loops OptNaturalLoopList)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view loops)
+    [(OptNaturalLoopList.Nil) unit]
+    [_ (opt-licm-addr-taken-install! frame blocks)]))
+
+(define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match (opt-instr-def-var
+    (owned_view.compiler-owned-reference-shared-view instr))
+    [(option_i64.Some dst)
+      (opt-addr-taken-var? (& opt-licm-addr-taken.marks) dst)]
+    [(option_i64.None) false]))
+
+;; The vars a loop may redefine: its own defs plus every address-taken local.
+(define (opt-licm-loop-defs [body : ir.CompilerIrBlockList] [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [defs : opt_i64_i64_map.Map
+      (opt-licm-collect-defs-blocks
+        body
+        (opt_i64_i64_map.with-capacity capacity))]
+    [count : i64 (opt_dense_i64_vec.len (& opt-licm-addr-taken.ids))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            defs
+            (opt-used-add defs (array-ref opt-licm-addr-taken.ids.slots index)))
+          (set! index (+ index 1))))
+      defs)))
+
 ;; A `Global` operand is a hidden load of that global's cell -- the backend
 ;; reads it rip-relative at the use site (`movq sym(%rip), reg`), which is why
 ;; `GlobalAddr` (`leaq`) is a separate value form. So it is loop-invariant
@@ -26850,10 +26941,12 @@
             (match (compiler-opt-global-shared-view instr)
               [(ir.CompilerIrInstr.Load _ _ _) true]
               [_ false])]
+          [addr-taken-write? : bool (opt-licm-writes-addr-taken? (& instr))]
           ;; The final run asks only about reads it may guard.
           [ordinary? : bool
             (and
               (or (not opt-licm-guard-on) (and load? deref-site.guard?))
+              (not addr-taken-write?)
               (opt-licm-candidate?
                 type-segment-bases
                 loop-defs
@@ -26891,6 +26984,7 @@
                   deref-site.guard?
                   load?
                   (not ordinary?)
+                  (not addr-taken-write?)
                   (opt-licm-candidate?
                     type-segment-bases
                     loop-defs
@@ -29086,9 +29180,7 @@
         direct-call-clean
         cells
         (compiler-opt-global-shared-view body)
-        (opt-licm-collect-defs-blocks
-          (compiler-opt-global-shared-view body)
-          (opt_i64_i64_map.with-capacity map-capacity))
+        (opt-licm-loop-defs (compiler-opt-global-shared-view body) map-capacity)
         global-write?
         mem-clean-call?
         any-call?
@@ -29136,9 +29228,9 @@
           (opt-licm-body-map-capacity
             (compiler-opt-global-shared-view body-blocks))]
         [loop-defs : opt_i64_i64_map.Map
-          (opt-licm-collect-defs-blocks
+          (opt-licm-loop-defs
             (compiler-opt-global-shared-view body-blocks)
-            (opt_i64_i64_map.with-capacity map-capacity))]
+            map-capacity)]
         [store-state : OptLicmStoreState
           (opt-licm-store-state-blocks
             type-segment-bases
@@ -29438,11 +29530,10 @@
         [body-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
         [loop-defs : opt_i64_i64_map.Map
-          (opt-licm-collect-defs-blocks
+          (opt-licm-loop-defs
             (compiler-opt-global-shared-view body-blocks)
-            (opt_i64_i64_map.with-capacity
-              (opt-licm-body-map-capacity
-                (compiler-opt-global-shared-view body-blocks))))]
+            (opt-licm-body-map-capacity
+              (compiler-opt-global-shared-view body-blocks)))]
         (and
           (opt-licm-guard-shape? (& loop-defs) (& body-blocks))
           (=
@@ -29706,11 +29797,10 @@
         [body-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-body-blocks loop)]
         [loop-defs : opt_i64_i64_map.Map
-          (opt-licm-collect-defs-blocks
+          (opt-licm-loop-defs
             (compiler-opt-global-shared-view body-blocks)
-            (opt_i64_i64_map.with-capacity
-              (opt-licm-body-map-capacity
-                (compiler-opt-global-shared-view body-blocks))))]
+            (opt-licm-body-map-capacity
+              (compiler-opt-global-shared-view body-blocks)))]
         (or
           (opt-licm-seed-blocks? late? loop-defs body-blocks)
           (and
@@ -29761,6 +29851,11 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
+          [_addr-taken : unit
+            (opt-licm-addr-taken-install-for-loops!
+              frame
+              (compiler-opt-global-shared-view blocks)
+              (& loops))]
           (if (not
             (if opt-licm-guard-on
               (opt-licm-guard-loops? type-segment-bases (& blocks) (& loops))
@@ -30720,11 +30815,10 @@
         [successors : OptLabelSet
           (opt-pred-map-successors context.pred-map header)]
         [loop-defs : opt_i64_i64_map.Map
-          (opt-licm-collect-defs-blocks
+          (opt-licm-loop-defs
             (compiler-opt-global-shared-view body-blocks)
-            (opt_i64_i64_map.with-capacity
-              (opt-licm-body-map-capacity
-                (compiler-opt-global-shared-view body-blocks))))]
+            (opt-licm-body-map-capacity
+              (compiler-opt-global-shared-view body-blocks)))]
         ;; PH-1: in-body compares count for the predicate hoist only.
         [_body-compare : unit
           (set!
@@ -31108,11 +31202,10 @@
           (opt-licm-unswitch-fuse-conds
             blocks
             (compiler-opt-global-shared-view shape.body-blocks)
-            (opt-licm-collect-defs-blocks
+            (opt-licm-loop-defs
               (compiler-opt-global-shared-view shape.body-blocks)
-              (opt_i64_i64_map.with-capacity
-                (opt-licm-body-map-capacity
-                  (compiler-opt-global-shared-view shape.body-blocks))))
+              (opt-licm-body-map-capacity
+                (compiler-opt-global-shared-view shape.body-blocks)))
             shape.chain-labels
             0
             shape.cond
@@ -31528,10 +31621,9 @@
               (opt-licm-unswitch-fuse-conds
                 blocks
                 (compiler-opt-global-shared-view shape.body-blocks)
-                (opt-licm-collect-defs-blocks
+                (opt-licm-loop-defs
                   (compiler-opt-global-shared-view shape.body-blocks)
-                  (opt_i64_i64_map.with-capacity
-                    (opt-licm-body-map-capacity shape.body-blocks)))
+                  (opt-licm-body-map-capacity shape.body-blocks))
                 shape.chain-labels
                 0
                 shape.cond
@@ -31610,6 +31702,11 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
+          [_addr-taken : unit
+            (opt-licm-addr-taken-install-for-loops!
+              frame
+              (compiler-opt-global-shared-view blocks)
+              (& loops))]
           (match (opt-licm-unswitch-loops
             blocks
             context

@@ -4,8 +4,8 @@ integration manifest.
 
 The request file is a NUL-delimited UTF-8 field stream:
 
-  tlwinq2<NUL>
-  label<NUL>exe<NUL>stdout<NUL>stderr<NUL>exit-file<NUL>
+  tlwinq3<NUL>
+  label<NUL>exe<NUL>stdout<NUL>stderr<NUL>exit-file<NUL>timeout-seconds<NUL>
   expected-exit<NUL>expected-stdout<NUL>expected-stderr<NUL>
   argument-count<NUL>argument...<NUL>
 
@@ -14,9 +14,13 @@ each already-split value with its `printf` builtin without launching base64/tr
 helpers or depending on shell quoting, whitespace, path punctuation, or
 newlines. `expected-exit` is `-` for a request that should only be captured.
 
+A request that has not exited and closed its output streams `timeout-seconds`
+after its start is a `timeout`: its process tree is killed, it gets no exit
+code or exit file, and the runner moves on to the next request.
+
 The result file is UTF-8 tab-separated:
 
-  label<TAB>ok|launch-failed<TAB>exit-code<TAB>error64<TAB>elapsed-ms
+  label<TAB>ok|launch-failed|timeout<TAB>exit-code<TAB>error64<TAB>elapsed-ms
 
 The assertion file is UTF-8 tab-separated:
 
@@ -180,6 +184,33 @@ function Set-ProcessArguments {
     }
 }
 
+# taskkill /T walks the live parent chain from the case, so the case and every
+# descendant still attached to it at the deadline are terminated. Returns
+# whether the case process itself has exited.
+function Stop-ProcessTree {
+    param([System.Diagnostics.Process]$Process)
+
+    $killStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $killStartInfo.FileName = "taskkill.exe"
+    $killStartInfo.Arguments = "/T /F /PID " +
+        $Process.Id.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $killStartInfo.UseShellExecute = $false
+    $killStartInfo.CreateNoWindow = $true
+    $killStartInfo.RedirectStandardOutput = $true
+    $killStartInfo.RedirectStandardError = $true
+    $killProcess = [System.Diagnostics.Process]::Start($killStartInfo)
+    try {
+        $killStderrTask = $killProcess.StandardError.ReadToEndAsync()
+        [void]$killProcess.StandardOutput.ReadToEnd()
+        [void]$killStderrTask.Result
+        $killProcess.WaitForExit()
+    }
+    finally {
+        $killProcess.Dispose()
+    }
+    return $Process.WaitForExit(10000)
+}
+
 function Get-UnsignedExitCode {
     param([int]$ExitCode)
 
@@ -207,7 +238,7 @@ if (-not [string]::IsNullOrEmpty($summaryDirectory)) {
 }
 
 $requestFields = @(Read-NullDelimitedUtf8Fields $RequestPath)
-if ($requestFields.Count -eq 0 -or $requestFields[0] -ne "tlwinq2") {
+if ($requestFields.Count -eq 0 -or $requestFields[0] -ne "tlwinq3") {
     throw "invalid Windows integration request header"
 }
 $resultWriter = New-Object System.IO.StreamWriter -ArgumentList @(
@@ -226,6 +257,7 @@ $totalStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $requestCount = 0
 $childStarts = 0
 $launchFailures = 0
+$timeouts = 0
 $assertionCount = 0
 $resultProcessStopwatch = New-Object System.Diagnostics.Stopwatch
 $assertTotalStopwatch = New-Object System.Diagnostics.Stopwatch
@@ -233,7 +265,7 @@ $cursor = 1
 
 try {
     while ($cursor -lt $requestFields.Count) {
-        if (($requestFields.Count - $cursor) -lt 9) {
+        if (($requestFields.Count - $cursor) -lt 10) {
             throw "truncated Windows integration runner request at field $cursor"
         }
 
@@ -242,13 +274,27 @@ try {
         $stdout = $requestFields[$cursor + 2]
         $stderr = $requestFields[$cursor + 3]
         $exitFile = $requestFields[$cursor + 4]
-        $expectedExit = $requestFields[$cursor + 5]
-        $expectedStdout = $requestFields[$cursor + 6]
-        $expectedStderr = $requestFields[$cursor + 7]
-        $argumentCountText = $requestFields[$cursor + 8]
-        $cursor += 9
+        $timeoutSecondsText = $requestFields[$cursor + 5]
+        $expectedExit = $requestFields[$cursor + 6]
+        $expectedStdout = $requestFields[$cursor + 7]
+        $expectedStderr = $requestFields[$cursor + 8]
+        $argumentCountText = $requestFields[$cursor + 9]
+        $cursor += 10
         if ($label -notmatch '^[A-Za-z0-9_]+$') {
             throw "invalid Windows integration runner label: $label"
+        }
+        $timeoutSeconds = 0
+        if (
+            -not [int]::TryParse(
+                $timeoutSecondsText,
+                [System.Globalization.NumberStyles]::None,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$timeoutSeconds
+            ) -or
+            $timeoutSeconds -lt 1 -or
+            $timeoutSeconds -gt 86400
+        ) {
+            throw "invalid timeout for Windows integration request '$label'"
         }
         $argumentCount = 0
         if (
@@ -321,14 +367,38 @@ try {
                 throw "Process.Start returned false for '$exe'"
             }
             $childStarts += 1
-            $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdoutFile)
-            $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrFile)
-            $process.WaitForExit()
-            $stdoutTask.Wait()
-            $stderrTask.Wait()
+            $streamTasks = [System.Threading.Tasks.Task[]]@(
+                $process.StandardOutput.BaseStream.CopyToAsync($stdoutFile),
+                $process.StandardError.BaseStream.CopyToAsync($stderrFile)
+            )
+            $timeoutMilliseconds = $timeoutSeconds * 1000
+            $finished = $process.WaitForExit($timeoutMilliseconds)
+            if ($finished) {
+                $remainingMilliseconds = [Math]::Max(
+                    0,
+                    $timeoutMilliseconds - $stopwatch.ElapsedMilliseconds
+                )
+                $finished = [System.Threading.Tasks.Task]::WaitAll(
+                    $streamTasks,
+                    [int]$remainingMilliseconds
+                )
+            }
 
-            $exitCode = Get-UnsignedExitCode $process.ExitCode
-            [System.IO.File]::WriteAllText($exitFile, $exitCode, $Utf8)
+            if ($finished) {
+                $exitCode = Get-UnsignedExitCode $process.ExitCode
+                [System.IO.File]::WriteAllText($exitFile, $exitCode, $Utf8)
+            }
+            else {
+                $status = "timeout"
+                $timeouts += 1
+                $errorMessage = "timeout after $timeoutSeconds s"
+                if (-not (Stop-ProcessTree $process)) {
+                    $errorMessage += "; the case survived its tree kill"
+                }
+                elseif (-not [System.Threading.Tasks.Task]::WaitAll($streamTasks, 10000)) {
+                    $errorMessage += "; a descendant kept its output open after the tree kill"
+                }
+            }
         }
         catch {
             $status = "launch-failed"
@@ -432,6 +502,7 @@ $totalStopwatch.Stop()
         "requests=$requestCount",
         "child_starts=$childStarts",
         "launch_failures=$launchFailures",
+        "timeouts=$timeouts",
         "assertions=$assertionCount",
         "result_process_ms=$($resultProcessStopwatch.ElapsedMilliseconds)",
         "assert_ms=$($assertTotalStopwatch.ElapsedMilliseconds)",

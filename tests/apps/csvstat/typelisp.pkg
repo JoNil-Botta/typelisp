@@ -1,0 +1,5 @@
+(package
+  (name "csvstat")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))

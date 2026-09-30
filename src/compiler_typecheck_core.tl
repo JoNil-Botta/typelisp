@@ -28605,19 +28605,22 @@
     [(TcSpmdRole.ActiveBarrier) true]
     [_ false]))
 
-;; A function value bound inside the gang may have captured the gang's varying
-;; values, so a foreach-active body hides it like a varying binding: calling it
-;; there would observe the lane's varying state without lane-value. Functions
-;; from outside the foreach are uniform and stay visible.
-(define (tc-spmd-gang-local-function?
+;; A value bound inside the gang that is not a scalar lane value may carry
+;; per-lane state the SPMD class does not see: a closure can capture varying
+;; values, and a tuple, struct, array or reference can hold such a closure. A
+;; foreach-active body therefore hides every gang-local binding except scalar
+;; lane values, like a varying binding: reading one there could observe the
+;; lane's varying state without lane-value. Values from outside the foreach
+;; are uniform and stay visible.
+(define (tc-spmd-gang-local-opaque?
   [scope : TcSpmdScope]
   [ty : (& ty ast.AstType)]) : bool
   (match scope
     [(TcSpmdScope.Outer) false]
     [(TcSpmdScope.Local)
-      (match ty
-        [(ast.AstType.Func _ _) true]
-        [_ false])]))
+      (not
+        (tc-spmd-lane-type-supported?
+          (owned_view.compiler-owned-reference-shared-view ty)))]))
 
 (define (tc-spmd-env-hidden-from?
   [bindings : u64]
@@ -28638,16 +28641,17 @@
               below-barrier
               (or
                 (tc-spmd-varying? binding.class)
-                (tc-spmd-gang-local-function? binding.scope (& binding.ty))))
+                (tc-spmd-gang-local-opaque? binding.scope (& binding.ty))))
             (tc-spmd-env-hidden-from?
               bindings
               (- index 1)
               name-id
               below-barrier))]))))
 
-;; True when NAME-ID resolves to a varying binding, or a gang-local function,
-;; declared outside the innermost foreach-active body. The body reads a varying
-;; binding only through lane-value and cannot read such a function at all.
+;; True when NAME-ID resolves to a varying binding, or a gang-local value that
+;; is not a scalar lane value, declared outside the innermost foreach-active
+;; body. The body reads a varying binding only through lane-value and cannot
+;; read such a value at all.
 (define (tc-spmd-env-hidden-id? [env : TcSpmdEnv] [name-id : i64]) : bool
   (tc-spmd-env-hidden-from?
     env.bindings
@@ -45026,13 +45030,13 @@
     (tc-env-key-name-text name-id)
     ")"))
 
-(define (tc-spmd-active-hidden-function-message [name-id : i64]) : String
+(define (tc-spmd-active-hidden-opaque-message [name-id : i64]) : String
   (str_cat.str-cat
     (tc-kind-message
       (cdiag.CompilerTypecheckKind.Spmd)
-      "typecheck: foreach-active body reads gang-local function `")
+      "typecheck: foreach-active body reads gang-local value `")
     (tc-env-key-name-text name-id)
-    "`, which can capture varying values; define it inside the body or outside the foreach"))
+    "`, which is not a scalar lane value and can carry per-lane state such as a captured varying value; bind it outside the foreach or inside the body"))
 
 (define (tc-spmd-active-unsupported-message [what : String]) : String
   (str_cat.str-cat
@@ -45076,7 +45080,7 @@
                     "typecheck: a lambda inside foreach-active cannot capture varying `")
                   (tc-env-key-name-text binding.name)
                   "`; read it with lane-value outside the lambda")
-                (tc-spmd-active-hidden-function-message binding.name)))
+                (tc-spmd-active-hidden-opaque-message binding.name)))
             (tc-spmd-active-lambda-capture-from
               expr-bases
               spmd-env
@@ -45352,7 +45356,7 @@
               (ResultTcSpmdExprInfo.Err
                 (if (tc-spmd-varying? class)
                   (tc-spmd-active-hidden-message name)
-                  (tc-spmd-active-hidden-function-message name)))
+                  (tc-spmd-active-hidden-opaque-message name)))
               (tc-spmd-finish-ctx ctx expr-ty class spmd-env))]
           [(TcSpmdLookup.Missing)
             (tc-spmd-finish-ctx ctx expr-ty TcSpmdClass.Uniform spmd-env)]))]
@@ -45734,17 +45738,20 @@
             (tc-kind-message
               (cdiag.CompilerTypecheckKind.Spmd)
               "typecheck: foreach-active lane binding is read-only"))]
-        [(TcSpmdLookup.Found _ (TcSpmdClass.Varying) _ _)
+        [(TcSpmdLookup.Found _ class _ _)
           (if (tc-spmd-env-hidden-id? spmd-env name)
             (ResultTcSpmdExprInfo.Err
-              (str_cat.str-cat
-                (tc-kind-message
-                  (cdiag.CompilerTypecheckKind.Spmd)
-                  "typecheck: foreach-active body cannot set varying binding `")
-                (tc-env-key-name-text name)
-                "`"))
+              (if (tc-spmd-varying? class)
+                (str_cat.str-cat
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.Spmd)
+                    "typecheck: foreach-active body cannot set varying binding `")
+                  (tc-env-key-name-text name)
+                  "`")
+                (tc-spmd-active-hidden-opaque-message name)))
             (tc-spmd-set ctx expr-bases env spmd-env expr-ty name value-box))]
-        [_ (tc-spmd-set ctx expr-bases env spmd-env expr-ty name value-box)])]
+        [(TcSpmdLookup.Missing)
+          (tc-spmd-set ctx expr-bases env spmd-env expr-ty name value-box)])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)

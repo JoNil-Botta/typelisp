@@ -5492,7 +5492,10 @@ Serialized lanes:
 - Varying values from outside the body are hidden inside it: reading the
   `foreach` index, a varying `let` binding or `(program-index)` directly is
   rejected with a diagnostic naming it, as are capturing one in a lambda and
-  `set!` of a varying binding. `(lane-value v)` gives the running lane's value
+  `set!` of a varying binding. A value bound inside the gang that is not a
+  scalar lane value, such as a function, tuple, struct, array or reference, is
+  hidden too, since it can hold a closure over varying values; bind it outside
+  the `foreach` or inside the body. `(lane-value v)` gives the running lane's value
   of `v` as a uniform value. `v` must have a scalar lane type (`i8`, `u8`,
   `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, `f64` or `bool`) and only
   read gang values: bindings, literals, operators, casts, `if`, `let`, and

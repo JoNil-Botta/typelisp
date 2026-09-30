@@ -521,8 +521,9 @@ move_value_loop_carried_reject|check-fail|tests/safety/move_value_loop_carried_r
 with_owner_value_begin_move_reject|check-fail|tests/safety/with_owner_value_begin_move_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_string_value_move_reject|check-fail|tests/safety/with_owner_string_value_move_reject.tl|-|cleanup owner `name` moved before with scope exit
 move_value_tail_shadow_ok|run-exit|tests/safety/move_value_tail_shadow_ok.tl|42|-
-# Branch joins: an arm that never completes normally does not reach the join,
-# but its moves of an active `with` owner still reach that scope's exit check.
+# Branch joins: an arm that never completes normally does not reach the join;
+# a move of an active `with` owner on it is checked at the edge that leaves the
+# owner's scope.
 move_diverging_if_return_ok|run-exit|tests/safety/move_diverging_if_return_ok.tl|42|-
 move_diverging_match_return_ok|run-exit|tests/safety/move_diverging_match_return_ok.tl|42|-
 move_diverging_never_call_ok|run-exit|tests/safety/move_diverging_never_call_ok.tl|42|-
@@ -592,7 +593,7 @@ generated_module_sibling_value_dependency_reject_message|check-fail|tests/safety
 serialize_unsupported_char_root_reject|check-fail|tests/safety/serialize_unsupported_char_root_reject.tl|-|serialize: unsupported root type
 serialize_unsupported_tuple_element_reject|check-fail|tests/safety/serialize_unsupported_tuple_element_reject.tl|-|serialize: unsupported type char
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool
-sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
+sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|cleanup obligation of `guard` is not discharged at the end of its let scope
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape
 sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type stdlib.sync.mutex.generated.i64/Guard without :owned
@@ -738,8 +739,31 @@ for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_c
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`
-vector_cleanup_owner_let_reject|check-fail|tests/safety/vector_cleanup_owner_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
-vector_cleanup_into_next_let_reject|check-fail|tests/safety/vector_cleanup_into_next_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
+vector_cleanup_owner_let_reject|check-fail|tests/safety/vector_cleanup_owner_let_reject.tl|-|cleanup obligation of `items` is not discharged at the end of its let scope
+vector_cleanup_into_next_let_reject|check-fail|tests/safety/vector_cleanup_into_next_let_reject.tl|-|cleanup obligation of `step` is not discharged at the end of its let scope
+# Ordinary `let` cleanup obligations (#6947): a `let` owner of a cleanup-owning
+# value is discharged or handed on through a known edge on every normal exit,
+# and paths that meet agree on it.
+let_obligation_paths_ok|run-exit|tests/safety/let_obligation_paths_ok.tl|42|-
+let_obligation_generated_ok|run-exit|tests/safety/let_obligation_generated_ok.tl|0|-
+let_obligation_missing_reject|check-fail|tests/safety/let_obligation_missing_reject.tl|-|cleanup obligation of `h` is not discharged at the end of its let scope
+let_obligation_transfer_missing_reject|check-fail|tests/safety/let_obligation_transfer_missing_reject.tl|-|cleanup obligation of `g` is not discharged at the end of its let scope
+let_obligation_return_reject|check-fail|tests/safety/let_obligation_return_reject.tl|-|cleanup obligation of `h` is not discharged before this return
+let_obligation_try_reject|check-fail|tests/safety/let_obligation_try_reject.tl|-|cleanup obligation of `h` is not discharged before this try can propagate an error
+let_obligation_break_reject|check-fail|tests/safety/let_obligation_break_reject.tl|-|cleanup obligation of `h` is not discharged before this break leaves its loop
+let_obligation_one_arm_reject|check-fail|tests/safety/let_obligation_one_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths through this branch
+let_obligation_match_arm_reject|check-fail|tests/safety/let_obligation_match_arm_reject.tl|-|cleanup obligation of `h` is discharged on only some paths through this match
+let_obligation_and_reject|check-fail|tests/safety/let_obligation_and_reject.tl|-|cleanup obligation of `h` is discharged on only some paths
+let_obligation_outer_loop_break_reject|check-fail|tests/safety/let_obligation_outer_loop_break_reject.tl|-|cleanup obligation of `h` is discharged on only some paths out of this loop
+let_obligation_lost_call_reject|check-fail|tests/safety/let_obligation_lost_call_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
+let_obligation_lookalike_reject|check-fail|tests/safety/let_obligation_lookalike_reject.tl|-|cleanup obligation of `h` is lost where it is moved without being discharged
+let_obligation_partial_reject|check-fail|tests/safety/let_obligation_partial_reject.tl|-|cleanup obligation of `p` is only partly discharged at the end of its let scope
+let_obligation_double_reject|check-fail|tests/safety/let_obligation_double_reject.tl|-|use of moved value `h`
+let_obligation_value_tails_ok|run-exit|tests/safety/let_obligation_value_tails_ok.tl|42|-
+let_obligation_never_ok|run-exit|tests/safety/let_obligation_never_ok.tl|42|-
+let_obligation_value_shadow_reject|check-fail|tests/safety/let_obligation_value_shadow_reject.tl|-|cleanup obligation of `h` is not discharged at the end of its let scope
+let_obligation_lambda_exits_ok|run-exit|tests/safety/let_obligation_lambda_exits_ok.tl|42|-
+let_obligation_deep_loops_ok|run-exit|tests/safety/let_obligation_deep_loops_ok.tl|42|-
 vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut_reject.tl|-|typecheck: unbound name tokens.slots-mut
 vector_cleanup_into_iter_vec_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_vec_projection_reject.tl|-|IntoIter.vec; available fields: state
 vector_cleanup_into_iter_state_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_state_projection_reject.tl|-|field projection .slots requires struct, got (MutPtr

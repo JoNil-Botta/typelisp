@@ -296,6 +296,22 @@ compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
 still await migration are tracked in #4960.
 
+The move checker stores an ordinary cleanup-owning `let`'s obligation in its
+lexical locals entry and its discharge in the existing place-path facts.
+Private owner-count and loop-depth entries use reserved negative map keys;
+source and structural name identities are nonnegative, so these snapshots
+neither alias bindings nor depend on an installed intern pool.
+Owner metadata preserves exact loop depth across the expression pool's range,
+so an inner loop exit cannot require discharge of an outer loop's owner.
+Shadowing snapshots and restores the outer binding's facts. Normal exit edges
+check every owner they leave before diverging arms are removed from joins;
+normally completing paths must agree on obligated roots. Transfer through a
+value form proves that every normal result names the same visible owner,
+using that job's original expression IDs and recorded divergence facts.
+`never` paths have no normal cleanup edge.
+Lambda bodies start from their capture locals so their exits cannot discharge
+or require the enclosing function's obligations or inherit its loop depth.
+
 The comptime evaluator has no import scope. Before a source `(comptime ...)`
 fold or a fixed `make-array` length is evaluated, typechecking and lowering
 resolve each type literal of the expression in the current module

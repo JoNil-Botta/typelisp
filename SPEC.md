@@ -3886,9 +3886,67 @@ would escape the cleanup scope.
 binding initializes a cleanup-owning struct, its cleanup position must be the
 struct's declared cleanup function; any other cleanup function is rejected. A
 resource value moved into a cleanup-owning aggregate is not also cleaned by
-the source binding. `let` has no cleanup behavior; creating a cleanup-owning
-value in `let` is valid only if the value is immediately moved into another
-owner whose cleanup is statically known.
+the source binding.
+
+An ordinary `let` never runs cleanup. A `let` that binds a cleanup-owning struct
+or enum value instead owns it under a discharge obligation, which the move
+checker enforces. On every normal exit of the binding's scope, the value must
+already have left the binding through one of these edges:
+
+- a call to the type's declared cleanup function, which discharges it;
+- the initializer of another `let`, which takes over the obligation;
+- the initializer of a `with` binding, which cleans it;
+- an argument of a cleanup-owning struct or enum constructor;
+- a `return`;
+- the `let`'s own value, which hands the obligation to that value.
+
+The normal exits are falling through the body, `return`, recoverable `try`
+propagation, and a `break` or `continue` that leaves the loop the binding is in.
+The declared cleanup function is identified by its declaration, so a
+module-qualified or import-aliased call counts, while a same-named or
+same-typed function does not. The following are rejected with a diagnostic
+naming the binding: passing the value by value to any other function, moving
+only part of it, leaving it on one exit edge, and discharging it on only some
+of the paths that meet at an `if`, `match`, `and`/`or` or loop exit. A path
+that ends in a call of a `never` function, such as a panic, needs no discharge.
+Function parameters do not yet carry an obligation (#6947).
+
+These transfers also recognize transparent value forms (`begin`, `unsafe`,
+and nested scopes) and `if`/`match` arms that all yield the same visible owner
+on their normal paths. A shadowing binding is a different owner. Selecting
+different live owners does not prove that both were discharged.
+
+```lisp test=run name=let-cleanup-obligation exit=42 stdout=""
+(define (close-fd [_fd : i64]) : unit
+  unit)
+
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(define (read-fd [h : (& h FileHandle)]) : i64
+  h.fd)
+
+(define (first-fd [fd : i64] [failed : bool]) : i64
+  (let
+    [h : FileHandle (FileHandle fd)]
+    (begin
+      (if failed
+        (begin
+          (cleanup-file-handle h) ; discharged before the early return
+          (return -1))
+        unit)
+      (let
+        [value : i64 (read-fd (& h))]
+        (begin
+          (cleanup-file-handle h) ; discharged on the fallthrough path
+          value)))))
+
+(define (main) : i64
+  (if (= (first-fd 7 true) -1)
+    (first-fd 42 false)
+    1))
+```
 
 Cleanup runs when the owner scope exits normally and before recoverable
 `(try ...)` propagation leaves the scope. If initialization of a later `with`
@@ -4140,11 +4198,14 @@ normally. A branch of any other type is treated as completing normally, even
 when it cannot in fact return (an endless loop, for example). A use after a
 move inside the diverging branch itself is still rejected.
 
-One fact survives a diverging branch: a move of an active non-move-aware `with`
-owner (section 5.19). The owner's cleanup runs on every `return`, `try`,
-`break`, and `continue` that leaves its scope, so moving it in a branch that
-leaves the scope is rejected with the same `cleanup owner ... moved before with
-scope exit` diagnostic as a move on the fallthrough path.
+An edge that leaves the scope of an owner is checked where it leaves. An active
+non-move-aware `with` owner (section 5.19) has its cleanup run on every
+`return`, `try`, `break`, and `continue` that leaves its scope, so an owner that
+such an edge finds moved is rejected with the same `cleanup owner ... moved
+before with scope exit` diagnostic as a move on the fallthrough path. An
+ordinary `let` owner of a cleanup-owning value must instead be discharged there
+(section 4.7.1). A branch that ends in a call of a `never` function leaves no
+scope normally and needs neither.
 
 **Shadowing.** Move facts belong to a binding, not to its printed name. A
 `let` or `with` binding that shadows a local starts initialized, and where its
@@ -6478,8 +6539,10 @@ used to compute a non-resource result before cleanup runs.
     h))
 ```
 
-Ordinary `let` has no cleanup behavior. A binding is cleaned up only when it is
-introduced by `with`, with an explicit cleanup function in the binding.
+Ordinary `let` never runs cleanup. A binding is cleaned up automatically only
+when it is introduced by `with`, with an explicit cleanup function in the
+binding. A `let` of a cleanup-owning aggregate must instead discharge the value
+explicitly on every normal exit (section 4.7.1).
 For cleanup-owning aggregate types (section 4.7.1), the explicit cleanup
 function must be the aggregate type's declared cleanup function. The field
 cleanup plan is then run by that aggregate cleanup function; `with` itself still

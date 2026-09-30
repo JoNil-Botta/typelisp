@@ -4664,6 +4664,9 @@ guards.
 
 - Mutates an existing local, parameter, global, struct-field, tuple-element,
   array-element, Box, or mutable-reference storage place.
+- A function `define` or function `extern` declares a callable name, not a
+  storage place. Assigning to it is rejected before checking the replacement,
+  including through imports. Function-valued storage remains assignable.
 - The type of `expr` must match `var`'s type. Assignment is subject to the
   same move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.

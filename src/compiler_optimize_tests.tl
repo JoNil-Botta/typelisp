@@ -3201,8 +3201,21 @@
               [_ false])]
           [_ false]))]))
 
-(test
-  optimizer-inline-callers-escape-through-explicit-job-pool
+(define (opt-inline-job-pool-caller-ok?
+  [bases : i64]
+  [out : (& out ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (opt-function-seq-find out name)
+    [(opt.OptMaybeFunction.Some func)
+      (opt-inline-job-pool-param-ok? bases (& func))]
+    [(opt.OptMaybeFunction.No) false]))
+
+;; One level-2 inline run on a fresh job pool grown by `fill` distinct type
+;; nodes, with a different, empty pool installed as the ambient context while
+;; it runs. True when the parameter's array node sits past the pool's first
+;; segment, an unoptimized caller calls the leaf once, and both callers absorb
+;; the leaf while keeping their job-pool parameter type.
+(define (opt-inline-job-pool-run-ok? [fill : i64]) : bool
   (let
     [job : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 16)]
@@ -3212,7 +3225,7 @@
       : unit
       ;; Distinct nodes, so deduplication cannot collapse them, until the
       ;; pool has crossed its first 1,024-node segment.
-      (while (< i 1100)
+      (while (< i fill)
         (begin
           (set!
             filler
@@ -3250,32 +3263,32 @@
         2
         (ir.compiler-source-spans-empty))]
     [_restore : unit (ast.ast-node-pool-context-install! ambient)]
-    (begin
-      (test.assert-true
-        (> array-id ast.ast-type-node-pool-segment-size)
-        "the parameter's array node sits past the job pool's first segment")
-      (let
-        [control : ir.CompilerIrFunction
-          (opt-inline-job-pool-caller "job_pool_c" (ast.AstType.Ref 1 array-id))]
-        (test.assert-i64-eq
-          (opt-inline-job-pool-leaf-calls (& control))
-          1
-          "an unoptimized caller calls the leaf once"))
+    [control : ir.CompilerIrFunction
+      (opt-inline-job-pool-caller "job_pool_c" (ast.AstType.Ref 1 array-id))]
+    (and
+      (> array-id ast.ast-type-node-pool-segment-size)
+      (= (opt-inline-job-pool-leaf-calls (& control)) 1)
       (match inlined
         [(opt.OptInlineSpanProgram.Program out _)
-          (begin
-            (test.assert-true
-              (match (opt-function-seq-find out "job_pool_a")
-                [(opt.OptMaybeFunction.Some a)
-                  (opt-inline-job-pool-param-ok? bases (& a))]
-                [(opt.OptMaybeFunction.No) false])
-              "job_pool_a absorbs the leaf and keeps its job-pool parameter type")
-            (test.assert-true
-              (match (opt-function-seq-find out "job_pool_b")
-                [(opt.OptMaybeFunction.Some b)
-                  (opt-inline-job-pool-param-ok? bases (& b))]
-                [(opt.OptMaybeFunction.No) false])
-              "job_pool_b absorbs the leaf and keeps its job-pool parameter type"))]))))
+          (and
+            (opt-inline-job-pool-caller-ok? bases (& out) "job_pool_a")
+            (opt-inline-job-pool-caller-ok? bases (& out) "job_pool_b"))]))))
+
+(test
+  optimizer-inline-callers-escape-through-explicit-job-pool
+  (test.assert-true
+    (opt-inline-job-pool-run-ok? 1100)
+    "with an empty ambient pool, both callers absorb the leaf and keep a parameter type that resolves past the explicit job pool's first segment"))
+
+;; Every run destroys its scratch arena before returning. Three runs in one
+;; process, alternating two job pools of different sizes, would read a table
+;; the previous run left pointing into its rewound phases.
+(test
+  optimizer-inline-repeated-interleaved-job-pools
+  (begin
+    (test.assert-true (opt-inline-job-pool-run-ok? 1100) "job A")
+    (test.assert-true (opt-inline-job-pool-run-ok? 1300) "job B")
+    (test.assert-true (opt-inline-job-pool-run-ok? 1100) "job A again")))
 
 ;; Each caller's phase escapes only the span rows its own rewrite added
 ;; (#8362), so the spans table grows linearly in the number of rewritten

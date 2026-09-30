@@ -7,6 +7,24 @@ caller passes the original expression provenance rather than inventing a span
 for a helper call. Short-circuiting remains control flow, and eager operands
 consume the state returned by the preceding operand.
 
+Requested pointer-proof capture runs at the specialized, checked function
+boundary before expression dispatch erases pointer semantics. It uses the shared
+AST child IDs and existing type and symbol authorities; disabled lowering does
+not walk expressions for proof input. Each captured read has its own occurrence
+index, while reads and assignments name the original lexical binding. Binding
+operands hold their initializers; a let sequence holds its bindings and body.
+Other operands retain AST child order: a branch join holds condition, then and
+else, and direct calls hold arguments without the callee expression. Function
+records bind source parameter ordinals and their result occurrence to the
+emitted function symbol.
+
+The analysis handoff requires its exact live, immutable IR and source-span
+tables. Captured paths, spans and source type categories belong to the proof
+owner and survive source/type/interner retirement. Missing facts and unknown
+pointer producers reject the handoff; known opaque producers record their kind
+without granting admission. Do not reconstruct erased conversions from machine
+types or let a later optimized program substitute for this boundary.
+
 This ledger tracks #7770. Its starting inventory on `95be68cf` contains 86
 arms, including the fallback. The issue remains open for the residual substantial
 bodies below. Grouped names are exact `AstExpr` variants.

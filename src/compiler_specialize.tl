@@ -5548,6 +5548,23 @@
                       [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (let
+        [body : ast.AstExpr (spec-state-expr-get state body-box)]
+        [body-templates : SpecTemplateEnv
+          (spec-template-env-shadow-name templates lane)]
+        (match (spec-rewrite-expr
+          body
+          body-templates
+          (spec-place-shared-view state))
+          [(ResultSpecExpr.Ok rewritten-body body-state)
+            (ResultSpecExpr.Ok
+              (ast.ast-expr-foreach-active-with-pools
+                (spec-state-pools state)
+                lane
+                rewritten-body)
+              body-state)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce
@@ -6085,6 +6102,17 @@
                 rewritten-start
                 rewritten-end
                 rewritten-body)))])]
+    [(ast.AstExpr.ForeachActive lane body-box)
+      (let
+        [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
+        [body-subs : SpecValueSubst (spec-value-subst-remove-name subs lane)]
+        [rewritten-body : i64
+          (try (spec-substitute-values-expr-with-owner owner body body-subs))]
+        (ResultSpecSubExpr.Ok
+          (ast.ast-expr-foreach-active-with-pools
+            (spec-owner-pools owner)
+            lane
+            rewritten-body)))]
     [(ast.AstExpr.SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce

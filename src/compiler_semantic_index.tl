@@ -3687,6 +3687,41 @@
           body-id)
         (compiler-semantic-walk-node! state bound.scope bound.env body-id)))))
 
+;; `(foreach-active [lane : i64] body...)` binds LANE, an i64, over the body.
+(define (compiler-semantic-walk-foreach-active!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : tc.TcTypeEnv]
+  [lane : i64]
+  [body-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
+    [bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        state
+        scope
+        env
+        lane
+        CompilerSemanticSymbolKind.Local
+        (ast.AstMaybeType.Some (ast.AstType.I64))
+        (compiler-semantic-form-head-end state.source form-start)
+        (compiler-semantic-expr-start-offset
+          state
+          body-id
+          (string.string-length state.source)))]
+    (begin
+      (compiler-semantic-scope-node-region-add!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        bound.scope
+        body-id)
+      (compiler-semantic-walk-node! state bound.scope bound.env body-id))))
+
 (define (compiler-semantic-walk-spmd-reduce!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
@@ -4966,6 +5001,14 @@
                 end
                 body
                 maybe-span)])]
+        [(ast.AstExpr.ForeachActive lane body)
+          (compiler-semantic-walk-foreach-active!
+            state
+            scope
+            env
+            lane
+            body
+            maybe-span)]
         [(ast.AstExpr.SpmdReduce payload)
           (match (__tl-box-place payload)
             [(ast.AstSpmdReduce.Reduce _ index index-ty start end init value)

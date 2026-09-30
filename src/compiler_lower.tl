@@ -6187,7 +6187,12 @@
   [decl-path : String]) : String
   (let
     [entry-path : String (lower-normalize-path lower-state entry-path)]
-    [decl-path : String (lower-normalize-path lower-state decl-path)]
+    ;; A stdlib module a root resolved names itself `stdlib/<suffix>`, as the
+    ;; embedded payload does, wherever the root lies relative to the cwd.
+    [decl-path : String
+      (lower-normalize-path
+        lower-state
+        (load.compiler-load-canonical-stdlib-path decl-path))]
     [base : String (lower-dirname entry-path)]
     [base-len : i64 (string.string-length base)]
     [decl-len : i64 (string.string-length decl-path)]
@@ -70541,13 +70546,21 @@
                 (ast.ast-decl-path-list-tail
                   (lower-global-shared-view cur-paths))]
               [_advance-paths : unit (set! cur-paths rest-paths)]
+              ;; Emitted locations (abort messages, line tables) name a
+              ;; root-resolved stdlib module by its canonical path, as the
+              ;; embedded payload does; compiler diagnostics keep the
+              ;; physical one.
               [_source-path : unit
                 (compiler-lower-state-write!
                   lower-state
                   i64
                   current-source-path-id
                   (if (> (string.string-length decl-path) 0)
-                    (load.compiler-load-source-path-id decl-path)
+                    (let
+                      [location-path : String
+                        (load.compiler-load-canonical-stdlib-path
+                          (lower-global-shared-view decl-path))]
+                      (load.compiler-load-source-path-id location-path))
                     0))]
               [_generated-decl : unit
                 (compiler-lower-state-write!

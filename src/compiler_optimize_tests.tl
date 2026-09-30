@@ -64225,11 +64225,19 @@
         "unlinking the middle preserves its successor")
       (set! table (opt.opt-expr-invalidate-var (& table) 33))
       (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& c))
+        -1
+        "the removed head is absent while its successor remains live")
+      (test.assert-i64-eq
         (opt-cse-table-result bases (& table) (& a))
         11
         "unlinking the head advances the bucket")
       (set! table (opt.opt-expr-table-add bases (& table) (clone b) 44))
       (set! table (opt.opt-expr-invalidate-var (& table) 11))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        -1
+        "the removed tail is absent while the reinserted key remains live")
       (test.assert-i64-eq
         (opt-cse-table-result bases (& table) (& b))
         44
@@ -64314,8 +64322,11 @@
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [table : opt.OptExprTable (opt.opt-expr-table-new)]
-    [key : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 1 : i64")]
+    [retired : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 1 : i64")]
+    [key : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 2 : i64")]
     (begin
+      (set! table (opt.opt-expr-table-add bases (& table) (clone retired) 9))
+      (set! table (opt.opt-expr-table-clear (& table)))
       (set! table (opt.opt-expr-table-add bases (& table) (clone key) 11))
       (match (owned_view.compiler-owned-reference-shared-view (& table))
         [(opt.OptExprTable.Dense state)
@@ -64326,7 +64337,14 @@
               (bit-and
                 (opt.opt-expr-key-hash bases (& key))
                 (- (array-length content.heads) 1))]
+            [retired-bucket : i64
+              (bit-and
+                (opt.opt-expr-key-hash bases (& retired))
+                (- (array-length content.heads) 1))]
             (begin
+              (test.assert-true
+                (not (= bucket retired-bucket))
+                "the first-generation key retains a distinct stale bucket")
               (set! content.generation 9223372036854775807)
               (set! (array-ref content.stamps bucket) content.generation)))])
       (test.assert-i64-eq
@@ -64338,12 +64356,19 @@
         [(opt.OptExprTable.Dense state)
           (let
             [content : (& state opt.OptExprState) (& (deref state))]
-            (test.assert-i64-eq
-              (opt.opt-expr-index-head
-                content
-                (opt.opt-expr-key-hash bases (& key)))
-              -1
-              "rollover invalidates the bucket independently of an empty lookup"))])
+            (begin
+              (test.assert-i64-eq
+                (opt.opt-expr-index-head
+                  content
+                  (opt.opt-expr-key-hash bases (& key)))
+                -1
+                "rollover invalidates the bucket independently of an empty lookup")
+              (test.assert-i64-eq
+                (opt.opt-expr-index-head
+                  content
+                  (opt.opt-expr-key-hash bases (& retired)))
+                -1
+                "rollover cannot revive a stale first-generation bucket")))])
       (test.assert-i64-eq
         (opt-cse-table-result bases (& table) (& key))
         -1

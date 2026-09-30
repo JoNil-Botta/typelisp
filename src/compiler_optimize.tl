@@ -109614,6 +109614,19 @@
     (set! opt-inline-caller-checked-taken? false)
     (set! opt-inline-current-block-label (ir.compiler-ir-label-none))))
 
+;; Unpublish the per-walk caller views -- the facts block list, its loop
+;; labels, and the phi-predecessor renames -- so no global names a caller's
+;; rewrite storage once that storage is released. The next walk reinstalls
+;; them (opt-inline-caller-facts-install!) before reading any of them.
+(define (opt-inline-caller-walk-unpublish!) : unit
+  (begin
+    (set!
+      (array-ref opt-inline-caller-facts-blocks 0)
+      (ir.CompilerIrBlockList.Nil))
+    (set! (array-ref opt-inline-caller-loop-labels 0) (OptLabelSet.Nil))
+    (set! opt-inline-caller-facts-ready? false)
+    (set! (array-ref opt-inline-pred-renames 0) (OptInlinePredRenameList.Nil))))
+
 (define (opt-inline-caller-facts-ensure!) : unit
   (if opt-inline-caller-facts-ready?
     unit
@@ -117987,6 +118000,7 @@
         current-spans))))
 
 (define (opt-inline-process-scc-order-with-spans
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -118001,38 +118015,63 @@
     [index-pos : i64 0]
     [slot-count : i64 (array-length slot-order)]
     [current-spans : ir.CompilerSourceSpans spans]
+    ;; Each caller's rewrite -- its intermediate generations and working
+    ;; state -- is dead once its final body is known, so it runs in one phase
+    ;; of this scratch arena. Only the final body (cloned through the job's
+    ;; explicit pools) and the span rows the rewrite added escape into the
+    ;; stage arena before the phase is rewound. Every table a rewrite leaves
+    ;; for later callers either grows in the IR label arena (census, synth,
+    ;; reach stamps, callee-cost memo), has fixed capacity (checked tier), or
+    ;; holds scalars (owned state); the memo's function views point at index
+    ;; bodies, which live in the stage arena. The per-walk caller globals are
+    ;; unpublished below before each rewind.
+    [scratch : arena.Arena (arena.make)]
     (begin
       (while (< index-pos slot-count)
         (begin
           (let
             [slot : i64 (array-ref slot-order index-pos)]
             [caller-scc : i64 (array-ref scc-of slot)]
-            (match (opt-inline-function-with-spans
-              type-segment-bases
-              (compiler-opt-global-array-element-shared-view values slot)
-              (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view census)
-              (compiler-opt-global-shared-view scc-result)
-              caller-scc
-              (compiler-opt-global-shared-view current-spans)
-              (compiler-opt-global-shared-view current-spans))
-              [(OptInlineSpanProgram.Program one next-spans)
-                (begin
-                  (if (> one.len 0)
+            [phase : arena.ArenaPhase (arena.phase scratch)]
+            (begin
+              (match (in-arena
+                scratch
+                (opt-inline-function-with-spans
+                  type-segment-bases
+                  (compiler-opt-global-array-element-shared-view values slot)
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view census)
+                  (compiler-opt-global-shared-view scc-result)
+                  caller-scc
+                  (compiler-opt-global-shared-view current-spans)
+                  (compiler-opt-global-shared-view current-spans)))
+                [(OptInlineSpanProgram.Program one next-spans)
+                  (begin
+                    (if (> one.len 0)
+                      (set!
+                        (array-ref values slot)
+                        (ir.compiler-ir-clone-function
+                          pools
+                          (compiler-opt-global-array-element-shared-view
+                            one.slots
+                            0)))
+                      unit)
                     (set!
-                      (array-ref values slot)
-                      (compiler-opt-global-array-element-shared-view
-                        one.slots
-                        0))
-                    unit)
-                  (set! current-spans next-spans))]))
+                      current-spans
+                      (ir.compiler-source-spans-append-new
+                        (compiler-opt-global-shared-view current-spans)
+                        (compiler-opt-global-shared-view next-spans))))])
+              (opt-inline-caller-walk-unpublish!)
+              (arena.rewind-safe! phase)))
           (set! index-pos (+ index-pos 1))))
+      (arena.destroy-safe! scratch)
       current-spans)))
 
 ;; Inline small single-block leaf callees across the whole program. Level 2
 ;; (the register-allocated quality build) runs the full census/SCC pipeline;
 ;; level 1 runs only the call-free tiny-leaf pass above.
 (define (opt-inline-program-functions-with-spans
+  [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]
@@ -118066,6 +118105,7 @@
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans
+          pools
           type-segment-bases
           (compiler-opt-global-shared-view index)
           census
@@ -127974,6 +128014,7 @@
             [_arm-checked : unit (opt-inline-checked-set-active! true)]
             [inlined : OptInlineSpanProgram
               (opt-inline-program-functions-with-spans
+                pools
                 type-segment-bases
                 functions
                 level

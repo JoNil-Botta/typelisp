@@ -522,6 +522,7 @@ spmd_shuffle_tail_computed_selector|all|-|tests/integration/spmd_shuffle_tail_co
 spmd_shuffle_lane1_trap|all|-|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_negative_trap|all|-|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_tail_oob|all|-|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_abort_nested|all|-|tests/integration/spmd_shuffle_abort_nested.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_io|all|-|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-

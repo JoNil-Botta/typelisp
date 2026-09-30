@@ -123,6 +123,111 @@ exit 134
 in stderr
 contains array index out of bounds
 
+# ------------------------------------------------------ SIMD staging region
+
+# #7497: the staged SIMD sequences address one per-function frame region
+# instead of moving %rsp: the variable-shift fallbacks, gather reassembly,
+# shuffle staging, and AVX2 predicated and tail-mask lane staging. The only
+# `subq` of %rsp in these kernels is the prologue's, on both targets. The
+# rsp/FPO rebase rewrites the region with the rest of the frame.
+case simd-staging-byte-shift
+source tests/spmd/byte_shift_value_types.tl
+target linux-x86_64 windows-x86_64
+mode avx2 avx512
+in fn _tl_byte_shift_value_types_run_direct_i8
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+match ^[[:space:]]+vpmovzxbd [0-9]+\(%rsp\), %[yz]mm0$
+in fn _tl_byte_shift_value_types_run_masked_u8
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+
+case simd-staging-word-shift
+source tests/spmd/word_shift_value_types.tl
+target linux-x86_64 windows-x86_64
+mode avx2
+in fn _tl_word_shift_value_types_run_direct_i16
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+match ^[[:space:]]+vpmovsxwd [0-9]+\(%rsp\), %ymm0$
+
+case simd-staging-gather
+source tests/integration/spmd_gather_read.tl
+target linux-x86_64 windows-x86_64
+mode avx2 avx512
+in fn _tl_spmd_gather_read_case_i32_gather
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+after ^[[:space:]]+vpgatherqd .*%[xy]mm[0-9]+(\{%k7\})?$
+next-line ^[[:space:]]+vmovdqu(32)? %[xy]mm[0-9]+, [0-9]+\(%rsp\)$
+
+# The selector abort calls out while the region is live, from the ordinary
+# frame: no call-site stack motion beyond the target's own call-space plan.
+case simd-staging-shuffle
+source tests/integration/spmd_shuffle_abort_nested.tl
+target linux-x86_64 windows-x86_64
+mode avx2 avx512
+in fn _tl_spmd_shuffle_abort_nested_permute_kernel
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+not-contains pushq %rbp
+after _abort:$
+next-line ^[[:space:]]+call tl_oob_abort$
+match ^[[:space:]]+vperm[dq] [0-9]+\(%rsp\), %[yz]mm0, %[yz]mm[0-9]+$
+
+# A --backtrace frame keeps its %rbp chain; the region is ordinary frame
+# state inside it.
+case simd-staging-rbp-frame
+source tests/integration/spmd_shuffle_abort_nested.tl
+mode avx2 avx512
+opt 0
+args --backtrace
+in fn _tl_spmd_shuffle_abort_nested_permute_kernel
+contains movq %rsp, %rbp
+count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+match ^[[:space:]]+vperm[dq] [0-9]+\(%rsp\), %[yz]mm0, %[yz]mm[0-9]+$
+
+# A call-free leaf keeps its staged lanes in the SysV red zone, below the
+# entry %rsp, with no stack adjustment at all. Windows has no red zone.
+case simd-staging-red-zone
+source tests/spmd/tail_i32_add.tl
+target linux-x86_64
+mode avx2
+in fn _tl_tail_i32_add_fill
+metric frame-size = 0
+match ^[[:space:]]+vmovdqu %ymm0, -[0-9]+\(%rsp\)$
+match ^[[:space:]]+movl \$-1, -[0-9]+\(%rsp\)$
+
+case simd-staging-predicated
+source tests/spmd/masked_if_i16_u16.tl
+target linux-x86_64 windows-x86_64
+mode avx2
+in fn _tl_masked_if_i16_u16_fill_i16_foreach
+count <= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+contains _load_skip_
+contains _store_skip_
+
+# The AVX-512 bool store builds its row of 1 bytes in registers instead of
+# broadcasting a pushed immediate.
+case simd-staging-bool-store
+source tests/spmd/bool_lanes.tl
+target linux-x86_64 windows-x86_64
+mode avx512
+in fn _tl_bool_lanes_fill_bool_copy_foreach
+not-contains pushq $1
+not-match vpbroadcastb .*%rsp
+contains vpternlogd $255,
+contains vpabsb
+
+# A shuffle's selector abort, three calls below main, while its staging
+# region is live: the fatal backtrace names every caller on both hosts.
+case shuffle-abort-nested-backtrace
+source tests/integration/spmd_shuffle_abort_nested.tl
+do build-run
+mode avx2 avx512
+opt 0
+args --backtrace
+exit 134
+in stderr
+contains array index out of bounds
+contains stack backtrace:
+order spmd_shuffle_abort_nested.tl::permute-kernel || spmd_shuffle_abort_nested.tl::middle || spmd_shuffle_abort_nested.tl::outer || main at
+
 # ------------------------------------------------------ private SPMD helpers
 
 # AVX2 private helpers stay AVX2 and call the native private entry with the

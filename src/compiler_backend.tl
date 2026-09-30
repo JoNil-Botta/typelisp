@@ -2313,8 +2313,19 @@
   14)
 (define compiler-backend-scratch-i64-object-flags-cc : i64
   15)
-(define compiler-backend-scratch-i64-count : i64
+
+;; The SIMD staging region (#7497): its size, planned before the body from
+;; the census of stack-backed SIMD routes; the frame offset of its lowest
+;; byte; and the largest request an emitted route made, which must equal the
+;; planned size once the body is done.
+(define compiler-backend-scratch-i64-simd-scratch-bytes : i64
   16)
+(define compiler-backend-scratch-i64-simd-scratch-base-offset : i64
+  17)
+(define compiler-backend-scratch-i64-simd-scratch-used-bytes : i64
+  18)
+(define compiler-backend-scratch-i64-count : i64
+  19)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -5521,16 +5532,16 @@
                                       "    "
                                       widen
                                       " "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
                                         word-offset)
                                       ", "
                                       tmp0
                                       "\n    "
                                       widen
                                       " "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
                                         (+ vector-bytes word-offset))
                                       ", "
                                       tmp1
@@ -5547,73 +5558,93 @@
                                       " "
                                       tmp0
                                       ", "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
                                         result-offset)
                                       "\n"))
                                   (set! group (+ group 1)))))
-                            (ResultCompilerBackend.Ok
-                              (str_cat.str-cat
-                                lhs-asm
-                                rhs-asm
-                                "    subq $128, %rsp\n    "
-                                move
-                                " "
-                                lhs-reg
-                                ", (%rsp)\n    "
-                                move
-                                " "
-                                rhs-reg
-                                ", 32(%rsp)\n"
-                                groups
-                                "    vpcmpeqd "
-                                tmp0
-                                ", "
-                                tmp0
-                                ", "
-                                tmp0
-                                "\n    vpsrld $16, "
-                                tmp0
-                                ", "
-                                tmp0
-                                "\n    "
-                                dword-move
-                                " 64(%rsp), "
-                                tmp1
-                                "\n    vpand "
-                                tmp0
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    "
-                                dword-move
-                                " 96(%rsp), "
-                                dst-reg
-                                "\n    vpand "
-                                tmp0
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    vpackusdw "
-                                dst-reg
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    vpermq $216, "
-                                tmp1
-                                ", "
-                                dst-reg
-                                "\n    addq $128, %rsp\n"
-                                (compiler-backend-vector-store-dst
-                                  assignments
-                                  dst
-                                  "ymm"
-                                  elem-ty
+                            (compiler-backend-simd-scratch-checked
+                              backend-state
+                              instr-diag
+                              compiler-backend-simd-scratch-word-shift-bytes
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat
+                                  lhs-asm
+                                  rhs-asm
+                                  "    "
+                                  move
+                                  " "
+                                  lhs-reg
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    0)
+                                  "\n    "
+                                  move
+                                  " "
+                                  rhs-reg
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    vector-bytes)
+                                  "\n"
+                                  groups
+                                  "    vpcmpeqd "
+                                  tmp0
+                                  ", "
+                                  tmp0
+                                  ", "
+                                  tmp0
+                                  "\n    vpsrld $16, "
+                                  tmp0
+                                  ", "
+                                  tmp0
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    result-base)
+                                  ", "
+                                  tmp1
+                                  "\n    vpand "
+                                  tmp0
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ result-base vector-bytes))
+                                  ", "
                                   dst-reg
-                                  backend-state)))))]
+                                  "\n    vpand "
+                                  tmp0
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    vpackusdw "
+                                  dst-reg
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    vpermq $216, "
+                                  tmp1
+                                  ", "
+                                  dst-reg
+                                  "\n"
+                                  (compiler-backend-vector-store-dst
+                                    assignments
+                                    dst
+                                    "ymm"
+                                    elem-ty
+                                    dst-reg
+                                    backend-state))))))]
                       [(ResultBackendReg.Err message)
                         (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
@@ -5664,7 +5695,8 @@
     [group-bytes : i64 (/ vector-bytes 4)]
     [group-base : i64 (* vector-bytes 2)]
     [index-offset : i64 (* vector-bytes 6)]
-    [stack-bytes : i64 (* vector-bytes 7)]
+    [stack-bytes : i64
+      (compiler-backend-simd-scratch-byte-shift-bytes vector-bytes)]
     [move : String (compiler-backend-vector-move-for-width width elem-ty)]
     [dword-move : String
       (let
@@ -5735,16 +5767,16 @@
                                       "    "
                                       widen
                                       " "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
                                         byte-offset)
                                       ", "
                                       tmp0
                                       "\n    "
                                       widen
                                       " "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
                                         (+ vector-bytes byte-offset))
                                       ", "
                                       tmp1
@@ -5761,245 +5793,249 @@
                                       " "
                                       tmp0
                                       ", "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
                                         result-offset)
                                       "\n"))
                                   (set! group (+ group 1)))))
-                            (ResultCompilerBackend.Ok
-                              (str_cat.str-cat
-                                lhs-asm
-                                rhs-asm
-                                "    subq $"
-                                (string.int->string stack-bytes)
-                                ", %rsp\n    "
-                                move
-                                " "
-                                lhs-reg
-                                ", (%rsp)\n    "
-                                move
-                                " "
-                                rhs-reg
-                                ", "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  vector-bytes)
-                                "\n"
-                                groups
-                                (if avx512
-                                  (str_cat.str-cat
-                                    "    vpternlogd $255, "
-                                    tmp0
-                                    ", "
-                                    tmp0
-                                    ", "
-                                    tmp0
-                                    "\n")
-                                  (str_cat.str-cat
-                                    "    vpcmpeqd "
-                                    tmp0
-                                    ", "
-                                    tmp0
-                                    ", "
-                                    tmp0
-                                    "\n"))
-                                "    vpsrld $24, "
-                                tmp0
-                                ", "
-                                tmp0
-                                "\n    "
-                                dword-move
-                                " "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  group-base)
-                                ", "
-                                tmp1
-                                "\n    "
-                                bit-and
-                                " "
-                                tmp0
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    "
-                                dword-move
-                                " "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  (+ group-base vector-bytes))
-                                ", "
-                                dst-reg
-                                "\n    "
-                                bit-and
-                                " "
-                                tmp0
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    vpackusdw "
-                                dst-reg
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    "
-                                dword-move
-                                " "
-                                tmp1
-                                ", "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  group-base)
-                                "\n    "
-                                dword-move
-                                " "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  (+ group-base (* vector-bytes 2)))
-                                ", "
-                                tmp1
-                                "\n    "
-                                bit-and
-                                " "
-                                tmp0
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    "
-                                dword-move
-                                " "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  (+ group-base (* vector-bytes 3)))
-                                ", "
-                                dst-reg
-                                "\n    "
-                                bit-and
-                                " "
-                                tmp0
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    vpackusdw "
-                                dst-reg
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    "
-                                dword-move
-                                " "
-                                tmp1
-                                ", "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  (+ group-base vector-bytes))
-                                "\n    "
-                                dword-move
-                                " "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  group-base)
-                                ", "
-                                tmp1
-                                "\n    "
-                                dword-move
-                                " "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  (+ group-base vector-bytes))
-                                ", "
-                                dst-reg
-                                "\n    vpackuswb "
-                                dst-reg
-                                ", "
-                                tmp1
-                                ", "
-                                tmp1
-                                "\n    movl $50462976, "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  index-offset)
-                                "\n    movl $117835012, "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  (+ index-offset 4))
-                                (if avx512
-                                  (str_cat.str-cat
-                                    "\n    movl $185207048, "
-                                    (compiler-backend-address-add-byte-offset
-                                      "(%rsp)"
-                                      (+ index-offset 8))
-                                    "\n    movl $252579084, "
-                                    (compiler-backend-address-add-byte-offset
-                                      "(%rsp)"
-                                      (+ index-offset 12)))
-                                  "")
-                                "\n    vpmovzxbd "
-                                (compiler-backend-address-add-byte-offset
-                                  "(%rsp)"
-                                  index-offset)
-                                ", "
-                                tmp0
-                                "\n    "
-                                dword-move
-                                " "
-                                tmp0
-                                ", "
-                                dst-reg
-                                "\n    vpsrld $"
-                                (if avx512
-                                  "2"
-                                  "1")
-                                ", "
-                                tmp0
-                                ", "
-                                tmp0
-                                "\n    vpslld $"
-                                (if avx512
-                                  "30"
-                                  "31")
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    vpsrld $"
-                                (if avx512
-                                  "28"
-                                  "29")
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    "
-                                bit-or
-                                " "
-                                dst-reg
-                                ", "
-                                tmp0
-                                ", "
-                                tmp0
-                                "\n    vpermd "
-                                tmp1
-                                ", "
-                                tmp0
-                                ", "
-                                dst-reg
-                                "\n    addq $"
-                                (string.int->string stack-bytes)
-                                ", %rsp\n"
-                                (compiler-backend-vector-store-dst
-                                  assignments
-                                  dst
-                                  width
-                                  elem-ty
+                            (compiler-backend-simd-scratch-checked
+                              backend-state
+                              instr-diag
+                              stack-bytes
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat
+                                  lhs-asm
+                                  rhs-asm
+                                  "    "
+                                  move
+                                  " "
+                                  lhs-reg
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    0)
+                                  "\n    "
+                                  move
+                                  " "
+                                  rhs-reg
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    vector-bytes)
+                                  "\n"
+                                  groups
+                                  (if avx512
+                                    (str_cat.str-cat
+                                      "    vpternlogd $255, "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      "\n")
+                                    (str_cat.str-cat
+                                      "    vpcmpeqd "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      ", "
+                                      tmp0
+                                      "\n"))
+                                  "    vpsrld $24, "
+                                  tmp0
+                                  ", "
+                                  tmp0
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    group-base)
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  bit-and
+                                  " "
+                                  tmp0
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ group-base vector-bytes))
+                                  ", "
                                   dst-reg
-                                  backend-state)))))]
+                                  "\n    "
+                                  bit-and
+                                  " "
+                                  tmp0
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    vpackusdw "
+                                  dst-reg
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  tmp1
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    group-base)
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ group-base (* vector-bytes 2)))
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  bit-and
+                                  " "
+                                  tmp0
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ group-base (* vector-bytes 3)))
+                                  ", "
+                                  dst-reg
+                                  "\n    "
+                                  bit-and
+                                  " "
+                                  tmp0
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    vpackusdw "
+                                  dst-reg
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  tmp1
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ group-base vector-bytes))
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    group-base)
+                                  ", "
+                                  tmp1
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ group-base vector-bytes))
+                                  ", "
+                                  dst-reg
+                                  "\n    vpackuswb "
+                                  dst-reg
+                                  ", "
+                                  tmp1
+                                  ", "
+                                  tmp1
+                                  "\n    movl $50462976, "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    index-offset)
+                                  "\n    movl $117835012, "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ index-offset 4))
+                                  (if avx512
+                                    (str_cat.str-cat
+                                      "\n    movl $185207048, "
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
+                                        (+ index-offset 8))
+                                      "\n    movl $252579084, "
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
+                                        (+ index-offset 12)))
+                                    "")
+                                  "\n    vpmovzxbd "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    index-offset)
+                                  ", "
+                                  tmp0
+                                  "\n    "
+                                  dword-move
+                                  " "
+                                  tmp0
+                                  ", "
+                                  dst-reg
+                                  "\n    vpsrld $"
+                                  (if avx512
+                                    "2"
+                                    "1")
+                                  ", "
+                                  tmp0
+                                  ", "
+                                  tmp0
+                                  "\n    vpslld $"
+                                  (if avx512
+                                    "30"
+                                    "31")
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    vpsrld $"
+                                  (if avx512
+                                    "28"
+                                    "29")
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    "
+                                  bit-or
+                                  " "
+                                  dst-reg
+                                  ", "
+                                  tmp0
+                                  ", "
+                                  tmp0
+                                  "\n    vpermd "
+                                  tmp1
+                                  ", "
+                                  tmp0
+                                  ", "
+                                  dst-reg
+                                  "\n"
+                                  (compiler-backend-vector-store-dst
+                                    assignments
+                                    dst
+                                    width
+                                    elem-ty
+                                    dst-reg
+                                    backend-state))))))]
                       [(ResultBackendReg.Err message)
                         (compiler-backend-instr-error instr-diag message)])])]
               [(ResultBackendVectorUse.Err message)
@@ -8785,9 +8821,7 @@
                   (compiler-backend-vector-reg-lower-xmm
                     (compiler-backend-global-shared-view dst-reg))]
                 [stack-bytes : i64
-                  (if dword
-                    128
-                    32)]
+                  (compiler-backend-simd-scratch-gather-bytes true dword)]
                 [result-off : i64 96]
                 (match (compiler-backend-emit-simd-base-data-pointer
                   assignments
@@ -8804,105 +8838,131 @@
                       dword
                       backend-state)
                       [(ResultBackendGatherAdjust.Ok adjust)
-                        (ResultCompilerBackend.Ok
-                          (str_cat.str-cat
-                            index-asm
-                            "    vmovdqu "
-                            index-addr
-                            ", %ymm15\n"
-                            (if dword
-                              (str_cat.str-cat
-                                "    vmovdqu 32"
-                                index-addr
-                                ", %ymm14\n")
-                              "")
-                            "    subq $"
-                            (string.int->string stack-bytes)
-                            ", %rsp\n    vmovdqu "
-                            mask-reg
-                            ", (%rsp)\n"
-                            (if dword
-                              "    vmovdqu %ymm14, 64(%rsp)\n"
-                              "")
-                            adjust.first
-                            base-asm
-                            "    vpxor "
-                            dst-reg
-                            ", "
-                            dst-reg
-                            ", "
-                            dst-reg
-                            "\n    vpcmpeqd "
-                            mask-reg
-                            ", "
-                            mask-reg
-                            ", "
-                            mask-reg
-                            "\n    "
-                            mnemonic
-                            " "
-                            (if dword
-                              mask-xmm
-                              mask-reg)
-                            ", ("
-                            base-reg
-                            ",%ymm15,"
-                            (if dword
-                              "4"
-                              "8")
-                            "), "
-                            (if dword
-                              dst-xmm
-                              dst-reg)
-                            "\n"
-                            (if dword
-                              (str_cat.str-cat
-                                "    vmovdqu "
-                                dst-xmm
-                                ", "
-                                (string.int->string result-off)
-                                "(%rsp)\n    vpxor "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    vpcmpeqd "
-                                mask-reg
-                                ", "
-                                mask-reg
-                                ", "
-                                mask-reg
-                                "\n    vmovdqu 64(%rsp), %ymm15\n"
-                                adjust.second
-                                base-asm
-                                "    "
-                                mnemonic
-                                " "
-                                mask-xmm
-                                ", ("
-                                base-reg
-                                ",%ymm15,4), "
-                                dst-xmm
-                                "\n    vmovdqu "
-                                dst-xmm
-                                ", 112(%rsp)\n    vmovdqu 96(%rsp), "
-                                dst-reg
-                                "\n")
-                              "")
-                            "    vmovdqu (%rsp), "
-                            mask-reg
-                            "\n"
-                            (compiler-backend-vector-store-dst
-                              assignments
-                              dst
-                              "ymm"
-                              elem-ty
+                        (compiler-backend-simd-scratch-checked
+                          backend-state
+                          instr-diag
+                          stack-bytes
+                          (ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              index-asm
+                              "    vmovdqu "
+                              index-addr
+                              ", %ymm15\n"
+                              (if dword
+                                (str_cat.str-cat
+                                  "    vmovdqu 32"
+                                  index-addr
+                                  ", %ymm14\n")
+                                "")
+                              "    vmovdqu "
+                              mask-reg
+                              ", "
+                              (compiler-backend-simd-scratch-address
+                                backend-state
+                                0)
+                              "\n"
+                              (if dword
+                                (str_cat.str-cat
+                                  "    vmovdqu %ymm14, "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    64)
+                                  "\n")
+                                "")
+                              adjust.first
+                              base-asm
+                              "    vpxor "
                               dst-reg
-                              backend-state)
-                            "    addq $"
-                            (string.int->string stack-bytes)
-                            ", %rsp\n"))]
+                              ", "
+                              dst-reg
+                              ", "
+                              dst-reg
+                              "\n    vpcmpeqd "
+                              mask-reg
+                              ", "
+                              mask-reg
+                              ", "
+                              mask-reg
+                              "\n    "
+                              mnemonic
+                              " "
+                              (if dword
+                                mask-xmm
+                                mask-reg)
+                              ", ("
+                              base-reg
+                              ",%ymm15,"
+                              (if dword
+                                "4"
+                                "8")
+                              "), "
+                              (if dword
+                                dst-xmm
+                                dst-reg)
+                              "\n"
+                              (if dword
+                                (str_cat.str-cat
+                                  "    vmovdqu "
+                                  dst-xmm
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    result-off)
+                                  "\n    vpxor "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    vpcmpeqd "
+                                  mask-reg
+                                  ", "
+                                  mask-reg
+                                  ", "
+                                  mask-reg
+                                  "\n    vmovdqu "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    64)
+                                  ", %ymm15\n"
+                                  adjust.second
+                                  base-asm
+                                  "    "
+                                  mnemonic
+                                  " "
+                                  mask-xmm
+                                  ", ("
+                                  base-reg
+                                  ",%ymm15,4), "
+                                  dst-xmm
+                                  "\n    vmovdqu "
+                                  dst-xmm
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    (+ result-off 16))
+                                  "\n    vmovdqu "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    result-off)
+                                  ", "
+                                  dst-reg
+                                  "\n")
+                                "")
+                              "    vmovdqu "
+                              (compiler-backend-simd-scratch-address
+                                backend-state
+                                0)
+                              ", "
+                              mask-reg
+                              "\n"
+                              (compiler-backend-vector-store-dst
+                                assignments
+                                dst
+                                "ymm"
+                                elem-ty
+                                dst-reg
+                                backend-state))))]
                       [(ResultBackendGatherAdjust.Err diag)
                         (ResultCompilerBackend.Err diag)])]
                   [(ResultCompilerBackend.Err message)
@@ -8988,80 +9048,101 @@
                       dword
                       backend-state)
                       [(ResultBackendGatherAdjust.Ok adjust)
-                        (ResultCompilerBackend.Ok
-                          (str_cat.str-cat
-                            index-asm
-                            "    vmovdqu64 "
-                            index-addr
-                            ", %zmm15\n"
-                            (if dword
-                              (str_cat.str-cat
-                                "    vmovdqu64 64"
-                                index-addr
-                                ", %zmm14\n")
-                              "")
-                            (if dword
-                              "    subq $128, %rsp\n"
-                              "")
-                            (if dword
-                              "    vmovdqu64 %zmm14, (%rsp)\n"
-                              "")
-                            adjust.first
-                            base-asm
-                            "    kxnorw %k7, %k7, %k7\n    vpxord "
-                            dst-reg
-                            ", "
-                            dst-reg
-                            ", "
-                            dst-reg
-                            "\n    "
-                            mnemonic
-                            " ("
-                            base-reg
-                            ",%zmm15,"
-                            (if dword
-                              "4"
-                              "8")
-                            "), "
-                            (if dword
-                              dst-ymm
-                              dst-reg)
-                            "{%k7}\n"
-                            (if dword
-                              (str_cat.str-cat
-                                "    vmovdqu32 "
-                                dst-ymm
-                                ", 64(%rsp)\n    kxnorw %k7, %k7, %k7\n    vpxord "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                ", "
-                                dst-reg
-                                "\n    vmovdqu64 (%rsp), %zmm15\n"
-                                adjust.second
-                                base-asm
-                                "    "
-                                mnemonic
-                                " ("
-                                base-reg
-                                ",%zmm15,4), "
-                                dst-ymm
-                                "{%k7}\n    vmovdqu32 "
-                                dst-ymm
-                                ", 96(%rsp)\n    vmovdqu32 64(%rsp), "
-                                dst-reg
-                                "\n")
-                              "")
-                            (compiler-backend-vector-store-dst
-                              assignments
-                              dst
-                              "zmm"
-                              elem-ty
+                        (compiler-backend-simd-scratch-checked
+                          backend-state
+                          instr-diag
+                          (compiler-backend-simd-scratch-gather-bytes
+                            false
+                            dword)
+                          (ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              index-asm
+                              "    vmovdqu64 "
+                              index-addr
+                              ", %zmm15\n"
+                              (if dword
+                                (str_cat.str-cat
+                                  "    vmovdqu64 64"
+                                  index-addr
+                                  ", %zmm14\n")
+                                "")
+                              (if dword
+                                (str_cat.str-cat
+                                  "    vmovdqu64 %zmm14, "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    0)
+                                  "\n")
+                                "")
+                              adjust.first
+                              base-asm
+                              "    kxnorw %k7, %k7, %k7\n    vpxord "
                               dst-reg
-                              backend-state)
-                            (if dword
-                              "    addq $128, %rsp\n"
-                              "")))]
+                              ", "
+                              dst-reg
+                              ", "
+                              dst-reg
+                              "\n    "
+                              mnemonic
+                              " ("
+                              base-reg
+                              ",%zmm15,"
+                              (if dword
+                                "4"
+                                "8")
+                              "), "
+                              (if dword
+                                dst-ymm
+                                dst-reg)
+                              "{%k7}\n"
+                              (if dword
+                                (str_cat.str-cat
+                                  "    vmovdqu32 "
+                                  dst-ymm
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    64)
+                                  "\n    kxnorw %k7, %k7, %k7\n    vpxord "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  ", "
+                                  dst-reg
+                                  "\n    vmovdqu64 "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    0)
+                                  ", %zmm15\n"
+                                  adjust.second
+                                  base-asm
+                                  "    "
+                                  mnemonic
+                                  " ("
+                                  base-reg
+                                  ",%zmm15,4), "
+                                  dst-ymm
+                                  "{%k7}\n    vmovdqu32 "
+                                  dst-ymm
+                                  ", "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    96)
+                                  "\n    vmovdqu32 "
+                                  (compiler-backend-simd-scratch-address
+                                    backend-state
+                                    64)
+                                  ", "
+                                  dst-reg
+                                  "\n")
+                                "")
+                              (compiler-backend-vector-store-dst
+                                assignments
+                                dst
+                                "zmm"
+                                elem-ty
+                                dst-reg
+                                backend-state))))]
                       [(ResultBackendGatherAdjust.Err diag)
                         (ResultCompilerBackend.Err diag)])]
                   [(ResultCompilerBackend.Err message)
@@ -9141,20 +9222,21 @@
   [index-offset : i64]
   [dword : bool]
   [avx512 : bool]
-  [value-reg : String]) : String
+  [value-reg : String]
+  [backend-state : CompilerBackendState]) : String
   (if (>= lane lanes)
     ""
     (let
       [selector-slot : String
-        (compiler-backend-address-add-byte-offset
-          "(%rsp)"
+        (compiler-backend-simd-scratch-address
+          backend-state
           (compiler-backend-shuffle-selector-offset
             lane
             selector-lanes
             width-bytes))]
       [index-slot : String
-        (compiler-backend-address-add-byte-offset
-          "(%rsp)"
+        (compiler-backend-simd-scratch-address
+          backend-state
           (+
             index-offset
             (if dword
@@ -9181,8 +9263,8 @@
               "\n    movl "
               value-reg32
               ", "
-              (compiler-backend-address-add-byte-offset
-                "(%rsp)"
+              (compiler-backend-simd-scratch-address
+                backend-state
                 (+ index-offset (* lane 8) 4))
               "\n")))]
       (str_cat.str-cat
@@ -9200,7 +9282,8 @@
           index-offset
           dword
           avx512
-          value-reg)))))
+          value-reg
+          backend-state)))))
 
 ;; Validate every selector vector at once. Predicated lowering zeroes inactive
 ;; destination lanes, so zero is a harmless source selector for those slots.
@@ -9210,7 +9293,8 @@
 (define (compiler-backend-shuffle-vector-check-asm
   [avx512 : bool]
   [selector-count : i64]
-  [width-bytes : i64]
+  [low-slot : (& low-slot str)]
+  [high-slot : (& high-slot str)]
   [active-reg : String]
   [value-reg : String]
   [abort-label : (& abort-label str)]) : String
@@ -9223,8 +9307,6 @@
       (compiler-backend-reg-part
         (compiler-backend-global-shared-view value-reg)
         4)]
-    [high-slot : String
-      (compiler-backend-address-add-byte-offset "(%rsp)" width-bytes)]
     (if avx512
       (str_cat.str-cat
         "    leaq -1("
@@ -9233,7 +9315,9 @@
         value-reg
         "\n    vpbroadcastq "
         value-reg
-        ", %zmm0\n    vmovdqu64 (%rsp), %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
+        ", %zmm0\n    vmovdqu64 "
+        low-slot
+        ", %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
         value-reg32
         "\n"
         (if (> selector-count 1)
@@ -9262,7 +9346,9 @@
         value-reg
         "\n    vmovq "
         value-reg
-        ", %xmm0\n    vpbroadcastq %xmm0, %ymm0\n    vmovdqu (%rsp), %ymm1\n    vpmovmskb %ymm1, "
+        ", %xmm0\n    vpbroadcastq %xmm0, %ymm0\n    vmovdqu "
+        low-slot
+        ", %ymm1\n    vpmovmskb %ymm1, "
         value-reg32
         "\n    vpcmpgtq %ymm0, %ymm1, %ymm1\n    vpmovmskb %ymm1, "
         active-reg32
@@ -9378,7 +9464,8 @@
         1)]
     [index-offset : i64 (* selector-count width-bytes)]
     [source-offset : i64 (+ index-offset width-bytes)]
-    [stack-bytes : i64 (+ source-offset width-bytes)]
+    [stack-bytes : i64
+      (compiler-backend-simd-scratch-shuffle-bytes width-bytes selector-count)]
     [abort-label : String
       (compiler-backend-shuffle-label
         (compiler-backend-global-shared-view function)
@@ -9482,8 +9569,8 @@
                                                   " "
                                                   high-reg
                                                   ", "
-                                                  (compiler-backend-address-add-byte-offset
-                                                    "(%rsp)"
+                                                  (compiler-backend-simd-scratch-address
+                                                    program-index.backend-state
                                                     width-bytes)
                                                   "\n")])]
                                           [(ResultBackendVectorUse.Err _) ""])]
@@ -9501,8 +9588,8 @@
                                         "\n    vmovdqu64 "
                                         index-reg
                                         ", "
-                                        (compiler-backend-address-add-byte-offset
-                                          "(%rsp)"
+                                        (compiler-backend-simd-scratch-address
+                                          program-index.backend-state
                                           index-offset)
                                         "\n")
                                       (str_cat.str-cat
@@ -9515,8 +9602,8 @@
                                         "\n    vmovdqu "
                                         index-reg
                                         ", "
-                                        (compiler-backend-address-add-byte-offset
-                                          "(%rsp)"
+                                        (compiler-backend-simd-scratch-address
+                                          program-index.backend-state
                                           index-offset)
                                         "\n"))]
                                   [permute : String
@@ -9528,103 +9615,111 @@
                                           "vpermq"
                                           "vpermd"))
                                       " "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
+                                      (compiler-backend-simd-scratch-address
+                                        program-index.backend-state
                                         source-offset)
                                       ", "
                                       index-reg
                                       ", "
                                       dst-reg
                                       "\n")]
-                                  (ResultCompilerBackend.Ok
-                                    (str_cat.str-cat
-                                      source-asm
-                                      active-asm
-                                      "    subq $"
-                                      (string.int->string stack-bytes)
-                                      ", %rsp\n"
-                                      "    "
-                                      (compiler-backend-vector-move-for-width
-                                        width
-                                        elem-ty)
-                                      " "
-                                      source-reg
-                                      ", "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
-                                        source-offset)
-                                      "\n"
-                                      low-asm
-                                      "    "
-                                      (let
-                                        [elem-ty
-                                          (compiler_ast_types.AstType.I64)]
+                                  (compiler-backend-simd-scratch-checked
+                                    program-index.backend-state
+                                    instr-diag
+                                    stack-bytes
+                                    (ResultCompilerBackend.Ok
+                                      (str_cat.str-cat
+                                        source-asm
+                                        active-asm
+                                        "    "
                                         (compiler-backend-vector-move-for-width
                                           width
-                                          elem-ty))
-                                      " "
-                                      low-reg
-                                      ", (%rsp)\n"
-                                      high-asm
-                                      (compiler-backend-shuffle-vector-check-asm
-                                        avx512
-                                        selector-count
-                                        width-bytes
-                                        active-reg
-                                        (compiler-backend-global-shared-view
-                                          value-reg)
-                                        abort-label)
-                                      zero-index-asm
-                                      (compiler-backend-shuffle-index-lane-copy-asm
-                                        0
-                                        lanes
-                                        selector-lanes
-                                        width-bytes
-                                        index-offset
-                                        dword
-                                        avx512
-                                        value-reg)
-                                      "    jmp "
-                                      permute-label
-                                      "\n"
-                                      abort-label
-                                      ":\n"
-                                      (compiler-backend-emit-call-space-sub
-                                        call-space)
-                                      "    call "
-                                      (compiler-backend-call-symbol-index
-                                        cbi.compiler-builtin-id-tl-oob-abort
-                                        plan
-                                        program-index)
-                                      "\n"
-                                      (compiler-backend-emit-call-space-add
-                                        call-space)
-                                      permute-label
-                                      ":\n    "
-                                      (let
-                                        [elem-ty
-                                          (compiler_ast_types.AstType.I64)]
-                                        (compiler-backend-vector-move-for-width
+                                          elem-ty)
+                                        " "
+                                        source-reg
+                                        ", "
+                                        (compiler-backend-simd-scratch-address
+                                          program-index.backend-state
+                                          source-offset)
+                                        "\n"
+                                        low-asm
+                                        "    "
+                                        (let
+                                          [elem-ty
+                                            (compiler_ast_types.AstType.I64)]
+                                          (compiler-backend-vector-move-for-width
+                                            width
+                                            elem-ty))
+                                        " "
+                                        low-reg
+                                        ", "
+                                        (compiler-backend-simd-scratch-address
+                                          program-index.backend-state
+                                          0)
+                                        "\n"
+                                        high-asm
+                                        (compiler-backend-shuffle-vector-check-asm
+                                          avx512
+                                          selector-count
+                                          (compiler-backend-simd-scratch-address
+                                            program-index.backend-state
+                                            0)
+                                          (compiler-backend-simd-scratch-address
+                                            program-index.backend-state
+                                            width-bytes)
+                                          active-reg
+                                          (compiler-backend-global-shared-view
+                                            value-reg)
+                                          abort-label)
+                                        zero-index-asm
+                                        (compiler-backend-shuffle-index-lane-copy-asm
+                                          0
+                                          lanes
+                                          selector-lanes
+                                          width-bytes
+                                          index-offset
+                                          dword
+                                          avx512
+                                          value-reg
+                                          program-index.backend-state)
+                                        "    jmp "
+                                        permute-label
+                                        "\n"
+                                        abort-label
+                                        ":\n"
+                                        (compiler-backend-emit-call-space-sub
+                                          call-space)
+                                        "    call "
+                                        (compiler-backend-call-symbol-index
+                                          cbi.compiler-builtin-id-tl-oob-abort
+                                          plan
+                                          program-index)
+                                        "\n"
+                                        (compiler-backend-emit-call-space-add
+                                          call-space)
+                                        permute-label
+                                        ":\n    "
+                                        (let
+                                          [elem-ty
+                                            (compiler_ast_types.AstType.I64)]
+                                          (compiler-backend-vector-move-for-width
+                                            width
+                                            elem-ty))
+                                        " "
+                                        (compiler-backend-simd-scratch-address
+                                          program-index.backend-state
+                                          index-offset)
+                                        ", "
+                                        index-reg
+                                        "\n"
+                                        permute
+                                        (compiler-backend-vector-store-dst
+                                          assignments
+                                          dst
                                           width
-                                          elem-ty))
-                                      " "
-                                      (compiler-backend-address-add-byte-offset
-                                        "(%rsp)"
-                                        index-offset)
-                                      ", "
-                                      index-reg
-                                      "\n"
-                                      permute
-                                      (compiler-backend-vector-store-dst
-                                        assignments
-                                        dst
-                                        width
-                                        elem-ty
-                                        dst-reg
-                                        program-index.backend-state)
-                                      "    addq $"
-                                      (string.int->string stack-bytes)
-                                      ", %rsp\n")))]
+                                          elem-ty
+                                          dst-reg
+                                          program-index.backend-state)))))]
                               [(ResultCompilerBackend.Err message)
                                 (compiler-backend-instr-error-from
                                   instr-diag
@@ -11541,6 +11636,9 @@
       [(ResultBackendReg.Err message)
         (compiler-backend-instr-error instr-diag message)])))
 
+;; The row of 1 bytes is built in registers: all ones from vpternlogd, then
+;; vpabsb turns each 0xff byte into 1. It needs no stack motion (#7497), and
+;; AVX-512BW is already required by the masked byte moves.
 (define (compiler-backend-emit-avx512-mask-store
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -11616,11 +11714,18 @@
                                         ", "
                                         bytes-reg
                                         "\n"
-                                        "    pushq $1\n"
-                                        "    vpbroadcastb (%rsp), "
+                                        "    vpternlogd $255, "
+                                        ones-reg
+                                        ", "
+                                        ones-reg
+                                        ", "
                                         ones-reg
                                         "\n"
-                                        "    addq $8, %rsp\n"
+                                        "    vpabsb "
+                                        ones-reg
+                                        ", "
+                                        ones-reg
+                                        "\n"
                                         "    vmovdqu8 "
                                         ones-reg
                                         ", "
@@ -13229,9 +13334,10 @@
     [else ""]))
 
 (define (compiler-backend-avx2-lane-stack-address
+  [backend-state : CompilerBackendState]
   [lane : i64]
   [lane-bytes : i64]) : String
-  (compiler-backend-address-add-byte-offset "(%rsp)" (* lane lane-bytes)))
+  (compiler-backend-simd-scratch-address backend-state (* lane lane-bytes)))
 
 (define (compiler-backend-avx2-lane-memory-address
   [addr : String]
@@ -13250,7 +13356,8 @@
   [lane : i64]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [acc : String]) : String
+  [acc : String]
+  [backend-state : CompilerBackendState]) : String
   (if (>= lane lanes)
     acc
     (let
@@ -13273,7 +13380,8 @@
             [_ false])
             1
             lane-bytes))]
-      [slot : String (compiler-backend-avx2-lane-stack-address lane lane-bytes)]
+      [slot : String
+        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
       [lane-asm : String
         (if (match (& elem-ty)
           [(compiler_ast_types.AstType.Bool) true]
@@ -13322,7 +13430,8 @@
         (+ lane 1)
         lanes
         elem-ty
-        (str_cat.str-cat acc lane-asm)))))
+        (str_cat.str-cat acc lane-asm)
+        backend-state))))
 
 (define (compiler-backend-avx2-predicated-store-lanes
   [function : String]
@@ -13332,7 +13441,8 @@
   [lane : i64]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [acc : String]) : String
+  [acc : String]
+  [backend-state : CompilerBackendState]) : String
   (if (>= lane lanes)
     acc
     (let
@@ -13351,7 +13461,8 @@
           (compiler-backend-global-shared-view addr)
           lane
           lane-bytes)]
-      [slot : String (compiler-backend-avx2-lane-stack-address lane lane-bytes)]
+      [slot : String
+        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
       [lane-asm : String
         (str_cat.str-cat
           "    testl $"
@@ -13381,7 +13492,8 @@
         (+ lane 1)
         lanes
         elem-ty
-        (str_cat.str-cat acc lane-asm)))))
+        (str_cat.str-cat acc lane-asm)
+        backend-state))))
 
 (define (compiler-backend-avx2-predicated-bool-store-lanes
   [function : String]
@@ -13492,25 +13604,38 @@
                               0
                               lanes
                               elem-ty
-                              "")]
-                          (ResultCompilerBackend.Ok
-                            (str_cat.str-cat
-                              mask-asm
-                              addr-asm
-                              "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n    vpmovmskb "
-                              mask-reg
-                              ", %r11d\n"
-                              lanes-asm
-                              "    vmovdqu (%rsp), "
-                              dst-reg
-                              "\n    addq $32, %rsp\n"
-                              (compiler-backend-vector-store-dst
-                                assignments
-                                dst
-                                "ymm"
-                                (compiler_ast_types.AstType.I8)
+                              ""
+                              backend-state)]
+                          (compiler-backend-simd-scratch-checked
+                            backend-state
+                            instr-diag
+                            compiler-backend-simd-scratch-lane-staging-bytes
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                mask-asm
+                                addr-asm
+                                "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, "
+                                (compiler-backend-simd-scratch-address
+                                  backend-state
+                                  0)
+                                "\n    vpmovmskb "
+                                mask-reg
+                                ", %r11d\n"
+                                lanes-asm
+                                "    vmovdqu "
+                                (compiler-backend-simd-scratch-address
+                                  backend-state
+                                  0)
+                                ", "
                                 dst-reg
-                                backend-state))))
+                                "\n"
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "ymm"
+                                  (compiler_ast_types.AstType.I8)
+                                  dst-reg
+                                  backend-state)))))
                         (ResultCompilerBackend.Ok
                           (str_cat.str-cat
                             mask-asm
@@ -13643,30 +13768,38 @@
                                 (compiler-backend-avx2-masked-move-mnemonic
                                   elem-ty)]
                               (if (string.eq masked-move "")
-                                (ResultCompilerBackend.Ok
-                                  (str_cat.str-cat
-                                    value-asm
-                                    mask-asm
-                                    addr-asm
-                                    "    subq $32, %rsp\n    vmovdqu "
-                                    value-reg
-                                    ", (%rsp)\n    vpmovmskb "
-                                    mask-reg
-                                    ", %r11d\n"
-                                    (compiler-backend-avx2-predicated-store-lanes
-                                      function
-                                      current-label
-                                      (/
-                                        (compiler-backend-function-state-emission-point
-                                          (compiler-backend-state-function-state
-                                            backend-state))
-                                        2)
-                                      addr
-                                      0
-                                      lanes
-                                      elem-ty
-                                      "")
-                                    "    addq $32, %rsp\n"))
+                                (compiler-backend-simd-scratch-checked
+                                  backend-state
+                                  instr-diag
+                                  compiler-backend-simd-scratch-lane-staging-bytes
+                                  (ResultCompilerBackend.Ok
+                                    (str_cat.str-cat
+                                      value-asm
+                                      mask-asm
+                                      addr-asm
+                                      "    vmovdqu "
+                                      value-reg
+                                      ", "
+                                      (compiler-backend-simd-scratch-address
+                                        backend-state
+                                        0)
+                                      "\n    vpmovmskb "
+                                      mask-reg
+                                      ", %r11d\n"
+                                      (compiler-backend-avx2-predicated-store-lanes
+                                        function
+                                        current-label
+                                        (/
+                                          (compiler-backend-function-state-emission-point
+                                            (compiler-backend-state-function-state
+                                              backend-state))
+                                          2)
+                                        addr
+                                        0
+                                        lanes
+                                        elem-ty
+                                        ""
+                                        backend-state))))
                                 (ResultCompilerBackend.Ok
                                   (str_cat.str-cat
                                     value-asm
@@ -13779,7 +13912,8 @@
   [dst : i64]
   [lane : i64]
   [lanes : i64]
-  [acc : String]) : String
+  [acc : String]
+  [backend-state : CompilerBackendState]) : String
   (if (>= lane lanes)
     acc
     (let
@@ -13796,7 +13930,8 @@
           [(= lane-bytes 4) "movl"]
           [(= lane-bytes 2) "movw"]
           [else "movb"])]
-      [slot : String (compiler-backend-avx2-lane-stack-address lane lane-bytes)]
+      [slot : String
+        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
       [lane-asm : String
         (str_cat.str-cat
           "    leaq "
@@ -13816,7 +13951,8 @@
         dst
         (+ lane 1)
         lanes
-        (str_cat.str-cat acc lane-asm)))))
+        (str_cat.str-cat acc lane-asm)
+        backend-state))))
 
 (define (compiler-backend-avx2-qword-tail-mask-asm [dst-reg : (& dst-reg str)]) : String
   (str_cat.str-cat
@@ -13863,31 +13999,46 @@
               "%r9"
               backend-state)
               [(ResultCompilerBackend.Ok end-asm)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    index-asm
-                    end-asm
-                    (if (= lanes 4)
-                      (compiler-backend-avx2-qword-tail-mask-asm dst-reg)
-                      (str_cat.str-cat
-                        "    subq $32, %rsp\n    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, (%rsp)\n"
-                        (compiler-backend-avx2-tail-mask-fill-lanes
-                          function
-                          current-label
-                          dst
-                          0
-                          lanes
-                          "")
-                        "    vmovdqu (%rsp), "
+                (compiler-backend-simd-scratch-checked
+                  backend-state
+                  instr-diag
+                  (if (= lanes 4)
+                    0
+                    compiler-backend-simd-scratch-lane-staging-bytes)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      index-asm
+                      end-asm
+                      (if (= lanes 4)
+                        (compiler-backend-avx2-qword-tail-mask-asm dst-reg)
+                        (str_cat.str-cat
+                          "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, "
+                          (compiler-backend-simd-scratch-address
+                            backend-state
+                            0)
+                          "\n"
+                          (compiler-backend-avx2-tail-mask-fill-lanes
+                            function
+                            current-label
+                            dst
+                            0
+                            lanes
+                            ""
+                            backend-state)
+                          "    vmovdqu "
+                          (compiler-backend-simd-scratch-address
+                            backend-state
+                            0)
+                          ", "
+                          dst-reg
+                          "\n"))
+                      (compiler-backend-vector-store-dst
+                        assignments
+                        dst
+                        "ymm"
+                        (compiler_ast_types.AstType.I8)
                         dst-reg
-                        "\n    addq $32, %rsp\n"))
-                    (compiler-backend-vector-store-dst
-                      assignments
-                      dst
-                      "ymm"
-                      (compiler_ast_types.AstType.I8)
-                      dst-reg
-                      backend-state)))]
+                        backend-state))))]
               [(ResultCompilerBackend.Err message)
                 (compiler-backend-instr-error-from instr-diag message)])]
           [(ResultCompilerBackend.Err message)
@@ -16163,6 +16314,370 @@
       function-state
       compiler-backend-scratch-i64-emergency-slot-offset)
     (* (compiler-backend-emergency-slot-size) index)))
+
+;; ============================================================================
+;; SIMD staging region (#7497).
+;;
+;; Some SIMD sequences stage vectors or lanes in memory:
+;;   * the AVX2 word and the AVX2/AVX-512 byte variable-shift fallbacks;
+;;   * gather reassembly and the AVX2 gather mask save;
+;;   * shuffle selector, index and source staging;
+;;   * the AVX2 narrow predicated load/store fallbacks;
+;;   * AVX2 non-qword tail-mask staging.
+;; Each used to open its own `subq/addq` window on %rsp: stack motion that no
+;; frame record described, and that shuffle's abort edge called out of.
+;;
+;; Now the frame carries one region. It is sized before the body to the
+;; largest request any instruction in the function will make. Every sequence
+;; addresses it at the same fixed offset, spelled like any other frame slot, so
+;; the rsp/FPO rebase and the red-zone anchor rewrite it with the rest of the
+;; frame.
+;;
+;; Each request is live only inside one instruction's sequence, so the region
+;; is the largest request, not their sum. Every access is an unaligned move, so
+;; the frame's 16-byte alignment is enough; a sequence switched to aligned moves
+;; must raise it.
+;;
+;; The census (`compiler-backend-simd-scratch-request`) and the emitters size
+;; each route with the helpers below. Each emitted route claims its bytes; a
+;; claim beyond the plan fails at the instruction, and after the body the
+;; region the body used must equal the plan.
+;; ============================================================================
+;; AVX2 word shift: lhs, rhs and the two widened dword result groups.
+(define compiler-backend-simd-scratch-word-shift-bytes : i64
+  128)
+
+;; Byte shift: lhs, rhs, the four widened dword result groups and the
+;; permutation index row, one vector each.
+(define (compiler-backend-simd-scratch-byte-shift-bytes [vector-bytes : i64]) : i64
+  (* vector-bytes 7))
+
+;; Gather: a dword gather stages its high index half and both result halves
+;; (and AVX2 saves its destructive mask below them); an AVX2 qword gather saves
+;; only the mask, and an AVX-512 qword gather stages nothing.
+(define (compiler-backend-simd-scratch-gather-bytes
+  [avx2 : bool]
+  [dword : bool]) : i64
+  (if dword
+    128
+    (if avx2
+      32
+      0)))
+
+;; Shuffle: one vector per selector half, then the index and the source.
+(define (compiler-backend-simd-scratch-shuffle-bytes
+  [width-bytes : i64]
+  [selector-count : i64]) : i64
+  (* width-bytes (+ selector-count 2)))
+
+;; AVX2 lane staging: one ymm of lanes for the predicated fallbacks and the
+;; non-qword tail mask.
+(define compiler-backend-simd-scratch-lane-staging-bytes : i64
+  32)
+
+;; The AVX2 predicated fallback: a shape AVX2 accepts whose element has no
+;; vpmaskmov/vmaskmov form stages its lanes. A bool store tests mask bits in
+;; GPRs instead.
+(define (compiler-backend-avx2-predicated-staged?
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [lanes : i64]
+  [store : bool]) : bool
+  (match elem-ty
+    [(compiler_ast_types.AstType.Bool)
+      (and (not store) (compiler-backend-avx2-mask-shape-ok? lanes))]
+    [_
+      (and
+        (compiler-backend-avx2-shape-ok? elem-ty lanes)
+        (string.eq (compiler-backend-avx2-masked-move-mnemonic elem-ty) ""))]))
+
+;; The bytes INSTR's emitted sequence will stage, following the dispatch in
+;; `compiler-backend-emit-instr-with-bound`: a vector binop picks its ISA from
+;; its own shape, the predicated, gather and tail-mask ops from the function's
+;; mode, and a shuffle from its own shape. 0 for every other instruction.
+(define (compiler-backend-simd-scratch-request
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [avx2-function : bool]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [op (compiler-backend-box-field-shared-view payload-box op)]
+        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
+        [mode : CompilerBackendMode
+          (compiler-backend-vector-mode elem-ty lanes)]
+        (cond
+          [(not (compiler-backend-mode-shape-ok? mode elem-ty lanes)) 0]
+          [(and
+              (compiler-backend-mode-avx2? mode)
+              (compiler-backend-word-vector-shift? op elem-ty))
+            compiler-backend-simd-scratch-word-shift-bytes]
+          [(compiler-backend-byte-vector-shift? op elem-ty)
+            (compiler-backend-simd-scratch-byte-shift-bytes
+              (match mode
+                [(CompilerBackendMode.Avx512) 64]
+                [_ 32]))]
+          [else 0]))]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
+        (if (and
+          avx2-function
+          (compiler-backend-avx2-predicated-staged? elem-ty lanes false))
+          compiler-backend-simd-scratch-lane-staging-bytes
+          0))]
+    [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
+        (if (and
+          avx2-function
+          (compiler-backend-avx2-predicated-staged? elem-ty lanes true))
+          compiler-backend-simd-scratch-lane-staging-bytes
+          0))]
+    [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
+        [dword : bool
+          (compiler-backend-gather-dword-element?
+            (compiler-backend-global-shared-view elem-ty))]
+        [mnemonic : String
+          (if avx2-function
+            (compiler-backend-avx2-gather-mnemonic elem-ty)
+            (compiler-backend-avx512-gather-mnemonic elem-ty))]
+        (if (and
+          (not (string.eq mnemonic ""))
+          (=
+            lanes
+            (*
+              (if avx2-function
+                4
+                8)
+              (if dword
+                2
+                1))))
+          (compiler-backend-simd-scratch-gather-bytes avx2-function dword)
+          0))]
+    [(compiler_ir_types.CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
+        [avx512 : bool (compiler-backend-avx512-shape-ok? elem-ty lanes)]
+        (if (or avx512 (compiler-backend-avx2-shape-ok? elem-ty lanes))
+          (compiler-backend-simd-scratch-shuffle-bytes
+            (if avx512
+              64
+              32)
+            (if (>
+              lanes
+              (if avx512
+                8
+                4))
+              2
+              1))
+          0))]
+    [(compiler_ir_types.CompilerIrInstr.TailMask _ _ _ lanes)
+      (if (and
+        avx2-function
+        (compiler-backend-avx2-mask-shape-ok? lanes)
+        (not (= lanes 4)))
+        compiler-backend-simd-scratch-lane-staging-bytes
+        0)]
+    [_ 0]))
+
+(define (compiler-backend-simd-scratch-census-instrs
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [avx2-function : bool]
+  [widest : i64]) : i64
+  (let
+    [index : i64 0]
+    [acc : i64 widest]
+    (begin
+      (while (< index instrs.len)
+        (let
+          [request : i64
+            (compiler-backend-simd-scratch-request
+              (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+              avx2-function)]
+          (begin
+            (if (> request acc)
+              (set! acc request)
+              unit)
+            (set! index (+ index 1)))))
+      acc)))
+
+(define (compiler-backend-simd-scratch-census-seq
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]
+  [avx2-function : bool]
+  [widest : i64]) : i64
+  (let
+    [index : i64 0]
+    [acc : i64 widest]
+    (begin
+      (while (< index (compiler_ir_types.compiler-ir-block-seq-count blocks))
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (set!
+                acc
+                (compiler-backend-simd-scratch-census-instrs
+                  instrs
+                  avx2-function
+                  acc))])
+          (set! index (+ index 1))))
+      acc)))
+
+(define (compiler-backend-simd-scratch-census-list
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [avx2-function : bool]
+  [widest : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) widest]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler-backend-simd-scratch-census-list
+            (deref rest)
+            avx2-function
+            (compiler-backend-simd-scratch-census-instrs
+              instrs
+              avx2-function
+              widest))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (compiler-backend-simd-scratch-census-seq seq avx2-function widest)]))
+
+;; The function's staging region size: the largest request over every block
+;; the body will emit, rounded to the frame's 16-byte granule. 0 when no
+;; instruction stages, so such a function's frame is unchanged. A scalar-mode
+;; function lowers no vector instruction and is not walked; a staged claim in
+;; one would still fail against its empty plan.
+(define (compiler-backend-simd-scratch-census
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [mode : CompilerBackendMode]) : i64
+  (if (compiler-backend-mode-scalar? mode)
+    0
+    (compiler-backend-round-up-16
+      (compiler-backend-simd-scratch-census-list
+        blocks
+        (compiler-backend-mode-avx2? mode)
+        0))))
+
+;; Plan a region of BYTES directly below FRAME-BASE, the frame offset the
+;; function's dynamic slots count down from, and clear the body's claims.
+(define (compiler-backend-simd-scratch-plan!
+  [function-state : CompilerBackendFunctionState]
+  [bytes : i64]
+  [frame-base : i64]) : unit
+  (begin
+    (compiler-backend-function-scratch-set-i64!
+      function-state
+      compiler-backend-scratch-i64-simd-scratch-bytes
+      bytes)
+    (compiler-backend-function-scratch-set-i64!
+      function-state
+      compiler-backend-scratch-i64-simd-scratch-base-offset
+      (- 0 (+ frame-base bytes)))
+    (compiler-backend-function-scratch-set-i64!
+      function-state
+      compiler-backend-scratch-i64-simd-scratch-used-bytes
+      0)))
+
+;; Record that the body used the region's first BYTES bytes.
+(define (compiler-backend-simd-scratch-use!
+  [function-state : CompilerBackendFunctionState]
+  [bytes : i64]) : unit
+  (if (>
+    bytes
+    (compiler-backend-function-scratch-i64
+      function-state
+      compiler-backend-scratch-i64-simd-scratch-used-bytes))
+    (compiler-backend-function-scratch-set-i64!
+      function-state
+      compiler-backend-scratch-i64-simd-scratch-used-bytes
+      bytes)
+    unit))
+
+;; RESULT of a sequence that stages BYTES in the region. Records the largest
+;; claim of the body for the check after it, and fails at the instruction when
+;; the planned region cannot hold BYTES.
+(define (compiler-backend-simd-scratch-checked
+  [backend-state : CompilerBackendState]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [bytes : i64]
+  [result : ResultCompilerBackend]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [planned : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-simd-scratch-bytes)]
+    (begin
+      (compiler-backend-simd-scratch-use! function-state bytes)
+      (if (<= bytes planned)
+        result
+        (compiler-backend-instr-error
+          instr-diag
+          (str_cat.str-cat
+            "backend: SIMD staging needs "
+            (string.int->string bytes)
+            " bytes but the function planned "
+            (string.int->string planned)))))))
+
+;; After the body: the region the body used must equal the plan. A claim
+;; beyond it has already failed at its instruction; a reference beyond it is a
+;; sequence that staged without a claim the census counted; a smaller use means
+;; the census reserved a region no emitted sequence needed.
+(define (compiler-backend-simd-scratch-drift?
+  [function-state : CompilerBackendFunctionState]) : bool
+  (not
+    (=
+      (compiler-backend-round-up-16
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-simd-scratch-used-bytes))
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-simd-scratch-bytes))))
+
+(define (compiler-backend-simd-scratch-drift-message
+  [function-state : CompilerBackendFunctionState]) : String
+  (str_cat.str-cat
+    "backend: SIMD staging plan drift: planned "
+    (string.int->string
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-simd-scratch-bytes))
+    " bytes, the body used "
+    (string.int->string
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-simd-scratch-used-bytes))))
+
+;; Byte OFFSET of the staging region, as a frame reference. A reference past
+;; the plan counts as use, so the check after the body fails it.
+(define (compiler-backend-simd-scratch-address
+  [backend-state : CompilerBackendState]
+  [offset : i64]) : String
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    (begin
+      (if (>=
+        offset
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-simd-scratch-bytes))
+        (compiler-backend-simd-scratch-use! function-state (+ offset 1))
+        unit)
+      (compiler-backend-frame-offset-with-backend-state
+        backend-state
+        (+
+          (compiler-backend-function-scratch-i64
+            function-state
+            compiler-backend-scratch-i64-simd-scratch-base-offset)
+          offset)))))
 
 ;; ============================================================================
 ;; T1-6 (b): frame-free emergency scratch saves.
@@ -65172,11 +65687,13 @@
 ;;
 ;; The pass PROVES rsp-constancy line by line instead of assuming it:
 ;;   * `delta` tracks any in-body %rsp displacement (bytes pushed beyond the
-;;     prologue sub), such as the AVX-512 `pushq $1` mask dip or conservative
-;;     fallback emitters. All such windows are straight-line and balanced within
-;;     one instruction emission; a label inside a nonzero-delta window, or a
-;;     net-negative delta, fails the audit. C-ABI outgoing args and arg/phi
-;;     cycle temps are pre-reserved frame uses and create no such dips.
+;;     prologue sub), such as a runtime-abort tail's operand pushes or a
+;;     conservative fallback emitter's window. (The SIMD staging sequences
+;;     use a frame region instead, #7497.) All such windows are straight-line
+;;     and balanced within one instruction emission; a label inside a
+;;     nonzero-delta window, or a net-negative delta, fails the audit. C-ABI
+;;     outgoing args and arg/phi cycle temps are pre-reserved frame uses and
+;;     create no such dips.
 ;;   * `pushq MEM` computes its address BEFORE %rsp moves; `popq MEM` AFTER --
 ;;     the delta updates are ordered accordingly.
 ;;   * `leave` and any other %rsp write (`leaq slot,%rsp` pop-restore
@@ -65494,11 +66011,12 @@
 ;;  2. NOTHING WRITES BELOW %rsp WHILE A SLOT IS LIVE. The body's own stack
 ;;     motion -- abort-site argument staging (`pushq LEN; pushq IDX; ...; popq;
 ;;     popq`), c-ABI dip windows (`subq $X,%rsp ... addq $X,%rsp`), phi
-;;     cycle-break pushes, the wide-vector scratch windows -- dips BELOW %rsp,
-;;     exactly where red-zone slots would sit. Instead of refusing those
-;;     functions the slot region is anchored `guard` bytes LOWER, `guard` being
-;;     the deepest dip the body reaches (compiler-backend-text-max-rsp-dip runs
-;;     the rebase audit's own delta walk over the final text). Every transient
+;;     cycle-break pushes -- dips BELOW %rsp, exactly where red-zone slots
+;;     would sit. (SIMD staging is a frame region, so it is one of those
+;;     slots, #7497.) Instead of refusing those functions the slot region is
+;;     anchored `guard` bytes LOWER, `guard` being the deepest dip the body
+;;     reaches (compiler-backend-text-max-rsp-dip runs the rebase audit's own
+;;     delta walk over the final text). Every transient
 ;;     push then lands strictly ABOVE every slot -- and still READS the slots it
 ;;     stages from correctly, because the rebase re-biases each reference by the
 ;;     running delta. This is the "push above the red-zone slots" resolution of
@@ -73746,8 +74264,23 @@
                         (compiler-backend-function-scratch-i64
                           function-state
                           compiler-backend-scratch-i64-const-hoist-frame-count)))]
+                  ;; The SIMD staging region (#7497) sits directly below the
+                  ;; base, above the cycle temps and emergency slots, which
+                  ;; move down by its size. A function whose body stages
+                  ;; nothing plans 0 bytes and keeps its layout.
+                  [simd-scratch-bytes : i64
+                    (compiler-backend-simd-scratch-census
+                      (compiler-backend-global-shared-view emit-blocks-list)
+                      (compiler-backend-function-state-current-mode
+                        function-state))]
+                  [dynamic-slot-base : i64
+                    (+ dynamic-frame-base simd-scratch-bytes)]
                   [_emergency-init : unit
                     (begin
+                      (compiler-backend-simd-scratch-plan!
+                        function-state
+                        simd-scratch-bytes
+                        dynamic-frame-base)
                       (compiler-backend-function-scratch-set-i64!
                         function-state
                         compiler-backend-scratch-i64-cycle-temp-used-count
@@ -73755,7 +74288,7 @@
                       (compiler-backend-function-scratch-set-i64!
                         function-state
                         compiler-backend-scratch-i64-cycle-temp-base-offset
-                        (- 0 (+ dynamic-frame-base 8)))
+                        (- 0 (+ dynamic-slot-base 8)))
                       (compiler-backend-function-scratch-set-bool!
                         function-state
                         compiler-backend-scratch-bool-emergency-used
@@ -73790,7 +74323,7 @@
                         (-
                           0
                           (+
-                            dynamic-frame-base
+                            dynamic-slot-base
                             (+
                               (compiler-backend-cycle-temp-frame-extra
                                 (compiler-backend-cycle-temp-max-slots))
@@ -73819,19 +74352,28 @@
                       ;; ordinal, and consumed it with a matching shape. Either
                       ;; half failing means a displacement could have been
                       ;; misapplied, so fail the compile loudly instead of
-                      ;; emitting wrong addressing.
-                      (if (compiler-backend-gep-fold-audit-failed?
-                        function-state)
+                      ;; emitting wrong addressing. The SIMD staging plan is
+                      ;; checked the same way: the census must have sized the
+                      ;; region to exactly what the body claimed.
+                      (if (or
+                        (compiler-backend-gep-fold-audit-failed? function-state)
+                        (compiler-backend-simd-scratch-drift? function-state))
                         (compiler-backend-instr-error
                           func-diag
                           (str_cat.str-cat
-                            "backend: gep displacement ordinal drift in "
+                            (if (compiler-backend-gep-fold-audit-failed?
+                              function-state)
+                              "backend: gep displacement ordinal drift"
+                              (compiler-backend-simd-scratch-drift-message
+                                function-state))
+                            " in "
                             (compiler-backend-symbol-text-index
                               program-index
                               name)))
                         (let
                           [dynamic-frame-extra : i64
                             (+
+                              simd-scratch-bytes
                               (compiler-backend-cycle-temp-frame-extra-needed
                                 (compiler-backend-function-scratch-i64
                                   function-state
@@ -73861,7 +74403,8 @@
                                         (compiler-backend-function-scratch-i64
                                           function-state
                                           compiler-backend-scratch-i64-const-hoist-frame-count)
-                                        0))
+                                        0)
+                                      (> simd-scratch-bytes 0))
                                       ;; A dynamic bottom-of-frame slot was used:
                                       ;; reserve the max callee-save area so those
                                       ;; slots never overlap on-demand CSR saves.

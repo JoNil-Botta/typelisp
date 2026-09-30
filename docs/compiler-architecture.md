@@ -408,6 +408,14 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+The level-2 inline stage rewrites each caller inside one phase of a scratch
+arena and keeps only the caller's final body, cloned through the job's explicit
+pools, and the span rows its rewrite added; the phase is rewound before the
+next caller. Tables a rewrite leaves for later callers grow in the IR label
+arena, have fixed capacity, or hold scalars, and the per-walk caller views are
+unpublished before each rewind, so nothing that outlives a caller points into
+its phase.
+
 The checked inliner's literal-argument scan borrows dense block storage directly.
 It visits blocks and instructions in forward order without building linked
 copies. Its result includes every matching definition and the last integer

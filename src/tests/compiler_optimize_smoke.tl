@@ -2375,6 +2375,7 @@
     [repaired-exit : ir.CompilerIrInstr
       (smoke-inline-phi-exit (ir.compiler-ir-label "inl.latch.0.cont"))]
     (match (opt.opt-inline-program-functions-with-spans
+      (ast.ast-node-pool-reader-context-current)
       (ast.ast-node-pool-reader-type-segment-bases)
       (smoke-inline-phi-functions symbols)
       2

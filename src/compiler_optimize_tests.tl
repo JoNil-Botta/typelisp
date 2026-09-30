@@ -505,6 +505,7 @@
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : ir.CompilerIrFunctionSeq
   (match (opt.opt-inline-program-functions-with-spans
+    (ast.ast-node-pool-reader-context-current)
     type-segment-bases
     functions
     level
@@ -2988,6 +2989,7 @@
       (irt.instr
         "%0 = phi [%1, inl.entry.0.then], [42, inl.entry.0.else] : i64")]
     (match (opt.opt-inline-program-functions-with-spans
+      (ast.ast-node-pool-reader-context-current)
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt-inline-branch-functions symbols)
       2
@@ -3086,6 +3088,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! debug?)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-prepend
             (opt-inline-mb-bounds-caller symbols)
@@ -3137,6 +3140,230 @@
   (and
     (opt-inline-mb-bounds-located-clone-ok? false)
     (opt-inline-mb-bounds-located-clone-ok? true)))
+
+;; The level-2 inline stage rewrites each caller inside a scratch phase and
+;; escapes only its final body, cloned through the job's explicit pools
+;; (#8362). The parameter type below names a nested node past the job pool's
+;; first type segment; the ambient pool installed during the stage is a
+;; different, empty one. Both callers must still absorb the leaf, and their
+;; escaped parameter types must resolve through the job pool.
+(define (opt-inline-job-pool-function
+  [name : String]
+  [param-type : ast.AstType]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (ir.compiler-ir-param-seq-prepend
+      (ir.CompilerIrParam.Param "p" param-type 0)
+      (ir.compiler-ir-param-seq-empty))
+    (ast.AstType.I64)
+    2
+    (ir.compiler-ir-block-cons
+      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") instrs)
+      ir.CompilerIrBlockList.Nil)
+    ir.CompilerIrFunctionAbi.Ordinary))
+
+(define (opt-inline-job-pool-caller [name : String] [param-type : ast.AstType]) : ir.CompilerIrFunction
+  (opt-inline-job-pool-function
+    name
+    param-type
+    (opt-test-instrs
+      (ir.CompilerIrInstr.Call
+        1
+        (opt-test-symbol "job_pool_leaf")
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
+        (ast.AstType.I64))
+      (ir.CompilerIrInstr.Return
+        (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1))))))
+
+(define (opt-inline-job-pool-leaf-calls [func : (& func ir.CompilerIrFunction)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      (opt-count-direct-call-name-blocks blocks "job_pool_leaf")]))
+
+;; The caller's escaped parameter is `(Ref _ array)` whose array resolves, in
+;; the job pool, to `(Array elem 4)` with `elem` resolving to i64.
+(define (opt-inline-job-pool-param-ok?
+  [bases : i64]
+  [func : (& func ir.CompilerIrFunction)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view func)
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks _)
+      (and
+        (= (opt-count-direct-call-name-blocks blocks "job_pool_leaf") 0)
+        (= (ir.compiler-ir-param-seq-count params) 1)
+        (match (ir.compiler-ir-param-seq-ref params 0)
+          [(ir.CompilerIrParam.Param _ (ast.AstType.Ref _ array-id) _)
+            (match (ast.ast-type-segment-bases-get bases array-id)
+              [(ast.AstType.Array elem-id 4)
+                (match (ast.ast-type-segment-bases-get bases elem-id)
+                  [(ast.AstType.I64) true]
+                  [_ false])]
+              [_ false])]
+          [_ false]))]))
+
+(test
+  optimizer-inline-callers-escape-through-explicit-job-pool
+  (let
+    [job : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [filler : i64 (ast.ast-node-pool-context-type-push job (ast.AstType.Bool))]
+    [i : i64 0]
+    [_fill
+      : unit
+      ;; Distinct nodes, so deduplication cannot collapse them, until the
+      ;; pool has crossed its first 1,024-node segment.
+      (while (< i 1100)
+        (begin
+          (set!
+            filler
+            (ast.ast-node-pool-context-type-push
+              job
+              (ast.AstType.Array filler (+ i 1))))
+          (set! i (+ i 1))))]
+    [elem-id : i64 (ast.ast-node-pool-context-type-push job (ast.AstType.I64))]
+    [array-id : i64
+      (ast.ast-node-pool-context-type-push job (ast.AstType.Array elem-id 4))]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases job)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (opt-inline-job-pool-caller "job_pool_a" (ast.AstType.Ref 1 array-id))
+        (ir.compiler-ir-function-seq-prepend
+          (opt-inline-job-pool-caller "job_pool_b" (ast.AstType.Ref 1 array-id))
+          (ir.compiler-ir-function-seq-prepend
+            (opt-inline-job-pool-function
+              "job_pool_leaf"
+              (ast.AstType.Ref 1 array-id)
+              (opt-test-instrs
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 7)))))
+            (ir.compiler-ir-function-seq-empty))))]
+    [ambient : ast.AstNodePoolContext
+      (ast.ast-node-pool-reader-context-current)]
+    [_install-empty : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 4 16))]
+    [inlined : opt.OptInlineSpanProgram
+      (opt.opt-inline-program-functions-with-spans
+        job
+        bases
+        functions
+        2
+        (ir.compiler-source-spans-empty))]
+    [_restore : unit (ast.ast-node-pool-context-install! ambient)]
+    (begin
+      (test.assert-true
+        (> array-id ast.ast-type-node-pool-segment-size)
+        "the parameter's array node sits past the job pool's first segment")
+      (let
+        [control : ir.CompilerIrFunction
+          (opt-inline-job-pool-caller "job_pool_c" (ast.AstType.Ref 1 array-id))]
+        (test.assert-i64-eq
+          (opt-inline-job-pool-leaf-calls (& control))
+          1
+          "an unoptimized caller calls the leaf once"))
+      (match inlined
+        [(opt.OptInlineSpanProgram.Program out _)
+          (begin
+            (test.assert-true
+              (match (opt-function-seq-find out "job_pool_a")
+                [(opt.OptMaybeFunction.Some a)
+                  (opt-inline-job-pool-param-ok? bases (& a))]
+                [(opt.OptMaybeFunction.No) false])
+              "job_pool_a absorbs the leaf and keeps its job-pool parameter type")
+            (test.assert-true
+              (match (opt-function-seq-find out "job_pool_b")
+                [(opt.OptMaybeFunction.Some b)
+                  (opt-inline-job-pool-param-ok? bases (& b))]
+                [(opt.OptMaybeFunction.No) false])
+              "job_pool_b absorbs the leaf and keeps its job-pool parameter type"))]))))
+
+;; Each caller's phase escapes only the span rows its own rewrite added
+;; (#8362), so the spans table grows linearly in the number of rewritten
+;; callers: six rewritten callers add exactly six times the rows one adds.
+(define (opt-inline-linear-span-instr-count [callers : i64]) : i64
+  (let
+    [functions : ir.CompilerIrFunctionSeq (ir.compiler-ir-function-seq-empty)]
+    [spans : ir.CompilerSourceSpans (opt-spans-base)]
+    [i : i64 0]
+    (begin
+      ;; Each caller has its own single-site copy of the bounds callee, whose
+      ;; bounds check carries a located span.
+      (while (< i callers)
+        (let
+          [suffix : String (string.int->string i)]
+          [callee-name : String (str_cat.str-cat "lin_callee_" (clone suffix))]
+          (begin
+            (set!
+              spans
+              (ir.compiler-source-spans-insert-instr-located
+                spans
+                (opt-test-span-symbol (clone callee-name))
+                (irt.instr "bounds_check %0, %1 message \"lin_ok\"")
+                613
+                (opt-test-span 57 29)))
+            (set!
+              functions
+              (ir.compiler-ir-function-seq-prepend
+                (ir.CompilerIrFunction.Function
+                  (opt-test-symbol (clone callee-name))
+                  (irt.params "idx=%0:i64, len=%1:i64")
+                  (ast.AstType.I64)
+                  3
+                  (irt.blocks
+                    "entry:
+                       bounds_check %0, %1 message \"lin_ok\"
+                       branch true, then, else
+                     then:
+                       return %0
+                     else:
+                       return 0")
+                  ir.CompilerIrFunctionAbi.Ordinary)
+                (ir.compiler-ir-function-seq-prepend
+                  (ir.CompilerIrFunction.Function
+                    (opt-test-symbol (str_cat.str-cat "lin_caller_" suffix))
+                    (irt.params "a=%0:i64, b=%1:i64")
+                    (ast.AstType.I64)
+                    3
+                    (ir.compiler-ir-block-cons
+                      (ir.CompilerIrBlock.Block
+                        (ir.compiler-ir-label "entry")
+                        (opt-test-instrs
+                          (ir.CompilerIrInstr.Call
+                            2
+                            (opt-test-symbol callee-name)
+                            (ir.CompilerIrCallArgs.Two
+                              (ir.CompilerIrValue.Var 0)
+                              (ir.CompilerIrValue.Var 1))
+                            (ast.AstType.I64))
+                          (irt.instr "return %2")))
+                      ir.CompilerIrBlockList.Nil)
+                    ir.CompilerIrFunctionAbi.Ordinary)
+                  functions)))
+            (set! i (+ i 1)))))
+      (let
+        [input-rows : i64 (ir.compiler-source-spans-instr-count (clone spans))]
+        (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
+          (ast.ast-node-pool-reader-type-segment-bases)
+          functions
+          2
+          spans)
+          [(opt.OptInlineSpanProgram.Program _ out-spans)
+            (- (ir.compiler-source-spans-instr-count out-spans) input-rows)])))))
+
+(test
+  optimizer-inline-span-rows-grow-linearly-with-callers
+  (let
+    [one : i64 (opt-inline-linear-span-instr-count 1)]
+    [six : i64 (opt-inline-linear-span-instr-count 6)]
+    (begin
+      (test.assert-true
+        (> one 0)
+        "an inlined located bounds check adds span rows")
+      (test.assert-i64-eq
+        six
+        (* 6 one)
+        "six rewritten callers add six times one caller's rows"))))
 
 (define (compiler-optimize-spans-non-inline-call-ok?) : bool
   (let
@@ -22663,6 +22890,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! true)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-switch-functions-named symbols callee-name)
           level
@@ -23021,6 +23249,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! true)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-nonleaf-functions symbols)
           2
@@ -23098,6 +23327,7 @@
       (begin
         (ir.compiler-debug-info-set-enabled! false)
         (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt-inline-nonleaf-functions-named symbols panic-name)
           2

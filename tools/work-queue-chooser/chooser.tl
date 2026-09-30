@@ -288,7 +288,9 @@
       [(json.JsonFound value)
         (match value
           [(json.JsonArray labels)
-            (pr-label-list-valid? (json.json-box-shared-view labels))]
+            (pr-label-list-valid?
+              (unsafe
+                (json.json-box-shared-view labels)))]
           [_ false])])))
 
 (define (pr-labels-error [prs : json.JsonSeq]) : String
@@ -400,7 +402,9 @@
       [(json.JsonFound found)
         (match found
           [(json.JsonArray entries)
-            (pr-check-list-complete? (json.json-box-shared-view entries))]
+            (pr-check-list-complete?
+              (unsafe
+                (json.json-box-shared-view entries)))]
           [_ true])]
       [(json.JsonMissing) true])))
 

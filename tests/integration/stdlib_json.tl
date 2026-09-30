@@ -19,7 +19,7 @@
       [(json.JsonFound value)
         (match value
           [(json.JsonArray items)
-            (= (json.list-count (json.json-box-shared-view items)) 5)]
+            (= (json.list-count-ref (& (__tl-box-place items))) 5)]
           [_ false])]
       [(json.JsonMissing) false])))
 
@@ -79,7 +79,7 @@
 (define (json-test-u64-round-trip? [value : u64] [text : String]) : bool
   (let
     [number : json.Json (json.u64->number value)]
-    [encoded : String (json.stringify (json.json-shared-view number))]
+    [encoded : String (json.stringify number)]
     (and
       (string.eq encoded text)
       (match (json.number->u64 (& text))
@@ -156,10 +156,10 @@
     (match (json.parse (& text))
       [(json.OkJson doc)
         (begin
-          (unless (json-test-name (json.json-shared-view doc)) (return 1))
-          (unless (json-test-items (json.json-shared-view doc)) (return 2))
-          (unless (json-test-escaped (json.json-shared-view doc)) (return 3))
-          (unless (json-test-stringify (json.json-shared-view doc)) (return 4))
+          (unless (json-test-name (clone doc)) (return 1))
+          (unless (json-test-items (clone doc)) (return 2))
+          (unless (json-test-escaped (clone doc)) (return 3))
+          (unless (json-test-stringify doc) (return 4))
           42)]
       [(json.ErrJson _) 7])))
 

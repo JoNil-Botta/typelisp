@@ -1685,42 +1685,60 @@
         1))
     1))
 
+;; A diagnostic's source text with the byte offset at which each of its lines
+;; starts, found in one pass. Rendering any number of snippets against it then
+;; costs that pass plus a substring per snippet, where scanning from byte 0 for
+;; every snippet made k diagnostics cost k passes over the file (#7895).
+;;
+;; Lines are the text between `\n` bytes, numbered from 1; a CR before the
+;; newline stays part of its line. There is always one more line than there are
+;; newlines, so the empty text has one empty line and a text ending in `\n` has
+;; an empty last line.
+(defstruct CompilerDiagnosticSource
+  (text String)
+  (line-starts (__tl_dyn-array i64))
+  (lines i64))
+
+(define (compiler-diagnostic-source-index [text : String]) : CompilerDiagnosticSource
+  (let
+    [n : i64 (string.string-length text)]
+    [newlines : i64 0]
+    [idx : i64 0]
+    [_count : unit
+      (while (< idx n)
+        (begin
+          (if (= (string.string-ref text idx) '\n')
+            (set! newlines (+ newlines 1))
+            unit)
+          (set! idx (+ idx 1))))]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ newlines 1))]
+    [line : i64 1]
+    (begin
+      (set! (array-ref starts 0) 0)
+      (set! idx 0)
+      (while (< idx n)
+        (begin
+          (if (= (string.string-ref text idx) '\n')
+            (begin
+              (set! (array-ref starts line) (+ idx 1))
+              (set! line (+ line 1)))
+            unit)
+          (set! idx (+ idx 1))))
+      (CompilerDiagnosticSource text starts (+ newlines 1)))))
+
 (define (compiler-diagnostic-source-line
-  [source : (& source str)]
+  [source : (& source CompilerDiagnosticSource)]
   [target-line : i64]) : CompilerDiagnosticMaybeString
-  (if (< target-line 1)
+  (if (or (< target-line 1) (> target-line source.lines))
     CompilerDiagnosticNoString
     (let
-      [idx : i64 0]
-      [n : i64 (string.string-length source)]
-      [line : i64 1]
-      [start : i64 0]
-      [done : bool false]
-      [out : String ""]
-      (begin
-        (while (if (< idx n)
-          (not done)
-          false)
-          (begin
-            (if (= line target-line)
-              (if (= (string.string-ref source idx) '\n')
-                (begin
-                  (set! out (string.substring source start (- idx start)))
-                  (set! done true))
-                unit)
-              unit)
-            (if (and (not done) (= (string.string-ref source idx) '\n'))
-              (begin
-                (set! line (+ line 1))
-                (set! start (+ idx 1)))
-              unit)
-            (set! idx (+ idx 1))))
-        (if done
-          (CompilerDiagnosticSomeString out)
-          (if (= line target-line)
-            (CompilerDiagnosticSomeString
-              (string.substring source start (- n start)))
-            CompilerDiagnosticNoString))))))
+      [start : i64 (array-ref source.line-starts (- target-line 1))]
+      [end : i64
+        (if (< target-line source.lines)
+          (- (array-ref source.line-starts target-line) 1)
+          (string.string-length source.text))]
+      (CompilerDiagnosticSomeString
+        (string.substring source.text start (- end start))))))
 
 (define (compiler-diagnostic-render-header
   [diag : (& diag CompilerDiagnostic)]
@@ -1779,7 +1797,7 @@
 
 (define (compiler-diagnostic-render-source-snippet
   [span : (& span CompilerDiagnosticSpan)]
-  [source : (& source str)]
+  [source : (& source CompilerDiagnosticSource)]
   [label-suffix : (& label-suffix str)]) : String
   (match (compiler-diagnostic-source-line
     source
@@ -1816,7 +1834,7 @@
 
 (define (compiler-diagnostic-render-secondary-span
   [primary-path : (& primary-path str)]
-  [source : (& source str)]
+  [source : (& source CompilerDiagnosticSource)]
   [entry : CompilerDiagnosticLabel]) : String
   (let
     [span : CompilerDiagnosticSpan entry.span]
@@ -1848,7 +1866,7 @@
 
 (define (compiler-diagnostic-render-secondary-spans
   [primary-path : String]
-  [source : (& source str)]
+  [source : (& source CompilerDiagnosticSource)]
   [labels : CompilerDiagnosticLabelList]) : String
   (let
     [count : i64 (compiler-diagnostic-label-list-count labels)]
@@ -1889,7 +1907,7 @@
 
 (define (compiler-diagnostic-render-source-with-metadata
   [diag : (& diag CompilerDiagnostic)]
-  [source : String]
+  [source : (& source CompilerDiagnosticSource)]
   [level : CompilerDiagnosticLevel]
   [code : CompilerDiagnosticMaybeString]
   [help : CompilerDiagnosticMaybeString]) : String
@@ -1903,7 +1921,7 @@
       "   |\n"
       (compiler-diagnostic-render-source-snippet
         primary-span
-        (& source)
+        source
         (& empty-label))
       (compiler-diagnostic-render-secondary-spans
         (compiler-diagnostic-path diag)
@@ -1915,6 +1933,16 @@
 (define (compiler-diagnostic-render-source
   [diag : CompilerDiagnostic]
   [source : String]) : String
+  (let
+    [indexed : CompilerDiagnosticSource
+      (compiler-diagnostic-source-index source)]
+    (compiler-diagnostic-render-indexed-source diag (& indexed))))
+
+;; `compiler-diagnostic-render-source` against a source already indexed, for
+;; callers rendering several diagnostics against one text.
+(define (compiler-diagnostic-render-indexed-source
+  [diag : CompilerDiagnostic]
+  [source : (& source CompilerDiagnosticSource)]) : String
   (compiler-diagnostic-render-source-with-metadata
     diag
     source

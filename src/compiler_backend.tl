@@ -2588,8 +2588,15 @@
 ;; Per var: the bound compiler-backend-shift-count-bounds proved, plus one.
 (define compiler-backend-function-i64-array-shift-count-bounds : i64
   8)
-(define compiler-backend-function-i64-array-count : i64
+
+;; The per-function edge index over the dense block sequence emit-blocks
+;; walks (compiler-backend-edge-index-ensure!): label -> block index, each
+;; block's scavenge entry point, and the shared-return count from each block to
+;; the end. Cleared at every emit-blocks entry; built on the first edge lookup.
+(define compiler-backend-function-i64-array-edge-index : i64
   9)
+(define compiler-backend-function-i64-array-count : i64
+  10)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3506,6 +3513,11 @@
         (array-ref
           data.i64-arrays
           compiler-backend-function-i64-array-shift-count-bounds)
+        data.empty-i64-array)
+      (set!
+        (array-ref
+          data.i64-arrays
+          compiler-backend-function-i64-array-edge-index)
         data.empty-i64-array)
       (set! (array-ref data.assignment-indexes 0) data.empty-assignment-index)
       (set!
@@ -44635,7 +44647,6 @@
         type-segment-bases
         assignments
         seq
-        0
         target-label
         from-label
         program-index
@@ -44646,44 +44657,40 @@
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
-  [index : i64]
   [target-label : i64]
   [from-label : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [point : i64]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
-    (ResultCompilerBackend.Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-at-start
-          ""
-          (str_cat.str-cat
-            "backend: unknown block "
-            (compiler_ir_types.compiler-ir-label-text target-label)))))
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-      [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-        (if (= block-label target-label)
+  ;; The edge index answers the first block labelled `target-label` in O(1)
+  ;; (compiler-backend-edge-index-ensure!).
+  (let
+    [edge-index : (__tl_dyn-array i64)
+      (compiler-backend-edge-index-ensure!
+        program-index.backend-state
+        (compiler-backend-global-shared-view blocks))]
+    [found : i64 (compiler-backend-edge-index-find (& edge-index) target-label)]
+    (if (< found 0)
+      (ResultCompilerBackend.Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start
+            ""
+            (str_cat.str-cat
+              "backend: unknown block "
+              (compiler_ir_types.compiler-ir-label-text target-label)))))
+      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks found)
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-backend-function-state-set-current-phi-target-point!
               program-index.backend-state
-              point)
+              (+ point (compiler-backend-edge-index-point (& edge-index) found)))
             (compiler-backend-emit-leading-phi-copies
               type-segment-bases
               assignments
               instrs
               from-label
               program-index
-              vars))
-          (compiler-backend-emit-phi-edge-copies-scan-seq
-            type-segment-bases
-            assignments
-            blocks
-            (+ index 1)
-            target-label
-            from-label
-            program-index
-            vars
-            (+ point (* 2 instrs.len))))])))
+              vars))]))))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
   [type-segment-bases : i64]
@@ -44793,7 +44800,6 @@
         type-segment-bases
         assignments
         seq
-        0
         target-label
         from-label
         moved-dst
@@ -44806,7 +44812,6 @@
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
-  [index : i64]
   [target-label : i64]
   [from-label : i64]
   [moved-dst : i64]
@@ -44814,17 +44819,24 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [point : i64]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
-    (ResultCompilerBackend.Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-at-start
-          ""
-          (str_cat.str-cat
-            "backend: unknown block "
-            (compiler_ir_types.compiler-ir-label-text target-label)))))
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-      [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-        (if (= block-label target-label)
+  ;; The edge index answers the first block labelled `target-label` in O(1)
+  ;; (compiler-backend-edge-index-ensure!).
+  (let
+    [edge-index : (__tl_dyn-array i64)
+      (compiler-backend-edge-index-ensure!
+        program-index.backend-state
+        (compiler-backend-global-shared-view blocks))]
+    [found : i64 (compiler-backend-edge-index-find (& edge-index) target-label)]
+    (if (< found 0)
+      (ResultCompilerBackend.Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start
+            ""
+            (str_cat.str-cat
+              "backend: unknown block "
+              (compiler_ir_types.compiler-ir-label-text target-label)))))
+      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks found)
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (match (compiler-backend-leading-phi-copies-seq
             program-index.backend-state
             assignments
@@ -44837,7 +44849,9 @@
                 (begin
                   (compiler-backend-function-state-set-current-phi-target-point!
                     program-index.backend-state
-                    point)
+                    (+
+                      point
+                      (compiler-backend-edge-index-point (& edge-index) found)))
                   (compiler-backend-emit-phi-copy-list
                     type-segment-bases
                     assignments
@@ -44860,19 +44874,7 @@
             [(ResultBackendPhiCopies.Err message)
               (ResultCompilerBackend.Err
                 (box
-                  (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])
-          (compiler-backend-emit-mov-phi-copy-edge-scan-seq
-            type-segment-bases
-            assignments
-            blocks
-            (+ index 1)
-            target-label
-            from-label
-            moved-dst
-            moved-src
-            program-index
-            vars
-            (+ point (* 2 instrs.len))))])))
+                  (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])]))))
 
 (define (compiler-backend-instr-seq-starts-with-phi?
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : bool
@@ -45782,6 +45784,175 @@
             blocks
             (+ index 1)))])))
 
+;; The edge index (compiler-backend-function-i64-array-edge-index) of one
+;; dense block sequence: [0] the address of the block storage it was built
+;; from, [1] its block count n, [2] a power-of-two hash capacity c >= 2n, then
+;; c label keys, c values (block index + 1; 0 marks an empty slot), n + 1
+;; scavenge entry points (the entry point of block i is the sum of 2 x the
+;; instruction count of every earlier block) and n + 1 shared-return suffix
+;; counts (block i's count is the compiler-backend-shared-return-block-count sum
+;; over blocks i..n-1). A label that repeats keeps its first block, exactly as a
+;; linear scan from the start finds it. Edge lookups then cost O(1) instead of a
+;; walk over the sequence plus a recount of every later block's returns.
+(define compiler-backend-edge-index-header : i64
+  3)
+
+(define (compiler-backend-edge-index-blocks-address
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (__tl_array-data blocks.slots) : (Ptr u8))))
+    : i64))
+
+(define (compiler-backend-edge-index-current?
+  [index : (& index (__tl_dyn-array i64))]
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]) : bool
+  (and
+    (>= (array-length index) compiler-backend-edge-index-header)
+    (= (array-ref index 0) (compiler-backend-edge-index-blocks-address blocks))
+    (=
+      (array-ref index 1)
+      (compiler_ir_types.compiler-ir-block-seq-count blocks))))
+
+(define (compiler-backend-edge-index-slot [label : i64] [capacity : i64]) : i64
+  (bit-and (* label 1048573) (- capacity 1)))
+
+;; Record `label` -> `block` unless the label already has a block.
+(define (compiler-backend-edge-index-insert!
+  [index : (&mut index (__tl_dyn-array i64))]
+  [capacity : i64]
+  [label : i64]
+  [block : i64]) : unit
+  (let
+    [keys-at : i64 compiler-backend-edge-index-header]
+    [values-at : i64 (+ compiler-backend-edge-index-header capacity)]
+    [slot : i64 (compiler-backend-edge-index-slot label capacity)]
+    [done : bool false]
+    (while (not done)
+      (cond
+        [(= (array-ref index (+ values-at slot)) 0)
+          (begin
+            (set! (array-ref index (+ keys-at slot)) label)
+            (set! (array-ref index (+ values-at slot)) (+ block 1))
+            (set! done true))]
+        [(= (array-ref index (+ keys-at slot)) label) (set! done true)]
+        [else (set! slot (bit-and (+ slot 1) (- capacity 1)))]))))
+
+;; The index of the first block labelled `label`, or -1.
+(define (compiler-backend-edge-index-find
+  [index : (& index (__tl_dyn-array i64))]
+  [label : i64]) : i64
+  (let
+    [capacity : i64 (array-ref index 2)]
+    [keys-at : i64 compiler-backend-edge-index-header]
+    [values-at : i64 (+ compiler-backend-edge-index-header capacity)]
+    [slot : i64 (compiler-backend-edge-index-slot label capacity)]
+    [steps : i64 0]
+    (begin
+      (while (< steps capacity)
+        (let
+          [value : i64 (array-ref index (+ values-at slot))]
+          (cond
+            [(= value 0) (return -1)]
+            [(= (array-ref index (+ keys-at slot)) label) (return (- value 1))]
+            [else
+              (begin
+                (set! slot (bit-and (+ slot 1) (- capacity 1)))
+                (set! steps (+ steps 1)))])))
+      -1)))
+
+(define (compiler-backend-edge-index-point
+  [index : (& index (__tl_dyn-array i64))]
+  [block : i64]) : i64
+  (array-ref
+    index
+    (+ compiler-backend-edge-index-header (* 2 (array-ref index 2)) block)))
+
+(define (compiler-backend-edge-index-returns-from
+  [index : (& index (__tl_dyn-array i64))]
+  [block : i64]) : i64
+  (array-ref
+    index
+    (+
+      compiler-backend-edge-index-header
+      (* 2 (array-ref index 2))
+      (+ (array-ref index 1) 1)
+      block)))
+
+(define (compiler-backend-edge-index-build
+  [backend-state : CompilerBackendState]
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]) : (__tl_dyn-array i64)
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    [capacity : i64 2]
+    [_capacity : unit
+      (while (< capacity (* 2 count))
+        (set! capacity (* capacity 2)))]
+    [points-at : i64 (+ compiler-backend-edge-index-header (* 2 capacity))]
+    [returns-at : i64 (+ points-at (+ count 1))]
+    [index : (__tl_dyn-array i64)
+      (__tl_make-array i64 (+ returns-at (+ count 1)))]
+    [i : i64 0]
+    [point : i64 0]
+    (begin
+      (set!
+        (array-ref index 0)
+        (compiler-backend-edge-index-blocks-address (& blocks)))
+      (set! (array-ref index 1) count)
+      (set! (array-ref index 2) capacity)
+      (while (< i count)
+        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks i)
+          [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+            (begin
+              (set! (array-ref index (+ points-at i)) point)
+              (set! point (+ point (* 2 instrs.len)))
+              (compiler-backend-edge-index-insert!
+                (&mut index)
+                capacity
+                label
+                i)
+              (set! i (+ i 1)))]))
+      (set! (array-ref index (+ points-at count)) point)
+      (set! (array-ref index (+ returns-at count)) 0)
+      (set! i (- count 1))
+      (while (>= i 0)
+        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks i)
+          [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+            (begin
+              (set!
+                (array-ref index (+ returns-at i))
+                (+
+                  (array-ref index (+ returns-at (+ i 1)))
+                  (compiler-backend-shared-return-block-count
+                    backend-state
+                    label
+                    instrs)))
+              (set! i (- i 1)))]))
+      index)))
+
+;; The edge index for `blocks`, rebuilt when the current function's index was
+;; built from other storage (emit-blocks clears it on entry).
+(define (compiler-backend-edge-index-ensure!
+  [backend-state : CompilerBackendState]
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]) : (__tl_dyn-array i64)
+  (let
+    [state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [current : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        state
+        compiler-backend-function-i64-array-edge-index)]
+    (if (compiler-backend-edge-index-current? (& current) (& blocks))
+      current
+      (begin
+        (compiler-backend-function-state-set-i64-array!
+          state
+          compiler-backend-function-i64-array-edge-index
+          (compiler-backend-edge-index-build backend-state blocks))
+        (compiler-backend-function-state-i64-array
+          state
+          compiler-backend-function-i64-array-edge-index)))))
+
 ;; The shared-return tail is only reachable for plans that save callee
 ;; registers, so plans without them (every stack-only opt0/opt1 plan) skip
 ;; the whole-function return walk; the count is only consumed through
@@ -46409,7 +46580,6 @@
         type-segment-bases
         source-function
         seq
-        0
         target-label
         from-label
         assignments
@@ -46421,42 +46591,34 @@
   [type-segment-bases : i64]
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
-  [index : i64]
   [target-label : i64]
   [from-label : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
-    (ResultCompilerBackend.Ok "")
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-      [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-        (if (= block-label target-label)
+  ;; The edge index answers the first block labelled `target-label` in O(1)
+  ;; (compiler-backend-edge-index-ensure!).
+  (let
+    [edge-index : (__tl_dyn-array i64)
+      (compiler-backend-edge-index-ensure!
+        program-index.backend-state
+        (compiler-backend-global-shared-view blocks))]
+    [found : i64 (compiler-backend-edge-index-find (& edge-index) target-label)]
+    (if (< found 0)
+      (ResultCompilerBackend.Ok "")
+      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks found)
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (compiler-backend-emit-trivial-phi-return-edge-instrs
             type-segment-bases
             source-function
-            (compiler-backend-block-seq-return-count
-              program-index.backend-state
-              blocks
-              index)
+            (compiler-backend-edge-index-returns-from (& edge-index) found)
             instrs
             from-label
             assignments
             vars
             ret-ty
-            program-index)
-          (compiler-backend-emit-trivial-phi-return-edge-seq
-            type-segment-bases
-            source-function
-            blocks
-            (+ index 1)
-            target-label
-            from-label
-            assignments
-            vars
-            ret-ty
-            program-index))])))
+            program-index)]))))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
   [type-segment-bases : i64]
@@ -46573,7 +46735,6 @@
         type-segment-bases
         source-function
         seq
-        0
         target-label
         from-label
         assignments
@@ -46587,7 +46748,6 @@
   [type-segment-bases : i64]
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
-  [index : i64]
   [target-label : i64]
   [from-label : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -46596,18 +46756,22 @@
   [moved-dst : i64]
   [moved-src : compiler_ir_types.CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
-    (ResultCompilerBackend.Ok "")
-    (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-      [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
-        (if (= block-label target-label)
+  ;; The edge index answers the first block labelled `target-label` in O(1)
+  ;; (compiler-backend-edge-index-ensure!).
+  (let
+    [edge-index : (__tl_dyn-array i64)
+      (compiler-backend-edge-index-ensure!
+        program-index.backend-state
+        (compiler-backend-global-shared-view blocks))]
+    [found : i64 (compiler-backend-edge-index-find (& edge-index) target-label)]
+    (if (< found 0)
+      (ResultCompilerBackend.Ok "")
+      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks found)
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
             type-segment-bases
             source-function
-            (compiler-backend-block-seq-return-count
-              program-index.backend-state
-              blocks
-              index)
+            (compiler-backend-edge-index-returns-from (& edge-index) found)
             instrs
             from-label
             assignments
@@ -46615,20 +46779,7 @@
             ret-ty
             moved-dst
             moved-src
-            program-index)
-          (compiler-backend-emit-mov-trivial-phi-return-edge-seq
-            type-segment-bases
-            source-function
-            blocks
-            (+ index 1)
-            target-label
-            from-label
-            assignments
-            vars
-            ret-ty
-            moved-dst
-            moved-src
-            program-index))])))
+            program-index)]))))
 
 ;; The destination's home register, or "" if it is spilled / has no home. Used to
 ;; load a move's source directly into the destination register (1 instr) instead
@@ -62416,6 +62567,13 @@
   ;; into it and this is the single finish boundary, handing the pipeline the
   ;; same body String emit-blocks always returned.
   (let
+    ;; Edge lookups build this function's edge index from `all-blocks` on
+    ;; first use; start without one.
+    [_edge-index-clear : unit
+      (compiler-backend-function-state-set-i64-array!
+        (compiler-backend-state-function-state program-index.backend-state)
+        compiler-backend-function-i64-array-edge-index
+        (__tl_make-array i64 0))]
     [out : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity
         (+

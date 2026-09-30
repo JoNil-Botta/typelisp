@@ -216,21 +216,22 @@
       [(lint_core.LintFixUnavailable _ _) diagnostic])))
 
 ;; Rich diagnostics are the human-facing default. `--format flat` preserves the
-;; historical line-oriented form for scripts and editors that parse it.
+;; historical line-oriented form for scripts and editors that parse it. `source`
+;; is the file's text, line-indexed once for all of its findings (#7895).
 (define (selfhost-lint-render-finding
   [path : String]
-  [source : String]
+  [source : (& source cdiag.CompilerDiagnosticSource)]
   [finding : lint_core.LintFinding]) : String
   (let
     [diag : cdiag.CompilerDiagnostic
       (selfhost-lint-finding-diagnostic path finding)]
     (if selfhost-lint-flat-output
       (cdiag.compiler-diagnostic-render diag)
-      (cdiag.compiler-diagnostic-render-source diag source))))
+      (cdiag.compiler-diagnostic-render-indexed-source diag source))))
 
 (define (selfhost-lint-render-finding-line
   [path : String]
-  [source : String]
+  [source : (& source cdiag.CompilerDiagnosticSource)]
   [finding : lint_core.LintFinding]) : String
   (let
     [rendered : String (selfhost-lint-render-finding path source finding)]
@@ -243,7 +244,7 @@
 ;; keep the established output order.
 (define (selfhost-lint-print-findings-from
   [path : String]
-  [source : String]
+  [source : (& source cdiag.CompilerDiagnosticSource)]
   [items : lint_core.LintFindings]
   [index : i64]
   [printed : i64]) : i64
@@ -254,7 +255,7 @@
         "{}"
         (selfhost-lint-render-finding-line
           (owned_view.compiler-owned-shared-view path)
-          (owned_view.compiler-owned-shared-view source)
+          source
           (lint_core.lint-findings-ref items index)))
       (selfhost-lint-print-findings-from
         path
@@ -267,12 +268,15 @@
   [path : String]
   [source : String]
   [items : lint_core.LintFindings]) : i64
-  (selfhost-lint-print-findings-from
-    path
-    source
-    (owned_view.compiler-owned-shared-view items)
-    (- (lint_core.lint-findings-count items) 1)
-    0))
+  (let
+    [indexed : cdiag.CompilerDiagnosticSource
+      (cdiag.compiler-diagnostic-source-index source)]
+    (selfhost-lint-print-findings-from
+      path
+      (& indexed)
+      (owned_view.compiler-owned-shared-view items)
+      (- (lint_core.lint-findings-count items) 1)
+      0)))
 
 (define (selfhost-lint-form-delim? [source : (& source str)] [idx : i64]) : bool
   (let
@@ -3407,7 +3411,7 @@
 
 (define (selfhost-lint-package-dead-print-for-source-from
   [path : String]
-  [source : String]
+  [source : (& source cdiag.CompilerDiagnosticSource)]
   [items : SelfhostLintDeadDecls]
   [index : i64]
   [printed : i64]) : i64
@@ -3419,14 +3423,14 @@
         (if (and
           (string.eq decl.path path)
           (selfhost-lint-package-dead-finding-active?
-            source
+            (& source.text)
             (owned_view.compiler-owned-shared-view decl)))
           (begin
             (io.print-format
               "{}"
               (selfhost-lint-render-finding-line
                 (owned_view.compiler-owned-shared-view path)
-                (owned_view.compiler-owned-shared-view source)
+                source
                 (lint_core.lint-dead-code-finding decl.name decl.span)))
             (+ printed 1))
           printed)]
@@ -3441,7 +3445,15 @@
   [path : String]
   [source : String]
   [items : SelfhostLintDeadDecls]) : i64
-  (selfhost-lint-package-dead-print-for-source-from path source items 0 0))
+  (let
+    [indexed : cdiag.CompilerDiagnosticSource
+      (cdiag.compiler-diagnostic-source-index source)]
+    (selfhost-lint-package-dead-print-for-source-from
+      path
+      (& indexed)
+      items
+      0
+      0)))
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
 ;; 1 when the file could not be loaded.

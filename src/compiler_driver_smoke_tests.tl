@@ -2135,3 +2135,65 @@
         opt-level
         false
         false))))
+
+(define (compiler-driver-smoke-write-text-fixture
+  [path : String]
+  [fallback-path : String]
+  [contents : String]) : String
+  (if (compiler-driver-pic-smoke-write-fixture-at? (& path) (& contents))
+    path
+    (begin
+      (io.write-file fallback-path (byte_buf.str-as-bytes (& contents)))
+      fallback-path)))
+
+;; A report whose diagnostics interleave two files renders each exactly as the
+;; one-shot renderer does, and reads each file once (#7895).
+(cfg
+  test
+  (test
+    compiler-driver-diagnostic-sources-interleaved-files
+    (let
+      [path-a : String
+        (compiler-driver-smoke-write-text-fixture
+          "target/compiler_driver_diagnostic_source_a.tl"
+          "compiler_driver_diagnostic_source_a.tl"
+          "(define a 1)\n(define b 2)\n")]
+      [path-b : String
+        (compiler-driver-smoke-write-text-fixture
+          "target/compiler_driver_diagnostic_source_b.tl"
+          "compiler_driver_diagnostic_source_b.tl"
+          "(define c 3)")]
+      [a-second : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-simple (clone path-a) 2 9 "second line of a")]
+      [b-first : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-simple (clone path-b) 1 9 "first line of b")]
+      [a-first : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-simple (clone path-a) 1 9 "first line of a")]
+      [sources : driver.CompilerDriverDiagnosticSources
+        (driver.compiler-driver-diagnostic-sources-new)]
+      [out-a-second : String
+        (driver.compiler-driver-render-source-diagnostic-from
+          (&mut sources)
+          (clone a-second))]
+      [out-b-first : String
+        (driver.compiler-driver-render-source-diagnostic-from
+          (&mut sources)
+          (clone b-first))]
+      [out-a-first : String
+        (driver.compiler-driver-render-source-diagnostic-from
+          (&mut sources)
+          (clone a-first))]
+      (begin
+        (test.assert-owned-string-eq
+          out-a-second
+          (driver.compiler-driver-render-source-diagnostic a-second)
+          "a's second line renders as a one-shot render does")
+        (test.assert-owned-string-eq
+          out-b-first
+          (driver.compiler-driver-render-source-diagnostic b-first)
+          "b renders as a one-shot render does")
+        (test.assert-owned-string-eq
+          out-a-first
+          (driver.compiler-driver-render-source-diagnostic a-first)
+          "returning to a, an earlier line renders as a one-shot render does")
+        (test.assert-i64-eq sources.count 2 "each file is read once")))))

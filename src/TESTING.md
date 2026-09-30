@@ -1071,6 +1071,13 @@ runner to preserve native Windows exit codes. Use this layer for behavior that
 only shows up after execution: exit status, stdout/stderr, diagnostic rendering,
 deterministic file output, and import-aware driver behavior.
 
+Every case run has a 300 s wall-clock deadline
+(`INTEGRATION_CASE_TIMEOUT_SECONDS`). On Linux, GNU `timeout` kills the case's
+whole process group; on Windows, the queue runner kills the case's process
+tree with `taskkill /T`. A case past its deadline fails its own row as
+`FAIL: <case> (timeout after 300 s)` with the output it wrote. The remaining
+cases still run, and nothing is skipped or retried.
+
 The integration manifest `tests/integration/native.manifest` serves both hosts:
 each row names the hosts it runs on and the opt levels it runs at (the batched
 default level and/or standalone `--opt-level` compiles), and

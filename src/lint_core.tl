@@ -2211,6 +2211,7 @@
     [(ast.AstType.Slice elem) (lint-type-id-names elem names)]
     [(ast.AstType.Box elem) (lint-type-id-names elem names)]
     [(ast.AstType.Region _ inner) (lint-type-id-names inner names)]
+    [(ast.AstType.Invalidate _ inner) (lint-type-id-names inner names)]
     [(ast.AstType.Ref _ inner) (lint-type-id-names inner names)]
     [(ast.AstType.MutRef _ inner) (lint-type-id-names inner names)]
     [(ast.AstType.Enum name) (lint-names-add names name)]
@@ -7705,6 +7706,8 @@
     [(ast.AstType.Box elem)
       (lint-unused-variable-type (ast.ty-node-get elem) state)]
     [(ast.AstType.Region name inner)
+      (lint-unused-variable-type-lifetime name inner state)]
+    [(ast.AstType.Invalidate name inner)
       (lint-unused-variable-type-lifetime name inner state)]
     [(ast.AstType.Ref name inner)
       (lint-unused-variable-type-lifetime name inner state)]

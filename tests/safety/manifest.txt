@@ -723,6 +723,49 @@ arena_branded_destroy_inside_field_owner_reject|check-fail|tests/safety/arena_br
 arena_branded_destroy_branch_double_reject|check-fail|tests/safety/arena_branded_destroy_branch_double_reject.tl|-|use of moved value `state`
 arena_branded_destroy_loop_reject|check-fail|tests/safety/arena_branded_destroy_loop_reject.tl|-|cannot move loop-carried owner value `state.arena`
 arena_branded_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_branded_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+# `(:invalidate r)` parameters (#6670): a call ends the argument's arena brand in
+# the caller exactly as a direct safe destroy does, and the helper must destroy
+# that brand exactly once on every normal exit.
+arena_invalidate_caller_value_use_reject|check-fail|tests/safety/arena_invalidate_caller_value_use_reject.tl|-|use of moved value `text`
+arena_invalidate_caller_borrow_use_reject|check-fail|tests/safety/arena_invalidate_caller_borrow_use_reject.tl|-|use of moved value `view`
+arena_invalidate_caller_container_use_reject|check-fail|tests/safety/arena_invalidate_caller_container_use_reject.tl|-|use of moved value `items`
+arena_invalidate_caller_closure_use_reject|check-fail|tests/safety/arena_invalidate_caller_closure_use_reject.tl|-|use of moved value `read-text`
+arena_invalidate_caller_struct_use_reject|check-fail|tests/safety/arena_invalidate_caller_struct_use_reject.tl|-|use of moved value `text`
+arena_invalidate_caller_atomic_before_join_reject|check-fail|tests/safety/arena_invalidate_caller_atomic_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_invalidate_inside_owner_reject|check-fail|tests/safety/arena_invalidate_inside_owner_reject.tl|-|an :invalidate call cannot run inside the arena it destroys
+arena_invalidate_unannotated_forward_reject|check-fail|tests/safety/arena_invalidate_unannotated_forward_reject.tl|-|an :invalidate argument must be a branded local arena owner or a value the caller itself invalidates
+arena_invalidate_result_tied_reject|check-fail|tests/safety/arena_invalidate_result_tied_reject.tl|-|an :invalidate call cannot return a value tied to the arena it destroys
+arena_invalidate_duplicate_argument_reject|check-fail|tests/safety/arena_invalidate_duplicate_argument_reject.tl|-|a call cannot invalidate the same arena through two arguments
+arena_invalidate_missing_destroy_reject|check-fail|tests/safety/arena_invalidate_missing_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_branch_one_arm_reject|check-fail|tests/safety/arena_invalidate_branch_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths through this branch
+arena_invalidate_match_one_arm_reject|check-fail|tests/safety/arena_invalidate_match_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths
+arena_invalidate_loop_reject|check-fail|tests/safety/arena_invalidate_loop_reject.tl|-|cannot move loop-carried owner value `owner`
+arena_invalidate_double_destroy_reject|check-fail|tests/safety/arena_invalidate_double_destroy_reject.tl|-|use of moved value `owner`
+arena_invalidate_return_before_destroy_reject|check-fail|tests/safety/arena_invalidate_return_before_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged before this return
+arena_invalidate_try_before_destroy_reject|check-fail|tests/safety/arena_invalidate_try_before_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged before this try can propagate an error
+arena_invalidate_moved_elsewhere_reject|check-fail|tests/safety/arena_invalidate_moved_elsewhere_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_raw_teardown_reject|check-fail|tests/safety/arena_invalidate_raw_teardown_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_nested_owner_move_reject|check-fail|tests/safety/arena_invalidate_nested_owner_move_reject.tl|-|invalidation obligation of `state` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_wrong_brand_reject|check-fail|tests/safety/arena_invalidate_wrong_brand_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_callee_use_after_destroy_reject|check-fail|tests/safety/arena_invalidate_callee_use_after_destroy_reject.tl|-|use of moved value `text`
+arena_invalidate_lambda_no_effect_reject|check-fail|tests/safety/arena_invalidate_lambda_no_effect_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_invalidate_return_owner_reject|check-fail|tests/safety/arena_invalidate_return_owner_reject.tl|-|a result cannot contain lifetime `r` that its function invalidates
+arena_invalidate_duplicate_lifetime_reject|check-fail|tests/safety/arena_invalidate_duplicate_lifetime_reject.tl|-|lifetime `r` is invalidated by more than one parameter
+arena_invalidate_lifetime_absent_reject|check-fail|tests/safety/arena_invalidate_lifetime_absent_reject.tl|-|:invalidate lifetime `r` does not appear in the parameter type
+arena_invalidate_reference_reject|check-fail|tests/safety/arena_invalidate_reference_reject.tl|-|:invalidate requires an owned parameter, not a reference
+arena_invalidate_extern_reject|check-fail|tests/safety/arena_invalidate_extern_reject.tl|-|an extern function cannot declare an :invalidate parameter
+arena_invalidate_comptime_reject|check-fail|tests/safety/arena_invalidate_comptime_reject.tl|-|parse: :invalidate requires a runtime parameter
+arena_invalidate_malformed_reject|check-fail|tests/safety/arena_invalidate_malformed_reject.tl|-|parse: malformed :invalidate metadata; expected (:invalidate lifetime)
+arena_invalidate_duplicate_metadata_reject|check-fail|tests/safety/arena_invalidate_duplicate_metadata_reject.tl|-|parse: duplicate :invalidate parameter metadata
+arena_invalidate_local_type_reject|check-fail|tests/safety/arena_invalidate_local_type_reject.tl|-|(:invalidate r T) is only valid as a parameter type
+arena_invalidate_function_drop_effect_reject|check-fail|tests/safety/arena_invalidate_function_drop_effect_reject.tl|-|the function types differ in a parameter's :invalidate effect
+arena_invalidate_function_add_effect_reject|check-fail|tests/safety/arena_invalidate_function_add_effect_reject.tl|-|the function types differ in a parameter's :invalidate effect
+arena_invalidate_forward_defined|run-exit|tests/safety/arena_invalidate_forward_defined.tl|42|-
+arena_invalidate_two_effects_defined|run-exit|tests/safety/arena_invalidate_two_effects_defined.tl|42|-
+arena_invalidate_branch_defined|run-exit|tests/safety/arena_invalidate_branch_defined.tl|42|-
+arena_invalidate_try_defined|run-exit|tests/safety/arena_invalidate_try_defined.tl|42|-
+arena_invalidate_transfer_defined|run-exit|tests/safety/arena_invalidate_transfer_defined.tl|42|-
+arena_invalidate_function_value_defined|run-exit|tests/safety/arena_invalidate_function_value_defined.tl|42|-
 arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook_double_buffer_stale_reject.tl|-|use of moved value `previous`
 arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
 arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value

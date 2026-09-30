@@ -64177,6 +64177,7 @@
 
 (define (opt-cse-table-index-capacity [table : (& table opt.OptExprTable)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view table)
+    [(opt.OptExprTable.Empty) 0]
     [(opt.OptExprTable.Dense state)
       (let
         [content : (& state opt.OptExprState) (& (deref state))]
@@ -64285,16 +64286,26 @@
   cse-table-index-grows-with-entries-and-reuses-capacity
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
-    [table : opt.OptExprTable (opt.opt-expr-table-with-capacity 1)]
+    [table : opt.OptExprTable (opt.opt-expr-table-new)]
     [index : i64 0]
     [grown-capacity : i64 0]
     [missing : opt.OptExprKey
       (opt-cse-table-key "%0 = add %1000000000, 99 : i64")]
     (begin
       (test.assert-i64-eq
+        (opt-cse-table-index-capacity (& table))
+        0
+        "a never-used table reserves no bucket storage")
+      (test.assert-i64-eq
         (opt-cse-table-result bases (& table) (& missing))
         -1
         "empty lookup misses")
+      (set! table (opt.opt-expr-invalidate-var (& table) 7))
+      (set! table (opt.opt-expr-table-clear (& table)))
+      (test.assert-i64-eq
+        (opt-cse-table-index-capacity (& table))
+        0
+        "invalidation and clear leave a never-used table unallocated")
       (set! table (opt.opt-expr-table-add bases (& table) (clone missing) 7))
       (set! table (opt.opt-expr-invalidate-var (& table) 7))
       (while (< index 65)
@@ -64364,6 +64375,8 @@
       (set! table (opt.opt-expr-table-add bases (& table) (clone key) 11))
       (set! table (opt.opt-expr-table-add bases (& table) current-collision 12))
       (match (owned_view.compiler-owned-reference-shared-view (& table))
+        [(opt.OptExprTable.Empty)
+          (test.assert-true false "the populated rollover fixture has storage")]
         [(opt.OptExprTable.Dense state)
           (let
             [content : (&mut state opt.OptExprState)
@@ -64388,6 +64401,8 @@
         "the last generation still owns its key")
       (set! table (opt.opt-expr-table-clear (& table)))
       (match (owned_view.compiler-owned-reference-shared-view (& table))
+        [(opt.OptExprTable.Empty)
+          (test.assert-true false "clear retains the rollover fixture storage")]
         [(opt.OptExprTable.Dense state)
           (let
             [content : (& state opt.OptExprState) (& (deref state))]

@@ -6791,7 +6791,8 @@
 ;; list, which made each definition cost an allocation per live entry. A boundary
 ;; that clears the table resets the lengths and keeps their capacity, so the
 ;; per-pass tables grow only past the largest block seen and a key is copied only
-;; by that growth. Live keys are unique -- an entry is added only after its lookup
+;; by that growth. Never-used tables allocate their store on the first insertion.
+;; Live keys are unique -- an entry is added only after its lookup
 ;; missed -- so entry order never decides a lookup.
 (import (vector.vector OptExprKey core) as opt_expr_key_vec)
 
@@ -6813,6 +6814,7 @@
   (indexed bool))
 
 (defenum OptExprTable
+  (Empty)
   (Dense (Box OptExprState)))
 
 (define (opt-expr-table-with-capacity [capacity : i64]) : OptExprTable
@@ -6835,10 +6837,11 @@
           false)))))
 
 (define (opt-expr-table-new) : OptExprTable
-  (opt-expr-table-with-capacity 0))
+  (OptExprTable.Empty))
 
 (define (opt-expr-table-clear [table : (& table OptExprTable)]) : OptExprTable
   (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (OptExprTable.Empty)]
     [(OptExprTable.Dense state)
       (begin
         (let
@@ -6946,6 +6949,10 @@
   [key : OptExprKey]
   [var : i64]) : OptExprTable
   (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty)
+      (let
+        [allocated : OptExprTable (opt-expr-table-with-capacity 1)]
+        (opt-expr-table-add type-segment-bases (& allocated) key var))]
     [(OptExprTable.Dense state)
       (begin
         (let
@@ -8655,6 +8662,7 @@
   [table : (& table OptExprTable)]
   [key : (& key OptExprKey)]) : ir.CompilerIrMaybeValue
   (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (ir.CompilerIrMaybeValue.No)]
     [(OptExprTable.Dense state)
       (let
         [content : (& state OptExprState) (& (deref state))]
@@ -8727,6 +8735,7 @@
 ;; order, and the keys themselves stay where they are.
 (define (opt-expr-invalidate-var [table : (& table OptExprTable)] [var : i64]) : OptExprTable
   (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (OptExprTable.Empty)]
     [(OptExprTable.Dense state)
       (begin
         (let

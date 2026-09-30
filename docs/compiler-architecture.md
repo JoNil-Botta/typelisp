@@ -496,9 +496,11 @@ do not allocate wide records for every possible local ID or rebuild cons chains.
 
 Block-local CSE (`opt-cse-instr`) and the Slice-word CSE in the load/copy walk
 reuse one table pair per function pass (`OptExprTable`), clearing each table
-before its block walk. Keys keep stable positions; parallel integer storage
-records results, live entries and collision links. Power-of-two bucket heads
-index expression hashes, and lookup checks structural equality within the chain.
+before its block walk. An empty carrier allocates storage only on its first
+insertion; subsequent clears retain that storage. Keys keep stable positions;
+parallel integer storage records results, live entries and collision links.
+Power-of-two bucket heads index expression hashes, and lookup checks structural
+equality within the chain.
 The index grows at half occupancy by relinking live positions. Lookup treats
 zero or one live entry directly; hashing starts with the second
 live key, so this constant-size path never scans a growing table. Once started,

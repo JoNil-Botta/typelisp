@@ -64,6 +64,25 @@ and emission takes the mask from the scavenger as a third XMM scratch that
 excludes the source, accumulator and sibling. AVX-512 native min/max and the
 other reduction shapes use two scratch registers.
 
+A function's frame is laid out before its body is emitted. Below the slot and
+maximum callee-save area it holds, from the top down: the SIMD staging region,
+the cycle-temp slots, the emergency slots, and, at the bottom, the outgoing
+stack-argument area. A pre-body census (`compiler-backend-simd-scratch-request`
+over every instruction) sizes the staging region to the largest request.
+- Nothing stages outside it: variable-shift fallbacks, gather reassembly,
+  shuffle staging, and AVX2 predicated and tail-mask lanes all address it
+  through `compiler-backend-simd-scratch-address`, and no SIMD sequence moves
+  `%rsp`. The rsp/FPO rebase, red-zone anchoring, CFI and SEH therefore see one
+  frame, and a call from a staged sequence, such as shuffle's selector abort,
+  leaves from the ordinary frame state.
+- The region's size and frame offset are function frame state
+  (`compiler-backend-scratch-i64-simd-scratch-*`), next to the cycle-temp and
+  emergency extras.
+- A function that stages nothing, including every scalar-mode function, plans
+  no region.
+- Each staged route claims its bytes. A claim beyond the plan fails at its
+  instruction, and the region the body used must equal the plan (#7497).
+
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
 same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers

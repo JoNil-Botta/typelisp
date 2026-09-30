@@ -34081,7 +34081,13 @@
             span
             message)])]
     [(and
-        (tc-message-text-prefix? (& message) "typecheck: unknown struct field ")
+        (or
+          (tc-message-text-prefix?
+            (& message)
+            "typecheck: unknown struct field ")
+          (tc-message-text-prefix?
+            (& message)
+            "typecheck: cannot assign to function `"))
         (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(ast.AstExpr.Set _ _)
@@ -57956,6 +57962,66 @@
         result))
     (TcMaybeString.No)))
 
+(define (tc-set-function-declaration?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : bool
+  ;; Lexical storage shadows declarations, while a hygienic definition-site
+  ;; name keeps its declaration identity even when the caller shadows it.
+  (if (and
+    (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
+    (or
+      (and
+        (tc-type-env-scoped-runtime-active? env)
+        (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
+      (tc-name-local-bound-before-module-scan-id? env name)))
+    false
+    (match (tc-unqualified-import-ambiguity-message ctx env name)
+      [(TcMaybeString.Some _) false]
+      [(TcMaybeString.No)
+        (match (tc-source-name-lookup-key-with-field-check-lookup
+          ctx
+          env
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)
+          name
+          false)
+          [(TcNameLookup.Err _) false]
+          [(TcNameLookup.Ok _ _)
+            (let
+              [handle : i64 (tc-move-value-symbol-handle-id ctx env name)]
+              [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+              (cond
+                [(not (csym.compiler-symbols-handle-found? handle)) false]
+                [(= kind (csym.compiler-symbol-kind-function-define)) true]
+                [(= kind (csym.compiler-symbol-kind-extern))
+                  (match (csym.compiler-symbols-decl-at-index
+                    (tc-context-symbols ctx)
+                    (csym.compiler-symbol-handle-index handle))
+                    [(parser.ResultAstDecl.Ok decl)
+                      (match (ast.ast-decl-unwrapped decl)
+                        [(ast.AstDecl.Extern
+                            _
+                            _
+                            (ast.AstExternKind.Function)
+                            _
+                            _)
+                          true]
+                        [_ false])]
+                    [(parser.ResultAstDecl.Err _) false])]
+                [else false]))])])))
+
+(define (tc-set-function-declaration-message [ctx : TcContext] [name : i64]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Place)
+    (str_cat.str-cat
+      "typecheck: cannot assign to function `"
+      (tc-hygiene-name-text-id-for-session
+        (tc-context-structural-session ctx)
+        name)
+      "`; assign to a function-valued variable instead")))
+
 (define (tc-set-expr-after-local-field-check
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -57965,43 +58031,51 @@
     [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
     (match (tc-lookup-visible-id ctx env name)
       [(ResultTcType.Ok var-ty)
-        (match (tc-expr-with-expected-or-actual-id
-          ctx
-          env
-          value-box
-          (tc-global-shared-view var-ty))
-          [(ResultTcType.Ok value-ty)
-            (match (tc-expect-in-context
-              ctx
-              env
-              (tc-global-shared-view value-ty)
-              (tc-global-shared-view var-ty)
-              "typecheck: assignment type mismatch")
-              [(ResultTcUnit.Ok)
-                (match (tc-ensure-cleanup-resource-not-assigned ctx env value)
-                  [(ResultTcUnit.Ok)
-                    (match (tc-ensure-region-value-can-flow-into
-                      env
-                      var-ty
-                      (tc-global-shared-view value-ty)
-                      "assignment")
-                      [(ResultTcUnit.Ok)
-                        (match (tc-ensure-reference-value-can-assign
-                          env
-                          name
-                          value-ty)
-                          [(ResultTcUnit.Ok)
-                            (ResultTcType.Ok (ast.AstType.Unit))]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcType.Err message)])]
-                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        (if (and
+          (match (tc-global-shared-view var-ty)
+            [(ast.AstType.Func _ _) true]
+            [_ false])
+          (tc-set-function-declaration? ctx env name))
+          (ResultTcType.Err (tc-set-function-declaration-message ctx name))
+          (match (tc-expr-with-expected-or-actual-id
+            ctx
+            env
+            value-box
+            (tc-global-shared-view var-ty))
+            [(ResultTcType.Ok value-ty)
+              (match (tc-expect-in-context
+                ctx
+                env
+                (tc-global-shared-view value-ty)
+                (tc-global-shared-view var-ty)
+                "typecheck: assignment type mismatch")
+                [(ResultTcUnit.Ok)
+                  (match (tc-ensure-cleanup-resource-not-assigned ctx env value)
+                    [(ResultTcUnit.Ok)
+                      (match (tc-ensure-region-value-can-flow-into
+                        env
+                        var-ty
+                        (tc-global-shared-view value-ty)
+                        "assignment")
+                        [(ResultTcUnit.Ok)
+                          (match (tc-ensure-reference-value-can-assign
+                            env
+                            name
+                            value-ty)
+                            [(ResultTcUnit.Ok)
+                              (ResultTcType.Ok (ast.AstType.Unit))]
+                            [(ResultTcUnit.Err message)
+                              (ResultTcType.Err message)])]
+                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)]))]
       [(ResultTcType.Err message)
-        (match (tc-set-foreign-qualified-global-message ctx env name)
-          [(TcMaybeString.Some foreign) (ResultTcType.Err foreign)]
-          [(TcMaybeString.No) (ResultTcType.Err message)])])))
+        (if (tc-set-function-declaration? ctx env name)
+          (ResultTcType.Err (tc-set-function-declaration-message ctx name))
+          (match (tc-set-foreign-qualified-global-message ctx env name)
+            [(TcMaybeString.Some foreign) (ResultTcType.Err foreign)]
+            [(TcMaybeString.No) (ResultTcType.Err message)]))])))
 
 (define (tc-for-owned-name-id-result
   [ctx : TcContext]

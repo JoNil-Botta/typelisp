@@ -37,6 +37,27 @@ stderr contains typecheck: unbound name missing-a
 stderr contains typecheck: unbound name missing-b
 stderr order parse: malformed define || typecheck: unbound name missing-a || typecheck: unbound name missing-b
 
+case check-function-assignment-location
+file main.tl
+(define (cap) : i64 4096)
+(define (big) : i64 42)
+
+(define (main) : i64
+  (begin
+    (set!
+      cap
+      missing-replacement)
+    42))
+end-file
+run check "{{dir}}/main.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0215]
+stderr contains {{native-dir}}/main.tl:7:7
+stderr contains typecheck: cannot assign to function
+stderr not-contains typecheck: unbound name missing-replacement
+stderr not-contains assignment type mismatch
+
 case check-cfg
 file main.tl
 (cfg linux

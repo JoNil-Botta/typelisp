@@ -596,6 +596,14 @@ A new write-capable place form needs the same call in its arm. Alias-qualified
 typing (`tc-set-foreign-qualified-global-message`). The
 `tests/safety/foreign_global_*` fixtures pin every route and import spelling.
 
+Function declarations are not storage places. The ordinary `set!` typing path
+uses the existing source-name and symbol-handle resolvers to reject function
+`define` and function `extern` targets before typing the replacement. Scoped
+and persistent lexical bindings retain precedence, including function-valued
+locals that shadow imported declarations; hygienic definition-site references
+retain the declaration's identity. `tests/safety/function_set_*_reject.tl` and
+`function_storage_assignment.tl` cover these distinctions.
+
 Macro surface searches borrow declaration records while inspecting their module,
 name and kind. A rejected candidate must not clone signature or parameter-list
 payloads. `compiler-load-surface-decl-list-borrow-at` ties the view to its source

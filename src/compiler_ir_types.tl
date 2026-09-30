@@ -8739,11 +8739,20 @@
     [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex) entries.shared]
     [len : i64 entries.len]
     (if (>= len (array-length slots))
-      (compiler-source-spans-instr-entry-list-copy-append
-        slots
-        shared
-        len
-        entry)
+      (let
+        [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
+          (__tl_make-array
+            CompilerSourceSpansInstrEntry
+            (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
+        (begin
+          (compiler-source-spans-instr-entry-list-copy-array-range!
+            (&mut copy)
+            (& slots)
+            0
+            len)
+          (compiler-source-spans-instr-entry-list-append
+            (compiler-source-spans-instr-entry-list-from-slots copy len shared)
+            entry)))
       ;; Only `...-from-slots` builds an array with room, and it fills the cell.
       (let
         [index : CompilerSourceSpansInstrIndex
@@ -8777,16 +8786,20 @@
                         (cast (array-ref chain dropped) : i64))
                       (set! dropped (- dropped 1))))
                   (set! (array-ref slots len) entry)
-                  (if (ir_i64_i64_map.contains? (& heads) function)
-                    (begin
-                      (set!
-                        (array-ref chain len)
-                        (cast
-                          (ir_i64_i64_map.get-value-or (& heads) function -1)
-                          : i32))
-                      (ir_i64_i64_map.mut-entry-set!
-                        (ir_i64_i64_map.get-mut-entry (&mut heads) function)
-                        len))
+                  (if (let
+                    [head : (ir_i64_i64_map.MutEntry heads)
+                      (ir_i64_i64_map.get-mut-entry (&mut heads) function)]
+                    (if (ir_i64_i64_map.mut-entry-present? (& head))
+                      (begin
+                        (set!
+                          (array-ref chain len)
+                          (cast
+                            (ir_i64_i64_map.mut-entry-value-or (& head) -1)
+                            : i32))
+                        (ir_i64_i64_map.mut-entry-set! head len)
+                        true)
+                      false))
+                    unit
                     (if (ir_i64_i64_map.needs-grow? (&mut heads))
                       ;; Full: leave the entry unindexed.
                       (set! indexed len)
@@ -8798,52 +8811,22 @@
                     (CompilerSourceSpansInstrIndex heads indexed))))))
           (CompilerSourceSpansInstrEntryList slots (+ len 1) chain shared))))))
 
-;; Append `entry` to a copy of `slots[0, len)` in a new, larger array.
-(define (compiler-source-spans-instr-entry-list-copy-append
-  [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
-  [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex)]
-  [len : i64]
-  [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
-  (let
-    [copy : (__tl_dyn-array CompilerSourceSpansInstrEntry)
-      (__tl_make-array
-        CompilerSourceSpansInstrEntry
-        (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
-    (begin
-      (compiler-source-spans-instr-entry-list-copy-array-range!
-        (&mut copy)
-        (& slots)
-        0
-        len)
-      ;; The new array has room and is indexed up to `len`.
-      (compiler-source-spans-instr-entry-list-append
-        (compiler-source-spans-instr-entry-list-from-slots
-          copy
-          len
-          (compiler-source-spans-instr-index-function-count shared))
-        entry))))
-
-;; The number of functions the index in `shared` has seen, or 0 for an empty
-;; array's missing index: a size hint for rebuilding it.
-(define (compiler-source-spans-instr-index-function-count
-  [shared : (__tl_dyn-array CompilerSourceSpansInstrIndex)]) : i64
-  (if (= (array-length shared) 0)
-    0
-    (let
-      [index : CompilerSourceSpansInstrIndex
-        (compiler-ir-array-shared-view shared 0)]
-      (ir_i64_i64_map.len (& index.heads)))))
-
 ;; A list over `slots[0, len)` with its index built from scratch in the current
 ;; arena, for constructors that copy or rewrite a whole list. `heads` gets room
-;; for the function count to double. `functions` estimates that count (the
-;; source list's); sizing `heads` from it up front leaves no rehashed arrays
-;; behind.
+;; for the source index's function count to double; sizing it up front leaves
+;; no rehashed arrays behind. The source cell is read only for this size hint.
 (define (compiler-source-spans-instr-entry-list-from-slots
   [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
   [len : i64]
-  [functions : i64]) : CompilerSourceSpansInstrEntryList
+  [source-index : (__tl_dyn-array CompilerSourceSpansInstrIndex)]) : CompilerSourceSpansInstrEntryList
   (let
+    [functions : i64
+      (if (= (array-length source-index) 0)
+        0
+        (let
+          [source : CompilerSourceSpansInstrIndex
+            (compiler-ir-array-shared-view source-index 0)]
+          (ir_i64_i64_map.len (& source.heads))))]
     [chain : (__tl_dyn-array i32) (__tl_make-array i32 (array-length slots))]
     ;; The growth limit is three quarters of the capacity.
     [heads : ir_i64_i64_map.Map
@@ -8911,7 +8894,7 @@
       (compiler-source-spans-instr-entry-list-from-slots
         copy
         len
-        (compiler-source-spans-instr-index-function-count entries.shared)))))
+        entries.shared))))
 
 (define (compiler-source-spans-escape [spans : CompilerSourceSpans]) : CompilerSourceSpans
   (match spans

@@ -4619,8 +4619,7 @@
             (compiler_ir_types.compiler-source-spans-instr-entry-list-from-slots
               slots
               instr-entries.len
-              (compiler_ir_types.compiler-source-spans-instr-index-function-count
-                instr-entries.shared))
+              instr-entries.shared)
             count)))]))
 
 ;; An emission error reported at the instruction (or function) being emitted.

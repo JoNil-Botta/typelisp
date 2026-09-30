@@ -100,6 +100,42 @@
                   (set! ok false))])]))
       ok)))
 
+;; `SymbolRva32` is a PE image-relative address with no ELF counterpart; the
+;; shared layout would otherwise serialize it as a silent zero (#7732).
+(define (compiler-object-elf-data-record-supported?
+  [record : cobj.CompilerObjectDataRecord]) : bool
+  (match record
+    [(cobj.CompilerObjectDataRecord.SymbolRva32 _) false]
+    [_ true]))
+
+;; Every section's data records, text included, must have an ELF encoding.
+(define (compiler-object-elf-data-records-supported?
+  [sections : (& sections cobj.CompilerObjectSectionList)]) : bool
+  (let
+    [count : i64 (cobj.compiler-object-section-list-count sections)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (match (cobj.compiler-object-section-list-ref sections index)
+          [(cobj.CompilerObjectSection.Section _ records _)
+            (let
+              [record-count : i64
+                (cobj.compiler-object-data-record-list-count (& records))]
+              [record-index : i64 0]
+              (begin
+                (while (and ok (< record-index record-count))
+                  (begin
+                    (set!
+                      ok
+                      (compiler-object-elf-data-record-supported?
+                        (cobj.compiler-object-data-record-list-ref
+                          (& records)
+                          record-index)))
+                    (set! record-index (+ record-index 1))))
+                (set! index (+ index 1))))]))
+      ok)))
+
 ;; build_run_core classifies its ELF fallback reasons with these checks.
 (define (compiler-object-elf-text-targets-known?
   [image : (& image cobj.CompilerObjectImage)]) : bool
@@ -227,6 +263,7 @@
   [image : (& image cobj.CompilerObjectImage)]) : bool
   (and
     (compiler-object-elf-sections-supported? image.sections)
+    (compiler-object-elf-data-records-supported? image.sections)
     (compiler-object-elf-relocation-list-supported? image.relocations)
     (compiler-object-elf-relocation-sites-known? image image.relocations)
     (layout.compiler-object-layout-text-targets-known? image)
@@ -936,20 +973,26 @@
 
 (define (compiler-object-elf-render
   [image : (& image cobj.CompilerObjectImage)]) : ResultCompilerObjectElf
-  (if (compiler-object-elf-image-supported? image)
-    (let
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (begin
-        (compiler-object-elf-push-header! (&mut out) image)
-        (compiler-object-elf-render-loadable-sections! (&mut out) image)
-        (compiler-object-elf-render-relocation-sections! (&mut out) image)
-        (compiler-object-elf-render-symbol-table! (&mut out) image)
-        (compiler-object-elf-render-string-tables! (&mut out) image)
-        (compiler-object-elf-push-section-headers! (&mut out) image)
-        (ResultCompilerObjectElf.Ok
-          (layout.compiler-object-layout-bytes-string (& out)))))
-    (ResultCompilerObjectElf.Err
-      "elf: object image contains unsupported text instructions or relocation records")))
+  (cond
+    [(not (compiler-object-elf-data-records-supported? image.sections))
+      (ResultCompilerObjectElf.Err
+        "elf: object image contains a PE-only SymbolRva32 data record")]
+    [(compiler-object-elf-image-supported? image)
+      (let
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-new)]
+        (begin
+          (compiler-object-elf-push-header! (&mut out) image)
+          (compiler-object-elf-render-loadable-sections! (&mut out) image)
+          (compiler-object-elf-render-relocation-sections! (&mut out) image)
+          (compiler-object-elf-render-symbol-table! (&mut out) image)
+          (compiler-object-elf-render-string-tables! (&mut out) image)
+          (compiler-object-elf-push-section-headers! (&mut out) image)
+          (ResultCompilerObjectElf.Ok
+            (layout.compiler-object-layout-bytes-string (& out)))))]
+    [else
+      (ResultCompilerObjectElf.Err
+        "elf: object image contains unsupported text instructions or relocation records")]))
 
 (define (compiler-object-elf-section-header-start
   [image : (& image cobj.CompilerObjectImage)]
@@ -1583,6 +1626,108 @@
 
 (cfg
   test
+  (define (compiler-object-elf-rodata-record-image
+    [record : cobj.CompilerObjectDataRecord]) : cobj.CompilerObjectImage
+    (let
+      [empty-data : cobj.CompilerObjectDataRecordList
+        (cobj.compiler-object-data-record-builder-finish
+          (cobj.compiler-object-data-record-builder-with-capacity 1))]
+      [empty-instrs : cobj.CompilerObjectX64InstrList
+        (cobj.compiler-object-instr-builder-finish
+          (cobj.compiler-object-instr-builder-with-capacity 1))]
+      [data0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 2)]
+      [data1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data0
+          (cobj.CompilerObjectDataRecord.Label "_tl_cell"))]
+      [data2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data1
+          (cobj.CompilerObjectDataRecord.I64 0))]
+      [rodata0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 2)]
+      [rodata1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata0
+          (cobj.CompilerObjectDataRecord.Label "_tl_table"))]
+      [rodata2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push rodata1 record)]
+      [sections0 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-with-capacity 4)]
+      [sections1 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections0
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Text)
+            (owned_view.compiler-owned-shared-view empty-data)
+            (owned_view.compiler-owned-shared-view empty-instrs)))]
+      [sections2 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections1
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Data)
+            (cobj.compiler-object-data-record-builder-finish data2)
+            (owned_view.compiler-owned-shared-view empty-instrs)))]
+      [sections3 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections2
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (cobj.compiler-object-data-record-builder-finish rodata2)
+            (owned_view.compiler-owned-shared-view empty-instrs)))]
+      [sections4 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections3
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Bss)
+            empty-data
+            empty-instrs))]
+      [symbols0 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-with-capacity 1)]
+      [symbols1 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols0
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_cell"
+            (cobj.CompilerObjectSymbolBinding.Export)
+            (cobj.CompilerObjectSymbolKind.Data)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Data))))]
+      (cobj.CompilerObjectImage
+        (cobj.compiler-object-section-builder-finish sections4)
+        (cobj.compiler-object-symbol-builder-finish symbols1)
+        (cobj.compiler-object-relocation-builder-finish
+          (cobj.compiler-object-relocation-builder-with-capacity 1))))))
+
+;; #7732: a PE-only SymbolRva32 record in any section fails ELF rendering with
+;; its own error before any bytes are produced, here in the section after a
+;; valid one; the same image with an ELF record in its place still renders.
+(cfg
+  test
+  (define (compiler-object-elf-rva32-rejected-ok?) : bool
+    (let
+      [rva : cobj.CompilerObjectImage
+        (compiler-object-elf-rodata-record-image
+          (cobj.CompilerObjectDataRecord.SymbolRva32 "_tl_cell"))]
+      [control : cobj.CompilerObjectImage
+        (compiler-object-elf-rodata-record-image
+          (cobj.CompilerObjectDataRecord.SymbolAddress "_tl_cell"))]
+      (and
+        (not (compiler-object-elf-image-supported? rva))
+        (match (compiler-object-elf-render rva)
+          [(ResultCompilerObjectElf.Err message)
+            (string.eq
+              message
+              "elf: object image contains a PE-only SymbolRva32 data record")]
+          [(ResultCompilerObjectElf.Ok _) false])
+        (compiler-object-elf-image-supported? control)
+        (match (compiler-object-elf-render control)
+          [(ResultCompilerObjectElf.Ok _) true]
+          [(ResultCompilerObjectElf.Err _) false])))))
+
+(cfg
+  test
   (test
     compiler-object-elf-smoke
     (begin
@@ -1592,4 +1737,7 @@
       (test.assert-true (compiler-object-elf-smoke-ok?) "elf object smoke")
       (test.assert-true
         (compiler-object-elf-text-smoke-ok?)
-        "elf text object smoke"))))
+        "elf text object smoke")
+      (test.assert-true
+        (compiler-object-elf-rva32-rejected-ok?)
+        "elf rejects PE-only SymbolRva32 data records"))))

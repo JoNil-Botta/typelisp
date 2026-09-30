@@ -1626,11 +1626,21 @@
   ;; Intra-gang permutation. The selector plan always has i64 elements even
   ;; when the shuffled value uses 32-bit lanes.
   (Shuffle (Box LowerVectorMapValue) (Box LowerVectorMapValue))
-  (BinOp ir.CompilerIrBinOp (Box LowerVectorMapValue) (Box LowerVectorMapValue)))
+  (BinOp ir.CompilerIrBinOp (Box LowerVectorMapValue) (Box LowerVectorMapValue))
+  ;; A `let` binding: the staged value is evaluated first, for its loads and
+  ;; checks, then the value. A read of the binding is the staged plan itself,
+  ;; which the emitter's value cache resolves to the staged result (#7541).
+  (Stage (Box LowerVectorMapValue) (Box LowerVectorMapValue)))
 
 (defenum LowerMaybeVectorMapValue
   (No)
   (Some LowerVectorMapValue))
+
+;; The `let` bindings in scope of a direct-map value, most recent first, each
+;; with the plan of its value.
+(defenum LowerVectorMapLocals
+  (Nil)
+  (Cons i64 LowerVectorMapValue (Box LowerVectorMapLocals)))
 
 (defstruct LowerVectorMapStore
   (array-var i64)
@@ -9226,20 +9236,61 @@
         (ResultLowerSpmdInlineHelper.Err
           (box (lower-diagnostic-at-expr ctx func message))))]))
 
-(define (lower-spmd-inline-build-subst
+;; An argument that can be rematerialized without changing its value or effects.
+;; A variable read needs a snapshot: later arguments or the helper body can
+;; change its value. Borrowing a checked variable only names its stable place.
+(define (lower-spmd-inline-arg-stable?
   [ctx : tc_core.TcContext]
-  [params : ast.AstParamList]
-  [args : ast.AstExprList]
-  [subst : LowerSpmdInlineSubst]
-  [origin : ast.AstExpr]) : ResultLowerSpmdInlineSubst
-  (lower-spmd-inline-build-subst-at ctx (& params) (& args) 0 subst origin))
+  [arg : ast.AstExpr]) : bool
+  (match arg
+    [(ast.AstExpr.Spanned inner-box _)
+      (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.Ann inner-box _)
+      (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.Borrow _ _ place-box)
+      (match (ast.ast-expr-unspan (lower-context-expr-get ctx place-box))
+        [(ast.AstExpr.Var _) true]
+        [_ false])]
+    [(ast.AstExpr.Var _) false]
+    [(ast.AstExpr.Literal _) true]
+    [(ast.AstExpr.SpmdProgramIndex) true]
+    [(ast.AstExpr.SpmdProgramCount) true]
+    [_ false]))
 
+;; The declared type of a staged argument: a scalar lane parameter keeps its
+;; type, which converts the argument as the call would and is what the SIMD
+;; planners read; any other parameter, such as a reference whose lifetime
+;; names the helper's own region, takes the argument's already checked type.
+(define (lower-spmd-inline-staged-type [param-ty : ast.AstType]) : ast.AstMaybeType
+  (match (tc_core.tc-type-without-regions (lower-global-shared-view param-ty))
+    [(ast.AstType.I8) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.U8) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.I16) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.U16) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.I32) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.U32) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.I64) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.U64) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.F32) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.F64) (ast.AstMaybeType.Some param-ty)]
+    [(ast.AstType.Bool) (ast.AstMaybeType.Some param-ty)]
+    [_ (ast.AstMaybeType.No)]))
+
+;; Call-by-value for an inlined helper (#7541). Every argument that cannot be
+;; rematerialized is bound, in argument order, to a fresh hygienic
+;; local, and the parameter is substituted by that
+;; local; `staged` collects those bindings for the `let` that wraps the body.
+;; So each such argument is evaluated exactly once, left to right, before the
+;; body, whether the body reads its parameter once, twice or not at all. A stable
+;; argument is substituted as it is.
 (define (lower-spmd-inline-build-subst-at
   [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
   [params : (& params ast.AstParamList)]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [subst : LowerSpmdInlineSubst]
+  [staged : (&mut staged ast.AstLetBindingList)]
   [origin : ast.AstExpr]) : ResultLowerSpmdInlineSubst
   (cond
     [(>= index (ast.ast-param-list-len params))
@@ -9255,26 +9306,33 @@
         [arg-id : i64 (ast.ast-expr-list-get args index 0)]
         [arg : ast.AstExpr (lower-context-expr-get ctx arg-id)]
         (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-          [(ast.AstParam.Param param-name _ _)
+          [(ast.AstParam.Param param-name param-ty _)
             (lower-spmd-inline-build-subst-at
               ctx
+              function-state
               params
               args
               (+ index 1)
-              (lower-spmd-inline-subst-cons param-name arg subst)
+              (if (lower-spmd-inline-arg-stable?
+                ctx
+                (lower-global-shared-view arg))
+                (lower-spmd-inline-subst-cons param-name arg subst)
+                (let
+                  [local : i64
+                    (lower-spmd-inline-fresh-local-id function-state param-name)]
+                  (begin
+                    (ast.ast-let-binding-list-push
+                      staged
+                      (ast.ast-let-binding-id
+                        local
+                        (lower-spmd-inline-staged-type param-ty)
+                        arg-id))
+                    (lower-spmd-inline-subst-cons
+                      param-name
+                      (ast.AstExpr.Var local)
+                      subst))))
+              staged
               origin)]))]))
-
-(define (lower-spmd-inline-arg-subst
-  [ctx : tc_core.TcContext]
-  [params : ast.AstParamList]
-  [args : ast.AstExprList]
-  [origin : ast.AstExpr]) : ResultLowerSpmdInlineSubst
-  (lower-spmd-inline-build-subst
-    ctx
-    params
-    args
-    (lower-spmd-inline-subst-empty)
-    origin))
 
 (define (lower-spmd-inline-expr-list
   [ctx : tc_core.TcContext]
@@ -9435,43 +9493,60 @@
   [args : ast.AstExprList]
   [body : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerAstExpr
-  (match (lower-spmd-inline-arg-subst
-    ctx
-    params
-    args
-    (lower-global-shared-view origin))
-    [(ResultLowerSpmdInlineSubst.Ok helper-subst)
-      (let
-        [previous : LowerIdSet
-          (compiler-lower-function-state-inline-helper-stack function-state)]
-        [result : ResultLowerAstExpr
-          (ResultLowerAstExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                ctx
-                origin
-                (lower-spmd-inline-recursive-message))))]
-        (begin
-          (compiler-lower-function-state-inline-helper-stack-set!
-            function-state
-            (lower-id-set-insert (lower-global-shared-view previous) handle))
-          (set!
-            result
-            (let
-              [shadowed (lower-id-set-empty)]
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                body
-                helper-subst
-                shadowed)))
-          (compiler-lower-function-state-inline-helper-stack-set!
-            function-state
-            previous)
-          result))]
-    [(ResultLowerSpmdInlineSubst.Err diag) (ResultLowerAstExpr.Err diag)]))
+  (let
+    [staged : ast.AstLetBindingList (ast.ast-let-binding-list-with-capacity 0)]
+    (match (lower-spmd-inline-build-subst-at
+      ctx
+      function-state
+      (& params)
+      (& args)
+      0
+      (lower-spmd-inline-subst-empty)
+      (&mut staged)
+      (lower-global-shared-view origin))
+      [(ResultLowerSpmdInlineSubst.Ok helper-subst)
+        (let
+          [previous : LowerIdSet
+            (compiler-lower-function-state-inline-helper-stack function-state)]
+          [result : ResultLowerAstExpr
+            (ResultLowerAstExpr.Err
+              (box
+                (lower-diagnostic-at-expr
+                  ctx
+                  origin
+                  (lower-spmd-inline-recursive-message))))]
+          (begin
+            (compiler-lower-function-state-inline-helper-stack-set!
+              function-state
+              (lower-id-set-insert (lower-global-shared-view previous) handle))
+            (set!
+              result
+              (let
+                [shadowed (lower-id-set-empty)]
+                (lower-spmd-inline-expr
+                  ctx
+                  function-state
+                  env
+                  type-env
+                  body
+                  helper-subst
+                  shadowed)))
+            (compiler-lower-function-state-inline-helper-stack-set!
+              function-state
+              previous)
+            (match result
+              [(ResultLowerAstExpr.Ok rewritten)
+                (if (= (ast.ast-let-binding-list-len (& staged)) 0)
+                  (ResultLowerAstExpr.Ok rewritten)
+                  (ResultLowerAstExpr.Ok
+                    (lower-context-expr-get
+                      ctx
+                      (ast.ast-expr-let-with-pools
+                        (tc_core.tc-context-pools ctx)
+                        staged
+                        (lower-context-expr-push ctx rewritten)))))]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])))]
+      [(ResultLowerSpmdInlineSubst.Err diag) (ResultLowerAstExpr.Err diag)])))
 
 ;; Keep the established small-helper rewrite, but stop cloning larger helper
 ;; bodies into every vector call site. The limit is deliberately an internal
@@ -49840,6 +49915,10 @@
     [(LowerVectorMapValue.Uniform _) true]
     [(LowerVectorMapValue.LaneIndex) true]
     [(LowerVectorMapValue.LaneCount) true]
+    [(LowerVectorMapValue.Stage staged value)
+      (and
+        (lower-vector-shuffle-operand-plan? (deref staged))
+        (lower-vector-shuffle-operand-plan? (deref value)))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (and
         (lower-vector-shuffle-operand-plan? (deref lhs))
@@ -49849,11 +49928,111 @@
 (define (lower-vector-map-value-has-shuffle? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(LowerVectorMapValue.Shuffle _ _) true]
+    [(LowerVectorMapValue.Stage staged value)
+      (or
+        (lower-vector-map-value-has-shuffle? (deref staged))
+        (lower-vector-map-value-has-shuffle? (deref value)))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-has-shuffle? (deref lhs))
         (lower-vector-map-value-has-shuffle? (deref rhs)))]
     [_ false]))
+
+;; The plan a `let` bound NAME to, or `No` outside every binding.
+(define (lower-vector-map-local-lookup
+  [locals : LowerVectorMapLocals]
+  [name : i64]) : LowerMaybeVectorMapValue
+  (match locals
+    [(LowerVectorMapLocals.Nil) (LowerMaybeVectorMapValue.No)]
+    [(LowerVectorMapLocals.Cons bound plan rest)
+      (if (= bound name)
+        (LowerMaybeVectorMapValue.Some plan)
+        (lower-vector-map-local-lookup (deref rest) name))]))
+
+;; A `let` in a direct-map value, such as an inlined helper's argument staging
+;; (#7541). Each binding is planned in order, in the map's element type, then
+;; the body with the bindings as lane locals. The plan stages every binding
+;; ahead of the body in binding order, so each is evaluated once, before the
+;; body, whether the body reads it or not. A binding must declare a lane type
+;; the map's element type admits, as a cast of it would.
+(define (lower-simple-vector-map-let
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index : (& index str)]
+  [dst-elem : ast.AstType]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [at : i64]
+  [body : ast.AstExpr]
+  [locals : LowerVectorMapLocals]) : LowerMaybeVectorMapValue
+  (if (>= at (ast.ast-let-binding-list-len bindings))
+    (lower-simple-vector-map-value
+      ctx
+      mode
+      numeric-context
+      env
+      type-env
+      index
+      dst-elem
+      body
+      locals)
+    (match (ast.ast-let-binding-list-get
+      bindings
+      at
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding name maybe-ty init-box)
+        (match maybe-ty
+          [(ast.AstMaybeType.Some declared)
+            (let
+              [binding-ty : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-resolve-type ctx declared))]
+              (if (or
+                (tc_core.tc-type-eq
+                  (lower-global-shared-view binding-ty)
+                  (lower-global-shared-view dst-elem))
+                (spmd_numeric.compiler-spmd-numeric-decision-supported?
+                  (spmd_numeric.compiler-spmd-numeric-conversion-decision
+                    (lower-global-shared-view binding-ty)
+                    (lower-global-shared-view dst-elem)
+                    numeric-context
+                    (lower-spmd-numeric-backend mode))))
+                (match (lower-simple-vector-map-value
+                  ctx
+                  mode
+                  numeric-context
+                  (lower-global-shared-view env)
+                  (lower-global-shared-view type-env)
+                  index
+                  (lower-global-shared-view dst-elem)
+                  (lower-context-expr-get ctx init-box)
+                  (lower-global-shared-view locals))
+                  [(LowerMaybeVectorMapValue.Some staged)
+                    (match (lower-simple-vector-map-let
+                      ctx
+                      mode
+                      numeric-context
+                      env
+                      (tc_core.tc-bind-id type-env name binding-ty)
+                      index
+                      dst-elem
+                      bindings
+                      (+ at 1)
+                      body
+                      (LowerVectorMapLocals.Cons
+                        name
+                        (lower-global-shared-view staged)
+                        (box locals)))
+                      [(LowerMaybeVectorMapValue.Some value)
+                        (LowerMaybeVectorMapValue.Some
+                          (LowerVectorMapValue.Stage (box staged) (box value)))]
+                      [(LowerMaybeVectorMapValue.No)
+                        (LowerMaybeVectorMapValue.No)])]
+                  [(LowerMaybeVectorMapValue.No) (LowerMaybeVectorMapValue.No)])
+                (LowerMaybeVectorMapValue.No)))]
+          [(ast.AstMaybeType.No) (LowerMaybeVectorMapValue.No)])])))
 
 (define (lower-simple-vector-map-value
   [ctx : tc_core.TcContext]
@@ -49863,7 +50042,8 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [dst-elem : ast.AstType]
-  [value : ast.AstExpr]) : LowerMaybeVectorMapValue
+  [value : ast.AstExpr]
+  [locals : LowerVectorMapLocals]) : LowerMaybeVectorMapValue
   (match (lower-global-shared-view value)
     [(ast.AstExpr.Spanned inner-box _)
       (let
@@ -49876,7 +50056,8 @@
           type-env
           index
           dst-elem
-          inner))]
+          inner
+          (lower-global-shared-view locals)))]
     [(ast.AstExpr.Ann inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -49888,7 +50069,8 @@
           type-env
           index
           dst-elem
-          inner))]
+          inner
+          (lower-global-shared-view locals)))]
     [(ast.AstExpr.Cast inner-box cast-ty-id)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -49923,7 +50105,8 @@
                     type-env
                     index
                     dst-elem
-                    inner)
+                    inner
+                    (lower-global-shared-view locals))
                   (LowerMaybeVectorMapValue.No))]
               [(tc_core.ResultTcType.Err _) (LowerMaybeVectorMapValue.No)])]))]
     [(ast.AstExpr.ArrayRef _ _)
@@ -49972,7 +50155,8 @@
             type-env
             index
             dst-elem
-            source)
+            source
+            (lower-global-shared-view locals))
             [(LowerMaybeVectorMapValue.Some source-plan)
               (match (lower-simple-vector-map-value
                 ctx
@@ -49982,7 +50166,8 @@
                 type-env
                 index
                 (ast.AstType.I64)
-                selector)
+                selector
+                (lower-global-shared-view locals))
                 [(LowerMaybeVectorMapValue.Some selector-plan)
                   (if (and
                     (lower-vector-shuffle-operand-plan?
@@ -50023,7 +50208,8 @@
                   type-env
                   index
                   dst-elem
-                  source)])]
+                  source
+                  (lower-global-shared-view locals))])]
           [(LowerMaybeIrValue.No) (LowerMaybeVectorMapValue.No)]))]
     [(ast.AstExpr.SpmdProgramIndex)
       (if (and
@@ -50042,35 +50228,54 @@
         (LowerMaybeVectorMapValue.Some (LowerVectorMapValue.LaneCount))
         (LowerMaybeVectorMapValue.No))]
     [(ast.AstExpr.Var name)
-      (let
-        [lookup-name : String (tc_core.tc-env-key-name-text name)]
-        (if (string.eq lookup-name index)
-          (LowerMaybeVectorMapValue.No)
+      (match (lower-vector-map-local-lookup locals name)
+        [(LowerMaybeVectorMapValue.Some bound)
+          (LowerMaybeVectorMapValue.Some bound)]
+        [(LowerMaybeVectorMapValue.No)
           (let
-            [var-id : i64
-              (sym_i64_env.sym-i64-lookup-id-or
-                env
-                name
-                (csym.compiler-symbols-missing-handle))]
-            (if (csym.compiler-symbols-handle-found? var-id)
-              (match (tc_core.tc-lookup-id type-env name)
-                [(tc_core.ResultTcType.Ok ty)
-                  (let
-                    [scalar-ty : ast.AstType
-                      (tc_core.tc-type-without-regions ty)]
-                    (if (and
-                      (>
-                        (lower-simd-lanes-for-elem
-                          mode
-                          (lower-global-shared-view scalar-ty))
-                        0)
-                      (tc_core.tc-type-eq scalar-ty dst-elem))
-                      (LowerMaybeVectorMapValue.Some
-                        (LowerVectorMapValue.Uniform
-                          (ir.CompilerIrValue.Var var-id)))
-                      (LowerMaybeVectorMapValue.No)))]
-                [(tc_core.ResultTcType.Err _) (LowerMaybeVectorMapValue.No)])
-              (LowerMaybeVectorMapValue.No)))))]
+            [lookup-name : String (tc_core.tc-env-key-name-text name)]
+            (if (string.eq lookup-name index)
+              (LowerMaybeVectorMapValue.No)
+              (let
+                [var-id : i64
+                  (sym_i64_env.sym-i64-lookup-id-or
+                    env
+                    name
+                    (csym.compiler-symbols-missing-handle))]
+                (if (csym.compiler-symbols-handle-found? var-id)
+                  (match (tc_core.tc-lookup-id type-env name)
+                    [(tc_core.ResultTcType.Ok ty)
+                      (let
+                        [scalar-ty : ast.AstType
+                          (tc_core.tc-type-without-regions ty)]
+                        (if (and
+                          (>
+                            (lower-simd-lanes-for-elem
+                              mode
+                              (lower-global-shared-view scalar-ty))
+                            0)
+                          (tc_core.tc-type-eq scalar-ty dst-elem))
+                          (LowerMaybeVectorMapValue.Some
+                            (LowerVectorMapValue.Uniform
+                              (ir.CompilerIrValue.Var var-id)))
+                          (LowerMaybeVectorMapValue.No)))]
+                    [(tc_core.ResultTcType.Err _) (LowerMaybeVectorMapValue.No)])
+                  (LowerMaybeVectorMapValue.No)))))])]
+    [(ast.AstExpr.Let let-box)
+      (match (__tl-box-place let-box)
+        [(ast.AstLet.Let bindings body-box)
+          (lower-simple-vector-map-let
+            ctx
+            mode
+            numeric-context
+            env
+            type-env
+            index
+            dst-elem
+            (& bindings)
+            0
+            (lower-context-expr-get ctx body-box)
+            (lower-global-shared-view locals))])]
     [(ast.AstExpr.Literal lit)
       (let
         [lit-ty : ast.AstType
@@ -50123,7 +50328,8 @@
             type-env
             index
             (lower-global-shared-view dst-elem)
-            lhs)
+            lhs
+            (lower-global-shared-view locals))
             [(LowerMaybeVectorMapValue.Some lhs-plan)
               (match (lower-simple-vector-map-value
                 ctx
@@ -50133,7 +50339,8 @@
                 type-env
                 index
                 (lower-global-shared-view dst-elem)
-                rhs)
+                rhs
+                (lower-global-shared-view locals))
                 [(LowerMaybeVectorMapValue.Some rhs-plan)
                   (LowerMaybeVectorMapValue.Some
                     (LowerVectorMapValue.BinOp
@@ -50164,6 +50371,10 @@
       (lower-array-var-set-merge
         (lower-vector-map-value-array-vars (deref source))
         (lower-vector-map-value-array-vars (deref selector)))]
+    [(LowerVectorMapValue.Stage staged value)
+      (lower-array-var-set-merge
+        (lower-vector-map-value-array-vars (deref staged))
+        (lower-vector-map-value-array-vars (deref value)))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (lower-array-var-set-merge
         (lower-vector-map-value-array-vars (deref lhs))
@@ -50184,6 +50395,10 @@
       (or
         (lower-vector-map-value-uses-array? (deref source) array-var)
         (lower-vector-map-value-uses-array? (deref selector) array-var))]
+    [(LowerVectorMapValue.Stage staged value)
+      (or
+        (lower-vector-map-value-uses-array? (deref staged) array-var)
+        (lower-vector-map-value-uses-array? (deref value) array-var))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-uses-array? (deref lhs) array-var)
@@ -50309,7 +50524,8 @@
                     type-env
                     index
                     (lower-global-shared-view dst-elem)
-                    value)
+                    value
+                    (LowerVectorMapLocals.Nil))
                     [(LowerMaybeVectorMapValue.Some value-plan)
                       (LowerMaybeVectorMapStore.Some
                         (LowerVectorMapStore dst-var value-plan)
@@ -50671,7 +50887,8 @@
                   type-env
                   index
                   (lower-global-shared-view elem)
-                  value)
+                  value
+                  (LowerVectorMapLocals.Nil))
                   [(LowerMaybeVectorMapValue.Some value-plan)
                     (LowerMaybeVectorReduce.Value
                       value-plan
@@ -53555,6 +53772,20 @@
     ;; generic leaf cache would materialize an unused, incorrectly shaped ID.
     [(LowerVectorMapValue.Shuffle _ _)
       (LowerVectorMapCachedEmit.Emit state ir.CompilerIrValue.Unit cache)]
+    [(LowerVectorMapValue.Stage staged value)
+      (match (lower-vector-map-preheader-cache-leaves
+        state
+        lanes
+        (lower-global-shared-view elem-ty)
+        (deref staged)
+        cache)
+        [(LowerVectorMapCachedEmit.Emit staged-state _ staged-cache)
+          (lower-vector-map-preheader-cache-leaves
+            staged-state
+            lanes
+            elem-ty
+            (deref value)
+            staged-cache)])]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (match (lower-vector-map-preheader-cache-leaves
         state
@@ -53699,6 +53930,24 @@
         (ir.CompilerIrValue.I64 lanes)
         lanes
         (ast.AstType.I64))]
+    [(LowerVectorMapValue.Stage staged value)
+      (match (lower-emit-shuffle-selector-plan
+        state
+        (lower-global-shared-view index)
+        lane-offset
+        (lower-global-shared-view gang-count)
+        lanes
+        (deref staged)
+        (lower-global-shared-view emit-mode))
+        [(LowerExpr.Expr staged-state _ _)
+          (lower-emit-shuffle-selector-plan
+            staged-state
+            index
+            lane-offset
+            gang-count
+            lanes
+            (deref value)
+            emit-mode)])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-shuffle-selector-plan
         state
@@ -54059,6 +54308,22 @@
         (deref source)
         (deref selector)
         (LowerVectorMapEmitMode.Full))]
+    [(LowerVectorMapValue.Stage staged value)
+      (match (lower-emit-vector-map-value
+        ctx
+        state
+        index-var
+        lanes
+        (lower-global-shared-view elem-ty)
+        (deref staged))
+        [(LowerExpr.Expr staged-state _ _)
+          (lower-emit-vector-map-value
+            ctx
+            staged-state
+            index-var
+            lanes
+            elem-ty
+            (deref value))])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-vector-map-value
         ctx
@@ -54329,6 +54594,26 @@
         emit-mode)
         [(LowerExpr.Expr shuffle-state shuffle-value _)
           (LowerVectorMapCachedEmit.Emit shuffle-state shuffle-value cache)])]
+    [(LowerVectorMapValue.Stage staged value)
+      (match (lower-emit-vector-map-value-cached
+        ctx
+        state
+        index-var
+        lanes
+        (lower-global-shared-view elem-ty)
+        (deref staged)
+        (lower-global-shared-view emit-mode)
+        cache)
+        [(LowerVectorMapCachedEmit.Emit staged-state _ staged-cache)
+          (lower-emit-vector-map-value-cached
+            ctx
+            staged-state
+            index-var
+            lanes
+            elem-ty
+            (deref value)
+            emit-mode
+            staged-cache)])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-vector-map-value-cached
         ctx
@@ -54450,6 +54735,26 @@
         (deref source)
         (deref selector)
         (LowerVectorMapEmitMode.Predicated end-value mask))]
+    [(LowerVectorMapValue.Stage staged value)
+      (match (lower-emit-predicated-vector-map-value
+        ctx
+        state
+        index-var
+        (lower-global-shared-view end-value)
+        (lower-global-shared-view mask)
+        lanes
+        (lower-global-shared-view elem-ty)
+        (deref staged))
+        [(LowerExpr.Expr staged-state _ _)
+          (lower-emit-predicated-vector-map-value
+            ctx
+            staged-state
+            index-var
+            end-value
+            mask
+            lanes
+            elem-ty
+            (deref value))])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-predicated-vector-map-value
         ctx
@@ -54489,6 +54794,10 @@
     [(LowerVectorMapValue.LaneIndex) true]
     [(LowerVectorMapValue.LaneCount) true]
     [(LowerVectorMapValue.Shuffle _ _) true]
+    [(LowerVectorMapValue.Stage staged value)
+      (or
+        (lower-vector-map-value-needs-scalar-tail? (deref staged))
+        (lower-vector-map-value-needs-scalar-tail? (deref value)))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-needs-scalar-tail? (deref lhs))
@@ -54499,6 +54808,10 @@
   (match plan
     [(LowerVectorMapValue.Gather _ _) true]
     [(LowerVectorMapValue.GatherLaneOffset _ _) true]
+    [(LowerVectorMapValue.Stage staged value)
+      (or
+        (lower-vector-map-value-has-gather? (deref staged))
+        (lower-vector-map-value-has-gather? (deref value)))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-has-gather? (deref lhs))
@@ -54747,6 +55060,28 @@
                     lanes
                     elem-ty
                     (deref source))])])])]
+    [(LowerVectorMapValue.Stage staged value)
+      (match (lower-emit-scalar-vector-map-value
+        ctx
+        state
+        base-index-var
+        current-index-var
+        (lower-global-shared-view lane-index)
+        (lower-global-shared-view active-lanes)
+        lanes
+        (lower-global-shared-view elem-ty)
+        (deref staged))
+        [(LowerExpr.Expr staged-state _ _)
+          (lower-emit-scalar-vector-map-value
+            ctx
+            staged-state
+            base-index-var
+            current-index-var
+            lane-index
+            active-lanes
+            lanes
+            elem-ty
+            (deref value))])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-scalar-vector-map-value
         ctx
@@ -61314,6 +61649,37 @@
             lanes
             inner
             expected-ty))]
+      ;; A `let`, such as an inlined helper's argument staging (#7541), gives
+      ;; its body the expected type, so a literal body splats in the store's
+      ;; element type as it would without the `let`.
+      [(ast.AstExpr.Let let-box)
+        (match (__tl-box-place let-box)
+          [(ast.AstLet.Let bindings body-box)
+            (match (lower-avx512-masked-let-bindings
+              ctx
+              state
+              env
+              type-env
+              (lower-global-shared-view lane-locals)
+              (lower-global-shared-view index)
+              index-var
+              (lower-global-shared-view active-mask)
+              lanes
+              (& bindings))
+              [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
+                (lower-avx512-masked-expr-expected
+                  ctx
+                  bound-state
+                  bound-env
+                  bound-type-env
+                  (lower-masked-vector-let-binding-names bindings lane-locals)
+                  index
+                  index-var
+                  active-mask
+                  lanes
+                  (lower-context-expr-get ctx body-box)
+                  expected-ty)]
+              [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])])]
       [(ast.AstExpr.Cast inner-box cast-ty-id)
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]

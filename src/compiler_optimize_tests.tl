@@ -64232,6 +64232,11 @@
         (opt-cse-table-result bases (& table) (& c))
         33
         "removing that successor preserves the live head")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone b) 44))
+      (test.assert-i64-eq
+        (opt-cse-table-result bases (& table) (& a))
+        -1
+        "a removed successor stays absent when a second live key restores indexed lookup")
       (set! table (opt.opt-expr-table-clear (& table)))
       (set! table (opt.opt-expr-table-add bases (& table) (clone a) 11))
       (set! table (opt.opt-expr-table-add bases (& table) (clone b) 22))

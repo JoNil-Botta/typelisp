@@ -33,6 +33,7 @@ stage0-release-publication-verifier-self-tests	all	stage0 release publication ve
 stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-	-	256	-	scripts/publish-stage0-latest.sh --self-test
 bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-	-	256	-	scripts/verify-bootstrap-fixpoint-control.sh
 bootstrap-fixpoint	all	bootstrap fixpoint	-	-	6400	-	gate_bootstrap_fixpoint
+stage0-size-ratchet	all	stage0 size ratchet	bootstrap-fixpoint	stage2	256	-	scripts/check-stage0-size.sh --self-test && scripts/check-stage0-size.sh "$STAGE2_BIN"
 stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint	stage2	5632	-	gate_build_invariance
 embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint	stage2	6144	embedded-image	scripts/verify-embedded-stdlib-tlci.sh
 stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression

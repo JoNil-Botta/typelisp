@@ -699,8 +699,7 @@
     (begin
       (ast.ast-node-pool-context-install! saved)
       (ast.ast-node-pool-context-destroy-storage! pools)
-      (unsafe
-        (arena.destroy owner))
+      (arena.destroy-safe! owner)
       ok)))
 
 (cfg

@@ -1,3 +1,33 @@
+file inline_helper_unit_argument.tl
+(define (ignore-unit [_u : unit]) : i64 7)
+(define (fill [counts : (&mut counts (__tl_dyn-array i64))]
+              [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (set! (array-ref out i)
+      (ignore-unit (set! (array-ref counts i) 1)))))
+(define (main) : i64
+  (let [counts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+       [out : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    (begin
+      (fill (&mut counts) (&mut out) 7)
+      (if (and (= (array-ref counts 0) 1) (= (array-ref counts 6) 1)
+               (= (array-ref out 0) 7) (= (array-ref out 6) 7)) 42 1))))
+end-file
+
+file inline_helper_variable_snapshot.tl
+(define (first [a : i64] [_b : i64]) : i64 a)
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let [x : i64 (+ i 1)]
+      (set! (array-ref out i)
+        (first x (begin (set! x 99) 0))))))
+(define (main) : i64
+  (let [out : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    (begin
+      (fill (&mut out) 7)
+      (if (and (= (array-ref out 0) 1) (= (array-ref out 6) 7)) 42 1))))
+end-file
+
 # SPMD SIMD codegen shapes and trap paths, run by scripts/verify-spmd-simd.sh
 # (gate stage2-spmd-simd-comparison) after its same-exit corpus. Shape cases
 # only compile, so they run on every host; trap cases build and run each mode,
@@ -345,6 +375,26 @@ order spmd_shuffle_abort_nested.tl::permute-kernel || spmd_shuffle_abort_nested.
 # faults, at the call's argument. With both arguments out of range the first
 # faults, though the helper reads them in reverse. In a masked branch an
 # active lane's unread argument faults and an inactive lane's does not.
+# Earlier variable reads capture their value before later arguments mutate it.
+case inline-helper-variable-snapshot
+source {{work}}/inline_helper_variable_snapshot.tl
+do link-run
+mode scalar avx2 avx512
+opt 2
+exit 42
+in stderr
+empty
+
+# An unread unit parameter still evaluates its store on every active lane.
+case inline-helper-unit-argument
+source {{work}}/inline_helper_unit_argument.tl
+do link-run
+mode scalar avx2 avx512
+opt 2
+exit 42
+in stderr
+empty
+
 case inline-helper-unused-arg-fault
 source {{work}}/inline_helper_unused_fault.tl
 do link-run

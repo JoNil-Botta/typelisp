@@ -10056,6 +10056,12 @@
     [(ir.CompilerIrBinOp.Shr _) true]
     [_ false]))
 
+;; Every instruction that clobbers the whole caller-saved set. This is the one
+;; list of the call family -- direct, indirect and C-ABI calls, a scalar-mode
+;; SPMD helper call, both tail calls and a syscall -- plus the non-call
+;; clobbers after it. compiler-reg-call-instr? below takes the call family from
+;; here, so the loop call-freedom scan and the returning-call census cannot miss
+;; a call-like variant this classification has (#8198).
 (define (compiler-reg-backend-caller-clobber-instr?
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -10076,6 +10082,18 @@
       (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
+;; The call family: every caller-saved clobber above that runs other code.
+;; Leaving out the non-call clobbers errs safe -- a new one missing here would
+;; count as a call, and a loop holding it would only lose its hoisted constants.
+(define (compiler-reg-call-instr? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-reg-global-shared-view instr)
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) false]
+    [(ir.CompilerIrInstr.CpuId _ _ _ _) false]
+    [(ir.CompilerIrInstr.Xgetbv _ _) false]
+    [(ir.CompilerIrInstr.Pack _ _ _) false]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) false]
+    [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
+
 ;; The tail-call family, exhaustively: the two IR instructions after which
 ;; control NEVER returns to this function. `TailCall` (direct) and
 ;; `TailCallIndirect` (computed callee) are the whole set -- there is no
@@ -10092,6 +10110,13 @@
     [(ir.CompilerIrInstr.TailCall _ _ _) true]
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))
+
+;; A call after which control comes back here: the call family minus the tail
+;; calls.
+(define (compiler-reg-returning-call-instr? [instr : ir.CompilerIrInstr]) : bool
+  (and
+    (compiler-reg-call-instr? (compiler-reg-global-shared-view instr))
+    (not (compiler-reg-tail-call-instr? instr))))
 
 ;; Clobber-POINT predicate for the register-search restriction + same-value
 ;; coalescing exclusion. Identical to caller-clobber-instr? EXCEPT bounds checks
@@ -13505,7 +13530,8 @@
       [(CompilerRegMaybeType.No) CompilerRegMaybeType.No])))
 
 ;; A loop region (one loop block) is clobber-free for caller-saved registers iff it
-;; contains no call/syscall -- those clobber the whole caller-saved set. Per-reg
+;; contains no instruction of the call family (compiler-reg-call-instr?), SPMD
+;; helper calls included -- those clobber the whole caller-saved set. Per-reg
 ;; fixed-use hazards are handled separately: %rcx is offered only when the region
 ;; crosses no variable shift, and %rdx only when it crosses no div/mod/mul fixed
 ;; use. In a clobber-free region a caller-saved reg survives the loop and is
@@ -13523,16 +13549,8 @@
         (begin
           (set!
             found
-            (match (array-ref slots index)
-              [(ir.CompilerIrInstr.Call _ _ _ _) true]
-              [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
-              [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
-              [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
-              [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
-              [(ir.CompilerIrInstr.TailCall _ _ _) true]
-              [(ir.CompilerIrInstr.TailCallIndirect _ _ _) true]
-              [(ir.CompilerIrInstr.Syscall _ _) true]
-              [_ false]))
+            (compiler-reg-call-instr?
+              (compiler-reg-global-array-element-shared-view slots index)))
           (set! index (+ index 1))))
       found)))
 
@@ -13557,15 +13575,8 @@
         (begin
           (set!
             found
-            (match (array-ref slots index)
-              [(ir.CompilerIrInstr.Call _ _ _ _) true]
-              [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
-              [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
-              [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
-              [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
-              [(ir.CompilerIrInstr.SpmdCall _) true]
-              [(ir.CompilerIrInstr.Syscall _ _) true]
-              [_ false]))
+            (compiler-reg-returning-call-instr?
+              (compiler-reg-global-array-element-shared-view slots index)))
           (set! index (+ index 1))))
       found)))
 

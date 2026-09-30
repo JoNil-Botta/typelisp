@@ -15537,6 +15537,119 @@
           (reg.compiler-reg-global-shared-view instr))
         (compiler-reg-backend-win64-extra-clobber-instr? instr))]))
 
+;; Sample `k` of the call-family agreement test below: 0-8 are the call family
+;; (6 and 7 the tail calls), 9 a bounds check, 10 a move and 11 a division.
+(define (compiler-reg-call-family-sample [k : i64]) : ir.CompilerIrInstr
+  (let
+    [args : ir.CompilerIrCallArgs
+      (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))]
+    [callee : ir.CompilerIrValue (ir.CompilerIrValue.Var 0)]
+    [slots : ir.CompilerIrCAbiReturnSlotSeq
+      (ir.CompilerIrCAbiReturnSlotSeq
+        (__tl_make-array ir.CompilerIrCAbiReturnSlot 0)
+        0)]
+    [symbol : i64 (ir.compiler-ir-test-symbol "callee")]
+    (cond
+      [(= k 0) (ir.CompilerIrInstr.Call 1 symbol args (ast.AstType.I64))]
+      [(= k 1)
+        (ir.CompilerIrInstr.CallIndirect 1 callee args (ast.AstType.I64))]
+      [(= k 2)
+        (ir.CompilerIrInstr.CallIndirectC 1 callee args (ast.AstType.I64))]
+      [(= k 3) (ir.ir-instr-call-cabi-store-result callee symbol args slots)]
+      [(= k 4)
+        (ir.ir-instr-call-indirect-cabi-store-result
+          (ir.CompilerIrValue.Var 1)
+          callee
+          args
+          slots)]
+      [(= k 5)
+        (ir.ir-instr-spmd-call-with-origin
+          symbol
+          (ir.CompilerIrSpmdBackend.Scalar)
+          1
+          (ir.CompilerIrValue.Bool true)
+          (ir.compiler-ir-spmd-call-arg-seq-empty)
+          (ir.CompilerIrSpmdCallResult.Unit)
+          (ir.CompilerIrSpmdCallOrigin.Imported
+            (box
+              (ir.CompilerIrImportedSpmdCall
+                "owner"
+                "0.1.0"
+                "helper"
+                "signature"
+                "abi"
+                "scalar"
+                1
+                ""
+                ""
+                0
+                "helper"))))]
+      [(= k 6) (ir.CompilerIrInstr.TailCall symbol args (ast.AstType.I64))]
+      [(= k 7)
+        (ir.CompilerIrInstr.TailCallIndirect callee args (ast.AstType.I64))]
+      [(= k 8) (ir.CompilerIrInstr.Syscall 1 args)]
+      [(= k 9)
+        (ir.CompilerIrInstr.BoundsCheck
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 4)
+          0)]
+      [(= k 10)
+        (ir.CompilerIrInstr.Mov 1 (ir.CompilerIrValue.Var 0) (ast.AstType.I64))]
+      [else
+        (ir.CompilerIrInstr.BinOp
+          1
+          (ir.CompilerIrBinOp.Mod)
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 3)
+          (ast.AstType.I64))])))
+
+;; Every call-like instruction, a scalar SPMD helper call included, is a
+;; caller-saved clobber, makes its block not call-free for the constant
+;; hoister, and counts as a returning call unless it is a tail call. No other
+;; instruction is in the call family (#8198).
+(define (compiler-reg-call-family-predicates-agree?) : bool
+  (let
+    [k : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< k 12))
+        (let
+          [call? : bool (< k 9)]
+          [returning? : bool (and (< k 9) (not (= k 6)) (not (= k 7)))]
+          [clobber? : bool (or (< k 9) (= k 9) (= k 11))]
+          [seq : ir.CompilerIrInstrSeq
+            (compiler-reg-test-instr-seq-prepend
+              (compiler-reg-call-family-sample k)
+              (ir.compiler-ir-instr-seq-empty))]
+          (begin
+            (set!
+              ok
+              (and
+                (=
+                  (reg.compiler-reg-call-instr?
+                    (compiler-reg-call-family-sample k))
+                  call?)
+                (=
+                  (reg.compiler-reg-backend-caller-clobber-instr?
+                    (compiler-reg-call-family-sample k))
+                  clobber?)
+                (=
+                  (reg.compiler-reg-loop-split-seq-has-call-or-syscall? (& seq))
+                  call?)
+                (=
+                  (reg.compiler-reg-seq-has-returning-call-or-syscall? seq)
+                  returning?)))
+            (set! k (+ k 1)))))
+      ok)))
+
+(cfg
+  test
+  (test
+    regalloc-call-family-predicates-agree
+    (test.assert-true
+      (compiler-reg-call-family-predicates-agree?)
+      "call-freedom, caller-clobber and returning-call queries share one call family")))
+
 (cfg
   test
   (define (compiler-reg-call-word-count-in-range

@@ -362,6 +362,18 @@ source, and not also appear as a standalone manifest source.
 
 ### IR-text fixtures
 
+`compiler_pointer_proof_smoke.tl` lowers source programs through the requested
+semantic-evidence boundary. It compares direct-pointer and integer-round-trip
+returns whose machine IR is identical, checks distinct uses and conversion
+locations, and rejects missing or unsupported evidence. Its requested/ordinary
+assembly comparisons cover opt0/1/2 and Linux/Windows lowering, including
+pointer casts, offsets, binding mutation, helper calls, recursion and nulls.
+These fixtures inspect generated programs; they do not execute foreign pointer
+returns. When extending this boundary, preserve the ordinary lowering workload
+and measure both disabled and requested paths under the compiler performance
+protocol. Job isolation tests must read earlier evidence after a later job and
+after source/type/interner retirement, then reject a retired proof owner.
+
 Optimizer, backend, register-allocator and liveness fixtures state their IR as
 the `typelisp-ir v1` text that `--dump-ir` prints, read back by the test-only
 `compiler_ir_text.tl` (`irt.instr`, `irt.instrs`, `irt.blocks`, `irt.func`,

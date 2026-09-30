@@ -14,6 +14,8 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import compiler_ir_types as ir)
+(import compiler_pointer_proof_input as pointer_proof)
+(import (vector.vector pointer_proof.PointerProofRef core) as proof_refs)
 (import compiler_ast_types as ast)
 (import compiler_clone as clone_support)
 (import compiler_ctfe as ctfe)
@@ -543,6 +545,8 @@
   37)
 (define advisory-sink-owner : i64
   (cfg (any compile-profile test) 38 37))
+(define pointer-proof-request : i64
+  (cfg (any compile-profile test) 39 38))
 
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
@@ -699,7 +703,7 @@
   [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
     [cells : (__tl_dyn-array i64)
-      (__tl_make-array i64 (cfg (any compile-profile test) 39 38))]
+      (__tl_make-array i64 (cfg (any compile-profile test) 40 39))]
     [address : i64
       (cast
         (unsafe
@@ -862,6 +866,11 @@
         (compiler-lower-state-cell
           cdiag.CompilerAdvisorySink
           (cdiag.compiler-advisory-sink-new)))
+      (set!
+        (array-ref cells pointer-proof-request)
+        (compiler-lower-state-cell
+          pointer_proof.PointerProofRequest
+          pointer_proof.PointerProofRequest.Disabled))
       state)))
 
 (define (compiler-lower-state-new-with-intern-state
@@ -1919,6 +1928,52 @@
 (defenum ResultCompilerLower
   (Ok ir.CompilerIrProgram ir.CompilerSourceSpans)
   (Err (Box cdiag.CompilerDiagnostic)))
+
+(defstruct CompilerLowerRequest
+  (mode CompilerLowerMode)
+  (pointer-proof pointer_proof.PointerProofRequest))
+
+;; Consumers of semantic evidence accept this checked boundary, not an ordinary
+;; ResultCompilerLower. Its program is immutable until analysis finishes.
+(defenum ResultCompilerLowerPointerProof
+  (Ok
+    ir.CompilerIrProgram
+    ir.CompilerSourceSpans
+    pointer_proof.PointerProofInput)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (compiler-lower-state-use-request!
+  [state : CompilerLowerState]
+  [request : CompilerLowerRequest]) : unit
+  (compiler-lower-state-write!
+    state
+    pointer_proof.PointerProofRequest
+    pointer-proof-request
+    request.pointer-proof))
+
+(define (lower-compiler-pointer-proof-result
+  [request : CompilerLowerRequest]
+  [result : ResultCompilerLower]) : ResultCompilerLowerPointerProof
+  (match result
+    [(ResultCompilerLower.Err diagnostic)
+      (ResultCompilerLowerPointerProof.Err diagnostic)]
+    [(ResultCompilerLower.Ok program spans)
+      (match request.pointer-proof
+        [(pointer_proof.PointerProofRequest.Disabled)
+          (ResultCompilerLowerPointerProof.Err
+            (box
+              (lower-diagnostic
+                "pointer proof: lowering did not request semantic evidence")))]
+        [(pointer_proof.PointerProofRequest.Requested input)
+          (let
+            [error : String
+              (pointer_proof.pointer-proof-input-error
+                input
+                (lower-global-shared-view program))]
+            (if (= (string.string-length (& error)) 0)
+              (ResultCompilerLowerPointerProof.Ok program spans input)
+              (ResultCompilerLowerPointerProof.Err
+                (box (pointer_proof.pointer-proof-input-diagnostic input error)))))])]))
 
 (define (compiler-lower-checked-dest-pools-use!
   [lower-state : CompilerLowerState]
@@ -66344,6 +66399,401 @@
     type-env
     origin))
 
+(define (lower-pointer-proof-type [ctx : tc_core.TcContext] [ty : ast.AstType]) : pointer_proof.PointerProofType
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
+    (match (lower-global-shared-view resolved)
+      [(ast.AstType.Ptr _) pointer_proof.PointerProofType.Pointer]
+      [(ast.AstType.MutPtr _) pointer_proof.PointerProofType.MutablePointer]
+      [_
+        (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
+          pointer_proof.PointerProofType.Integer
+          pointer_proof.PointerProofType.NonPointer)])))
+
+(define (lower-pointer-proof-scalar-type? [ty : pointer_proof.PointerProofType]) : bool
+  (match ty
+    [(pointer_proof.PointerProofType.Integer) true]
+    [(pointer_proof.PointerProofType.NonPointer) true]
+    [_ false]))
+
+;; These cases give provenance semantics; all other child enumeration uses the
+;; shared AST walker. An unknown pointer-producing case is explicitly incomplete.
+(define (lower-pointer-proof-operation
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bindings : sym_i64_env.SymI64Env]
+  [expr : ast.AstExpr]
+  [ty : pointer_proof.PointerProofType]) : pointer_proof.PointerProofOperation
+  (match expr
+    [(ast.AstExpr.Var name)
+      (let
+        [binding : i64 (sym_i64_env.sym-i64-lookup-id-or (& bindings) name -1)]
+        (if (>= binding 0)
+          (pointer_proof.PointerProofOperation.Read binding)
+          (pointer_proof.PointerProofOperation.Global
+            (ir.compiler-ir-symbol-typed-id
+              (lower-resolve-call-name-id state bindings name)))))]
+    [(ast.AstExpr.PtrCast _ _) pointer_proof.PointerProofOperation.PointerCast]
+    [(ast.AstExpr.PtrToInt _)
+      pointer_proof.PointerProofOperation.PointerToInteger]
+    [(ast.AstExpr.IntToPtr _ _)
+      pointer_proof.PointerProofOperation.IntegerToPointer]
+    [(ast.AstExpr.PtrNull _) pointer_proof.PointerProofOperation.Null]
+    [(ast.AstExpr.PtrOffset _ _) pointer_proof.PointerProofOperation.Offset]
+    [(ast.AstExpr.PtrAddrOf _) pointer_proof.PointerProofOperation.AddressOf]
+    [(ast.AstExpr.PtrRead _) pointer_proof.PointerProofOperation.MemoryRead]
+    [(ast.AstExpr.StringData _) pointer_proof.PointerProofOperation.StringData]
+    [(ast.AstExpr.ArrayData _) pointer_proof.PointerProofOperation.ArrayData]
+    [(ast.AstExpr.ProgramArgv) pointer_proof.PointerProofOperation.ProgramArgv]
+    [(ast.AstExpr.ProgramEnvp) pointer_proof.PointerProofOperation.ProgramEnvp]
+    [(ast.AstExpr.TupleRef _ index)
+      (pointer_proof.PointerProofOperation.TupleProjection index)]
+    [(ast.AstExpr.StructGet _ field)
+      (pointer_proof.PointerProofOperation.StructProjection field)]
+    [(ast.AstExpr.ArrayRef _ _)
+      pointer_proof.PointerProofOperation.ArrayProjection]
+    [(ast.AstExpr.BoxGet _) pointer_proof.PointerProofOperation.BoxProjection]
+    [(ast.AstExpr.BoxTake _) pointer_proof.PointerProofOperation.BoxProjection]
+    [(ast.AstExpr.Literal literal)
+      (match literal
+        [(ast.AstLiteral.String _)
+          pointer_proof.PointerProofOperation.StaticStorage]
+        [_ pointer_proof.PointerProofOperation.Scalar])]
+    [(ast.AstExpr.BinaryData _)
+      pointer_proof.PointerProofOperation.StaticStorage]
+    [(ast.AstExpr.Cast _ _) pointer_proof.PointerProofOperation.IntegerCast]
+    [(ast.AstExpr.Ann _ _) pointer_proof.PointerProofOperation.Identity]
+    [(ast.AstExpr.If _ _ _) pointer_proof.PointerProofOperation.Join]
+    [(ast.AstExpr.Begin _) pointer_proof.PointerProofOperation.Sequence]
+    [(ast.AstExpr.Unsafe _) pointer_proof.PointerProofOperation.Sequence]
+    [(ast.AstExpr.Let _) pointer_proof.PointerProofOperation.Sequence]
+    [(ast.AstExpr.While _ _) pointer_proof.PointerProofOperation.Loop]
+    [(ast.AstExpr.Return _) pointer_proof.PointerProofOperation.Return]
+    [(ast.AstExpr.Set name _)
+      (pointer_proof.PointerProofOperation.Assignment
+        (sym_i64_env.sym-i64-lookup-id-or (& bindings) name -1))]
+    [(ast.AstExpr.Call func-id _)
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (tc_core.tc-context-expr-bases ctx)
+        (lower-context-expr-get ctx func-id))
+        [(ast.AstExpr.Var name)
+          (let
+            [names : LowerNameCache (lower-state-names state)]
+            [lookup : i64
+              (lower-name-cache-resolve-logical-id (& names) name name)]
+            [callable : bool
+              (and
+                (not (sym_i64_env.sym-i64-contains-id bindings name))
+                (lower-top-level-callable-lookup-id?
+                  ctx
+                  (lower-callable-lookup-id ctx name lookup)))]
+            (if callable
+              (pointer_proof.PointerProofOperation.DirectCall
+                (ir.compiler-ir-symbol-typed-id
+                  (lower-resolve-call-name-id state bindings name)))
+              pointer_proof.PointerProofOperation.IndirectCall))]
+        [_ pointer_proof.PointerProofOperation.IndirectCall])]
+    [_
+      (if (lower-pointer-proof-scalar-type? ty)
+        pointer_proof.PointerProofOperation.Scalar
+        pointer_proof.PointerProofOperation.Unsupported)]))
+
+(define (lower-pointer-proof-capture-id
+  [input : pointer_proof.PointerProofInput]
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bindings : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [id : i64]
+  [span : ir.CompilerMaybeSourceSpan]) : pointer_proof.PointerProofRef
+  (lower-pointer-proof-capture-expr
+    input
+    ctx
+    state
+    bindings
+    type-env
+    (lower-context-expr-get ctx id)
+    span))
+
+(define (lower-pointer-proof-source-path
+  [input : pointer_proof.PointerProofInput]
+  [state : LowerState]) : String
+  (let
+    [path-id : i64 (lower-state-current-source-path-id state)]
+    [path : String
+      (if (> path-id 0)
+        (compiler-lower-state-name-text (lower-state-owner state) path-id)
+        "")]
+    (if (or
+      (= (string.string-length (& path)) 0)
+      (string.eq (& path) "<source>"))
+      (pointer_proof.pointer-proof-input-default-path input)
+      path)))
+
+(define (lower-pointer-proof-capture-expr
+  [input : pointer_proof.PointerProofInput]
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [bindings : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [span : ir.CompilerMaybeSourceSpan]) : pointer_proof.PointerProofRef
+  (match (lower-global-shared-view expr)
+    [(ast.AstExpr.Spanned inner own-span)
+      (lower-pointer-proof-capture-id
+        input
+        ctx
+        state
+        bindings
+        type-env
+        inner
+        (ir.CompilerMaybeSourceSpan.Some own-span))]
+    [(ast.AstExpr.MacroExpansion inner _ _)
+      (lower-pointer-proof-capture-id
+        input
+        ctx
+        state
+        bindings
+        type-env
+        inner
+        span)]
+    [_
+      (let
+        [ty : pointer_proof.PointerProofType
+          (match (lower-expr-result-type-or-check
+            ctx
+            bindings
+            type-env
+            (lower-state-type-cache state)
+            (lower-state-function-state state)
+            (& expr))
+            [(tc_core.ResultTcType.Ok source-ty)
+              (lower-pointer-proof-type ctx source-ty)]
+            [(tc_core.ResultTcType.Err _)
+              pointer_proof.PointerProofType.Missing])]
+        [operation : pointer_proof.PointerProofOperation
+          (lower-pointer-proof-operation
+            ctx
+            state
+            bindings
+            (lower-global-shared-view expr)
+            ty)]
+        [operands : proof_refs.Vec
+          (pointer_proof.pointer-proof-input-operands input)]
+        [function : ir.CompilerIrSymbolId
+          (ir.compiler-ir-symbol-typed-id
+            (lower-state-current-function-id state))]
+        [path : String (lower-pointer-proof-source-path input state)]
+        (begin
+          (match operation
+            [(pointer_proof.PointerProofOperation.Unsupported)
+              (pointer_proof.pointer-proof-input-fail-at!
+                input
+                "pointer proof: unsupported semantic pointer operation"
+                (lower-global-shared-view path)
+                span)]
+            [(pointer_proof.PointerProofOperation.Assignment binding)
+              (when
+                (< binding 0)
+                (pointer_proof.pointer-proof-input-fail-at!
+                  input
+                  "pointer proof: assignment has no semantic binding"
+                  (lower-global-shared-view path)
+                  span))]
+            [_ unit])
+          (match (lower-global-shared-view expr)
+            [(ast.AstExpr.Let payload)
+              (match (__tl-box-place payload)
+                [(ast.AstLet.Let lets body)
+                  (let
+                    [local-bindings : sym_i64_env.SymI64Env bindings]
+                    [local-types : tc_core.TcTypeEnv type-env]
+                    [index : i64 0]
+                    (begin
+                      (while (< index (ast.ast-let-binding-list-len (& lets)))
+                        (match (ast.ast-let-binding-list-get
+                          (& lets)
+                          index
+                          (ast.ast-let-binding-fallback))
+                          [(ast.AstLetBinding.Binding name maybe-ty init)
+                            (let
+                              [value : pointer_proof.PointerProofRef
+                                (lower-pointer-proof-capture-id
+                                  input
+                                  ctx
+                                  state
+                                  local-bindings
+                                  local-types
+                                  init
+                                  span)]
+                              [edges : proof_refs.Vec
+                                (pointer_proof.pointer-proof-input-operands
+                                  input)]
+                              [binding-type : tc_core.ResultTcType
+                                (tc_core.tc-let-binding-plain-type
+                                  ctx
+                                  local-types
+                                  (tc_core.tc-let-binding-resolve-maybe-type
+                                    ctx
+                                    maybe-ty)
+                                  (lower-context-expr-get ctx init))]
+                              (begin
+                                (pointer_proof.pointer-proof-input-push-operand!
+                                  input
+                                  (&mut edges)
+                                  value)
+                                (match binding-type
+                                  [(tc_core.ResultTcType.Ok source-ty)
+                                    (let
+                                      [binding : pointer_proof.PointerProofRef
+                                        (pointer_proof.pointer-proof-input-push!
+                                          input
+                                          function
+                                          pointer_proof.PointerProofOperation.Binding
+                                          (lower-pointer-proof-type
+                                            ctx
+                                            (lower-global-shared-view source-ty))
+                                          edges
+                                          (lower-global-shared-view path)
+                                          span)]
+                                      (begin
+                                        (pointer_proof.pointer-proof-input-push-operand!
+                                          input
+                                          (&mut operands)
+                                          binding)
+                                        (set!
+                                          local-bindings
+                                          (sym_i64_env.sym-i64-bind-id
+                                            local-bindings
+                                            name
+                                            binding.index))
+                                        (set!
+                                          local-types
+                                          (tc_core.tc-bind-id
+                                            local-types
+                                            name
+                                            source-ty))))]
+                                  [(tc_core.ResultTcType.Err _)
+                                    (pointer_proof.pointer-proof-input-fail!
+                                      input
+                                      "pointer proof: missing binding type")])
+                                (set! index (+ index 1))))]))
+                      (pointer_proof.pointer-proof-input-push-operand!
+                        input
+                        (&mut operands)
+                        (lower-pointer-proof-capture-id
+                          input
+                          ctx
+                          state
+                          local-bindings
+                          local-types
+                          body
+                          span))))])]
+            [_
+              (let
+                [children : ast.AstExprList
+                  (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+                [child-env : tc_core.TcTypeEnv
+                  (match (lower-global-shared-view expr)
+                    [(ast.AstExpr.Unsafe _) (tc_core.tc-enter-unsafe type-env)]
+                    [_ type-env])]
+                [start : i64
+                  (match (lower-global-shared-view expr)
+                    [(ast.AstExpr.Call _ _) 1]
+                    [_ 0])]
+                [index : i64 start]
+                (while (< index children.len)
+                  (begin
+                    (pointer_proof.pointer-proof-input-push-operand!
+                      input
+                      (&mut operands)
+                      (lower-pointer-proof-capture-id
+                        input
+                        ctx
+                        state
+                        bindings
+                        child-env
+                        (ast.ast-expr-list-get (& children) index -1)
+                        span))
+                    (set! index (+ index 1)))))])
+          (pointer_proof.pointer-proof-input-push!
+            input
+            function
+            operation
+            ty
+            operands
+            path
+            span)))]))
+
+(define (lower-pointer-proof-capture-function!
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [type-env : tc_core.TcTypeEnv]
+  [params : ast.AstParamList]
+  [ret : ast.AstType]
+  [body : ast.AstExpr]) : unit
+  (match (compiler-lower-state-read
+    (lower-state-owner state)
+    pointer_proof.PointerProofRequest
+    pointer-proof-request)
+    [(pointer_proof.PointerProofRequest.Disabled) unit]
+    [(pointer_proof.PointerProofRequest.Requested input)
+      (let
+        [bindings : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+        [references : proof_refs.Vec
+          (pointer_proof.pointer-proof-input-operands input)]
+        [symbol : ir.CompilerIrSymbolId
+          (ir.compiler-ir-symbol-typed-id
+            (lower-state-current-function-id state))]
+        [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+        [span : ir.CompilerMaybeSourceSpan
+          (lower-ast-expr-span (& pools) (lower-global-shared-view body))]
+        [index : i64 0]
+        (begin
+          (while (< index (ast.ast-param-list-len (& params)))
+            (match (ast.ast-param-list-get
+              (& params)
+              index
+              (ast.ast-param-fallback))
+              [(ast.AstParam.Param name source-ty _)
+                (let
+                  [reference : pointer_proof.PointerProofRef
+                    (pointer_proof.pointer-proof-input-push!
+                      input
+                      symbol
+                      (pointer_proof.PointerProofOperation.Parameter index)
+                      (lower-pointer-proof-type ctx source-ty)
+                      (pointer_proof.pointer-proof-input-operands input)
+                      (lower-pointer-proof-source-path input state)
+                      span)]
+                  (begin
+                    (set!
+                      bindings
+                      (sym_i64_env.sym-i64-bind-id
+                        bindings
+                        name
+                        reference.index))
+                    (pointer_proof.pointer-proof-input-push-operand!
+                      input
+                      (&mut references)
+                      reference)
+                    (set! index (+ index 1))))]))
+          (pointer_proof.pointer-proof-input-add-function!
+            input
+            (pointer_proof.PointerProofFunction
+              symbol
+              references
+              (lower-pointer-proof-capture-expr
+                input
+                ctx
+                state
+                bindings
+                type-env
+                body
+                span)
+              (lower-pointer-proof-type ctx ret)))))]))
+
 (define (lower-param-list-into!
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
@@ -66560,6 +67010,14 @@
           (lower_i64_i64_map.with-capacity 8)
           source-start
           (+ source-start param-count))]
+      [_pointer-proof : unit
+        (lower-pointer-proof-capture-function!
+          ctx
+          state
+          type-env
+          (lower-global-shared-view params)
+          (lower-global-shared-view ret-ty)
+          (lower-global-shared-view body))]
       (match ret-class
         [(LowerCAbiAggregate.Unsupported message)
           (ResultLowerFunction.Err
@@ -69886,6 +70344,22 @@
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
+    (match (compiler-lower-state-read
+      lower-state
+      pointer_proof.PointerProofRequest
+      pointer-proof-request)
+      [(pointer_proof.PointerProofRequest.Disabled) unit]
+      [(pointer_proof.PointerProofRequest.Requested input)
+        (let
+          [error : String (pointer_proof.pointer-proof-input-begin-error input)]
+          (when
+            (> (string.string-length (& error)) 0)
+            (return (ResultCompilerLower.Err (box (lower-diagnostic error)))))
+          (pointer_proof.pointer-proof-input-use-default-path!
+            input
+            (if (> (string.string-length (& entry-path)) 0)
+              (lower-global-shared-view entry-path)
+              "<source>")))])
     ;; Clone-root discovery and checked typechecking can probe aggregate layout
     ;; with helper contexts before final lowering. Emitted code must use one
     ;; internally consistent layout view for all functions in this pass.
@@ -69913,17 +70387,26 @@
             [(ResultLowerDecls.Ok payload)
               (let
                 [success : LowerDeclsSuccess (deref payload)]
+                [program : ir.CompilerIrProgram
+                  (ir.CompilerIrProgram.Program
+                    success.globals
+                    success.functions
+                    success.externs)]
                 (begin
                   ;; Returning the public IR is the explicit text boundary:
                   ;; diagnostics, optimizers, and backend emitters may inspect
                   ;; symbol spellings, while construction above uses handles.
                   (lower-materialize-generated-role-symbols! lower-state)
-                  (ResultCompilerLower.Ok
-                    (ir.CompilerIrProgram.Program
-                      success.globals
-                      success.functions
-                      success.externs)
-                    success.spans)))]
+                  (match (compiler-lower-state-read
+                    lower-state
+                    pointer_proof.PointerProofRequest
+                    pointer-proof-request)
+                    [(pointer_proof.PointerProofRequest.Disabled) unit]
+                    [(pointer_proof.PointerProofRequest.Requested input)
+                      (pointer_proof.pointer-proof-input-bind!
+                        input
+                        (lower-global-shared-view program))])
+                  (ResultCompilerLower.Ok program success.spans)))]
             [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))
 
 ;; Internal `expanded` workers assume macro expansion has already run; the
@@ -71377,3 +71860,37 @@
 
 (define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode path src (CompilerLowerMode.Scalar)))
+
+(define (lower-compiler-source-with-request
+  [path : String]
+  [src : String]
+  [request : CompilerLowerRequest]) : ResultCompilerLower
+  (let
+    [state : CompilerLowerState (compiler-lower-state-new)]
+    (begin
+      (compiler-lower-state-use-request!
+        state
+        (lower-global-shared-view request))
+      (match request.pointer-proof
+        [(pointer_proof.PointerProofRequest.Disabled) unit]
+        [(pointer_proof.PointerProofRequest.Requested input)
+          (let
+            [error : String
+              (pointer_proof.pointer-proof-input-begin-error input)]
+            (begin
+              (when
+                (> (string.string-length (& error)) 0)
+                (return
+                  (ResultCompilerLower.Err
+                    (box
+                      (cdiag.compiler-diagnostic-at-start
+                        (lower-global-shared-view path)
+                        error)))))
+              (pointer_proof.pointer-proof-input-use-default-path!
+                input
+                (lower-global-shared-view path))))])
+      (lower-compiler-source-with-path-mode-and-state
+        state
+        path
+        src
+        request.mode))))

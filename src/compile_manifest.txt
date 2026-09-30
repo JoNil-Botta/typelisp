@@ -150,6 +150,9 @@ end
 case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|none|direct
 end
 
+case|selfhost_compiler_pointer_proof_input|src/compiler_pointer_proof_input.tl|assembly|none|direct
+end
+
 case|selfhost_compiler_optimize|src/compiler_optimize.tl|assembly|none|direct
 end
 

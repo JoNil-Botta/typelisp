@@ -112,6 +112,37 @@ focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispat
 records routing, residual inline bodies and the state/evaluation/provenance
 contract for those boundaries.
 
+Raw data-pointer return analysis requests a `CompilerLowerRequest` with a
+`PointerProofRequest.Requested` owner. Standalone callers use
+`lower-compiler-source-with-request`; driver callers install the request on
+their explicit lowering state before checked lowering. The specialized,
+typechecked function boundary records a graph of semantic occurrences before
+pointer machine normalization. Parameter ordinals, lexical bindings,
+assignment, branch alternatives, direct-call argument/result uses and function
+results refer to that graph. Pointer casts, pointer/integer conversions, null
+construction and offsets remain visible even when they emit no instruction.
+Function and call identities come from the existing lowering symbol authority;
+source spans use the existing source-location authority. The graph records
+resolved `Ptr`, `MutPtr`, integer and other source categories independently of
+the scalar machine representation.
+
+`lower-compiler-pointer-proof-result` produces the typed
+`ResultCompilerLowerPointerProof` analysis handoff only for complete evidence
+coupled to the exact unoptimized program. Ordinary lowering, a reused job
+owner, a foreign program, missing function metadata and an unclassified
+pointer producer fail closed. Consumers analyze this handoff before mutating
+or optimizing its IR; a later IR result cannot substitute for it. This layer
+does not grant nullable ABI permission or admit a return: caller/static origin
+classification, joins, recursion and witnesses belong to the return analysis.
+
+The graph owns copied source paths, spans and source categories in a dedicated
+arena, with no borrowed AST nodes, pooled types or source-interner strings.
+Its caller-owned control cell must remain live throughout analysis. After the
+handoff is consumed, `pointer-proof-input-release!` tombstones that cell and
+retires its data arena; references from another owner or a retired owner are
+rejected. Each job requests a fresh owner. Disabled jobs allocate no graph and
+perform no additional expression traversal.
+
 Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
 codegen'd once into archives; an in-process session cache warms compiler

@@ -2230,8 +2230,8 @@
                       [self-first? : bool (= in0.label label)]
                       [outer : ir.CompilerIrPhiInput
                         (if self-first?
-                          in1
-                          in0)]
+                          (owned_view.compiler-owned-shared-view in1)
+                          (owned_view.compiler-owned-shared-view in0))]
                       [inner : ir.CompilerIrPhiInput
                         (if self-first?
                           in0
@@ -20419,13 +20419,17 @@
     [replace-final? : bool (or (= label plan.preheader) (= label plan.latch))]
     [prefix : ir.CompilerIrInstrSeq
       (cond
-        [(= label plan.body-label) plan.phis]
-        [(= label plan.exit-label) plan.exit-phis]
+        [(= label plan.body-label)
+          (owned_view.compiler-owned-shared-view plan.phis)]
+        [(= label plan.exit-label)
+          (owned_view.compiler-owned-shared-view plan.exit-phis)]
         [else (ir.compiler-ir-instr-seq-empty)])]
     [guard : ir.CompilerIrInstrSeq
       (cond
-        [(= label plan.preheader) plan.preheader-guard]
-        [(= label plan.latch) plan.latch-guard]
+        [(= label plan.preheader)
+          (owned_view.compiler-owned-shared-view plan.preheader-guard)]
+        [(= label plan.latch)
+          (owned_view.compiler-owned-shared-view plan.latch-guard)]
         [else (ir.compiler-ir-instr-seq-empty)])]
     [inside? : bool (opt-label-contains plan.body label)]
     (opt-rotate-ssa-rewrite-instr-seq
@@ -37684,7 +37688,7 @@
               (match plan.cleared
                 [(ir.CompilerIrMaybeValue.Some cleared) cleared]
                 [(ir.CompilerIrMaybeValue.No) value])
-              plan.seed)
+              (owned_view.compiler-owned-shared-view plan.seed))
             value)
           label
           (opt-flag-exit-literalize-inputs rest plan))))))
@@ -38036,7 +38040,7 @@
             (opt-copy-subst-instr
               (compiler-opt-global-shared-view plan.mint-env)
               (compiler-opt-global-shared-view instr))
-            instr)]
+            (owned_view.compiler-owned-shared-view instr))]
         (cond
           [(not last?) read]
           [clear-pred? (opt-flag-exit-retarget instr label plan)]
@@ -39839,7 +39843,7 @@
         [seed-zero? : bool (opt-lftr-seed-literal? seed 0)]
         [offset-value : ir.CompilerIrValue
           (if seed-zero?
-            bound
+            (owned_view.compiler-owned-shared-view bound)
             (ir.CompilerIrValue.Var sub-var))]
         (begin
           (if seed-zero?
@@ -43657,8 +43661,8 @@
             phi-var
             op
             (if phi-left
-              var-value
-              literal)
+              (owned_view.compiler-owned-shared-view var-value)
+              (owned_view.compiler-owned-shared-view literal))
             (if phi-left
               literal
               var-value)
@@ -43696,7 +43700,7 @@
     [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
     [literal : ir.CompilerIrValue
       (if phi-left
-        rhs
+        (owned_view.compiler-owned-shared-view rhs)
         lhs)]
     (if (or
       (not (opt-bool-branch-compare-op? (compiler-opt-global-shared-view op)))
@@ -43880,7 +43884,7 @@
                 [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
                 [literal : ir.CompilerIrValue
                   (if phi-left
-                    rhs
+                    (owned_view.compiler-owned-shared-view rhs)
                     lhs)]
                 (if (or
                   (not (= cond-var cmp-var))
@@ -59639,7 +59643,7 @@
                             (>= from 0)
                             (not (opt-dom-info-dominates-id? doms id from)))
                             (opt-flag-facts-value facts from input.value)
-                            input.value)]
+                            (owned_view.compiler-owned-shared-view input.value))]
                         (begin
                           (if (opt-value-eq
                             (compiler-opt-global-shared-view value)
@@ -69604,7 +69608,7 @@
         [(ir.CompilerIrBlock.Block label _)
           (ir.compiler-ir-block-cons
             (if (= label loop-label)
-              new-block
+              (owned_view.compiler-owned-shared-view new-block)
               block)
             (opt-unroll-const-replace-block (deref rest) loop-label new-block))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -74704,7 +74708,7 @@
             (opt-bce-version-alloc-var cell))]
         [eff : ir.CompilerIrValue
           (if (= offset 0)
-            base
+            (owned_view.compiler-owned-shared-view base)
             (ir.CompilerIrValue.Var eff-var))]
         [eff-instrs : ir.CompilerIrInstrBuilder
           (if (= offset 0)
@@ -74910,7 +74914,7 @@
             (opt-bce-version-alloc-var cell))]
         [start : ir.CompilerIrValue
           (if (= kmin 0)
-            base
+            (owned_view.compiler-owned-shared-view base)
             (ir.CompilerIrValue.Var start-var))]
         [work : ir.CompilerIrInstrBuilder
           (if (= kmin 0)
@@ -75846,7 +75850,8 @@
               (ir.CompilerIrValue.Var maximum-trip)
               (match literal-room
                 [(OptBceVersionKSum.Some q) (ir.CompilerIrValue.I64 q)]
-                [(OptBceVersionKSum.No) origin]))]
+                [(OptBceVersionKSum.No)
+                  (owned_view.compiler-owned-shared-view origin)]))]
           [_emit-arithmetic : unit
             (begin
               (opt-bce-version-builder-push!
@@ -76995,18 +77000,22 @@
                 (match (compiler-opt-global-shared-view derived-guard)
                   [(OptBceVersionGuardAcc.No)
                     (OptBceVersionDerive
-                      state.guard
-                      (opt-bce-version-keep-add state.keep index)
+                      (owned_view.compiler-owned-shared-view state.guard)
+                      (opt-bce-version-keep-add
+                        (owned_view.compiler-owned-shared-view state.keep)
+                        index)
                       state.derived)]
                   [(OptBceVersionGuardAcc.Some _ _ _)
                     (OptBceVersionDerive
                       derived-guard
-                      state.keep
+                      (owned_view.compiler-owned-shared-view state.keep)
                       (+ state.derived 1))]))]
             [(ir.CompilerIrMaybeValue.No)
               (OptBceVersionDerive
-                state.guard
-                (opt-bce-version-keep-add state.keep index)
+                (owned_view.compiler-owned-shared-view state.guard)
+                (opt-bce-version-keep-add
+                  (owned_view.compiler-owned-shared-view state.keep)
+                  index)
                 state.derived)])]
         [_ state]))))
 
@@ -81842,11 +81851,15 @@
                   plan
                   (OptBceMbFarPlan
                     plan.wire
-                    plan.wire-vars
+                    (owned_view.compiler-owned-shared-view plan.wire-vars)
                     plan.far-labels
-                    plan.far-vars
-                    (opt-bce-mb-var-list-prepend plan.phi-labels label)
-                    (opt-bce-mb-var-list-prepend plan.phi-vars var))))]
+                    (owned_view.compiler-owned-shared-view plan.far-vars)
+                    (opt-bce-mb-var-list-prepend
+                      (owned_view.compiler-owned-shared-view plan.phi-labels)
+                      label)
+                    (opt-bce-mb-var-list-prepend
+                      (owned_view.compiler-owned-shared-view plan.phi-vars)
+                      var))))]
             [_ plan]))]
       (opt-bce-mb-far-phi-input-seq
         body-labels
@@ -82160,13 +82173,15 @@
         (if (opt-dom-dominates? doms plan.wire label)
           (OptBceMbFarPlan
             plan.wire
-            plan.wire-vars
+            (owned_view.compiler-owned-shared-view plan.wire-vars)
             (opt-label-add plan.far-labels label)
             (if (opt-bce-mb-var-list-contains? plan.far-vars var)
-              plan.far-vars
-              (opt-bce-mb-var-list-prepend plan.far-vars var))
-            plan.phi-labels
-            plan.phi-vars)
+              (owned_view.compiler-owned-shared-view plan.far-vars)
+              (opt-bce-mb-var-list-prepend
+                (owned_view.compiler-owned-shared-view plan.far-vars)
+                var))
+            (owned_view.compiler-owned-shared-view plan.phi-labels)
+            (owned_view.compiler-owned-shared-view plan.phi-vars))
           plan)]
       (opt-bce-mb-far-merge-phis doms next (+ index 1)))))
 
@@ -84692,7 +84707,7 @@
                       cell
                       (compiler-opt-global-shared-view anchor-length)
                       (compiler-opt-global-shared-view length-invariant)
-                      state.guard))]
+                      (owned_view.compiler-owned-shared-view state.guard)))]
                 (match (compiler-opt-global-shared-view with-relation)
                   [(OptBceVersionGuardAcc.No) kept]
                   [(OptBceVersionGuardAcc.Some _ _ _)
@@ -84704,7 +84719,7 @@
                       (if related?
                         state.fused
                         (opt-bce-mb-fused-prepend
-                          state.fused
+                          (owned_view.compiler-owned-shared-view state.fused)
                           anchor-length
                           length-invariant)))]))]))]
       [_ kept])))
@@ -84852,7 +84867,7 @@
                 (compiler-opt-global-shared-view state.hoists)
                 fan
                 (compiler-opt-global-shared-view state.guard)
-                state)]
+                (owned_view.compiler-owned-shared-view state))]
             [(ir.CompilerIrMaybeValue.No)
               ;; A hoisted descriptor length costs a gep+load in the guard for
               ;; the whole loop, which is priced against a trip range; a
@@ -84872,11 +84887,11 @@
                   (compiler-opt-global-shared-view state.guard)))
                 [(OptBceMbMaybeLength.No)
                   (OptBceMbDerive
-                    state.guard
+                    (owned_view.compiler-owned-shared-view state.guard)
                     (opt-bce-mb-keep-cons label index state.keep)
                     state.derived
-                    state.hoists
-                    state.fused)]
+                    (owned_view.compiler-owned-shared-view state.hoists)
+                    (owned_view.compiler-owned-shared-view state.fused))]
                 [(OptBceMbMaybeLength.Some
                     hoisted-length
                     hoisted-hoists
@@ -84900,7 +84915,7 @@
                     hoisted-hoists
                     fan
                     hoisted-guard
-                    state)])])]
+                    (owned_view.compiler-owned-shared-view state))])])]
         [_ state]))))
 
 ;; An UNCOVERED block's checks: the counter compare does not dominate them
@@ -89980,8 +89995,8 @@
                 [last? : bool (= next (- count 1))]
                 [remap : (__tl_dyn-array ir.CompilerIrValue)
                   (if (= copy 0)
-                    remap0
-                    remap1)]
+                    (owned_view.compiler-owned-shared-view remap0)
+                    (owned_view.compiler-owned-shared-view remap1))]
                 [cloned : ir.CompilerIrInstr
                   (if (and last? (= label shape.latch))
                     (match (compiler-opt-global-shared-view instr)
@@ -90001,7 +90016,7 @@
                               shape.header
                               0)
                             shape.exit-label))]
-                      [_ instr])
+                      [_ (owned_view.compiler-owned-shared-view instr)])
                     (if (and
                       (= label shape.header)
                       (match (& instr)
@@ -98510,8 +98525,10 @@
                                       (let
                                         [on-true : ir.CompilerIrValue
                                           (if forward?
-                                            first
-                                            second)]
+                                            (owned_view.compiler-owned-shared-view
+                                              first)
+                                            (owned_view.compiler-owned-shared-view
+                                              second))]
                                         [on-false : ir.CompilerIrValue
                                           (if forward?
                                             second

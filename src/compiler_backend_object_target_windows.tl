@@ -1012,7 +1012,7 @@
   (cobj.compiler-object-symbol-builder-finish
     (if emit-manifest-resource
       (cobj.compiler-object-symbol-builder-push
-        parts.symbols
+        (owned_view.compiler-owned-shared-view parts.symbols)
         (cobj.CompilerObjectSymbol.Symbol
           (compiler-backend-object-global-shared-view
             compiler-backend-object-manifest-label)
@@ -1028,7 +1028,7 @@
   (cobj.compiler-object-relocation-builder-finish
     (if emit-manifest-resource
       (cobj.compiler-object-relocation-builder-push
-        parts.relocations
+        (owned_view.compiler-owned-shared-view parts.relocations)
         (cobj.CompilerObjectRelocation.Relocation
           (cobj.CompilerObjectSectionKind.Rsrc)
           (compiler-backend-object-global-shared-view

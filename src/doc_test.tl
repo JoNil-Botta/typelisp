@@ -1876,7 +1876,7 @@
           (if (or
             (compiler_load.compiler-load-absolute-path? path)
             (doc-test-path-under-root? normalized manifest-dir))
-            normalized
+            (owned_view.compiler-owned-shared-view normalized)
             (compiler_load.compiler-load-normalize-path
               (compiler_load.compiler-load-join-root-path
                 (owned_view.compiler-owned-shared-view manifest-dir)

@@ -559,8 +559,12 @@
                   (if (string.eq kind "module")
                     (compiler-profile-summary-module
                       (array-ref exact-names exact-index))
-                    (array-ref exact-names exact-index))
-                  (array-ref names index))
+                    (owned_view.compiler-owned-array-element-shared-view
+                      exact-names
+                      exact-index))
+                  (owned_view.compiler-owned-array-element-shared-view
+                    names
+                    index))
                 elapsed
                 calls)
               (set! shown-elapsed (+ shown-elapsed elapsed))

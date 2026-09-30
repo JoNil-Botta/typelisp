@@ -2299,7 +2299,7 @@
     [repo-root : String
       (if (= (string.string-length manifest-dir) 0)
         "."
-        manifest-dir)]
+        (owned_view.compiler-owned-shared-view manifest-dir))]
     [target-dir : String
       (load.compiler-load-join-root-path manifest-dir "target")]
     [identity-dir : String
@@ -2963,8 +2963,10 @@
           [link : load.CompilerPkgLink node.manifest.link]
           [selected : load.CompilerPkgLinkSet
             (match target
-              [(backend.CompilerBackendTarget.Linux) link.linux]
-              [(backend.CompilerBackendTarget.Windows) link.windows])]
+              [(backend.CompilerBackendTarget.Linux)
+                (owned_view.compiler-owned-shared-view link.linux)]
+              [(backend.CompilerBackendTarget.Windows)
+                (owned_view.compiler-owned-shared-view link.windows)])]
           [owner : String
             (build-package-link-owner
               (owned_view.compiler-owned-shared-view node.manifest.name)
@@ -3024,7 +3026,9 @@
   (load.compiler-load-canonical-path
     (if (load.compiler-load-absolute-path? dep.path)
       dep.path
-      (load.compiler-load-join-root-path manifest-dir dep.path))))
+      (load.compiler-load-join-root-path
+        manifest-dir
+        (owned_view.compiler-owned-shared-view dep.path)))))
 
 (define (build-package-catalog-deps-contain-root?
   [deps : (& deps load.CompilerPkgDepList)]
@@ -3279,7 +3283,7 @@
     [canonical-name : String
       (csym.compiler-symbol-module-key
         (if (= (string.string-length module) 0)
-          package-name
+          (owned_view.compiler-owned-shared-view package-name)
           module)
         (ci.intern-str name))]
     [signature : String
@@ -3504,7 +3508,8 @@
           (let
             [decl-path : String
               (match (ast.ast-decl-path-list-step path-cursor)
-                [(ast.AstDeclPathListStep.Nil) fallback-path]
+                [(ast.AstDeclPathListStep.Nil)
+                  (owned_view.compiler-owned-shared-view fallback-path)]
                 [(ast.AstDeclPathListStep.Cons path _) path])]
             [owned-path : String
               (if (build-package-tlci-source-owned? owned-sources decl-path)
@@ -3574,7 +3579,8 @@
             (let
               [decl-path : String
                 (match (ast.ast-decl-path-list-step path-cursor)
-                  [(ast.AstDeclPathListStep.Nil) fallback-path]
+                  [(ast.AstDeclPathListStep.Nil)
+                    (owned_view.compiler-owned-shared-view fallback-path)]
                   [(ast.AstDeclPathListStep.Cons path _) path])]
               [owned-path : String
                 (if (build-package-tlci-source-owned? owned-sources decl-path)

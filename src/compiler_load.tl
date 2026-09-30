@@ -10445,10 +10445,10 @@
             [decls : ast.AstDeclList (deref decls-box)]
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
-                source-module-fallback
+                (owned_view.compiler-owned-shared-view source-module-fallback)
                 (if (compiler-load-stdlib-source-module-import?
                   (compiler-load-normalize-path path))
-                  module-id-fallback
+                  (owned_view.compiler-owned-shared-view module-id-fallback)
                   ""))]
             [source-module : String
               (compiler-load-decls-source-module-or
@@ -12274,7 +12274,7 @@
     [canonical-name : String
       (compiler-load-package-module-key
         (if (= (string.string-length module) 0)
-          package-owner
+          (owned_view.compiler-owned-shared-view package-owner)
           module)
         (ci.intern-str name))]
     [callables : ast.AstImportedSpmdCallableList
@@ -13594,10 +13594,10 @@
             [decls : ast.AstDeclList (deref decls-box)]
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
-                source-module-fallback
+                (owned_view.compiler-owned-shared-view source-module-fallback)
                 (if (compiler-load-stdlib-source-module-import?
                   (compiler-load-normalize-path path))
-                  module-id-fallback
+                  (owned_view.compiler-owned-shared-view module-id-fallback)
                   ""))]
             [source-module : String
               (compiler-load-decls-source-module-or
@@ -15571,7 +15571,7 @@
         [trimmed : String
           (if (compiler-load-path-separator? (string.string-ref dir (- n 1)))
             (string.substring dir 0 (- n 1))
-            dir)]
+            (owned_view.compiler-owned-shared-view dir))]
         [parent : String (compiler-load-dirname trimmed)]
         (if (string.eq parent dir)
           (CompilerLoadNoPath)

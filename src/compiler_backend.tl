@@ -6331,7 +6331,7 @@
                 8
                 "%r9"
                 backend-state)
-              index-home)]
+              (owned_view.compiler-owned-shared-view index-home))]
           (match (compiler-backend-emit-simd-base-data-pointer
             assignments
             base
@@ -8899,8 +8899,8 @@
                               mnemonic
                               " "
                               (if dword
-                                mask-xmm
-                                mask-reg)
+                                (owned_view.compiler-owned-shared-view mask-xmm)
+                                (owned_view.compiler-owned-shared-view mask-reg))
                               ", ("
                               base-reg
                               ",%ymm15,"
@@ -8909,8 +8909,8 @@
                                 "8")
                               "), "
                               (if dword
-                                dst-xmm
-                                dst-reg)
+                                (owned_view.compiler-owned-shared-view dst-xmm)
+                                (owned_view.compiler-owned-shared-view dst-reg))
                               "\n"
                               (if dword
                                 (str_cat.str-cat
@@ -9104,8 +9104,8 @@
                                 "8")
                               "), "
                               (if dword
-                                dst-ymm
-                                dst-reg)
+                                (owned_view.compiler-owned-shared-view dst-ymm)
+                                (owned_view.compiler-owned-shared-view dst-reg))
                               "{%k7}\n"
                               (if dword
                                 (str_cat.str-cat
@@ -9836,8 +9836,8 @@
     [blend? : bool (>= blend-mask 0)]
     [out-reg : String
       (if blend?
-        work0
-        dst-reg)]
+        (owned_view.compiler-owned-shared-view work0)
+        (owned_view.compiler-owned-shared-view dst-reg))]
     [combine : String
       (match op
         [(compiler_ir_types.CompilerIrVectorPrefixOp.Sum)
@@ -10322,7 +10322,7 @@
       [register-ty : compiler_ast_types.AstType
         (match (compiler-backend-global-shared-view elem-ty)
           [(compiler_ast_types.AstType.Bool) (compiler_ast_types.AstType.I8)]
-          [_ elem-ty])]
+          [_ (owned_view.compiler-owned-shared-view elem-ty)])]
       [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
       [dst-scratch-xmm : String
         (compiler-backend-scavenge-xmm-reg
@@ -11142,7 +11142,7 @@
       (if (and
         (not (string.eq index-home ""))
         (not (string.eq index-home count-reg)))
-        index-home
+        (owned_view.compiler-owned-shared-view index-home)
         (compiler-backend-scavenge-reg-here
           (compiler-backend-global-shared-view index-exclude)
           7
@@ -12805,7 +12805,7 @@
           (not (string.eq conditional-address "")))]
       [conditional-reg : String
         (if conditional-direct?
-          true-home
+          (owned_view.compiler-owned-shared-view true-home)
           (compiler-backend-scavenge-reg
             dst
             (compiler-backend-two-exclude
@@ -13016,7 +13016,7 @@
           (compiler-backend-global-shared-view cmp-ty))]
       [dest-reg : String
         (if swap?
-          rhs-home
+          (owned_view.compiler-owned-shared-view rhs-home)
           lhs-home)]
       [source-operand : String
         (if swap?
@@ -13086,7 +13086,7 @@
           (compiler-backend-global-shared-view guard-b))]
       [result-peek : String
         (if use-dst-home?
-          dst-home
+          (owned_view.compiler-owned-shared-view dst-home)
           (compiler-backend-flags-select-reg
             true
             dst
@@ -20626,20 +20626,24 @@
           (let
             [high-compare-left : String
               (match op
-                [(compiler_ir_types.CompilerIrVectorReduceOp.Min) acc-xmm]
-                [_ xmm])]
+                [(compiler_ir_types.CompilerIrVectorReduceOp.Min)
+                  (owned_view.compiler-owned-shared-view acc-xmm)]
+                [_ (owned_view.compiler-owned-shared-view xmm)])]
             [high-compare-right : String
               (match op
-                [(compiler_ir_types.CompilerIrVectorReduceOp.Min) xmm]
-                [_ acc-xmm])]
+                [(compiler_ir_types.CompilerIrVectorReduceOp.Min)
+                  (owned_view.compiler-owned-shared-view xmm)]
+                [_ (owned_view.compiler-owned-shared-view acc-xmm)])]
             [lane-compare-left : String
               (match op
-                [(compiler_ir_types.CompilerIrVectorReduceOp.Min) scratch-xmm]
-                [_ acc-xmm])]
+                [(compiler_ir_types.CompilerIrVectorReduceOp.Min)
+                  (owned_view.compiler-owned-shared-view scratch-xmm)]
+                [_ (owned_view.compiler-owned-shared-view acc-xmm)])]
             [lane-compare-right : String
               (match op
-                [(compiler_ir_types.CompilerIrVectorReduceOp.Min) acc-xmm]
-                [_ scratch-xmm])]
+                [(compiler_ir_types.CompilerIrVectorReduceOp.Min)
+                  (owned_view.compiler-owned-shared-view acc-xmm)]
+                [_ (owned_view.compiler-owned-shared-view scratch-xmm)])]
             (str_cat.str-cat
               "    vextracti128 $1, "
               ymm
@@ -21508,11 +21512,11 @@
         ;; leaving the stack-dst exclusions unchanged.
         [dst0-reg : String
           (if (compiler-backend-pack-word-dst-register? dst0)
-            dst0
+            (owned_view.compiler-owned-shared-view dst0)
             "")]
         [dst1-reg : String
           (if (compiler-backend-pack-word-dst-register? dst1)
-            dst1
+            (owned_view.compiler-owned-shared-view dst1)
             "")]
         [scratch0-exclude : (__tl_dyn-array String)
           (compiler-backend-three-exclude
@@ -24869,7 +24873,8 @@
                                                           frame-base-slots
                                                           frame-count
                                                           1))))
-                                                  reg-name)]
+                                                  (owned_view.compiler-owned-shared-view
+                                                    reg-name))]
                                               (begin
                                                 ;; synthetic occupancy entry
                                                 (set!
@@ -25349,7 +25354,7 @@
             "")]
         [magic-src : String
           (if (string.eq home "")
-            scratch-reg
+            (owned_view.compiler-owned-shared-view scratch-reg)
             home)]
         [quotient-asm : String
           (if want-remainder
@@ -25383,7 +25388,7 @@
             "")]
         [magic-src : String
           (if (string.eq home "")
-            scratch-reg
+            (owned_view.compiler-owned-shared-view scratch-reg)
             home)]
         [quotient-asm : String
           (if want-remainder
@@ -25496,7 +25501,7 @@
         "")]
     [magic-src : String
       (if (string.eq home "")
-        scratch-reg
+        (owned_view.compiler-owned-shared-view scratch-reg)
         home)]
     [quotient-asm : String
       (if want-remainder
@@ -25677,7 +25682,7 @@
         "")]
     [magic-src : String
       (if (string.eq home "")
-        scratch-reg
+        (owned_view.compiler-owned-shared-view scratch-reg)
         home)]
     [quotient-prefix : String
       (str_cat.str-cat
@@ -27863,7 +27868,7 @@
             5
             "%r8"
             backend-state)
-          dst-home)]
+          (owned_view.compiler-owned-shared-view dst-home))]
       [store-result : String
         (if (string.eq dst-home "")
           (compiler-backend-emit-store-typed-var
@@ -29159,7 +29164,7 @@
       (cond
         [direct-rax-src? "%rax"]
         [own-src? lhs-home]
-        [dst-src? dst-home]
+        [dst-src? (owned_view.compiler-owned-shared-view dst-home)]
         [else
           (compiler-backend-scavenge-divmod-src-reg
             dst
@@ -29176,11 +29181,11 @@
     [result-reg : String
       (if (string.eq dst-home "")
         (if (compiler-backend-binop-wants-remainder? op)
-          src
+          (owned_view.compiler-owned-shared-view src)
           ;; Quotient-only strength reductions honor a requested %rax result;
           ;; staging a spilled store there avoids a fixed-register hop.
           "%rax")
-        dst-home)]
+        (owned_view.compiler-owned-shared-view dst-home))]
     (match (compiler-backend-emit-load-value
       assignments
       lhs
@@ -29583,7 +29588,7 @@
                           backend-state
                           assignments
                           rhs)
-                        rhs-hoist)]
+                        (owned_view.compiler-owned-shared-view rhs-hoist))]
                     [lhs-reg : String
                       (compiler-backend-value-scalar-register
                         backend-state
@@ -29648,8 +29653,8 @@
                           (str_cat.str-cat
                             "    leaq ("
                             (if (string.eq lhs-reg "%rbp")
-                              rhs-reg
-                              lhs-reg)
+                              (owned_view.compiler-owned-shared-view rhs-reg)
+                              (owned_view.compiler-owned-shared-view lhs-reg))
                             ","
                             (if (string.eq lhs-reg "%rbp")
                               lhs-reg
@@ -30950,7 +30955,8 @@
                                     (compiler-backend-cycle-temp-slot-with-backend-state
                                       backend-state
                                       0)
-                                    rhs-reg)]
+                                    (owned_view.compiler-owned-shared-view
+                                      rhs-reg))]
                                 (if rhs-frame?
                                   (compiler-backend-emit-return-compare-frame-fallback
                                     type-segment-bases
@@ -30988,8 +30994,10 @@
                                                 assignments
                                                 lhs)
                                               rhs-reg))
-                                            lhs-asm
-                                            rhs-asm)
+                                            (owned_view.compiler-owned-shared-view
+                                              lhs-asm)
+                                            (owned_view.compiler-owned-shared-view
+                                              rhs-asm))
                                           (if (and
                                             (not
                                               (string.eq
@@ -31062,7 +31070,8 @@
                                     (compiler-backend-cycle-temp-slot-with-backend-state
                                       backend-state
                                       0)
-                                    rhs-reg)]
+                                    (owned_view.compiler-owned-shared-view
+                                      rhs-reg))]
                                 (if rhs-frame?
                                   (compiler-backend-emit-return-compare-frame-fallback
                                     type-segment-bases
@@ -31097,8 +31106,10 @@
                                                 assignments
                                                 lhs)
                                               rhs-reg))
-                                            lhs-asm
-                                            rhs-asm)
+                                            (owned_view.compiler-owned-shared-view
+                                              lhs-asm)
+                                            (owned_view.compiler-owned-shared-view
+                                              rhs-asm))
                                           (if (and
                                             (not
                                               (string.eq
@@ -32394,7 +32405,7 @@
                   base-home))]
             [addr : String
               (if (not (string.eq rip ""))
-                rip
+                (owned_view.compiler-owned-shared-view rip)
                 (compiler-backend-base-address
                   disp
                   (compiler-backend-global-shared-view scav-base)))]
@@ -32673,7 +32684,7 @@
           6
           "%r10"
           program-index.backend-state)
-        index-reg)]
+        (owned_view.compiler-owned-shared-view index-reg))]
     (if (string.eq index-reg "")
       (let
         [const-imm : String
@@ -33541,7 +33552,7 @@
                           0
                           "%xmm2"
                           backend-state))
-                      dst-home)]
+                      (owned_view.compiler-owned-shared-view dst-home))]
                   [store-asm : String
                     (if (string.eq dst-home "")
                       (compiler-backend-emit-store-float-var
@@ -33591,7 +33602,7 @@
           0
           "%xmm2"
           backend-state)
-        dst-home)]
+        (owned_view.compiler-owned-shared-view dst-home))]
     (str_cat.str-cat
       (compiler-backend-emit-load-float-memory addr load-reg ty)
       (if (string.eq dst-home "")
@@ -34200,7 +34211,7 @@
             protect-n
             "%r10"
             backend-state)
-          dst-home)]
+          (owned_view.compiler-owned-shared-view dst-home))]
       (match (if (string.eq dst-home "")
         (compiler-backend-emit-load-value
           assignments
@@ -34232,7 +34243,7 @@
                   (+ 1 protect-n)
                   "%r9"
                   backend-state)
-                src-home)]
+                (owned_view.compiler-owned-shared-view src-home))]
             [copy-xmm : String
               (compiler-backend-copy-xmm-scratch size backend-state)]
             [copy-gp-exclude-base : (__tl_dyn-array String)
@@ -34570,7 +34581,7 @@
           (+ 1 protect-n)
           "%r10"
           backend-state)
-        base-home)]
+        (owned_view.compiler-owned-shared-view base-home))]
     (match (if (string.eq base-home "")
       (match (compiler-backend-emit-load-value
         assignments
@@ -34606,7 +34617,7 @@
                 (+ 1 protect-n)
                 "%r9"
                 backend-state)
-              src-home)]
+              (owned_view.compiler-owned-shared-view src-home))]
           [copy-xmm : String
             (compiler-backend-copy-xmm-scratch size backend-state)]
           [copy-gp : String
@@ -34753,7 +34764,7 @@
                     (+ 1 protect-n)
                     "%r9"
                     backend-state)
-                  src-home)]
+                  (owned_view.compiler-owned-shared-view src-home))]
               [copy-xmm : String
                 (compiler-backend-copy-xmm-scratch size backend-state)]
               [copy-gp : String
@@ -34967,7 +34978,7 @@
           (+ 2 protect-n)
           "%r10"
           backend-state)
-        dst-home)]
+        (owned_view.compiler-owned-shared-view dst-home))]
     (match (if (string.eq dst-home "")
       (compiler-backend-emit-load-value
         assignments
@@ -35048,7 +35059,7 @@
           (+ 2 protect-n)
           "%r9"
           backend-state)
-        src-home)]
+        (owned_view.compiler-owned-shared-view src-home))]
     (match (if (string.eq src-home "")
       (compiler-backend-emit-load-value
         assignments
@@ -35273,7 +35284,7 @@
               base-home))]
         [addr : String
           (if (not (string.eq rip ""))
-            rip
+            (owned_view.compiler-owned-shared-view rip)
             (compiler-backend-base-address
               disp
               (compiler-backend-global-shared-view base-reg)))]
@@ -35789,7 +35800,7 @@
                 exclude-n
                 "%xmm2"
                 backend-state)
-              src-home)]
+              (owned_view.compiler-owned-shared-view src-home))]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg
               type-segment-bases
@@ -35822,7 +35833,7 @@
                 exclude-n
                 "%r8"
                 backend-state)
-              src-home)]
+              (owned_view.compiler-owned-shared-view src-home))]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg
               type-segment-bases
@@ -36052,7 +36063,7 @@
         (compiler-backend-gep-sib-scale? scale))]
     [scav-idx : String
       (if direct-index?
-        offset-home
+        (owned_view.compiler-owned-shared-view offset-home)
         (compiler-backend-scavenge-reg-here
           (compiler-backend-scavenge-exclude-ops2
             backend-state
@@ -36120,7 +36131,7 @@
                 (if (string.eq addr "")
                   (compiler-backend-base-deref
                     (compiler-backend-global-shared-view scav-fold))
-                  addr)]
+                  (owned_view.compiler-owned-shared-view addr))]
               [store-exclude : (__tl_dyn-array String)
                 (if (string.eq addr "")
                   (compiler-backend-one-exclude scav-fold)
@@ -36519,7 +36530,7 @@
                 0
                 "%r8"
                 backend-state)
-              src-reg)]
+              (owned_view.compiler-owned-shared-view src-reg))]
           [dst-tmp : String
             (compiler-backend-scavenge-xmm-reg
               dst
@@ -36653,7 +36664,7 @@
                 0
                 "%xmm2"
                 backend-state)
-              src-reg))]
+              (owned_view.compiler-owned-shared-view src-reg)))]
         [dst-reg : String
           (if (and
             (not (string.eq dst-home ""))
@@ -36999,7 +37010,7 @@
                     0
                     "%xmm2"
                     backend-state)
-                  src-reg)]
+                  (owned_view.compiler-owned-shared-view src-reg))]
               [dst-reg : String
                 (if (and
                   (not (string.eq dst-home ""))
@@ -37061,7 +37072,7 @@
                     0
                     "%r8"
                     backend-state)
-                  src-reg)]
+                  (owned_view.compiler-owned-shared-view src-reg))]
               [dst-tmp : String
                 (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
                   dst-home
@@ -43922,7 +43933,7 @@
             exclude-n
             "%r8"
             backend-state))
-        dst-home)]
+        (owned_view.compiler-owned-shared-view dst-home))]
     ;; The scavenged staging register may host a value live through the edge even
     ;; when the point-local occupancy mask reads it free. Back edges hit this
     ;; when a loop-carried value's next use is in the next iteration; a drained
@@ -46992,7 +47003,7 @@
               exclude-n
               "%xmm2"
               backend-state)
-            dst-home)]
+            (owned_view.compiler-owned-shared-view dst-home))]
         (match (compiler-backend-emit-load-typed-value-to-reg
           type-segment-bases
           assignments
@@ -53627,8 +53638,8 @@
               ;; ALU destination's home before the memory operand is consumed.
               [x : compiler_ir_types.CompilerIrValue
                 (if mem-is-rhs?
-                  lhs
-                  rhs)]
+                  (owned_view.compiler-owned-shared-view lhs)
+                  (owned_view.compiler-owned-shared-view rhs))]
               [dst-home : String
                 (compiler-backend-var-register-home
                   backend-state
@@ -55081,8 +55092,8 @@
                     cmp-var)))]
             [other : compiler_ir_types.CompilerIrValue
               (if mem-is-lhs?
-                rhs
-                lhs)]
+                (owned_view.compiler-owned-shared-view rhs)
+                (owned_view.compiler-owned-shared-view lhs))]
             (if (and
               (compiler-backend-compare-op? op)
               (compiler-backend-var-single-use? ctx.use-counts cmp-dst)
@@ -55388,8 +55399,8 @@
     (match (compiler-backend-gep-load-bounds-probe
       (compiler-backend-global-shared-view ctx)
       (if (string.eq addr "")
-        staged-addr
-        addr)
+        (owned_view.compiler-owned-shared-view staged-addr)
+        (owned_view.compiler-owned-shared-view addr))
       load-dst
       (compiler-backend-global-shared-view load-ty)
       (compiler-backend-global-shared-view instrs)
@@ -55454,8 +55465,8 @@
         (match (compiler-backend-gep-load-cmp-branch-probe
           (compiler-backend-global-shared-view ctx)
           (if (string.eq addr "")
-            staged-addr
-            addr)
+            (owned_view.compiler-owned-shared-view staged-addr)
+            (owned_view.compiler-owned-shared-view addr))
           load-dst
           (compiler-backend-global-shared-view load-ty)
           (compiler-backend-global-shared-view instrs)
@@ -55496,8 +55507,8 @@
             (match (compiler-backend-gep-load-widen-cast-probe
               (compiler-backend-global-shared-view ctx)
               (if (string.eq addr "")
-                staged-addr
-                addr)
+                (owned_view.compiler-owned-shared-view staged-addr)
+                (owned_view.compiler-owned-shared-view addr))
               load-dst
               (compiler-backend-global-shared-view load-ty)
               (compiler-backend-global-shared-view instrs)
@@ -57882,8 +57893,8 @@
                   (str_cat.str-cat
                     "    leaq ("
                     (if (string.eq lhs-reg "%rbp")
-                      rhs-reg
-                      lhs-reg)
+                      (owned_view.compiler-owned-shared-view rhs-reg)
+                      (owned_view.compiler-owned-shared-view lhs-reg))
                     ","
                     (if (string.eq lhs-reg "%rbp")
                       lhs-reg
@@ -73912,7 +73923,8 @@
           (compiler_regalloc.compiler-reg-max scratch-vars slot-vars)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (match (compiler-backend-global-shared-view coloring)
-            [(compiler_regalloc.CompilerRegColoring.None) spans]
+            [(compiler_regalloc.CompilerRegColoring.None)
+              (owned_view.compiler-owned-shared-view spans)]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (if (>
                 (compiler_liveness.compiler-live-set-word-count
@@ -73922,7 +73934,7 @@
                   (compiler-backend-global-shared-view spans)
                   name
                   remap)
-                spans)])]
+                (owned_view.compiler-owned-shared-view spans))])]
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
@@ -74156,7 +74168,7 @@
               function-state
               compiler-backend-function-i64-array-swb-bare-labels
               (if swb-active?
-                swb-bare
+                (owned_view.compiler-owned-shared-view swb-bare)
                 (__tl_make-array i64 0))))]
         [shrinkwrap-saving-label : i64
           (compiler_regalloc.compiler-reg-early-exit-saving-label-current)]
@@ -74686,7 +74698,7 @@
                                 (compiler-backend-global-shared-view
                                   shrinkwrap-planned-guard)
                                 shrinkwrap-incoming-guard)
-                              body)]
+                              (owned_view.compiler-owned-shared-view body))]
                           [framed-body : String
                             (if wrap-active?
                               (let
@@ -75104,11 +75116,13 @@
                                     swb-plan.dup-sites
                                     swb-plan.dup-site-count
                                     swb-plan.dup-text)
-                                  final-body)]
+                                  (owned_view.compiler-owned-shared-view
+                                    final-body))]
                               [entry-symbol : String
                                 (if wrap-active?
-                                  saving-asm-label
-                                  symbol)]
+                                  (owned_view.compiler-owned-shared-view
+                                    saving-asm-label)
+                                  (owned_view.compiler-owned-shared-view symbol))]
                               [windows-describe? : bool
                                 (compiler-backend-windows-framed-describe-saves?
                                   target-policy
@@ -78190,7 +78204,7 @@
           0
           "%r10"
           backend-state)
-        src-home)]
+        (owned_view.compiler-owned-shared-view src-home))]
     [shuttle : String
       (compiler-backend-scavenge-reg-here
         (compiler-backend-one-exclude

@@ -5805,7 +5805,7 @@
             sites
             index
             (if editable
-              cached-source
+              (owned_view.compiler-owned-shared-view cached-source)
               ""))
           (set! index (+ index 1)))))))
 

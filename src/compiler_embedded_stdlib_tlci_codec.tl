@@ -642,8 +642,10 @@
                             (let
                               [lookup : (__tl_dyn-array i64)
                                 (if (= stage 1)
-                                  distance-lookup
-                                  length-lookup)]
+                                  (owned_view.compiler-owned-shared-view
+                                    distance-lookup)
+                                  (owned_view.compiler-owned-shared-view
+                                    length-lookup))]
                               [value : i64 (- 0 1)]
                               (begin
                                 (when

@@ -408,7 +408,9 @@
                   starts
                   ends
                   (if (> (array-length after-items) 0)
-                    (array-ref after-items 0)
+                    (owned_view.compiler-owned-array-element-shared-view
+                      after-items
+                      0)
                     (compiler_liveness.compiler-live-set-empty))
                   0
                   point)
@@ -39237,7 +39239,7 @@ b_keep:
                     backend-state
                     stream
                     (backend.compiler-backend-global-shared-view state))
-                  state)]
+                  (owned_view.compiler-owned-shared-view state))]
               [group : text_buf.TextBuf
                 (in-arena group-arena (text_buf.append at-boundary.group chunk))]
               (begin

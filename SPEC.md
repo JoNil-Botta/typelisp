@@ -4131,10 +4131,10 @@ out by installing a caller-supplied replacement.
 value comes out of an `if`, `match`, `cond`, `begin`, `unsafe`, `let`, `with`,
 `with-arena`, `with-escape`, `with-scratch` or `in-arena` moves the place named
 at each of that form's value tails, except a tail naming a binding the form
-introduces itself. This applies when the value carries a
-cleanup obligation: its type is a cleanup-owning struct or enum, or holds one
-through a `Box`, an array or a tuple, or the place is an active `with` owner.
-Other move-only values are not yet moved through these forms (#8269).
+introduces itself. This applies to every non-`Copy` value, so a value chosen
+through one of these forms moves exactly once; an active `with` owner moves
+there even when its type is `Copy`. Code that must keep reading the chosen
+place borrows it instead, for example `(if c (& x) (& z))`.
 
 **Concrete closure calls.** Lambda literals and their direct local bindings
 retain the checker-only shared, mutable, or consuming capability described in

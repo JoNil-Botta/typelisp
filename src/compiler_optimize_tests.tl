@@ -64282,6 +64282,8 @@
         (opt-cse-table-result bases (& table) (& missing))
         -1
         "empty lookup misses")
+      (set! table (opt.opt-expr-table-add bases (& table) (clone missing) 7))
+      (set! table (opt.opt-expr-invalidate-var (& table) 7))
       (while (< index 65)
         (let
           [key : opt.OptExprKey
@@ -64337,11 +64339,17 @@
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [table : opt.OptExprTable (opt.opt-expr-table-new)]
     [retired : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 1 : i64")]
+    [retired-collision : opt.OptExprKey
+      (opt-cse-table-key "%0 = add %7, 2147483648 : i64")]
     [key : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 2 : i64")]
+    [current-collision : opt.OptExprKey
+      (opt-cse-table-key "%0 = add %7, 2147483649 : i64")]
     (begin
       (set! table (opt.opt-expr-table-add bases (& table) (clone retired) 9))
+      (set! table (opt.opt-expr-table-add bases (& table) retired-collision 10))
       (set! table (opt.opt-expr-table-clear (& table)))
       (set! table (opt.opt-expr-table-add bases (& table) (clone key) 11))
+      (set! table (opt.opt-expr-table-add bases (& table) current-collision 12))
       (match (owned_view.compiler-owned-reference-shared-view (& table))
         [(opt.OptExprTable.Dense state)
           (let

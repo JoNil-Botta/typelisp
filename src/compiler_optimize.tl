@@ -6809,7 +6809,8 @@
   (links opt_expr_link_vec.Vec)
   (heads (__tl_dyn-array i64))
   (stamps (__tl_dyn-array i64))
-  (generation i64))
+  (generation i64)
+  (indexed bool))
 
 (defenum OptExprTable
   (Dense (Box OptExprState)))
@@ -6830,7 +6831,8 @@
           (opt_expr_link_vec.with-capacity capacity)
           (__tl_make-array i64 buckets)
           (__tl_make-array i64 buckets)
-          1)))))
+          1
+          false)))))
 
 (define (opt-expr-table-new) : OptExprTable
   (opt-expr-table-with-capacity 4))
@@ -6847,6 +6849,7 @@
               (set! content.vars.len 0)
               (set! content.live.len 0)
               (set! content.links.len 0)
+              (set! content.indexed false)
               (if (= content.generation 9223372036854775807)
                 (begin
                   (set!
@@ -6919,6 +6922,24 @@
                 (opt-expr-index-link! content position key-hash)
                 (set! index (+ index 1))))))))))
 
+;; An unindexed table has at most one live key. The second insertion indexes
+;; that key at its stable position; earlier invalidated keys stay unreachable.
+(define (opt-expr-index-start!
+  [type-segment-bases : i64]
+  [content : (&mut content OptExprState)]) : unit
+  (when
+    (and (not content.indexed) (> (opt_dense_i64_vec.len (& content.live)) 0))
+    (let
+      [position : i64 (array-ref content.live.slots 0)]
+      [key-hash : i64
+        (opt-expr-key-hash
+          type-segment-bases
+          (& (array-ref content.keys.slots position)))]
+      (begin
+        (set! (array-ref content.links.slots position).hash key-hash)
+        (opt-expr-index-link! content position key-hash)
+        (set! content.indexed true)))))
+
 (define (opt-expr-table-add
   [type-segment-bases : i64]
   [table : (& table OptExprTable)]
@@ -6930,16 +6951,23 @@
         (let
           [content : (&mut state OptExprState) (&mut (__tl-box-place state))]
           [position : i64 (opt_expr_key_vec.len (& content.keys))]
-          [key-hash : i64 (opt-expr-key-hash type-segment-bases (& key))]
+          [key-hash : i64 0]
           (begin
-            (opt-expr-index-reserve! content)
+            (opt-expr-index-start! type-segment-bases content)
+            (when
+              content.indexed
+              (begin
+                (set! key-hash (opt-expr-key-hash type-segment-bases (& key)))
+                (opt-expr-index-reserve! content)))
             (opt_expr_key_vec.push-ref! (&mut content.keys) key)
             (opt_dense_i64_vec.push-ref! (&mut content.vars) var)
             (opt_dense_i64_vec.push-ref! (&mut content.live) position)
             (opt_expr_link_vec.push-ref!
               (&mut content.links)
               (OptExprLink key-hash -1 -1))
-            (opt-expr-index-link! content position key-hash)))
+            (when
+              content.indexed
+              (opt-expr-index-link! content position key-hash))))
         (OptExprTable.Dense state))]))
 
 ;; Only live entries occur in a hash bucket. Unlinking changes integer links,
@@ -8615,33 +8643,49 @@
     [(OptExprTable.Dense state)
       (let
         [content : (& state OptExprState) (& (deref state))]
-        (if (= (opt_dense_i64_vec.len (& content.live)) 0)
+        [count : i64 (opt_dense_i64_vec.len (& content.live))]
+        (if (= count 0)
           (ir.CompilerIrMaybeValue.No)
-          (let
-            [key-hash : i64 (opt-expr-key-hash type-segment-bases key)]
-            [position : i64 (opt-expr-index-head content key-hash)]
-            [found : i64 (- 0 1)]
-            (begin
-              (while (and (>= position 0) (< found 0))
-                (begin
-                  (if (and
-                    (= (array-ref content.links.slots position).hash key-hash)
-                    (opt-expr-key-eq
-                      type-segment-bases
-                      (compiler-opt-global-array-element-shared-view
-                        content.keys.slots
-                        position)
-                      key))
+          (if (= count 1)
+            (let
+              [position : i64 (array-ref content.live.slots 0)]
+              (if (opt-expr-key-eq
+                type-segment-bases
+                (compiler-opt-global-array-element-shared-view
+                  content.keys.slots
+                  position)
+                key)
+                (ir.CompilerIrMaybeValue.Some
+                  (ir.CompilerIrValue.Var
+                    (array-ref content.vars.slots position)))
+                (ir.CompilerIrMaybeValue.No)))
+            (let
+              [key-hash : i64 (opt-expr-key-hash type-segment-bases key)]
+              [position : i64 (opt-expr-index-head content key-hash)]
+              [found : i64 (- 0 1)]
+              (begin
+                (while (and (>= position 0) (< found 0))
+                  (begin
+                    (if (and
+                      (= (array-ref content.links.slots position).hash key-hash)
+                      (opt-expr-key-eq
+                        type-segment-bases
+                        (compiler-opt-global-array-element-shared-view
+                          content.keys.slots
+                          position)
+                        key))
+                      (set!
+                        found
+                        (array-ref
+                          (opt_dense_i64_vec.slots (& content.vars))
+                          position))
+                      unit)
                     (set!
-                      found
-                      (array-ref
-                        (opt_dense_i64_vec.slots (& content.vars))
-                        position))
-                    unit)
-                  (set! position (array-ref content.links.slots position).next)))
-              (if (< found 0)
-                (ir.CompilerIrMaybeValue.No)
-                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var found)))))))]))
+                      position
+                      (array-ref content.links.slots position).next)))
+                (if (< found 0)
+                  (ir.CompilerIrMaybeValue.No)
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var found))))))))]))
 
 (define (opt-value-is-var? [value : (& value ir.CompilerIrValue)] [var : i64]) : bool
   (match value
@@ -8687,7 +8731,9 @@
                       (opt-key-uses-var?
                         (& (array-ref content.keys.slots position))
                         var))
-                      (opt-expr-table-unlink! content position)
+                      (when
+                        content.indexed
+                        (opt-expr-table-unlink! content position))
                       (begin
                         (set! (array-ref content.live.slots write) position)
                         (set! write (+ write 1))))

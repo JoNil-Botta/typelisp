@@ -489,8 +489,11 @@ reuse one table pair per function pass (`OptExprTable`), clearing each table
 before its block walk. Keys keep stable positions; parallel integer storage
 records results, live entries and collision links. Power-of-two bucket heads
 index expression hashes, and lookup checks structural equality within the chain.
-The index grows at half occupancy by relinking live positions. Invalidation
-unlinks dead entries and compacts only live positions. Calls, stores, shuffles
+The index grows at half occupancy by relinking live positions. Lookup treats
+zero or one live entry directly; hashing starts with the second
+live key, so this constant-size path never scans a growing table. Once started,
+the index remains active until clear. Invalidation unlinks indexed dead entries
+and compacts only live positions. Calls, stores, shuffles
 and control-flow boundaries clear lengths and advance the bucket generation,
 retaining capacity without scanning it; generation rollover resets all stamps.
 Entries are added only after a lookup miss, so live keys are unique. No caller

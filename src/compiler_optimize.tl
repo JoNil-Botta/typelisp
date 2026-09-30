@@ -3124,26 +3124,15 @@
   [instrs : ir.CompilerIrInstrSeq]) : opt_i64_i64_map.Map
   (opt-collect-instr-seq-uses-from set instrs.slots 0 instrs.len))
 
-;; Division, modulo, and shift can trap at runtime (zero divisor, signed
-;; MIN / -1, shift count out of range), so a BinOp using one of those operators
-;; is NOT pure: dropping it as dead would elide the trap the safe-code contract
-;; requires. An unused result alone does not prove these instructions dead;
-;; the DCE-specific predicate below additionally proves valid literal counts.
-(define (opt-binop-traps? [op : ir.CompilerIrBinOp]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Div) true]
-    [(ir.CompilerIrBinOp.Mod) true]
-    [(ir.CompilerIrBinOp.Shl _) true]
-    [(ir.CompilerIrBinOp.Shr _) true]
-    [_ false]))
-
-;; A scalar shift cannot fault when its literal count is in range for the
+;; A faulting operator (`ir.compiler-ir-binop-may-fault?`: division, modulo
+;; and shifts) is not pure: dropping it as dead would elide the fault the
+;; safe-code contract requires, so an unused result alone does not prove it
+;; dead. A scalar shift cannot fault when its literal count is in range for the
 ;; independently typed count and the shifted operand's width. Unknown or
-;; invalid counts keep their language-level abort; other operators retain the
-;; conservative operator-only rule. `opt-dce-binop-traps?` applies this proof
-;; wherever an instruction may be removed, skipped, or run once instead of per
-;; iteration: dead-code sweeps, flag_exit's skipped path and the
-;; fill_call/copy_call bodies.
+;; invalid counts keep their language-level abort; other operators keep the
+;; operator-level rule. `opt-dce-binop-traps?` applies this proof wherever an
+;; instruction may be removed, skipped, or run once instead of per iteration:
+;; dead-code sweeps, flag_exit's skipped path and the fill_call/copy_call bodies.
 (define (opt-dce-shift-count-valid?
   [rhs : ir.CompilerIrValue]
   [count-ty : ast.AstType]
@@ -3165,7 +3154,7 @@
       (not (opt-dce-shift-count-valid? rhs count-ty ty))]
     [(ir.CompilerIrBinOp.Shr count-ty)
       (not (opt-dce-shift-count-valid? rhs count-ty ty))]
-    [_ (opt-binop-traps? op)]))
+    [_ (ir.compiler-ir-binop-may-fault? op)]))
 
 (define (opt-instr-alloc-dst? [instr : ir.CompilerIrInstr] [dst : i64]) : bool
   (match instr
@@ -18950,7 +18939,8 @@
     [(ir.CompilerIrInstr.Mov _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
-    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (not (opt-binop-traps? op))]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+      (not (ir.compiler-ir-binop-may-fault? op))]
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [_ false]))
 
@@ -24435,7 +24425,7 @@
     [(ir.CompilerIrInstr.Cast _ _ _ _) false]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) false]
     [(ir.CompilerIrInstr.UnOp _ _ _ _) false]
-    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-binop-traps? op)]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? op)]
     [(ir.CompilerIrInstr.Phi _ _ _) false]
     ;; A block's own terminator: the chain walk decides where it leads.
     [(ir.CompilerIrInstr.Jump _) false]
@@ -26308,7 +26298,7 @@
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
       (and
         (opt-used-array-contains hot-uses dst)
-        (not (opt-binop-traps? op))
+        (not (ir.compiler-ir-binop-may-fault? op))
         (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
     [(ir.CompilerIrInstr.UnOp dst _ src _)
       (and
@@ -26333,7 +26323,7 @@
           (opt-used-array-contains hot-uses (deref payload-box).dst)
           ;; A checked vector div/mod/shift may still trap when executed.  Do
           ;; not speculate it into a preheader for a zero-trip loop.
-          (not (opt-binop-traps? op))
+          (not (ir.compiler-ir-binop-may-fault? op))
           (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
@@ -29349,7 +29339,7 @@
     [(ir.CompilerIrInstr.Word _ src _ _) (opt-licm-seed-value? loop-defs src)]
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
       (and
-        (not (opt-binop-traps? op))
+        (not (ir.compiler-ir-binop-may-fault? op))
         (opt-licm-seed-values? loop-defs lhs rhs))]
     [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-licm-seed-value? loop-defs src)]
     [(ir.CompilerIrInstr.Splat _ src _ _) (opt-licm-seed-value? loop-defs src)]
@@ -29359,7 +29349,7 @@
         [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
         [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
         (and
-          (not (opt-binop-traps? op))
+          (not (ir.compiler-ir-binop-may-fault? op))
           (opt-licm-seed-values? loop-defs lhs rhs)))]
     [(ir.CompilerIrInstr.VectorCompare payload-box)
       (let
@@ -39674,7 +39664,9 @@
     [(ir.CompilerIrInstr.Gep dst _ _ _)
       (not (opt-used-array-contains uses dst))]
     [(ir.CompilerIrInstr.BinOp dst op _ _ _)
-      (and (not (opt-binop-traps? op)) (not (opt-used-array-contains uses dst)))]
+      (and
+        (not (ir.compiler-ir-binop-may-fault? op))
+        (not (opt-used-array-contains uses dst)))]
     [(ir.CompilerIrInstr.UnOp dst _ _ _)
       (not (opt-used-array-contains uses dst))]
     [_ false]))
@@ -72232,21 +72224,20 @@
 ;; single byte). When eight zero-extended byte loads sit at CONSECUTIVE literal
 ;; offsets from one resolved base and the shift/or tree places each byte at
 ;; shift 8*(offset - min), the compose is exactly one little-endian i64 load at
-;; base+min on x86_64. This pass rewrites the chain ROOT -- the outermost
-;; or/add -- into that one wide Load in place and DELETES the chain elements
-;; itself: the pipeline DCE treats every shift as potentially trapping
-;; (`opt-binop-traps?`), so the dead shl/or spine would otherwise pin the byte
-;; loads and casts in the emitted code. Deletion is exact here: every element
-;; is proven single-use function-wide, every shl carries a literal count that
-;; is a multiple of 8 BELOW the i64 width (k in {8..56} -- a literal count of
-;; 64 or more, e.g. `shl 0, 64` on a neutral seed, is rejected because the
-;; shift itself can trap at runtime), every mul is restricted to the literal
+;; base+min on x86_64. This pass rewrites the chain ROOT -- the outermost or/add
+;; -- into that one wide Load in place and DELETES the chain elements itself:
+;; the pipeline DCE treats every shift as potentially trapping
+;; (`ir.compiler-ir-binop-may-fault?`), so the dead shl/or spine would otherwise
+;; pin the byte loads and casts in the emitted code. Deletion is exact here:
+;; every element is proven single-use function-wide, every shl carries a literal
+;; count that is a multiple of 8 BELOW the i64 width (k in {8..56} -- a literal
+;; count of 64 or more, e.g. `shl 0, 64` on a neutral seed, is rejected because
+;; the shift itself can trap at runtime), every mul is restricted to the literal
 ;; 256, and the remaining element kinds (Mov, Cast, BitOr, Add, byte Load)
 ;; cannot trap, so every deleted instruction is provably non-trapping. The
 ;; address temps (geps, base+literal adds) are not elements, so the checks'
-;; inputs stay.
-;; The pass rewrites instructions only (no CFG or frame change) and is
-;; idempotent: the root is no longer an or/add afterwards, so a second run is
+;; inputs stay. The pass rewrites instructions only (no CFG or frame change) and
+;; is idempotent: the root is no longer an or/add afterwards, so a second run is
 ;; a no-op.
 ;;
 ;; Soundness:
@@ -82572,7 +82563,8 @@
     ;; SafeDiv/SafeMod and checked scalar shifts can abort even though their
     ;; value-producing effect class is Pure.
     (match instr
-      [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-binop-traps? op)]
+      [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+        (ir.compiler-ir-binop-may-fault? op)]
       [_ false])))
 
 ;; Length-relation conjuncts the cross-array fusion derivation has already put
@@ -93917,15 +93909,12 @@
   (clone-count (__tl_dyn-array i64)))
 
 (define (opt-successor-sink-binop? [op : ir.CompilerIrBinOp]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Div) false]
-    [(ir.CompilerIrBinOp.Mod) false]
+  (match (compiler-opt-global-shared-view op)
+    ;; Faulting operators go through the shared rule; the proven division forms
+    ;; stay excluded as well.
     [(ir.CompilerIrBinOp.SafeDiv) false]
     [(ir.CompilerIrBinOp.SafeMod) false]
-    ;; Scalar shifts have language-level abort checks for invalid counts.
-    [(ir.CompilerIrBinOp.Shl _) false]
-    [(ir.CompilerIrBinOp.Shr _) false]
-    [_ true]))
+    [_ (not (ir.compiler-ir-binop-may-fault? op))]))
 
 ;; `Global`/`RuntimeGlobal` operands are implicit mutable reads, not stable
 ;; scalar values. The listed instruction forms are pure only when their value
@@ -101008,14 +100997,10 @@
 ;; aborted. Division, shifts and every memory write or call are excluded, and so
 ;; is any bounds check the group does not own.
 (define (opt-bg-safe-binop? [op : ir.CompilerIrBinOp]) : bool
-  (match op
-    [(ir.CompilerIrBinOp.Div) false]
-    [(ir.CompilerIrBinOp.Mod) false]
+  (match (compiler-opt-global-shared-view op)
     [(ir.CompilerIrBinOp.SafeDiv) false]
     [(ir.CompilerIrBinOp.SafeMod) false]
-    [(ir.CompilerIrBinOp.Shl _) false]
-    [(ir.CompilerIrBinOp.Shr _) false]
-    [_ true]))
+    [_ (not (ir.compiler-ir-binop-may-fault? op))]))
 
 (define (opt-bg-filler? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -121423,14 +121408,14 @@
 ;; WHY THE FINAL SLOT. The early constant-global rewrite keeps a wide literal
 ;; out of every operand, so until here the product is a `Mul` of a Global
 ;; operand: a pure, non-trapping BinOp. An IR `Shl` is not one to the passes
-;; that ask opt-binop-traps? -- LICM, rotation, DCE, range analysis all treat
-;; every shift as a possible abort -- so rewriting early would make them keep
-;; an invariant product in its loop, leave a loop unrotated and a dead product
-;; in place. After unswitch and the derived-counter pass no pass that asks that
-;; question runs on the function, and the whole-program inline stage ran
-;; before any of this, so the shift is never re-examined as a hazard. The count
-;; is a literal in [31, 62], valid for the 64-bit operand: the shift cannot
-;; abort at run time either.
+;; that ask `ir.compiler-ir-binop-may-fault?` -- LICM, rotation, DCE, range
+;; analysis all treat every shift as a possible abort -- so rewriting early would
+;; make them keep an invariant product in its loop, leave a loop unrotated and a
+;; dead product in place. After unswitch and the derived-counter pass no pass
+;; that asks that question runs on the function, and the whole-program inline
+;; stage ran before any of this, so the shift is never re-examined as a hazard.
+;; The count is a literal in [31, 62], valid for the 64-bit operand: the shift
+;; cannot abort at run time either.
 ;;
 ;; The multiplier is recognized as the Global operand itself, or through the
 ;; single-definition copy global-cell promotion leaves in a preheader. The other
@@ -121636,7 +121621,7 @@
 ;; A wide power-of-two global stays a Global operand here like every other
 ;; wide constant: its multiply becomes a shift only in the final pipeline slot
 ;; (opt-const-global-mul-shift-final), after every pass that reads
-;; opt-binop-traps? has seen it as the pure Mul it is.
+;; ir.compiler-ir-binop-may-fault? has seen it as the pure Mul it is.
 (define (opt-const-divisor-rewrite-instr
   [const-divisors : (& const-divisors opt_i64_i64_map.Map)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -128263,12 +128248,8 @@
   (match instr
     [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
     [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-      (match op
-        [(ir.CompilerIrBinOp.Div) true]
-        [(ir.CompilerIrBinOp.Mod) true]
-        [(ir.CompilerIrBinOp.Shl _) true]
-        [(ir.CompilerIrBinOp.Shr _) true]
-        [_ false])]
+      (ir.compiler-ir-binop-may-fault?
+        (owned_view.compiler-owned-reference-shared-view op))]
     [(ir.CompilerIrInstr.Call _ name _ _)
       (let
         [text : String (ir.compiler-ir-symbol-text (deref name))]

@@ -19206,12 +19206,7 @@
   (match instr
     [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) true]
     [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
-      (match op
-        [(compiler_ir_types.CompilerIrBinOp.Div) true]
-        [(compiler_ir_types.CompilerIrBinOp.Mod) true]
-        [(compiler_ir_types.CompilerIrBinOp.Shl _) true]
-        [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
-        [_ false])]
+      (compiler_ir_types.compiler-ir-binop-may-fault? op)]
     [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
       (compiler-backend-stdlib-io-panic-name? backend-state name)]
     [_ false]))
@@ -19225,51 +19220,59 @@
 (define (compiler-backend-runtime-abort-site-install!
   [ctx : CompilerBackendEmissionContext]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
+  (begin
+    (compiler-backend-function-state-set-bool!
+      ctx.function-state
+      compiler-backend-function-bool-abort-site-active
+      false)
+    ;; Every emitted instruction passes here, and few are abort sites. The
+    ;; located setup lives in its own function so this common path keeps a
+    ;; small frame.
+    (when
+      (compiler-backend-runtime-abort-site-instr?
+        ctx.backend-state
+        (compiler-backend-global-shared-view instr))
+      (compiler-backend-runtime-abort-site-locate! ctx instr))))
+
+(define (compiler-backend-runtime-abort-site-locate!
+  [ctx : CompilerBackendEmissionContext]
+  [instr : compiler_ir_types.CompilerIrInstr]) : unit
   (let
     [function-state : CompilerBackendFunctionState ctx.function-state]
-    (begin
-      (compiler-backend-function-state-set-bool!
-        function-state
-        compiler-backend-function-bool-abort-site-active
-        false)
-      (when
-        (compiler-backend-runtime-abort-site-instr?
-          ctx.backend-state
-          (compiler-backend-global-shared-view instr))
-        (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
-          ctx.spans
-          (compiler_ir_types.compiler-ir-symbol-typed-id ctx.source-function)
-          instr)
-          [(compiler_ir_types.CompilerMaybeSourceLocation.No) unit]
-          [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
-            (let
-              [path-id : i64 location.path-id]
-              [span : compiler_ast_types.AstSourceSpan location.span]
-              (when
-                (> path-id 0)
-                (begin
-                  (compiler-backend-function-state-set-bool!
-                    function-state
-                    compiler-backend-function-bool-abort-site-active
-                    true)
-                  (compiler-backend-function-state-set-string!
-                    function-state
-                    compiler-backend-function-string-abort-site-path
-                    (compiler_ir_types.compiler-debug-path-remap
-                      (ci.intern-compat-state-str
-                        (compiler-backend-state-intern ctx.backend-state)
-                        path-id)))
-                  (compiler-backend-function-state-set-i64!
-                    function-state
-                    compiler-backend-function-i64-abort-site-line
-                    (compiler_ast_types.ast-source-span-start-line span))
-                  (compiler-backend-function-state-set-i64!
-                    function-state
-                    compiler-backend-function-i64-abort-site-column
-                    (compiler_ast_types.ast-source-span-start-col span))
-                  (compiler-backend-function-state-set-abort-target!
-                    function-state
-                    ctx.target-policy.target))))])))))
+    (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
+      ctx.spans
+      (compiler_ir_types.compiler-ir-symbol-typed-id ctx.source-function)
+      instr)
+      [(compiler_ir_types.CompilerMaybeSourceLocation.No) unit]
+      [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
+        (let
+          [path-id : i64 location.path-id]
+          [span : compiler_ast_types.AstSourceSpan location.span]
+          (when
+            (> path-id 0)
+            (begin
+              (compiler-backend-function-state-set-bool!
+                function-state
+                compiler-backend-function-bool-abort-site-active
+                true)
+              (compiler-backend-function-state-set-string!
+                function-state
+                compiler-backend-function-string-abort-site-path
+                (compiler_ir_types.compiler-debug-path-remap
+                  (ci.intern-compat-state-str
+                    (compiler-backend-state-intern ctx.backend-state)
+                    path-id)))
+              (compiler-backend-function-state-set-i64!
+                function-state
+                compiler-backend-function-i64-abort-site-line
+                (compiler_ast_types.ast-source-span-start-line span))
+              (compiler-backend-function-state-set-i64!
+                function-state
+                compiler-backend-function-i64-abort-site-column
+                (compiler_ast_types.ast-source-span-start-col span))
+              (compiler-backend-function-state-set-abort-target!
+                function-state
+                ctx.target-policy.target))))])))
 
 (define (compiler-backend-abort-arg-reg
   [backend-state : CompilerBackendState]

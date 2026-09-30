@@ -1321,9 +1321,13 @@
                       (source-tool-windows-link-libs)))))))))]
     (process.args-cons
       "/NOLOGO"
-      (if (ir.compiler-debug-info-enabled?)
-        (process.args-cons "/DEBUG" args)
-        args))))
+      ;; The image timestamp and debug GUID derive from the inputs, so linking
+      ;; the same objects again produces the same bytes.
+      (process.args-cons
+        "/Brepro"
+        (if (ir.compiler-debug-info-enabled?)
+          (process.args-cons "/DEBUG" args)
+          args)))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

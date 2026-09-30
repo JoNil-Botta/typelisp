@@ -45438,6 +45438,11 @@
           state
           compiler-backend-function-i64-array-edge-index)))))
 
+;; The shared-return tail is only reachable for plans that save callee
+;; registers, so plans without them (every stack-only opt0/opt1 plan) skip
+;; the whole-function return walk; the count is only consumed through
+;; use-shared-return-count?, where 0 and the true count decide identically
+;; once the callee-regs conjunct is false.
 (define (compiler-backend-shared-return-count
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]

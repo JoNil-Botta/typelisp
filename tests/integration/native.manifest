@@ -527,6 +527,7 @@ spmd_shuffle_lane1_trap|all|-|tests/integration/spmd_shuffle_lane1_trap.tl|134|-
 spmd_shuffle_negative_trap|all|-|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_tail_oob|all|-|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_abort_nested|all|-|tests/integration/spmd_shuffle_abort_nested.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_inline_helper_call_by_value|all|0,1,2|tests/integration/spmd_inline_helper_call_by_value.tl|42|-|-|-|-
 # foreach-active scalar reference (#8306): one serialized case per argument.
 spmd_foreach_active_histogram|all|-|tests/integration/spmd_foreach_active.tl|0|1 2 4 1\n|1|-|stage-stdlib
 spmd_foreach_active_accumulate|all|-|tests/integration/spmd_foreach_active.tl|0|55 15\n|2|-|stage-stdlib

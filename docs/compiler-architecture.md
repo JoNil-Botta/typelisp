@@ -218,6 +218,20 @@ verifier checks retained arena bytes before that compaction, and
 failed reads and shared-session reuse. Whole-load scan release empties the
 token scratch, while reusable sessions retain their current capacity.
 
+Instruction source spans preserve the dense list's shared-array semantics: an
+append with spare capacity overwrites the shared slot, while growth copies the
+list's live prefix. Each array owns an index of its current `slots[0, valid)`:
+one shared cell maps function symbols to their newest entry, and an `i32` chain
+links previous entries of the same function. Lookups respect each list's length
+and scan any unindexed tail before the function chain, so abandoned rewrites and
+batch replay retain the same newest-binding behavior. In-place appends only
+mutate existing index storage; a full function map leaves a tail unindexed until
+array growth rebuilds it. Growth, arena escape and backend register remapping
+use `compiler-source-spans-instr-entry-list-from-slots` to allocate the slots,
+chain and map together in the destination arena. An index must never retain a
+pointer into a younger arena. The IR smoke tests cover shared histories,
+capacity limits, independent tables and escape after source-arena destruction.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original

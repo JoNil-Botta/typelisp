@@ -973,6 +973,19 @@ foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_define
 # JSON live-prefix validation and checked arithmetic, including strategy hooks.
 json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-
 
+# JSON view macros add no `unsafe` of their own: safe callers reject at the raw
+# read however they reach the macro, and explicit caller `unsafe` compiles.
+json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|-|typecheck: ptr-read requires unsafe context
+json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_ok.tl|42|-
+
 # A typecheck code follows the raise site's kind, not words in the message.
 typecheck_kind_ignores_binding_name_reject|check-fail|tests/safety/typecheck_kind_ignores_binding_name_reject.tl|-|error[E0206]: typecheck: let binding `cleanup` type mismatch: expected i64, found bool
 typecheck_kind_ignores_spmd_word_reject|check-fail|tests/safety/typecheck_kind_ignores_spmd_word_reject.tl|-|error[E0206]: typecheck: let binding `foreach-total` type mismatch: expected i64, found bool

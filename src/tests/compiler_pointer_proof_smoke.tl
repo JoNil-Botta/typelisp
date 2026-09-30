@@ -540,6 +540,40 @@
       (proof.pointer-proof-input-release! second)
       (proof.pointer-proof-input-release! missing))))
 
+(define (proof-smoke-failed-source-job [mode : lower.CompilerLowerMode]) : unit
+  (let
+    [sources : (Array String 2) (array "(" "(define (main) : i64 true)")]
+    [index : i64 0]
+    (while (< index 2)
+      (let
+        [input : proof.PointerProofInput (proof.pointer-proof-input-new)]
+        [request : lower.CompilerLowerRequest (proof-smoke-request input mode)]
+        [failed : lower.ResultCompilerLower
+          (lower.lower-compiler-source-with-request
+            "failed-source.tl"
+            (owned_view.compiler-owned-array-element-shared-view sources index)
+            (owned_view.compiler-owned-shared-view request))]
+        (begin
+          (match failed
+            [(lower.ResultCompilerLower.Err _) unit]
+            [_ (io.panic "pointer-proof smoke: invalid source was accepted")])
+          (let
+            [error : String (proof.pointer-proof-input-begin-error input)]
+            (unless
+              (> (string.string-length (& error)) 0)
+              (io.panic
+                "pointer-proof smoke: failed source did not consume its owner")))
+          (match (lower.lower-compiler-source-with-request
+            "failed-reuse.tl"
+            "(define (main [p : (Ptr i64)]) : (Ptr i64) p)"
+            request)
+            [(lower.ResultCompilerLower.Err _) unit]
+            [_
+              (io.panic
+                "pointer-proof smoke: failed owner entered a later source job")])
+          (proof.pointer-proof-input-release! input)
+          (set! index (+ index 1)))))))
+
 (define (proof-smoke-driver-handoff
   [mode : lower.CompilerLowerMode]
   [target : backend.CompilerBackendTarget]) : unit
@@ -640,6 +674,8 @@
     (proof-smoke-missing-location)
     (proof-smoke-job-guards lower.CompilerLowerMode.LinuxScalar)
     (proof-smoke-job-guards lower.CompilerLowerMode.WindowsScalar)
+    (proof-smoke-failed-source-job lower.CompilerLowerMode.LinuxScalar)
+    (proof-smoke-failed-source-job lower.CompilerLowerMode.WindowsScalar)
     (proof-smoke-driver-handoff
       lower.CompilerLowerMode.LinuxScalar
       backend.CompilerBackendTarget.Linux)

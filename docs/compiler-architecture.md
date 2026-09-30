@@ -141,7 +141,8 @@ arena, with no borrowed AST nodes, pooled types or source-interner strings.
 Its caller-owned control cell must remain live throughout analysis. After the
 handoff is consumed, `pointer-proof-input-release!` tombstones that cell and
 retires its data arena; references from another owner or a retired owner are
-rejected. Each job requests a fresh owner. Disabled jobs allocate no graph and
+rejected. Each job requests a fresh owner; a failed requested source job also
+consumes its owner. Disabled jobs allocate no graph and
 perform no additional expression traversal.
 
 Compilation is one whole program per executable with import-graph dedup

@@ -70409,7 +70409,18 @@
                         (lower-global-shared-view program)
                         (lower-global-shared-view success.spans))])
                   (ResultCompilerLower.Ok program success.spans)))]
-            [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))
+            [(ResultLowerDecls.Err message)
+              (begin
+                (match (compiler-lower-state-read
+                  lower-state
+                  pointer_proof.PointerProofRequest
+                  pointer-proof-request)
+                  [(pointer_proof.PointerProofRequest.Requested input)
+                    (pointer_proof.pointer-proof-input-fail!
+                      input
+                      "pointer proof: requested lowering did not complete")]
+                  [_ unit])
+                (ResultCompilerLower.Err message))]))])))
 
 ;; Internal `expanded` workers assume macro expansion has already run; the
 ;; public `-mode` wrappers below own the expand -> specialize -> typecheck
@@ -71891,8 +71902,21 @@
               (pointer_proof.pointer-proof-input-use-default-path!
                 input
                 (lower-global-shared-view path))))])
-      (lower-compiler-source-with-path-mode-and-state
-        state
-        path
-        src
-        request.mode))))
+      (let
+        [result : ResultCompilerLower
+          (lower-compiler-source-with-path-mode-and-state
+            state
+            path
+            src
+            request.mode)]
+        (begin
+          (match (lower-global-shared-view result)
+            [(ResultCompilerLower.Err _)
+              (match request.pointer-proof
+                [(pointer_proof.PointerProofRequest.Requested input)
+                  (pointer_proof.pointer-proof-input-fail!
+                    input
+                    "pointer proof: requested source lowering did not complete")]
+                [_ unit])]
+            [_ unit])
+          result)))))

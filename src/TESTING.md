@@ -373,6 +373,8 @@ returns. When extending this boundary, preserve the ordinary lowering workload
 and measure both disabled and requested paths under the compiler performance
 protocol. Job isolation tests must read earlier evidence after a later job and
 after source/type/interner retirement, then reject a retired proof owner.
+Parse/type failures must consume the requested owner before any later job can
+reuse its copied source locations.
 
 ### IR-text fixtures
 

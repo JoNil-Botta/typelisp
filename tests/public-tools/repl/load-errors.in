@@ -1,0 +1,7 @@
+.load tests/public-tools/repl/load-type-error.tl
+(define a : i64 1)
+(define b : i64 2)
+.load tests/public-tools/repl/load-type-error.tl
+.load tests/public-tools/repl/load-parse-error.tl.invalid
+.type loaded-ok
+.exit

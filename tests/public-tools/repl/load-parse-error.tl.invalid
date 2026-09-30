@@ -1,0 +1,2 @@
+(define loaded-first : i64 1)
+(define loaded-open : i64 (+ loaded-first 1)

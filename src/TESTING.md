@@ -5,6 +5,13 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`backend-colored-vector-id-extent` keeps nine wide values live across an
+ordinary call and exercises allocation, stack coloring, final liveness and
+emission on both SIMD widths and target ABIs. Its remapped homes extend beyond
+the original variable count. Keep final side tables in that logical ID domain,
+while existing compact-frame and register-home cases preserve the separate
+physical slot count. The case also runs in the native SIMD backend suite.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

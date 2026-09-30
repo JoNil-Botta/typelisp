@@ -73193,9 +73193,8 @@
         ;; carry conservative CFG intervals specifically for this pass; plans
         ;; from modes without intervals still pass through unchanged. Only real
         ;; remat vars can demand slots; scratch pseudo-vars are register-only.
-        ;; `slot-vars` replaces the raw var count everywhere the frame layout
-        ;; is derived, while `scratch-vars` keeps indexing per-variable side
-        ;; tables.
+        ;; `slot-vars` governs the physical frame; the final logical extent
+        ;; below governs remapped per-variable side tables.
         [coloring
           : compiler_regalloc.CompilerRegColoring
           ;; Stack-homed register groups keep word0 in their remapped formula
@@ -73219,6 +73218,19 @@
               (and
                 (compiler-backend-mode-scalar? mode)
                 (not scalar-registers-enabled))))]
+        [slot-vars : i64
+          (match (compiler-backend-global-shared-view coloring)
+            ;; Synthetic scratch ids are register-only and are not referenced
+            ;; by the emitted IR. When stack coloring is unavailable, retain
+            ;; the real rewritten var count so scratch ids cannot grow the
+            ;; frame merely by numbering temporary register intervals.
+            [(compiler_regalloc.CompilerRegColoring.None) rewritten-vars]
+            [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
+        ;; Wide stack ranges can place remapped ids beyond the original plan.
+        ;; Register-only ids can remain beyond the compacted frame. Every
+        ;; final-IR side table must contain both domains.
+        [emit-vars : i64
+          (compiler_regalloc.compiler-reg-max scratch-vars slot-vars)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None) spans]
@@ -73240,7 +73252,7 @@
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
-                scratch-vars
+                emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (compiler-backend-global-shared-view rewritten-reg-plan)))])]
         ;; Install the final authoritative table for direct operand-home lookup
@@ -73250,13 +73262,13 @@
         ;; their emission context and avoid the state-wrapper setup.
         [_emit-assignment-index : unit
           (begin
-            (if (>= scratch-vars 64)
+            (if (>= emit-vars 64)
               (begin
                 (compiler-backend-function-state-set-assignment-index!
                   function-state
                   (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
                     assignments
-                    scratch-vars))
+                    emit-vars))
                 (compiler-backend-function-state-set-bool!
                   function-state
                   compiler-backend-function-bool-emit-assignment-index-active
@@ -73293,7 +73305,7 @@
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
                 remap
-                scratch-vars
+                emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   rewritten-reg-plan))])]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
@@ -73327,14 +73339,6 @@
               (compiler-backend-global-shared-view emit-blocks-list)
               (compiler-backend-global-shared-view emit-params))
             0)]
-        [slot-vars : i64
-          (match (compiler-backend-global-shared-view coloring)
-            ;; Synthetic scratch ids are register-only and are not referenced
-            ;; by the emitted IR. When stack coloring is unavailable, retain
-            ;; the real rewritten var count so scratch ids cannot grow the
-            ;; frame merely by numbering temporary register intervals.
-            [(compiler_regalloc.CompilerRegColoring.None) rewritten-vars]
-            [(compiler_regalloc.CompilerRegColoring.Remap _ slots) slots])]
         [scavenge-selection
           : compiler_regalloc.CompilerRegIntervalSelection
           ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
@@ -73352,7 +73356,7 @@
           ;; where a register actually carries a live value, instead of a hull
           ;; that saturates every register in a merged body.
           (compiler_regalloc.compiler-reg-with-analysis-scratch
-            scratch-vars
+            emit-vars
             (compiler-backend-global-shared-view emit-blocks-list)
             (if (compiler-backend-assignments-have-register-home?
               scavenge-assignments)
@@ -73362,7 +73366,7 @@
                     name
                     (compiler-backend-global-shared-view emit-params)
                     (compiler-backend-global-shared-view ret-ty)
-                    scratch-vars
+                    emit-vars
                     (compiler-backend-global-shared-view emit-blocks-list)
                     function-abi)]
                 (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
@@ -73390,7 +73394,7 @@
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-types
                 remap
-                scratch-vars
+                emit-vars
                 plan-types)])]
         [emit-group-vars-base : compiler_liveness.CompilerLiveI64Set
           (match coloring
@@ -73425,9 +73429,9 @@
           (compiler-backend-function-symbol-index program-index name)]
         [label-scope : String
           (compiler-backend-function-label-scope program-index name)]
-        [use-counts : (__tl_dyn-array i64) (__tl_make-array i64 scratch-vars)]
+        [use-counts : (__tl_dyn-array i64) (__tl_make-array i64 emit-vars)]
         [fuse-free-counts : (__tl_dyn-array i64)
-          (__tl_make-array i64 scratch-vars)]
+          (__tl_make-array i64 emit-vars)]
         [_use-facts : unit
           (compiler-backend-count-block-use-facts
             (compiler-backend-global-shared-view use-counts)
@@ -73490,7 +73494,7 @@
               type-segment-bases
               target
               (compiler-backend-global-shared-view emit-params)
-              scratch-vars
+              emit-vars
               assignments
               (compiler-backend-global-shared-view label-scope)
               name
@@ -73509,7 +73513,7 @@
               type-segment-bases
               target
               (compiler-backend-global-shared-view emit-params)
-              scratch-vars
+              emit-vars
               assignments
               (compiler-backend-global-shared-view label-scope)
               name
@@ -73566,7 +73570,7 @@
               (compiler-backend-global-shared-view emit-blocks-list)
               assignments
               (compiler-backend-global-shared-view scavenge-intervals)
-              scratch-vars
+              emit-vars
               (compiler-backend-frame-slots-emergency-max
                 slot-vars
                 has-group-vars
@@ -73598,24 +73602,21 @@
         [scavenge-base-vars : i64
           (compiler-backend-const-hoist-extend-vars
             (compiler-backend-global-shared-view const-hoist-synth)
-            scratch-vars)]
+            emit-vars)]
         [scavenge-base-assignments : compiler_regalloc.CompilerRegAssignmentTable
           (compiler-backend-const-hoist-extend-assignments
             (compiler-backend-global-shared-view const-hoist-synth)
-            scratch-vars
+            emit-vars
             scavenge-assignments)]
         [scavenge-base-intervals : compiler_regalloc.CompilerRegIntervalSeq
           (compiler-backend-const-hoist-extend-intervals
             const-hoist-synth
-            scratch-vars
+            emit-vars
             scavenge-intervals)]
         [_scavenge-install-ctx
           : unit
-          ;; Use scratch-vars (the FULL var count the assignments are sized for), NOT
-          ;; slot-vars (the compacted stack-slot count): register-homed vars keep
-          ;; indices >= slot-vars, so a slot-vars-sized ctx would miss them and the
-          ;; free-register query would false-free their registers (e.g. a pooled %r8
-          ;; holding a register var). M-F appends synthetic register-homed
+          ;; The logical extent includes widened stack homes and register-only
+          ;; ids beyond the physical frame. M-F appends synthetic register-homed
           ;; pseudo-vars so scavenging avoids the hoisted registers inside
           ;; their regions.
           (compiler-backend-scavenge-install-ctx-from-intervals!
@@ -73685,7 +73686,7 @@
                   [_addr-forward : unit
                     (compiler-backend-addr-of-forwarding-enable!
                       program-index.backend-state
-                      scratch-vars
+                      emit-vars
                       (compiler-backend-global-shared-view emit-blocks-list)
                       (compiler-backend-global-shared-view use-counts))]
                   [_fuse-need : unit
@@ -73699,7 +73700,7 @@
                         program-index.backend-state)
                       compiler-backend-function-i64-array-shift-count-bounds
                       (compiler-backend-shift-count-bounds
-                        scratch-vars
+                        emit-vars
                         emit-params
                         (compiler-backend-global-shared-view emit-blocks-list)))]
                   [_identity-tail-forwarder : unit

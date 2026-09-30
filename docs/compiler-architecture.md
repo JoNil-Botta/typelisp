@@ -435,6 +435,11 @@ analysis temporaries after copying their small result. The budget selects only
 allocation lifetime; it never reduces analysis precision or optimizer work.
 Avoid unconditional arenas for small analyses: an arena per analysis
 multiplies arena creation and regresses ordinary compile time.
+Stack coloring keeps physical frame slots separate from the final logical
+variable extent. Wide homes can move IDs above the original plan count, while
+register-only IDs can remain above the compacted frame. Final liveness, type and
+home tables, use facts and scavenger contexts cover the maximum of both domains;
+frame layout continues to use only the physical slot count.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes

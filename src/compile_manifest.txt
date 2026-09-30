@@ -199,6 +199,9 @@ end
 case|selfhost_format_tokens|src/format_tokens.tl|assembly|none|direct
 end
 
+case|selfhost_compiler_module_name|src/compiler_module_name.tl|assembly|none|direct
+end
+
 case|selfhost_lex|src/lex.tl|assembly|none|direct
 end
 

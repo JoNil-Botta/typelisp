@@ -16,6 +16,13 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+`compiler_module_name.tl` owns the complete dotted import-name contract used by
+both the parser and LSP: nonempty components, no path separators or colon, and
+no final `.tl` suffix. It preserves the existing byte-level name predicate;
+source tokenization still belongs to the lexer. The LSP classifies incomplete
+editor prefixes separately and resolves only complete names at token boundaries,
+so an unsupported byte cannot turn an invalid operand into a valid prefix.
+
 `AstType.CFunc` separates a native code address from an ordinary TypeLisp
 function/closure descriptor. Its pooled `Func` operand records only argument and
 result shape; its second operand records nullability and the unsafe-call effect.

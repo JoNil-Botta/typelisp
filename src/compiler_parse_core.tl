@@ -8,6 +8,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_cfg_core as cfg_core)
+(import compiler_module_name as module_name)
 (import compiler_diagnostic as cdiag)
 (import lex as lexer)
 (import read as reader)
@@ -11399,41 +11400,6 @@
         [_ (ResultAstDecl.Err "parse: import macro operand must be a call")])]
     [(ResultAstExpr.Err message) (ResultAstDecl.Err message)]))
 
-(define (parse-ast-dotted-import-tl-suffix? [name : (& name str)]) : bool
-  (let
-    [n : i64 (string.string-length name)]
-    (if (< n 3)
-      false
-      (string.eq (string.substring name (- n 3) 3) ".tl"))))
-
-(define (parse-ast-dotted-import-name-valid? [name : (& name str)]) : bool
-  (let
-    [n : i64 (string.string-length name)]
-    [i : i64 0]
-    [ok : bool (and (> n 0) (not (parse-ast-dotted-import-tl-suffix? name)))]
-    [last-was-dot : bool true]
-    (begin
-      (while ok
-        (if (< i n)
-          (let
-            [c : char (string.string-ref name i)]
-            (if (or
-              (string.char-eq c '/')
-              (string.char-eq c '\\')
-              (string.char-eq c ':'))
-              (set! ok false)
-              (if (string.char-eq c '.')
-                (if last-was-dot
-                  (set! ok false)
-                  (begin
-                    (set! last-was-dot true)
-                    (set! i (+ i 1))))
-                (begin
-                  (set! last-was-dot false)
-                  (set! i (+ i 1))))))
-          (set! ok false)))
-      (and (= i n) (not last-was-dot)))))
-
 (define (parse-ast-dotted-import-default-alias-start [name : (& name str)]) : i64
   (let
     [n : i64 (string.string-length name)]
@@ -11535,7 +11501,7 @@
       (compiler-parse-dispatch-intern-state dispatch)]
     [module-name : String
       (compiler-parse-name-text-with-state intern-state module-name-id)]
-    (if (not (parse-ast-dotted-import-name-valid? module-name))
+    (if (not (module_name.compiler-module-name-valid? module-name))
       (ResultAstDecl.Err "parse: invalid dotted import module name")
       (if (parse-ast-dotted-import-wildcard? module-name)
         (match (reader.spanned-sexpr-view tail)

@@ -16,6 +16,7 @@
 (import lex as lexer)
 (import read as reader)
 (import compiler_builtin_ids as cbi)
+(import compiler_module_name as module_name)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
 (import compiler_semantic_index)
@@ -333,6 +334,13 @@
   (line i64)
   (col i64)
   (code bool))
+
+;; A token at the end of an unfinished document may still extend to a valid
+;; identity. Only Complete can resolve an import; Prefix never changes grammar.
+(defenum LspDottedImportNameKind
+  (Complete)
+  (Prefix)
+  (Invalid))
 
 (defenum LspImportTarget
   (Found String i64 i64)
@@ -4690,40 +4698,35 @@
               -1))
           -1)))))
 
-(define (lsp-dotted-import-tl-suffix? [name : (& name str)]) : bool
-  (let
-    [n : i64 (string.string-length name)]
-    (if (< n 3)
-      false
-      (string.eq (string.substring name (- n 3) 3) ".tl"))))
+(define (lsp-dotted-import-name-kind
+  [name : (& name str)]
+  [token-complete : bool]) : LspDottedImportNameKind
+  (cond
+    [(module_name.compiler-module-name-valid? name)
+      LspDottedImportNameKind.Complete]
+    [(not token-complete)
+      (let
+        [continued : String (str_cat.str-cat (string.copy name) "x" "")]
+        (if (module_name.compiler-module-name-valid? (& continued))
+          LspDottedImportNameKind.Prefix
+          LspDottedImportNameKind.Invalid))]
+    [else LspDottedImportNameKind.Invalid]))
 
-(define (lsp-dotted-import-name-valid? [name : (& name str)]) : bool
-  (let
-    [n : i64 (string.string-length name)]
-    [i : i64 0]
-    [ok : bool (and (> n 0) (not (lsp-dotted-import-tl-suffix? name)))]
-    [last-was-dot : bool true]
-    (begin
-      (while ok
-        (if (< i n)
-          (let
-            [c : char (string.string-ref name i)]
-            (if (or
-              (string.char-eq c '/')
-              (string.char-eq c '\\')
-              (string.char-eq c ':'))
-              (set! ok false)
-              (if (string.char-eq c '.')
-                (if last-was-dot
-                  (set! ok false)
-                  (begin
-                    (set! last-was-dot true)
-                    (set! i (+ i 1))))
-                (begin
-                  (set! last-was-dot false)
-                  (set! i (+ i 1))))))
-          (set! ok false)))
-      (and (= i n) (not last-was-dot)))))
+;; An identifier scanner stop at an unsupported byte is not a token boundary.
+(define (lsp-dotted-import-token-boundary? [text : (& text str)] [end : i64]) : bool
+  (if (= end (string.string-length text))
+    true
+    (let
+      [c : char (string.string-ref text end)]
+      (or
+        (source_text.source-text-space? c)
+        (= c '(')
+        (= c ')')
+        (= c '[')
+        (= c ']')
+        (= c '"')
+        (= c '\'')
+        (= c ';')))))
 
 (define (lsp-resolve-module-import-target
   [path : String]
@@ -4776,15 +4779,18 @@
                   text
                   operand-start
                   (- module-end operand-start))]
-              (if (lsp-dotted-import-name-valid? module-name)
-                (LspImportTarget.Found
-                  (lsp-resolve-module-import-target
-                    path
-                    module-name
-                    stdlib-roots)
-                  operand-start
-                  module-end)
-                LspImportTarget.Missing))]
+              (match (if (lsp-dotted-import-token-boundary? text module-end)
+                (lsp-dotted-import-name-kind (& module-name) (< module-end n))
+                LspDottedImportNameKind.Invalid)
+                [(LspDottedImportNameKind.Complete)
+                  (LspImportTarget.Found
+                    (lsp-resolve-module-import-target
+                      path
+                      module-name
+                      stdlib-roots)
+                    operand-start
+                    module-end)]
+                [_ LspImportTarget.Missing]))]
           [else LspImportTarget.Missing])))))
 
 ;; Collect every import target from the document, skipping strings and comments

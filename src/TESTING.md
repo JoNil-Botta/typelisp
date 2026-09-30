@@ -87,6 +87,14 @@ covers equal numeric IDs with different spellings. `compiler_ast_types_smoke.tl`
 owns synthetic AST construction, empty-name compatibility, and pool reset
 cases; `compiler_parse_smoke.tl` owns parsed-token identity.
 
+`tests/compiler_module_name_tests.tl` pins the shared complete dotted-import
+grammar across parser symbols and LSP names, including byte-level Unicode,
+punctuation, path rejection, long names, diagnostics, and import metadata.
+Source-token fixtures also compare parser and LSP acceptance. Separate editor
+prefix cases and unsupported-byte fixtures ensure incomplete or invalid operands
+cannot resolve a valid prefix. The existing parser and LSP smokes retain alias,
+wildcard, string-path diagnostics, and editor integration coverage.
+
 ## Optimizer dense block scans
 
 The `call-memory-dense-scan` inline test in `compiler_optimize_tests.tl`

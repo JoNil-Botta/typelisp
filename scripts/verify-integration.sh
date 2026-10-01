@@ -940,6 +940,7 @@ fs_rooted_linux_reopen_directory
 fs_rooted_linux_read_into
 fs_rooted_linux_read_reuse
 fs_rooted_linux_source
+fs_rooted_linux_guard
 EOF
 }
 

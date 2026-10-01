@@ -26,6 +26,14 @@
 ;# capability they read through, revalidate a name against it through the
 ;# retained parent, and finish their private stage with the admitted source
 ;# permissions, verified by a fresh `fstat` before flush and close.
+;#
+;# Cooperating rewriters serialize through `FsLinuxRootedGuard`: a cleanup-owning,
+;# move-only capability holding one exclusive `flock` on a permanent sidecar
+;# below the retained parent. Acquisition makes exactly one nonblocking attempt;
+;# retry, deadline and cancellation policy belong to the caller. The lock lives
+;# on the guard's own open file description, so an explicit release, the
+;# guard's cleanup, or process death releases it. No writer ever unlinks or
+;# replaces the sidecar.
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -56,7 +64,8 @@
   (LinuxRootedIdentityChanged)
   (LinuxRootedSourceChanged)
   (LinuxRootedInvalidPermissions)
-  (LinuxRootedModeMismatch))
+  (LinuxRootedModeMismatch)
+  (LinuxRootedLockConflict))
 
 ;: Portable file-mode intent owned by the Linux leaf.
 (defenum FsLinuxRootedFileMode
@@ -126,6 +135,22 @@
 (defstruct FsLinuxRootedHandleState
   (fd i64)
   (result FsLinuxRootedResult)
+  (close FsLinuxRootedResult))
+
+;: Private state of one guard. `fd` is live only while an acquired lock is
+;: held; `device` and `inode` identify the sidecar that lock is on.
+(defstruct FsLinuxRootedGuardState
+  (fd i64)
+  (result FsLinuxRootedResult)
+  (device u64)
+  (inode u64)
+  (unlock FsLinuxRootedResult)
+  (close FsLinuxRootedResult))
+
+;: Outcome of releasing a guard: its one `LOCK_UN` attempt and its one close
+;: attempt, reported independently.
+(defstruct FsLinuxRootedGuardRelease
+  (unlock FsLinuxRootedResult)
   (close FsLinuxRootedResult))
 
 ;: Return true exactly for successful rooted operations.
@@ -263,6 +288,14 @@
 (define fs-linux-rooted-syscall-fchmod : i64
   91)
 
+;: Linux x86-64 `flock` syscall number.
+(define fs-linux-rooted-syscall-flock : i64
+  73)
+
+;: Linux x86-64 `geteuid` syscall number.
+(define fs-linux-rooted-syscall-geteuid : i64
+  107)
+
 ;: Linux x86-64 `openat` syscall number.
 (define fs-linux-rooted-syscall-openat : i64
   257)
@@ -310,6 +343,18 @@
 ;: Linux `RENAME_NOREPLACE` flag.
 (define fs-linux-rooted-rename-noreplace : i64
   1)
+
+;: Linux `flock` operations: exclusive, nonblocking, and unlock.
+(define fs-linux-rooted-lock-exclusive : i64
+  2)
+
+;: Linux `LOCK_NB`.
+(define fs-linux-rooted-lock-nonblocking : i64
+  4)
+
+;: Linux `LOCK_UN`.
+(define fs-linux-rooted-lock-unlock : i64
+  8)
 
 ;: Linux open flags used by this boundary.
 (define fs-linux-rooted-o-wronly : u64
@@ -385,6 +430,17 @@
       (bit-or
         fs-linux-rooted-o-excl
         (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))))
+
+;: Guard sidecar create-or-open flags: read-only (`flock` needs no write
+;: access), created without `O_EXCL` because the sidecar is permanent and
+;: shared, never following a final symlink, and nonblocking so a substituted
+;: FIFO is opened and then rejected by kind instead of stalling.
+(define fs-linux-rooted-guard-open-flags : u64
+  (bit-or
+    fs-linux-rooted-o-creat
+    (bit-or
+      fs-linux-rooted-o-nonblock
+      (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec))))
 
 ;: Existing-file read flags. `O_RDONLY` is zero on Linux.
 (define fs-linux-rooted-file-read-flags : u64
@@ -463,6 +519,10 @@
 ;: Every mode bit below the file kind (`07777`).
 (define fs-linux-rooted-mode-bits-mask : i64
   4095)
+
+;: Group and other write bits (`022`). A guard sidecar must carry neither.
+(define fs-linux-rooted-shared-write-mask : i64
+  18)
 
 ;: Linux `S_IFMT` mask.
 (define fs-linux-rooted-stat-kind-mask : i64
@@ -545,6 +605,18 @@
 ;: Fault-injection ID for retained-file rewind via `lseek`.
 (define fs-linux-rooted-syscall-kind-lseek : i64
   17)
+
+;: Fault-injection ID for the guard sidecar's create-or-open `openat2`.
+(define fs-linux-rooted-syscall-kind-guard-open : i64
+  18)
+
+;: Fault-injection ID for the guard's one `flock(LOCK_EX | LOCK_NB)`.
+(define fs-linux-rooted-syscall-kind-flock : i64
+  19)
+
+;: Fault-injection ID for the guard release's one `flock(LOCK_UN)`.
+(define fs-linux-rooted-syscall-kind-unlock : i64
+  20)
 
 ;: Sentinel distinct from every valid raw syscall result.
 (define fs-linux-rooted-no-injection : i64
@@ -638,6 +710,18 @@
     0))
 (cfg
   fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-guard-open-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-flock-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-unlock-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
   (define fs-linux-rooted-test-read-max : i64
     0))
 (cfg
@@ -683,6 +767,9 @@
       (set! fs-linux-rooted-test-directory-fsync-calls 0)
       (set! fs-linux-rooted-test-reopen-directory-calls 0)
       (set! fs-linux-rooted-test-lseek-calls 0)
+      (set! fs-linux-rooted-test-guard-open-calls 0)
+      (set! fs-linux-rooted-test-flock-calls 0)
+      (set! fs-linux-rooted-test-unlock-calls 0)
       (set! fs-linux-rooted-test-read-max 0)
       (set! fs-linux-rooted-test-mkdir-race-enabled false)
       (set! fs-linux-rooted-test-mkdir-race-ok false)
@@ -780,6 +867,12 @@
         fs-linux-rooted-test-reopen-directory-calls]
       [(= kind fs-linux-rooted-syscall-kind-lseek)
         fs-linux-rooted-test-lseek-calls]
+      [(= kind fs-linux-rooted-syscall-kind-guard-open)
+        fs-linux-rooted-test-guard-open-calls]
+      [(= kind fs-linux-rooted-syscall-kind-flock)
+        fs-linux-rooted-test-flock-calls]
+      [(= kind fs-linux-rooted-syscall-kind-unlock)
+        fs-linux-rooted-test-unlock-calls]
       [else 0])))
 
 ;: Record one syscall attempt and return an injected raw result or the sentinel.
@@ -891,6 +984,24 @@
                 fs-linux-rooted-test-lseek-calls
                 (+ fs-linux-rooted-test-lseek-calls 1))
               fs-linux-rooted-test-lseek-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-guard-open)
+            (begin
+              (set!
+                fs-linux-rooted-test-guard-open-calls
+                (+ fs-linux-rooted-test-guard-open-calls 1))
+              fs-linux-rooted-test-guard-open-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-flock)
+            (begin
+              (set!
+                fs-linux-rooted-test-flock-calls
+                (+ fs-linux-rooted-test-flock-calls 1))
+              fs-linux-rooted-test-flock-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-unlock)
+            (begin
+              (set!
+                fs-linux-rooted-test-unlock-calls
+                (+ fs-linux-rooted-test-unlock-calls 1))
+              fs-linux-rooted-test-unlock-calls)]
           [else 0])]
       (if (and
         (= kind fs-linux-rooted-test-fail-kind)
@@ -1190,6 +1301,74 @@
           (unsafe
             (syscall fs-linux-rooted-syscall-lseek fd 0 0)))))))
 
+;: Raw Linux `openat2` dedicated to guard-sidecar create-or-open faults.
+(unsafe
+  (define (linux-rooted-raw-guard-openat2
+    [dirfd : i64]
+    [path : (Ptr u8)]
+    [how : FsLinuxOpenHow]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-guard-open)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-openat2
+              dirfd
+              (linux-rooted-ptr-arg path)
+              (cast (ptr->int (ptr-cast (ptr-addr-of how) : (Ptr u8))) : i64)
+              fs-linux-rooted-open-how-size)))))))
+
+;: Raw Linux `flock(fd, LOCK_EX | LOCK_NB)`.
+(unsafe
+  (define (linux-rooted-raw-lock [fd : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-flock)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-flock
+              fd
+              (bit-or
+                fs-linux-rooted-lock-exclusive
+                fs-linux-rooted-lock-nonblocking))))))))
+
+;: Raw Linux `flock(fd, LOCK_UN)`.
+(unsafe
+  (define (linux-rooted-raw-unlock [fd : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-unlock)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-flock
+              fd
+              fs-linux-rooted-lock-unlock)))))))
+
+;: The calling process's effective user ID. `geteuid` cannot fail.
+(define (linux-rooted-effective-user) : u32
+  (cfg
+    windows
+    (cast 0 : u32)
+    (cast
+      (unsafe
+        (syscall fs-linux-rooted-syscall-geteuid))
+      : u32)))
+
 ;: Raw Linux `read`, optionally bounded by the focused short-read hook.
 (unsafe
   (define (linux-rooted-raw-read [fd : i64] [data : (MutPtr u8)] [count : i64]) : i64
@@ -1387,6 +1566,14 @@
     [(= raw -18) LinuxRootedCrossDevice]
     [(= raw -39) LinuxRootedDirectoryNotEmpty]
     [else (linux-rooted-result-from-raw raw)]))
+
+;: Guard-sidecar open normalization: the sidecar is opened for I/O so it can be
+;: locked, and opening a socket reports ENXIO, which for a sidecar name means
+;: the name is not a regular file.
+(define (linux-rooted-guard-open-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (if (= raw -6)
+    LinuxRootedWrongKind
+    (linux-rooted-result-from-raw raw)))
 
 ;: Cleanup-specific normalization treats both permitted nonempty-directory
 ;: errno values as one stable result while preserving ordinary EEXIST elsewhere.
@@ -1651,6 +1838,86 @@
   (state
     (MutPtr FsLinuxRootedHandleState)
     (:cleanup linux-rooted-state-cleanup)))
+
+;: Allocate private active-arena state for one guard.
+(unsafe
+  (define (linux-rooted-guard-state-new [value : FsLinuxRootedGuardState]) : (MutPtr
+      FsLinuxRootedGuardState)
+    (let
+      [states : (__tl_dyn-array FsLinuxRootedGuardState)
+        (__tl_make-array FsLinuxRootedGuardState 1)]
+      [state : (MutPtr FsLinuxRootedGuardState)
+        (unsafe
+          (__tl_array-data states))]
+      (begin
+        (unsafe
+          (ptr-write! state value))
+        state))))
+
+;: Snapshot guard state, failing closed for a null pointer.
+(unsafe
+  (define (linux-rooted-guard-state-read
+    [state : (MutPtr FsLinuxRootedGuardState)]) : FsLinuxRootedGuardState
+    (if (ptr-null? state)
+      (FsLinuxRootedGuardState
+        -1
+        LinuxRootedClosed
+        (cast 0 : u64)
+        (cast 0 : u64)
+        LinuxRootedClosed
+        LinuxRootedClosed)
+      (unsafe
+        (ptr-read state)))))
+
+;: Store guard state after checking its opaque pointer.
+(unsafe
+  (define (linux-rooted-guard-state-write!
+    [state : (MutPtr FsLinuxRootedGuardState)]
+    [value : FsLinuxRootedGuardState]) : unit
+    (if (ptr-null? state)
+      unit
+      (unsafe
+        (ptr-write! state value)))))
+
+;: Cleanup-field adapter: one close of a still-held descriptor. Closing the
+;: guard's only open file description releases its lock; the outcome is
+;: observable only through `linux-rooted-guard-release!`.
+(define (linux-rooted-guard-state-cleanup
+  [state : (MutPtr FsLinuxRootedGuardState)]) : unit
+  (unsafe
+    (let
+      [held : FsLinuxRootedGuardState (linux-rooted-guard-state-read state)]
+      (if (< held.fd 0)
+        unit
+        (begin
+          (linux-rooted-guard-state-write!
+            state
+            (FsLinuxRootedGuardState
+              -1
+              held.result
+              held.device
+              held.inode
+              held.unlock
+              LinuxRootedClosed))
+          (let
+            [close-result : FsLinuxRootedResult
+              (linux-rooted-close-fd-once held.fd)]
+            (linux-rooted-guard-state-write!
+              state
+              (FsLinuxRootedGuardState
+                -1
+                held.result
+                held.device
+                held.inode
+                held.unlock
+                close-result))))))))
+
+;: Cleanup-owning, move-only exclusive lock on one rooted sidecar.
+(defstruct FsLinuxRootedGuard
+  (:cleanup cleanup-linux-rooted-guard)
+  (state
+    (MutPtr FsLinuxRootedGuardState)
+    (:cleanup linux-rooted-guard-state-cleanup)))
 
 ;: Return the stable construction/current result without exposing the fd.
 (define (linux-rooted-directory-result
@@ -2307,6 +2574,290 @@
                   operation
                   (linux-rooted-close-fd-once fd)))))]))))
 
+;: One nonblocking exclusive lock attempt. Another open file description
+;: holding the lock is `LockConflict`; a kernel or filesystem without `flock`
+;: support is `Unsupported`; an interrupted attempt is `Cancelled`.
+(define (linux-rooted-lock-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (cond
+    [(= raw 0) LinuxRootedOk]
+    [(= raw -11) LinuxRootedLockConflict]
+    [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+    [(or (= raw -22) (= raw -37) (= raw -38) (= raw -95))
+      LinuxRootedUnsupported]
+    [else LinuxRootedIoFailure]))
+
+;: One `LOCK_UN` attempt. It is never retried: the close that follows it
+;: releases the lock in any case.
+(define (linux-rooted-unlock-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (cond
+    [(= raw 0) LinuxRootedOk]
+    [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+    [else LinuxRootedIoFailure]))
+
+;: Sidecar policy, checked before locking: a linked regular file with exactly
+;: one name, owned by the effective user, writable by neither group nor
+;: others. Any other shape could let another user substitute or alias it, so
+;: it is not trusted to serialize writers.
+(define (linux-rooted-guard-sidecar-result
+  [sidecar : (& sidecar FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+  (cond
+    [(not (linux-rooted-result-ok? (clone sidecar.result)))
+      (clone sidecar.result)]
+    [(not (= sidecar.links (cast 1 : u64))) LinuxRootedUnsupported]
+    [(not (= sidecar.owner (linux-rooted-effective-user)))
+      LinuxRootedUnsupported]
+    [(not (= (bit-and sidecar.permissions fs-linux-rooted-shared-write-mask) 0))
+      LinuxRootedUnsupported]
+    [else LinuxRootedOk]))
+
+;: A guard that holds no descriptor and no lock.
+(define (linux-rooted-failed-guard [result : FsLinuxRootedResult]) : FsLinuxRootedGuard
+  (FsLinuxRootedGuard
+    (unsafe
+      (linux-rooted-guard-state-new
+        (FsLinuxRootedGuardState
+          -1
+          result
+          (cast 0 : u64)
+          (cast 0 : u64)
+          LinuxRootedClosed
+          LinuxRootedClosed)))))
+
+;: A failed guard after its acquired sidecar descriptor was closed once; the
+;: close outcome stays observable beside `result`.
+(unsafe
+  (define (linux-rooted-failed-guard-after-close
+    [result : FsLinuxRootedResult]
+    [fd : i64]) : FsLinuxRootedGuard
+    (FsLinuxRootedGuard
+      (unsafe
+        (linux-rooted-guard-state-new
+          (FsLinuxRootedGuardState
+            -1
+            result
+            (cast 0 : u64)
+            (cast 0 : u64)
+            LinuxRootedClosed
+            (unsafe
+              (linux-rooted-close-fd-once fd))))))))
+
+;: Create or open the permanent sidecar `component` below the retained parent
+;: and make exactly one nonblocking exclusive lock attempt on it. The open uses
+;: the complete descendant policy; the sidecar must pass
+;: `linux-rooted-guard-sidecar-result` before the lock is attempted, and
+;: cancellation is checked before each host step. A successful lock commits and
+;: is returned as a live guard. Every failure after the open closes its
+;: descriptor once and reports that close beside the failure. Blocking,
+;: retries and deadlines are the caller's policy.
+(define (linux-rooted-guard-acquire
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedGuard
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (linux-rooted-failed-guard LinuxRootedInvalidComponent)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result)))
+          (linux-rooted-failed-guard LinuxRootedClosed)]
+        [(cancel-check) (linux-rooted-failed-guard LinuxRootedCancelled)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [how : FsLinuxOpenHow
+              (FsLinuxOpenHow
+                fs-linux-rooted-guard-open-flags
+                fs-linux-rooted-private-file-mode
+                fs-linux-rooted-resolve-policy)]
+            [fd : i64
+              (linux-rooted-raw-guard-openat2
+                parent-state.fd
+                (io.array-const-ptr component-bytes)
+                how)]
+            (if (< fd 0)
+              (linux-rooted-failed-guard
+                (linux-rooted-guard-open-result-from-raw fd))
+              (let
+                [sidecar : FsLinuxRootedSourceSnapshot
+                  (linux-rooted-fd-source-snapshot fd)]
+                [policy : FsLinuxRootedResult
+                  (linux-rooted-guard-sidecar-result (& sidecar))]
+                (cond
+                  [(not (linux-rooted-result-ok? policy))
+                    (linux-rooted-failed-guard-after-close policy fd)]
+                  [(cancel-check)
+                    (linux-rooted-failed-guard-after-close
+                      LinuxRootedCancelled
+                      fd)]
+                  [else
+                    (let
+                      [locked : FsLinuxRootedResult
+                        (linux-rooted-lock-result-from-raw
+                          (linux-rooted-raw-lock fd))]
+                      (if (linux-rooted-result-ok? locked)
+                        (FsLinuxRootedGuard
+                          (linux-rooted-guard-state-new
+                            (FsLinuxRootedGuardState
+                              fd
+                              LinuxRootedOk
+                              sidecar.device
+                              sidecar.inode
+                              LinuxRootedClosed
+                              LinuxRootedClosed)))
+                        (linux-rooted-failed-guard-after-close locked fd)))]))))]))))
+
+;: Acquisition result of a guard. `LinuxRootedOk` means the lock was taken;
+;: it stays `Ok` after release, so use `linux-rooted-guard-locked?` for the
+;: current state.
+(define (linux-rooted-guard-result [guard : (& guard FsLinuxRootedGuard)]) : FsLinuxRootedResult
+  (let
+    [held : FsLinuxRootedGuardState
+      (unsafe
+        (linux-rooted-guard-state-read guard.state))]
+    held.result))
+
+;: True while the guard holds its lock.
+(define (linux-rooted-guard-locked? [guard : (& guard FsLinuxRootedGuard)]) : bool
+  (let
+    [held : FsLinuxRootedGuardState
+      (unsafe
+        (linux-rooted-guard-state-read guard.state))]
+    (and (>= held.fd 0) (linux-rooted-result-ok? held.result))))
+
+;: The recorded close of a failed acquisition or of a release.
+(define (linux-rooted-guard-close-result [guard : (& guard FsLinuxRootedGuard)]) : FsLinuxRootedResult
+  (let
+    [held : FsLinuxRootedGuardState
+      (unsafe
+        (linux-rooted-guard-state-read guard.state))]
+    held.close))
+
+;: Unlock outcome of a release.
+(define (linux-rooted-guard-release-unlock
+  [release : FsLinuxRootedGuardRelease]) : FsLinuxRootedResult
+  release.unlock)
+
+;: Close outcome of a release.
+(define (linux-rooted-guard-release-close [release : FsLinuxRootedGuardRelease]) : FsLinuxRootedResult
+  release.close)
+
+;: True when both the unlock and the close of a release succeeded.
+(define (linux-rooted-guard-release-ok? [release : FsLinuxRootedGuardRelease]) : bool
+  (and
+    (linux-rooted-result-ok? release.unlock)
+    (linux-rooted-result-ok? release.close)))
+
+;: Check, before a transaction's first source cutover, that `component` below
+;: the retained parent still names the sidecar this guard locked: one
+;: `openat2` without create, one `fstat`, one close. Another file at the name
+;: (a hostile or careless substitution) is `IdentityChanged`, a symlink
+;: `UnsafeResolution`, a removed sidecar `NotFound`; none of them is reported
+;: as serialized. The close outcome is reported separately.
+(define (linux-rooted-guard-revalidate
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [guard : (& guard FsLinuxRootedGuard)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedFinishResult
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      [held : FsLinuxRootedGuardState
+        (linux-rooted-guard-state-read guard.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (FsLinuxRootedFinishResult
+            LinuxRootedInvalidComponent
+            LinuxRootedClosed)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result))
+            (< held.fd 0)
+            (not (linux-rooted-result-ok? held.result)))
+          (FsLinuxRootedFinishResult LinuxRootedClosed LinuxRootedClosed)]
+        [(cancel-check)
+          (FsLinuxRootedFinishResult LinuxRootedCancelled LinuxRootedClosed)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [how : FsLinuxOpenHow
+              (FsLinuxOpenHow
+                fs-linux-rooted-file-read-flags
+                (cast 0 : u64)
+                fs-linux-rooted-resolve-policy)]
+            [fd : i64
+              (linux-rooted-raw-reopenat2
+                parent-state.fd
+                (io.array-const-ptr component-bytes)
+                how)]
+            (if (< fd 0)
+              (FsLinuxRootedFinishResult
+                (linux-rooted-guard-open-result-from-raw fd)
+                LinuxRootedClosed)
+              (let
+                [current : FsLinuxRootedSourceSnapshot
+                  (linux-rooted-fd-source-snapshot fd)]
+                [operation : FsLinuxRootedResult
+                  (cond
+                    [(not (linux-rooted-result-ok? (clone current.result)))
+                      (clone current.result)]
+                    [(and
+                        (= current.device held.device)
+                        (= current.inode held.inode))
+                      LinuxRootedOk]
+                    [else LinuxRootedIdentityChanged])]
+                (FsLinuxRootedFinishResult
+                  operation
+                  (linux-rooted-close-fd-once fd)))))]))))
+
+;: Release a guard: one `LOCK_UN` attempt while the lock is held, then one
+;: close regardless of its outcome. The descriptor is poisoned first, so later
+;: cleanup is a no-op. A guard that holds nothing reports `Closed` for the
+;: unlock and its recorded close.
+(define (linux-rooted-guard-release! [guard : (&mut guard FsLinuxRootedGuard)]) : FsLinuxRootedGuardRelease
+  (unsafe
+    (let
+      [held : FsLinuxRootedGuardState
+        (linux-rooted-guard-state-read guard.state)]
+      (if (< held.fd 0)
+        (FsLinuxRootedGuardRelease LinuxRootedClosed held.close)
+        (let
+          [unlock : FsLinuxRootedResult
+            (if (linux-rooted-result-ok? held.result)
+              (linux-rooted-unlock-result-from-raw
+                (linux-rooted-raw-unlock held.fd))
+              LinuxRootedClosed)]
+          (begin
+            (linux-rooted-guard-state-write!
+              guard.state
+              (FsLinuxRootedGuardState
+                -1
+                held.result
+                held.device
+                held.inode
+                unlock
+                LinuxRootedClosed))
+            (let
+              [close-result : FsLinuxRootedResult
+                (linux-rooted-close-fd-once held.fd)]
+              (begin
+                (linux-rooted-guard-state-write!
+                  guard.state
+                  (FsLinuxRootedGuardState
+                    -1
+                    held.result
+                    held.device
+                    held.inode
+                    unlock
+                    close-result))
+                (FsLinuxRootedGuardRelease unlock close-result)))))))))
+
 ;: Construct a no-data read outcome.
 (define (linux-rooted-empty-read-result
   [operation : FsLinuxRootedResult]
@@ -2846,7 +3397,8 @@
       [(LinuxRootedIdentityChanged) 20]
       [(LinuxRootedSourceChanged) 21]
       [(LinuxRootedInvalidPermissions) 22]
-      [(LinuxRootedModeMismatch) 23])))
+      [(LinuxRootedModeMismatch) 23]
+      [(LinuxRootedLockConflict) 24])))
 
 (cfg
   test
@@ -3128,6 +3680,125 @@
 
 (cfg
   test
+  (define (linux-rooted-test-sidecar
+    [links : i64]
+    [owner : u32]
+    [permissions : i64]) : FsLinuxRootedSourceSnapshot
+    (FsLinuxRootedSourceSnapshot
+      LinuxRootedOk
+      (cast 7 : u64)
+      (cast 99 : u64)
+      0
+      (cast links : u64)
+      owner
+      (cast 1001 : u32)
+      permissions)))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-guard-policy
+    (let
+      [user : u32 (linux-rooted-effective-user)]
+      [private : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 384)]
+      [read-only : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 292)]
+      [aliased : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 2 user 384)]
+      [foreign : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 (+ user (cast 1 : u32)) 384)]
+      [group-writable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 432)]
+      [other-writable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 386)]
+      [directory : FsLinuxRootedSourceSnapshot
+        (linux-rooted-failed-source-snapshot LinuxRootedWrongKind)]
+      (begin
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& private)))
+          0
+          "a private sidecar owned by the effective user is trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& read-only)))
+          0
+          "a read-only sidecar can still be locked")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& aliased)))
+          7
+          "a hard-linked sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& foreign)))
+          7
+          "another user's sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& group-writable)))
+          7
+          "a group-writable sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& other-writable)))
+          7
+          "an other-writable sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& directory)))
+          5
+          "a sidecar that is not a regular file keeps its kind result")))))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-lock-taxonomy
+    (begin
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw 0))
+        0
+        "an acquired lock is Ok")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -11))
+        24
+        "EWOULDBLOCK is a lock conflict")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -4))
+        9
+        "EINTR is cancellation")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -37))
+        7
+        "ENOLCK is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -22))
+        7
+        "EINVAL is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -95))
+        7
+        "EOPNOTSUPP is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -5))
+        8
+        "other lock errors are I/O failures")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw 0))
+        0
+        "an unlock is Ok")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw -4))
+        9
+        "an interrupted unlock is cancellation")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw -9))
+        8
+        "other unlock errors are I/O failures"))))
+
+(cfg
+  test
   (test
     fs-rooted-linux-component-validation
     (let
@@ -3231,7 +3902,17 @@
       (test.assert-i64-eq
         (linux-rooted-test-result-code (linux-rooted-result-from-errno 40))
         4
-        "a source symlink (ELOOP) is unsafe resolution"))))
+        "a source symlink (ELOOP) is unsafe resolution")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-open-result-from-raw -6))
+        5
+        "a guard sidecar that is a socket (ENXIO) is wrong kind")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-open-result-from-raw -40))
+        4
+        "a guard sidecar symlink (ELOOP) stays unsafe resolution"))))
 
 (cfg
   test
@@ -3330,6 +4011,22 @@
       (test.assert-i64-eq fs-linux-rooted-permission-mask 511 "0777 mask")
       (test.assert-i64-eq fs-linux-rooted-special-mode-mask 3584 "07000 mask")
       (test.assert-i64-eq fs-linux-rooted-mode-bits-mask 4095 "07777 mask")
+      (test.assert-i64-eq fs-linux-rooted-shared-write-mask 18 "022 mask")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-flock
+        73
+        "x86-64 flock syscall number")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-geteuid
+        107
+        "x86-64 geteuid syscall number")
+      (test.assert-i64-eq fs-linux-rooted-lock-exclusive 2 "LOCK_EX value")
+      (test.assert-i64-eq fs-linux-rooted-lock-nonblocking 4 "LOCK_NB value")
+      (test.assert-i64-eq fs-linux-rooted-lock-unlock 8 "LOCK_UN value")
+      (test.assert-i64-eq
+        (cast fs-linux-rooted-guard-open-flags : i64)
+        657472
+        "guard sidecar create-or-open flags")
       (test.assert-i64-eq
         fs-linux-rooted-read-max-bytes
         1048576

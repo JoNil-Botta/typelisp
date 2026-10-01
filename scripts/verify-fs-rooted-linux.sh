@@ -596,6 +596,75 @@ for applied in stage-verify-fstat stage-fsync stage-close; do
     assert_mode "$SOURCE_FAULTS/$applied.txt" 640
 done
 
+# Rooted sidecar guards (#7559): lock semantics, sidecar policy, substitution,
+# faults, and serialization between processes.
+GUARD_SOURCE="$ROOT/tests/integration/fs_rooted_linux_guard.tl"
+GUARD_ASM="$WORKDIR/guard.s"
+GUARD_OBJ="$WORKDIR/guard.o"
+GUARD_BIN="$WORKDIR/guard"
+echo "[fs-rooted-linux] compile rooted sidecar guard coverage"
+"$COMPILER" compile "$GUARD_SOURCE" -o "$GUARD_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/guard-compile.stdout" 2> "$WORKDIR/guard-compile.stderr" ||
+    fail "sidecar guard fixture compile failed"
+as "$GUARD_ASM" -o "$GUARD_OBJ"
+ld "$GUARD_OBJ" -o "$GUARD_BIN" -e _tl_start
+
+GUARD_TREE="$WORKDIR/guard-tree"
+mkdir -p "$GUARD_TREE/dir-sidecar"
+ln -s "$WORKDIR/outside/guard-target" "$GUARD_TREE/link-sidecar"
+mkfifo "$GUARD_TREE/fifo-sidecar"
+: > "$GUARD_TREE/linked-sidecar"
+ln "$GUARD_TREE/linked-sidecar" "$GUARD_TREE/linked-alias"
+: > "$GUARD_TREE/shared-sidecar"
+chmod 664 "$GUARD_TREE/shared-sidecar"
+run_expect guard 42 "$GUARD_BIN" guard "$GUARD_TREE"
+for sidecar in lock scoped-lock; do
+    [ -f "$GUARD_TREE/$sidecar" ] || fail "guard sidecar $sidecar was not kept"
+    [ ! -s "$GUARD_TREE/$sidecar" ] || fail "guard sidecar $sidecar gained bytes"
+    assert_mode "$GUARD_TREE/$sidecar" 600
+done
+[ ! -e "$GUARD_TREE/never-created" ] ||
+    fail "a cancelled guard acquisition created its sidecar"
+[ ! -e "$WORKDIR/outside/guard-target" ] ||
+    fail "a symlinked guard sidecar created its outside target"
+[ -L "$GUARD_TREE/link-sidecar" ] || fail "a symlinked guard sidecar was replaced"
+assert_mode "$GUARD_TREE/shared-sidecar" 664
+
+GUARD_FAULTS="$WORKDIR/guard-faults"
+mkdir -p "$GUARD_FAULTS"
+run_expect guard-faults 42 "$GUARD_BIN" faults "$GUARD_FAULTS"
+assert_mode "$GUARD_FAULTS/fault-lock" 600
+
+# One process holds the shared sidecar lock while another's single attempt
+# conflicts; after an explicit release, and after a holder exits without
+# releasing, a new attempt acquires it.
+GUARD_SHARED="$WORKDIR/guard-shared"
+mkdir -p "$GUARD_SHARED"
+"$GUARD_BIN" hold "$GUARD_SHARED" \
+    > "$WORKDIR/guard-hold.stdout" 2> "$WORKDIR/guard-hold.stderr" &
+GUARD_HOLD_PID=$!
+guard_waits=0
+while [ ! -e "$GUARD_SHARED/held" ] && [ "$guard_waits" -lt 100 ]; do
+    sleep 0.1
+    guard_waits=$((guard_waits + 1))
+done
+[ -e "$GUARD_SHARED/held" ] || fail "the guard holder never announced its lock"
+run_expect guard-try-held 60 "$GUARD_BIN" try "$GUARD_SHARED"
+set +e
+wait "$GUARD_HOLD_PID"
+GUARD_HOLD_STATUS=$?
+set -e
+[ "$GUARD_HOLD_STATUS" -eq 42 ] ||
+    fail "the guard holder exited $GUARD_HOLD_STATUS"
+[ ! -s "$WORKDIR/guard-hold.stdout" ] || fail "the guard holder wrote stdout"
+[ ! -s "$WORKDIR/guard-hold.stderr" ] || fail "the guard holder wrote stderr"
+run_expect guard-try-released 42 "$GUARD_BIN" try "$GUARD_SHARED"
+run_expect guard-die 42 "$GUARD_BIN" die "$GUARD_SHARED"
+run_expect guard-try-after-exit 42 "$GUARD_BIN" try "$GUARD_SHARED"
+assert_mode "$GUARD_SHARED/shared-lock" 600
+
 # Exercise the direct-object-enabled source planner. This backend closure uses
 # unsupported direct-object records today, so the asserted behavior is the
 # documented assembler fallback; the first probe proves the assembler is used.

@@ -563,12 +563,12 @@
       (surface-ast-struct-repr-roundtrip-ok? ast.AstStructRepr.Default)
       (surface-ast-struct-repr-roundtrip-ok? (ast.ast-struct-repr-c))
       (surface-ast-struct-repr-roundtrip-ok?
-        (ast.AstStructRepr.C 1 (ast.ast-field-align-list-new)))
+        (ast.AstStructRepr.C 1 (ast.ast-no-field-aligns)))
       (surface-ast-struct-repr-roundtrip-ok?
-        (ast.AstStructRepr.C 4096 (ast.ast-field-align-list-new)))
+        (ast.AstStructRepr.C 4096 (ast.ast-no-field-aligns)))
       (surface-ast-struct-repr-roundtrip-ok?
         (ast.ast-struct-repr-with-field-align
-          (ast.AstStructRepr.C 32 (ast.ast-field-align-list-new))
+          (ast.AstStructRepr.C 32 (ast.ast-no-field-aligns))
           2
           16))
       (surface-ast-declared-align-rejected? 1 24 0 0)
@@ -1062,7 +1062,7 @@
             (ast.ast-decl-def-struct-id
               struct-id
               (ast.ast-struct-repr-with-field-align
-                (ast.AstStructRepr.C 16 (ast.ast-field-align-list-new))
+                (ast.AstStructRepr.C 16 (ast.ast-no-field-aligns))
                 0
                 8)
               ast.AstStructCleanup.No

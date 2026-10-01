@@ -1941,7 +1941,7 @@
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct _ _ (ast.AstStructRepr.C _ aligns) _ _)
-            (= aligns.len want)]
+            (= (ast.ast-field-aligns-len aligns) want)]
           [_ false]))]
     [(parser.ResultAstProgram.Err _) false]))
 

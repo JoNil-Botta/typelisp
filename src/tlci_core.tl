@@ -568,8 +568,6 @@
     compiler-comptime-host-callback-struct-field-count
     compiler-comptime-host-callback-struct-field-name
     compiler-comptime-host-callback-struct-field-type
-    compiler-comptime-host-callback-type-declared-align
-    compiler-comptime-host-callback-struct-field-declared-align
     compiler-comptime-host-callback-enum-variant-count
     compiler-comptime-host-callback-enum-variant-name
     compiler-comptime-host-callback-enum-variant-payload-count

@@ -6032,8 +6032,8 @@ Primitive names and signatures are fixed as follows:
 | `(struct-field-count type-expr)` | `i64` | Requires a struct type. |
 | `(struct-field-name type-expr index-expr)` | `String` | Zero-based field name. |
 | `(struct-field-type type-expr index-expr)` | `type` | Zero-based field type. |
-| `(struct-field-declared-align type-expr index-expr)` | `i64` | Literal `(:align N)` of the zero-based field, or 0 when it declares none. Requires a struct type. |
-| `(type-declared-align type-expr)` | `i64` | Literal struct-level `(:align N)`, or 0 when absent. Every type other than a `(:repr c)` struct with that metadata answers 0. |
+| `(struct-field-declared-align type-expr index-expr)` | `i64` | Literal `(:align N)` of the zero-based field, or 0 when it declares none. Requires a struct type. Interpreter-answered; no host callback yet. |
+| `(type-declared-align type-expr)` | `i64` | Literal struct-level `(:align N)`, or 0 when absent. Every type other than a `(:repr c)` struct with that metadata answers 0. Interpreter-answered; no host callback yet. |
 | `(enum-variant-count type-expr)` | `i64` | Requires an enum type. |
 | `(enum-variant-name type-expr index-expr)` | `String` | Zero-based variant constructor name. |
 | `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |

@@ -2806,24 +2806,6 @@
     session
     (compiler-comptime-host-type-query-data "enum-variant-payload-count" arg-a)))
 
-(define (compiler-comptime-host-callback-type-declared-align
-  [session : i64]
-  [_arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
-  (compiler-comptime-host-data-callback
-    session
-    (compiler-comptime-host-type-query-data "type-declared-align" 0)))
-
-(define (compiler-comptime-host-callback-struct-field-declared-align
-  [session : i64]
-  [arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
-  (compiler-comptime-host-data-callback
-    session
-    (compiler-comptime-host-type-query-data "struct-field-declared-align" arg-a)))
-
 (define (compiler-comptime-host-callback-tuple-element-count
   [session : i64]
   [_arg-a : i64]

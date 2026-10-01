@@ -284,12 +284,14 @@
           (begin
             (codec.surface-ast-write-i64! out 1)
             (codec.surface-ast-write-i64! out align)
-            (codec.surface-ast-write-i64! out fields.len)
-            (while (< index fields.len)
+            (codec.surface-ast-write-i64!
+              out
+              (ast.ast-field-aligns-len (& fields)))
+            (while (< index (ast.ast-field-aligns-len (& fields)))
               (begin
                 (codec.surface-ast-write-i64!
                   out
-                  (ast.ast-field-align-list-get (& fields) index 0))
+                  (ast.ast-field-aligns-ref (& fields) index))
                 (set! index (+ index 1))))))])))
 
 ;; A declared `(:align N)` value: 0 when absent, otherwise a power of two
@@ -314,7 +316,7 @@
   (match repr
     [(ast.AstStructRepr.C _ aligns)
       (when
-        (> aligns.len fields.len)
+        (> (ast.ast-field-aligns-len aligns) fields.len)
         (codec.surface-ast-reader-fail!
           reader
           "surface ast: field alignments exceed the struct's fields"))]
@@ -330,21 +332,21 @@
         (let
           [align : i64 (surface-ast-read-declared-align! reader)]
           [count : i64 (codec.surface-ast-read-count! reader)]
-          [fields : ast.AstFieldAlignList
-            (ast.ast-field-align-list-with-capacity count)]
+          [fields : ast.AstFieldAligns
+            (if (= count 0)
+              (ast.ast-no-field-aligns)
+              (ast.AstFieldAligns (__tl_make-array i64 count)))]
           [index : i64 0]
           (begin
             (while (< index count)
               (begin
-                (ast.ast-field-align-list-push
-                  (&mut fields)
+                (set!
+                  (array-ref fields.slots index)
                   (surface-ast-read-declared-align! reader))
                 (set! index (+ index 1))))
-            ;; The parser ends the list at the last declared field alignment.
+            ;; The parser ends the array at the last declared field alignment.
             (when
-              (and
-                (> count 0)
-                (= (ast.ast-field-align-list-get (& fields) (- count 1) 0) 0))
+              (and (> count 0) (= (array-ref fields.slots (- count 1)) 0))
               (codec.surface-ast-reader-fail!
                 reader
                 "surface ast: field alignment list ends in an absent entry"))

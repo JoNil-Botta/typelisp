@@ -948,7 +948,7 @@
     ;; Point declares `(:align 16)` and its `flag` field `(:align 8)`.
     [point-repr : ast.AstStructRepr
       (ast.ast-struct-repr-with-field-align
-        (ast.AstStructRepr.C 16 (ast.ast-field-align-list-new))
+        (ast.AstStructRepr.C 16 (ast.ast-no-field-aligns))
         1
         8)]
     (ctfe-env-with-reflections

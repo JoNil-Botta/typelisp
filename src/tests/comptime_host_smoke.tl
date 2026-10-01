@@ -497,24 +497,17 @@
             fields
             0)
           pair-id))
-      ;; The pair declares `(:align 16)` and its `beta` field `(:align 8)`.
-      (let
-        [pair-repr : ast.AstStructRepr
-          (ast.ast-struct-repr-with-field-align
-            (ast.AstStructRepr.C 16 (ast.ast-field-align-list-new))
-            1
-            8)]
-        (ctfe.ctfe-reflect-info-list-push-id
-          (ctfe.ctfe-reflect-info-list-add-aligns infos pair-id (& pair-repr) 2)
-          (ctfe.CtfeReflectInfo.Enum
-            "HostSmokeChoice"
-            ""
-            "HostSmokeChoice"
-            choice-id
-            (ctfe.CtfeReflectCleanup.No)
-            variants
-            0)
-          choice-id)))))
+      (ctfe.ctfe-reflect-info-list-push-id
+        infos
+        (ctfe.CtfeReflectInfo.Enum
+          "HostSmokeChoice"
+          ""
+          "HostSmokeChoice"
+          choice-id
+          (ctfe.CtfeReflectCleanup.No)
+          variants
+          0)
+        choice-id))))
 
 ;; The reflection builder test below batches several independent logical
 ;; invocations under one expensive metadata setup. Consume its synthetic result
@@ -1312,34 +1305,6 @@
               0
               0)
             2)
-          (host-smoke-push? 0)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-type-declared-align
-              0
-              0)
-            16)
-          (host-smoke-push? 1)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-type-declared-align
-              0
-              0)
-            0)
-          (host-smoke-push? 0)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-struct-field-declared-align
-              1
-              0)
-            8)
-          (host-smoke-push? 0)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-struct-field-declared-align
-              0
-              0)
-            0)
           (host-smoke-push? 0)
           (host-smoke-ok?
             host.compiler-comptime-host-callback-struct-field-name

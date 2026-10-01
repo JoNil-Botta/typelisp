@@ -2446,21 +2446,21 @@
         [(ast.AstStructRepr.C b-align b-fields)
           (and
             (= a-align b-align)
-            (= a-fields.len b-fields.len)
-            (gen-field-align-list-eq-at (& a-fields) (& b-fields) 0))]
+            (=
+              (ast.ast-field-aligns-len (& a-fields))
+              (ast.ast-field-aligns-len (& b-fields)))
+            (gen-field-aligns-eq-at (& a-fields) (& b-fields) 0))]
         [_ false])]))
 
-(define (gen-field-align-list-eq-at
-  [a : (& a ast.AstFieldAlignList)]
-  [b : (& b ast.AstFieldAlignList)]
+(define (gen-field-aligns-eq-at
+  [a : (& a ast.AstFieldAligns)]
+  [b : (& b ast.AstFieldAligns)]
   [index : i64]) : bool
   (or
-    (>= index a.len)
+    (>= index (ast.ast-field-aligns-len a))
     (and
-      (=
-        (ast.ast-field-align-list-get a index 0)
-        (ast.ast-field-align-list-get b index 0))
-      (gen-field-align-list-eq-at a b (+ index 1)))))
+      (= (ast.ast-field-aligns-ref a index) (ast.ast-field-aligns-ref b index))
+      (gen-field-aligns-eq-at a b (+ index 1)))))
 
 (define (gen-struct-cleanup-eq?
   [a : ast.AstStructCleanup]

@@ -560,19 +560,18 @@
   (len i64))
 
 ;; The declared `(:align N)` values of a `(:repr c)` struct's fields, by field
-;; index (0 for a field that declares none). The list ends at the last field
-;; that declares one, so a struct without field alignment keeps the shared
-;; empty list and the metadata costs nothing per field.
-(defstruct AstFieldAlignList
-  (slots (__tl_dyn-array i64))
-  (len i64))
+;; index (0 for a field that declares none). The array ends at the last field
+;; that declares one, so a struct without field alignment shares one empty
+;; array and the metadata costs nothing per field.
+(defstruct AstFieldAligns
+  (slots (__tl_dyn-array i64)))
 
 ;; `(:repr c)` carries the struct's declared `(:align N)` value (0 when absent)
 ;; and its fields' declared values. Explicit alignment is C-layout metadata
 ;; only.
 (defenum AstStructRepr
   (Default)
-  (C i64 AstFieldAlignList))
+  (C i64 AstFieldAligns))
 
 (defenum AstExternAbi
   (C)
@@ -5533,15 +5532,6 @@
     (ci.intern-syntax-id-from-raw 0)
     (AstType.Unit)
     AstFieldCleanup.No))
-
-(dense_list.compiler-dense-list-operations
-  i64
-  AstFieldAlignList
-  ast-field-align-list
-  caller-provided-fallback
-  shared-zero-capacity
-  ast-empty-field-align-slots
-  len)
 
 (dense_list.compiler-dense-list-operations
   AstFieldDef
@@ -11371,9 +11361,30 @@
     [(AstStructRepr.C _ _) true]
     [(AstStructRepr.Default) false]))
 
+;; The field alignments of a struct without any.
+(define ast-no-field-aligns-storage : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+(define (ast-no-field-aligns) : AstFieldAligns
+  (AstFieldAligns
+    (unsafe
+      (ptr-read (ptr-addr-of ast-no-field-aligns-storage)))))
+
+;; The number of field alignment entries.
+(define (ast-field-aligns-len [fields : (& fields AstFieldAligns)]) : i64
+  (array-length fields.slots))
+
+;; Field `index`'s declared alignment, or 0 past the last declared one.
+(define (ast-field-aligns-ref
+  [fields : (& fields AstFieldAligns)]
+  [index : i64]) : i64
+  (if (< index (array-length fields.slots))
+    (array-ref fields.slots index)
+    0))
+
 ;; `(:repr c)` without declared alignment.
 (define (ast-struct-repr-c) : AstStructRepr
-  (AstStructRepr.C 0 (ast-field-align-list-new)))
+  (AstStructRepr.C 0 (ast-no-field-aligns)))
 
 ;; The struct's declared `(:align N)` value, or 0 when it has none.
 (define (ast-struct-repr-declared-align [repr : (& repr AstStructRepr)]) : i64
@@ -11386,17 +11397,33 @@
   [repr : (& repr AstStructRepr)]
   [index : i64]) : i64
   (match repr
-    [(AstStructRepr.C _ fields) (ast-field-align-list-get fields index 0)]
+    [(AstStructRepr.C _ fields) (ast-field-aligns-ref fields index)]
     [(AstStructRepr.Default) 0]))
 
 ;; Whether the struct or any of its fields declares an alignment.
 (define (ast-struct-repr-declares-align? [repr : (& repr AstStructRepr)]) : bool
   (match repr
-    [(AstStructRepr.C align fields) (or (> (deref align) 0) (> fields.len 0))]
+    [(AstStructRepr.C align fields)
+      (or (> (deref align) 0) (> (ast-field-aligns-len fields) 0))]
     [(AstStructRepr.Default) false]))
 
-;; `repr` with field `index` declaring `align`; the list grows with zeros up to
-;; `index` only when `align` is nonzero, so it never ends in a zero.
+;; The first `count` field alignments of `fields` in fresh storage, padded
+;; with absent entries.
+(define (ast-field-aligns-copy
+  [fields : (& fields AstFieldAligns)]
+  [count : i64]) : AstFieldAligns
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref out index) (ast-field-aligns-ref fields index))
+          (set! index (+ index 1))))
+      (AstFieldAligns out))))
+
+;; `repr` with field `index` declaring `align`. The array grows only for a
+;; nonzero `align`, so it never ends in an absent entry.
 (define (ast-struct-repr-with-field-align
   [repr : AstStructRepr]
   [index : i64]
@@ -11406,33 +11433,22 @@
     (match repr
       [(AstStructRepr.C struct-align fields)
         (let
-          [out : AstFieldAlignList fields]
+          [out : AstFieldAligns (ast-field-aligns-copy (& fields) (+ index 1))]
           (begin
-            (while (< out.len index)
-              (ast-field-align-list-push (&mut out) 0))
-            (ast-field-align-list-push (&mut out) align)
+            (set! (array-ref out.slots index) align)
             (AstStructRepr.C struct-align out)))]
       [(AstStructRepr.Default) AstStructRepr.Default])))
 
-;; A copy whose field list owns fresh storage, for moving a declaration into
+;; A copy whose field array owns fresh storage, for moving a declaration into
 ;; another arena.
 (define (ast-struct-repr-copy [repr : AstStructRepr]) : AstStructRepr
   (match repr
     [(AstStructRepr.C align fields)
-      (if (= fields.len 0)
-        (AstStructRepr.C align (ast-field-align-list-new))
-        (let
-          [out : AstFieldAlignList
-            (ast-field-align-list-with-capacity fields.len)]
-          [index : i64 0]
-          (begin
-            (while (< index fields.len)
-              (begin
-                (ast-field-align-list-push
-                  (&mut out)
-                  (ast-field-align-list-get (& fields) index 0))
-                (set! index (+ index 1))))
-            (AstStructRepr.C align out))))]
+      (AstStructRepr.C
+        align
+        (if (= (ast-field-aligns-len (& fields)) 0)
+          (ast-no-field-aligns)
+          (ast-field-aligns-copy (& fields) (ast-field-aligns-len (& fields)))))]
     [(AstStructRepr.Default) AstStructRepr.Default]))
 
 ;; The shared cap on a declared `(:align N)` value: one page on both targets.

@@ -46865,25 +46865,42 @@
   ;; 1 or 2 while a home holds the carried list, 0 while the caller's arena does.
   (holder i64))
 
+;; DELIBERATE-RAW (#6620): the three arenas are process storage, made on first
+;; use and emptied between uses, so a pass does not map fresh arenas for every
+;; function. Rounds never re-enter the pass, so one set serves every caller; the
+;; optimizer drivers release it with their function scratch.
+(define opt-round-region-arenas : (__tl_dyn-array i64)
+  (__tl_make-array i64 3))
+(define opt-round-region-marks : (__tl_dyn-array i64)
+  (__tl_make-array i64 3))
+
 (define (opt-round-regions-new) : OptRoundRegions
   (let
     [outer : i64 (arena.tl_arena_current)]
-    [arenas : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    [marks : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    [slot : i64 0]
     (begin
-      (while (< slot 3)
+      (when
+        (= (array-ref opt-round-region-arenas 0) 0)
         (let
-          [handle : i64 (arena.tl_arena_make)]
+          [slot : i64 0]
           (begin
-            (set! (array-ref arenas slot) handle)
+            (while (< slot 3)
+              (let
+                [handle : i64 (arena.tl_arena_make)]
+                (begin
+                  (set! (array-ref opt-round-region-arenas slot) handle)
+                  (unsafe
+                    (arena.tl_arena_set handle))
+                  (set!
+                    (array-ref opt-round-region-marks slot)
+                    (arena.tl_region_mark))
+                  (set! slot (+ slot 1)))))
             (unsafe
-              (arena.tl_arena_set handle))
-            (set! (array-ref marks slot) (arena.tl_region_mark))
-            (set! slot (+ slot 1)))))
-      (unsafe
-        (arena.tl_arena_set outer))
-      (OptRoundRegions outer arenas marks 0))))
+              (arena.tl_arena_set outer)))))
+      (OptRoundRegions
+        outer
+        (compiler-opt-global-shared-view opt-round-region-arenas)
+        (compiler-opt-global-shared-view opt-round-region-marks)
+        0))))
 
 ;; Make arena SLOT current and empty.
 (define (opt-round-regions-enter!
@@ -46929,17 +46946,33 @@
   (unsafe
     (arena.tl_arena_set regions.outer)))
 
-;; Destroy the regions; a held list must already have been copied out.
-(define (opt-round-regions-destroy! [regions : (& regions OptRoundRegions)]) : unit
+;; Empty all three regions and return to the caller's arena; a held list must
+;; already have been copied out.
+(define (opt-round-regions-leave! [regions : (& regions OptRoundRegions)]) : unit
   (let
     [slot : i64 0]
     (begin
-      (unsafe
-        (arena.tl_arena_set regions.outer))
       (while (< slot 3)
         (begin
-          (unsafe
-            (arena.tl_arena_destroy (array-ref regions.arenas slot)))
+          (opt-round-regions-enter! regions slot)
+          (set! slot (+ slot 1))))
+      (unsafe
+        (arena.tl_arena_set regions.outer)))))
+
+;; Destroy the process's round regions, if a pass made them.
+(define (opt-round-regions-release!) : unit
+  (let
+    [slot : i64 0]
+    (while (< slot 3)
+      (let
+        [handle : i64 (array-ref opt-round-region-arenas slot)]
+        (begin
+          (when
+            (not (= handle 0))
+            (begin
+              (unsafe
+                (arena.tl_arena_destroy handle))
+              (set! (array-ref opt-round-region-arenas slot) 0)))
           (set! slot (+ slot 1)))))))
 
 ;; A list moving between regions is copied with every block, instruction and
@@ -47052,7 +47085,7 @@
               (opt-round-copy-blocks (compiler-opt-global-shared-view current))
               current)]
           (begin
-            (opt-round-regions-destroy! (& regions))
+            (opt-round-regions-leave! (& regions))
             result))))))
 
 ;; The first round runs in the caller's arena, so a function that threads once
@@ -105501,6 +105534,7 @@
           "optimizer-scratch"
           (arena.raw-handle scratch))
         (arena.destroy-safe! scratch)
+        (opt-round-regions-release!)
         result))))
 
 (define (optimize-function-level1-escaping-with-summaries
@@ -130724,6 +130758,7 @@
           "optimizer-late-scratch"
           (arena.raw-handle scratch))
         (arena.destroy-safe! scratch)
+        (opt-round-regions-release!)
         result))))
 
 ;; --- block-local redundant-load CSE -----------------------------------------

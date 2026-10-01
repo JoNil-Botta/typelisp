@@ -390,12 +390,14 @@
           (ir.compiler-ir-label "entry")
           (owned_view.compiler-owned-reference-shared-view instrs))
         (ir.CompilerIrBlockList.Nil))]
-    [addr-taken : (__tl_dyn-array bool) (opt-test-addr-taken-marks (& own))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (& own))
+        (opt.compiler-opt-global-shared-view own))]
     (while (< index count)
       (match (opt.opt-copy-instr
         (opt.compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index))
-        (& addr-taken))
+        (clone (array-ref instrs.slots index)))
         [(opt.OptCopyResult.Result next-state rewritten)
           (begin
             (set! (array-ref instrs.slots index) rewritten)
@@ -562,8 +564,9 @@
     (match (opt.opt-thread-const-branch-final-pass type-segment-bases converted)
       [(opt.OptFunctionPassResult.Result next _) next])))
 
-;; One past the highest var a block's `addr_of` reads, so the marks below cover
-;; every address-taken var whether a block defines it or reads it as a param.
+;; One past the highest var a block's `addr_of` reads: the frame a test driver
+;; installs address-taken marks for, so they cover every address-taken var
+;; whether the block defines it or reads it as a param.
 (define (opt-test-addr-of-bound-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (let
@@ -598,16 +601,11 @@
         [blocks (ir.compiler-ir-block-seq-to-list seq)]
         (opt-test-addr-of-bound blocks))]))
 
-;; The address-taken marks the function pass computes, from `blocks` alone.
-(define (opt-test-addr-taken-marks [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array
-    bool)
-  (opt.opt-addr-taken-vars (opt-test-addr-of-bound blocks) blocks))
-
 ;; The block-local pipeline (fold, CSE, load-CSE, DSE, copy, bounds) on one
 ;; block with no header-typed handles, load kinds, alias seeds or scan scratch:
 ;; the context-free form of the per-block step optimize-block-list-for-function
-;; runs. The block's own `addr_of`s mark its address-taken vars, as the
-;; function pass's whole-function scan would.
+;; runs. It installs the block's own `addr_of`s as the fold pipeline's
+;; address-taken marks, as the function pass installs its whole-function scan.
 (define (opt-test-optimize-block
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -620,7 +618,10 @@
       (ir.compiler-ir-block-cons
         (opt.compiler-opt-global-shared-view block)
         (ir.CompilerIrBlockList.Nil))]
-    [addr-taken : (__tl_dyn-array bool) (opt-test-addr-taken-marks (& own))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (& own))
+        (opt.compiler-opt-global-shared-view own))]
     [hs (opt.opt-load-header-set-empty)]
     [dead-kinds (opt.opt-load-kinds-empty)]
     [load-kinds (opt.opt-load-kinds-empty)]
@@ -636,7 +637,6 @@
       entry-label
       seed-facts
       (__tl_make-array i64 0)
-      (& addr-taken)
       block)))
 
 (define (opt-test-optimize-block-list
@@ -52612,7 +52612,10 @@
           (ir.compiler-ir-label "entry")
           (opt.compiler-opt-global-shared-view instrs))
         (ir.CompilerIrBlockList.Nil))]
-    [addr-taken : (__tl_dyn-array bool) (opt-test-addr-taken-marks (& blocks))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (& blocks))
+        (opt.compiler-opt-global-shared-view blocks))]
     [hs : opt.OptLoadHeaderSet
       (opt.opt-load-header-set-from-function
         type-segment-bases
@@ -52631,8 +52634,7 @@
           (opt.opt-load-cse-kinds-cap-for-size
             (ir.compiler-ir-instr-seq-count seq))
           (opt.opt-alias-seed-params type-segment-bases params))
-        (opt.compiler-opt-global-shared-view seq)
-        (& addr-taken))
+        (opt.compiler-opt-global-shared-view seq))
       seq)))
 
 (define (opt-load-cse-run-with-params-and-call-memory

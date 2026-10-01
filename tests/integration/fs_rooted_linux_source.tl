@@ -31,7 +31,8 @@
     [(rooted.LinuxRootedIdentityChanged) 20]
     [(rooted.LinuxRootedSourceChanged) 21]
     [(rooted.LinuxRootedInvalidPermissions) 22]
-    [(rooted.LinuxRootedModeMismatch) 23]))
+    [(rooted.LinuxRootedModeMismatch) 23]
+    [(rooted.LinuxRootedLockConflict) 24]))
 
 (define (finish-is?
   [result : rooted.FsLinuxRootedFinishResult]

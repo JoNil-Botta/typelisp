@@ -432,9 +432,11 @@ stderr contains compiler-load: cannot read import
 stderr match vendor[/\\]math[/\\]src[/\\]missing\.tl
 
 # A consumer calls its dependency's TypeLisp functions through package externs
-# (`AstExternAbi.TypeLisp`, #8485): two scalar arguments and six (two of them
-# past the register arguments) must cross the call boundary intact. Struct
-# arguments and results do not agree across packages yet (#8532).
+# (`AstExternAbi.TypeLisp`, #8485): two, six and eight scalar arguments must
+# cross the call boundary intact and in order. Each argument is weighted by its
+# position, so a swap changes the result, and eight arguments reach the stack on
+# both hosts. Struct arguments and results do not agree across packages yet
+# (#8532).
 case package-dependency-call-abi
 file typelisp.pkg
 (package
@@ -448,12 +450,21 @@ end-file
 file src/main.tl
 (import depabi.src.lib)
 (define (main) : i64
-  (+ (lib.dep-add2 1 2) (lib.dep-add6 1 2 3 4 5 6) 18))
+  (-
+    (+
+      (lib.dep-weigh2 1 2)
+      (lib.dep-weigh6 1 2 3 4 5 6)
+      (lib.dep-weigh8 1 2 3 4 5 6 7 8))
+    258))
 end-file
 file vendor/depabi/src/lib.tl
-(define (dep-add2 [a : i64] [b : i64]) : i64 (+ a b))
-(define (dep-add6 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64
-  (+ a b c d e f))
+;; Each returns the sum of i * x_i: 5, 91 and 204 for arguments 1..n.
+(define (dep-weigh2 [a : i64] [b : i64]) : i64 (+ a (* 2 b)))
+(define (dep-weigh6 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64
+  (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e) (* 6 f)))
+(define (dep-weigh8
+  [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e) (* 6 f) (* 7 g) (* 8 h)))
 end-file
 file vendor/depabi/typelisp.pkg
 (package

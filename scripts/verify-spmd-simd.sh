@@ -164,6 +164,10 @@ tests/spmd/byte_shift_inactive_invalid.tl
 tests/spmd/word_shift_value_types.tl
 tests/spmd/word_shift_inactive_invalid.tl
 tests/spmd/masked_if_value_types.tl
+tests/spmd/masked_cast_i32_f32_reject.tl
+tests/spmd/masked_cast_f32_i32_reject.tl
+tests/spmd/masked_cast_u32_f32_reject.tl
+tests/spmd/masked_cast_f32_u32_reject.tl
 tests/spmd/masked_move_fault_suppression.tl
 tests/spmd/masked_load_cache_fault_suppression.tl
 tests/spmd/masked_if_nested_i64.tl
@@ -218,6 +222,15 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/fixed_array_whole_use_keeps_array.tl:avx2 | tests/spmd/fixed_array_whole_use_keeps_array.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
+            ;;
+        tests/spmd/masked_cast_*_reject.tl:avx2 | tests/spmd/masked_cast_*_reject.tl:avx512)
+            # masked_cast_<source>_<destination>_reject.tl: masked conversions
+            # reject at the cast until #7162 implements them (#7306).
+            _row=${_prog#tests/spmd/masked_cast_}
+            _row=${_row%_reject.tl}
+            _backend=AVX2
+            [ "$_mode" = avx2 ] || _backend=AVX-512
+            printf '%s\n' "lower: SPMD numeric conversion from ${_row%_*} to ${_row#*_} is unsupported in masked control context for $_backend backend; SIMD cross-lane conversion has no implemented strategy; use scalar backend"
             ;;
         *) return 1 ;;
     esac

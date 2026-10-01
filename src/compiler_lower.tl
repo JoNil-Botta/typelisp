@@ -45757,6 +45757,18 @@
           (tc_core.ResultTcType.Err
             "lower: cannot recover SPMD numeric expression type")])]))
 
+;; Test builds can make the masked census admit every typed cast, so lowerer
+;; tests reach the masked emitter's own cast check (#7306).
+(cfg
+  test
+  (define lower-masked-census-admits-every-cast : bool
+    false))
+
+(cfg
+  test
+  (define (lower-masked-census-admit-every-cast! [admit : bool]) : unit
+    (set! lower-masked-census-admits-every-cast admit)))
+
 (define (lower-masked-spmd-numeric-conversion-supported?
   [function-state : CompilerLowerFunctionState]
   [mode : CompilerLowerMode]
@@ -45767,26 +45779,28 @@
       (>
         (compiler-lower-function-state-inline-helper-stack function-state).len
         0)]
-    (if helper-body
-      (and
-        (spmd_numeric.compiler-spmd-numeric-decision-supported?
-          (spmd_numeric.compiler-spmd-numeric-conversion-decision
-            (lower-global-shared-view source)
-            (lower-global-shared-view destination)
-            (spmd_numeric.CompilerSpmdNumericContext.InlineHelper)
-            (lower-spmd-numeric-backend mode)))
+    (or
+      (cfg test lower-masked-census-admits-every-cast false)
+      (if helper-body
+        (and
+          (spmd_numeric.compiler-spmd-numeric-decision-supported?
+            (spmd_numeric.compiler-spmd-numeric-conversion-decision
+              (lower-global-shared-view source)
+              (lower-global-shared-view destination)
+              (spmd_numeric.CompilerSpmdNumericContext.InlineHelper)
+              (lower-spmd-numeric-backend mode)))
+          (spmd_numeric.compiler-spmd-numeric-decision-supported?
+            (spmd_numeric.compiler-spmd-numeric-conversion-decision
+              source
+              destination
+              (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+              (lower-spmd-numeric-backend mode))))
         (spmd_numeric.compiler-spmd-numeric-decision-supported?
           (spmd_numeric.compiler-spmd-numeric-conversion-decision
             source
             destination
-            (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
-            (lower-spmd-numeric-backend mode))))
-      (spmd_numeric.compiler-spmd-numeric-decision-supported?
-        (spmd_numeric.compiler-spmd-numeric-conversion-decision
-          source
-          destination
-          (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)
-          (lower-spmd-numeric-backend mode))))))
+            (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)
+            (lower-spmd-numeric-backend mode)))))))
 
 (define (lower-masked-vector-unop-supported? [op : ast.AstUnOp]) : bool
   (match op
@@ -56912,6 +56926,16 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx expr message)))]))
 
+;; The numeric context the masked emitter reports: a helper body inlined into
+;; masked control is checked as private-helper code.
+(define (lower-masked-spmd-numeric-context [state : LowerState]) : spmd_numeric.CompilerSpmdNumericContext
+  (if (>
+    (compiler-lower-function-state-inline-helper-stack
+      (lower-state-function-state state)).len
+    0)
+    (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+    (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)))
+
 (define (lower-avx512-masked-binary-unsupported
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -56932,12 +56956,7 @@
             (if (spmd_numeric.compiler-spmd-numeric-comparison-op? op)
               (ast.AstType.Bool)
               (owned_view.compiler-owned-shared-view source))
-            (if (>
-              (compiler-lower-function-state-inline-helper-stack
-                (lower-state-function-state state)).len
-              0)
-              (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
-              (spmd_numeric.CompilerSpmdNumericContext.MaskedControl))
+            (lower-masked-spmd-numeric-context state)
             (lower-spmd-numeric-backend (lower-state-mode state))
             op)]
         (if (and
@@ -61432,6 +61451,164 @@
             "non-direct SPMD helper calls")])]
     [(ResultLowerSpmdInlineHelper.Err message) (ResultLowerExpr.Err message)]))
 
+;; Masked SPMD lowering has no vector conversion, so a cast may reach its
+;; operand only when the operand already has the destination's lane
+;; representation: a casted numeric literal, or a cast between identical
+;; numeric lanes. Every other cast is rejected at `origin` here, whatever a
+;; caller's census admitted: lowering its operand would load lanes in the
+;; source domain and store the same bits in the destination domain (#7306).
+(define (lower-avx512-masked-cast
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : ir.CompilerIrMaybeValue]
+  [lanes : i64]
+  [origin : ast.AstExpr]
+  [inner : ast.AstExpr]
+  [cast-ty-id : i64]) : ResultLowerExpr
+  (if (or
+    (tc_core.tc-integer-literal-expr? ctx (lower-global-shared-view inner))
+    (tc_core.tc-float-literal-expr? ctx (lower-global-shared-view inner)))
+    (lower-avx512-masked-expr
+      ctx
+      state
+      env
+      type-env
+      lane-locals
+      index
+      index-var
+      active-mask
+      lanes
+      inner)
+    (match (lower-masked-spmd-numeric-expr-type
+      ctx
+      env
+      type-env
+      (lower-global-shared-view inner))
+      [(tc_core.ResultTcType.Ok source-ty)
+        (let
+          [source : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type ctx source-ty))]
+          [destination : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type
+                ctx
+                (tc_core.tc-context-type-get ctx cast-ty-id)))]
+          [source-lane : spmd_numeric.CompilerSpmdNumericLane
+            (spmd_numeric.compiler-spmd-numeric-lane
+              (lower-global-shared-view source))]
+          [destination-lane : spmd_numeric.CompilerSpmdNumericLane
+            (spmd_numeric.compiler-spmd-numeric-lane
+              (lower-global-shared-view destination))]
+          (cond
+            [(not
+                (and
+                  (spmd_numeric.compiler-spmd-numeric-lane? source-lane)
+                  (spmd_numeric.compiler-spmd-numeric-lane? destination-lane)))
+              (lower-avx512-masked-unsupported ctx origin "this cast")]
+            [(spmd_numeric.compiler-spmd-numeric-lane-eq?
+                source-lane
+                destination-lane)
+              (lower-avx512-masked-expr
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                inner)]
+            [else
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic-at-expr
+                    ctx
+                    origin
+                    (lower-spmd-numeric-failure-message
+                      (spmd_numeric.compiler-spmd-numeric-conversion-decision
+                        source
+                        destination
+                        (lower-masked-spmd-numeric-context state)
+                        (lower-spmd-numeric-backend (lower-state-mode state)))))))]))]
+      [(tc_core.ResultTcType.Err _)
+        (lower-avx512-masked-unsupported ctx origin "this cast")])))
+
+;; A casted literal with a known lane type folds to its typed splat; every
+;; other cast takes the checked path above.
+(define (lower-avx512-masked-cast-expected
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : ir.CompilerIrMaybeValue]
+  [lanes : i64]
+  [origin : ast.AstExpr]
+  [inner : ast.AstExpr]
+  [cast-ty-id : i64]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [resolved-cast : ast.AstType
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-resolve-type
+          ctx
+          (tc_core.tc-context-type-get ctx cast-ty-id)))]
+    [resolved-expected : ast.AstType
+      (tc_core.tc-type-without-regions
+        (tc_core.tc-resolve-type ctx expected-ty))]
+    (match (lower-simple-vector-map-casted-literal
+      ctx
+      (lower-state-mode state)
+      resolved-cast
+      (lower-global-shared-view resolved-expected)
+      (lower-global-shared-view inner))
+      [(LowerMaybeVectorMapValue.Some plan)
+        (match plan
+          [(LowerVectorMapValue.Uniform value)
+            (ResultLowerExpr.Ok
+              (lower-emit-masked-preheader-splat
+                state
+                value
+                lanes
+                resolved-expected))]
+          [_
+            (lower-avx512-masked-cast
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              origin
+              inner
+              cast-ty-id)])]
+      [(LowerMaybeVectorMapValue.No)
+        (lower-avx512-masked-cast
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          origin
+          inner
+          cast-ty-id)])))
+
 (define (lower-avx512-masked-expr
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -61450,17 +61627,34 @@
       [(ast.AstExpr.Spanned inner-box _)
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-avx512-masked-expr
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            inner))]
+          (match (lower-global-shared-view inner)
+            ;; A rejected cast is reported at its own span.
+            [(ast.AstExpr.Cast cast-box cast-ty-id)
+              (lower-avx512-masked-cast
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                expr
+                (lower-context-expr-get ctx cast-box)
+                cast-ty-id)]
+            [_
+              (lower-avx512-masked-expr
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                inner)]))]
       [(ast.AstExpr.Ann inner-box _)
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -61475,20 +61669,20 @@
             active-mask
             lanes
             inner))]
-      [(ast.AstExpr.Cast inner-box _)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-avx512-masked-expr
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            inner))]
+      [(ast.AstExpr.Cast inner-box cast-ty-id)
+        (lower-avx512-masked-cast
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          expr
+          (lower-context-expr-get ctx inner-box)
+          cast-ty-id)]
       [(ast.AstExpr.Literal lit)
         (match (lower-global-shared-view lit)
           [(ast.AstLiteral.Bool value)
@@ -61759,18 +61953,36 @@
       [(ast.AstExpr.Spanned inner-box _)
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-avx512-masked-expr-expected
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            inner
-            expected-ty))]
+          (match (lower-global-shared-view inner)
+            ;; A rejected cast is reported at its own span.
+            [(ast.AstExpr.Cast cast-box cast-ty-id)
+              (lower-avx512-masked-cast-expected
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                expr
+                (lower-context-expr-get ctx cast-box)
+                cast-ty-id
+                expected-ty)]
+            [_
+              (lower-avx512-masked-expr-expected
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                inner
+                expected-ty)]))]
       [(ast.AstExpr.Ann inner-box _)
         (let
           [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -61818,55 +62030,20 @@
                   expected-ty)]
               [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])])]
       [(ast.AstExpr.Cast inner-box cast-ty-id)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          [resolved-cast : ast.AstType
-            (tc_core.tc-type-without-regions
-              (tc_core.tc-resolve-type
-                ctx
-                (tc_core.tc-context-type-get ctx cast-ty-id)))]
-          [resolved-expected : ast.AstType
-            (tc_core.tc-type-without-regions
-              (tc_core.tc-resolve-type ctx expected-ty))]
-          (match (lower-simple-vector-map-casted-literal
-            ctx
-            (lower-state-mode state)
-            resolved-cast
-            (lower-global-shared-view resolved-expected)
-            inner)
-            [(LowerMaybeVectorMapValue.Some plan)
-              (match plan
-                [(LowerVectorMapValue.Uniform value)
-                  (ResultLowerExpr.Ok
-                    (lower-emit-masked-preheader-splat
-                      state
-                      value
-                      lanes
-                      resolved-expected))]
-                [_
-                  (lower-avx512-masked-expr
-                    ctx
-                    state
-                    env
-                    type-env
-                    lane-locals
-                    index
-                    index-var
-                    active-mask
-                    lanes
-                    expr)])]
-            [(LowerMaybeVectorMapValue.No)
-              (lower-avx512-masked-expr
-                ctx
-                state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                expr)]))]
+        (lower-avx512-masked-cast-expected
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          expr
+          (lower-context-expr-get ctx inner-box)
+          cast-ty-id
+          expected-ty)]
       [(ast.AstExpr.Literal lit)
         (match (lower-global-shared-view lit)
           [(ast.AstLiteral.Bool value)

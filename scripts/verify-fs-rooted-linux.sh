@@ -619,7 +619,11 @@ mkfifo "$GUARD_TREE/fifo-sidecar"
 ln "$GUARD_TREE/linked-sidecar" "$GUARD_TREE/linked-alias"
 : > "$GUARD_TREE/shared-sidecar"
 chmod 664 "$GUARD_TREE/shared-sidecar"
+: > "$GUARD_TREE/setuid-replacement"
+chmod 4600 "$GUARD_TREE/setuid-replacement"
 run_expect guard 42 "$GUARD_BIN" guard "$GUARD_TREE"
+assert_mode "$GUARD_TREE/special-swap" 4600
+assert_mode "$GUARD_TREE/sealed" 0
 for sidecar in lock scoped-lock; do
     [ -f "$GUARD_TREE/$sidecar" ] || fail "guard sidecar $sidecar was not kept"
     [ ! -s "$GUARD_TREE/$sidecar" ] || fail "guard sidecar $sidecar gained bytes"

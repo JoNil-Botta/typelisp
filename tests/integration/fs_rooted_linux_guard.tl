@@ -237,6 +237,115 @@
         46]
       [else 0])))
 
+;; Admission metadata of `component`, read through a fresh read capability.
+(define (snapshot-of
+  [directory : (& directory rooted.FsLinuxRootedDirectory)]
+  [component : String]) : rooted.FsLinuxRootedSourceSnapshot
+  (with
+    ([reader
+        (rooted.linux-rooted-reopen-file
+          directory
+          (& component)
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-read-file])
+    (if (rooted.linux-rooted-read-file-open? (& reader))
+      (rooted.linux-rooted-read-file-source-snapshot
+        (& reader)
+        rooted.linux-rooted-never-cancelled)
+      (rooted.linux-rooted-failed-source-snapshot
+        (rooted.linux-rooted-read-file-result (& reader))))))
+
+;; `source` with only its permission bits replaced.
+(define (with-permissions
+  [source : (& source rooted.FsLinuxRootedSourceSnapshot)]
+  [permissions : i64]) : rooted.FsLinuxRootedSourceSnapshot
+  (rooted.FsLinuxRootedSourceSnapshot
+    rooted.LinuxRootedOk
+    source.device
+    source.inode
+    source.length
+    source.links
+    source.owner
+    source.group
+    permissions))
+
+;; A file carrying a special bit renamed over a locked sidecar is a changed
+;; identity, like any other substitution.
+(define (check-special-substitution
+  [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
+  (with
+    ([guard (acquire root "special-swap") rooted.cleanup-linux-rooted-guard])
+    (cond
+      [(not (rooted.linux-rooted-guard-locked? (& guard))) 47]
+      [(not
+          (rooted.linux-rooted-result-ok?
+            (rooted.linux-rooted-rename-replace
+              root
+              "setuid-replacement"
+              root
+              "special-swap"
+              rooted.linux-rooted-never-cancelled)))
+        48]
+      [(not
+          (finish-is?
+            (rooted.linux-rooted-guard-revalidate
+              root
+              "special-swap"
+              (& guard)
+              rooted.linux-rooted-never-cancelled)
+            20
+            0))
+        49]
+      [else 0])))
+
+;; The lock is held on the sidecar's file, not on its mode: a locked sidecar
+;; sealed to 0000 still revalidates, because revalidation only names it.
+(define (check-sealed [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
+  (with
+    ([stage
+        (rooted.linux-rooted-create-file
+          root
+          "sealed"
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-file])
+    (if (not (rooted.linux-rooted-file-open? (& stage)))
+      70
+      (with
+        ([guard (acquire root "sealed") rooted.cleanup-linux-rooted-guard])
+        (let
+          [locked? : bool (rooted.linux-rooted-guard-locked? (& guard))]
+          [admitted : rooted.FsLinuxRootedSourceSnapshot
+            (snapshot-of root "sealed")]
+          [no-access : rooted.FsLinuxRootedSourceSnapshot
+            (with-permissions (& admitted) 0)]
+          [empty : String ""]
+          [sealed : rooted.FsLinuxRootedFinishResult
+            (rooted.linux-rooted-file-finish-with-source-permissions!
+              (&mut stage)
+              (byte_buf.str-as-bytes (& empty))
+              0
+              (& no-access)
+              true
+              rooted.linux-rooted-never-cancelled)]
+          (cond
+            [(not locked?) 71]
+            [(not
+                (rooted.linux-rooted-result-ok?
+                  (rooted.linux-rooted-source-result (& admitted))))
+              72]
+            [(not (finish-is? sealed 0 0)) 73]
+            [(not
+                (finish-is?
+                  (rooted.linux-rooted-guard-revalidate
+                    root
+                    "sealed"
+                    (& guard)
+                    rooted.linux-rooted-never-cancelled)
+                  0
+                  0))
+              74]
+            [else 0]))))))
+
 (define (run-guard [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
   (let
     [lifecycle : i64 (check-lifecycle root)]
@@ -250,7 +359,15 @@
             [policy : i64 (check-policy root)]
             (if (not (= policy 0))
               policy
-              (check-substitution root))))))))
+              (let
+                [substitution : i64 (check-substitution root)]
+                (if (not (= substitution 0))
+                  substitution
+                  (let
+                    [special : i64 (check-special-substitution root)]
+                    (if (not (= special 0))
+                      special
+                      (check-sealed root))))))))))))
 
 ;; 0 when releasing `guard` unlocks and closes it, else `failure`. A
 ;; function keeps this choice out of the `with` bodies below (#8290).

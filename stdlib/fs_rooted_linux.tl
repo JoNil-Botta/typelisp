@@ -434,7 +434,9 @@
 ;: Guard sidecar create-or-open flags: read-only (`flock` needs no write
 ;: access), created without `O_EXCL` because the sidecar is permanent and
 ;: shared, never following a final symlink, and nonblocking so a substituted
-;: FIFO is opened and then rejected by kind instead of stalling.
+;: FIFO is opened and then rejected by kind instead of stalling. `flock` needs a
+;: real open file description, so unlike revalidation this open cannot use
+;: `O_PATH`: a device node at the name is opened before its kind is rejected.
 (define fs-linux-rooted-guard-open-flags : u64
   (bit-or
     fs-linux-rooted-o-creat
@@ -448,12 +450,12 @@
     fs-linux-rooted-o-nonblock
     (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))
 
-;: Source revalidation flags. `O_PATH` only names the file for `fstat`, so a
-;: device, FIFO or socket at the name is never opened and a mode that no longer
-;: grants read access is still observed. Without `O_NOFOLLOW`, the policy's
+;: Revalidation flags, for sources and guard sidecars. `O_PATH` only names the
+;: file for `fstat`, so a device, FIFO or socket at the name is never opened
+;: and a mode that no longer grants read access is still observed. Without `O_NOFOLLOW`, the policy's
 ;: `RESOLVE_NO_SYMLINKS` rejects a symlink at the final name as it does
 ;: everywhere else.
-(define fs-linux-rooted-source-revalidate-flags : u64
+(define fs-linux-rooted-revalidate-flags : u64
   (bit-or fs-linux-rooted-o-path fs-linux-rooted-o-cloexec))
 
 ;: Creation and final mode values.
@@ -1567,9 +1569,9 @@
     [(= raw -39) LinuxRootedDirectoryNotEmpty]
     [else (linux-rooted-result-from-raw raw)]))
 
-;: Guard-sidecar open normalization: the sidecar is opened for I/O so it can be
-;: locked, and opening a socket reports ENXIO, which for a sidecar name means
-;: the name is not a regular file.
+;: Guard-acquire open normalization: the sidecar is opened for I/O so it can
+;: be locked, and opening a socket reports ENXIO, which for a sidecar name
+;: means the name is not a regular file.
 (define (linux-rooted-guard-open-result-from-raw [raw : i64]) : FsLinuxRootedResult
   (if (= raw -6)
     LinuxRootedWrongKind
@@ -2553,7 +2555,7 @@
               (linux-rooted-c-string component)]
             [how : FsLinuxOpenHow
               (FsLinuxOpenHow
-                fs-linux-rooted-source-revalidate-flags
+                fs-linux-rooted-revalidate-flags
                 (cast 0 : u64)
                 fs-linux-rooted-resolve-policy)]
             [fd : i64
@@ -2752,8 +2754,23 @@
     (linux-rooted-result-ok? release.unlock)
     (linux-rooted-result-ok? release.close)))
 
+;: Compare a fresh snapshot of a sidecar name with the locked sidecar's
+;: identity. Another physical file is `IdentityChanged`, whether or not it
+;: carries a special bit; the locked file is `Ok`, or `Unsupported` if it now
+;: carries a special bit; a snapshot without identity (not a linked regular
+;: file, or a failed `fstat`) keeps its own result.
+(define (linux-rooted-guard-compare
+  [device : u64]
+  [inode : u64]
+  [current : (& current FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+  (cond
+    [(= current.links (cast 0 : u64)) (clone current.result)]
+    [(not (and (= current.device device) (= current.inode inode)))
+      LinuxRootedIdentityChanged]
+    [else (clone current.result)]))
+
 ;: Check, before a transaction's first source cutover, that `component` below
-;: the retained parent still names the sidecar this guard locked: one
+;: the retained parent still names the sidecar this guard locked: one `O_PATH`
 ;: `openat2` without create, one `fstat`, one close. Another file at the name
 ;: (a hostile or careless substitution) is `IdentityChanged`, a symlink
 ;: `UnsafeResolution`, a removed sidecar `NotFound`; none of them is reported
@@ -2788,7 +2805,7 @@
               (linux-rooted-c-string component)]
             [how : FsLinuxOpenHow
               (FsLinuxOpenHow
-                fs-linux-rooted-file-read-flags
+                fs-linux-rooted-revalidate-flags
                 (cast 0 : u64)
                 fs-linux-rooted-resolve-policy)]
             [fd : i64
@@ -2798,20 +2815,16 @@
                 how)]
             (if (< fd 0)
               (FsLinuxRootedFinishResult
-                (linux-rooted-guard-open-result-from-raw fd)
+                (linux-rooted-result-from-raw fd)
                 LinuxRootedClosed)
               (let
                 [current : FsLinuxRootedSourceSnapshot
                   (linux-rooted-fd-source-snapshot fd)]
                 [operation : FsLinuxRootedResult
-                  (cond
-                    [(not (linux-rooted-result-ok? (clone current.result)))
-                      (clone current.result)]
-                    [(and
-                        (= current.device held.device)
-                        (= current.inode held.inode))
-                      LinuxRootedOk]
-                    [else LinuxRootedIdentityChanged])]
+                  (linux-rooted-guard-compare
+                    held.device
+                    held.inode
+                    (& current))]
                 (FsLinuxRootedFinishResult
                   operation
                   (linux-rooted-close-fd-once fd)))))]))))
@@ -3796,6 +3809,57 @@
         (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw -9))
         8
         "other unlock errors are I/O failures"))))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-guard-compare
+    (let
+      [same : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33152 0)]
+      [other : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 33152 0)]
+      [other-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 35200 0)]
+      [same-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 35200 0)]
+      [now-directory : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 2 16877 0)]
+      [unreadable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
+      [device : u64 (cast 7 : u64)]
+      [inode : u64 (cast 99 : u64)]
+      (begin
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& same)))
+          0
+          "the locked sidecar revalidates")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& other)))
+          20
+          "another file at the name is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& other-setuid)))
+          20
+          "another file carrying a special bit is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& same-setuid)))
+          7
+          "the locked sidecar newly carrying a special bit is unsupported")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& now-directory)))
+          5
+          "a name that became a directory keeps its own result")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& unreadable)))
+          7
+          "a failed fresh snapshot keeps its own result")))))
 
 (cfg
   test

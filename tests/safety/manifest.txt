@@ -1016,6 +1016,16 @@ loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_re
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+# A `try` operand keeps its own break, continue and return edges in the loop
+# move and borrow walkers.
+try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
+try_loop_carried_move_reject|check-fail|tests/safety/try_loop_carried_move_reject.tl|-|cannot move loop-carried owner value `t`
+try_loop_return_move_ok|run-exit|tests/safety/try_loop_return_move_ok.tl|42|-
+try_loop_return_borrow_ok|check-ok|tests/safety/try_loop_return_borrow_ok.tl|-|-
+# `try` shapes: quoted operands are checked, and the enclosing family's Ok
+# variant may carry several payloads.
+try_quasiquote_unquote_reject|check-fail|tests/safety/try_quasiquote_unquote_reject.tl|-|typecheck: unquote expects Expr
+try_multi_payload_return_ok|run-exit|tests/safety/try_multi_payload_return_ok.tl|42|-
 
 # Raw thread/sync effects stay on the adapters, including generated modules.
 thread_raw_spawn_safe_reject|check-fail|tests/safety/thread_raw_spawn_safe_reject.tl|-|thread/spawn requires unsafe context

@@ -1256,3 +1256,18 @@ match ^[[:space:]]+addq 88\(%r[a-z0-9]+\), %r[a-z0-9]+$
 match ^[[:space:]]+movq %r[a-z0-9]+, 88\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movl %[a-z0-9]+, 80\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movb %[a-z0-9]+, 84\(%r[a-z0-9]+\)$
+
+# A `try` error exit returns the enclosing family's Err like a returned
+# constructor: the 32-byte family is written straight into the caller's sret
+# slot (one tag store per exit) and the 16-byte family travels in the register
+# group, with no arena allocation on either path.
+case try-err-return-slot
+source tests/integration/try_propagation.tl
+opt 0 2
+in fn _tl_try_propagation_validate
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+count = 2 ^[[:space:]]+movq \$1, \(%r[a-z0-9]+\)$
+in fn _tl_try_propagation_word_sum
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc

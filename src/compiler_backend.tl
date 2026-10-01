@@ -37320,6 +37320,9 @@
       (compiler-backend-scavenge-reg dst head-exclude 2 "%r9" backend-state)]
     ;; The inline path advances the bump pointer with a plain store. Shared
     ;; arenas must use the runtime helper, whose atomic path reserves with CAS.
+    ;; The shared flag is bit 0 of the arena's flag word and only `jnz` reads
+    ;; the result, so testing the flag word's low byte is exact; `testb` takes
+    ;; an 8-bit immediate where `testq` on memory needs 32 bits.
     (str_cat.str-cat
       (compiler-backend-current-arena-load
         target
@@ -37331,7 +37334,7 @@
         scav
         "\n    jz "
         slow-label
-        "\n    testq $1, 48("
+        "\n    testb $1, 48("
         scav
         ")\n    jnz "
         slow-label

@@ -32196,7 +32196,7 @@ g:
       (compiler-backend-inline-fast-alloc-source)
       (backend.CompilerBackendTarget.Windows))
     (has
-      "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n"
+      "    testb $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n"
       "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n"
       "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
     (lacks
@@ -32621,7 +32621,7 @@ g:
           (asm-lacks? asm "    movq %rdx, -640(%rbp)\n")
           (asm-has?
             asm
-            "    movq %fs:tl_current_arena@tpoff, %r9\n    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n    testq $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
+            "    movq %fs:tl_current_arena@tpoff, %r9\n    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n    testb $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
           (asm-has? asm "    movq 16(%rcx), %rax\n    leaq 8(%rax), %r9\n")
           (asm-has?
             asm

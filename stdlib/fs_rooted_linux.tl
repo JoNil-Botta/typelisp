@@ -77,8 +77,9 @@
 ;: Owned identity and admission metadata of one regular source file, captured
 ;: by `fstat` of an acquired descriptor. `device` and `inode` are its physical
 ;: identity. `permissions` holds only the nine `rwx` bits: a source with
-;: setuid, setgid or sticky set is `LinuxRootedUnsupported`, never admitted.
-;: The fields are meaningful only when `result` is `LinuxRootedOk`.
+;: setuid, setgid or sticky set is `LinuxRootedUnsupported`, never admitted,
+;: but keeps its linked file's identity so revalidation can compare it. The
+;: other fields are meaningful only when `result` is `LinuxRootedOk`.
 (defstruct FsLinuxRootedSourceSnapshot
   (result FsLinuxRootedResult)
   (device u64)
@@ -339,6 +340,10 @@
 (define fs-linux-rooted-o-cloexec : u64
   (cast 524288 : u64))
 
+;: Linux `O_PATH` flag: the descriptor names the file without opening it.
+(define fs-linux-rooted-o-path : u64
+  (cast 2097152 : u64))
+
 ;: Linux `openat2` resolution flags.
 (define fs-linux-rooted-resolve-no-xdev : u64
   (cast 1 : u64))
@@ -386,6 +391,14 @@
   (bit-or
     fs-linux-rooted-o-nonblock
     (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))
+
+;: Source revalidation flags. `O_PATH` only names the file for `fstat`, so a
+;: device, FIFO or socket at the name is never opened and a mode that no longer
+;: grants read access is still observed. Without `O_NOFOLLOW`, the policy's
+;: `RESOLVE_NO_SYMLINKS` rejects a symlink at the final name as it does
+;: everywhere else.
+(define fs-linux-rooted-source-revalidate-flags : u64
+  (bit-or fs-linux-rooted-o-path fs-linux-rooted-o-cloexec))
 
 ;: Creation and final mode values.
 (define fs-linux-rooted-private-directory-mode : u64
@@ -1375,13 +1388,6 @@
     [(= raw -39) LinuxRootedDirectoryNotEmpty]
     [else (linux-rooted-result-from-raw raw)]))
 
-;: Source-reopen normalization: opening a socket reports ENXIO, which for a
-;: source name means the name is not a regular file.
-(define (linux-rooted-source-open-result-from-raw [raw : i64]) : FsLinuxRootedResult
-  (if (= raw -6)
-    LinuxRootedWrongKind
-    (linux-rooted-result-from-raw raw)))
-
 ;: Cleanup-specific normalization treats both permitted nonempty-directory
 ;: errno values as one stable result while preserving ordinary EEXIST elsewhere.
 (define (linux-rooted-cleanup-result-from-raw [raw : i64]) : FsLinuxRootedResult
@@ -2132,7 +2138,9 @@
 
 ;: Admit or reject one filled x86-64 `struct stat` as a rewrite source. Only a
 ;: linked regular file with a nonnegative size and no setuid, setgid or sticky
-;: bit is admitted; every other shape gets a stable result.
+;: bit is admitted; every other shape gets a stable result. A linked regular
+;: file carrying a special bit keeps all its fields under `Unsupported`, so a
+;: revalidation can tell another file from a changed one.
 (unsafe
   (define (linux-rooted-source-snapshot-from-stat [statbuf : (MutPtr u8)]) : FsLinuxRootedSourceSnapshot
     (let
@@ -2157,11 +2165,11 @@
           (linux-rooted-failed-source-snapshot LinuxRootedIoFailure)]
         [(= links (cast 0 : u64))
           (linux-rooted-failed-source-snapshot LinuxRootedNotFound)]
-        [(not (= (bit-and mode fs-linux-rooted-special-mode-mask) 0))
-          (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
         [else
           (FsLinuxRootedSourceSnapshot
-            LinuxRootedOk
+            (if (= (bit-and mode fs-linux-rooted-special-mode-mask) 0)
+              LinuxRootedOk
+              LinuxRootedUnsupported)
             (unsafe
               (linux-rooted-stat-u64 statbuf fs-linux-rooted-stat-device-offset))
             (unsafe
@@ -2207,9 +2215,10 @@
         [else (linux-rooted-fd-source-snapshot state.fd)]))))
 
 ;: Compare a fresh snapshot of a name with the admitted one. A different
-;: physical file is `IdentityChanged`; the same file with any other admitted
-;: field changed, or newly carrying a special bit, is `SourceChanged`; a fresh
-;: snapshot that is no longer a linked regular file keeps its own result.
+;: physical file is `IdentityChanged`, whether or not it carries a special bit;
+;: the same file with any other admitted field changed, or newly carrying a
+;: special bit, is `SourceChanged`; a fresh snapshot that is no longer a linked
+;: regular file, or whose `fstat` failed, keeps its own result.
 (define (linux-rooted-source-compare
   [admitted : (& admitted FsLinuxRootedSourceSnapshot)]
   [current : (& current FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
@@ -2230,15 +2239,25 @@
               (= admitted.permissions current.permissions)))
           LinuxRootedSourceChanged]
         [else LinuxRootedOk])]
-    [(LinuxRootedUnsupported) LinuxRootedSourceChanged]
+    [(LinuxRootedUnsupported)
+      (cond
+        ;; A failed snapshot has no identity; only an admitted shape is linked.
+        [(= current.links (cast 0 : u64)) LinuxRootedUnsupported]
+        [(not
+            (and
+              (= admitted.device current.device)
+              (= admitted.inode current.inode)))
+          LinuxRootedIdentityChanged]
+        [else LinuxRootedSourceChanged])]
     [_ (clone current.result)]))
 
 ;: Revalidate `component` below the retained `parent` against an admitted
-;: snapshot: one `openat2` with the complete descendant policy, one `fstat`,
-;: and one close. Nothing is resolved through a process-relative path. A
-;: symlink or mount crossing is `UnsafeResolution`, a missing name `NotFound`,
-;: a directory, FIFO or device `WrongKind`. The close outcome is reported
-;: independently of the comparison.
+;: snapshot: one `O_PATH` `openat2` with the complete descendant policy, one
+;: `fstat`, and one close. Nothing is resolved through a process-relative path
+;: and nothing at the name is opened for I/O. A symlink or mount crossing is
+;: `UnsafeResolution`, a missing name `NotFound`, a directory, FIFO, socket or
+;: device `WrongKind`. The close outcome is reported independently of the
+;: comparison.
 (define (linux-rooted-source-revalidate
   [parent : (& parent FsLinuxRootedDirectory)]
   [component : (& component str)]
@@ -2267,7 +2286,7 @@
               (linux-rooted-c-string component)]
             [how : FsLinuxOpenHow
               (FsLinuxOpenHow
-                fs-linux-rooted-file-read-flags
+                fs-linux-rooted-source-revalidate-flags
                 (cast 0 : u64)
                 fs-linux-rooted-resolve-policy)]
             [fd : i64
@@ -2277,7 +2296,7 @@
                 how)]
             (if (< fd 0)
               (FsLinuxRootedFinishResult
-                (linux-rooted-source-open-result-from-raw fd)
+                (linux-rooted-result-from-raw fd)
                 LinuxRootedClosed)
               (let
                 [current : FsLinuxRootedSourceSnapshot
@@ -3043,6 +3062,10 @@
         (linux-rooted-test-snapshot 7 99 1 33188 10)]
       [made-setuid : FsLinuxRootedSourceSnapshot
         (linux-rooted-test-snapshot 7 99 1 35232 10)]
+      [replaced-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 35232 10)]
+      [unreadable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
       [now-directory : FsLinuxRootedSourceSnapshot
         (linux-rooted-test-snapshot 7 99 2 16877 10)]
       (begin
@@ -3087,6 +3110,16 @@
             (linux-rooted-source-compare (& admitted) (& made-setuid)))
           21
           "a special bit added to the same file is a changed source")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& replaced-setuid)))
+          20
+          "another inode carrying a special bit is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& unreadable)))
+          7
+          "a failed fresh snapshot keeps its own result")
         (test.assert-i64-eq
           (linux-rooted-test-result-code
             (linux-rooted-source-compare (& admitted) (& now-directory)))
@@ -3196,15 +3229,9 @@
         8
         "unclassified errno is generic I/O")
       (test.assert-i64-eq
-        (linux-rooted-test-result-code
-          (linux-rooted-source-open-result-from-raw -6))
-        5
-        "a source name that is a socket (ENXIO) is wrong kind")
-      (test.assert-i64-eq
-        (linux-rooted-test-result-code
-          (linux-rooted-source-open-result-from-raw -40))
+        (linux-rooted-test-result-code (linux-rooted-result-from-errno 40))
         4
-        "a source symlink (ELOOP) stays unsafe resolution"))))
+        "a source symlink (ELOOP) is unsafe resolution"))))
 
 (cfg
   test

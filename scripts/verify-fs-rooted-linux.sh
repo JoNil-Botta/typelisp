@@ -528,6 +528,8 @@ printf 'source payload\n' > "$SOURCE_TREE/source.txt"
 chmod 640 "$SOURCE_TREE/source.txt"
 ln "$SOURCE_TREE/source.txt" "$SOURCE_TREE/alias.txt"
 printf 'other\n' > "$SOURCE_TREE/other.txt"
+printf 'setuid\n' > "$SOURCE_TREE/setuid-other.txt"
+chmod 4644 "$SOURCE_TREE/setuid-other.txt"
 mkfifo "$SOURCE_TREE/fifo"
 ln -s source.txt "$SOURCE_TREE/link"
 printf 'victim\n' > "$SOURCE_TREE/victim.txt"
@@ -546,6 +548,8 @@ cmp -s "$WORKDIR/outside.expected" "$WORKDIR/outside/sentinel.txt" ||
     fail "revalidating a substituted symlink modified its target"
 [ -f "$SOURCE_TREE/sub-moved/inner.txt" ] ||
     fail "the retained child directory was not renamed"
+assert_mode "$SOURCE_TREE/sealed.txt" 0
+assert_mode "$SOURCE_TREE/setuid-other.txt" 4644
 
 SOURCE_FINISH="$WORKDIR/source-finish"
 mkdir -p "$SOURCE_FINISH"

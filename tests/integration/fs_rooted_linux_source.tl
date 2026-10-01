@@ -124,8 +124,9 @@
         rooted.linux-rooted-never-cancelled))))
 
 ;; The harness creates `source.txt` (15 bytes, 0640) with the hard link
-;; `alias.txt`, `other.txt`, the directory `dir`, the FIFO `fifo`, the
-;; symlink `link`, `victim.txt`, the symlink `victim-link`, and
+;; `alias.txt`, `other.txt`, `setuid-other.txt` (04644), the directory `dir`,
+;; the FIFO `fifo`, the symlink `link`, `victim.txt`, the symlink
+;; `victim-link`, and
 ;; `sub/inner.txt`.
 (define (check-identity [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
   (let
@@ -242,20 +243,68 @@
       [(not (finish-is? (revalidate root "victim.txt" (& victim)) 4 14)) 52]
       [else 0])))
 
+;; Another file carrying a special bit is a changed identity, not a changed
+;; source. A source whose mode drops to 0000 after admission is still compared
+;; by metadata, because revalidation only names the file.
+(define (check-special-and-sealed
+  [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
+  (with
+    ([stage
+        (rooted.linux-rooted-create-file
+          root
+          "sealed.txt"
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-file])
+    (if (not (rooted.linux-rooted-file-open? (& stage)))
+      25
+      (let
+        [source : rooted.FsLinuxRootedSourceSnapshot
+          (snapshot-of root "source.txt")]
+        [sealed : rooted.FsLinuxRootedSourceSnapshot
+          (snapshot-of root "sealed.txt")]
+        [empty : String ""]
+        [no-access : rooted.FsLinuxRootedSourceSnapshot
+          (forged (& sealed) (cast 0 : u32) 0)]
+        [finished : rooted.FsLinuxRootedFinishResult
+          (rooted.linux-rooted-file-finish-with-source-permissions!
+            (&mut stage)
+            (byte_buf.str-as-bytes (& empty))
+            0
+            (& no-access)
+            true
+            rooted.linux-rooted-never-cancelled)]
+        (cond
+          [(not
+              (finish-is? (revalidate root "setuid-other.txt" (& source)) 20 0))
+            26]
+          [(not
+              (rooted.linux-rooted-result-ok?
+                (rooted.linux-rooted-source-result (& sealed))))
+            27]
+          [(not (finish-is? finished 0 0)) 28]
+          [(not (finish-is? (revalidate root "sealed.txt" (& sealed)) 21 0)) 29]
+          [else 0])))))
+
 (define (run-revalidate [root : (& root rooted.FsLinuxRootedDirectory)]) : i64
   (let
     [identity : i64 (check-identity root)]
-    (if (not (= identity 0))
-      identity
-      (let
-        [replacement : i64 (check-replacement root)]
-        (if (not (= replacement 0))
-          replacement
-          (let
-            [parent : i64 (check-parent-rename root)]
-            (if (not (= parent 0))
-              parent
-              (check-symlink-substitution root))))))))
+    [special : i64
+      (if (= identity 0)
+        (check-special-and-sealed root)
+        0)]
+    (cond
+      [(not (= identity 0)) identity]
+      [(not (= special 0)) special]
+      [else
+        (let
+          [replacement : i64 (check-replacement root)]
+          (if (not (= replacement 0))
+            replacement
+            (let
+              [parent : i64 (check-parent-rename root)]
+              (if (not (= parent 0))
+                parent
+                (check-symlink-substitution root)))))])))
 
 ;; A snapshot whose fields were not produced by an admitted `fstat`.
 (define (forged

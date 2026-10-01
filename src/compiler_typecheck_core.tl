@@ -104009,7 +104009,14 @@
     [(ast.AstExpr.While cond-box body-box)
       (match (macro-expand-node ctx env decls depth cond-box)
         [(ResultMacroExpr.Ok ncond)
-          (match (macro-expand-node ctx env decls depth body-box)
+          ;; As in `tc-expr`: the body is a loop target, so a macro operand
+          ;; such as `(when done (break))` checks its `break` / `continue`.
+          (match (macro-expand-node
+            ctx
+            (tc-enter-loop-target env)
+            decls
+            depth
+            body-box)
             [(ResultMacroExpr.Ok nbody)
               (ResultMacroExpr.Ok (ast.ast-expr-while ncond nbody))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
@@ -104141,14 +104148,15 @@
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (match (macro-expand-node
             ctx
+            ;; A lambda body is not inside the enclosing loop.
             (match (tc-global-shared-view maybe-ret)
               [(ast.AstMaybeType.Some ret)
                 (tc-bind-return-type
-                  (tc-bind-params ctx env params)
+                  (tc-bind-params ctx (tc-clear-loop-target env) params)
                   (tc-resolve-type ctx ret))]
               [(ast.AstMaybeType.No)
                 (tc-bind-return-type
-                  (tc-bind-params ctx env params)
+                  (tc-bind-params ctx (tc-clear-loop-target env) params)
                   (ast.AstType.Never))])
             decls
             depth

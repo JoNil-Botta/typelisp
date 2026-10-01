@@ -2218,10 +2218,13 @@ The relation is structural:
 - `(&mut source T)` is covariant in its outer lifetime `source` and invariant
   in referent type `T`; shortening the exclusive borrow does not permit changing
   what may be written through it.
-- `Box`, fixed `Array`, `Tuple`, struct and enum fields/payloads, immutable raw
-  `Ptr`, and native `Slice` are covariant through their contents. Compatibility
-  dynamic arrays remain invariant because they expose mutable element storage.
-  Mutable raw `MutPtr` is invariant through its referent.
+- `Box`, fixed `Array`, owned dynamic arrays, `Tuple`, struct and enum
+  fields/payloads, immutable raw `Ptr`, and native `Slice` are covariant through
+  their contents. A dynamic array is a move-only handle whose elements change
+  only through its owning place or a `&mut` to it, so shortening one moves the
+  handle and leaves no alias typed with the longer lifetime; through `&mut` its
+  element type stays invariant. Mutable raw `MutPtr` is invariant through its
+  referent.
 - Function parameters are contravariant and function results are covariant.
   Entering a parameter position flips the surrounding polarity; entering a
   result preserves it.

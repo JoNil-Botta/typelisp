@@ -664,6 +664,84 @@
   (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 0)] unit))"
       "typecheck: __tl_make-array element type is not supported")))
 
+;; An owned dynamic array is covariant in its element lifetimes (#8133): the
+;; shortening moves the handle, and `&mut` keeps its referent invariant.
+(define (compiler-typecheck-dyn-array-covariance-tests-ok?) : bool
+  (and
+    (tc_tests.compiler-typecheck-ok?
+      "(define (main [n : i64]) : unit
+  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    (let [m : i64 1]
+      (let [short : (__tl_dyn-array (& m i64)) items]
+        (__tl_array-push! short (& m))))))")
+    (tc_tests.compiler-typecheck-ok?
+      "(define (keep [items : (__tl_dyn-array (& l i64))] [r : (& l i64)]) : (__tl_dyn-array (& l i64))
+  items)
+(define (main [n : i64]) : unit
+  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    (let [m : i64 1]
+      (let [short : (__tl_dyn-array (& m i64)) (keep items (& m))]
+        (__tl_array-push! short (& m))))))")
+    (tc_tests.compiler-typecheck-ok?
+      "(define (count-both [a : (__tl_dyn-array (& l i64))] [b : (__tl_dyn-array (& l i64))]) : i64
+  (+ (array-length a) (array-length b)))
+(define (main [n : i64]) : i64
+  (let [long : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    (let [m : i64 1]
+      (let [short : (__tl_dyn-array (& m i64)) (init : (__tl_dyn-array (& m i64)))]
+        (count-both long short)))))")
+    (tc_tests.compiler-typecheck-ok?
+      "(defstruct Refs
+  (:lifetimes a)
+  (items (__tl_dyn-array (& a i64))))
+(define (main [n : i64]) : unit
+  (let [refs : (Refs n) (Refs (init : (__tl_dyn-array (& n i64))))]
+    (let [m : i64 1]
+      (let [short : (Refs m) refs]
+        (__tl_array-push! short.items (& m))))))")
+    (tc_tests.compiler-typecheck-ok?
+      "(defenum MaybeRefs
+  (:lifetimes a)
+  (NoRefs)
+  (SomeRefs (__tl_dyn-array (& a i64))))
+(define (main [n : i64]) : unit
+  (let [refs : (MaybeRefs n) (MaybeRefs.SomeRefs (init : (__tl_dyn-array (& n i64))))]
+    (let [m : i64 1]
+      (let [short : (MaybeRefs m) refs] unit))))")
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (main [n : i64]) : i64
+  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    (begin
+      (let [m : i64 1]
+        (let [short : (__tl_dyn-array (& m i64)) items]
+          (__tl_array-push! short (& m))))
+      (array-length items))))"
+      "typecheck: use of moved value `items`")
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (main [n : i64]) : unit
+  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    (let [m : i64 1]
+      (let [short : (__tl_dyn-array (& m i64)) items]
+        (let [k : i64 2] (__tl_array-push! short (& k)))))))"
+      "typecheck: __tl_array-push! value type mismatch: expected (& m i64), found (& k i64)")
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (main [n : i64]) : unit
+  (let [m : i64 1]
+    (let [items : (__tl_dyn-array (& m i64)) (init : (__tl_dyn-array (& m i64)))]
+      (let [long : (__tl_dyn-array (& n i64)) items] unit))))"
+      "typecheck: let binding `long` type mismatch: expected (__tl_dyn-array (& n i64)), found (__tl_dyn-array (& m i64)); source lifetime `m` does not outlive required lifetime `n`")
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (shorten [n : i64] [items : (&mut b (__tl_dyn-array (& n i64)))]) : unit
+  (let [m : i64 1]
+    (let [short : (&mut b (__tl_dyn-array (& m i64))) items] unit)))
+(define (main) : unit unit)"
+      "typecheck: let binding `short` type mismatch: expected (&mut b (__tl_dyn-array (& m i64))), found (&mut b (__tl_dyn-array (& n i64))); source lifetime `n` cannot satisfy required lifetime `m` because mutable reference referent type is invariant")
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (lengthen [n : i64] [m : i64] [items : (&mut b (__tl_dyn-array (& m i64)))]) : unit
+  (let [long : (&mut b (__tl_dyn-array (& n i64))) items] unit))
+(define (main) : unit unit)"
+      "typecheck: let binding `long` type mismatch: expected (&mut b (__tl_dyn-array (& n i64))), found (&mut b (__tl_dyn-array (& m i64))); source lifetime `m` cannot satisfy required lifetime `n` because mutable reference referent type is invariant")))
+
 (define (compiler-typecheck-signature-lifetime-alias-tests-ok?) : bool
   (tc_tests.compiler-typecheck-ok?
     "(defstruct SignatureAliasRec
@@ -942,6 +1020,7 @@
     (compiler-typecheck-closure-copy-tests-ok?)
     (compiler-typecheck-reference-return-container-tests-ok?)
     (compiler-typecheck-reference-dyn-array-tests-ok?)
+    (compiler-typecheck-dyn-array-covariance-tests-ok?)
     (compiler-typecheck-signature-lifetime-alias-tests-ok?)
     (compiler-typecheck-bytes-referent-tests-ok?)))
 

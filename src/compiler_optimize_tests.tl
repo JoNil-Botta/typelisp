@@ -16212,17 +16212,28 @@
 ;; INL-14: a versioned loop prices as ONE loop. The slow copy is the guard's
 ;; failure path and is priced cold, so the pair costs exactly what either copy
 ;; costs alone; a clone with no original beside it, or an original with no
-;; clone, is an ordinary loop.
-(define (compiler-optimize-inline-checked-slow-copy-weighting-ok?) : bool
+;; clone, is an ordinary loop. The guard runs once per entry: below the cap its
+;; own depth prices that, and at or past the cap it is charged one rung below
+;; the cap rather than at its inner loop's weight (#8455). A guard whose header
+;; is not in the body is ordinary code.
+(define (compiler-optimize-inline-checked-versioned-loop-weighting-ok?) : bool
   (let
     [base : i64 (opt.opt-inline-census-depth-base)]
+    [w1 : i64 (opt.opt-inline-census-depth-weight 1)]
+    [w2 : i64 (opt.opt-inline-census-depth-weight 2)]
+    [rung : i64
+      (opt.opt-inline-census-depth-weight
+        (- (opt.opt-inline-census-depth-cap) 1))]
     [pair : i64
       (let
         [func
           (irt.func
             "function @checked_versioned_pair() -> i64 vars 1 {
            entry:
-             jump loop
+             jump loop__bce_guard
+           loop__bce_guard:
+             %0 = mov 1 : i64
+             branch true, loop__bce_fast, loop
            loop:
              %0 = mov 1 : i64
              %0 = mov 1 : i64
@@ -16231,8 +16242,37 @@
            loop__bce_fast:
              %0 = mov 1 : i64
              %0 = mov 1 : i64
-             %0 = mov 1 : i64
              jump loop__bce_fast
+           }")]
+        (opt.opt-inline-checked-weighted-instrs-at func 0))]
+    [nested : i64
+      (let
+        [func
+          (irt.func
+            "function @checked_versioned_nested() -> i64 vars 1 {
+           entry:
+             jump outer
+           outer:
+             %0 = mov 1 : i64
+             jump mid
+           mid:
+             jump gone__bce_guard
+           gone__bce_guard:
+             jump loop__bce_guard
+           loop__bce_guard:
+             %0 = mov 1 : i64
+             branch true, loop__bce_fast, loop
+           loop:
+             %0 = mov 1 : i64
+             branch true, loop, mid_latch
+           loop__bce_fast:
+             branch true, loop__bce_fast, mid_latch
+           mid_latch:
+             branch true, mid, outer_latch
+           outer_latch:
+             branch true, outer, exit
+           exit:
+             return 0
            }")]
         (opt.opt-inline-checked-weighted-instrs-at func 0))]
     [fast-only : i64
@@ -16267,8 +16307,15 @@
       ;; one entry instruction at depth 0 plus four loop instructions at depth 1
       (= fast-only (+ 1 (* base 4)))
       (= slow-only (+ 1 (* base 4)))
-      ;; and the pair prices the clone alone: the original is cold
-      (= pair fast-only))))
+      ;; the entry and the two-instruction guard at depth 0, the clone at
+      ;; depth 1, and not the original
+      (= pair (+ 3 (* base 3)))
+      ;; the entry and exit at depth 0; `outer`, `outer_latch` and the
+      ;; two-instruction guard at depth 2 charged one rung below the cap;
+      ;; `mid`, the headerless guard, the clone and `mid_latch` saturated;
+      ;; and not the original
+      (= rung w1)
+      (= nested (+ 2 (* 5 w1) (* 4 w2))))))
 
 ;; The accept window. A free inline saves exactly `boundary`; the tier keeps a
 ;; site only when the model lands between half of that and two and a half

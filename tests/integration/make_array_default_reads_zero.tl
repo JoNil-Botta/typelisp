@@ -6,10 +6,11 @@
 ;# all-zero default. This fixture pins that contract for the element shapes the
 ;# dropped loops relied on -- i64, bool, a fieldless-tag-0 enum -- and for an
 ;# enum whose tag-0 variant carries zero-default fields (an i64 and a struct of
-;# i32s), which zero-fills too (#8520). Enums whose tag-0 field is a String or a
-;# Box keep the per-element init loop (a Box default is a live allocation, so a
-;# wrongly zeroed slot would read through a null box); their defaults must read
-;# back as well. It pins
+;# i32s; an f64, a char and a bool), which zero-fills too (#8520). Enums whose
+;# tag-0 field is a String or a Box keep the per-element init loop (a Box
+;# default is a live allocation, so a wrongly zeroed slot would read through a
+;# null box), and so does one whose tag-0 field is such an enum; their defaults
+;# must read back as well. It pins
 ;# the contract in BOTH arena states: a virgin arena (where tl_array_zero is
 ;# allowed to skip its fill) and a rewound one (where it must not).
 ;#
@@ -36,6 +37,14 @@
 (defenum Holder
   (Has (Box i64))
   (Empty))
+
+(defenum Mixed
+  (Vals f64 char bool)
+  (NoVals))
+
+(defenum Wrapped
+  (Wrap Named)
+  (Bare))
 
 (define (dirty-i64! [items : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
@@ -132,6 +141,38 @@
           (set! i (+ i 1))))
       bad)))
 
+(define (count-non-default-mixed [items : (__tl_dyn-array Mixed)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Mixed.Vals value code flag)
+              (if (and (= value 0.0) (= code '\0') (not flag))
+                unit
+                (set! bad (+ bad 1)))]
+            [(Mixed.NoVals) (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
+(define (count-non-default-wrapped [items : (__tl_dyn-array Wrapped)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Wrapped.Wrap (Named.Label text))
+              (if (= (string-length text) 0)
+                unit
+                (set! bad (+ bad 1)))]
+            [_ (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
 (define (defaults-bad [n : i64]) : i64
   (+
     (count-nonzero-i64 (__tl_make-array i64 n) n)
@@ -143,7 +184,11 @@
           (count-non-default-cell (__tl_make-array Cell n) n)
           (+
             (count-non-default-named (__tl_make-array Named n) n)
-            (count-non-default-holder (__tl_make-array Holder n) n)))))))
+            (+
+              (count-non-default-holder (__tl_make-array Holder n) n)
+              (+
+                (count-non-default-mixed (__tl_make-array Mixed n) n)
+                (count-non-default-wrapped (__tl_make-array Wrapped n) n)))))))))
 
 (define (main) : i64
   (let

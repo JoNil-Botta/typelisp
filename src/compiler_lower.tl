@@ -33,6 +33,7 @@
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
 (import stdlib.text_buf)
+(import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.comptime)
 (import compiler_owned_view as owned_view)
@@ -68037,7 +68038,7 @@
   [names : LowerNameCache]
   [expr : ast.AstExpr]
   [ty : ast.AstType]) : ResultLowerValue
-  (match expr
+  (match (lower-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box _)
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
@@ -68107,9 +68108,112 @@
             (box
               (lower-diagnostic
                 "lower: global initializer reads a value at startup")))))]
-    [_
+    [_ (lower-global-static-array ctx names expr ty)]))
+
+;; A fixed array of constant scalars is static data (#8369): the global's cell
+;; points at the exact element bytes, laid out at the element size `array-ref`
+;; addresses, instead of at a copy a startup initializer allocates and fills.
+;; Anything else is an unsupported global initializer, for which the caller
+;; builds a runtime initializer with its conversions.
+(define (lower-global-static-array
+  [ctx : tc_core.TcContext]
+  [names : LowerNameCache]
+  [expr : ast.AstExpr]
+  [ty : ast.AstType]) : ResultLowerValue
+  (let
+    [bytes : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (if (match expr
+      [(ast.AstExpr.Array values)
+        (lower-static-array-encode! ctx names values ty (&mut bytes))]
+      [_ false])
+      (ResultLowerValue.Ok
+        (ir.CompilerIrValue.StaticArray
+          (byte_buf_core.byte-buf-builder-finish-string (& bytes))))
       (ResultLowerValue.Err
-        (box (lower-diagnostic "lower: unsupported global initializer")))]))
+        (box (lower-diagnostic "lower: unsupported global initializer"))))))
+
+;; Appends the elements' little-endian bytes. False unless `ty` is `(Array T N)`
+;; and all N elements are constants of scalar T's kind; an empty array has no
+;; element to check, so it is (empty) static data for any T.
+(define (lower-static-array-encode!
+  [ctx : tc_core.TcContext]
+  [names : LowerNameCache]
+  [values : ast.AstExprList]
+  [ty : ast.AstType]
+  [bytes : (&mut bytes byte_buf_core.ByteBufBuilder)]) : bool
+  (match (tc_core.tc-resolve-type ctx ty)
+    [(ast.AstType.Array elem-id count)
+      (let
+        [elem-ty : ast.AstType
+          (tc_core.tc-resolve-type
+            ctx
+            (tc_core.tc-context-type-get ctx elem-id))]
+        [elem-size : i64 (lower-type-size ctx (& elem-ty))]
+        [index : i64 0]
+        [ok : bool (= values.len count)]
+        (begin
+          (while (and ok (< index values.len))
+            (begin
+              (match (lower-global-value
+                ctx
+                (lower-global-shared-view names)
+                (lower-context-expr-get
+                  ctx
+                  (ast.ast-expr-list-get values index 0))
+                (lower-global-shared-view elem-ty))
+                [(ResultLowerValue.Ok value)
+                  (if (lower-static-array-element-kind?
+                    (lower-global-shared-view value)
+                    (lower-global-shared-view elem-ty))
+                    (let
+                      [bits : i64 (lower-static-array-element-bits value)]
+                      [byte : i64 0]
+                      (while (< byte elem-size)
+                        (begin
+                          (byte_buf_core.byte-buf-builder-push
+                            bytes
+                            (cast (bit-and (shr bits (* 8 byte)) 255) : u8))
+                          (set! byte (+ byte 1)))))
+                    (set! ok false))]
+                [(ResultLowerValue.Err _) (set! ok false)])
+              (set! index (+ index 1))))
+          ok))]
+    [_ false]))
+
+;; Whether constant `value` is data of scalar type `ty`: integer literals only
+;; for integer elements, float bits (already in `ty`'s width) only for floats.
+(define (lower-static-array-element-kind?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 _) (tc_core.tc-integer-type? ty)]
+    [(ir.CompilerIrValue.F64 _)
+      (match ty
+        [(ast.AstType.F64) true]
+        [(ast.AstType.F32) true]
+        [_ false])]
+    [(ir.CompilerIrValue.Bool _)
+      (match ty
+        [(ast.AstType.Bool) true]
+        [_ false])]
+    [(ir.CompilerIrValue.Char _)
+      (match ty
+        [(ast.AstType.Char) true]
+        [_ false])]
+    [_ false]))
+
+;; The element's bits, little-endian from bit 0; only the element size's low
+;; bytes are stored.
+(define (lower-static-array-element-bits [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.I64 n) n]
+    [(ir.CompilerIrValue.F64 bits) (cast bits : i64)]
+    [(ir.CompilerIrValue.Bool b)
+      (if b
+        1
+        0)]
+    [(ir.CompilerIrValue.Char c) (cast c : i64)]
+    [_ 0]))
 
 (define (lower-global-init-function-name
   [lower-state : CompilerLowerState]

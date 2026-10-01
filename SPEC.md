@@ -2787,8 +2787,15 @@ formed, and the result borrows its source like a Slice subview.
 ### 4.1 `(define name [: type] init)` — global variable
 
 Declares a global variable with a typed or inferred initializer. Scalar constant
-initializers can be emitted directly as static data. `String` and aggregate
-initializers, including struct, enum, tuple, fixed-array, and private
+initializers can be emitted directly as static data. A fixed array `(Array T N)`
+of a scalar `T` (an integer type, `f32`, `f64`, `bool` or `char`) whose
+initializer is an `(array ...)` literal of N constants of `T`'s kind is static
+data too: the global refers to writable storage holding the elements' exact
+bits, with no startup copy, and element writes, borrowed writes and whole
+assignment behave as for any fixed-array global. An element that is not such a
+constant (a call, another global, or a cast that converts between integer and
+float) keeps the runtime initializer. `String` and aggregate
+initializers, including struct, enum, tuple, other fixed-array, and private
 dynamic-buffer values, are lowered through generated runtime initializer
 functions when static data emission is not sufficient. Those initializer
 functions run before the selected `main`, in declaration order within a module

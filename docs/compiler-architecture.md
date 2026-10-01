@@ -370,6 +370,21 @@ intern session; dotted projections must not consult another installed pool.
 Unrelated globals remain pruned. The global-field inline fixture and harness
 retention test guard this boundary.
 
+A global's IR initializer takes one of three forms:
+- **A constant value**, emitted as static data.
+- **`RuntimeGlobal`**, naming the hidden `__global_init_*` function that the
+  entry code calls before `main`.
+- **`StaticArray`**, the exact little-endian element bytes of a fixed array of
+  constant scalars (#8369).
+  - It appears only as a global initializer. The optimizer copies only `I64`
+    initializers into instructions, and the backend's operand load rejects a
+    `StaticArray`.
+  - The backend emits one writable copy per global behind the cell and never
+    deduplicates them, so the cell keeps the pointer representation of every
+    `(Array T N)` value.
+  - The direct-object encoder has no static-array record, so such programs
+    take the assembly path.
+
 Mutable typecheck caches, indexes and traversal state belong to the compiler
 job's `TcJobState`, never to process-wide cells, so resetting or destroying one
 job cannot disturb another. A value that is a pure function of intern ids is

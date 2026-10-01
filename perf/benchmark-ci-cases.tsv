@@ -64,3 +64,14 @@ instruction-heavy	spmd_zip
 instruction-heavy	string_scan
 instruction-main	pure_call_join
 instruction-main	loop_call_literal
+instruction-main	arith_loop
+instruction-main	array_sum
+instruction-main	borrowed_disjoint_store
+instruction-main	hashmap_churn
+instruction-main	hashmap_get
+instruction-main	hashmap_grow
+instruction-main	hashmap_insert
+instruction-main	opt_bytecode_vm
+instruction-main	opt_crc32
+instruction-main	opt_quicksort
+instruction-main	spmd_reduce

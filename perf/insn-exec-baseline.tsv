@@ -3,7 +3,7 @@ benchmark/typelisp/arith_loop	312500071
 benchmark/c-scalar/arith_loop	500001471
 benchmark/typelisp/array_sum	1313771003
 benchmark/c-scalar/array_sum	1651021946
-benchmark/typelisp/borrowed_disjoint_store	850000201
+benchmark/typelisp/borrowed_disjoint_store	400000162
 benchmark/c-scalar/borrowed_disjoint_store	1400001545
 benchmark/typelisp/hashmap_churn	3489467
 benchmark/c-scalar/hashmap_churn	4369269

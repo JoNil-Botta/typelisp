@@ -1,7 +1,9 @@
 /* Checked-reference load-GVN benchmark (#5201).
  *
  * Equivalent to bench.tl: repeatedly read one Pair through a shared pointer
- * while writing a distinct Pair through an exclusive pointer.
+ * while writing a distinct Pair through an exclusive pointer. Both functions
+ * stay `noinline`: this side keeps the call-crossing case the benchmark was
+ * written for, while the TypeLisp side inlines (see bench.tl's header).
  */
 #include <stdint.h>
 

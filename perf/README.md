@@ -17,9 +17,13 @@ Measured deltas belong in the PR that changes a row, not in this file.
 `perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
 committed cachegrind `Ir` baselines for the required Linux per-PR performance
 gates. The first covers `self_compile` and the `instruction-main` cases of
-`perf/benchmark-ci-cases.tsv` (the twelve compiler-derived kernels plus
-`pure_call_join` and `loop_call_literal`); the second covers the
-`instruction-heavy` cases, benchmark rows only. Explicit `--benchmarks` subsets
+`perf/benchmark-ci-cases.tsv`: the twelve compiler-derived kernels,
+`pure_call_join` and `loop_call_literal`, and the eleven original kernels
+(`arith_loop`, `array_sum`, `borrowed_disjoint_store`, the four `hashmap_*`
+cases, `opt_bytecode_vm`, `opt_crc32`, `opt_quicksort` and `spmd_reduce`).
+That is every `benchmark/typelisp` row the file carries, so none goes stale
+unchecked. The second covers the `instruction-heavy` cases, benchmark rows
+only. Explicit `--benchmarks` subsets
 are scoped against the selected cases even when a baseline carries additional
 rows.
 
@@ -136,10 +140,15 @@ startup is excluded.
 `perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
 `benchmark` suite, the `optimization-opt2` optimizer-corpus suite, and the
 `instruction-main` and `instruction-heavy` suites. `scripts/lib-benchmark.sh`
-enforces that no `instruction-main` case is also in `benchmark` or
-`optimization-opt2`, and no `instruction-heavy` case is also in `benchmark`:
-their measured execution already supplies output parity. Local `--cases` and
-`--filter` selections are independent of CI membership.
+enforces that no `instruction-heavy` case is also in `benchmark`: its measured
+execution already supplies output parity. An `instruction-main` case may also
+be in `benchmark` or `optimization-opt2`, because each suite checks something
+the others do not. `benchmark` correctness builds TypeLisp at the default
+level (opt1). The opt2 corpus refuses compiler stderr and links through its
+own assembler path. The instruction gate checks opt2 parity across TypeLisp,
+auto and scalar C and pins the counts. The eleven original kernels are in all
+the suites they were in before they were gated. Local `--cases` and `--filter`
+selections are independent of CI membership.
 
 ## Compiler scaling budgets
 

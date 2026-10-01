@@ -627,6 +627,7 @@
     [load-kinds (opt.opt-load-kinds-empty)]
     [entry-label (ir.compiler-ir-label "entry")]
     [seed-facts (opt.opt-alias-empty)]
+    [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
     (opt.optimize-block-hs-with-kinds
       profile-state
       pools
@@ -637,7 +638,7 @@
       entry-label
       seed-facts
       (__tl_make-array i64 0)
-      (opt.opt-block-expr-tables-new)
+      (&mut tables)
       block)))
 
 (define (opt-test-optimize-block-list
@@ -52736,6 +52737,7 @@
         (opt.compiler-opt-global-shared-view params)
         blocks)]
     [seq : ir.CompilerIrInstrSeq instrs]
+    [words : opt.OptExprTable (opt.opt-expr-table-new)]
     (begin
       (opt.opt-load-copy-instr-seq-rewrite!
         type-segment-bases
@@ -52748,7 +52750,7 @@
           (opt.opt-load-cse-kinds-cap-for-size
             (ir.compiler-ir-instr-seq-count seq))
           (opt.opt-alias-seed-params type-segment-bases params))
-        (opt.opt-expr-table-new)
+        (&mut words)
         (opt.compiler-opt-global-shared-view seq))
       seq)))
 
@@ -64700,6 +64702,85 @@
       (let
         [content : (& state opt.OptExprState) (& (deref state))]
         (array-length content.heads))]))
+
+;; 0 for a table that has no state yet, else its clear generation: a fresh state
+;; starts at 1 and every clear of a non-empty state advances it.
+(define (opt-cse-table-generation [table : (& table opt.OptExprTable)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(opt.OptExprTable.Empty) 0]
+    [(opt.OptExprTable.Dense state)
+      (let
+        [content : (& state opt.OptExprState) (& (deref state))]
+        content.generation)]))
+
+;; A pass's block tables start empty, take the state of the first block walk that
+;; inserts, and lend it to every later walk: the second block clears the stored
+;; state (generation 2) rather than allocating its own, and the pass's slot still
+;; holds that one state afterwards. A walk that inserts nothing leaves an empty
+;; slot empty.
+(test
+  cse-block-tables-keep-the-first-walk-state
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
+    [no-exprs : ir.CompilerIrInstrSeq (irt.instrs "%1 = mov %0 : i64")]
+    [first : ir.CompilerIrInstrSeq
+      (irt.instrs "%2 = add %0, %1 : i64
+%3 = add %0, %1 : i64")]
+    [second : ir.CompilerIrInstrSeq
+      (irt.instrs "%4 = mul %0, %1 : i64
+%5 = mul %0, %1 : i64")]
+    (begin
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables.exprs)
+        (opt.compiler-opt-global-shared-view no-exprs))
+      (test.assert-i64-eq
+        (opt-cse-table-generation (& tables.exprs))
+        0
+        "a walk that inserts nothing allocates no state")
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables.exprs)
+        (opt.compiler-opt-global-shared-view first))
+      (test.assert-i64-eq
+        (opt-cse-table-generation (& tables.exprs))
+        1
+        "the first inserting walk stores its state in the pass's slot")
+      (opt.opt-fold-strength-cse-instr-seq-rewrite!
+        bases
+        (&mut tables.exprs)
+        (opt.compiler-opt-global-shared-view second))
+      (test.assert-i64-eq
+        (opt-cse-table-generation (& tables.exprs))
+        2
+        "the next block clears and reuses that state")
+      (test.assert-bool-eq
+        (match (ir.compiler-ir-instr-seq-ref second 1)
+          [(ir.CompilerIrInstr.Mov dst value _)
+            (and
+              (= dst 5)
+              (match value
+                [(ir.CompilerIrValue.Var source) (= source 4)]
+                [_ false]))]
+          [_ false])
+        true
+        "the reused state still eliminates the repeated expression")
+      (let
+        [walk : opt.OptExprTable (opt.opt-expr-table-with-capacity 1)]
+        (begin
+          (opt.opt-expr-table-keep!
+            (&mut tables.words)
+            (opt.compiler-opt-global-shared-view walk))
+          (test.assert-i64-eq
+            (opt-cse-table-generation (& tables.words))
+            1
+            "an empty slot keeps the walk's state")
+          (opt.opt-expr-table-keep! (&mut tables.exprs) walk)
+          (test.assert-i64-eq
+            (opt-cse-table-generation (& tables.exprs))
+            2
+            "a slot that has state keeps it"))))))
 
 (test
   cse-table-hash-collisions-unlink-head-middle-and-tail

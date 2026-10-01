@@ -6876,10 +6876,24 @@
             unit))
         (OptExprTable.Dense state))]))
 
+;; Keep a block walk's final table in `table`, the pass's slot it started from.
+;; A walk that starts from `Empty` allocates on its first insertion; storing that
+;; state back is what lets every later block of the pass clear and reuse it. A
+;; walk that started from `Dense` only ever holds views of the same state, so
+;; there is nothing to store.
+(define (opt-expr-table-keep!
+  [table : (&mut table OptExprTable)]
+  [walk : OptExprTable]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view table)
+    [(OptExprTable.Empty) (set! (deref table) walk)]
+    [(OptExprTable.Dense _) unit]))
+
 ;; The block pass's two CSE tables: `exprs` for `opt-cse-instr` and `words` for
 ;; the Slice-word CSE of the load/copy walk. One pair serves a whole function
-;; pass, next to its other per-pass scratch, and each block walk clears the table
-;; it uses before its first instruction, so no entry crosses a block.
+;; pass, next to its other per-pass scratch: the walkers borrow it mutably, each
+;; block walk clears the table it uses before its first instruction, so no entry
+;; crosses a block, and the first walk that inserts stores its state back with
+;; `opt-expr-table-keep!`.
 (defstruct OptBlockExprTables
   (exprs OptExprTable)
   (words OptExprTable))
@@ -62234,14 +62248,14 @@
 
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
-  [exprs : OptExprTable]
+  [exprs : (&mut exprs OptExprTable)]
   [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [store-count : i64 0]
     [fold-state : OptConstEnv (OptConstEnv.Nil)]
     [strength-state : OptConstEnv (OptConstEnv.Nil)]
-    [cse-state : OptExprTable (opt-expr-table-clear (& exprs))]
+    [cse-state : OptExprTable (opt-expr-table-clear exprs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (begin
       (while (< index count)
@@ -62287,6 +62301,7 @@
                         unit)
                       (set! cse-state next-cse)
                       (set! index (+ index 1)))])])]))
+      (opt-expr-table-keep! exprs cse-state)
       store-count)))
 
 ;; Native Slice parameters are two-word register groups passed by value. Their
@@ -62394,7 +62409,7 @@
   [type-segment-bases : i64]
   [hs : (& hs OptLoadHeaderSet)]
   [state : OptLoadCseState]
-  [words : OptExprTable]
+  [words : (&mut words OptExprTable)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
     [index : i64 0]
@@ -62406,46 +62421,48 @@
     [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
-    [word-state : OptExprTable (opt-expr-table-clear (& words))]
+    [word-state : OptExprTable (opt-expr-table-clear words)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-slice-word-cse-instr
-        type-segment-bases
-        hs
-        (compiler-opt-global-shared-view word-state)
-        (ir.compiler-ir-instr-seq-ref instrs index))
-        [(OptCseResult.Result next-word word-rewritten)
-          (let
-            [load-input : ir.CompilerIrInstr
-              (if (opt-slice-word-copy-use? hs word-rewritten)
-                (opt-copy-subst-instr
-                  (compiler-opt-global-shared-view copy-state)
-                  word-rewritten)
-                word-rewritten)]
-            (match (opt-load-cse-dispatch
-              type-segment-bases
-              (&mut no-canon)
-              hs
-              false
-              sources
-              call-memory
-              cells
-              (compiler-opt-global-shared-view load-state)
-              load-input)
-              [(OptLoadCseResult.Result next-load loaded)
-                (match (opt-copy-instr
-                  (compiler-opt-global-shared-view copy-state)
-                  loaded)
-                  [(OptCopyResult.Result next-copy rewritten)
-                    (begin
-                      (ir.compiler-ir-instr-seq-set!
-                        (&mut instrs)
-                        index
-                        rewritten)
-                      (set! load-state next-load)
-                      (set! copy-state next-copy)
-                      (set! word-state next-word)
-                      (set! index (+ index 1)))])]))]))))
+    (begin
+      (while (< index count)
+        (match (opt-slice-word-cse-instr
+          type-segment-bases
+          hs
+          (compiler-opt-global-shared-view word-state)
+          (ir.compiler-ir-instr-seq-ref instrs index))
+          [(OptCseResult.Result next-word word-rewritten)
+            (let
+              [load-input : ir.CompilerIrInstr
+                (if (opt-slice-word-copy-use? hs word-rewritten)
+                  (opt-copy-subst-instr
+                    (compiler-opt-global-shared-view copy-state)
+                    word-rewritten)
+                  word-rewritten)]
+              (match (opt-load-cse-dispatch
+                type-segment-bases
+                (&mut no-canon)
+                hs
+                false
+                sources
+                call-memory
+                cells
+                (compiler-opt-global-shared-view load-state)
+                load-input)
+                [(OptLoadCseResult.Result next-load loaded)
+                  (match (opt-copy-instr
+                    (compiler-opt-global-shared-view copy-state)
+                    loaded)
+                    [(OptCopyResult.Result next-copy rewritten)
+                      (begin
+                        (ir.compiler-ir-instr-seq-set!
+                          (&mut instrs)
+                          index
+                          rewritten)
+                        (set! load-state next-load)
+                        (set! copy-state next-copy)
+                        (set! word-state next-word)
+                        (set! index (+ index 1)))])]))]))
+      (opt-expr-table-keep! words word-state))))
 
 ;; --- fold pre-scan -------------------------------------------------------------
 ;;
@@ -63219,7 +63236,7 @@
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
   [load-facts : OptAliasFacts]
-  [tables : OptBlockExprTables]
+  [tables : (&mut tables OptBlockExprTables)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
@@ -63241,7 +63258,7 @@
             store-capacity
             (opt-fold-strength-cse-instr-seq-rewrite!
               type-segment-bases
-              (compiler-opt-global-shared-view tables.exprs)
+              (&mut tables.exprs)
               (compiler-opt-global-shared-view work)))
           (set!
             work
@@ -63260,7 +63277,7 @@
               (ir.compiler-ir-instr-seq-count work)
               load-kinds
               load-facts)
-            (compiler-opt-global-shared-view tables.words)
+            (&mut tables.words)
             (compiler-opt-global-shared-view work))
           (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
           (ir.CompilerIrBlock.Block label work)))]))
@@ -63275,7 +63292,7 @@
   [entry-label : i64]
   [seed-facts : (& seed-facts OptAliasFacts)]
   [scan-work : (__tl_dyn-array i64)]
-  [tables : OptBlockExprTables]
+  [tables : (&mut tables OptBlockExprTables)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (if (opt-block-scan-skippable?
     scan-work
@@ -63318,7 +63335,7 @@
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (__tl_dyn-array i64)]
-  [tables : OptBlockExprTables]
+  [tables : (&mut tables OptBlockExprTables)]
   [work : OptLoadKindsDenseWork]
   [generation : i64]
   [blocks : ir.CompilerIrBlockSeq]) : ir.CompilerIrBlockList
@@ -63353,7 +63370,7 @@
                 entry-label
                 seed-facts
                 (compiler-opt-global-shared-view scan-work)
-                (compiler-opt-global-shared-view tables)
+                tables
                 block))
             (set! index (+ index 1)))))
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
@@ -63369,7 +63386,7 @@
   [entry-label : i64]
   [seed-facts : OptAliasFacts]
   [scan-work : (__tl_dyn-array i64)]
-  [tables : OptBlockExprTables]
+  [tables : (&mut tables OptBlockExprTables)]
   [work : OptLoadKindsDenseWork]
   [generation : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
@@ -63393,7 +63410,7 @@
           entry-label
           seed-facts
           (compiler-opt-global-shared-view scan-work)
-          (compiler-opt-global-shared-view tables)
+          tables
           block)
         (optimize-block-list-hs-dense
           profile-state
@@ -63500,7 +63517,7 @@
                 entry-label
                 seed-facts
                 scan-work
-                tables
+                (&mut tables)
                 work
                 1
                 seq)]
@@ -63513,7 +63530,7 @@
                 entry-label
                 seed-facts
                 scan-work
-                tables
+                (&mut tables)
                 work
                 1
                 blocks)])]

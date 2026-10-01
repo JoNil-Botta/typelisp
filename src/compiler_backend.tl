@@ -1045,6 +1045,43 @@
       (compiler_abi.compiler-abi-float-arg-register-count abi)
       (compiler_abi.compiler-abi-outgoing-shadow-space abi))))
 
+;; Facts for code that holds only a raw target. Each reads the target's policy,
+;; so `compiler-backend-target-policy-new` stays the one place a target is
+;; mapped to its ABI, unwind, object format and runtime choices.
+(define (compiler-backend-target-object-format
+  [target : CompilerBackendTarget]) : CompilerBackendObjectFormatPolicy
+  (compiler-backend-target-policy-new target).object-format)
+
+(define (compiler-backend-object-format-elf?
+  [format : CompilerBackendObjectFormatPolicy]) : bool
+  (match format
+    [(CompilerBackendObjectFormatPolicy.Elf) true]
+    [(CompilerBackendObjectFormatPolicy.Coff) false]))
+
+(define (compiler-backend-target-elf? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-object-format-elf?
+    (compiler-backend-target-object-format target)))
+
+(define (compiler-backend-target-coff? [target : CompilerBackendTarget]) : bool
+  (not (compiler-backend-target-elf? target)))
+
+(define (compiler-backend-target-seh-unwind? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-target-policy-new target).seh-unwind)
+
+(define (compiler-backend-target-stack-probe? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-target-policy-new target).stack-probe)
+
+;; The target's name as diagnostics and fallback categories spell it.
+(define (compiler-backend-target-triple [target : CompilerBackendTarget]) : String
+  (match target
+    [(CompilerBackendTarget.Linux) "linux-x86_64"]
+    [(CompilerBackendTarget.Windows) "windows-x86_64"]))
+
+;; The one target whose programs may issue raw `syscall` instructions, named in
+;; the diagnostic the others report.
+(define (compiler-backend-raw-syscall-target-triple) : String
+  (compiler-backend-target-triple (CompilerBackendTarget.Linux)))
+
 ;; A backend job owns one exact intern capability and the small mutable state
 ;; that is safe to share across its emission phases.  Keep the public carrier
 ;; opaque and one machine word; all mutable data lives in the owner arena cell
@@ -14751,19 +14788,19 @@
 (define (compiler-backend-emit-windows-seh-proc
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     (str_cat.str-cat ".seh_proc " symbol "\n" "")
     ""))
 
 (define (compiler-backend-emit-windows-seh-push-rbp
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_pushreg %rbp\n"
     ""))
 
 (define (compiler-backend-emit-windows-seh-set-rbp
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_setframe %rbp, 0\n"
     ""))
 
@@ -14842,7 +14879,10 @@
   [vars : i64]
   [frame : i64]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (>
+    (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+      (compiler-backend-target-abi target))
+    0)
     (compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
       vars
@@ -14905,7 +14945,7 @@
   [frame : i64]
   [end-prologue : bool]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     (str_cat.str-cat
       (if (> frame 0)
         (str_cat.str-cat
@@ -14930,7 +14970,7 @@
 
 (define (compiler-backend-emit-windows-seh-endproc
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_endproc\n"
     ""))
 
@@ -14952,7 +14992,7 @@
 (define (compiler-backend-emit-function-type-directive
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-linux? target)
+  (if (compiler-backend-target-elf? target)
     (str_cat.str-cat "    .type " symbol ",@function\n")
     ""))
 
@@ -14961,7 +15001,7 @@
 (define (compiler-backend-emit-function-size-directive
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-linux? target)
+  (if (compiler-backend-target-elf? target)
     (str_cat.str-cat "    .size " symbol ", . - " symbol "\n")
     ""))
 
@@ -18784,7 +18824,7 @@
                 [path-id : i64 (array-ref paths path-index)]
                 [path : String
                   (compiler-backend-escape-string
-                    (if (compiler-backend-target-linux? target)
+                    (if (compiler-backend-target-elf? target)
                       (string.replace
                         (compiler_ir_types.compiler-debug-path-remap
                           (ci.intern-compat-state-str
@@ -18802,7 +18842,7 @@
                     buf
                     (text_buf.append
                       buf
-                      (if (compiler-backend-target-windows? target)
+                      (if (compiler-backend-target-coff? target)
                         (str_cat.str-cat
                           "    .cv_file "
                           file-number
@@ -18871,7 +18911,7 @@
   [span-index : CompilerBackendSourceSpanIndex]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
-    (if (compiler-backend-target-windows? target)
+    (if (compiler-backend-target-coff? target)
       (str_cat.str-cat
         "    .section .debug$S,\"dr\"\n"
         "    .long 4\n"
@@ -18900,7 +18940,7 @@
           [column : i64 (compiler_ast_types.ast-source-span-start-col span)]
           (if (or (<= file-number 0) (<= line 0))
             ""
-            (if (compiler-backend-target-windows? target)
+            (if (compiler-backend-target-coff? target)
               (match (compiler-backend-index-function-slot
                 program-index
                 function)
@@ -18973,7 +19013,7 @@
   [function : i64]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
-    (compiler-backend-target-windows? target))
+    (compiler-backend-target-coff? target))
     (match (compiler-backend-index-function-slot program-index function)
       [(backend_i64_i64_map.LookupFound function-id)
         (str_cat.str-cat
@@ -18989,7 +19029,7 @@
   [program-index : CompilerBackendProgramIndex]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
-    (compiler-backend-target-windows? target))
+    (compiler-backend-target-coff? target))
     (str_cat.str-cat
       "    .section .debug$S,\"dr\"\n"
       "    .cv_filechecksums\n"
@@ -18997,7 +19037,7 @@
       "    .text\n")
     (if (and
       (compiler_ir_types.compiler-debug-info-enabled?)
-      (compiler-backend-target-linux? target))
+      (compiler-backend-target-elf? target))
       "    .section .text.typelisp_runtime,\"ax\"\n"
       "")))
 
@@ -19011,13 +19051,13 @@
 ;; direct-object release builds therefore keep their existing section model.
 (define (compiler-backend-backtrace-map-section
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-coff? target)
     "    .section .rdata$TLBT,\"dr\"\n"
     "    .section .typelisp_backtrace,\"a\",@progbits\n"))
 
 (define (compiler-backend-backtrace-string-section
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-coff? target)
     "    .section .rdata$TLBS,\"dr\"\n"
     "    .section .rodata.typelisp_backtrace,\"a\",@progbits\n"))
 
@@ -19288,20 +19328,13 @@
 (define (compiler-backend-abort-arg-reg
   [backend-state : CompilerBackendState]
   [index : i64]) : String
-  (match (compiler-backend-function-state-abort-target
-    (compiler-backend-state-function-state backend-state))
-    [(CompilerBackendTarget.Linux)
-      (cond
-        [(= index 0) "%rdi"]
-        [(= index 1) "%rsi"]
-        [(= index 2) "%rdx"]
-        [else "%rcx"])]
-    [(CompilerBackendTarget.Windows)
-      (cond
-        [(= index 0) "%rcx"]
-        [(= index 1) "%rdx"]
-        [(= index 2) "%r8"]
-        [else "%r9"])]))
+  (compiler_abi.compiler-abi-gp-arg-register
+    (compiler-backend-target-abi
+      (compiler-backend-function-state-abort-target
+        (compiler-backend-state-function-state backend-state)))
+    (if (> index 3)
+      3
+      index)))
 
 (define (compiler-backend-abort-site-next-label
   [backend-state : CompilerBackendState]
@@ -40287,10 +40320,8 @@
   [_program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-call-arg-space-from target))
 
-(define (compiler-backend-call-arg-space-from [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Windows) 0]
-    [(CompilerBackendTarget.Linux) 0]))
+(define (compiler-backend-call-arg-space-from [_target : CompilerBackendTarget]) : i64
+  0)
 
 (define (compiler-backend-closure-call-arg-space
   [target : CompilerBackendTarget]
@@ -47511,31 +47542,32 @@
     (string.eq name "tl_atomic_i32_fetch_add_ptr")))
 
 (define (compiler-backend-atomic-ptr-reg [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "%rcx"
-    "%rdi"))
+  (compiler_abi.compiler-abi-gp-arg-register (compiler-backend-target-abi target) 0))
 
 (define (compiler-backend-atomic-value-reg
   [target : CompilerBackendTarget]
   [i32? : bool]) : String
-  (if (compiler-backend-target-windows? target)
-    (if i32?
-      "%edx"
-      "%rdx")
-    (if i32?
-      "%esi"
-      "%rsi")))
+  (compiler-backend-atomic-arg-reg target 1 i32?))
 
 (define (compiler-backend-atomic-new-reg
   [target : CompilerBackendTarget]
   [i32? : bool]) : String
-  (if (compiler-backend-target-windows? target)
+  (compiler-backend-atomic-arg-reg target 2 i32?))
+
+;; An atomic builtin's operands arrive in the target ABI's integer argument
+;; registers, narrowed to their 32-bit names for the i32 forms.
+(define (compiler-backend-atomic-arg-reg
+  [target : CompilerBackendTarget]
+  [index : i64]
+  [i32? : bool]) : String
+  (let
+    [reg : String
+      (compiler_abi.compiler-abi-gp-arg-register
+        (compiler-backend-target-abi target)
+        index)]
     (if i32?
-      "%r8d"
-      "%r8")
-    (if i32?
-      "%edx"
-      "%rdx")))
+      (compiler-backend-reg-part reg 4)
+      reg)))
 
 (define (compiler-backend-atomic-rax [i32? : bool]) : String
   (if i32?
@@ -49243,7 +49275,10 @@
       (box
         (compiler_diagnostic.compiler-diagnostic-at-start
           ""
-          "backend: syscall is only supported on the linux-x86_64 target")))
+          (str_cat.str-cat
+            "backend: syscall is only supported on the "
+            (compiler-backend-raw-syscall-target-triple)
+            " target"))))
     (let
       [count : i64
         (compiler-backend-call-args-count
@@ -68315,7 +68350,7 @@
             compiler-backend-scratch-i64-emergency-used-count)
           outgoing
           backend-state)]
-      [(and (compiler-backend-target-windows? target) rebase-ok)
+      [(and (compiler-backend-target-seh-unwind? target) rebase-ok)
         (compiler-backend-sweep-record-win64!
           backend-state
           (compiler-backend-state-stream-state backend-state)
@@ -76160,7 +76195,7 @@
                           "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
                           (if (and
                             (compiler_ir_types.compiler-debug-info-enabled?)
-                            (compiler-backend-target-linux? target))
+                            (compiler-backend-target-elf? target))
                             "    .cfi_endproc\n"
                             "")
                           "")
@@ -80378,7 +80413,7 @@
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (and (not pic-emit?) (not (compiler-backend-target-windows? target))))
+      (and (not pic-emit?) (compiler-backend-target-elf? target)))
     (cfg
       test
       (profile_state.compiler-profile-metrics-reset-range!
@@ -80883,9 +80918,7 @@
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [probe : bool
-      (match target
-        [(CompilerBackendTarget.Windows) (>= frame-size 4096)]
-        [_ false])]
+      (and (compiler-backend-target-stack-probe? target) (>= frame-size 4096))]
     [remaining : i64 frame-size]
     (begin
       (compiler-backend-object-push-u8! (&mut out) 0x55)
@@ -84231,23 +84264,13 @@
     [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
       "unsupported-object-semantics"]
     [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
-      (match target
-        [(CompilerBackendTarget.Linux)
-          (match context
-            [(CompilerBackendObjectAbiContext.Call)
-              "unsupported-object-abi:linux-x86_64:call"]
-            [(CompilerBackendObjectAbiContext.FunctionEntry)
-              "unsupported-object-abi:linux-x86_64:function-entry"]
-            [(CompilerBackendObjectAbiContext.FunctionReturn)
-              "unsupported-object-abi:linux-x86_64:function-return"])]
-        [(CompilerBackendTarget.Windows)
-          (match context
-            [(CompilerBackendObjectAbiContext.Call)
-              "unsupported-object-abi:windows-x86_64:call"]
-            [(CompilerBackendObjectAbiContext.FunctionEntry)
-              "unsupported-object-abi:windows-x86_64:function-entry"]
-            [(CompilerBackendObjectAbiContext.FunctionReturn)
-              "unsupported-object-abi:windows-x86_64:function-return"])])]
+      (str_cat.str-cat
+        "unsupported-object-abi:"
+        (compiler-backend-target-triple target)
+        (match context
+          [(CompilerBackendObjectAbiContext.Call) ":call"]
+          [(CompilerBackendObjectAbiContext.FunctionEntry) ":function-entry"]
+          [(CompilerBackendObjectAbiContext.FunctionReturn) ":function-return"]))]
     [(CompilerDirectObjectFallbackReason.ObjectEncoding)
       "unsupported-object-encoding"]
     [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)
@@ -84270,9 +84293,7 @@
     [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable target kind)
       (str_cat.str-cat
         "target="
-        (match target
-          [(CompilerBackendTarget.Linux) "linux-x86_64"]
-          [(CompilerBackendTarget.Windows) "windows-x86_64"])
+        (compiler-backend-target-triple target)
         "|kind="
         (match kind
           [(CompilerDirectObjectArtifactKind.Bin) "bin"]
@@ -84922,7 +84943,7 @@
     (begin
       (compiler-backend-state-set-absolute-switch-ok!
         backend-state
-        (not (compiler-backend-target-windows? target)))
+        (compiler-backend-target-elf? target))
       (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
         backend-state
         type-segment-bases
@@ -84964,7 +84985,7 @@
   (begin
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (not (compiler-backend-target-windows? target)))
+      (compiler-backend-target-elf? target))
     (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
       backend-state
       (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)

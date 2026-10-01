@@ -9,6 +9,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import compiler_incremental_binary)
 (import stdlib.json)
 (import stdlib.sort)
 (import stdlib.vector)
@@ -1844,47 +1845,57 @@
       [(and (>= code 97) (<= code 102)) (+ 10 (- code 97))]
       [else -1])))
 
+;; A file URI percent-encodes the path's bytes (#8376): `%XX` is the byte XX,
+;; not the code point U+00XX, so a non-ASCII name such as `%C3%A5` decodes to
+;; the two bytes of its UTF-8 spelling. That inverts `lsp-percent-encode-path`
+;; for every path it encodes. Decoded bytes that are not well-formed UTF-8, or
+;; that contain NUL, are refused rather than repaired.
 (define (lsp-percent-decode [text : String]) : LspStringResult
   (let
     [n : i64 (string.string-length text)]
+    ;; Decoding never lengthens the text.
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [len : i64 0]
     [i : i64 0]
-    [out : String ""]
-    [err : String ""]
-    [has-error : bool false]
+    [ok : bool true]
     (begin
-      (while (< i n)
-        (if (not has-error)
-          (if (= (string.string-ref text i) '%')
-            (if (< (+ i 2) n)
-              (let
-                [hi : i64 (lsp-hex-value (string.string-ref text (+ i 1)))]
-                [lo : i64 (lsp-hex-value (string.string-ref text (+ i 2)))]
-                (if (and (>= hi 0) (>= lo 0))
-                  (match (json.codepoint-string (+ (* hi 16) lo))
-                    [(json.OkJsonCodepointString decoded)
-                      (begin
-                        (set! out (str_cat.str-cat out decoded ""))
-                        (set! i (+ i 3)))]
-                    [(json.ErrJsonCodepointString message)
-                      (begin
-                        (set! err message)
-                        (set! has-error true)
-                        (set! i n))])
-                  (begin
-                    (set! err "lsp: invalid percent escape in file URI")
-                    (set! has-error true)
-                    (set! i n))))
+      (while (and ok (< i n))
+        (if (= (string.string-ref text i) '%')
+          (let
+            [hi : i64
+              (if (< (+ i 2) n)
+                (lsp-hex-value (string.string-ref text (+ i 1)))
+                -1)]
+            [lo : i64
+              (if (< (+ i 2) n)
+                (lsp-hex-value (string.string-ref text (+ i 2)))
+                -1)]
+            (if (and (>= hi 0) (>= lo 0))
               (begin
-                (set! err "lsp: invalid percent escape in file URI")
-                (set! has-error true)
-                (set! i n)))
-            (begin
-              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-              (set! i (+ i 1))))
-          (set! i n)))
-      (if (not has-error)
-        (LspStringResult.Ok out)
-        (LspStringResult.Err err)))))
+                (set! (array-ref bytes len) (cast (+ (* hi 16) lo) : u8))
+                (set! len (+ len 1))
+                (set! i (+ i 3)))
+              (set! ok false)))
+          (begin
+            (set! (array-ref bytes len) (cast (string.string-ref text i) : u8))
+            (set! len (+ len 1))
+            (set! i (+ i 1)))))
+      (cond
+        [(not ok)
+          (LspStringResult.Err "lsp: invalid percent escape in file URI")]
+        [(not
+            (compiler_incremental_binary.compiler-incremental-binary-utf8-range-valid?
+              (& bytes)
+              0
+              len))
+          (LspStringResult.Err "lsp: file URI path is not valid UTF-8")]
+        [(= len 0) (LspStringResult.Ok "")]
+        [else
+          (LspStringResult.Ok
+            (unsafe
+              (string-from-bytes
+                (ptr-cast (__tl_array-data bytes) : (Ptr u8))
+                len)))]))))
 
 (define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
   (let

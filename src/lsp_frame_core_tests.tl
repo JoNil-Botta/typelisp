@@ -18,6 +18,52 @@
 (cfg test (import token))
 (import lsp_frame_core as lsp)
 
+;; Percent-decoding a file URI yields bytes (#8376): `%XX` is byte XX, so the
+;; encoder's output for a non-ASCII path decodes back to the same path.
+(define (lsp-percent-decode-is? [text : String] [want : String]) : bool
+  (match (lsp.lsp-percent-decode text)
+    [(lsp.LspStringResult.Ok decoded) (string.eq decoded want)]
+    [(lsp.LspStringResult.Err _) false]))
+
+(define (lsp-percent-decode-error-is? [text : String] [want : String]) : bool
+  (match (lsp.lsp-percent-decode text)
+    [(lsp.LspStringResult.Ok _) false]
+    [(lsp.LspStringResult.Err message) (string.eq message want)]))
+
+(define (lsp-file-uri-round-trips? [path : String]) : bool
+  (let
+    [uri : String (lsp.lsp-path-to-file-uri (string.copy (& path)))]
+    (match (lsp.lsp-file-uri-to-path (& uri))
+      [(lsp.LspUriPath.Ok decoded) (string.eq decoded path)]
+      [(lsp.LspUriPath.Err _) false])))
+
+(define (lsp-percent-decode-bytes-ok?) : bool
+  (and
+    (lsp-percent-decode-is? "/tmp/%c3%a5/u.tl" "/tmp/å/u.tl")
+    (lsp-percent-decode-is? "/tmp/%C3%A5/u.tl" "/tmp/å/u.tl")
+    (lsp-percent-decode-is? "a%20b%26c%2Fd" "a b&c/d")
+    (lsp-percent-decode-is? "plain" "plain")
+    (lsp-percent-decode-error-is?
+      "/tmp/%4"
+      "lsp: invalid percent escape in file URI")
+    (lsp-percent-decode-error-is?
+      "/tmp/%"
+      "lsp: invalid percent escape in file URI")
+    (lsp-percent-decode-error-is?
+      "/tmp/%zz/u.tl"
+      "lsp: invalid percent escape in file URI")
+    (lsp-percent-decode-error-is?
+      "/tmp/%ff/u.tl"
+      "lsp: file URI path is not valid UTF-8")
+    (lsp-percent-decode-error-is?
+      "/tmp/%c3/u.tl"
+      "lsp: file URI path is not valid UTF-8")
+    (lsp-percent-decode-error-is?
+      "/tmp/%00/u.tl"
+      "lsp: file URI path is not valid UTF-8")
+    (lsp-file-uri-round-trips? "/tmp/å b&c/café.tl")
+    (lsp-file-uri-round-trips? "/tmp/x/ascii.tl")))
+
 (define (lsp-diagnostic-uris-single [uri : String]) : lvf.LspDiagnosticUris
   (lsp.lsp-diagnostic-uris-add (lsp.lsp-diagnostic-uris-empty) uri))
 

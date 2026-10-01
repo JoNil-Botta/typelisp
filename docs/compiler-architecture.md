@@ -182,15 +182,14 @@ codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
 Each function body typechecks against a function-local fork of the module
-environment (#8375): `tc-type-env-fork-function-store` copies the store
-descriptor, keeps the parent's head and capabilities, and gives the fork its
-own binding and cache segments in the function's rewound scratch. Environment
-heads are raw node addresses, so the fork's records link to the parent's
-immutable nodes without copying them, and the parent store never receives a
-function-local record. The parent's explicit-layer chain index stays shared
-read-only until the fork's first layer registration, which copies it into the
-scratch (`tc-chain-state-detach!`). Only the parent environment reaches
-lowering. Retiring the scratch advances `tc-type-env-store-epoch`, so memos keyed
+environment (#8375): `tc-type-env-fork-function-store` creates a store in the
+function's rewound scratch with the parent's head and capabilities, and the
+fork's binding and cache segments grow there. Environment heads are raw node
+addresses, so the fork's records link to the parent's immutable nodes without
+copying them, and the parent store never receives a function-local record. The
+parent's explicit-layer chain index stays shared read-only until the fork's
+first layer registration, when `tc-chain-state-ensure!` copies it into the
+scratch. Only the parent environment reaches lowering. Retiring the scratch advances `tc-type-env-store-epoch`, so memos keyed
 by a store handle or node address cannot match a later fork reallocated at the
 same address, and clears the unbound-name suggestion snapshot that names the
 fork.

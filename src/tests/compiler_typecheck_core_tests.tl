@@ -2419,8 +2419,9 @@
 
 ;; A function-local store fork (#8375) grows its bindings, cache layers and
 ;; chain index in the current scratch, sees every parent binding through the
-;; inherited head, and leaves the parent's store, index and lookups unchanged
-;; after the scratch is rewound.
+;; inherited head, shares the parent's index until its first layer, and leaves
+;; the parent's store, index and lookups unchanged after the scratch is
+;; rewound. A parent without an index keeps none.
 (define (tc-type-env-function-store-fork-smoke?) : bool
   (let
     [base-id : i64 (ci.intern "fork-parent-base")]
@@ -2441,6 +2442,8 @@
             (ast.AstType.String))
           kept-id
           (ast.AstType.I64)))]
+    [plain : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (ast.AstType.String))]
     [parent-store : tc_core.TcTypeEnvStore
       (tc_core.tc-type-env-store-read parent.store)]
     [parent-chain : i64 (tc_core.tc-chain-state-address parent.store)]
@@ -2451,14 +2454,17 @@
         (arena.tl_arena_set scratch))
       (let
         [mark : i64 (arena.tl_region_mark)]
-        [empty-params : tc_core.TcTypeEnv
-          (tc_core.tc-type-env-fork-function-store parent 0)]
+        [reader : tc_core.TcTypeEnv
+          (tc_core.tc-type-env-fork-function-store parent)]
         [fork : tc_core.TcTypeEnv
-          (tc_core.tc-type-env-fork-function-store parent 5)]
+          (tc_core.tc-type-env-fork-function-store parent)]
+        [plain-fork : tc_core.TcTypeEnv
+          (tc_core.tc-env-with-cache
+            (tc_core.tc-type-env-fork-function-store plain))]
         [index : i64 0]
         (begin
-          ;; Shadow a parent name, then cross both the first (parameter-sized)
-          ;; binding segment and an ordinary one, and several cache segments.
+          ;; Shadow a parent name, then cross two binding segments and several
+          ;; cache segments.
           (set! fork (tc_core.tc-bind-id fork base-id (ast.AstType.Bool)))
           (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
             (begin
@@ -2481,12 +2487,18 @@
               (match (tc_core.tc-lookup-id fork local-id)
                 [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
                 [_ false])
-              (match (tc_core.tc-lookup-id empty-params base-id)
+              (match (tc_core.tc-lookup-id reader base-id)
                 [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
                 [_ false])
+              (= (tc_core.tc-chain-state-address reader.store) parent-chain)
               (= (tc_core.tc-chain-store-owner fork.store) scratch)
               (> (tc_core.tc-chain-state-address fork.store) 0)
-              (not (= (tc_core.tc-chain-state-address fork.store) parent-chain))))
+              (not (= (tc_core.tc-chain-state-address fork.store) parent-chain))
+              (>= (tc-type-env-chain-index-len fork.store) parent-chain-len)
+              (> (tc_core.tc-chain-state-address plain-fork.store) 0)
+              (match (tc_core.tc-lookup-id plain-fork base-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [_ false])))
           (unsafe
             (arena.tl_region_reset mark))))
       (unsafe
@@ -2505,6 +2517,7 @@
             (= after.cache-len parent-store.cache-len)
             (= after-chain parent-chain)
             (= (tc-type-env-chain-index-len parent.store) parent-chain-len)
+            (= (tc_core.tc-chain-state-address plain.store) 0)
             (match (tc_core.tc-lookup-id parent base-id)
               [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
               [_ false])

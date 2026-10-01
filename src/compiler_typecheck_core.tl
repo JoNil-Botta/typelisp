@@ -10173,14 +10173,18 @@
 (define (tc-chain-state-ensure! [store-handle : i64]) : i64
   (let
     [existing : i64 (tc-chain-state-address store-handle)]
-    (if (> existing 0)
-      (if (=
-        (__tl-project-field (tc-chain-state-read existing) owner-arena)
-        (tc-chain-store-owner store-handle))
-        existing
-        (tc-chain-state-detach! store-handle existing))
+    [owner : i64 (tc-chain-store-owner store-handle)]
+    (if (and
+      (> existing 0)
+      (= (__tl-project-field (tc-chain-state-read existing) owner-arena) owner))
+      existing
       (let
-        [owner : i64 (tc-chain-store-owner store-handle)]
+        [parent-len : i64
+          (if (> existing 0)
+            (let
+              [parent : TcChainIndex (tc-chain-state-read existing)]
+              (tc_i64_i64_map.len (& parent.map)))
+            0)]
         [cell : i64
           (in-arena
             (arena.Arena owner)
@@ -10190,7 +10194,18 @@
               (begin
                 (set!
                   (array-ref slots 0)
-                  (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
+                  (TcChainIndex
+                    (if (> parent-len 0)
+                      (let
+                        [parent : TcChainIndex (tc-chain-state-read existing)]
+                        (tc-moved-clone-id-map (& parent.map)))
+                      (tc_i64_i64_map.with-capacity 1024))
+                    (if (> existing 0)
+                      (__tl-project-field
+                        (tc-chain-state-read existing)
+                        next-seq)
+                      0)
+                    owner))
                 (unsafe
                   (cast
                     (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
@@ -10198,42 +10213,6 @@
         (begin
           (tc-chain-state-set! store-handle cell)
           cell)))))
-
-;; Copy the inherited index at PARENT-ADDR into STORE-HANDLE's owner arena and
-;; make the copy this store's index.
-(define (tc-chain-state-detach! [store-handle : i64] [parent-addr : i64]) : i64
-  (let
-    [owner : i64 (tc-chain-store-owner store-handle)]
-    [parent : TcChainIndex (tc-chain-state-read parent-addr)]
-    [cell : i64
-      (in-arena
-        (arena.Arena owner)
-        (let
-          [map : tc_i64_i64_map.Map
-            (tc_i64_i64_map.with-capacity
-              (tc_i64_i64_map.capacity (& parent.map)))]
-          [remaining : i64 (tc_i64_i64_map.len (& parent.map))]
-          [index : i64 0]
-          [slots : (__tl_dyn-array TcChainIndex)
-            (__tl_make-array TcChainIndex 1)]
-          (begin
-            (while (> remaining 0)
-              (begin
-                (set! index (tc_i64_i64_map.next-occupied (& parent.map) index))
-                (match (tc_i64_i64_map.entry-at (& parent.map) index)
-                  [(tc_i64_i64_map.EntrySome key value)
-                    (tc_i64_i64_map.insert-ref! (&mut map) key value)]
-                  [(tc_i64_i64_map.EntryNone) unit])
-                (set! index (+ index 1))
-                (set! remaining (- remaining 1))))
-            (set! (array-ref slots 0) (TcChainIndex map parent.next-seq owner))
-            (unsafe
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
-                : i64)))))]
-    (begin
-      (tc-chain-state-set! store-handle cell)
-      cell)))
 
 (define (tc-chain-jump-levels [depth : i64]) : i64
   (if (< depth 1)
@@ -111598,6 +111577,23 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
+;; A view of ENV for one function body: the parent's head, capabilities and
+;; chain index, but a store of its own, created in the current arena (the
+;; function scratch), whose binding and cache segments grow there too. Nothing
+;; the body binds lands in the parent's owner arena.
+(define (tc-type-env-fork-function-store [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [store : i64
+      (tc-type-env-store-handle-new-with-topenv-state-address
+        (__tl-project-field (tc-type-env-topenv-membership-state env) address)
+        (__tl-project-field (tc-type-env-structural-session env) address)
+        (__tl-project-field
+          (tc-type-env-type-resolution-cache-state env)
+          address))]
+    (begin
+      (tc-chain-state-set! store (tc-chain-state-address env.store))
+      (TcTypeEnv store env.head env.abi-pad))))
+
 ;; Function bodies dominate typecheck allocation and the check returns only
 ;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -111609,33 +111605,6 @@
 ;; overflow segments itself. The interner owns new spellings at insertion, so
 ;; its entries survive this rewind. Node pools already grow in the persistent
 ;; base arena.
-;; A view of ENV for one function body: the parent's head and capabilities,
-;; but a store of its own whose binding and cache segments grow in the current
-;; arena (the function scratch), so nothing the body binds lands in the
-;; parent's owner arena. The first segment holds the parameter and return
-;; environments the checker materializes at once; later ones use the ordinary
-;; segment growth.
-(define (tc-type-env-fork-function-store [env : TcTypeEnv] [param-count : i64]) : TcTypeEnv
-  (let
-    [store : TcTypeEnvStore (tc-type-env-store-read env.store)]
-    [capacity : i64 (* 2 (+ param-count 1))]
-    [cell : (__tl_dyn-array TcTypeEnvStore) (__tl_make-array TcTypeEnvStore 1)]
-    (begin
-      (set! store.bindings (__tl_make-array TcTypeEnvBinding capacity))
-      (set! store.binding-capacity capacity)
-      (set! store.binding-len 0)
-      (set! store.caches (__tl_make-array TcTypeEnvCache 1))
-      (set! store.cache-capacity 0)
-      (set! store.cache-len 0)
-      (set! store.owner-arena (arena.tl_arena_current))
-      (set! (array-ref cell 0) store)
-      (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
-      (TcTypeEnv
-        (unsafe
-          (cast (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr u8))) : i64))
-        env.head
-        env.abi-pad))))
-
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
@@ -111656,9 +111625,7 @@
         [raw : ResultTcUnit
           (tc-check-fn-decl-body
             ctx
-            (tc-type-env-fork-function-store
-              global-env
-              (ast.ast-param-list-len (& params)))
+            (tc-type-env-fork-function-store global-env)
             name
             params
             ret

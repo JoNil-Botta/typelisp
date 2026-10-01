@@ -1841,15 +1841,15 @@
   [build : CompilerBackendDebugFileBuildState]) : CompilerBackendDebugFileBuildState
   (if (>= index entries.len)
     build
-    (match (array-ref entries.slots index)
-      [(compiler_ir_types.CompilerSourceSpansEntry.Entry _ path-id _)
-        (let
-          [next : CompilerBackendDebugFileBuildState
-            (compiler-backend-debug-file-add! build path-id)]
-          (compiler-backend-debug-files-from-function-entries
-            entries
-            (+ index 1)
-            next))])))
+    (let
+      [span-entry : compiler_ir_types.CompilerSourceSpansEntry
+        (array-ref entries.slots index)]
+      [next : CompilerBackendDebugFileBuildState
+        (compiler-backend-debug-file-add! build span-entry.path-id)]
+      (compiler-backend-debug-files-from-function-entries
+        entries
+        (+ index 1)
+        next))))
 
 (define (compiler-backend-debug-files-from-instr-entries
   [entries : compiler_ir_types.CompilerSourceSpansInstrEntryList]
@@ -1857,15 +1857,12 @@
   [build : CompilerBackendDebugFileBuildState]) : CompilerBackendDebugFileBuildState
   (if (>= index entries.len)
     build
-    (match (array-ref entries.slots index)
-      [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry _ path-id _)
-        (let
-          [next : CompilerBackendDebugFileBuildState
-            (compiler-backend-debug-file-add! build path-id)]
-          (compiler-backend-debug-files-from-instr-entries
-            entries
-            (+ index 1)
-            next))])))
+    (let
+      [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+        (array-ref entries.slots index)]
+      [next : CompilerBackendDebugFileBuildState
+        (compiler-backend-debug-file-add! build span-entry.path-id)]
+      (compiler-backend-debug-files-from-instr-entries entries (+ index 1) next))))
 
 (define (compiler-backend-debug-file-index-build-with-backend-state
   [backend-state : CompilerBackendState]
@@ -4427,29 +4424,32 @@
     [out : backend_i64_i64_map.Map map]
     (if (< index 0)
       out
-      (match (array-ref slots index)
-        [(compiler_ir_types.CompilerSourceSpansEntry.Entry name _ span)
-          (if (backend_i64_i64_map.contains?
-            (& out)
-            (compiler_ir_types.compiler-ir-symbol-id-value name))
+      (let
+        [span-entry : compiler_ir_types.CompilerSourceSpansEntry
+          (array-ref slots index)]
+        [name : compiler_ir_types.CompilerIrSymbolId span-entry.name]
+        [span : compiler_ast_types.AstSourceSpan span-entry.span]
+        (if (backend_i64_i64_map.contains?
+          (& out)
+          (compiler_ir_types.compiler-ir-symbol-id-value name))
+          (compiler-backend-source-span-index-add-array
+            slots
+            (- index 1)
+            out
+            values)
+          (begin
+            (backend_i64_i64_map.insert-ref!
+              (&mut out)
+              (compiler_ir_types.compiler-ir-symbol-id-value name)
+              index)
+            (set!
+              (array-ref values index)
+              (compiler_ir_types.CompilerMaybeSourceSpan.Some span))
             (compiler-backend-source-span-index-add-array
               slots
               (- index 1)
               out
-              values)
-            (begin
-              (backend_i64_i64_map.insert-ref!
-                (&mut out)
-                (compiler_ir_types.compiler-ir-symbol-id-value name)
-                index)
-              (set!
-                (array-ref values index)
-                (compiler_ir_types.CompilerMaybeSourceSpan.Some span))
-              (compiler-backend-source-span-index-add-array
-                slots
-                (- index 1)
-                out
-                values)))]))))
+              values)))))))
 
 (define (compiler-backend-source-span-index-build-with-backend-state
   [backend-state : CompilerBackendState]
@@ -4535,29 +4535,30 @@
             (begin
               (while (< index instr-entries.len)
                 (begin
-                  (match (array-ref instr-entries.slots index)
-                    [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                        key
-                        _
-                        _)
-                      (match key
-                        [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
-                            key-function
-                            var)
-                          (if (and
-                            (=
-                              (compiler_ir_types.compiler-ir-symbol-id-value
-                                key-function)
-                              function)
-                            (>= var 0)
-                            (< var vars))
-                            (begin
-                              (compiler_liveness.compiler-live-set-builder-insert!
-                                (&mut words)
-                                var)
-                              (set! pinned true))
-                            unit)]
-                        [_ unit])])
+                  (let
+                    [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                      (array-ref instr-entries.slots index)]
+                    [key : compiler_ir_types.CompilerSourceSpansInstrKey
+                      (compiler_ir_types.compiler-source-spans-instr-entry-key
+                        (& span-entry))]
+                    (match key
+                      [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
+                          key-function
+                          var)
+                        (if (and
+                          (=
+                            (compiler_ir_types.compiler-ir-symbol-id-value
+                              key-function)
+                            function)
+                          (>= var 0)
+                          (< var vars))
+                          (begin
+                            (compiler_liveness.compiler-live-set-builder-insert!
+                              (&mut words)
+                              var)
+                            (set! pinned true))
+                          unit)]
+                      [_ unit]))
                   (set! index (+ index 1))))
               (if pinned
                 (compiler_liveness.compiler-live-set-from-words-trimmed
@@ -4599,20 +4600,23 @@
         (begin
           (while (< index instr-entries.len)
             (begin
-              (match (array-ref instr-entries.slots index)
-                [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                    key
+              (let
+                [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                  (array-ref instr-entries.slots index)]
+                [key : compiler_ir_types.CompilerSourceSpansInstrKey
+                  (compiler_ir_types.compiler-source-spans-instr-entry-key
+                    (& span-entry))]
+                [path-id : i64 span-entry.path-id]
+                [span : compiler_ast_types.AstSourceSpan span-entry.span]
+                (set!
+                  (array-ref slots index)
+                  (compiler_ir_types.compiler-source-spans-instr-entry
+                    (compiler-backend-remap-source-span-key
+                      key
+                      function
+                      (compiler-backend-global-shared-view remap))
                     path-id
-                    span)
-                  (set!
-                    (array-ref slots index)
-                    (compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                      (compiler-backend-remap-source-span-key
-                        key
-                        function
-                        (compiler-backend-global-shared-view remap))
-                      path-id
-                      span))])
+                    span)))
               (set! index (+ index 1))))
           (compiler_ir_types.CompilerSourceSpans.Spans
             entries
@@ -76986,21 +76990,20 @@
         (begin
           (while (< index count)
             (begin
-              (match (array-ref slots index)
-                [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                    _
-                    path-id
-                    _)
-                  (when
-                    (> path-id 0)
-                    (set!
+              (let
+                [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                  (array-ref slots index)]
+                [path-id : i64 span-entry.path-id]
+                (when
+                  (> path-id 0)
+                  (set!
+                    out
+                    (compiler-backend-program-collections-add-string
                       out
-                      (compiler-backend-program-collections-add-string
-                        out
-                        (compiler_ir_types.compiler-debug-path-remap
-                          (ci.intern-compat-state-str
-                            (compiler-backend-state-intern backend-state)
-                            path-id)))))])
+                      (compiler_ir_types.compiler-debug-path-remap
+                        (ci.intern-compat-state-str
+                          (compiler-backend-state-intern backend-state)
+                          path-id))))))
               (set! index (+ index 1))))
           out))]))
 

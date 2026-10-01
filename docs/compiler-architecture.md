@@ -225,6 +225,14 @@ verifier checks retained arena bytes before that compaction, and
 failed reads and shared-session reuse. Whole-load scan release empties the
 token scratch, while reusable sessions retain their current capacity.
 
+The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
+inline records: function entries (symbol, path id, span; 32 bytes) and
+instruction entries (value, store or bounds key, path id, span; 48 bytes). The
+records carry no variant tag, so a slot costs exactly its fields. An append with
+spare capacity writes the shared slot and growth copies the live prefix;
+escaping a table copies only that prefix into the current arena, which leaves
+no pointer into the arena that built it.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original

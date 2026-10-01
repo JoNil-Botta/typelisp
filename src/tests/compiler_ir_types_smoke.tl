@@ -4447,6 +4447,31 @@
       instr
       "  switch %9 base 4 [4:four, 5:five] default other")))
 
+;; Span entries are flat records: an array slot holds exactly the fields, with
+;; no outer variant tag (a function entry 32 bytes, an instruction entry 48).
+(define (compiler-ir-source-spans-entry-strides-pinned?) : bool
+  (let
+    [entries : (__tl_dyn-array compiler_ir_types.CompilerSourceSpansEntry)
+      (__tl_make-array compiler_ir_types.CompilerSourceSpansEntry 2)]
+    [instr-entries : (__tl_dyn-array
+      compiler_ir_types.CompilerSourceSpansInstrEntry)
+      (__tl_make-array compiler_ir_types.CompilerSourceSpansInstrEntry 2)]
+    (and
+      (=
+        (-
+          (unsafe
+            (ptr->int (ptr-offset (__tl_array-data entries) 1)))
+          (unsafe
+            (ptr->int (__tl_array-data entries))))
+        32)
+      (=
+        (-
+          (unsafe
+            (ptr->int (ptr-offset (__tl_array-data instr-entries) 1)))
+          (unsafe
+            (ptr->int (__tl_array-data instr-entries))))
+        48))))
+
 (define (compiler-ir-source-spans-entry-list-ok?) : bool
   (let
     [span1 : ast.AstSourceSpan (ast.ast-source-span 1 2 1 3)]
@@ -4480,8 +4505,8 @@
       (compiler_ir_types.compiler-source-spans-entry-list-append
         (compiler_ir_types.compiler-source-spans-entry-list-append
           (compiler_ir_types.compiler-source-spans-entry-list-empty)
-          (compiler_ir_types.CompilerSourceSpansEntry.Entry first 0 span1))
-        (compiler_ir_types.CompilerSourceSpansEntry.Entry second 0 span2))]
+          (compiler_ir_types.CompilerSourceSpansEntry first 0 span1))
+        (compiler_ir_types.CompilerSourceSpansEntry second 0 span2))]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert
         (compiler_ir_types.compiler-source-spans-insert
@@ -4544,7 +4569,7 @@
             grown-entries
             (compiler_ir_types.compiler-source-spans-entry-list-append
               grown-entries
-              (compiler_ir_types.CompilerSourceSpansEntry.Entry
+              (compiler_ir_types.CompilerSourceSpansEntry
                 grow
                 0
                 (if (= i 5)
@@ -5378,6 +5403,7 @@
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
     (unless (compiler-ir-switch-render-ok?) (return 1))
     (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
+    (unless (compiler-ir-source-spans-entry-strides-pinned?) (return 1))
     (unless (compiler-ir-instr-seq-dense-construction-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))

@@ -70,6 +70,8 @@ VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
 VECTOR_FULL_STDERR="$WORKDIR/profile-vector-full.stderr"
+POOL_PREPARE_STDOUT="$WORKDIR/profile-macro-pool-prepare.stdout"
+POOL_PREPARE_STDERR="$WORKDIR/profile-macro-pool-prepare.stderr"
 VECTOR_ONE_ASM="$WORKDIR/profile-vector-one.s"
 VECTOR_ONE_STDOUT="$WORKDIR/profile-vector-one.stdout"
 VECTOR_ONE_STDERR="$WORKDIR/profile-vector-one.stderr"
@@ -825,6 +827,29 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+
+# Each pool context allocates two cells in the long-lived load+macro arena, so
+# the macro walk may build only a bounded number per fired declaration.
+# Preparing a transformer compares pool lengths and builds none (#7937); a path
+# that builds one per transformer run exceeds the bound on this fixture, whose
+# fired declarations each run several expression macros.
+echo "[compile-profile] verify macro transformer preparation builds no pool context"
+run_logged "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR" "profiled macro pool preparation fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_macro_pool_prepare.tl \
+    --stdlib-root . --stdlib-root stdlib
+POOL_PREPARE_FIRES=$(profile_counter_value_in "$POOL_PREPARE_STDERR" "typecheck.macro.walk_decl_fire_count") &&
+    POOL_PREPARE_CONTEXTS=$(profile_counter_value_in "$POOL_PREPARE_STDERR" "typecheck.macro.walk_decl_fire_pool_contexts") || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "missing macro pool-context counters"
+}
+[ "$POOL_PREPARE_FIRES" -ge 30 ] || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "macro pool preparation fixture fired $POOL_PREPARE_FIRES declarations, expected at least 30"
+}
+[ "$POOL_PREPARE_CONTEXTS" -le $((7 * POOL_PREPARE_FIRES)) ] || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "macro walk built $POOL_PREPARE_CONTEXTS pool contexts for $POOL_PREPARE_FIRES fired declarations, more than 7 per fire"
+}
 
 echo "[compile-profile] verify compile-wide peak survives nested reset"
 run_logged "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR" "compile-wide nested peak reset fixture failed" \

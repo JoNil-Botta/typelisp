@@ -5366,6 +5366,10 @@
       "typecheck.macro.walk_decl_fire_survivor_expr_nodes")
     (tc-profile-fire-survivor-type-nodes
       "typecheck.macro.walk_decl_fire_survivor_type_nodes")
+    (tc-profile-fire-pool-contexts
+      "typecheck.macro.walk_decl_fire_pool_contexts")
+    (tc-profile-prepare-pools-installs
+      "typecheck.macro.walk_prepare_pools_installs")
     (tc-profile-decl-generations "typecheck.macro.walk_decl_generations")
     (tc-profile-decl-generation-rotations
       "typecheck.macro.walk_decl_generation_rotations")
@@ -5608,6 +5612,10 @@
   compile-profile
   (define compiler-tc-walk-decl-sample-start-captures : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sample-start-pool-contexts : i64
+    0))
 
 (cfg
   compile-profile
@@ -5781,11 +5789,19 @@
               (counters.add!
                 tc-profile-fire-live
                 (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live))
+              (counters.add!
+                tc-profile-fire-pool-contexts
+                (-
+                  ast.ast-node-pool-context-profile-allocations
+                  compiler-tc-walk-decl-sample-start-pool-contexts))
               (counters.bump! tc-profile-fire-count))]
           [else unit])
         (set! compiler-tc-walk-decl-sample-kind 0)
         (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
         (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
+        (set!
+          compiler-tc-walk-decl-sample-start-pool-contexts
+          ast.ast-node-pool-context-profile-allocations)
         (set!
           compiler-tc-walk-decl-sample-start-captures
           compiler-tc-walk-operand-captures)))))
@@ -101815,21 +101831,27 @@
 
 (define (macro-prepare-transformer-pools! [ctx : TcContext]) : unit
   ;; Argument normalization may extend the owned context while the global
-  ;; active pool still points at an older caller snapshot.
+  ;; active pool still points at an older caller snapshot. Outside the compat
+  ;; context the active pool's lengths are the pool globals that
+  ;; `ast-node-pool-context-capture-active` would copy, so they are read
+  ;; directly instead of through a fresh snapshot on every preparation.
   (if (ast.ast-node-pool-compat-context-active?)
     unit
     (let
       [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      [active-pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-capture-active)]
       (if (or
         (>
           (ast.ast-node-pool-context-expr-len owned-pools)
-          (ast.ast-node-pool-context-expr-len active-pools))
+          (ast.ast-node-pool-len))
         (>
           (ast.ast-node-pool-context-type-len owned-pools)
-          (ast.ast-node-pool-context-type-len active-pools)))
-        (tc-context-install-pools! ctx)
+          (ast.ty-node-pool-len)))
+        (begin
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-prepare-pools-installs)
+            unit)
+          (tc-context-install-pools! ctx))
         (tc-context-capture-active-pools! ctx)))))
 
 (define (macro-adopt-transformer-env-pools!

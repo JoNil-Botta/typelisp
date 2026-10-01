@@ -5363,6 +5363,10 @@
       "typecheck.macro.walk_decl_fire_survivor_expr_nodes")
     (tc-profile-fire-survivor-type-nodes
       "typecheck.macro.walk_decl_fire_survivor_type_nodes")
+    (tc-profile-fire-pool-contexts
+      "typecheck.macro.walk_decl_fire_pool_contexts")
+    (tc-profile-prepare-pools-installs
+      "typecheck.macro.walk_prepare_pools_installs")
     (tc-profile-decl-generations "typecheck.macro.walk_decl_generations")
     (tc-profile-decl-generation-rotations
       "typecheck.macro.walk_decl_generation_rotations")
@@ -5605,6 +5609,10 @@
   compile-profile
   (define compiler-tc-walk-decl-sample-start-captures : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sample-start-pool-contexts : i64
+    0))
 
 (cfg
   compile-profile
@@ -5778,11 +5786,19 @@
               (counters.add!
                 tc-profile-fire-live
                 (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live))
+              (counters.add!
+                tc-profile-fire-pool-contexts
+                (-
+                  ast.ast-node-pool-context-profile-allocations
+                  compiler-tc-walk-decl-sample-start-pool-contexts))
               (counters.bump! tc-profile-fire-count))]
           [else unit])
         (set! compiler-tc-walk-decl-sample-kind 0)
         (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
         (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
+        (set!
+          compiler-tc-walk-decl-sample-start-pool-contexts
+          ast.ast-node-pool-context-profile-allocations)
         (set!
           compiler-tc-walk-decl-sample-start-captures
           compiler-tc-walk-operand-captures)))))
@@ -6164,7 +6180,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    132))
+    133))
 
 (cfg
   (any compile-profile test)
@@ -6186,7 +6202,8 @@
     (compiler-tc-macro-lifetime-start-enclosing-handle-metric)
     (compiler-tc-macro-lifetime-start-enclosing-bytes-metric)
     (compiler-tc-macro-lifetime-start-job-owner-bytes-metric)
-    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)))
+    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)
+    (compiler-tc-macro-lifetime-start-intern-bytes-metric)))
 
 (cfg
   (any compile-profile test)
@@ -85898,7 +85915,12 @@
           metrics-address
           compiler-tc-macro-lifetime-start-scoped-env-bytes-metric
           (compiler-tc-macro-lifetime-arena-bytes
-            (tc-job-state-type-env-scoped-state-arena job-state)))))))
+            (tc-job-state-type-env-scoped-state-arena job-state)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-intern-bytes-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (ci.intern-persistent-arena-handle)))))))
 
 (cfg
   compile-profile
@@ -85977,6 +85999,15 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
+      ;; Spellings interned during expansion (generated names, hygiene
+      ;; renames) persist in the intern arena for the whole session.
+      [intern-handle : i64 (ci.intern-persistent-arena-handle)]
+      [interns : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          intern-handle
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-intern-bytes-metric))]
       [job-owner : i64
         (if (or
           (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
@@ -86007,7 +86038,8 @@
           (=
             job-owner-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
-          (= job-owner-handle scoped-env-handle))
+          (= job-owner-handle scoped-env-handle)
+          (= job-owner-handle intern-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             job-owner-handle
@@ -86049,7 +86081,8 @@
           (=
             enclosing-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
-          (= enclosing-handle scoped-env-handle))
+          (= enclosing-handle scoped-env-handle)
+          (= enclosing-handle intern-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             enclosing-handle
@@ -86058,24 +86091,26 @@
               compiler-tc-macro-lifetime-start-enclosing-bytes-metric)))]
       [named : i64
         (+
-          scoped-env
+          interns
           (+
-            job-owner
+            scoped-env
             (+
-              enclosing
+              job-owner
               (+
-                pool-base
+                enclosing
                 (+
-                  expr-pool
+                  pool-base
                   (+
-                    type-pool
+                    expr-pool
                     (+
-                      symbols-current
+                      type-pool
                       (+
-                        symbols-retired
+                        symbols-current
                         (+
-                          expansion-pool
-                          (+ active-generations retired-generations))))))))))]
+                          symbols-retired
+                          (+
+                            expansion-pool
+                            (+ active-generations retired-generations)))))))))))]
       [remainder : i64 (- live-delta named)]
       (begin
         (compiler-tc-macro-lifetime-emit-row!
@@ -86098,6 +86133,13 @@
           "session"
           cumulative-alloc
           job-owner
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "intern-storage"
+          "session"
+          cumulative-alloc
+          interns
           peak-delta)
         (compiler-tc-macro-lifetime-emit-row!
           (tc-global-shared-view boundary)
@@ -101978,21 +102020,27 @@
 
 (define (macro-prepare-transformer-pools! [ctx : TcContext]) : unit
   ;; Argument normalization may extend the owned context while the global
-  ;; active pool still points at an older caller snapshot.
+  ;; active pool still points at an older caller snapshot. Outside the compat
+  ;; context the active pool's lengths are the pool globals that
+  ;; `ast-node-pool-context-capture-active` would copy, so they are read
+  ;; directly instead of through a fresh snapshot on every preparation.
   (if (ast.ast-node-pool-compat-context-active?)
     unit
     (let
       [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      [active-pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-capture-active)]
       (if (or
         (>
           (ast.ast-node-pool-context-expr-len owned-pools)
-          (ast.ast-node-pool-context-expr-len active-pools))
+          (ast.ast-node-pool-len))
         (>
           (ast.ast-node-pool-context-type-len owned-pools)
-          (ast.ast-node-pool-context-type-len active-pools)))
-        (tc-context-install-pools! ctx)
+          (ast.ty-node-pool-len)))
+        (begin
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-prepare-pools-installs)
+            unit)
+          (tc-context-install-pools! ctx))
         (tc-context-capture-active-pools! ctx)))))
 
 (define (macro-adopt-transformer-env-pools!

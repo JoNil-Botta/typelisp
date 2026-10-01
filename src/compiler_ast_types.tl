@@ -3865,6 +3865,13 @@
 ;;
 ;; Arena handles identify stable roots, so targeting the named owner does not
 ;; require recapturing or republishing a physical chain head afterwards.
+;; Pool contexts built by `ast-node-pool-context-new-with-pool-owner`, each two
+;; fresh cells; the macro walk reports how many each fired declaration builds.
+(cfg
+  compile-profile
+  (define ast-node-pool-context-profile-allocations : i64
+    0))
+
 (define (ast-node-pool-context-new-with-pool-owner
   [expr-pool : AstExprNodePoolState]
   [type-pool : AstTypeNodePoolState]
@@ -3884,6 +3891,12 @@
           (arena.Arena allocation-owner-arena)
           (__tl_make-array AstTypeNodePoolState 1)))]
     (begin
+      (cfg
+        compile-profile
+        (set!
+          ast-node-pool-context-profile-allocations
+          (+ ast-node-pool-context-profile-allocations 1))
+        unit)
       ;; The cells and the state records already have their intended owners.
       ;; Publish the records shallowly: an aggregate assignment would create a
       ;; fresh nested dynamic-array descriptor for `dedup-slots` in whatever

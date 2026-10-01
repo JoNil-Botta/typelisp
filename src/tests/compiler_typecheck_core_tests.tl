@@ -476,6 +476,84 @@
         [(tc_core.TcAggLayoutCacheSlot.Empty) true]
         [(tc_core.TcAggLayoutCacheSlot.Full _ _) false]))))
 
+(define (macro-prepare-test-ctx [pools : ast.AstNodePoolContext]) : tc_core.TcContext
+  (tc_core.tc-context-new
+    (ast.ast-program (ast.ast-decl-list-new))
+    (csym.compiler-symbols-empty)
+    (csym.compiler-registries-empty)
+    ""
+    cbi.compiler-builtin-id-fix-empty
+    pools))
+
+;; Preparing a transformer compares the owned pools with the installed pool's
+;; lengths (#7937). An owned context that argument normalisation extended past
+;; the installed one, in either pool, is installed; an owned context that is not
+;; longer takes a capture of the installed state; under an explicit
+;; compatibility context nothing changes.
+(test
+  macro-prepare-transformer-pools-length-decision
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [older : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [owned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx owned)]
+    [_older-root : i64
+      (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 1))]
+    [_owned-root : i64
+      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 2))]
+    [_owned-next : i64
+      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 3))]
+    [_install-older : unit (ast.ast-node-pool-context-install! older)]
+    [_prepare-longer : unit (tc_core.macro-prepare-transformer-pools! ctx)]
+    [longer-installed? : bool (ast.ast-node-pool-context-expr-installed? owned)]
+    [_older-grows : i64
+      (begin
+        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 4))
+        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 5)))]
+    [_reinstall-older : unit (ast.ast-node-pool-context-install! older)]
+    [_prepare-shorter : unit (tc_core.macro-prepare-transformer-pools! ctx)]
+    [shorter-captured? : bool
+      (and
+        (ast.ast-node-pool-context-expr-installed? older)
+        (= (ast.ast-node-pool-context-expr-len owned) 3)
+        (= (ast.ast-node-pool-len) 3))]
+    [type-older : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [type-owned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [type-ctx : tc_core.TcContext (macro-prepare-test-ctx type-owned)]
+    [_type-owned-node : i64
+      (ast.ast-node-pool-context-type-push
+        type-owned
+        (ast.AstType.Array 0 7937))]
+    [_install-type-older : unit (ast.ast-node-pool-context-install! type-older)]
+    [_prepare-type : unit (tc_core.macro-prepare-transformer-pools! type-ctx)]
+    [type-longer-installed? : bool
+      (ast.ast-node-pool-context-expr-installed? type-owned)]
+    [_install-compat-older : unit (ast.ast-node-pool-context-install! older)]
+    [compat-unchanged? : bool
+      (begin
+        (ast.ast-node-pool-compat-context-use! type-older)
+        (tc_core.macro-prepare-transformer-pools! type-ctx)
+        (let
+          [unchanged? : bool
+            (not (ast.ast-node-pool-context-expr-installed? type-owned))]
+          (begin
+            (ast.ast-node-pool-compat-context-clear!)
+            unchanged?)))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if (and
+        longer-installed?
+        shorter-captured?
+        type-longer-installed?
+        compat-unchanged?)
+        unit
+        (io.panic "typecheck: macro transformer pool preparation failed")))))
+
 (test
   tc-context-expression-pool-isolation
   (let

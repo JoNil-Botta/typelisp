@@ -67,10 +67,10 @@ contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=13 bytes=
+contains surface-frontend-ast: present schema-version=14 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=13 bytes=0
+not-contains surface-frontend-ast: present schema-version=14 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -89,10 +89,10 @@ contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=13 bytes=
+contains surface-frontend-ast: present schema-version=14 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=13 bytes=0
+not-contains surface-frontend-ast: present schema-version=14 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -302,10 +302,10 @@ contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=13 bytes=
+contains surface-frontend-ast: present schema-version=14 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=13 bytes=0
+not-contains surface-frontend-ast: present schema-version=14 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -325,10 +325,10 @@ contains package-name: split_math
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=13 bytes=
+contains surface-frontend-ast: present schema-version=14 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=13 bytes=0
+not-contains surface-frontend-ast: present schema-version=14 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -430,3 +430,53 @@ run build --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stderr contains compiler-load: cannot read import
 stderr match vendor[/\\]math[/\\]src[/\\]missing\.tl
+
+# A consumer calls its dependency's TypeLisp functions through package externs
+# (`AstExternAbi.TypeLisp`, #8485): two, six and eight scalar arguments must
+# cross the call boundary intact and in order. Each argument is weighted by its
+# position, so a swap changes the result, and eight arguments reach the stack on
+# both hosts. Struct arguments and results do not agree across packages yet
+# (#8532).
+case package-dependency-call-abi
+file typelisp.pkg
+(package
+  (name "dep_abi_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (depabi "vendor/depabi")))
+end-file
+file src/main.tl
+(import depabi.src.lib)
+(define (main) : i64
+  (-
+    (+
+      (lib.dep-weigh2 1 2)
+      (lib.dep-weigh6 1 2 3 4 5 6)
+      (lib.dep-weigh8 1 2 3 4 5 6 7 8))
+    258))
+end-file
+file vendor/depabi/src/lib.tl
+;; Each returns the sum of i * x_i: 5, 91 and 204 for arguments 1..n.
+(define (dep-weigh2 [a : i64] [b : i64]) : i64 (+ a (* 2 b)))
+(define (dep-weigh6 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64
+  (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e) (* 6 f)))
+(define (dep-weigh8
+  [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (+ a (* 2 b) (* 3 c) (* 4 d) (* 5 e) (* 6 f) (* 7 g) (* 8 h)))
+end-file
+file vendor/depabi/typelisp.pkg
+(package
+  (name "depabi")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+step dep-abi-build
+run build --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+test -x "{{dir}}/target/release/dep_abi_pkg{{exe}}"
+step dep-abi-run
+exec "{{dir}}/target/release/dep_abi_pkg{{exe}}"
+exit 42

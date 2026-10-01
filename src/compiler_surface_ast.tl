@@ -68,6 +68,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 14: extern ABI tag 3 marks a package dependency's TypeLisp function
+  ;; (#8485).
+  ;;
   ;; 13: `AstStructRepr.C` carries the declared struct `(:align N)` value (0
   ;; when absent) and the per-field values up to the last declared one (#7445).
   ;;
@@ -111,7 +114,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  13)
+  14)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -369,7 +372,8 @@
       [(ast.AstExternAbi.CVarargsTyped ty)
         (begin
           (codec.surface-ast-write-i64! out 2)
-          (codec.surface-ast-write-type! out context ty))])))
+          (codec.surface-ast-write-type! out context ty))]
+      [(ast.AstExternAbi.TypeLisp) (codec.surface-ast-write-i64! out 3)])))
 
 (define (surface-ast-read-extern-abi!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstExternAbi
@@ -380,6 +384,7 @@
       [(= tag 1) ast.AstExternAbi.CVarargsOpen]
       [(= tag 2)
         (ast.AstExternAbi.CVarargsTyped (codec.surface-ast-read-type! reader))]
+      [(= tag 3) ast.AstExternAbi.TypeLisp]
       [else
         (begin
           (codec.surface-ast-reader-fail!

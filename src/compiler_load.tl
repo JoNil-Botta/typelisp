@@ -12427,7 +12427,7 @@
       (ast.AstExternKind.Function)
       (box
         (ast.AstExternMetadata.Metadata
-          (ast.AstExternAbi.C)
+          (ast.AstExternAbi.TypeLisp)
           (ci.intern-id-from-renderable
             (ci.intern-generated-canonical-name
               (owned_view.compiler-owned-shared-view link-name)))

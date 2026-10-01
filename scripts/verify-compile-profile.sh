@@ -76,6 +76,9 @@ VECTOR_ONE_STDERR="$WORKDIR/profile-vector-one.stderr"
 VECTOR_FIVE_ASM="$WORKDIR/profile-vector-five.s"
 VECTOR_FIVE_STDOUT="$WORKDIR/profile-vector-five.stdout"
 VECTOR_FIVE_STDERR="$WORKDIR/profile-vector-five.stderr"
+VECTOR_STRUCT_ASM="$WORKDIR/profile-vector-struct-full.s"
+VECTOR_STRUCT_STDOUT="$WORKDIR/profile-vector-struct-full.stdout"
+VECTOR_STRUCT_STDERR="$WORKDIR/profile-vector-struct-full.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 CTFE_SPLICE_STDOUT="$WORKDIR/profile-ctfe-splice.stdout"
@@ -1016,13 +1019,14 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # The selfhost walk's generated imports all target loaded modules and
+    # extend the live tables (#8135), so it retires no symbol table; the
+    # generated-import fixture covers retired-symbol retention instead.
     profile_rows "$SELFHOST_STDOUT" "$SELFHOST_STDERR" <<'ROWS'
-c typecheck.macro.retention_retired_symbol_rotations >= 1
 c typecheck.macro.retention_expansion_scratch_creations >= 1
 c typecheck.macro.retention_active_generation_rotations >= 1
 c typecheck.macro.retention_retired_generation_rotations >= 1
 c typecheck.macro.retention_live_symbols_max_bytes >= 1
-c typecheck.macro.retention_retired_symbols_max_bytes >= 1
 c typecheck.macro.retention_expansion_scratch_max_bytes >= 1
 c typecheck.macro.retention_active_generations_max_bytes >= 1
 c typecheck.macro.retention_retired_generations_max_bytes >= 1
@@ -1040,16 +1044,21 @@ ROWS
     SELFHOST_MATERIALIZED_SPLICES=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_decl_sp_mat_count")
+    SELFHOST_INCREMENTAL_IMPORTS=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_segment_incremental_imports")
     SELFHOST_SEGMENT_ALIAS_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_segment_fallback_alias_flattens")
     SELFHOST_REGISTRY_INVALIDATIONS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_splice_registry_invalidated")
-    if [ "$SELFHOST_SEGMENT_FILE_FLATTENS" -ne "$SELFHOST_MATERIALIZED_SPLICES" ] ||
+    # Every materialized generated import takes exactly one path: the file
+    # fallback, or the incremental append when it loads nothing new.
+    if [ "$((SELFHOST_SEGMENT_FILE_FLATTENS + SELFHOST_INCREMENTAL_IMPORTS))" -ne "$SELFHOST_MATERIALIZED_SPLICES" ] ||
         [ "$SELFHOST_SEGMENT_ALIAS_FLATTENS" -ne "$SELFHOST_REGISTRY_INVALIDATIONS" ]; then
         show_failure_logs "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-        fail "segmented-program fallbacks do not match their conservative paths: file=$SELFHOST_SEGMENT_FILE_FLATTENS materialized=$SELFHOST_MATERIALIZED_SPLICES alias=$SELFHOST_SEGMENT_ALIAS_FLATTENS invalidated=$SELFHOST_REGISTRY_INVALIDATIONS"
+        fail "segmented-program fallbacks do not match their conservative paths: file=$SELFHOST_SEGMENT_FILE_FLATTENS incremental=$SELFHOST_INCREMENTAL_IMPORTS materialized=$SELFHOST_MATERIALIZED_SPLICES alias=$SELFHOST_SEGMENT_ALIAS_FLATTENS invalidated=$SELFHOST_REGISTRY_INVALIDATIONS"
     fi
     # The compiler source currently exercises ordinary Decls, generated
     # Modules, and generated-file nominal deltas. All are additive: the CTFE
@@ -1941,6 +1950,21 @@ c typecheck.macro.walk_segment_splits >= 5
 c typecheck.macro.walk_segment_delta_decls >= 5
 ROWS
 
+# Full-mode struct and enum vectors instantiate `(eq.eq S)`, whose generated
+# body imports the already-loaded `stdlib.eq`. That import loads no new
+# declarations, so it extends the live tables instead of flattening the whole
+# program and rebuilding them.
+echo "[compile-profile] full-mode struct and enum vectors import loaded stdlib.eq"
+run_logged "$VECTOR_STRUCT_STDOUT" "$VECTOR_STRUCT_STDERR" "profiled struct-vector fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_vector_struct_full.tl \
+    -o "$VECTOR_STRUCT_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --opt-level 1
+profile_rows "$VECTOR_STRUCT_STDOUT" "$VECTOR_STRUCT_STDERR" <<'ROWS'
+c typecheck.macro.walk_segment_fallback_flattens = 0
+c typecheck.macro.walk_segment_incremental_imports >= 2
+c typecheck.macro.live_rebuilds = 1
+ROWS
+
 for counter in \
     checked_program.pre_decls.functions \
     checked_program.reachable.decls \
@@ -1973,10 +1997,15 @@ assert_segmented_program_view_in \
     "$GEN_IMPORT_STDERR"
 
 # The generated module imports stdlib.string; the single demand-driven pass
-# loads and forces that file import inline.
+# loads and forces that file import inline. Loading new declarations takes the
+# file fallback, which rebuilds the live tables and retires the old symbols.
 profile_rows "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR" <<'ROWS'
 lacks typecheck.macro.fixed_point_
 has compile-profile|typecheck.macro_scratch_release|
+c typecheck.macro.walk_segment_fallback_file_flattens >= 1
+c typecheck.macro.walk_segment_incremental_imports = 0
+c typecheck.macro.retention_retired_symbol_rotations >= 1
+c typecheck.macro.retention_retired_symbols_max_bytes >= 1
 ROWS
 
 echo "[compile-profile] check additive CTFE splice fixture"

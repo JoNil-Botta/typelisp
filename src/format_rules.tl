@@ -514,6 +514,7 @@
   [slots : (__tl_dyn-array cst.FormatCst)]
   [start : i64]
   [count : i64]
+  [arms : bool]
   [emit : bool]
   [width : i64]
   [indent : i64]
@@ -576,15 +577,25 @@
             (begin
               (set!
                 out
-                (format-rules-layout-cst
-                  (owned_view.compiler-owned-shared-view node)
-                  emit
-                  width
-                  indent
-                  after-line
-                  flat
-                  limit
-                  buf))
+                (if arms
+                  (format-rules-layout-arm-cst
+                    (owned_view.compiler-owned-shared-view node)
+                    emit
+                    width
+                    indent
+                    after-line
+                    flat
+                    limit
+                    buf)
+                  (format-rules-layout-cst
+                    (owned_view.compiler-owned-shared-view node)
+                    emit
+                    width
+                    indent
+                    after-line
+                    flat
+                    limit
+                    buf)))
               (set! last-comment (format-rules-node-comment? node))
               (set! index (+ index 1))))))
       (if last-comment
@@ -604,6 +615,7 @@
     items.slots
     items.start
     items.len
+    false
     emit
     width
     indent
@@ -611,6 +623,197 @@
     flat
     limit
     buf))
+
+;; Match and cond arms: a bracket arm with two or more body forms is laid out
+;; like a `begin` body, its head on the bracket's line and one form per line.
+(define (format-rules-arm-form-count [items : (& items cst.FormatCstList)]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index items.len)
+        (begin
+          (unless
+            (format-rules-node-comment?
+              (owned_view.compiler-owned-array-element-shared-view
+                items.slots
+                (+ items.start index)))
+            (set! count (+ count 1)))
+          (set! index (+ index 1))))
+      count)))
+
+;; A `:` after the head marks a parameter or binding clause such as
+;; `[arms : ExprClause ...]` in a `(cond ...)` macro signature, never an arm.
+(define (format-rules-arm-sequence? [node : cst.FormatCst]) : bool
+  (match node
+    [(cst.FormatCst.BracketList items)
+      (match (cst.fmt-cst-list-step (deref items))
+        [(cst.FormatCstListStep.Item head rest)
+          (and
+            (not (format-rules-node-comment? head))
+            (match (cst.fmt-cst-list-step rest)
+              [(cst.FormatCstListStep.Item second _)
+                (not (format-rules-node-colon? second))]
+              [(cst.FormatCstListStep.Empty) false])
+            (> (format-rules-arm-form-count (& (deref items))) 2))]
+        [(cst.FormatCstListStep.Empty) false])]
+    [_ false]))
+
+(define (format-rules-arms-have-sequence? [items : (& items cst.FormatCstList)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index items.len))
+        (begin
+          (set!
+            found
+            (format-rules-arm-sequence?
+              (owned_view.compiler-owned-array-element-shared-view
+                items.slots
+                (+ items.start index))))
+          (set! index (+ index 1))))
+      found)))
+
+(define (format-rules-layout-arm-cst
+  [node : cst.FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (if (format-rules-arm-sequence? (owned_view.compiler-owned-shared-view node))
+    (match node
+      [(cst.FormatCst.BracketList items)
+        (match (cst.fmt-cst-list-step (deref items))
+          [(cst.FormatCstListStep.Item head body)
+            (format-rules-layout-text
+              "]"
+              emit
+              width
+              indent
+              (format-rules-layout-arm-hard-tail
+                false
+                body
+                emit
+                width
+                (+ indent 2)
+                (format-rules-layout-cst
+                  head
+                  emit
+                  width
+                  indent
+                  (format-rules-layout-text
+                    "["
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf)
+              flat
+              limit
+              buf)]
+          [(cst.FormatCstListStep.Empty) col])]
+      [_ col])
+    (format-rules-layout-cst node emit width indent col flat limit buf)))
+
+(define (format-rules-layout-arm-hard-tail
+  [arms : bool]
+  [items : cst.FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (format-rules-layout-hard-tail-dense
+    items.slots
+    items.start
+    items.len
+    arms
+    emit
+    width
+    indent
+    col
+    flat
+    limit
+    buf))
+
+;; `(head first arm...)` for match, or `(head arm...)` for a cond that has a
+;; multi-form arm, with every arm on its own line.
+(define (format-rules-layout-arms-form
+  [head : String]
+  [rest : cst.FormatCstList]
+  [skip-first : bool]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (let
+    [after-head : i64
+      (format-rules-layout-text
+        head
+        emit
+        width
+        indent
+        (format-rules-layout-text "(" emit width indent col flat limit buf)
+        flat
+        limit
+        buf)]
+    (format-rules-layout-text
+      ")"
+      emit
+      width
+      indent
+      (match (cst.fmt-cst-list-step rest)
+        [(cst.FormatCstListStep.Item first arms)
+          (if skip-first
+            (format-rules-layout-arm-hard-tail
+              true
+              arms
+              emit
+              width
+              (+ indent 2)
+              (format-rules-layout-space-cst
+                first
+                emit
+                width
+                indent
+                after-head
+                flat
+                limit
+                buf)
+              flat
+              limit
+              buf)
+            (format-rules-layout-arm-hard-tail
+              true
+              rest
+              emit
+              width
+              (+ indent 2)
+              after-head
+              flat
+              limit
+              buf))]
+        [(cst.FormatCstListStep.Empty) after-head])
+      flat
+      limit
+      buf)))
 
 (define (format-rules-layout-tail-separator
   [previous-comment : bool]
@@ -2139,9 +2342,37 @@
           limit
           buf)]
       [(string.eq head-name "match")
-        (format-rules-layout-first-or-line-form
-          "match"
+        (match (cst.fmt-cst-list-step rest)
+          [(cst.FormatCstListStep.Empty)
+            (format-rules-layout-inline-form
+              "match"
+              rest
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf)]
+          [(cst.FormatCstListStep.Item _ _)
+            (format-rules-layout-arms-form
+              "match"
+              rest
+              true
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf)])]
+      [(and
+          (string.eq head-name "cond")
+          (format-rules-arms-have-sequence? (& rest)))
+        (format-rules-layout-arms-form
+          "cond"
           rest
+          false
           emit
           width
           indent

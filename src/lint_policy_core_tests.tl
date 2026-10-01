@@ -158,10 +158,13 @@
     [nested-let-default : lint_core.LintLevel
       (lint_core_tests.lint-rule-default-level
         (lint_core.lint-rule-nested-let-id))]
+    [redundant-begin-default : lint_core.LintLevel
+      (lint_core_tests.lint-rule-default-level
+        (lint_core.lint-rule-redundant-begin-id))]
     [index : i64 0]
     (begin
       (lint-policy-test-expect
-        (= (lint_core.lint-rule-list-count rules) 27)
+        (= (lint_core.lint-rule-list-count rules) 28)
         "lint policy: registry count should remain deterministic")
       (while (< index (lint_core.lint-rule-list-count rules))
         (let
@@ -178,24 +181,27 @@
         "lint policy: first registry decision should be stable")
       (lint-policy-test-expect
         (string.eq
-          (lint_core.lint-rule-list-ref rules 26).rule-id
+          (lint_core.lint-rule-list-ref rules 27).rule-id
           (lint_core.lint-rule-type-name-case-id))
         "lint policy: last registry decision should be stable")
       (lint-policy-test-expect
         (= (lint_core.lint-level-rank deprecated-default) 0)
         "lint policy: opt-in compatibility lint should default to allow")
       (lint-policy-test-expect
+        (= (lint_core.lint-level-rank redundant-begin-default) 0)
+        "lint policy: staged redundant-begin lint should default to allow")
+      (lint-policy-test-expect
         (= (lint_core.lint-level-rank nested-let-default) 1)
         "lint policy: existing default lint should remain warn")
       (lint-policy-test-expect
         (and
-          (= resolution.stats.registry-rules 27)
+          (= resolution.stats.registry-rules 28)
           (= resolution.stats.group-definitions 0)
           (= resolution.stats.group-members 0)
           (= resolution.stats.assignments 0)
           (= resolution.stats.expanded-rule-updates 0)
           (= resolution.stats.trace-entries 0)
-          (= (lint-policy-decisions-count resolution.decisions) 27)
+          (= (lint-policy-decisions-count resolution.decisions) 28)
           (= (lint-policy-resolution-diagnostics-count resolution) 0)
           (= (lint-policy-resolution-trace-count resolution) 0))
         "lint policy: disabled policy work must be one fixed registry pass"))))
@@ -566,9 +572,9 @@
               true
               (lint-policy-test-origin "legacy-floor")))))]
     [legacy : policy.LintPolicyResolution
-      (policy.lint-policy-legacy-resolution true true false true)]
+      (policy.lint-policy-legacy-resolution true true true false true)]
     [dotted-only : policy.LintPolicyResolution
-      (policy.lint-policy-legacy-resolution false false true false)]
+      (policy.lint-policy-legacy-resolution false false false true false)]
     (begin
       (lint-policy-test-expect
         (lint-policy-test-decision-is?
@@ -583,8 +589,14 @@
         "lint policy: satisfied minimum should be recorded as shadowed")
       (lint-policy-test-expect
         (and
-          (= legacy.stats.assignments 6)
-          (= legacy.stats.trace-entries 6)
+          (= legacy.stats.assignments 7)
+          (= legacy.stats.trace-entries 7)
+          (lint-policy-test-decision-is?
+            legacy
+            "redundant-begin"
+            (lint_core.LintLevel.Warn)
+            (policy.LintPolicyLayer.Cli)
+            "legacy-cli")
           (lint-policy-test-decision-is?
             legacy
             "deprecated-string-concat"

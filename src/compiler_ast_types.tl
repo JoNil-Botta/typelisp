@@ -1028,7 +1028,7 @@
   (Quasiquote i64)
   (Unquote i64)
   (UnquoteSplicing i64)
-  ;; Macro-only call operand syntax: `[expr expr]` bracket clauses are parsed
+  ;; Macro-only call operand syntax: `[expr ...]` bracket clauses are parsed
   ;; only inside call argument lists. Ordinary typechecking rejects this node;
   ;; macro binding consumes it for `ExprClause` operands.
   (BracketClause AstExprList)

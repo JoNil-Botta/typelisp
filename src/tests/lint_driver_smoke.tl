@@ -154,6 +154,7 @@
     false
     false
     false
+    false
     true))
 
 (define (lint-driver-smoke-name-case-rule-count
@@ -276,6 +277,93 @@
           (= (ast.ast-source-span-start-line fspan) line)
           (string.eq finding.rule-id rule-id)))]
     [(lint_core.LintMaybeFinding.No) false]))
+
+(define (lint-driver-smoke-redundant-begin-findings
+  [source : String]
+  [enabled : bool]) : lint_core.LintFindings
+  (driver_tests.selfhost-lint-source-with-roots-and-all-options
+    "lint_driver_smoke_test.tl"
+    source
+    (lint_svec.new)
+    false
+    false
+    enabled
+    false
+    false))
+
+(define (lint-driver-smoke-redundant-begin-count
+  [source : String]
+  [enabled : bool]) : i64
+  (let
+    [findings : lint_core.LintFindings
+      (lint-driver-smoke-redundant-begin-findings source enabled)]
+    (driver_tests.selfhost-lint-findings-rule-count
+      (& findings)
+      (lint_core.lint-rule-redundant-begin-id))))
+
+(define (lint-driver-smoke-redundant-begin-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (set! x 1)
+      (match x
+        [1
+          (begin
+            (set! x 2)
+            x)]
+        [_ x]))))")
+
+;; The staged rule reports a written begin in a body position only behind
+;; --redundant-begin, and honours `lint-allow`.
+(define (lint-driver-smoke-redundant-begin-self-test) : i64
+  (let
+    [reported : lint_core.LintFindings
+      (lint-driver-smoke-redundant-begin-findings
+        (lint-driver-smoke-redundant-begin-source)
+        true)]
+    (cond
+      [(not
+          (=
+            (driver_tests.selfhost-lint-findings-rule-count
+              (& reported)
+              (lint_core.lint-rule-redundant-begin-id))
+            2))
+        200]
+      [(not
+          (or
+            (lint-driver-smoke-finding-rule-line-ok?
+              (owned_view.compiler-owned-shared-view reported)
+              0
+              (lint_core.lint-rule-redundant-begin-id)
+              4)
+            (lint-driver-smoke-finding-rule-line-ok?
+              (owned_view.compiler-owned-shared-view reported)
+              1
+              (lint_core.lint-rule-redundant-begin-id)
+              4)))
+        201]
+      [(not
+          (=
+            (lint-driver-smoke-redundant-begin-count
+              (lint-driver-smoke-redundant-begin-source)
+              false)
+            0))
+        202]
+      [(not
+          (=
+            (lint-driver-smoke-redundant-begin-count
+              "(define (main) : i64
+  (let
+    [x : i64 0]
+    ;; lint-allow: redundant-begin
+    (begin
+      (set! x 1)
+      x)))"
+              true)
+            0))
+        203]
+      [else 42])))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
   (let
@@ -1112,6 +1200,7 @@
           false
           false
           false
+          false
           false)]
       [safe-parses : i64
         (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
@@ -1123,6 +1212,7 @@
         (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/shadow.tl"
           (lint_svec.new)
+          false
           false
           false
           false
@@ -1140,6 +1230,7 @@
           false
           false
           false
+          false
           false)]
       [macro-fallbacks : i64
         (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
@@ -1150,6 +1241,7 @@
           "target/lint_unsafe_surface/local_value.tl"
           (lint_svec.new)
           true
+          false
           false
           false
           false
@@ -1166,6 +1258,7 @@
           false
           false
           false
+          false
           false)]
       [callable-value-fallbacks : i64
         (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
@@ -1175,6 +1268,7 @@
         (lint_driver.selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/legacy.tl"
           (lint_svec.new)
+          false
           false
           false
           false
@@ -1220,6 +1314,7 @@
           false
           false
           false
+          false
           false)]
       [batch-macro-status : i64
         (let
@@ -1233,6 +1328,7 @@
             false
             false
             false
+            false
             0))]
       [package-macro-status : i64
         (let
@@ -1241,6 +1337,7 @@
             smoke-paths
             (lint_svec.new)
             true
+            false
             false
             false
             false
@@ -1260,6 +1357,7 @@
             false
             false
             false
+            false
             0))]
       [package-error-status : i64
         (let
@@ -1267,6 +1365,7 @@
           (lint_driver.selfhost-lint-package-files
             smoke-paths
             (lint_svec.new)
+            false
             false
             false
             false
@@ -1281,6 +1380,7 @@
           (lint_driver.selfhost-lint-files
             smoke-paths
             (lint_svec.new)
+            false
             false
             false
             false
@@ -1845,6 +1945,8 @@
         (driver_tests.selfhost-lint-dynamic-array-literal-self-test)]
       [concat-result : i64
         (lint-driver-smoke-deprecated-string-concat-self-test)]
+      [redundant-begin-result : i64
+        (lint-driver-smoke-redundant-begin-self-test)]
       [no-effect-result : i64 (lint-driver-smoke-no-effect-self-test)]
       [unreachable-result : i64 (lint-driver-smoke-unreachable-self-test)]
       [divergence-result : i64 (lint-driver-smoke-divergence-padding-self-test)]
@@ -1869,6 +1971,7 @@
         [(not (= single-cell-result 42)) single-cell-result]
         [(not (= dynamic-array-literal-result 42)) dynamic-array-literal-result]
         [(not (= concat-result 42)) concat-result]
+        [(not (= redundant-begin-result 42)) redundant-begin-result]
         [(not (= no-effect-result 42)) no-effect-result]
         [(not (= unreachable-result 42)) unreachable-result]
         [(not (= divergence-result 42)) divergence-result]

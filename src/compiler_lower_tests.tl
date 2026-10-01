@@ -258,7 +258,7 @@
 (define (compiler-lower-macro-expr-clause-shape-error-source) : String
   "(defmacro (need [arm : ExprClause]) : i64
   (expr-clause-second arm))
-(define (main) : i64 (need [true 1 2]))")
+(define (main) : i64 (need [true]))")
 
 (define (compiler-lower-bracket-ordinary-call-error-source) : String
   "(define (take [x : i64]) : i64 x)

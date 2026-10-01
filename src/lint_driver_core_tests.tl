@@ -1976,6 +1976,7 @@ end
   [stdlib-roots : lint_svec.Vec]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
   (lint_driver.selfhost-lint-source-with-roots-and-all-options-with-cfg
@@ -1985,6 +1986,7 @@ end
     (lint_driver.selfhost-lint-language-cfgs)
     deprecated-string-concat
     redundant-function-name
+    redundant-begin
     prefer-dotted-field
     name-case))
 
@@ -2001,6 +2003,7 @@ end
     stdlib-roots
     deprecated-string-concat
     redundant-function-name
+    false
     prefer-dotted-field
     false))
 

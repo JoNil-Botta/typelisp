@@ -38,6 +38,50 @@
           unit
           (io.panic message)))]))
 
+(define (fmt-render-80 [source : String]) : String
+  (match (format_rules.format-rules-render-source-width-result source 80)
+    [(format_rules.ResultFormatString.Ok formatted) formatted]
+    [(format_rules.ResultFormatString.Err err)
+      (io.panic (tokens.format-source-error-message err))]))
+
+;; A match or cond arm with several body forms breaks like a `begin` body;
+;; one-form arms, a cond without a multi-form arm and a `cond` macro signature
+;; keep their layout.
+(test
+  fmt-multi-form-arms-break-like-begin
+  (let
+    [expected : String
+      "(define (f [x : i64]) : i64
+  (match x
+    [0
+      (set! x 1)
+      x]
+    [_ x]))
+
+(define (g [x : i64]) : i64
+  (cond [(= x 0) 1] [else x]))
+
+(defmacro (m [a : Expr] [b : Expr ...]) : Expr
+  `(cond
+    [,a
+      (set! x 1)
+      ,@b]
+    [else 0]))
+
+(defmacro (cond [arms : ExprClause ...]) : Expr
+  (fold arms))"]
+    [once : String
+      (fmt-render-80
+        "(define (f [x : i64]) : i64 (match x [0 (set! x 1) x] [_ x]))
+(define (g [x : i64]) : i64 (cond [(= x 0) 1] [else x]))
+(defmacro (m [a : Expr] [b : Expr ...]) : Expr `(cond [,a (set! x 1) ,@b] [else 0]))
+(defmacro (cond [arms : ExprClause ...]) : Expr (fold arms))")]
+    (unless
+      (and
+        (string.eq once expected)
+        (string.eq (fmt-render-80 (string.copy (& once))) expected))
+      (io.panic once))))
+
 (define (fmt-malformed-int-error? [source : String]) : bool
   (match (format_rules.format-rules-render-source-width-result source 80)
     [(format_rules.ResultFormatString.Ok _) false]

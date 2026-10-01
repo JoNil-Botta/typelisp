@@ -4434,10 +4434,66 @@
       (io.panic "semantic-index: repeated generated cfg failed"))
     true))
 
+;; A binder from a match pattern is in scope through every form of a
+;; multi-form arm body: the use in the last form resolves to the pattern.
+(define (compiler-check-semantic-index-multiform-arm-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_multiform_arm.tl"]
+    [source : String
+      "(defenum Opt (Some i64) (None))
+(define (arm-use [o : Opt] [n : i64]) : i64
+  (match o
+    [(Some inner)
+      (set! n (+ n 1))
+      (+ inner n)]
+    [(None) n]))"]
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
+      [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [ok : bool
+            (let
+              [definition-index : i64
+                (compiler-semantic-source-index-find-definition
+                  (& index)
+                  path
+                  "inner")]
+              (and
+                (>= definition-index 0)
+                (let
+                  [definition : sem.CompilerSemanticRecord
+                    (sem.compiler-semantic-source-index-get
+                      (& index)
+                      definition-index)]
+                  [use-index : i64
+                    (compiler-semantic-source-index-find-record
+                      (& index)
+                      path
+                      "inner"
+                      sem.CompilerSemanticRecordRole.Use
+                      definition.symbol.local-ordinal)]
+                  (and
+                    (>= definition.symbol.local-ordinal 0)
+                    (>= use-index 0)
+                    (>
+                      (sem.compiler-semantic-source-index-get
+                        (& index)
+                        use-index).span.start-byte
+                      definition.span.start-byte)))))]
+          (begin
+            (sem.compiler-semantic-source-index-release! (&mut index))
+            ok))]
+      [_ false])))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (let
     [base-start : i64 (compiler-semantic-index-smoke-timing-start)]
-    [base-ok : bool (compiler-check-semantic-index-base-ok?)]
+    [base-ok : bool
+      (and
+        (compiler-check-semantic-index-base-ok?)
+        (compiler-check-semantic-index-multiform-arm-ok?))]
     [base-timing-ok : bool
       (compiler-semantic-index-smoke-timing-record
         "semantic-base"

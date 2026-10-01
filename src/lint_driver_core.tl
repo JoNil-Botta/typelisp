@@ -33,8 +33,8 @@
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.
 (defenum SelfhostLintConfig
-  (File lint_svec.Vec lint_svec.Vec bool bool bool bool bool)
-  (Package String bool lint_svec.Vec bool bool bool bool bool))
+  (File lint_svec.Vec lint_svec.Vec bool bool bool bool bool bool)
+  (Package String bool lint_svec.Vec bool bool bool bool bool bool))
 
 (defenum ResultSelfhostLintConfig
   (Ok SelfhostLintConfig)
@@ -52,11 +52,13 @@
 (define (selfhost-lint-compatibility-policy
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_policy.LintPolicyResolution
   (lint_policy.lint-policy-legacy-resolution
     deprecated-string-concat
     redundant-function-name
+    redundant-begin
     prefer-dotted-field
     name-case))
 
@@ -88,6 +90,7 @@
         (cli_option.cli-args
           "selfhost-lint"
           "--check --deprecated-string-concat --redundant-function-name
+           --redundant-begin
            --prefer-dotted-field --name-case --format <rich|flat> --cfg <name>
            --target <target> --stdlib-root <dir> --manifest-path <file>"
           start
@@ -100,6 +103,7 @@
     [enforcing : bool false]
     [deprecated-string-concat : bool false]
     [redundant-function-name : bool false]
+    [redundant-begin : bool false]
     [prefer-dotted-field : bool false]
     [name-case : bool false]
     (begin
@@ -110,6 +114,8 @@
             (set! deprecated-string-concat true)]
           [(string.eq args.name "--redundant-function-name")
             (set! redundant-function-name true)]
+          [(string.eq args.name "--redundant-begin")
+            (set! redundant-begin true)]
           [(string.eq args.name "--prefer-dotted-field")
             (set! prefer-dotted-field true)]
           [(string.eq args.name "--name-case") (set! name-case true)]
@@ -176,6 +182,7 @@
               enforcing
               deprecated-string-concat
               redundant-function-name
+              redundant-begin
               prefer-dotted-field
               name-case))]
         [has-manifest
@@ -189,6 +196,7 @@
               enforcing
               deprecated-string-concat
               redundant-function-name
+              redundant-begin
               prefer-dotted-field
               name-case))]))))
 
@@ -793,6 +801,7 @@
   [stdlib-roots : lint_svec.Vec]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
   (match (selfhost-lint-program-with-selected-items path stdlib-roots parsed)
@@ -802,7 +811,11 @@
         ;; Keep the default path allocation-free with respect to lint policy.
         ;; The policy adapter is only needed when a legacy opt-in is active.
         (if (not
-          (or deprecated-string-concat redundant-function-name name-case))
+          (or
+            deprecated-string-concat
+            redundant-function-name
+            redundant-begin
+            name-case))
           (selfhost-lint-filter-derived-origins
             path
             (owned_view.compiler-owned-shared-view source)
@@ -817,6 +830,7 @@
               (selfhost-lint-compatibility-policy
                 deprecated-string-concat
                 redundant-function-name
+                redundant-begin
                 prefer-dotted-field
                 name-case)]
             [deprecated-enabled : bool
@@ -827,6 +841,10 @@
               (lint_policy.lint-policy-rule-enabled?
                 compatibility-policy
                 "redundant-function-name")]
+            [redundant-begin-enabled : bool
+              (lint_policy.lint-policy-rule-enabled?
+                compatibility-policy
+                "redundant-begin")]
             [name-case-enabled : bool
               (lint_policy.lint-policy-rule-enabled?
                 compatibility-policy
@@ -845,9 +863,15 @@
                   (ast.ast-program decls)
                   base)
                 base)]
+            [with-begin : lint_core.LintFindings
+              (if redundant-begin-enabled
+                (lint_core.lint-redundant-begin-scan
+                  (owned_view.compiler-owned-shared-view source)
+                  with-redundant)
+                with-redundant)]
             ;; Dotted field projection is now the only public spelling. Keep
             ;; the staged option as a no-op for command-line compatibility.
-            [with-prefer : lint_core.LintFindings with-redundant]
+            [with-prefer : lint_core.LintFindings with-begin]
             (selfhost-lint-filter-derived-origins path source with-prefer))))]))
 
 (define (selfhost-lint-findings-append-from
@@ -1417,6 +1441,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
   (begin
@@ -1435,6 +1460,7 @@
           (owned_view.compiler-owned-shared-view stdlib-roots)
           deprecated-string-concat
           redundant-function-name
+          redundant-begin
           prefer-dotted-field
           name-case)]
       [unknown-count : i64
@@ -1480,6 +1506,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
   (begin
@@ -1505,6 +1532,7 @@
                   (owned_view.compiler-owned-shared-view stdlib-roots)
                   deprecated-string-concat
                   redundant-function-name
+                  redundant-begin
                   prefer-dotted-field
                   name-case)]
               (selfhost-lint-findings-append
@@ -1533,6 +1561,7 @@
     source
     stdlib-roots
     cfgs
+    false
     false
     false
     false
@@ -3485,6 +3514,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : i64
   (let
@@ -3508,6 +3538,7 @@
               enforcing
               deprecated-string-concat
               redundant-function-name
+              redundant-begin
               prefer-dotted-field
               name-case)]
           (begin
@@ -3538,6 +3569,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
@@ -3560,6 +3592,7 @@
               enforcing
               deprecated-string-concat
               redundant-function-name
+              redundant-begin
               prefer-dotted-field
               name-case
               dead-decls)]
@@ -3587,6 +3620,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : i64
   (let
@@ -3616,6 +3650,7 @@
               (selfhost-lint-language-cfgs)
               deprecated-string-concat
               redundant-function-name
+              redundant-begin
               prefer-dotted-field
               name-case)]
           (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
@@ -3652,6 +3687,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
@@ -3682,6 +3718,7 @@
               (selfhost-lint-language-cfgs)
               deprecated-string-concat
               redundant-function-name
+              redundant-begin
               prefer-dotted-field
               name-case)]
           (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
@@ -3723,6 +3760,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]
   [print-headers : bool]
@@ -3747,6 +3785,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            redundant-begin
             prefer-dotted-field
             name-case))]
       (selfhost-lint-files-from
@@ -3756,6 +3795,7 @@
         enforcing
         deprecated-string-concat
         redundant-function-name
+        redundant-begin
         prefer-dotted-field
         name-case
         print-headers
@@ -3769,6 +3809,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]
   [print-headers : bool]
@@ -3782,6 +3823,7 @@
       enforcing
       deprecated-string-concat
       redundant-function-name
+      redundant-begin
       prefer-dotted-field
       name-case
       print-headers
@@ -3794,6 +3836,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]
@@ -3819,6 +3862,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            redundant-begin
             prefer-dotted-field
             name-case
             (owned_view.compiler-owned-shared-view dead-decls)))]
@@ -3829,6 +3873,7 @@
         enforcing
         deprecated-string-concat
         redundant-function-name
+        redundant-begin
         prefer-dotted-field
         name-case
         dead-decls
@@ -3843,6 +3888,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]
@@ -3857,6 +3903,7 @@
       enforcing
       deprecated-string-concat
       redundant-function-name
+      redundant-begin
       prefer-dotted-field
       name-case
       dead-decls
@@ -3870,6 +3917,7 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : i64
   (match (package_source_core.package-source-discover-for
@@ -3906,6 +3954,7 @@
                 enforcing
                 deprecated-string-concat
                 redundant-function-name
+                redundant-begin
                 prefer-dotted-field
                 name-case
                 dead-decls
@@ -3927,6 +3976,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            redundant-begin
             prefer-dotted-field
             name-case)
           (selfhost-lint-files
@@ -3935,6 +3985,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            redundant-begin
             prefer-dotted-field
             name-case
             (> (lint_svec.len (& input-paths)) 1)
@@ -3946,6 +3997,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            redundant-begin
             prefer-dotted-field
             name-case)
           (selfhost-lint-package
@@ -3955,6 +4007,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            redundant-begin
             prefer-dotted-field
             name-case)])]
     [(ResultSelfhostLintConfig.Err message)

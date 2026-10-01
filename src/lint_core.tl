@@ -8349,6 +8349,11 @@
       (begin
         (lint-unused-unsafe-block-mark-unknown!)
         (lint-unused-variable-children node-id state span))]
+    ;; A `deref` needs unsafe only through a raw pointer, which takes types.
+    [(ast.AstExpr.BoxTake _)
+      (begin
+        (lint-unused-unsafe-block-mark-unknown!)
+        (lint-unused-variable-children node-id state span))]
     [(ast.AstExpr.Borrow _ lifetime-id _)
       (lint-unused-variable-children
         node-id

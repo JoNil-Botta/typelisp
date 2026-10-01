@@ -2959,6 +2959,39 @@
       "(define (main) : i64 (deref 1))"
       "typecheck: deref requires Box or reference type")))
 
+;; A raw-pointer `deref` is an unsafe place only as a struct-field projection
+;; receiver, and only a `MutPtr` field is assignable.
+(define (compiler-typecheck-raw-deref-field-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(defstruct Inner (a i64) (b i64))
+(defstruct Point (x i64) (inner Inner) (items (Array i64 2)))
+(define (bump [p : (MutPtr Point)]) : i64
+  (unsafe
+    (begin
+      (set! (deref p).x (+ (deref p).x 1))
+      (set! (deref p).inner.b 2)
+      (set! (array-ref (deref p).items 1) 3)
+      (+ (deref p).inner.a (array-ref (deref p).items 0)))))
+(define (read [p : (Ptr Point)]) : i64
+  (unsafe (deref p).inner.b))
+(define (main) : i64 0)")
+    (compiler-typecheck-error-ok?
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (MutPtr Point)]) : unit
+  (set! (deref p).x 1))"
+      "typecheck: deref of a raw pointer requires unsafe context")
+    (compiler-typecheck-error-ok?
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (Ptr Point)]) : unit
+  (unsafe (set! (deref p).x 1)))"
+      (tc_core.tc-raw-deref-read-only-message))
+    (compiler-typecheck-error-ok?
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (MutPtr Point)]) : Point
+  (unsafe (deref p)))"
+      (tc_core.tc-raw-deref-whole-message))))
+
 (define (compiler-typecheck-init-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -10614,6 +10647,9 @@
     (if (compiler-typecheck-box-tests-ok?)
       unit
       (io.panic "typecheck: box tests failed"))
+    (if (compiler-typecheck-raw-deref-field-tests-ok?)
+      unit
+      (io.panic "typecheck: raw-pointer field place tests failed"))
     (if (compiler-typecheck-init-tests-ok?)
       unit
       (io.panic "typecheck: init tests failed"))

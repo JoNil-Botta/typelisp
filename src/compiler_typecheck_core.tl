@@ -52025,20 +52025,35 @@
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         (match (tc-expr ctx env (tc-global-shared-view receiver))
           [(ResultTcType.Ok receiver-ty)
-            (match (tc-box-set-inner-type
-              ctx
-              (tc-global-shared-view receiver-ty))
-              [(ResultTcType.Ok _)
-                (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-                  [(ast.AstType.MutRef lifetime _) (ResultTcNameId.Ok lifetime)]
-                  [_ (tc-store-place-lifetime ctx env receiver)])]
-              [(ResultTcType.Err message) (ResultTcNameId.Err message)])]
+            (match (tc-type-strip-region
+              (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+              [(ast.AstType.MutPtr _)
+                (ResultTcNameId.Ok (tc-raw-place-lifetime-id))]
+              [(ast.AstType.Ptr _)
+                (ResultTcNameId.Err (tc-raw-deref-read-only-message))]
+              [_
+                (match (tc-box-set-inner-type
+                  ctx
+                  (tc-global-shared-view receiver-ty))
+                  [(ResultTcType.Ok _)
+                    (match (tc-type-strip-region
+                      (tc-resolve-type ctx receiver-ty))
+                      [(ast.AstType.MutRef lifetime _)
+                        (ResultTcNameId.Ok lifetime)]
+                      [_ (tc-store-place-lifetime ctx env receiver)])]
+                  [(ResultTcType.Err message) (ResultTcNameId.Err message)])])]
           [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [_
       (ResultTcNameId.Err
         (tc-kind-message
           (cdiag.CompilerTypecheckKind.Place)
           "typecheck: expression is not a storage place"))]))
+
+;; A place reached through a raw pointer has no checked lifetime: like
+;; `ptr-write!`, a store through it does not check the references it writes.
+;; Interned lifetime and name IDs are non-negative.
+(define (tc-raw-place-lifetime-id) : i64
+  -1)
 
 (define (tc-ensure-reference-value-can-store-in-place
   [ctx : TcContext]
@@ -52053,10 +52068,12 @@
       [_
         (match (tc-store-place-lifetime ctx env place-expr)
           [(ResultTcNameId.Ok target-lifetime)
-            (if (tc-reference-lifetimes-outlive-lifetime?
-              env
-              lifetimes
-              target-lifetime)
+            (if (or
+              (= target-lifetime (tc-raw-place-lifetime-id))
+              (tc-reference-lifetimes-outlive-lifetime?
+                env
+                lifetimes
+                target-lifetime))
               ResultTcUnit.Ok
               (ResultTcUnit.Err
                 (str_cat.str-cat
@@ -56352,11 +56369,115 @@
       (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
     [(ast.AstType.MutRef lifetime referent-ty)
       (ResultTcType.Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+    [(ast.AstType.Ptr _) (ResultTcType.Err (tc-raw-deref-whole-message))]
+    [(ast.AstType.MutPtr _) (ResultTcType.Err (tc-raw-deref-whole-message))]
     [_
       (ResultTcType.Err
         (tc-kind-message
           (cdiag.CompilerTypecheckKind.TypeMismatch)
           "typecheck: deref requires Box or reference type"))]))
+
+;; `(deref p)` with a raw pointer `p` is an unsafe place only as the receiver
+;; of a struct-field projection. `(deref p).field` reads that one field at its
+;; offset from `p`, and through a `MutPtr` `(set! (deref p).field v)` stores
+;; it; further field, tuple and array projections may follow. Like
+;; `ptr-write!`, a store neither drops nor ownership-checks the value it
+;; overwrites. The whole pointee keeps its by-value `ptr-read` and `ptr-write!`
+;; forms, so a raw-pointer `deref` anywhere else is rejected.
+(define (tc-raw-deref-whole-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.TypeMismatch)
+    "typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!"))
+
+(define (tc-raw-deref-read-only-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)"))
+
+;; The pointer type when `receiver` is `(deref p)` over a raw pointer `p`.
+(define (tc-raw-deref-pointer-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]) : ast.AstMaybeType
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    receiver)
+    [(ast.AstExpr.BoxTake pointer-box)
+      (match (tc-expr-id ctx env pointer-box)
+        [(ResultTcType.Ok pointer-ty)
+          (let
+            [resolved : ast.AstType
+              (tc-type-strip-region (tc-resolve-type ctx pointer-ty))]
+            (match (tc-global-shared-view resolved)
+              [(ast.AstType.Ptr _) (ast.AstMaybeType.Some resolved)]
+              [(ast.AstType.MutPtr _) (ast.AstMaybeType.Some resolved)]
+              [_ ast.AstMaybeType.No]))]
+        [(ResultTcType.Err _) ast.AstMaybeType.No])]
+    [_ ast.AstMaybeType.No]))
+
+;; The raw pointer a place is reached through: its root is a raw-pointer
+;; `deref`, possibly under field, tuple and array projections.
+(define (tc-raw-deref-place-pointer-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]) : ast.AstMaybeType
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    (tc-global-shared-view place))
+    [(ast.AstExpr.BoxTake _) (tc-raw-deref-pointer-type ctx env place)]
+    [(ast.AstExpr.StructGet receiver-box _)
+      (tc-raw-deref-place-pointer-type
+        ctx
+        env
+        (tc-context-expr-get ctx receiver-box))]
+    [(ast.AstExpr.TupleRef receiver-box _)
+      (tc-raw-deref-place-pointer-type
+        ctx
+        env
+        (tc-context-expr-get ctx receiver-box))]
+    [(ast.AstExpr.ArrayRef receiver-box _)
+      (tc-raw-deref-place-pointer-type
+        ctx
+        env
+        (tc-context-expr-get ctx receiver-box))]
+    [_ ast.AstMaybeType.No]))
+
+(define (tc-raw-deref-place?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]) : bool
+  (match (tc-raw-deref-place-pointer-type ctx env place)
+    [(ast.AstMaybeType.Some _) true]
+    [(ast.AstMaybeType.No) false]))
+
+;; The type a struct-field projection reads its field from. An ordinary
+;; receiver is typed as an expression; only when that fails is the receiver
+;; tried as a raw-pointer `deref`, so ordinary projections pay nothing. The
+;; StructGet case of `tc-expr-inner` inlines the same fallback.
+(define (tc-field-receiver-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]) : ResultTcType
+  (match (tc-expr ctx env (tc-global-shared-view receiver))
+    [(ResultTcType.Ok receiver-ty) (ResultTcType.Ok receiver-ty)]
+    [(ResultTcType.Err message)
+      (tc-raw-deref-field-receiver-type ctx env receiver message)]))
+
+(define (tc-raw-deref-field-receiver-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [message : String]) : ResultTcType
+  (match (tc-raw-deref-pointer-type ctx env receiver)
+    [(ast.AstMaybeType.Some pointer-ty)
+      (match (tc-require-unsafe ctx env "deref of a raw pointer")
+        [(ResultTcUnit.Ok)
+          (match (tc-raw-pointer-elem pointer-ty message)
+            [(ResultTcType.Ok elem)
+              (ResultTcType.Ok (tc-resolve-type ctx elem))]
+            [(ResultTcType.Err elem-message) (ResultTcType.Err elem-message)])]
+        [(ResultTcUnit.Err unsafe-message) (ResultTcType.Err unsafe-message)])]
+    [(ast.AstMaybeType.No) (ResultTcType.Err message)]))
 
 (define (tc-deref-expr
   [ctx : TcContext]
@@ -56403,6 +56524,8 @@
         (tc-kind-message
           (cdiag.CompilerTypecheckKind.BorrowViolation)
           "typecheck: set! deref requires mutable access"))]
+    [(ast.AstType.Ptr _) (ResultTcType.Err (tc-raw-deref-whole-message))]
+    [(ast.AstType.MutPtr _) (ResultTcType.Err (tc-raw-deref-whole-message))]
     [_
       (ResultTcType.Err
         "typecheck: set! deref requires Box or mutable reference")]))
@@ -57521,6 +57644,20 @@
   [env : TcTypeEnv]
   [place : ast.AstExpr]
   [replacement-id : i64]) : ResultTcType
+  (match (tc-raw-deref-place-pointer-type ctx env (tc-global-shared-view place))
+    [(ast.AstMaybeType.Some _)
+      (ResultTcType.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Place)
+          "typecheck: replace! target cannot be reached through a raw pointer; use ptr-read and ptr-write!"))]
+    [(ast.AstMaybeType.No)
+      (tc-replace-storage-place-type ctx env place replacement-id)]))
+
+(define (tc-replace-storage-place-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]
+  [replacement-id : i64]) : ResultTcType
   (match (tc-store-place-lifetime ctx env (tc-global-shared-view place))
     [(ResultTcNameId.Ok _)
       (if (tc-active-cleanup-owner-place? ctx env (tc-global-shared-view place))
@@ -57709,7 +57846,9 @@
   [value : ast.AstExpr]) : ResultTcType
   (match (tc-store-place-lifetime ctx env (tc-global-shared-view receiver))
     [(ResultTcNameId.Ok _)
-      (match (tc-expr ctx env (tc-global-shared-view receiver))
+      (match (if (ast.ast-tuple-set-field-id? field-id)
+        (tc-expr ctx env (tc-global-shared-view receiver))
+        (tc-field-receiver-type ctx env (tc-global-shared-view receiver)))
         [(ResultTcType.Ok receiver-ty)
           (let
             [field-ty : ast.AstType
@@ -58462,7 +58601,13 @@
       (let
         [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
         [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        (match (tc-expr-id ctx env array-box)
+        (match (match (tc-raw-deref-place-pointer-type
+          ctx
+          env
+          (tc-global-shared-view array))
+          [(ast.AstMaybeType.Some (ast.AstType.Ptr _))
+            (ResultTcType.Err (tc-raw-deref-read-only-message))]
+          [_ (tc-expr-id ctx env array-box)])
           [(ResultTcType.Ok array-ty)
             (match (tc-expr-with-expected-or-actual-id
               ctx
@@ -59023,7 +59168,15 @@
       (match (tc-expr-id ctx env receiver-box)
         [(ResultTcType.Ok receiver-ty)
           (tc-struct-get-result-type-id ctx receiver-ty field)]
-        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message)
+          (match (tc-raw-deref-field-receiver-type
+            ctx
+            env
+            (tc-context-expr-get ctx receiver-box)
+            message)
+            [(ResultTcType.Ok receiver-ty)
+              (tc-struct-get-result-type-id ctx receiver-ty field)]
+            [(ResultTcType.Err raw-message) (ResultTcType.Err raw-message)])])]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -65786,14 +65939,26 @@
       (tc-global-shared-view expr))
       [(TcMaybeNameId.Some root-id)
         (if (tc-move-global-source-root? ctx env locals root-id)
-          (TcMoveResult.Err
-            (tc-locate-error-at-expr
-              expr-bases
-              expr
-              (tc-move-global-source-message root-id)))
+          (tc-move-global-source-result ctx expr-bases env moved expr root-id)
           (TcMoveResult.Ok moved))]
       [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])
     (TcMoveResult.Ok moved)))
+
+(define (tc-move-global-source-result
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [expr : ast.AstExpr]
+  [root-id : i64]) : TcMoveResult
+  ;; A raw pointer held by the global is copied, not moved.
+  (if (tc-raw-deref-place? ctx env (tc-global-shared-view expr))
+    (TcMoveResult.Ok moved)
+    (TcMoveResult.Err
+      (tc-locate-error-at-expr
+        expr-bases
+        expr
+        (tc-move-global-source-message root-id)))))
 
 (define (tc-move-check-replace-global-source
   [ctx : TcContext]
@@ -65856,7 +66021,12 @@
           (if (tc-move-aggregate-path-projection?
             expr-bases
             (tc-global-shared-view expr))
-            (TcMoveResult.Err (tc-move-aggregate-path-message))
+            ;; A read through a raw pointer copies the value's bits and moves
+            ;; nothing, as `ptr-read` does; ownership is the caller's
+            ;; obligation.
+            (if (tc-raw-deref-place? ctx env (tc-global-shared-view expr))
+              (TcMoveResult.Ok moved)
+              (TcMoveResult.Err (tc-move-aggregate-path-message)))
             (match (tc-move-root-projection-var-id
               expr-bases
               (tc-global-shared-view expr))

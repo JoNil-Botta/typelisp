@@ -10,7 +10,9 @@
 ;# consuming traversal. Consuming construction uses an ordinary by-value
 ;# parameter, so the non-`Copy` source moves exactly once and cannot be reused. Scalar ranges
 ;# implement the same canonical consuming protocol through `into-iterator` /
-;# `into-next`, which is the pair the scalar `for` macro selects.
+;# `into-next`, which is the pair the scalar `for` macro selects. A single
+;# unannotated `for` clause whose source is a direct `range` call counts from
+;# its first bound to its second in place, without constructing the range.
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning

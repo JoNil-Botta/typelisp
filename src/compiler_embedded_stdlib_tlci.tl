@@ -2601,6 +2601,26 @@
         (compiler-comptime-host-session-pools)
         (ast.AstExpr.Literal (ast.AstLiteral.Unit))))))
 
+(define (compiler-comptime-host-callback-expr-break
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-push-expr!
+      (ast.ast-expr-break-with-pools (compiler-comptime-host-session-pools)))))
+
+(define (compiler-comptime-host-callback-expr-continue
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-push-expr!
+      (ast.ast-expr-continue-with-pools (compiler-comptime-host-session-pools)))))
+
 ;; Computed-body locals: local-set pops one value into the named session
 ;; slot; local-get pushes the slot's value.
 (define (compiler-comptime-host-callback-local-set
@@ -4617,6 +4637,85 @@
       [(CompilerCtfeMaybeExpr.Some (ast.AstExpr.Begin _)) 1]
       [(CompilerCtfeMaybeExpr.Some _) 0]
       [(CompilerCtfeMaybeExpr.None) -3])))
+
+(define (compiler-comptime-host-callback-local-expr-call?
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-data-callback
+    session
+    (match (compiler-comptime-host-local-expr arg-a)
+      [(CompilerCtfeMaybeExpr.Some (ast.AstExpr.Call _ _)) 1]
+      [(CompilerCtfeMaybeExpr.Some _) 0]
+      [(CompilerCtfeMaybeExpr.None) -3])))
+
+;; Project the callee Expr and the argument ExprList from a local Expr.Call,
+;; as interpreted `(match e [(Expr.Call callee args) ...])` binds them. A
+;; captured expression keeps its originating pool context so the projected
+;; node ids remain valid across the native expansion boundary.
+(define (compiler-comptime-host-local-expr-call-payload!
+  [slot : i64]
+  [want-args : bool]) : i64
+  (if (or
+    (< slot 0)
+    (>= slot compiler-comptime-host-locals-cap)
+    (not
+      (compiler-comptime-host-array-element-shared-view
+        compiler-comptime-host-locals-live
+        slot)))
+    tlci.tlci-host-callback-status-bad-request
+    (let
+      [value : ctfe_support.CompilerCtfeValue
+        (compiler-comptime-host-array-element-shared-view
+          compiler-comptime-host-locals
+          slot)]
+      [node : i64 (compiler-comptime-host-value-node value)]
+      [pools : ast.AstNodePoolContext
+        (compiler-comptime-host-value-pools value)]
+      (if (< node 0)
+        tlci.tlci-host-callback-status-bad-request
+        (match (compiler-comptime-host-unspanned-expr
+          pools
+          (ast.ast-node-pool-context-expr-get pools node))
+          [(ast.AstExpr.Call callee items)
+            (match value
+              [(ctfe_support.CompilerCtfeValue.CapturedExpr _ _ pools)
+                (compiler-comptime-host-push!
+                  (if want-args
+                    (ctfe_support.CompilerCtfeValue.CapturedExprList
+                      items
+                      pools)
+                    (ctfe_support.CompilerCtfeValue.CapturedExpr
+                      callee
+                      (ctfe_support.ctfe-untyped-expr-type)
+                      pools)))]
+              [_
+                (compiler-comptime-host-push!
+                  (if want-args
+                    (ctfe_support.CompilerCtfeValue.ExprList items)
+                    (ctfe_support.CompilerCtfeValue.Expr
+                      callee
+                      (ctfe_support.ctfe-untyped-expr-type))))])]
+          [_ tlci.tlci-host-callback-status-bad-request])))))
+
+(define (compiler-comptime-host-callback-local-expr-call-callee
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-local-expr-call-payload! arg-a false)))
+
+(define (compiler-comptime-host-callback-local-expr-call-args
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-local-expr-call-payload! arg-a true)))
 
 ;; Project the ExprList payload from a local Expr.Begin. Captured expressions
 ;; keep their originating pool context so the returned list's node ids remain

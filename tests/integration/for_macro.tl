@@ -54,25 +54,30 @@
   (let
     [total : i64 0]
     (begin
-      (for [item items] (set! total (+ total (deref item))))
+      (for [item items]
+        (set! total (+ total (deref item))))
       total)))
 
 (define (bump-native-array! [items : (&mut source (Array i64 3))]) : unit
-  (for [item items] (set! (deref item) (+ (deref item) 10))))
+  (for [item items]
+    (set! (deref item) (+ (deref item) 10))))
 
 (define (sum-native-slice [items : (& source (Slice i64))]) : i64
   (let
     [total : i64 0]
     (begin
-      (for [item items] (set! total (+ total (deref item))))
+      (for [item items]
+        (set! total (+ total (deref item))))
       total)))
 
 (define (bump-native-slice! [items : (&mut source (Slice i64))]) : unit
-  (for [item items] (set! (deref item) (+ (deref item) 10))))
+  (for [item items]
+    (set! (deref item) (+ (deref item) 10))))
 
 (define (native-for-return) : i64
   (begin
-    (for [item (array (ann 42 : i64) (ann 99 : i64))] (return item))
+    (for [item (array (ann 42 : i64) (ann 99 : i64))]
+      (return item))
     0))
 
 (define (native-for-ok?) : bool
@@ -93,19 +98,21 @@
     [empty-visits : i64 0]
     [break-visits : i64 0]
     (begin
-      (for [item copy-items] (set! owned-total (+ owned-total item)))
-      (for
-        [item : String strings]
+      (for [item copy-items]
+        (set! owned-total (+ owned-total item)))
+      (for [item : String strings]
         (set! string-total (+ string-total (consume-native-for-string item))))
-      (for
-        [left zip-left]
+      (for [left zip-left]
         [right zip-right]
         (set! zip-total (+ zip-total (+ left right))))
-      (for
-        [row grid]
-        (for [item row] (set! nested-total (+ nested-total item))))
-      (for [item empty-items] (set! empty-visits (+ empty-visits item)))
-      (for [item break-items] (set! break-visits (+ break-visits item)) (break))
+      (for [row grid]
+        (for [item row]
+          (set! nested-total (+ nested-total item))))
+      (for [item empty-items]
+        (set! empty-visits (+ empty-visits item)))
+      (for [item break-items]
+        (set! break-visits (+ break-visits item))
+        (break))
       (let
         [array-before : i64 (sum-native-array (& borrowed-items))]
         (begin
@@ -137,8 +144,7 @@
     [visits : i64 0]
     (begin
       (reset-for-cleanup-total!)
-      (for
-        [token : ForCleanupToken (cleanup-token-vec)]
+      (for [token : ForCleanupToken (cleanup-token-vec)]
         [index (iterator.range 0 0)]
         (set! visits (+ visits (+ token.value index 1))))
       (and (= visits 0) (= for-cleanup-total 111)))))
@@ -148,8 +154,7 @@
     [visits : i64 0]
     (begin
       (reset-for-cleanup-total!)
-      (for
-        [token : ForCleanupToken (cleanup-token-vec)]
+      (for [token : ForCleanupToken (cleanup-token-vec)]
         [index (iterator.range 0 1)]
         (set! visits (+ visits (+ index 1)))
         (cleanup-for-cleanup-token token))
@@ -160,8 +165,7 @@
     [visits : i64 0]
     (begin
       (reset-for-cleanup-total!)
-      (for
-        [token : ForCleanupToken (cleanup-token-vec)]
+      (for [token : ForCleanupToken (cleanup-token-vec)]
         [index (iterator.range 0 3)]
         (set! visits (+ visits (+ token.value index)))
         (break))
@@ -172,8 +176,7 @@
     [visits : i64 0]
     (begin
       (reset-for-cleanup-total!)
-      (for
-        [token : ForCleanupToken (cleanup-token-vec)]
+      (for [token : ForCleanupToken (cleanup-token-vec)]
         [index (iterator.range 0 2)]
         (set! visits (+ visits (+ index 1)))
         (continue))
@@ -181,8 +184,7 @@
 
 (define (for-cleanup-return-value) : i64
   (begin
-    (for
-      [token : ForCleanupToken (cleanup-token-vec)]
+    (for [token : ForCleanupToken (cleanup-token-vec)]
       [index (iterator.range 0 3)]
       (return (+ token.value index)))
     99))
@@ -209,28 +211,30 @@
     ;; lint-allow: local-name-case -- macro hygiene collision fixture
     [__for_done_0 : i64 4]
     (begin
-      (for [item : i64 (counted-range 1 4)] (set! total (+ total item)))
-      (for [item (& borrowed)] (set! total (+ total item.value)))
-      (for [item (&mut borrowed)] (set! item.value (+ item.value 10)))
-      (for [item (& borrowed)] (set! total (+ total item.value)))
-      (for [item : ForCounter owned] (set! total (+ total item.value)))
-      (for
-        [left (iterator.range 0 3)]
+      (for [item : i64 (counted-range 1 4)]
+        (set! total (+ total item)))
+      (for [item (& borrowed)]
+        (set! total (+ total item.value)))
+      (for [item (&mut borrowed)]
+        (set! item.value (+ item.value 10)))
+      (for [item (& borrowed)]
+        (set! total (+ total item.value)))
+      (for [item : ForCounter owned]
+        (set! total (+ total item.value)))
+      (for [left (iterator.range 0 3)]
         [right : i64 (iterator.range 10 11)]
         (set! total (+ total (+ left right))))
-      (for
-        [item (iterator.range 2 2)]
+      (for [item (iterator.range 2 2)]
         (set! empty-visits (+ empty-visits (+ item 1))))
-      (for [item (iterator.range 0 1)] (set! total (+ total item)))
-      (for
-        [item (iterator.range 0 1)]
+      (for [item (iterator.range 0 1)]
+        (set! total (+ total item)))
+      (for [item (iterator.range 0 1)]
         (set!
           total
           (+
             total
             (+ item (+ __for_source_0 (+ __for_iterator_0 __for_done_0))))))
-      (for
-        [token : ForCleanupToken (cleanup-token-vec)]
+      (for [token : ForCleanupToken (cleanup-token-vec)]
         (set! cleanup-visits (+ cleanup-visits 1))
         (cleanup-for-cleanup-token token)
         (break))

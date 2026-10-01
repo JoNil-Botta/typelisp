@@ -125,6 +125,9 @@ vector_cleanup_consuming_iterator|all|-|tests/integration/vector_cleanup_consumi
 vector_bang_eval_once|all|-|tests/integration/vector_bang_eval_once.tl|42|-|-|stdlib/vector.tl|-
 dense_list_generated|all|-|tests/integration/dense_list_generated.tl|42|-|-|stdlib/dense_list.tl|-
 for_macro|all|-|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/string.tl stdlib/vector.tl|-
+for_macro_sources|all|-,0,2|tests/integration/for_macro_sources.tl|42|-|-|for_slots_protocol_provider.tl stdlib/iterator.tl stdlib/string.tl|-
+core_macros_compound_assign|all|-,0,2|tests/integration/core_macros_compound_assign.tl|42|-|-|-|-
+core_macros_any_all|all|-|tests/integration/core_macros_any_all.tl|42|-|-|stdlib/iterator.tl|-
 macro_clause_capture_slice_view|all|-|tests/integration/macro_clause_capture_slice_view.tl|42|-|-|-|-
 macro_binder_pool_publication|all|-|tests/integration/macro_binder_pool_publication.tl|42|-|-|-|-
 macro_loop_control_operand|all|-|tests/integration/macro_loop_control_operand.tl|42|-|-|stdlib/iterator.tl|-

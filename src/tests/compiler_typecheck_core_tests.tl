@@ -2032,6 +2032,113 @@
         (io.panic
           "typecheck: type-handle cache isolation/rebinding self-test failed")))))
 
+;; The first id after START whose cache slot equals KEY's, so a lookup of it
+;; evicts KEY's entry.
+(define (tc-type-handle-cache-colliding-id [key : i64] [start : i64]) : i64
+  (if (and
+    (not (= start key))
+    (=
+      (tc_core.tc-type-handle-cache-slot start)
+      (tc_core.tc-type-handle-cache-slot key)))
+    start
+    (tc-type-handle-cache-colliding-id key (+ start 1))))
+
+(cfg
+  test
+  (test
+    tc-type-handle-cache-move-kind-lane-follows-key-and-stamp
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state : tc_core.TcNominalCacheState
+        (tc_core.tc-job-state-nominal-cache job)]
+      [name-id : i64 137]
+      [map-key : i64 (csym.compiler-symbol-name-id-key name-id)]
+      [symbols-a : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id
+          (csym.compiler-symbols-empty)
+          map-key
+          101)]
+      [symbols-b : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id
+          (csym.compiler-symbols-empty)
+          map-key
+          202)]
+      ;; An unbound cache neither answers nor records a kind.
+      [unbound-set : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-a)
+          name-id
+          2)]
+      [unbound : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      [_bind : i64
+        (tc_core.tc-type-handle-lookup-id
+          state
+          (& symbols-a)
+          name-id
+          tc_core.tc-type-handle-lookup-caller-move-kind)]
+      [fresh : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      [_record : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-a)
+          name-id
+          2)]
+      [recorded : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      ;; A key that is not the slot's current key is not recorded.
+      [other-id : i64 (tc-type-handle-cache-colliding-id name-id 1)]
+      [_absent-set : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-a)
+          other-id
+          1)]
+      [still-recorded : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      ;; Another stamp neither sees the kind nor, once rebound, keeps it.
+      [other-stamp : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) name-id)]
+      [_rebind : i64
+        (tc_core.tc-type-handle-lookup-id
+          state
+          (& symbols-b)
+          name-id
+          tc_core.tc-type-handle-lookup-caller-move-kind)]
+      [rebound : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) name-id)]
+      [_record-b : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-b)
+          name-id
+          1)]
+      ;; Evicting the slot resets the kind for both the old and the new key.
+      [_evict : i64
+        (tc_core.tc-type-handle-lookup-id
+          state
+          (& symbols-b)
+          other-id
+          tc_core.tc-type-handle-lookup-caller-move-kind)]
+      [evicted : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) name-id)]
+      [evictor : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) other-id)]
+      (if (and
+        (= unbound 0)
+        (= fresh 0)
+        (= recorded 2)
+        (= still-recorded 2)
+        (= other-stamp 0)
+        (= rebound 0)
+        (= evicted 0)
+        (= evictor 0))
+        unit
+        (io.panic
+          "typecheck: type-handle cache move-kind lane self-test failed")))))
+
 (define (tc-resolve-type-with-pools
   [ctx : tc_core.TcContext]
   [pools : ast.AstNodePoolContext]

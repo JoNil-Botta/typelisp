@@ -2516,6 +2516,17 @@
       "lower.module_local_view.entries"
       live)))
 
+;; Released module-local views live in slot 378, after the retained name-cache
+;; storage.
+(cfg
+  (any compile-profile test)
+  (counters.defslots
+    compiler-lower-module-view-profile
+    378
+    (compiler-lower-profile-module-local-view-released-metric
+      "lower.module_local_view.released"
+      live)))
+
 ;; Retained name-cache storage lives in slots 374-377, after the typecheck view.
 (cfg
   (any compile-profile test)
@@ -2546,7 +2557,11 @@
       (profile_state.compiler-profile-state-metric-reset-range!
         (compiler-lower-state-profile _state)
         compiler-lower-profile-name-cache-id-growth-views-metric
-        compiler-lower-name-storage-profile-end))
+        compiler-lower-name-storage-profile-end)
+      (profile_state.compiler-profile-state-metric-reset-range!
+        (compiler-lower-state-profile _state)
+        compiler-lower-profile-module-local-view-released-metric
+        compiler-lower-module-view-profile-end))
     unit))
 
 (define (compiler-lower-profile-value
@@ -2795,7 +2810,11 @@
       (profile_state.compiler-profile-state-metric-reset-range!
         (compiler-lower-state-profile state)
         compiler-lower-profile-name-cache-id-growth-views-metric
-        compiler-lower-profile-alias-overlay-growth-slots-metric))))
+        compiler-lower-profile-alias-overlay-growth-slots-metric)
+      (profile_state.compiler-profile-state-metric-reset-range!
+        (compiler-lower-state-profile state)
+        compiler-lower-profile-module-local-view-released-metric
+        compiler-lower-module-view-profile-end))))
 
 (cfg
   compile-profile
@@ -2813,7 +2832,8 @@
         (counters.profile-counter-live-row!
           "lower.alias_overlay.capacity_slots"
           (lower_i64_i64_map.capacity (& ids)))
-        (compiler-lower-name-cache-profile-emit! address)))))
+        (compiler-lower-name-cache-profile-emit! address)
+        (compiler-lower-module-view-profile-emit! address)))))
 
 (cfg
   (any compile-profile test)
@@ -8581,41 +8601,210 @@
       module-id
       view)))
 
-(define (lower-module-local-view-cached
+(define (lower-module-local-view-build
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
   [names : LowerNameEnv]
   [module : (& module str)]
   [module-id : i64]) : ResultLowerModuleLocalView
+  (match (lower-module-local-envs
+    ctx
+    top-env
+    names
+    (lower-active-global-name-cache-current lower-state)
+    module
+    module-id)
+    [(ResultLowerModuleLocalEnv.Ok local-top-env local-type-env local-name-only)
+      (ResultLowerModuleLocalView.Ok
+        (LowerModuleLocalView
+          local-top-env
+          (lower-name-cache-overlay lower-state local-name-only module-id)
+          (lower-type-cache-overlay lower-state local-type-env)))]
+    [(ResultLowerModuleLocalEnv.Err message)
+      (ResultLowerModuleLocalView.Err message)]))
+
+;; The declaration loop's module views are released in epochs. The loop's
+;; `(module ...)` markers are split into `lower-module-view-epoch-count` equal
+;; epochs. A module's view lives in the arena of the epoch holding the module's
+;; last marker, and that arena is destroyed once the loop has passed the epoch,
+;; when no module of the epoch has a segment left. Views share epoch arenas
+;; because an arena of its own would cost most views a whole transparent huge
+;; page on Linux.
+(define lower-module-view-epoch-count : i64
+  8)
+
+(defstruct LowerModuleViewEpochs
+  ;; module id -> index of the module's last marker
+  (last-markers lower_i64_i64_map.Map)
+  (marker-count i64)
+  ;; one arena per epoch, 0 until a view needs it
+  (arenas (__tl_dyn-array i64))
+  ;; the modules whose views were built, and their epochs
+  (modules (__tl_dyn-array i64))
+  (module-epochs (__tl_dyn-array i64))
+  (built i64)
+  ;; epochs below this one are released
+  (released i64))
+
+;; Index every `(module ...)` marker of DECLS. The loop visits every marker,
+;; including runtime-skipped modules' (their skip stops at the next marker).
+(define (lower-module-view-epochs-new [decls : ast.AstDeclList]) : LowerModuleViewEpochs
+  (let
+    [last-markers : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 64)]
+    [count : i64 0]
+    [cursor : ast.AstDeclList decls]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast.ast-decl-list-step cursor)
+          [(ast.AstDeclListStep.Nil) (set! done true)]
+          [(ast.AstDeclListStep.Cons decl rest)
+            (begin
+              (match (lower-global-shared-view decl)
+                [(ast.AstDecl.Module module-id)
+                  (begin
+                    (lower_i64_i64_map.insert-ref!
+                      (&mut last-markers)
+                      module-id
+                      count)
+                    (set! count (+ count 1)))]
+                [_ unit])
+              (set! cursor rest))]))
+      (LowerModuleViewEpochs
+        last-markers
+        count
+        (__tl_make-array i64 lower-module-view-epoch-count)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        0))))
+
+(define (lower-module-view-epoch
+  [epochs : (& epochs LowerModuleViewEpochs)]
+  [module-id : i64]) : i64
+  (/
+    (*
+      (lower_i64_i64_map.get-value-or (& epochs.last-markers) module-id 0)
+      lower-module-view-epoch-count)
+    (if (> epochs.marker-count 0)
+      epochs.marker-count
+      1)))
+
+;; MODULE-ID's view, built on first use into its epoch's arena. The
+;; lowering-wide declaration index is filled first, in the enclosing arena; the
+;; alias-overlay set and the interner already allocate in their own arenas.
+(define (lower-module-local-view-cached
+  [lower-state : CompilerLowerState]
+  [ctx : tc_core.TcContext]
+  [top-env : tc_core.TcTypeEnv]
+  [names : LowerNameEnv]
+  [module : (& module str)]
+  [module-id : i64]
+  [epochs : (&mut epochs LowerModuleViewEpochs)]) : ResultLowerModuleLocalView
   (match (lower-active-module-local-view-lookup lower-state module-id)
     [(LowerMaybeModuleLocalView.Some view) (ResultLowerModuleLocalView.Ok view)]
     [(LowerMaybeModuleLocalView.No)
-      (match (lower-module-local-envs
-        ctx
-        top-env
-        names
-        (lower-active-global-name-cache-current lower-state)
-        module
-        module-id)
-        [(ResultLowerModuleLocalEnv.Ok
-            local-top-env
-            local-type-env
-            local-name-only)
-          (let
-            [view : LowerModuleLocalView
-              (LowerModuleLocalView
-                local-top-env
-                (lower-name-cache-overlay lower-state local-name-only module-id)
-                (lower-type-cache-overlay lower-state local-type-env))]
-            (begin
-              (lower-active-module-local-view-insert!
-                lower-state
-                module-id
-                (lower-global-shared-view view))
-              (ResultLowerModuleLocalView.Ok view)))]
-        [(ResultLowerModuleLocalEnv.Err message)
-          (ResultLowerModuleLocalView.Err message)])]))
+      (begin
+        (if (string.eq module "")
+          unit
+          (match (tc_core.tc-context-program ctx)
+            [(ast.AstProgram.Program decls-box)
+              (lower-module-decl-index-ensure! lower-state (deref decls-box))]))
+        (let
+          [epoch : i64 (lower-module-view-epoch epochs module-id)]
+          [view-arena : i64
+            (if (> (array-ref epochs.arenas epoch) 0)
+              (array-ref epochs.arenas epoch)
+              (let
+                [created : i64 (arena.tl_arena_make_small)]
+                (begin
+                  (ast.compiler-arena-debug-protect-never-reset! created)
+                  (set! (array-ref epochs.arenas epoch) created)
+                  created)))]
+          [home : i64 (arena.tl_arena_current)]
+          [_enter : unit
+            (unsafe
+              (arena.tl_arena_set view-arena))]
+          [built : ResultLowerModuleLocalView
+            (lower-module-local-view-build
+              lower-state
+              ctx
+              top-env
+              names
+              module
+              module-id)]
+          [_leave : unit
+            (unsafe
+              (arena.tl_arena_set home))]
+          (match built
+            [(ResultLowerModuleLocalView.Ok view)
+              (begin
+                (lower-active-module-local-view-insert!
+                  lower-state
+                  module-id
+                  (lower-global-shared-view view))
+                (__tl_array-push! epochs.modules module-id)
+                (__tl_array-push! epochs.module-epochs epoch)
+                (set! epochs.built (+ epochs.built 1))
+                (ResultLowerModuleLocalView.Ok view))]
+            [(ResultLowerModuleLocalView.Err message)
+              (ResultLowerModuleLocalView.Err message)])))]))
+
+;; Release every epoch the loop has passed at marker index MARKER: each one
+;; whose modules all have their last marker before it. Their views' map entries
+;; are dropped (their value slots are never read again), then the epoch's arena
+;; is destroyed. Nothing that outlives a module's segments points into its view:
+;; the caches never grow after construction, lowering-wide memo state allocates
+;; in its own arenas, and only construction runs with an epoch arena current.
+(define (lower-module-view-epochs-release-before!
+  [lower-state : CompilerLowerState]
+  [epochs : (&mut epochs LowerModuleViewEpochs)]
+  [marker : i64]) : unit
+  (while (and
+    (< epochs.released lower-module-view-epoch-count)
+    (<=
+      (* (+ epochs.released 1) epochs.marker-count)
+      (* marker lower-module-view-epoch-count)))
+    (let
+      [epoch : i64 epochs.released]
+      [store : LowerModuleLocalViewStore
+        (compiler-lower-state-read
+          lower-state
+          LowerModuleLocalViewStore
+          active-module-local-views)]
+      [modules : lower_i64_i64_map.Map store.modules]
+      [index : i64 0]
+      (begin
+        (while (< index epochs.built)
+          (begin
+            (if (= (array-ref epochs.module-epochs index) epoch)
+              (begin
+                (lower_i64_i64_map.remove-ref!
+                  (&mut modules)
+                  (array-ref epochs.modules index))
+                (cfg
+                  (any compile-profile test)
+                  (profile_state.compiler-profile-metrics-add!
+                    (compiler-lower-profile-metrics-view lower-state)
+                    compiler-lower-profile-module-local-view-released-metric
+                    1)
+                  unit)
+                unit)
+              unit)
+            (set! index (+ index 1))))
+        (compiler-lower-state-write!
+          lower-state
+          LowerModuleLocalViewStore
+          active-module-local-views
+          (LowerModuleLocalViewStore modules store.values store.len))
+        (if (> (array-ref epochs.arenas epoch) 0)
+          (begin
+            (ast.compiler-arena-retire-protected-owner!
+              (array-ref epochs.arenas epoch))
+            (set! (array-ref epochs.arenas epoch) 0))
+          unit)
+        (set! epochs.released (+ epoch 1))))))
 
 (define (lower-id-set-empty) : LowerIdSet
   (LowerIdSet (__tl_make-array i64 0) 0))
@@ -70620,6 +70809,9 @@
     [cur-type-cache : LowerTypeCache type-cache]
     [cur-module : String module]
     [cur-module-id : i64 module-id]
+    [view-epochs : LowerModuleViewEpochs
+      (lower-module-view-epochs-new (lower-global-shared-view cur-decls))]
+    [marker-index : i64 0]
     [result : ResultLowerDecls
       (ResultLowerDecls.Err
         (box (lower-diagnostic "lower: internal decls walk")))]
@@ -70629,6 +70821,10 @@
         (match (ast.ast-decl-list-step cur-decls)
           [(ast.AstDeclListStep.Nil)
             (begin
+              (lower-module-view-epochs-release-before!
+                lower-state
+                (&mut view-epochs)
+                view-epochs.marker-count)
               (set!
                 result
                 (ResultLowerDecls.Ok
@@ -71052,13 +71248,16 @@
                       (lower-name-id-text lower-state next-module)]
                     [skip-runtime : bool
                       (lower-comptime-runtime-skip-module? next-module-str)]
+                    [marker : i64 marker-index]
+                    [_next-marker : unit (set! marker-index (+ marker-index 1))]
                     (match (lower-module-local-view-cached
                       lower-state
                       ctx
                       top-env
                       (lower-global-shared-view names)
                       next-module-str
-                      next-module)
+                      next-module
+                      (&mut view-epochs))
                       [(ResultLowerModuleLocalView.Ok view)
                         (begin
                           (set! cur-local-top-env view.local-top-env)
@@ -71066,6 +71265,10 @@
                           (set! cur-type-cache view.type-cache)
                           (set! cur-module next-module-str)
                           (set! cur-module-id next-module)
+                          (lower-module-view-epochs-release-before!
+                            lower-state
+                            (&mut view-epochs)
+                            marker)
                           (if skip-runtime
                             (match (lower-skip-runtime-until-next-module-with-paths
                               rest

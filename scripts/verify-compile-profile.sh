@@ -70,6 +70,9 @@ VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
 VECTOR_FULL_STDERR="$WORKDIR/profile-vector-full.stderr"
+MODULE_VIEW_ASM="$WORKDIR/profile-module-view-release.s"
+MODULE_VIEW_STDOUT="$WORKDIR/profile-module-view-release.stdout"
+MODULE_VIEW_STDERR="$WORKDIR/profile-module-view-release.stderr"
 VECTOR_ONE_ASM="$WORKDIR/profile-vector-one.s"
 VECTOR_ONE_STDOUT="$WORKDIR/profile-vector-one.stdout"
 VECTOR_ONE_STDERR="$WORKDIR/profile-vector-one.stderr"
@@ -825,6 +828,29 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+
+# Lowering releases each module's local view after the module's last
+# declaration segment (#8372): every view built is released, including on a
+# fixture whose modules are left and revisited.
+echo "[compile-profile] verify module-local views are released after their last segment"
+run_logged "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR" "profiled module view release fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_module_view_release.tl \
+    -o "$MODULE_VIEW_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --stdlib-root tests/integration
+MODULE_VIEW_BUILT=$(profile_live_counter_value_in "$MODULE_VIEW_STDERR" "lower.module_local_view.entries") &&
+    MODULE_VIEW_RELEASED=$(profile_live_counter_value_in "$MODULE_VIEW_STDERR" "lower.module_local_view.released") &&
+    MODULE_VIEW_REVISITS=$(profile_live_counter_value_in "$MODULE_VIEW_STDERR" "lower.module_local_view.hits") || {
+    show_failure_logs "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR"
+    fail "missing module-local view counters"
+}
+[ "$MODULE_VIEW_BUILT" -ge 3 ] && [ "$MODULE_VIEW_REVISITS" -ge 1 ] || {
+    show_failure_logs "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR"
+    fail "module view fixture built $MODULE_VIEW_BUILT views with $MODULE_VIEW_REVISITS revisits, expected at least 3 and 1"
+}
+[ "$MODULE_VIEW_RELEASED" -eq "$MODULE_VIEW_BUILT" ] || {
+    show_failure_logs "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR"
+    fail "lowering released $MODULE_VIEW_RELEASED of $MODULE_VIEW_BUILT module-local views"
+}
 
 echo "[compile-profile] verify compile-wide peak survives nested reset"
 run_logged "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR" "compile-wide nested peak reset fixture failed" \

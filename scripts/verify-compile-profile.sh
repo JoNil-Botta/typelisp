@@ -70,6 +70,8 @@ VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
 VECTOR_FULL_STDERR="$WORKDIR/profile-vector-full.stderr"
+POOL_PREPARE_STDOUT="$WORKDIR/profile-macro-pool-prepare.stdout"
+POOL_PREPARE_STDERR="$WORKDIR/profile-macro-pool-prepare.stderr"
 MODULE_VIEW_ASM="$WORKDIR/profile-module-view-release.s"
 MODULE_VIEW_STDOUT="$WORKDIR/profile-module-view-release.stdout"
 MODULE_VIEW_STDERR="$WORKDIR/profile-module-view-release.stderr"
@@ -323,7 +325,7 @@ assert_lifetime_ledger_in() {
     _lll_stderr=$3
     if ! awk -F'|' '
         BEGIN {
-            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|remainder|unattributed"
+            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|intern-storage|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|intern-storage|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|remainder|unattributed"
             expected_count = split(expected_text, expected, " ")
         }
         $1 == "compile-profile-lifetime" && $2 == "boundary" {
@@ -354,12 +356,11 @@ assert_lifetime_ledger_in() {
             for (i = 1; i <= count; i++) {
                 boundary = boundaries[i]
                 if (total[boundary] <= 0 || owners[boundary] + remainder[boundary] != total[boundary]) exit 1
-                # Named owners cover at least 89% of each boundary. The owners
-                # scale with the compiled source; the ~56 MB session remainder
-                # does not, so a smaller compiler source lowers the share: on
-                # the shrunk source the main-branch compiler and this one both
-                # measure about 90.0% at macro.lower-handoff (Windows CI 89.85).
-                if (owners[boundary] * 100 < total[boundary] * 89) exit 1
+                # Named owners cover at least 95% of each boundary. The macro
+                # boundaries name the session intern-storage growth, which
+                # was a ~47 MB unattributed remainder; the rest is about 9 MB
+                # (98.2% named at macro.lower-handoff on the Linux selfhost).
+                if (owners[boundary] * 100 < total[boundary] * 95) exit 1
             }
             if (value["load.handoff|token-storage"] != 0) exit 1
             if (value["macro.pre-detach|retired-symbols-registry"] != 0) exit 1
@@ -828,6 +829,29 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+
+# Each pool context allocates two cells in the long-lived load+macro arena, so
+# the macro walk may build only a bounded number per fired declaration.
+# Preparing a transformer compares pool lengths and builds none (#7937); a path
+# that builds one per transformer run exceeds the bound on this fixture, whose
+# fired declarations each run several expression macros.
+echo "[compile-profile] verify macro transformer preparation builds no pool context"
+run_logged "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR" "profiled macro pool preparation fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_macro_pool_prepare.tl \
+    --stdlib-root . --stdlib-root stdlib
+POOL_PREPARE_FIRES=$(profile_counter_value_in "$POOL_PREPARE_STDERR" "typecheck.macro.walk_decl_fire_count") &&
+    POOL_PREPARE_CONTEXTS=$(profile_counter_value_in "$POOL_PREPARE_STDERR" "typecheck.macro.walk_decl_fire_pool_contexts") || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "missing macro pool-context counters"
+}
+[ "$POOL_PREPARE_FIRES" -ge 30 ] || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "macro pool preparation fixture fired $POOL_PREPARE_FIRES declarations, expected at least 30"
+}
+[ "$POOL_PREPARE_CONTEXTS" -le $((7 * POOL_PREPARE_FIRES)) ] || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "macro walk built $POOL_PREPARE_CONTEXTS pool contexts for $POOL_PREPARE_FIRES fired declarations, more than 7 per fire"
+}
 
 # Lowering releases each module's local view after the module's last
 # declaration segment (#8372): every view built is released, including on a

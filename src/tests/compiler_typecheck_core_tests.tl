@@ -476,6 +476,84 @@
         [(tc_core.TcAggLayoutCacheSlot.Empty) true]
         [(tc_core.TcAggLayoutCacheSlot.Full _ _) false]))))
 
+(define (macro-prepare-test-ctx [pools : ast.AstNodePoolContext]) : tc_core.TcContext
+  (tc_core.tc-context-new
+    (ast.ast-program (ast.ast-decl-list-new))
+    (csym.compiler-symbols-empty)
+    (csym.compiler-registries-empty)
+    ""
+    cbi.compiler-builtin-id-fix-empty
+    pools))
+
+;; Preparing a transformer compares the owned pools with the installed pool's
+;; lengths (#7937). An owned context that argument normalisation extended past
+;; the installed one, in either pool, is installed; an owned context that is not
+;; longer takes a capture of the installed state; under an explicit
+;; compatibility context nothing changes.
+(test
+  macro-prepare-transformer-pools-length-decision
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [older : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [owned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx owned)]
+    [_older-root : i64
+      (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 1))]
+    [_owned-root : i64
+      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 2))]
+    [_owned-next : i64
+      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 3))]
+    [_install-older : unit (ast.ast-node-pool-context-install! older)]
+    [_prepare-longer : unit (tc_core.macro-prepare-transformer-pools! ctx)]
+    [longer-installed? : bool (ast.ast-node-pool-context-expr-installed? owned)]
+    [_older-grows : i64
+      (begin
+        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 4))
+        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 5)))]
+    [_reinstall-older : unit (ast.ast-node-pool-context-install! older)]
+    [_prepare-shorter : unit (tc_core.macro-prepare-transformer-pools! ctx)]
+    [shorter-captured? : bool
+      (and
+        (ast.ast-node-pool-context-expr-installed? older)
+        (= (ast.ast-node-pool-context-expr-len owned) 3)
+        (= (ast.ast-node-pool-len) 3))]
+    [type-older : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [type-owned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [type-ctx : tc_core.TcContext (macro-prepare-test-ctx type-owned)]
+    [_type-owned-node : i64
+      (ast.ast-node-pool-context-type-push
+        type-owned
+        (ast.AstType.Array 0 7937))]
+    [_install-type-older : unit (ast.ast-node-pool-context-install! type-older)]
+    [_prepare-type : unit (tc_core.macro-prepare-transformer-pools! type-ctx)]
+    [type-longer-installed? : bool
+      (ast.ast-node-pool-context-expr-installed? type-owned)]
+    [_install-compat-older : unit (ast.ast-node-pool-context-install! older)]
+    [compat-unchanged? : bool
+      (begin
+        (ast.ast-node-pool-compat-context-use! type-older)
+        (tc_core.macro-prepare-transformer-pools! type-ctx)
+        (let
+          [unchanged? : bool
+            (not (ast.ast-node-pool-context-expr-installed? type-owned))]
+          (begin
+            (ast.ast-node-pool-compat-context-clear!)
+            unchanged?)))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if (and
+        longer-installed?
+        shorter-captured?
+        type-longer-installed?
+        compat-unchanged?)
+        unit
+        (io.panic "typecheck: macro transformer pool preparation failed")))))
+
 (test
   tc-context-expression-pool-isolation
   (let
@@ -530,14 +608,40 @@
         (let
           [ok?
             : bool
-            ;; Compatibility callers intentionally follow their selected pool,
-            ;; even when the TcContext argument names another owner.
-            (match (tc_core.tc-context-expr-get ctx-b root-a)
-              [(ast.AstExpr.Var name) (= name 101)]
-              [_ false])]
+            ;; A compatibility pool context does not redirect typechecker
+            ;; reads, and no typecheck context may be created under one.
+            (and
+              (match (tc_core.tc-context-expr-get ctx-b root-a)
+                [(ast.AstExpr.Var name) (= name 202)]
+                [_ false])
+              (=
+                (tc_core.tc-context-expr-bases ctx-b)
+                (ast.ast-node-pool-context-expr-segment-bases (& pools-b)))
+              (>
+                (string.string-length (tc_core.tc-context-compat-guard-message))
+                0))]
           (begin
             (ast.ast-node-pool-compat-context-clear!)
-            ok?)))]
+            (and
+              ok?
+              (=
+                (string.string-length (tc_core.tc-context-compat-guard-message))
+                0)))))]
+    [installed-ok? : bool
+      (let
+        [saved : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (begin
+          ;; Neither does an ordinary install of another pool.
+          (ast.ast-node-pool-context-install! pools-b)
+          (let
+            [ok? : bool
+              (match (tc_core.tc-context-expr-get ctx-a root-b)
+                [(ast.AstExpr.Var name) (= name 101)]
+                [_ false])]
+            (begin
+              (ast.ast-node-pool-context-install! saved)
+              ok?))))]
     (if (and
       (= root-a root-b)
       (= next-a next-b)
@@ -546,6 +650,7 @@
       a-next-ok?
       b-next-ok?
       compat-ok?
+      installed-ok?
       (= (ast.ast-node-pool-context-expr-len pools-a) 2)
       (= (ast.ast-node-pool-context-expr-len pools-b) 2)
       (= (ast.ast-node-pool-len) installed-len))
@@ -5118,25 +5223,25 @@
             (tc_core.tc-float-literal-expr?
               ctx-a
               (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))))
-      ;; The explicit compatibility route intentionally selects its installed
-      ;; owner, even when the context argument names a different pool.
+      ;; A compatibility pool context does not redirect typechecker reads: the
+      ;; owner-A context still reads its integer literal at the shared id.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
         (and
-          (tc_core.tc-float-literal-expr?
+          (tc_core.tc-integer-literal-expr?
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b))
           (not
-            (tc_core.tc-integer-literal-expr?
+            (tc_core.tc-float-literal-expr?
               ctx-a
               (tc_core.tc-context-expr-get ctx-a root-b)))
-          (match (tc_core.tc-float-literal-expr-with-expected
+          (match (tc_core.tc-integer-literal-expr-with-expected
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b)
-            (ast.AstType.F32))
+            (ast.AstType.I64))
             [(tc_core.ResultTcType.Ok ty)
-              (tc_core.tc-type-eq ty (ast.AstType.F32))]
+              (tc_core.tc-type-eq ty (ast.AstType.I64))]
             [_ false])))
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-install! saved)
@@ -5759,8 +5864,8 @@
               ctx-b
               (ast.AstExpr.MacroExpansion 6 0 0))
             0)))
-      ;; The explicit compatibility route intentionally selects its installed
-      ;; owner, even when the context argument names a different pool.
+      ;; A compatibility pool context does not redirect typechecker reads: the
+      ;; owner-A context keeps its own keys for the same ids.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
@@ -5769,12 +5874,12 @@
             (tc_core.tc-call-arg-fact-key
               ctx-a
               (ast.AstExpr.MacroExpansion 2 0 0))
-            0)
+            1)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a
               (ast.AstExpr.MacroExpansion 3 0 0))
-            1)
+            2)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a

@@ -6183,7 +6183,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    132))
+    133))
 
 (cfg
   (any compile-profile test)
@@ -6205,7 +6205,8 @@
     (compiler-tc-macro-lifetime-start-enclosing-handle-metric)
     (compiler-tc-macro-lifetime-start-enclosing-bytes-metric)
     (compiler-tc-macro-lifetime-start-job-owner-bytes-metric)
-    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)))
+    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)
+    (compiler-tc-macro-lifetime-start-intern-bytes-metric)))
 
 (cfg
   (any compile-profile test)
@@ -85901,7 +85902,12 @@
           metrics-address
           compiler-tc-macro-lifetime-start-scoped-env-bytes-metric
           (compiler-tc-macro-lifetime-arena-bytes
-            (tc-job-state-type-env-scoped-state-arena job-state)))))))
+            (tc-job-state-type-env-scoped-state-arena job-state)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-intern-bytes-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (ci.intern-persistent-arena-handle)))))))
 
 (cfg
   compile-profile
@@ -85980,6 +85986,15 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
+      ;; Spellings interned during expansion (generated names, hygiene
+      ;; renames) persist in the intern arena for the whole session.
+      [intern-handle : i64 (ci.intern-persistent-arena-handle)]
+      [interns : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          intern-handle
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-intern-bytes-metric))]
       [job-owner : i64
         (if (or
           (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
@@ -86010,7 +86025,8 @@
           (=
             job-owner-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
-          (= job-owner-handle scoped-env-handle))
+          (= job-owner-handle scoped-env-handle)
+          (= job-owner-handle intern-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             job-owner-handle
@@ -86052,7 +86068,8 @@
           (=
             enclosing-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
-          (= enclosing-handle scoped-env-handle))
+          (= enclosing-handle scoped-env-handle)
+          (= enclosing-handle intern-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             enclosing-handle
@@ -86061,24 +86078,26 @@
               compiler-tc-macro-lifetime-start-enclosing-bytes-metric)))]
       [named : i64
         (+
-          scoped-env
+          interns
           (+
-            job-owner
+            scoped-env
             (+
-              enclosing
+              job-owner
               (+
-                pool-base
+                enclosing
                 (+
-                  expr-pool
+                  pool-base
                   (+
-                    type-pool
+                    expr-pool
                     (+
-                      symbols-current
+                      type-pool
                       (+
-                        symbols-retired
+                        symbols-current
                         (+
-                          expansion-pool
-                          (+ active-generations retired-generations))))))))))]
+                          symbols-retired
+                          (+
+                            expansion-pool
+                            (+ active-generations retired-generations)))))))))))]
       [remainder : i64 (- live-delta named)]
       (begin
         (compiler-tc-macro-lifetime-emit-row!
@@ -86101,6 +86120,13 @@
           "session"
           cumulative-alloc
           job-owner
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "intern-storage"
+          "session"
+          cumulative-alloc
+          interns
           peak-delta)
         (compiler-tc-macro-lifetime-emit-row!
           (tc-global-shared-view boundary)

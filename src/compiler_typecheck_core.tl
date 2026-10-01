@@ -65585,8 +65585,33 @@
   [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)
     [(ResultTcType.Ok ty)
-      (tc-move-local-or-type-move-only? ctx locals name-id ty)]
+      (or
+        (tc-move-local-or-type-move-only?
+          ctx
+          locals
+          name-id
+          (tc-global-shared-view ty))
+        (and (tc-arena-type? ctx ty) (tc-move-arena-owner-local? env name-id)))]
     [(ResultTcType.Err _) false]))
+
+;; A direct local owner tracked from `arena.make`/`arena.make-atomic`. A bare
+;; `arena.Arena` handle is Copy, but a copy stored in another binding, an
+;; aggregate or a result would outlive the owner's destroy or rewind, so storing
+;; the owner moves it like a move-only value. Passing it to a bare-Arena
+;; parameter stays a borrow: call arguments move only for move-only parameters.
+(define (tc-move-arena-owner-local? [env : TcTypeEnv] [name-id : i64]) : bool
+  (or
+    (tc-ordinary-arena-owner-active-id? env name-id)
+    (tc-atomic-arena-owner-active-id? env name-id)))
+
+;; Whether `expr` is a bare reference to a tracked arena owner local.
+(define (tc-move-arena-owner-var?
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : bool
+  (match (tc-move-bare-var expr-bases expr)
+    [(TcMaybeMoveName.Some v-id _) (tc-move-arena-owner-local? env v-id)]
+    [(TcMaybeMoveName.No) false]))
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.
@@ -66635,7 +66660,7 @@
       ;; at the first value form whether to move the leaves below it.
       (if move?
         -1
-        0))
+        1))
       [(TcMoveResult.Ok moved1)
         (if move?
           (tc-move-after-consuming-projection
@@ -67102,7 +67127,7 @@
     moved
     expr
     target-ty
-    0))
+    1))
 
 (define (tc-move-after-move-only-value
   [ctx : TcContext]
@@ -67146,7 +67171,7 @@
           ;; at the first value form whether to move the leaves below it.
           (if move?
             -1
-            0))
+            1))
           [(TcMoveResult.Ok moved1)
             (tc-move-after-moving-value
               ctx
@@ -68154,7 +68179,12 @@
                 [(ResultTcType.Ok visible-ty)
                   (if (if transfer-only
                     (and
-                      (not (tc-atomic-arena-owner-active-id? root key))
+                      (not
+                        (and
+                          (tc-arena-type?
+                            ctx
+                            (tc-global-shared-view visible-ty))
+                          (tc-move-arena-owner-local? root key)))
                       (not
                         (tc-type-move-only?
                           ctx
@@ -68175,11 +68205,18 @@
                         visible-ty)
                         [(TcThreadTransferClass.Transferable) true]
                         [_ false]))
-                    (tc-move-local-or-type-move-only?
-                      ctx
-                      (tc-global-shared-view locals)
-                      key
-                      visible-ty))
+                    ;; A captured ordinary arena owner moves into the closure.
+                    ;; A captured atomic owner instead becomes a tracked user
+                    ;; that its destroy or rewind must see released.
+                    (or
+                      (tc-move-local-or-type-move-only?
+                        ctx
+                        (tc-global-shared-view locals)
+                        key
+                        (tc-global-shared-view visible-ty))
+                      (and
+                        (tc-arena-type? ctx (tc-global-shared-view visible-ty))
+                        (tc-ordinary-arena-owner-active-id? root key))))
                     (if (or
                       (tc-moved-contains? moved key)
                       (tc-moved-partial? moved key))
@@ -73636,8 +73673,10 @@
 ;; avoids cloning the full move-state maps at every result branch. A leaf that
 ;; names an unshadowed local place is also moved, as the consumer would move it
 ;; in its own position (#8268, #8269): `consume` 2 moves every such leaf, 0 none,
-;; and -1 is decided by `tc-move-consume-mode` at the first value form. The
-;; operand of a nested `return` or `try` is consumed by that form instead.
+;; 1 only a leaf naming a tracked arena owner (a store of a Copy value, which
+;; must still move the owner; a call argument walks with 0 and borrows it), and
+;; -1 is decided by `tc-move-consume-mode` at the first value form. The operand
+;; of a nested `return` or `try` is consumed by that form instead.
 (define (tc-move-check-global-result-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -74015,7 +74054,15 @@
                   (tc-global-shared-view result-ty)
                   (tc-global-shared-view result-ty)))
                 [(TcMoveResult.Ok moved1)
-                  (if (= consume-here 2)
+                  (if (or
+                    (= consume-here 2)
+                    (and
+                      (= consume-here 1)
+                      (tc-arena-type? ctx (tc-global-shared-view result-ty))
+                      (tc-move-arena-owner-var?
+                        expr-bases
+                        env
+                        (tc-global-shared-view expr))))
                     ;; `origin` keeps the leaf's span for move diagnostics.
                     (match (tc-move-after-consuming-projection
                       ctx

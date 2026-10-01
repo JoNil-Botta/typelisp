@@ -583,6 +583,17 @@ late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
 the verifier's canonical instruction classifier.
 
+A local whose address is taken (`addr_of v` anywhere in the function) is
+memory, not a value: a store or call through the exposed address redefines it
+without naming it. Global copy/CSE, affine folding and the block-local `fold`
+pipeline read the per-function marks of `opt-addr-taken-vars`. None of them
+records a copy or constant fact naming a marked var, as destination or source.
+`fold` computes the marks once per function pass and threads them into its
+constant environments and its copy environment (#7973). The marks come from
+LICM's scan, which allocates nothing for a function without an `addr_of`. LICM
+installs its own copy, and the loop call cache keeps a separate scan. #8190
+tracks making this one pass-wide rule with an adversarial matrix.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

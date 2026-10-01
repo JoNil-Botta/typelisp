@@ -11719,94 +11719,78 @@
         [(option_i64.None) false])]
     [(option_i64.None) false]))
 
-(define (opt-cfg-frontier-has-reachable-pred-id?
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [label-id : i64]
-  [edge : i64]
-  [end : i64]) : bool
-  (if (>= edge end)
-    false
-    (let
-      [pred-id : i64 (array-ref index.preds.edges edge)]
-      (if (and
-        (array-ref index.reachable pred-id)
-        (opt-dom-info-dominates-id? doms label-id pred-id))
-        true
-        (opt-cfg-frontier-has-reachable-pred-id?
-          index
-          doms
-          label-id
-          (+ edge 1)
-          end)))))
-
-(define (opt-cfg-dominance-frontier-block?
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [label-id : i64]
-  [block-id : i64]) : bool
+;; Every block's dominance frontier, computed once per function (#8287) by the
+;; Cooper-Harvey-Kennedy runner walk: from each in-tree predecessor of a
+;; reachable block Y, Y joins the frontier of every block the walk passes up the
+;; dominator tree until it reaches one that strictly dominates Y. That is the
+;; frontier's definition -- X dominates a reachable predecessor of Y and does
+;; not strictly dominate Y -- read off the same tree `opt-dom-info-dominates-id?`
+;; answers from, so a block outside it (unreachable, or not reached by the idom
+;; fixpoint) has an empty frontier and contributes no predecessor. The cost is
+;; the predecessor edges plus the frontier sizes. Blocks are visited from the
+;; last id down and each frontier conses its newest label, so every set lists
+;; its blocks in increasing id order, with a repeated label kept at its
+;; highest-id block, as the per-label scan this replaces produced them.
+(define (opt-cfg-dominance-frontiers [context : (& context OptCfgContext)]) : (__tl_dyn-array
+    OptLabelSet)
   (let
+    [index (& context.index)]
+    [doms (& context.doms)]
     [preds (& index.preds)]
-    (and
-      (array-ref index.reachable block-id)
-      (opt-cfg-frontier-has-reachable-pred-id?
-        index
-        doms
-        label-id
-        (array-ref preds.offsets block-id)
-        (array-ref preds.offsets (+ block-id 1)))
-      (not
-        (and
-          (!= label-id block-id)
-          (opt-dom-info-dominates-id? doms label-id block-id))))))
+    [out : (__tl_dyn-array OptLabelSet)
+      (__tl_make-array OptLabelSet (opt-cfg-index-block-count index))]
+    [block : i64 (opt-cfg-index-block-count index)]
+    (begin
+      (while (> block 0)
+        (begin
+          (set! block (- block 1))
+          (when
+            (array-ref index.reachable block)
+            (let
+              [label : i64 (opt-cfg-index-label index block)]
+              [edge : i64 (array-ref preds.offsets block)]
+              (while (< edge (array-ref preds.offsets (+ block 1)))
+                (let
+                  [runner : i64 (array-ref preds.edges edge)]
+                  (begin
+                    (when
+                      (opt-dom-info-dominates-id? doms runner runner)
+                      (while (and
+                        (>= runner 0)
+                        (or
+                          (= runner block)
+                          (not (opt-dom-info-dominates-id? doms runner block))))
+                        (let
+                          [frontier : OptLabelSet (array-ref out runner)]
+                          (begin
+                            (set!
+                              (array-ref out runner)
+                              (cond
+                                [(and
+                                    (> (opt-label-count frontier) 0)
+                                    (= (opt-label-ref frontier 0) label))
+                                  frontier]
+                                [index.labels-unique
+                                  (opt-label-cons label frontier)]
+                                [else (opt-label-add frontier label)]))
+                            ;; The entry is the tree's root and its own idom.
+                            (set!
+                              runner
+                              (if (= (array-ref doms.idom runner) runner)
+                                -1
+                                (array-ref doms.idom runner)))))))
+                    (set! edge (+ edge 1)))))))))
+      out)))
 
-;; `remaining` starts as the block list `index` was built from, so the walk
-;; position is the block id.
-(define (opt-cfg-dominance-frontier-blocks
-  [remaining : (& remaining ir.CompilerIrBlockList)]
+;; The frontier of `label` from a table `opt-cfg-dominance-frontiers` built for
+;; the same context; an unknown label has none.
+(define (opt-cfg-dominance-frontier-of
   [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [label-id : i64]
-  [block-id : i64]) : OptLabelSet
-  (match (owned_view.compiler-owned-reference-shared-view remaining)
-    [(ir.CompilerIrBlockList.Nil) (OptLabelSet.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block block-label _)
-          (let
-            [tail : OptLabelSet
-              (opt-cfg-dominance-frontier-blocks
-                (deref rest)
-                index
-                doms
-                label-id
-                (+ block-id 1))]
-            (if (and
-              (< block-id (opt-cfg-index-block-count index))
-              (opt-cfg-dominance-frontier-block? index doms label-id block-id))
-              (opt-label-add tail block-label)
-              tail))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [remaining (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-cfg-dominance-frontier-blocks
-          remaining
-          index
-          doms
-          label-id
-          block-id))]))
-
-(define (opt-cfg-dominance-frontier-with-context
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [context : OptCfgContext]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [label : i64]) : OptLabelSet
-  (let
-    [index : OptCfgIndex (__tl-project-field context index)]
-    [label-id : i64
-      (match (opt-cfg-index-id index label)
-        [(option_i64.Some id) id]
-        [(option_i64.None) (- 0 1)])]
-    (opt-cfg-dominance-frontier-blocks blocks index context.doms label-id 0)))
+  (match (opt-cfg-index-id index label)
+    [(option_i64.Some id) (array-ref frontiers id)]
+    [(option_i64.None) (OptLabelSet.Nil)]))
 
 (defenum ResultCompilerOptimizeVerify
   (Ok)
@@ -14626,7 +14610,7 @@
 
 (define (opt-ssa-insert-phis-worklist
   [context : OptCfgContext]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [var : i64]
   [ty : ast.AstType]
   [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
@@ -14644,14 +14628,14 @@
             [label : i64 (opt-label-ref worklist 0)]
             (opt-ssa-insert-phis-worklist
               (compiler-opt-global-shared-view context)
-              blocks
+              frontiers
               var
               (compiler-opt-global-shared-view ty)
               (let
-                [frontier
-                  (opt-cfg-dominance-frontier-with-context
-                    blocks
-                    (compiler-opt-global-shared-view context)
+                [frontier : OptLabelSet
+                  (opt-cfg-dominance-frontier-of
+                    (& context.index)
+                    frontiers
                     label)]
                 (opt-ssa-phi-add-frontier
                   context.index
@@ -14667,7 +14651,7 @@
 
 (define (opt-ssa-insert-phis-for-var
   [context : OptCfgContext]
-  [blocks : ir.CompilerIrBlockList]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [defs : OptSsaVarBlocks]
   [state : OptSsaPhiInsertState]
   [var : i64]
@@ -14689,7 +14673,7 @@
           (opt-ssa-label-mark-members! index (&mut work-members) worklist)
           (opt-ssa-insert-phis-worklist
             (compiler-opt-global-shared-view context)
-            blocks
+            frontiers
             var
             ty
             (OptSsaPhiInsertState.State
@@ -14702,7 +14686,7 @@
 (define (opt-ssa-insert-phis-types
   [facts : OptSsaFacts]
   [context : OptCfgContext]
-  [blocks : ir.CompilerIrBlockList]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [defs : OptSsaVarBlocks]
   [types : (& types OptSsaVarTypes)]
   [state : OptSsaPhiInsertState]
@@ -14716,18 +14700,18 @@
           (opt-ssa-insert-phis-types
             (compiler-opt-global-shared-view facts)
             (compiler-opt-global-shared-view context)
-            (compiler-opt-global-shared-view blocks)
+            frontiers
             (compiler-opt-global-shared-view defs)
             types
             (if (opt-ssa-candidate? facts var)
-              (opt-ssa-insert-phis-for-var context blocks defs state var ty)
+              (opt-ssa-insert-phis-for-var context frontiers defs state var ty)
               state)
             (+ index 1))]
         [(OptMaybeAstType.No)
           (opt-ssa-insert-phis-types
             facts
             context
-            blocks
+            frontiers
             defs
             types
             state
@@ -14745,10 +14729,12 @@
         [index : OptCfgIndex context.index]
         [work-members : (__tl_dyn-array bool) (opt-ssa-label-members-new index)]
         [site-members : (__tl_dyn-array bool) (opt-ssa-label-members-new index)]
+        [frontiers : (__tl_dyn-array OptLabelSet)
+          (opt-cfg-dominance-frontiers (& context))]
         (opt-ssa-insert-phis-types
           (compiler-opt-global-shared-view facts)
           (compiler-opt-global-shared-view context)
-          (compiler-opt-global-shared-view blocks)
+          (& frontiers)
           (opt-ssa-def-blocks-from-function
             index
             facts

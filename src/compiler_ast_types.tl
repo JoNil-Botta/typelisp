@@ -573,10 +573,15 @@
   (Default)
   (C i64 AstFieldAligns))
 
+;; How an extern is called. `C` and the C varargs forms are user externs.
+;; `TypeLisp` is a package dependency's TypeLisp function as its consumer sees
+;; it (#8485). It is called exactly like `C` today; it is the fact a
+;; TypeLisp-to-TypeLisp calling convention will select on.
 (defenum AstExternAbi
   (C)
   (CVarargsOpen)
-  (CVarargsTyped AstType))
+  (CVarargsTyped AstType)
+  (TypeLisp))
 
 (defenum AstExternKind
   (Value)
@@ -10560,7 +10565,8 @@
     [(AstExternAbi.C) AstExternAbi.C]
     [(AstExternAbi.CVarargsOpen) AstExternAbi.CVarargsOpen]
     [(AstExternAbi.CVarargsTyped ty)
-      (AstExternAbi.CVarargsTyped (ast-compaction-remap-type remap ty))]))
+      (AstExternAbi.CVarargsTyped (ast-compaction-remap-type remap ty))]
+    [(AstExternAbi.TypeLisp) AstExternAbi.TypeLisp]))
 
 (define (ast-compaction-remap-extern-link-input [input : AstExternLinkInput]) : AstExternLinkInput
   (match input
@@ -11466,17 +11472,21 @@
 (define (ast-declared-align-encodable? [align : i64]) : bool
   (or (= align 0) (ast-declared-align-valid? align)))
 
+;; Whether calls use the platform C convention. A package dependency's
+;; function still does until a TypeLisp-internal convention exists.
 (define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
   (match abi
     [(AstExternAbi.C) true]
     [(AstExternAbi.CVarargsOpen) true]
-    [(AstExternAbi.CVarargsTyped _) true]))
+    [(AstExternAbi.CVarargsTyped _) true]
+    [(AstExternAbi.TypeLisp) true]))
 
 (define (ast-extern-abi-c-varargs? [abi : AstExternAbi]) : bool
   (match abi
     [(AstExternAbi.C) false]
     [(AstExternAbi.CVarargsOpen) true]
-    [(AstExternAbi.CVarargsTyped _) true]))
+    [(AstExternAbi.CVarargsTyped _) true]
+    [(AstExternAbi.TypeLisp) false]))
 
 (define (ast-extern-abi-c-varargs-open? [abi : AstExternAbi]) : bool
   (match abi
@@ -11527,6 +11537,10 @@
     [(AstExternAbi.CVarargsTyped aty)
       (match b
         [(AstExternAbi.CVarargsTyped bty) (ast-type-eq? aty bty)]
+        [_ false])]
+    [(AstExternAbi.TypeLisp)
+      (match b
+        [(AstExternAbi.TypeLisp) true]
         [_ false])]))
 
 ;; Read-only walk entry point: snapshot the type pool's segment-bases once, so

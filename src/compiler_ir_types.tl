@@ -8163,7 +8163,8 @@
     [(ast.AstExternAbi.CVarargsTyped ty)
       (str_cat.str-cat
         "c-varargs:"
-        (compiler-ir-type-render structural-session type-segment-bases ty))]))
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
+    [(ast.AstExternAbi.TypeLisp) "typelisp"]))
 
 (define (compiler-ir-extern-render
   [structural-session : cis.InternStructuralSessionHandle]

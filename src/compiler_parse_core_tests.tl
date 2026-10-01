@@ -1034,9 +1034,11 @@
                       (ast.ast-extern-metadata-symbol
                         (parser.compiler-parse-place-shared-view metadata-view))
                       "foreign_exact")
-                    (ast.ast-extern-abi-c?
-                      (ast.ast-extern-metadata-abi
-                        (parser.compiler-parse-place-shared-view metadata-view)))
+                    ;; A user extern is exactly C, never the package TypeLisp ABI.
+                    (match (ast.ast-extern-metadata-abi
+                      (parser.compiler-parse-place-shared-view metadata-view))
+                      [(ast.AstExternAbi.C) true]
+                      [_ false])
                     (compiler-parse-extern-link-inputs-ok?
                       (ast.ast-extern-metadata-link-inputs metadata-view))
                     (match ty

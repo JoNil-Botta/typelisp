@@ -430,3 +430,50 @@ run build --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stderr contains compiler-load: cannot read import
 stderr match vendor[/\\]math[/\\]src[/\\]missing\.tl
+
+# A consumer calls its dependency's TypeLisp functions through package externs
+# (`AstExternAbi.TypeLisp`, #8485): two and six scalar arguments, an aggregate
+# argument and an aggregate result must all cross the call boundary intact.
+case package-dependency-call-abi
+file typelisp.pkg
+(package
+  (name "dep_abi_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (depabi "vendor/depabi")))
+end-file
+file src/main.tl
+(import depabi.src.lib)
+(define (main) : i64
+  (let
+    [pair : lib.DepPair (lib.dep-make-pair 10)]
+    (-
+      (+ (lib.dep-add2 1 2) (lib.dep-add6 1 2 3 4 5 6) (lib.dep-pair-sum pair))
+      3)))
+end-file
+file vendor/depabi/src/lib.tl
+(defstruct DepPair
+  (x i64)
+  (y i64))
+(define (dep-add2 [a : i64] [b : i64]) : i64 (+ a b))
+(define (dep-add6 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64
+  (+ a b c d e f))
+(define (dep-make-pair [x : i64]) : DepPair (DepPair x (+ x 1)))
+(define (dep-pair-sum [p : DepPair]) : i64 (+ p.x p.y))
+end-file
+file vendor/depabi/typelisp.pkg
+(package
+  (name "depabi")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+step dep-abi-build
+run build --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+test -x "{{dir}}/target/release/dep_abi_pkg{{exe}}"
+step dep-abi-run
+exec "{{dir}}/target/release/dep_abi_pkg{{exe}}"
+exit 42

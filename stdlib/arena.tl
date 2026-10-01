@@ -100,9 +100,11 @@
 ;# unannotated canonical `make` or `make-atomic` call is checker-refined to the
 ;# move-only `(Arena fresh)` form; the generated brand is phantom, so both forms
 ;# retain the same one-word ABI. Writing an explicit bare `Arena` annotation
-;# deliberately erases that brand for compatibility. The raw `tl_*` hooks
-;# remain exported for compiler/runtime internals and FFI-like low-level code;
-;# ordinary user code should use the typed helpers below.
+;# deliberately erases that brand for compatibility. The direct owner stays
+;# tracked: copying it into another binding, an aggregate, a closure or a result
+;# moves it, so no copy outlives its safe destroy or rewind (SPEC 5.16). The
+;# raw `tl_*` hooks remain exported for compiler/runtime internals and FFI-like
+;# low-level code; ordinary user code should use the typed helpers below.
 ;: First-class arena handle. The runtime representation is a raw `i64` handle,
 ;: but the source type is nominal so raw integers cannot satisfy arena APIs.
 (defstruct Arena

@@ -5846,6 +5846,28 @@ operation. They are also rejected while a live `with` cleanup owner (section
 5.19) carries the destroyed brand or the rewound phase generation: that owner
 is not merely made unusable, because its cleanup runs when its scope ends.
 
+**Owner moves:** a direct local owner tracked from `arena.make` or
+`arena.make-atomic` moves when it is stored. That covers:
+
+- copying it into another binding, including through an `if`, `let`, `match`
+  or `begin` result;
+- using it as an aggregate field or tuple element;
+- capturing it in a closure;
+- returning it.
+
+This holds for a bare-annotated owner too, whose `arena.Arena` handle is
+otherwise Copy: the copy would outlive the owner's destroy or rewind. A later
+`arena.destroy-safe!`, `arena.phase`, `arena.rewind-safe!` or `in-arena` on the
+original reports "use of moved value".
+
+Two cases do not move the owner:
+
+- Passing it as a call argument to a bare `arena.Arena` parameter is a
+  non-consuming borrow.
+- A closure that captures an atomic owner becomes one of the owner's
+  checker-visible users, which its destroy or rewind must see joined or
+  released.
+
 **Invalidation effects:** a helper that destroys a branded owner it receives
 declares `(:invalidate r)` on that parameter (section 3.3):
 

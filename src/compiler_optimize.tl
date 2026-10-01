@@ -105855,10 +105855,6 @@
   (No)
   (Some ir.CompilerIrFunction))
 
-(defenum OptSlotList
-  (Nil)
-  (Cons i64 (Box OptSlotList)))
-
 (defstruct OptFunctionNameIndex
   (ids opt_i64_i64_map.Map))
 
@@ -105867,9 +105863,14 @@
   (values (__tl_dyn-array ir.CompilerIrFunction))
   (leaf-starts (__tl_dyn-array i64)))
 
+;; The call graph in compressed rows. Function `slot` calls exactly the slots
+;; `targets[offsets[slot] .. offsets[slot + 1])`; each row is ascending and has
+;; no duplicates. Every reader asks an order-free question of a row: membership,
+;; the least callee above a bound, or an OR or any-match over the callees.
 (defstruct OptCallGraph
   (count i64)
-  (edges (__tl_dyn-array OptSlotList)))
+  (offsets (__tl_dyn-array i64))
+  (targets opt_dense_i64_vec.Vec))
 
 (defstruct OptInlineCensus
   ;; All three maps are keyed by OptFunctionIndex dense slots. IR spellings are
@@ -106044,82 +106045,127 @@
   [slot : i64]) : ir.CompilerIrFunction
   (compiler-opt-global-array-element-shared-view index.values slot))
 
-(define (opt-slot-list-contains? [slots : (& slots OptSlotList)] [slot : i64]) : bool
-  (match slots
-    [(OptSlotList.Nil) false]
-    [(OptSlotList.Cons item rest)
-      (if (= (deref item) slot)
-        true
-        (opt-slot-list-contains? (deref (deref rest)) slot))]))
+;; Insert `callee` into the row being built, `targets[start ..)`, keeping it
+;; ascending. Rows hold one function's distinct callees, so the shift is short.
+(define (opt-callgraph-row-insert!
+  [targets : (&mut targets opt_dense_i64_vec.Vec)]
+  [start : i64]
+  [callee : i64]) : unit
+  (let
+    [at : i64 (opt_dense_i64_vec.len targets)]
+    (begin
+      (opt_dense_i64_vec.push-ref! targets callee)
+      (while (and (> at start) (> (array-ref targets.slots (- at 1)) callee))
+        (begin
+          (set! (array-ref targets.slots at) (array-ref targets.slots (- at 1)))
+          (set! at (- at 1))))
+      (set! (array-ref targets.slots at) callee))))
 
-(define (opt-slot-list-add [slots : OptSlotList] [slot : i64]) : OptSlotList
-  (if (opt-slot-list-contains? slots slot)
-    slots
-    (OptSlotList.Cons slot (box slots))))
-
-(define (opt-slot-list-count [slots : OptSlotList]) : i64
-  (match slots
-    [(OptSlotList.Nil) 0]
-    [(OptSlotList.Cons _ rest) (+ 1 (opt-slot-list-count (deref rest)))]))
-
-(define (opt-callgraph-add-callee
+;; `seen[callee] = stamp` marks a callee already in the current row; each row
+;; has its own stamp, so `seen` is never cleared between rows.
+(define (opt-callgraph-add-callee!
   [index : (& index OptFunctionIndex)]
-  [callees : OptSlotList]
-  [name : i64]) : OptSlotList
+  [targets : (&mut targets opt_dense_i64_vec.Vec)]
+  [seen : (&mut seen (__tl_dyn-array i64))]
+  [start : i64]
+  [stamp : i64]
+  [name : i64]) : unit
   (match (opt-function-index-slot index name)
-    [(option_i64.Some slot) (opt-slot-list-add callees slot)]
-    [(option_i64.None) callees]))
+    [(option_i64.Some callee)
+      (when
+        (not (= (array-ref seen callee) stamp))
+        (begin
+          (set! (array-ref seen callee) stamp)
+          (opt-callgraph-row-insert! targets start callee)))]
+    [(option_i64.None) unit]))
 
 ;; Deliberately call-only: address-taken function values are reachability roots,
 ;; but they are not direct call-graph edges for the inliner. `direct-only?`
 ;; keeps the plain `Call`/`TailCall` edges alone, the graph the whole-program
 ;; summaries close over (OptProgramIndex).
-(define (opt-callgraph-instr
+(define (opt-callgraph-instr!
   [index : (& index OptFunctionIndex)]
   [direct-only? : bool]
-  [callees : OptSlotList]
-  [instr : ir.CompilerIrInstr]) : OptSlotList
+  [targets : (&mut targets opt_dense_i64_vec.Vec)]
+  [seen : (&mut seen (__tl_dyn-array i64))]
+  [start : i64]
+  [stamp : i64]
+  [instr : ir.CompilerIrInstr]) : unit
   (match instr
     [(ir.CompilerIrInstr.Call _ name _ _)
-      (opt-callgraph-add-callee index callees name)]
+      (opt-callgraph-add-callee! index targets seen start stamp name)]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (if direct-only?
-        callees
+        unit
         (let
           [name (deref payload-box).name]
-          (opt-callgraph-add-callee index callees name)))]
+          (opt-callgraph-add-callee! index targets seen start stamp name)))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (if direct-only?
-        callees
+        unit
         (let
           [name (deref payload-box).callee]
-          (opt-callgraph-add-callee index callees name)))]
+          (opt-callgraph-add-callee! index targets seen start stamp name)))]
     [(ir.CompilerIrInstr.TailCall name _ _)
-      (opt-callgraph-add-callee index callees name)]
-    [_ callees]))
+      (opt-callgraph-add-callee! index targets seen start stamp name)]
+    [_ unit]))
 
 (define (opt-callgraph-build-with
   [index : (& index OptFunctionIndex)]
   [direct-only? : bool]) : OptCallGraph
   (let
     [count : i64 (opt-function-index-count index)]
-    [edges : (__tl_dyn-array OptSlotList) (__tl_make-array OptSlotList count)]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [targets : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [slot : i64 0]
     (begin
       (while (< slot count)
-        (begin
-          (set!
-            (array-ref edges slot)
+        (let
+          [start : i64 (opt_dense_i64_vec.len (& targets))]
+          (begin
+            (set! (array-ref offsets slot) start)
             (match (opt-function-index-at-slot index slot)
               [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
-                (opt-blocks-fold
+                (opt-blocks-visit
                   blocks
-                  OptSlotList.Nil
-                  opt-callgraph-instr
+                  opt-callgraph-instr!
                   index
-                  direct-only?)]))
-          (set! slot (+ slot 1))))
-      (OptCallGraph count edges))))
+                  direct-only?
+                  (&mut targets)
+                  (&mut seen)
+                  start
+                  (+ slot 1))])
+            (set! slot (+ slot 1)))))
+      (set! (array-ref offsets count) (opt_dense_i64_vec.len (& targets)))
+      (OptCallGraph count offsets targets))))
+
+(define (opt-callgraph-row-start [graph : (& graph OptCallGraph)] [slot : i64]) : i64
+  (array-ref graph.offsets slot))
+
+(define (opt-callgraph-row-end [graph : (& graph OptCallGraph)] [slot : i64]) : i64
+  (array-ref graph.offsets (+ slot 1)))
+
+(define (opt-callgraph-target [graph : (& graph OptCallGraph)] [at : i64]) : i64
+  (array-ref graph.targets.slots at))
+
+;; The first position in `slot`'s row whose callee exceeds `after`, or the
+;; row's end.
+(define (opt-callgraph-row-upper-bound
+  [graph : (& graph OptCallGraph)]
+  [slot : i64]
+  [after : i64]) : i64
+  (let
+    [low : i64 (opt-callgraph-row-start graph slot)]
+    [high : i64 (opt-callgraph-row-end graph slot)]
+    (begin
+      (while (< low high)
+        (let
+          [middle : i64 (+ low (/ (- high low) 2))]
+          (if (> (opt-callgraph-target graph middle) after)
+            (set! high middle)
+            (set! low (+ middle 1)))))
+      low)))
 
 (define (opt-callgraph-build [index : (& index OptFunctionIndex)]) : OptCallGraph
   (opt-callgraph-build-with index false))
@@ -106733,9 +106779,10 @@
     (>= to-slot graph.count))
     false
     (let
-      [slots
-        (compiler-opt-global-array-element-shared-view graph.edges from-slot)]
-      (opt-slot-list-contains? slots to-slot))))
+      [at : i64 (opt-callgraph-row-upper-bound graph from-slot (- to-slot 1))]
+      (and
+        (< at (opt-callgraph-row-end graph from-slot))
+        (= (opt-callgraph-target graph at) to-slot)))))
 
 (define (opt-scc-set-low-min!
   [lowlink : (&mut lowlink (__tl_dyn-array i64))]
@@ -106747,30 +106794,17 @@
       (set! (array-ref lowlink slot) candidate)
       unit)))
 
-(define (opt-scc-next-child-from
-  [slots : OptSlotList]
-  [after : i64]
-  [best : i64]) : i64
-  (match slots
-    [(OptSlotList.Nil) best]
-    [(OptSlotList.Cons slot rest)
-      (opt-scc-next-child-from
-        (deref rest)
-        after
-        (if (and (> slot after) (or (< best 0) (< slot best)))
-          slot
-          best))]))
-
 (define (opt-scc-next-child
   [graph : (& graph OptCallGraph)]
   [slot : i64]
   [after : i64]) : i64
   (if (or (< slot 0) (>= slot graph.count))
     (- 0 1)
-    (opt-scc-next-child-from
-      (compiler-opt-global-array-element-shared-view graph.edges slot)
-      after
-      (- 0 1))))
+    (let
+      [at : i64 (opt-callgraph-row-upper-bound graph slot after)]
+      (if (< at (opt-callgraph-row-end graph slot))
+        (opt-callgraph-target graph at)
+        (- 0 1)))))
 
 (define (opt-scc-discover!
   [slot : i64]
@@ -107222,19 +107256,6 @@
               blocks
               0))]))))
 
-(define (opt-inline-synth-mark-called-from!
-  [callees : OptSlotList]
-  [from-slot : i64]
-  [called : (&mut called (__tl_dyn-array bool))]) : unit
-  (match callees
-    [(OptSlotList.Nil) unit]
-    [(OptSlotList.Cons slot rest)
-      (begin
-        (if (= slot from-slot)
-          unit
-          (set! (array-ref called slot) true))
-        (opt-inline-synth-mark-called-from! (deref rest) from-slot called))]))
-
 ;; Which functions some OTHER function calls. A self-edge does not count: a
 ;; recursive function whose only caller is itself has no entry the program can
 ;; see, and a count of zero would leave its whole component at zero.
@@ -107245,12 +107266,19 @@
     [slot : i64 0]
     [count : i64 graph.count]
     (while (< slot count)
-      (begin
-        (opt-inline-synth-mark-called-from!
-          (compiler-opt-global-array-element-shared-view graph.edges slot)
-          slot
-          called)
-        (set! slot (+ slot 1))))))
+      (let
+        [at : i64 (opt-callgraph-row-start graph slot)]
+        [end : i64 (opt-callgraph-row-end graph slot)]
+        (begin
+          (while (< at end)
+            (let
+              [callee : i64 (opt-callgraph-target graph at)]
+              (begin
+                (if (= callee slot)
+                  unit
+                  (set! (array-ref called callee) true))
+                (set! at (+ at 1)))))
+          (set! slot (+ slot 1)))))))
 
 (define (opt-inline-synth-base
   [index : (& index OptFunctionIndex)]
@@ -119707,22 +119735,18 @@
               component))
             (let
               [slot : i64 (array-ref index.scc.members end)]
-              [callees : OptSlotList
-                (compiler-opt-global-array-element-shared-view
-                  index.calls.edges
-                  slot)]
+              [at : i64 (opt-callgraph-row-start (& index.calls) slot)]
+              [row-end : i64 (opt-callgraph-row-end (& index.calls) slot)]
               (begin
                 (set! row (bit-or row (array-ref rows slot)))
-                (while (match callees
-                  [(OptSlotList.Nil) false]
-                  [(OptSlotList.Cons callee rest)
+                (while (< at row-end)
+                  (let
+                    [callee : i64 (opt-callgraph-target (& index.calls) at)]
                     (begin
                       (if (= (array-ref index.scc.scc-of callee) component)
                         unit
                         (set! row (bit-or row (array-ref rows callee))))
-                      (set! callees (deref rest))
-                      true)])
-                  unit)
+                      (set! at (+ at 1)))))
                 (set! end (+ end 1)))))
           (while (< at end)
             (begin
@@ -120661,24 +120685,20 @@
   (let
     [seen : i64 (array-ref computed-at slot)]
     [component : i64 (array-ref index.scc.scc-of slot)]
-    [callees : OptSlotList
-      (compiler-opt-global-array-element-shared-view index.calls.edges slot)]
+    [at : i64 (opt-callgraph-row-start (& index.calls) slot)]
+    [end : i64 (opt-callgraph-row-end (& index.calls) slot)]
     [stale? : bool (< seen 0)]
     (begin
-      (while (and
-        (not stale?)
-        (match callees
-          [(OptSlotList.Nil) false]
-          [(OptSlotList.Cons callee rest)
-            (begin
-              (when
-                (and
-                  (= (array-ref index.scc.scc-of callee) component)
-                  (> (array-ref changed-at callee) seen))
-                (set! stale? true))
-              (set! callees (deref rest))
-              true)]))
-        unit)
+      (while (and (not stale?) (< at end))
+        (let
+          [callee : i64 (opt-callgraph-target (& index.calls) at)]
+          (begin
+            (when
+              (and
+                (= (array-ref index.scc.scc-of callee) component)
+                (> (array-ref changed-at callee) seen))
+              (set! stale? true))
+            (set! at (+ at 1)))))
       stale?)))
 
 (define (opt-call-memory-build-with-descriptor-globals

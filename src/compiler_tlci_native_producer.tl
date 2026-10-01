@@ -7442,7 +7442,8 @@
   (let
     [boolean? : bool
       (match maybe-ty
-        [(compiler_ast_types.AstMaybeType.Some compiler_ast_types.AstType.Bool)
+        [(compiler_ast_types.AstMaybeType.Some
+            (compiler_ast_types.AstType.Bool))
           true]
         [_ false])]
     [slot : i64

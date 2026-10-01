@@ -1150,3 +1150,14 @@ function_set_wildcard_reject|check-fail|tests/safety/function_set_wildcard_rejec
 function_set_imported_extern_reject|check-fail|tests/safety/function_set_imported_extern_reject.tl|-|typecheck: cannot assign to function
 function_set_macro_reject|check-fail|tests/safety/function_set_macro_reject.tl|-|typecheck: cannot assign to function
 function_storage_assignment|run-exit|tests/safety/function_storage_assignment.tl|42|-
+
+# Bare variant names (SPEC 3.5.1, 4.4.3): an expected enum type resolves them,
+# even for an imported enum; without one they see only enums the module
+# declares or imports with `.*`. A same-named module function or struct
+# constructor, or a payload binder spelling a payload variant, is rejected.
+variant_expected_imported_ok|check-ok|tests/safety/variant_expected_imported_ok.tl|-|-
+variant_unimported_module_reject|check-fail|tests/safety/variant_unimported_module_reject.tl|-|typecheck: unbound name Pass
+variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_bare_reject.tl|-|typecheck: unbound name Pass
+variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
+variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
+variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder

@@ -32659,6 +32659,20 @@
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
         [_ (tc-expr ctx env expr)])]
+    [(ast.AstExpr.Call func-box _)
+      (match (tc-expected-call-variant-retarget!
+        ctx
+        env
+        func-box
+        (tc-global-shared-view expected))
+        [(ResultTcUnit.Ok)
+          (tc-expr-result-with-expected-or-actual
+            ctx
+            env
+            expected
+            allow-mut-by-value-borrow
+            (tc-expr ctx env expr))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [_
       (if (tc-integer-literal-expr? ctx (tc-global-shared-view expr))
         (tc-integer-literal-expr-with-expected ctx expr expected)
@@ -33009,12 +33023,22 @@
               (tc-context-structural-session ctx)
               name)
             0))
-          (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
+          (match (tc-expected-bare-variant-retarget!
             ctx
             env
-            expr
-            expected
-            allow-mut-by-value-borrow)
+            expr-id
+            name
+            (tc-global-shared-view expected))
+            [(ResultTcNameId.Ok resolved-name)
+              (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
+                ctx
+                env
+                (if (= resolved-name name)
+                  expr
+                  (ast.AstExpr.Var resolved-name))
+                expected
+                allow-mut-by-value-borrow)]
+            [(ResultTcNameId.Err message) (ResultTcType.Err message)])
           (match (tc-normalize-dotted-local-field-direct-node!
             ctx
             env
@@ -34280,6 +34304,22 @@
           (begin
             (tc-unbound-suggestion-snapshot-record! ctx env name-id)
             (ResultTcType.Err (tc-located-error span message)))]
+        [_
+          (tc-locate-spanned-error
+            (tc-context-expr-bases ctx)
+            (tc-context-structural-session ctx)
+            inner
+            span
+            message)])]
+    [(and
+        (or
+          (tc-message-text-prefix? (& message) "typecheck: ambiguous `")
+          (tc-message-text-prefix? (& message) "typecheck: ambiguous variant `"))
+        (not (tc-encoded-error? message)))
+      (match (tc-global-shared-view inner)
+        [(ast.AstExpr.Var _) (ResultTcType.Err (tc-located-error span message))]
+        [(ast.AstExpr.Call _ _)
+          (ResultTcType.Err (tc-located-error span message))]
         [_
           (tc-locate-spanned-error
             (tc-context-expr-bases ctx)
@@ -52404,12 +52444,24 @@
   [pattern : ast.AstPattern]
   [ty : ast.AstType]) : ResultTcEnv
   (match mode
-    [(TcPatternListMode.Sub) (tc-bind-sub-pattern ctx env pattern ty)]
+    [(TcPatternListMode.Sub)
+      (match (tc-payload-binder-variant-check
+        ctx
+        (tc-global-shared-view pattern)
+        (tc-global-shared-view ty))
+        [(ResultTcUnit.Ok) (tc-bind-sub-pattern ctx env pattern ty)]
+        [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
     [(TcPatternListMode.Element) (tc-bind-tuple-sub-pattern ctx env pattern ty)]
     [(TcPatternListMode.StructField)
       (tc-bind-struct-field-pattern ctx env pattern ty)]
     [(TcPatternListMode.BorrowedSub lifetime)
-      (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)]
+      (match (tc-payload-binder-variant-check
+        ctx
+        (tc-global-shared-view pattern)
+        (tc-global-shared-view ty))
+        [(ResultTcUnit.Ok)
+          (tc-bind-borrowed-sub-pattern ctx env lifetime pattern ty)]
+        [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
     [(TcPatternListMode.BorrowedElement lifetime)
       (tc-bind-borrowed-tuple-sub-pattern ctx env lifetime pattern ty)]))
 
@@ -54300,6 +54352,641 @@
           variant-name-id)
           [(option_i64.Some enum-handle) enum-handle]
           [(option_i64.None) fallback])])))
+
+;; --- Bare variant names (SPEC 3.5.1, 4.4.3, 5.12.1) -------------------------
+;; Where an enum type is expected, a bare variant name means that enum's
+;; variant. Otherwise it sees only the enums its module declares or imports
+;; with `.*`, never a module the file did not import, and two such enums
+;; declaring the name make it ambiguous.
+;;
+;; The index maps a (declaring module, variant name) key to the module's one
+;; declaring variant's registry handle plus one, or to 0 when two of its enums
+;; declare the name. `names` marks every declared variant name by its pool id,
+;; so the common bare value lookup that names no variant costs one array read.
+(define tc-bare-variant-index-ready : bool
+  false)
+(define tc-bare-variant-index-registry-id : i64
+  -1)
+(define tc-bare-variant-index-decl-count : i64
+  -1)
+(define tc-bare-variant-index-arena : i64
+  0)
+(define tc-bare-variant-index-entries : csym.CompilerSymbolMap
+  (csym.compiler-symbol-map-with-capacity 16))
+(define tc-bare-variant-index-names : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
+;; A parsed, unqualified, non-hygienic source name such as `Ok`.
+(define (tc-bare-variant-name-id? [name-id : i64]) : bool
+  (and
+    (>= name-id 0)
+    (< name-id (ci.intern-pool-len))
+    (< (ci.intern-first-dot name-id) 0)
+    (not (ci.intern-qualified? name-id))
+    (not (ci.intern-macro-global-name-id? name-id))
+    (not (ci.intern-macro-local-name-id? name-id))))
+
+(define (tc-bare-variant-index-bind!
+  [session : cis.InternStructuralSessionHandle]
+  [entries : (&mut entries csym.CompilerSymbolMap)]
+  [names : (&mut names (__tl_dyn-array bool))]
+  [module-id : i64]
+  [enum-index : i64]
+  [variants : (& variants ast.AstVariantDefList)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index variants.len)
+      (begin
+        (match (ast.ast-variant-def-list-get
+          variants
+          index
+          (ast.ast-variant-def-fallback))
+          [(ast.AstVariantDef.Def name _ _)
+            (let
+              [member-id : i64 (tc-variant-member-name-id session name)]
+              [name-id : i64
+                (if (and (>= member-id 0) (< member-id (ci.intern-pool-len)))
+                  member-id
+                  (ci.intern (tc-variant-member-name-text member-id)))]
+              [key-id : i64
+                (csym.compiler-symbol-module-key-id-by-id module-id name-id)]
+              [value : i64
+                (+
+                  (csym.compiler-registry-make-handle
+                    (csym.compiler-symbol-kind-enum-variant)
+                    enum-index
+                    index)
+                  1)]
+              [previous : i64
+                (csym.compiler-symbol-map-lookup-handle-id entries key-id)]
+              (begin
+                (set! (array-ref names name-id) true)
+                (cond
+                  [(< previous 0)
+                    (csym.compiler-symbol-map-bind-id! entries key-id value)]
+                  [(= previous value) unit]
+                  [else (csym.compiler-symbol-map-bind-id! entries key-id 0)])))])
+        (set! index (+ index 1))))))
+
+(define (tc-bare-variant-index-scan!
+  [ctx : TcContext]
+  [entries : (&mut entries csym.CompilerSymbolMap)]
+  [names : (&mut names (__tl_dyn-array bool))]
+  [start : i64]
+  [count : i64]) : unit
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [decls : (__tl_dyn-array ast.AstDecl)
+      (csym.compiler-symbols-decls (tc-context-symbols ctx))]
+    [index : i64 start]
+    (while (< index count)
+      (let
+        [module-id : i64
+          (csym.compiler-symbols-owner-module-id-at-index-or
+            (tc-context-symbols ctx)
+            index
+            (csym.compiler-symbol-root-module-id))]
+        (begin
+          (match (array-ref decls index)
+            [(ast.AstDecl.DefEnum _ _ _ variants)
+              (tc-bare-variant-index-bind!
+                session
+                entries
+                names
+                module-id
+                index
+                (& variants))]
+            [(ast.AstDecl.DefEnumLifetimes _ _ _ _ variants)
+              (tc-bare-variant-index-bind!
+                session
+                entries
+                names
+                module-id
+                index
+                (& variants))]
+            [_ unit])
+          (set! index (+ index 1)))))))
+
+;; Symbol declarations only append under one registry identity, so a grown
+;; table extends the index in its own arena instead of rebuilding it.
+(define (tc-bare-variant-index-ensure! [ctx : TcContext]) : unit
+  (let
+    [registry-id : i64
+      (csym.compiler-registries-identity (tc-context-registries ctx))]
+    [count : i64 (csym.compiler-symbols-decl-count (tc-context-symbols ctx))]
+    [current : bool
+      (and
+        tc-bare-variant-index-ready
+        (= tc-bare-variant-index-registry-id registry-id)
+        (<= tc-bare-variant-index-decl-count count))]
+    (if (and current (= tc-bare-variant-index-decl-count count))
+      unit
+      (let
+        [prev-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (if current
+            (begin
+              (unsafe
+                (arena.tl_arena_set tc-bare-variant-index-arena))
+              (tc-bare-variant-index-scan!
+                ctx
+                (&mut tc-bare-variant-index-entries)
+                (&mut tc-bare-variant-index-names)
+                tc-bare-variant-index-decl-count
+                count))
+            (let
+              [index-arena : i64 (arena.tl_arena_make)]
+              [_switch : unit
+                (unsafe
+                  (arena.tl_arena_set index-arena))]
+              [entries : csym.CompilerSymbolMap
+                (csym.compiler-symbol-map-with-capacity 256)]
+              [names : (__tl_dyn-array bool)
+                (__tl_make-array bool (ci.intern-capacity))]
+              (begin
+                (tc-bare-variant-index-scan!
+                  ctx
+                  (&mut entries)
+                  (&mut names)
+                  0
+                  count)
+                (if (= tc-bare-variant-index-arena 0)
+                  unit
+                  (unsafe
+                    (arena.tl_arena_destroy tc-bare-variant-index-arena)))
+                (set! tc-bare-variant-index-entries entries)
+                (set! tc-bare-variant-index-names names)
+                (set! tc-bare-variant-index-registry-id registry-id)
+                (set! tc-bare-variant-index-arena index-arena)
+                (set! tc-bare-variant-index-ready true))))
+          (set! tc-bare-variant-index-decl-count count)
+          (unsafe
+            (arena.tl_arena_set prev-arena)))))))
+
+;; The declaring-module entry: the variant's registry handle, -1 when no enum of
+;; `module-id` declares `name-id`, or -2 when two do.
+(define (tc-bare-variant-module-entry [module-id : i64] [name-id : i64]) : i64
+  (let
+    [value : i64
+      (csym.compiler-symbol-map-lookup-handle-id
+        (& tc-bare-variant-index-entries)
+        (csym.compiler-symbol-module-key-id-by-id module-id name-id))]
+    (cond [(< value 0) -1] [(= value 0) -2] [else (- value 1)])))
+
+;; The module a `(import m.*)` at `position` reads, or -1 for any other decl.
+(define (tc-bare-variant-star-target-at
+  [decls : (& decls ast.AstDeclList)]
+  [position : i64]) : i64
+  (match (ast.ast-decl-unwrapped
+    (ast.ast-array-shared-view decls.slots (+ decls.offset position)))
+    [(ast.AstDecl.Import
+        _
+        (ast.AstImportSpec.Spec
+          (ast.AstImportKind.ModuleAll)
+          _
+          (ast.AstMaybeModuleName.Some target-module)
+          _
+          _))
+      target-module]
+    [_ -1]))
+
+;; Registry handle of the one visible enum variant spelled `name-id` in the
+;; current module: -1 when no visible enum declares it, -2 when two do.
+;; Whether any enum declares a variant spelled `name-id`; the cheap gate in
+;; front of every bare-variant rule.
+(define (tc-bare-variant-declared-name? [ctx : TcContext] [name-id : i64]) : bool
+  (begin
+    (tc-bare-variant-index-ensure! ctx)
+    (and
+      (>= name-id 0)
+      (< name-id (array-length tc-bare-variant-index-names))
+      (array-ref tc-bare-variant-index-names name-id))))
+
+(define (tc-bare-variant-visible-handle [ctx : TcContext] [name-id : i64]) : i64
+  (if (not (tc-bare-variant-declared-name? ctx name-id))
+    -1
+    (let
+      [module-id : i64 (tc-context-module-id ctx)]
+      [found : i64 (tc-bare-variant-module-entry module-id name-id)]
+      (match (tc-context-program ctx)
+        [(ast.AstProgram.Program decls-box)
+          (let
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [_ensure : unit (tc-module-decl-index-ensure! (& decls))]
+            [slot : i64 (tc-module-decl-index-slot module-id)]
+            [j : i64
+              (if (< slot 0)
+                0
+                (array-ref tc-module-import-index-starts slot))]
+            [end : i64
+              (if (< slot 0)
+                0
+                (array-ref tc-module-import-index-ends slot))]
+            (begin
+              (while (and (< j end) (not (= found -2)))
+                (let
+                  [target : i64
+                    (tc-bare-variant-star-target-at
+                      (& decls)
+                      (array-ref tc-module-import-index-positions j))]
+                  [entry : i64
+                    (if (< target 0)
+                      -1
+                      (tc-bare-variant-module-entry target name-id))]
+                  (begin
+                    (cond
+                      [(= entry -1) unit]
+                      [(or (= found -1) (= found entry)) (set! found entry)]
+                      [else (set! found -2)])
+                    (set! j (+ j 1)))))
+              found))]))))
+
+;; `out` extended with ` or Enum.V` when `variants` declares `name-id`.
+(define (tc-bare-variant-candidate-append
+  [session : cis.InternStructuralSessionHandle]
+  [out : String]
+  [enum-name : i64]
+  [variants : (& variants ast.AstVariantDefList)]
+  [name-id : i64]) : String
+  (match (tc-variant-member-handle-in-list-at
+    session
+    (csym.compiler-symbol-make-handle (csym.compiler-symbol-kind-defenum) 0)
+    name-id
+    variants
+    0)
+    [(option_i64.Some _)
+      (let
+        [separator : String
+          (if (= (string.string-length out) 0)
+            ""
+            " or ")]
+        (str_cat.str-cat
+          out
+          separator
+          (tc-env-key-name-text enum-name)
+          "."
+          (ci.intern-str name-id)))]
+    [(option_i64.None) out]))
+
+;; `A.V or B.V` over the enums of `module-id` that declare `name-id`.
+(define (tc-bare-variant-module-candidates
+  [session : cis.InternStructuralSessionHandle]
+  [decls : (& decls ast.AstDeclList)]
+  [module-id : i64]
+  [name-id : i64]
+  [prefix : String]) : String
+  (let
+    [slot : i64 (tc-module-decl-index-slot module-id)]
+    [j : i64
+      (if (< slot 0)
+        0
+        (array-ref tc-module-decl-index-starts slot))]
+    [end : i64
+      (if (< slot 0)
+        0
+        (array-ref tc-module-decl-index-ends slot))]
+    [out : String prefix]
+    (begin
+      (while (< j end)
+        (begin
+          (match (ast.ast-decl-unwrapped
+            (ast.ast-array-shared-view
+              decls.slots
+              (+ decls.offset (array-ref tc-module-decl-index-positions j))))
+            [(ast.AstDecl.DefEnum _ enum-name _ variants)
+              (set!
+                out
+                (tc-bare-variant-candidate-append
+                  session
+                  out
+                  enum-name
+                  (& variants)
+                  name-id))]
+            [(ast.AstDecl.DefEnumLifetimes _ enum-name _ _ variants)
+              (set!
+                out
+                (tc-bare-variant-candidate-append
+                  session
+                  out
+                  enum-name
+                  (& variants)
+                  name-id))]
+            [_ unit])
+          (set! j (+ j 1))))
+      out)))
+
+(define (tc-bare-variant-ambiguous-message [ctx : TcContext] [name-id : i64]) : String
+  (match (tc-context-program ctx)
+    [(ast.AstProgram.Program decls-box)
+      (let
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [_ensure : unit (tc-module-decl-index-ensure! (& decls))]
+        [session : cis.InternStructuralSessionHandle
+          (tc-context-structural-session ctx)]
+        [module-id : i64 (tc-context-module-id ctx)]
+        [slot : i64 (tc-module-decl-index-slot module-id)]
+        [j : i64
+          (if (< slot 0)
+            0
+            (array-ref tc-module-import-index-starts slot))]
+        [end : i64
+          (if (< slot 0)
+            0
+            (array-ref tc-module-import-index-ends slot))]
+        [candidates : String
+          (tc-bare-variant-module-candidates
+            session
+            (& decls)
+            module-id
+            name-id
+            "")]
+        (begin
+          (while (< j end)
+            (let
+              [target : i64
+                (tc-bare-variant-star-target-at
+                  (& decls)
+                  (array-ref tc-module-import-index-positions j))]
+              (begin
+                (if (< target 0)
+                  unit
+                  (set!
+                    candidates
+                    (tc-bare-variant-module-candidates
+                      session
+                      (& decls)
+                      target
+                      name-id
+                      candidates)))
+                (set! j (+ j 1)))))
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.UnboundName)
+            (str_cat.str-cat
+              "typecheck: ambiguous variant `"
+              (ci.intern-str name-id)
+              "`; qualify as "
+              candidates))))]))
+
+;; Lexical storage (a let, parameter or lambda binding, hygiene-scoped by its
+;; id) shadows every declaration, variants included.
+(define (tc-bare-variant-local-binding? [env : TcTypeEnv] [name-id : i64]) : bool
+  (or
+    (and
+      (tc-type-env-scoped-runtime-active? env)
+      (>= (tc-type-env-scoped-runtime-lookup-index env name-id) 0))
+    (tc-name-local-bound-before-module-scan-id? env name-id)))
+
+;; No expected enum: a unique visible variant keeps the ordinary lookup, two
+;; are ambiguous.
+(define (tc-bare-variant-unexpected-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : ResultTcUnit
+  (if (and
+    (tc-bare-variant-declared-name? ctx name-id)
+    (tc-bare-variant-name-id? name-id)
+    (= (tc-bare-variant-visible-handle ctx name-id) -2)
+    (not (tc-bare-variant-local-binding? env name-id)))
+    (ResultTcUnit.Err (tc-bare-variant-ambiguous-message ctx name-id))
+    ResultTcUnit.Ok))
+
+;; The lookup of a bare name the environment does not bind: only a variant of
+;; a visible enum resolves, so a loaded module the file never imported stays
+;; invisible.
+(define (tc-bare-variant-constructor-type-or
+  [ctx : TcContext]
+  [name-id : i64]
+  [not-found-message : String]) : ResultTcType
+  (let
+    [handle : i64 (tc-bare-variant-visible-handle ctx name-id)]
+    (cond
+      [(= handle -2)
+        (ResultTcType.Err (tc-bare-variant-ambiguous-message ctx name-id))]
+      [(< handle 0) (ResultTcType.Err not-found-message)]
+      [else (tc-variant-constructor-type-for-handle ctx handle)])))
+
+(define (tc-expected-enum-name-id [ctx : TcContext] [expected : ast.AstType]) : i64
+  (match (tc-type-strip-region
+    (match (tc-type-strip-region (tc-global-shared-view expected))
+      [(ast.AstType.Var _)
+        (tc-resolve-type ctx (tc-global-shared-view expected))]
+      [(ast.AstType.VarArgs _ _)
+        (tc-resolve-type ctx (tc-global-shared-view expected))]
+      [_ (tc-global-shared-view expected)]))
+    [(ast.AstType.Enum enum-id) enum-id]
+    [(ast.AstType.EnumArgs enum-id _) enum-id]
+    [_ -1]))
+
+;; A function, value or struct constructor that the current module declares or
+;; imports unqualified under the variant's name. The root module keys values by
+;; bare name, which every module's flat aliases share, so there only the root's
+;; own declarations count.
+(define (tc-bare-variant-declaration-conflict?
+  [ctx : TcContext]
+  [handle : i64]
+  [struct? : bool]) : bool
+  (and
+    (csym.compiler-symbols-handle-found? handle)
+    (if struct?
+      (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-defstruct))
+      (not
+        (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-enum-variant))))
+    (or
+      (not (csym.compiler-symbol-root-module-id? (tc-context-module-id ctx)))
+      (csym.compiler-symbol-root-module-id?
+        (csym.compiler-symbols-owner-module-id-at-index-or
+          (tc-context-symbols ctx)
+          (csym.compiler-symbol-handle-index handle)
+          cbi.compiler-builtin-id-runtime-module)))))
+
+(define (tc-bare-variant-value-conflict? [ctx : TcContext] [name-id : i64]) : bool
+  (or
+    (tc-bare-variant-declaration-conflict?
+      ctx
+      (csym.compiler-symbols-lookup-value-in-module-id-or
+        (tc-context-symbols ctx)
+        (tc-context-module-id ctx)
+        name-id
+        (csym.compiler-symbols-missing-handle))
+      false)
+    (tc-bare-variant-declaration-conflict?
+      ctx
+      (csym.compiler-symbols-lookup-type-in-module-id-or
+        (tc-context-symbols ctx)
+        (tc-context-module-id ctx)
+        name-id
+        (csym.compiler-symbols-missing-handle))
+      true)))
+
+(define (tc-bare-variant-enum-name-id [ctx : TcContext] [handle : i64]) : i64
+  (match (csym.compiler-symbols-decl-at-index
+    (tc-context-symbols ctx)
+    (csym.compiler-registry-handle-owner-index handle))
+    [(parser.ResultAstDecl.Ok decl)
+      (match (ast.ast-decl-unwrapped decl)
+        [(ast.AstDecl.DefEnum _ name _ _) name]
+        [(ast.AstDecl.DefEnumLifetimes _ name _ _ _) name]
+        [_ -1])]
+    [(parser.ResultAstDecl.Err _) -1]))
+
+;; R1/R2: where the expected type is an enum declaring `name-id`, the bare name
+;; is that enum's variant unless a local binding shadows it; a same-named
+;; module function, value or struct constructor makes it ambiguous. When the
+;; ordinary lookup would pick another variant, the `Var` node is rewritten to
+;; `Enum.Variant` as seen from the enum's own module (the hygienic spelling a
+;; macro template produces), so lowering, specialization and the semantic
+;; index resolve the same variant without the expected type. Typed
+;; macro-operand checks journal the rewrite and restore the written name.
+(define (tc-expected-bare-variant-retarget!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [var-id : i64]
+  [name-id : i64]
+  [expected : ast.AstType]) : ResultTcNameId
+  (let
+    [enum-id : i64
+      (if (and
+        (tc-bare-variant-declared-name? ctx name-id)
+        (tc-bare-variant-name-id? name-id))
+        (tc-expected-enum-name-id ctx expected)
+        -1)]
+    [handle : i64
+      (if (< enum-id 0)
+        (csym.compiler-symbols-missing-handle)
+        (tc-source-variant-handle-for-enum-id-or
+          ctx
+          enum-id
+          name-id
+          (csym.compiler-symbols-missing-handle)))]
+    (cond
+      [(not (csym.compiler-symbols-handle-found? handle))
+        (ResultTcNameId.Ok name-id)]
+      [(tc-bare-variant-value-conflict? ctx name-id)
+        (if (tc-bare-variant-local-binding? env name-id)
+          (ResultTcNameId.Ok name-id)
+          (ResultTcNameId.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.UnboundName)
+              (str_cat.str-cat
+                "typecheck: ambiguous `"
+                (ci.intern-str name-id)
+                "`: both the variant "
+                (tc-env-key-name-text (tc-bare-variant-enum-name-id ctx handle))
+                "."
+                (ci.intern-str name-id)
+                " and a module-level declaration of that name are visible; qualify the variant"))))]
+      [(= (tc-bare-variant-visible-handle ctx name-id) handle)
+        (ResultTcNameId.Ok name-id)]
+      [(tc-bare-variant-local-binding? env name-id) (ResultTcNameId.Ok name-id)]
+      [else
+        (let
+          [qualified-id : i64
+            (macro-hygiene-global-id
+              (tc-context-structural-session ctx)
+              (csym.compiler-symbols-owner-module-id-at-index-or
+                (tc-context-symbols ctx)
+                (csym.compiler-registry-handle-owner-index handle)
+                (csym.compiler-symbol-root-module-id))
+              (ci.intern
+                (str_cat.str-cat
+                  (tc-env-key-name-text
+                    (tc-bare-variant-enum-name-id ctx handle))
+                  "."
+                  (ci.intern-str name-id)))
+              false)]
+          (begin
+            (tc-dotted-macro-journal-record!
+              (tc-context-macro-state ctx)
+              var-id
+              (ast.AstExpr.Var name-id))
+            (ast.ast-node-set! var-id (ast.AstExpr.Var qualified-id))
+            (ResultTcNameId.Ok qualified-id)))])))
+
+;; The callee of a call in an expected-enum position, when it is a `Var`.
+(define (tc-expected-call-variant-retarget!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [expected : ast.AstType]) : ResultTcUnit
+  (match (tc-type-strip-region (tc-global-shared-view expected))
+    [(ast.AstType.Enum _)
+      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
+    [(ast.AstType.EnumArgs _ _)
+      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
+    [(ast.AstType.Var _)
+      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
+    [(ast.AstType.VarArgs _ _)
+      (tc-expected-callee-variant-retarget! ctx env func-id expected)]
+    [_ ResultTcUnit.Ok]))
+
+(define (tc-expected-callee-variant-retarget!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [expected : ast.AstType]) : ResultTcUnit
+  (match (tc-context-expr-get ctx func-id)
+    [(ast.AstExpr.Spanned inner-id _)
+      (tc-expected-callee-variant-retarget! ctx env inner-id expected)]
+    [(ast.AstExpr.Var name-id)
+      (match (tc-expected-bare-variant-retarget!
+        ctx
+        env
+        func-id
+        name-id
+        expected)
+        [(ResultTcNameId.Ok _) ResultTcUnit.Ok]
+        [(ResultTcNameId.Err message) (ResultTcUnit.Err message)])]
+    [_ ResultTcUnit.Ok]))
+
+;; A bare binder in a variant payload position that spells a variant of the
+;; payload's enum would silently match every value; require `(V)` or another
+;; name (the precedent is Rust's `bindings_with_variant_name` lint).
+(define (tc-payload-binder-variant-check
+  [ctx : TcContext]
+  [pattern : ast.AstPattern]
+  [payload-ty : ast.AstType]) : ResultTcUnit
+  (let
+    [name-id : i64
+      (match pattern
+        [(ast.AstPattern.Binding name) name]
+        [(ast.AstPattern.Var name _) name]
+        [_ -1])]
+    [enum-id : i64
+      (if (or
+        (< name-id 0)
+        (>= name-id (ci.intern-pool-len))
+        (ci.intern-macro-global-name-id? name-id)
+        (ci.intern-macro-local-name-id? name-id)
+        (not (tc-bare-variant-declared-name? ctx name-id)))
+        -1
+        (tc-expected-enum-name-id ctx payload-ty))]
+    (if (or
+      (< enum-id 0)
+      (not
+        (csym.compiler-symbols-handle-found?
+          (tc-source-variant-handle-for-enum-id-or
+            ctx
+            enum-id
+            name-id
+            (csym.compiler-symbols-missing-handle)))))
+      ResultTcUnit.Ok
+      (ResultTcUnit.Err
+        (tc-kind-message
+          (cdiag.CompilerTypecheckKind.Pattern)
+          (str_cat.str-cat
+            "typecheck: pattern binder `"
+            (ci.intern-str name-id)
+            "` spells a variant of the payload enum "
+            (tc-nominal-name-id-display enum-id)
+            "; write `("
+            (ci.intern-str name-id)
+            ")` to match that variant or rename the binder"))))))
 
 (define (tc-variant-name-for-enum [enum-name : String] [variant-name : String]) : String
   (if (tc-name-qualified? variant-name)
@@ -58740,35 +59427,56 @@
           env
           (tc-env-name-key-id (tc-type-env-structural-session env) lookup-id))
           [(ResultTcTypeUnsafe.Ok ty unsafe)
-            (if unsafe
-              (match (tc-unsafe-callable-use
-                ctx
-                env
-                (tc-source-lookup-display-name ctx name-text name lookup-name)
-                ty
-                direct-call-target)
-                [(ResultTcType.Ok unsafe-ty)
+            (match (tc-bare-variant-unexpected-check ctx env name)
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+              [(ResultTcUnit.Ok)
+                (if unsafe
+                  (match (tc-unsafe-callable-use
+                    ctx
+                    env
+                    (tc-source-lookup-display-name
+                      ctx
+                      name-text
+                      name
+                      lookup-name)
+                    ty
+                    direct-call-target)
+                    [(ResultTcType.Ok unsafe-ty)
+                      (match (tc-unqualified-import-ambiguity-message
+                        ctx
+                        env
+                        name)
+                        [(TcMaybeString.No) (ResultTcType.Ok unsafe-ty)]
+                        [(TcMaybeString.Some message)
+                          (ResultTcType.Err message)])]
+                    [(ResultTcType.Err message) (ResultTcType.Err message)])
                   (match (tc-unqualified-import-ambiguity-message ctx env name)
-                    [(TcMaybeString.No) (ResultTcType.Ok unsafe-ty)]
-                    [(TcMaybeString.Some message) (ResultTcType.Err message)])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])
-              (match (tc-unqualified-import-ambiguity-message ctx env name)
-                [(TcMaybeString.No) (ResultTcType.Ok ty)]
-                [(TcMaybeString.Some message) (ResultTcType.Err message)]))]
+                    [(TcMaybeString.No) (ResultTcType.Ok ty)]
+                    [(TcMaybeString.Some message) (ResultTcType.Err message)]))])]
           [(ResultTcTypeUnsafe.Err message)
             (match (tc-dotted-alias-variant-handle ctx name-text name)
               [(option_i64.Some handle)
                 (tc-variant-constructor-type-for-handle ctx handle)]
               [(option_i64.None)
-                (tc-variant-constructor-type-for-lookup-or-id
-                  ctx
-                  lookup-id
-                  (tc-source-unbound-display-message
+                (if (tc-bare-variant-name-id? name)
+                  (tc-bare-variant-constructor-type-or
                     ctx
-                    name-text
                     name
-                    lookup-name
-                    message))])])]
+                    (tc-source-unbound-display-message
+                      ctx
+                      name-text
+                      name
+                      lookup-name
+                      message))
+                  (tc-variant-constructor-type-for-lookup-or-id
+                    ctx
+                    lookup-id
+                    (tc-source-unbound-display-message
+                      ctx
+                      name-text
+                      name
+                      lookup-name
+                      message)))])])]
       [(TcNameLookup.Err message)
         (tc-source-lookup-error-or-variant-constructor ctx name message)])))
 

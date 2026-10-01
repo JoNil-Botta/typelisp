@@ -3329,6 +3329,7 @@
               [generated-hook-id : i64 (ci.intern-generated-name "hook")]
               [retained : tc_core.MacroMaybeDecl
                 (tc_core.macro-surface-call-decl-in-module
+                  (ast.ast-node-pool-active-expr-segment-bases)
                   macro-state
                   provider-id
                   hook-id)]
@@ -3352,6 +3353,7 @@
                       provider-id
                       (ci.intern "wide")))
                   (match (tc_core.macro-surface-call-decl-in-module
+                    (ast.ast-node-pool-active-expr-segment-bases)
                     macro-state
                     provider-id
                     (ci.intern "wide"))
@@ -3377,12 +3379,14 @@
                     (tc_core.macro-surface-module-has-macro?
                       generated-provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
+                    (ast.ast-node-pool-active-expr-segment-bases)
                     macro-state
                     provider-id
                     hook-id)
                     [(tc_core.MacroMaybeDecl.Some _ _ _ _ _ _) true]
                     [(tc_core.MacroMaybeDecl.No) false])
                   (match (tc_core.macro-surface-call-decl-in-module
+                    (ast.ast-node-pool-active-expr-segment-bases)
                     macro-state
                     generated-provider-id
                     generated-hook-id)
@@ -3429,6 +3433,7 @@
                     (tc_core.macro-surface-macro-in-module? provider-id hook-id))
                   (not (tc_core.macro-surface-module-has-macro? provider-id))
                   (match (tc_core.macro-surface-call-decl-in-module
+                    (ast.ast-node-pool-active-expr-segment-bases)
                     macro-state
                     provider-id
                     hook-id)

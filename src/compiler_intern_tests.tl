@@ -392,6 +392,96 @@
             (set! index (+ index 1)))))
       first)))
 
+;; A reset clears the map and cache slots of the records the structural table
+;; held, which must leave every slot zero as a full clear does (#8520). The
+;; by-record path runs after the map grew; a table holding many records for its
+;; capacity takes the full clear. A pair cached before a reset must not answer
+;; after it: the record columns keep their old contents, so a surviving cache
+;; slot would return the previous owner's raw.
+(define (intern-structural-table-cleared?) : bool
+  (let
+    [table : ci.InternStructuralTable
+      (ci.intern-array-shared-view ci.intern-structural-table-cell 0)]
+    [clear? : bool (= table.len 0)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length table.map-slots))
+        (begin
+          (if (= (array-ref table.map-slots index) 0)
+            unit
+            (set! clear? false))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (array-length table.structural-cache-raws))
+        (begin
+          (if (= (array-ref table.structural-cache-raws index) 0)
+            unit
+            (set! clear? false))
+          (set! index (+ index 1))))
+      clear?)))
+
+;; Pairs and triples through the composite paths, which write the cache.
+(define (intern-structural-reset-fill! [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (ci.intern-composite-pair-id (+ 1000000 index) (+ 2000000 index))
+        (if (= (% index 3) 0)
+          (begin
+            (ci.intern-composite-triple-id
+              (+ 3000000 index)
+              index
+              (+ 4000000 index))
+            unit)
+          unit)
+        (set! index (+ index 1))))))
+
+(define (intern-structural-table-by-record-reset?) : bool
+  (let
+    [table : ci.InternStructuralTable
+      (ci.intern-array-shared-view ci.intern-structural-table-cell 0)]
+    (<
+      (* table.len 8)
+      (+
+        (array-length table.map-slots)
+        (array-length table.structural-cache-raws)))))
+
+(define (intern-structural-reset-tests-ok?) : bool
+  (begin
+    (ci.intern-reset!)
+    (intern-structural-reset-fill! 300)
+    (let
+      [pair : i64 (ci.intern-composite-pair-id 1000005 2000005)]
+      [triple : i64 (ci.intern-composite-triple-id 3000006 6 4000006)]
+      [table : ci.InternStructuralTable
+        (ci.intern-array-shared-view ci.intern-structural-table-cell 0)]
+      [grown? : bool (>= (array-length table.map-slots) 1024)]
+      [by-record? : bool (intern-structural-table-by-record-reset?)]
+      [used? : bool (not (intern-structural-table-cleared?))]
+      (begin
+        (ci.intern-reset!)
+        (let
+          [small-clear? : bool (intern-structural-table-cleared?)]
+          [pair-again : i64 (ci.intern-composite-pair-id 1000005 2000005)]
+          [triple-again : i64 (ci.intern-composite-triple-id 3000006 6 4000006)]
+          (begin
+            (ci.intern-reset!)
+            (intern-structural-reset-fill! 40000)
+            (let
+              [full? : bool (not (intern-structural-table-by-record-reset?))]
+              (begin
+                (ci.intern-reset!)
+                (and
+                  grown?
+                  by-record?
+                  used?
+                  small-clear?
+                  (not (= pair-again pair))
+                  (not (= triple-again triple))
+                  full?
+                  (intern-structural-table-cleared?))))))))))
+
 (define (intern-structural-generation-tests-ok?) : bool
   (let
     [live : i64 (ci.intern-structural-generations-live)]
@@ -1263,6 +1353,7 @@
           (intern-persistent-arena-tests-ok?)
           (intern-compat-state-persistent-arena-growth-tests-ok?)
           (intern-structural-generation-tests-ok?)
+          (intern-structural-reset-tests-ok?)
           (intern-reset-to-tests-ok?)
           (intern-persistent-floor-reset-tests-ok?)
           (intern-source-name-session-tests-ok?)

@@ -236,15 +236,33 @@
   (intern-runtime-abort-string
     "tl: intern pool capacity exhausted: source and generated lanes met\n"))
 
+;; The structural cache is direct-mapped: a pair's raw at its slot in the first
+;; `intern-structural-pair-cache-capacity` entries, a triple's in the rest.
+;; `intern-structural-table-reset!` clears records' slots with these same
+;; formulas.
+(defmacro (intern-structural-pair-cache-slot [left : Expr] [right : Expr]) : i64
+  `(bit-and
+    (bit-xor ,right (* ,left 6364136223846793005))
+    (- (intern-structural-pair-cache-capacity) 1)))
+
+(defmacro (intern-structural-triple-cache-slot
+  [left : Expr]
+  [middle : Expr]
+  [right : Expr]) : i64
+  `(+
+    (intern-structural-pair-cache-capacity)
+    (bit-and
+      (bit-xor
+        ,right
+        (bit-xor (* ,left 6364136223846793005) (* ,middle 1442695040888963407)))
+      (- (intern-structural-triple-cache-capacity) 1))))
+
 ;; Structural compound identities are session-owned canonical records, not
 ;; entries in the string pool. Keep their compatibility raw-handle adapters at
 ;; this lowest layer while typed boundaries migrate outward.
 (define (intern-composite-pair-id [left-id : i64] [right-id : i64]) : i64
   (let
-    [cache-slot : i64
-      (bit-and
-        (bit-xor right-id (* left-id 6364136223846793005))
-        (- (intern-structural-pair-cache-capacity) 1))]
+    [cache-slot : i64 (intern-structural-pair-cache-slot left-id right-id)]
     [cached-raw : i64
       (intern-active-i64-ref
         intern-active-structural-cache-raws-address
@@ -322,15 +340,7 @@
   [right-id : i64]) : i64
   (let
     [cache-slot : i64
-      (+
-        (intern-structural-pair-cache-capacity)
-        (bit-and
-          (bit-xor
-            right-id
-            (bit-xor
-              (* left-id 6364136223846793005)
-              (* middle-id 1442695040888963407)))
-          (- (intern-structural-triple-cache-capacity) 1)))]
+      (intern-structural-triple-cache-slot left-id middle-id right-id)]
     [cached-raw : i64
       (intern-active-i64-ref
         intern-active-structural-cache-raws-address
@@ -1124,28 +1134,101 @@
             (intern-structural-table-map-put-index! next-table index)
             (intern-structural-raw-for-index next-table.owner index)))))))
 
+;; Zero the map slot holding record `index`. Records are only inserted, each at
+;; the first free slot probing from its hash, and a grow re-inserts them all, so
+;; record `index` sits at or after its first slot. The probe passes other
+;; records' slots, and slots this reset already cleared, until it finds
+;; `index + 1`.
+(define (intern-structural-table-map-clear-index!
+  [table : (&mut table InternStructuralTable)]
+  [index : i64]) : unit
+  (let
+    [kind : i64 (cast (array-ref table.kinds index) : i64)]
+    [left : i64 (array-ref table.lefts index)]
+    [middle : i64 (array-ref table.middles index)]
+    [right : i64 (array-ref table.rights index)]
+    [slots-address : u64 (intern-i64-array-address table.map-slots)]
+    [mask : i64 (- (array-length table.map-slots) 1)]
+    [slot : i64
+      (intern-structural-table-first-slot table kind left middle right)]
+    [steps : i64 0]
+    (begin
+      (while (not (= (intern-active-i64-ref slots-address slot) (+ index 1)))
+        (begin
+          (if (> steps mask)
+            (tl_oob_abort)
+            unit)
+          (set! steps (+ steps 1))
+          (set! slot (bit-and (+ slot 1) mask))))
+      (intern-active-i64-set! slots-address slot 0))))
+
+;; Reset clears what the table used since the last reset rather than its whole
+;; capacity, while it holds few records for that capacity: the map keeps the
+;; size its largest compile grew it to, and the cache never shrinks.
+;; - Every nonzero map slot holds `index + 1` for a record `index < len`.
+;; - Every nonzero cache slot was written by `intern-composite-pair-id` or
+;;   `intern-composite-triple-id` with the raw of a pair or triple record
+;;   `< len`, at the slot that record's fields hash to. Those are the only
+;;   writers, and the cache address they write is always synchronized with the
+;;   table they intern into.
+;; Clearing each record's map and cache slot therefore leaves both arrays
+;; all-zero, exactly as a full clear does.
 (define (intern-structural-table-reset!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
   (let
     [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
+    [by-record? : bool
+      (<
+        (* table.len 8)
+        (+
+          (array-length table.map-slots)
+          (array-length table.structural-cache-raws)))]
     [index : i64 0]
     (begin
-      (while (< index (array-length table.map-slots))
+      (if by-record?
+        unit
         (begin
-          (set! (array-ref table.map-slots index) 0)
-          (set! index (+ index 1))))
-      (set! index 0)
+          (while (< index (array-length table.map-slots))
+            (begin
+              (set! (array-ref table.map-slots index) 0)
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (array-length table.structural-cache-raws))
+            (begin
+              (set! (array-ref table.structural-cache-raws index) 0)
+              (set! index (+ index 1))))
+          (set! index 0)))
       (while (< index table.len)
         (begin
+          (if by-record?
+            (let
+              [kind : i64 (cast (array-ref table.kinds index) : i64)]
+              (begin
+                (intern-structural-table-map-clear-index! table index)
+                (cond
+                  [(= kind (intern-structural-kind-pair))
+                    (set!
+                      (array-ref
+                        table.structural-cache-raws
+                        (intern-structural-pair-cache-slot
+                          (array-ref table.lefts index)
+                          (array-ref table.rights index)))
+                      0)]
+                  [(= kind (intern-structural-kind-triple))
+                    (set!
+                      (array-ref
+                        table.structural-cache-raws
+                        (intern-structural-triple-cache-slot
+                          (array-ref table.lefts index)
+                          (array-ref table.middles index)
+                          (array-ref table.rights index)))
+                      0)]
+                  [else unit])))
+            unit)
           (set! (array-ref table.rendered-names index) "")
           (set!
             (array-ref table.generated-symbol-handles index)
             (intern-id-slot-empty))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index (array-length table.structural-cache-raws))
-        (begin
-          (set! (array-ref table.structural-cache-raws index) 0)
           (set! index (+ index 1))))
       (set! table.owner (intern-structural-owner-allocate!))
       (set! table.len 0)

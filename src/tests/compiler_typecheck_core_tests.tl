@@ -24,6 +24,7 @@
 (cfg test (import stdlib.profile))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
+(import compiler_parse_core as parser)
 (import compiler_owned_view as owned_view)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
@@ -1003,6 +1004,122 @@
       (if ok?
         unit
         (io.panic "typecheck: diagnostic span pool isolation failed")))))
+
+;; One decoy-pool fixture for macro expression reads (#8199): `(head name 1)`
+;; whose name is a spanned child. Pools A and B push the same shapes, so ids
+;; collide, but A builds `(define alpha 1)` and B `(begin beta 1)`.
+(define (macro-read-pool-call
+  [pools : ast.AstNodePoolContext]
+  [head-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [name : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name-id))]
+    [spanned : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned name (ast.ast-source-span 3 1 3 6)))]
+    [value : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "1")))]
+    [head : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var head-id))]
+    [args : ast.AstExprList (ast.ast-expr-list-new)]
+    (begin
+      (ast.ast-expr-list-push (&mut args) spanned)
+      (ast.ast-expr-list-push (&mut args) value)
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Call head args)))))
+
+;; The name id of the single `define` a macro output parses to, or -1.
+(define (macro-read-pool-parsed-name [parsed : tc_core.ResultMacroParsedDecls]) : i64
+  (match parsed
+    [(tc_core.ResultMacroParsedDecls.Ok decls)
+      (match (ast.ast-decl-list-step decls)
+        [(ast.AstDeclListStep.Cons decl _)
+          (match decl
+            [(ast.AstDecl.Def _ name _ _) name]
+            [_ -1])]
+        [(ast.AstDeclListStep.Nil) -1])]
+    [(tc_core.ResultMacroParsedDecls.Err _) -1]))
+
+;; With decoy pool B installed, macro call naming, sexpr conversion and output
+;; declaration parsing of A's nodes read A through its segment bases.
+(test
+  macro-expression-read-pool-isolation
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [alpha-id : i64 (ci.intern "macro-read-isolation/alpha")]
+    [beta-id : i64 (ci.intern "macro-read-isolation/beta")]
+    [call-a : i64 (macro-read-pool-call pools-a (ci.intern "define") alpha-id)]
+    [call-b : i64 (macro-read-pool-call pools-b (ci.intern "begin") beta-id)]
+    [ctx-a : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools-a)]
+    [session : cis.InternStructuralSessionHandle
+      (tc_core.tc-context-structural-session ctx-a)]
+    [dispatch : sym_i64_env.SymI64Env (parser.compiler-parse-dispatch-env)]
+    [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
+    [call-expr : ast.AstExpr (ast.ast-expr-segment-bases-get bases-a call-a)]
+    [owner : tc_core.MacroSexprOwner
+      (tc_core.macro-sexpr-owner bases-a session)]
+    ;; The spanned name is the define's first argument, pushed second.
+    [spanned-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get bases-a (- call-a 3))]
+    ;; Parsing an output form installs the parser's pools, so the decoy is
+    ;; reinstalled before each read under test.
+    [_decoy-for-name : unit (ast.ast-node-pool-context-install! pools-b)]
+    [callee-name : String
+      (match (tc_core.macro-call-callee-name bases-a session spanned-expr)
+        [(tc_core.TcMaybeString.Some name) name]
+        [(tc_core.TcMaybeString.No) ""])]
+    [_decoy-for-sexpr : unit (ast.ast-node-pool-context-install! pools-b)]
+    [sexpr-name : i64
+      (match (tc_core.macro-expr-to-spanned-sexpr
+        (& owner)
+        (tc_core.tc-global-shared-view call-expr)
+        (tc_core.tc-global-shared-view call-expr))
+        [(tc_core.ResultMacroSexpr.Ok form)
+          (match (parser.parse-ast-decl-maybe dispatch form)
+            [(parser.ResultAstMaybeDecl.SomeDecl decl)
+              (match decl
+                [(ast.AstDecl.Def _ name _ _) name]
+                [_ -1])]
+            [_ -1])]
+        [(tc_core.ResultMacroSexpr.Err _) -1])]
+    [_decoy-for-parse : unit (ast.ast-node-pool-context-install! pools-b)]
+    [parsed-name : i64
+      (macro-read-pool-parsed-name
+        (tc_core.macro-parse-decls-from-expr
+          (& owner)
+          dispatch
+          (tc_core.tc-global-shared-view call-expr)
+          call-expr))]
+    [ok? : bool
+      (and
+        (= call-a call-b)
+        (string.eq callee-name "macro-read-isolation/alpha")
+        (string.eq
+          (tc_core.tc-env-key-display session sexpr-name)
+          "macro-read-isolation/alpha")
+        (string.eq
+          (tc_core.tc-env-key-display session parsed-name)
+          "macro-read-isolation/alpha"))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if ok?
+        unit
+        (io.panic "typecheck: macro expression read pool isolation failed")))))
 
 (define (tc-type-env-lookup-step [env : tc_core.TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
   (match (tc_core.tc-type-env-view env)

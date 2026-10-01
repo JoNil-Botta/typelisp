@@ -83989,6 +83989,22 @@
   (Ok reader.SpannedSexpr)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+;; What stays fixed while macro output is converted to sexprs and parsed: the
+;; expression pool's segment bases that child reads go through, and the
+;; structural session that spells names. One reference carries both through
+;; the recursive converters.
+(defstruct MacroSexprOwner
+  (expr-bases i64)
+  (session-address i64))
+
+(define (macro-sexpr-owner
+  [expr-bases : i64]
+  [session : cis.InternStructuralSessionHandle]) : MacroSexprOwner
+  (MacroSexprOwner expr-bases session.address))
+
+(define (macro-sexpr-session [owner : (& owner MacroSexprOwner)]) : cis.InternStructuralSessionHandle
+  (cis.InternStructuralSessionHandle owner.session-address))
+
 (defenum ResultMacroParsedDecls
   (Ok ast.AstDeclList)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -88276,6 +88292,7 @@
     [(ctfe_support.ResultCtfe.Err diag) (spec.ResultGenKey.Err diag)]))
 
 (define (macro-identity-key-string-exprs-at
+  [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [env : ctfe_support.CtfeEnv]
@@ -88284,10 +88301,13 @@
     (spec.ResultGenKey.Ok "" fuel)
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-identity-key-string-expr head-expr env fuel)
         [(spec.ResultGenKey.Ok head-key head-fuel)
           (match (macro-identity-key-string-exprs-at
+            expr-bases
             exprs
             (+ index 1)
             env
@@ -88334,14 +88354,16 @@
         (spec.spec-string-key (macro-identity-key-sexpr session items)))]))
 
 (define (macro-identity-key-syntax-expr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]
   [fuel : i64]) : spec.ResultGenKey
-  (match (macro-expr-to-spanned-sexpr session expr origin)
+  (match (macro-expr-to-spanned-sexpr owner expr origin)
     [(ResultMacroSexpr.Ok sexpr)
       (spec.ResultGenKey.Ok
-        (str_cat.str-cat "syntax:" (macro-identity-key-sexpr session sexpr))
+        (str_cat.str-cat
+          "syntax:"
+          (macro-identity-key-sexpr (macro-sexpr-session owner) sexpr))
         fuel)]
     [(ResultMacroSexpr.Err diag) (spec.ResultGenKey.Err diag)]))
 
@@ -88386,11 +88408,12 @@
       [(spec.ResultGenKey.Ok key next-fuel)
         (spec.ResultGenKey.Ok key next-fuel)]
       [(spec.ResultGenKey.Err _)
-        (macro-identity-key-syntax-expr
-          (tc-context-structural-session ctx)
-          expr
-          call-expr
-          fuel)])
+        (let
+          [sexpr-owner : MacroSexprOwner
+            (macro-sexpr-owner
+              (tc-context-expr-bases ctx)
+              (tc-context-structural-session ctx))]
+          (macro-identity-key-syntax-expr (& sexpr-owner) expr call-expr fuel))])
     (macro-identity-key-string-expr expr env fuel)))
 
 (define (macro-identity-key-param-exprs-at
@@ -88581,13 +88604,19 @@
                     fuel
                     call-expr)]
                 [else
-                  (macro-identity-key-string-exprs-at args arg-index env fuel)])
+                  (macro-identity-key-string-exprs-at
+                    (tc-context-expr-bases ctx)
+                    args
+                    arg-index
+                    env
+                    fuel)])
               (if (macro-param-expr-binding-clause?
                 ctx
                 (tc-global-shared-view fallback-module)
                 fallback-module-id
                 (tc-global-shared-view ty))
                 (match (macro-expr-binding-clause-prefix-from-args
+                  (tc-context-expr-bases ctx)
                   args
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
@@ -90198,14 +90227,14 @@
   (reader.SpannedSexpr.Sym (ci.intern-syntax-id-from-raw name-id) span))
 
 (define (macro-expr-list-with-head-symbol-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [exprs : ast.AstExprList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (let
     [tail : reader.SpannedSexpr
-      (try (macro-expr-list-to-spanned-sexpr session exprs span origin))]
+      (try (macro-expr-list-to-spanned-sexpr owner exprs span origin))]
     (ResultMacroSexpr.Ok
       (reader.spanned-sexpr-list-prepend
         (macro-spanned-symbol-id name-id span)
@@ -90217,13 +90246,13 @@
 ;; rebuild non-trivial function bodies (arithmetic, struct/array access, let,
 ;; while, set!, ...) that the quasiquote evaluator stores as typed AST nodes.
 (define (macro-child-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span
-    session
-    (ast.ast-node-get id)
+    owner
+    (ast.ast-expr-segment-bases-get owner.expr-bases id)
     span
     origin))
 
@@ -90325,20 +90354,20 @@
     span))
 
 (define (macro-type-list-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [items : ast.AstTypeList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (macro-type-list-to-spanned-sexpr-at session (& items) span origin 0))
+  (macro-type-list-to-spanned-sexpr-at owner (& items) span origin 0))
 
 (define (macro-type-list-to-spanned-sexpr-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [items : (& items ast.AstTypeList)]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
   [index : i64]) : ResultMacroSexpr
   (macro-type-list-to-spanned-sexpr-into
-    session
+    owner
     items
     span
     origin
@@ -90346,7 +90375,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-type-list-to-spanned-sexpr-into
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [items : (& items ast.AstTypeList)]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
@@ -90355,14 +90384,14 @@
   (if (>= index (ast.ast-type-list-len items))
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-type-to-spanned-sexpr
-      session
+      owner
       (ast.ty-node-get
         (ast.ast-type-list-get items index (ast.ast-type-id-fallback)))
       span
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok shead)
         (macro-type-list-to-spanned-sexpr-into
-          session
+          owner
           items
           span
           origin
@@ -90374,13 +90403,13 @@
           (ResultMacroSexpr.Err diag))])))
 
 (define (macro-type-unary-sexpr-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [inner-id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (macro-type-to-spanned-sexpr
-    session
+    owner
     (ast.ty-node-get inner-id)
     span
     origin)
@@ -90398,8 +90427,8 @@
       (macro-lifetime-list-to-spanned-sexpr lifetimes span)
       span)))
 
-(define (macro-output-origin-arg-name [expr : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan expr)
+(define (macro-output-origin-arg-name [expr-bases : i64] [expr : ast.AstExpr]) : String
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
@@ -90415,12 +90444,14 @@
           [_ (tc-type-render ty)]))]
     [_ "<expression>"]))
 
-(define (macro-output-origin-name [origin : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan origin)
+(define (macro-output-origin-name [expr-bases : i64] [origin : ast.AstExpr]) : String
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases origin)
     [(ast.AstExpr.Call func-box args)
       (let
         [func-name : String
-          (match (ast.ast-expr-unspan (ast.ast-node-get func-box))
+          (match (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases func-box))
             [(ast.AstExpr.Var name-id)
               (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
                 (ci.intern-str name-id)
@@ -90429,7 +90460,10 @@
         [arg-name : String
           (if (> (ast.ast-expr-list-len (& args)) 0)
             (macro-output-origin-arg-name
-              (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
+              expr-bases
+              (ast.ast-expr-segment-bases-get
+                expr-bases
+                (ast.ast-expr-list-get (& args) 0 0)))
             "<no-args>")]
         (str_cat.str-cat func-name "(" arg-name ")"))]
     [(ast.AstExpr.Var name-id)
@@ -90441,7 +90475,7 @@
 ;; Serialize an AstType back to a spanned sexpr so type positions embedded in
 ;; expression nodes (__tl_make-array, cast, ann, typed let bindings) round-trip.
 (define (macro-type-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [ty : ast.AstType]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
@@ -90505,19 +90539,19 @@
         (macro-spanned-symbol-id cbi.compiler-builtin-id-fix-ExprList span))]
     [(ast.AstType.DynArray elem)
       (macro-type-unary-sexpr-id
-        session
+        owner
         (ci.intern "__tl_dyn-array")
         elem
         span
         origin)]
     [(ast.AstType.Slice elem)
-      (macro-type-unary-sexpr-id session (ci.intern "Slice") elem span origin)]
+      (macro-type-unary-sexpr-id owner (ci.intern "Slice") elem span origin)]
     [(ast.AstType.Array elem count)
       (let
         [selem : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get elem)
               span
               origin))]
@@ -90529,21 +90563,21 @@
             span)))]
     [(ast.AstType.Box inner)
       (macro-type-unary-sexpr-id
-        session
+        owner
         cbi.compiler-builtin-id-fix-Box
         inner
         span
         origin)]
     [(ast.AstType.Ptr inner)
       (macro-type-unary-sexpr-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "Ptr")
         inner
         span
         origin)]
     [(ast.AstType.MutPtr inner)
       (macro-type-unary-sexpr-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "MutPtr")
         inner
         span
@@ -90553,7 +90587,7 @@
         [stail : reader.SpannedSexpr
           (try
             (macro-type-list-to-spanned-sexpr
-              session
+              owner
               (ast.ast-type-list-box-shared-view items)
               span
               origin))]
@@ -90564,7 +90598,7 @@
             span)))]
     [(ast.AstType.Func args ret)
       (match (macro-type-list-to-spanned-sexpr
-        session
+        owner
         (ast.ast-type-list-box-shared-view args)
         span
         (tc-global-shared-view origin))
@@ -90573,7 +90607,7 @@
             [sret : reader.SpannedSexpr
               (try
                 (macro-type-to-spanned-sexpr
-                  session
+                  owner
                   (ast.ty-node-get ret)
                   span
                   origin))]
@@ -90595,7 +90629,7 @@
         [signature-sexpr : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get signature)
               span
               origin))]
@@ -90632,10 +90666,13 @@
         (io.panic
           (str_cat.str-cat
             "macro output received invalid type-var id in origin "
-            (macro-output-origin-name origin)))
+            (macro-output-origin-name owner.expr-bases origin)))
         (ResultMacroSexpr.Ok
           (macro-spanned-symbol-id
-            (macro-output-source-identity-id-at session name "type-var")
+            (macro-output-source-identity-id-at
+              (macro-sexpr-session owner)
+              name
+              "type-var")
             span)))]
     [(ast.AstType.StructArgs name lifetimes)
       (ResultMacroSexpr.Ok
@@ -90653,7 +90690,10 @@
           span))]
     [(ast.AstType.VarArgs name lifetimes)
       (macro-type-named-args-sexpr
-        (macro-output-source-identity-id-at session name "type-var-args")
+        (macro-output-source-identity-id-at
+          (macro-sexpr-session owner)
+          name
+          "type-var-args")
         (ast.ast-lifetime-list-box-shared-view lifetimes)
         span)]
     [(ast.AstType.Ref region inner)
@@ -90661,7 +90701,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -90678,7 +90718,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -90695,7 +90735,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -90710,7 +90750,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -90722,51 +90762,51 @@
             span)))]))
 
 (define (macro-child-form1-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (match (macro-child-to-spanned-sexpr session id span origin)
+  (match (macro-child-to-spanned-sexpr owner id span origin)
     [(ResultMacroSexpr.Ok sexpr)
       (ResultMacroSexpr.Ok (macro-form1-id name-id sexpr span))]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-child-form2-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [left-id : i64]
   [right-id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr
-    session
+    owner
     left-id
     span
     (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sleft)
       (let
         [sright : reader.SpannedSexpr
-          (try (macro-child-to-spanned-sexpr session right-id span origin))]
+          (try (macro-child-to-spanned-sexpr owner right-id span origin))]
         (ResultMacroSexpr.Ok (macro-form2-id name-id sleft sright span)))]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-child-type-form3-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [expr-id : i64]
   [ty : ast.AstType]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr
-    session
+    owner
     expr-id
     span
     (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sexpr)
       (let
         [sty : reader.SpannedSexpr
-          (try (macro-type-to-spanned-sexpr session ty span origin))]
+          (try (macro-type-to-spanned-sexpr owner ty span origin))]
         (ResultMacroSexpr.Ok
           (macro-form3-id
             name-id
@@ -90913,21 +90953,21 @@
             "typecheck: module macro output typed patterns cannot be parsed as source declarations")))]))
 
 (define (macro-match-arm-bracket
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arm : ast.AstMatchArm]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match arm
     [(ast.AstMatchArm.Arm pattern body-id)
       (match (macro-pattern-to-spanned-sexpr
-        session
+        (macro-sexpr-session owner)
         pattern
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok spattern)
           (let
             [sbody : reader.SpannedSexpr
-              (try (macro-child-to-spanned-sexpr session body-id span origin))]
+              (try (macro-child-to-spanned-sexpr owner body-id span origin))]
             (ResultMacroSexpr.Ok
               (reader.spanned-sexpr-bracket-list
                 (reader.spanned-sexpr-list2 spattern sbody span)
@@ -90935,20 +90975,20 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-match-arm-list-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arms : ast.AstMatchArmList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (macro-match-arm-list-to-spanned-sexpr-at session (& arms) 0 span origin))
+  (macro-match-arm-list-to-spanned-sexpr-at owner (& arms) 0 span origin))
 
 (define (macro-match-arm-list-to-spanned-sexpr-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-match-arm-list-to-spanned-sexpr-into
-    session
+    owner
     arms
     index
     span
@@ -90956,7 +90996,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-match-arm-list-to-spanned-sexpr-into
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [span : token.SourceSpan]
@@ -90965,13 +91005,13 @@
   (if (>= index arms.len)
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-match-arm-bracket
-      session
+      owner
       (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       span
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok shead)
         (macro-match-arm-list-to-spanned-sexpr-into
-          session
+          owner
           arms
           (+ index 1)
           span
@@ -90983,14 +91023,14 @@
           (ResultMacroSexpr.Err diag))])))
 
 (define (macro-let-binding-bracket
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [binding : ast.AstLetBinding]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match binding
     [(ast.AstLetBinding.Binding name maybe-ty value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         value-id
         span
         (tc-global-shared-view origin))
@@ -91002,7 +91042,7 @@
                   (reader.spanned-sexpr-list2
                     (macro-spanned-symbol-id
                       (macro-output-source-identity-id-at
-                        session
+                        (macro-sexpr-session owner)
                         name
                         "let-binding")
                       span)
@@ -91012,13 +91052,13 @@
             [(ast.AstMaybeType.Some ty)
               (let
                 [sty : reader.SpannedSexpr
-                  (try (macro-type-to-spanned-sexpr session ty span origin))]
+                  (try (macro-type-to-spanned-sexpr owner ty span origin))]
                 (ResultMacroSexpr.Ok
                   (reader.spanned-sexpr-bracket-list
                     (reader.spanned-sexpr-list4
                       (macro-spanned-symbol-id
                         (macro-output-source-identity-id-at
-                          session
+                          (macro-sexpr-session owner)
                           name
                           "typed-let-binding")
                         span)
@@ -91032,13 +91072,13 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-let-tail
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [bindings : ast.AstLetBindingList]
   [body : reader.SpannedSexpr]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-let-tail-at
-    session
+    owner
     (& bindings)
     body
     span
@@ -91047,7 +91087,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-let-tail-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [bindings : (& bindings ast.AstLetBindingList)]
   [body : reader.SpannedSexpr]
   [span : token.SourceSpan]
@@ -91060,7 +91100,7 @@
         (reader.spanned-sexpr-builder-push builder body)
         span))
     (match (macro-let-binding-bracket
-      session
+      owner
       (ast.ast-let-binding-list-get
         bindings
         index
@@ -91069,7 +91109,7 @@
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok sbracket)
         (macro-let-tail-at
-          session
+          owner
           bindings
           body
           span
@@ -91082,12 +91122,12 @@
           (ResultMacroSexpr.Err diag))])))
 
 (define (macro-expr-list-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [exprs : ast.AstExprList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-expr-list-to-spanned-sexpr-at
-    session
+    owner
     (& exprs)
     0
     span
@@ -91095,7 +91135,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-expr-list-to-spanned-sexpr-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [span : token.SourceSpan]
@@ -91105,15 +91145,17 @@
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (ast.ast-expr-segment-bases-get
+          owner.expr-bases
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-expr-to-spanned-sexpr-with-span
-        session
+        owner
         head-expr
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok shead)
           (macro-expr-list-to-spanned-sexpr-at
-            session
+            owner
             exprs
             (+ index 1)
             span
@@ -91125,27 +91167,30 @@
             (ResultMacroSexpr.Err diag))]))))
 
 (define (macro-call-head-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box ast-span)
       (macro-call-head-to-spanned-sexpr
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         (macro-source-span-from-ast ast-span)
         origin)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-call-head-to-spanned-sexpr
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         span
         origin)]
     [(ast.AstExpr.Var name-id)
       (let
         [source-id : i64
-          (macro-output-syntax-id-at session name-id "call-head")]
+          (macro-output-syntax-id-at
+            (macro-sexpr-session owner)
+            name-id
+            "call-head")]
         [tag : i64
           (parser.compiler-parse-dispatch-tag-id
             (parser.compiler-parse-dispatch-env)
@@ -91154,28 +91199,31 @@
           (macro-spanned-symbol-id
             (if (or
               (= tag (parser.compiler-parse-tag-unknown))
-              (macro-hygiene-global-id? session name-id))
-              (macro-output-source-identity-id-at session name-id "call-head")
+              (macro-hygiene-global-id? (macro-sexpr-session owner) name-id))
+              (macro-output-source-identity-id-at
+                (macro-sexpr-session owner)
+                name-id
+                "call-head")
               source-id)
             span)))]
-    [_ (macro-expr-to-spanned-sexpr-with-span session expr span origin)]))
+    [_ (macro-expr-to-spanned-sexpr-with-span owner expr span origin)]))
 
 (define (macro-expr-to-spanned-sexpr-with-span
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match expr
     [(ast.AstExpr.Spanned inner-box ast-span)
       (macro-expr-to-spanned-sexpr-with-span
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         (macro-source-span-from-ast ast-span)
         origin)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-expr-to-spanned-sexpr-with-span
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         span
         origin)]
     [(ast.AstExpr.Literal lit)
@@ -91183,31 +91231,35 @@
     [(ast.AstExpr.Var name)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id
-          (macro-output-source-identity-id-at session name "expr-var")
+          (macro-output-source-identity-id-at
+            (macro-sexpr-session owner)
+            name
+            "expr-var")
           span))]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
         (match (macro-call-head-to-spanned-sexpr
-          session
+          owner
           func
           span
           (tc-global-shared-view origin))
           [(ResultMacroSexpr.Ok head)
-            (match (macro-expr-list-to-spanned-sexpr session args span origin)
+            (match (macro-expr-list-to-spanned-sexpr owner args span origin)
               [(ResultMacroSexpr.Ok tail)
                 (ResultMacroSexpr.Ok
                   (reader.spanned-sexpr-list-prepend head tail span))]
               [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
           [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))]
     [(ast.AstExpr.BracketClause items)
-      (match (macro-expr-list-to-spanned-sexpr session items span origin)
+      (match (macro-expr-list-to-spanned-sexpr owner items span origin)
         [(ResultMacroSexpr.Ok list)
           (ResultMacroSexpr.Ok (reader.spanned-sexpr-bracket-list list span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.If cond-box then-box else-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "if")
         (ast.ast-expr-cons
           cond-box
@@ -91218,82 +91270,82 @@
         origin)]
     [(ast.AstExpr.Begin exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "begin")
         exprs
         span
         origin)]
     [(ast.AstExpr.Unsafe exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "unsafe")
         exprs
         span
         origin)]
     [(ast.AstExpr.Tuple exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "tuple")
         exprs
         span
         origin)]
     [(ast.AstExpr.Array exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "array")
         exprs
         span
         origin)]
     [(ast.AstExpr.DynArray exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (ci.intern "__tl_make-array")
         exprs
         span
         origin)]
     [(ast.AstExpr.Quote inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "quote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Quasiquote inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "quasiquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Unquote inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "unquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "unquote-splicing")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Binary op left-id right-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         left-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sleft)
-          (match (macro-child-to-spanned-sexpr session right-id span origin)
+          (match (macro-child-to-spanned-sexpr owner right-id span origin)
             [(ResultMacroSexpr.Ok sright)
               (ResultMacroSexpr.Ok
                 (macro-form2-id (macro-binop-symbol-id op) sleft sright span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Unary op inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (macro-unop-symbol-id op) sinner span))]
@@ -91302,12 +91354,12 @@
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-id)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             body-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sbody)
-              (match (macro-let-tail session bindings sbody span origin)
+              (match (macro-let-tail owner bindings sbody span origin)
                 [(ResultMacroSexpr.Ok stail)
                   (ResultMacroSexpr.Ok
                     (reader.spanned-sexpr-list-prepend
@@ -91320,12 +91372,12 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.While cond-id body-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         cond-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok scond)
-          (match (macro-child-to-spanned-sexpr session body-id span origin)
+          (match (macro-child-to-spanned-sexpr owner body-id span origin)
             [(ResultMacroSexpr.Ok sbody)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91339,13 +91391,13 @@
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-id arms)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             scrutinee-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sscrutinee)
               (match (macro-match-arm-list-to-spanned-sexpr
-                session
+                owner
                 arms
                 span
                 origin)
@@ -91365,25 +91417,28 @@
                 [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.Set name value-id)
-      (match (macro-child-to-spanned-sexpr session value-id span origin)
+      (match (macro-child-to-spanned-sexpr owner value-id span origin)
         [(ResultMacroSexpr.Ok svalue)
           (ResultMacroSexpr.Ok
             (macro-form2-id
               (cbi.compiler-builtin-ctfe "set!")
               (macro-spanned-symbol-id
-                (macro-output-source-identity-id-at session name "expr-set")
+                (macro-output-source-identity-id-at
+                  (macro-sexpr-session owner)
+                  name
+                  "expr-set")
                 span)
               svalue
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.FixedMakeArray ty-id len-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sty)
-          (match (macro-child-to-spanned-sexpr session len-id span origin)
+          (match (macro-child-to-spanned-sexpr owner len-id span origin)
             [(ResultMacroSexpr.Ok slen)
               (ResultMacroSexpr.Ok
                 (macro-form2-id (ci.intern "make-array") sty slen span))]
@@ -91391,12 +91446,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.MakeArray ty-id len-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sty)
-          (match (macro-child-to-spanned-sexpr session len-id span origin)
+          (match (macro-child-to-spanned-sexpr owner len-id span origin)
             [(ResultMacroSexpr.Ok slen)
               (ResultMacroSexpr.Ok
                 (macro-form2-id (ci.intern "__tl_make-array") sty slen span))]
@@ -91404,12 +91459,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayRef array-id index-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
-          (match (macro-child-to-spanned-sexpr session index-id span origin)
+          (match (macro-child-to-spanned-sexpr owner index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91421,18 +91476,18 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArraySet array-id index-id value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             index-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sindex)
-              (match (macro-child-to-spanned-sexpr session value-id span origin)
+              (match (macro-child-to-spanned-sexpr owner value-id span origin)
                 [(ResultMacroSexpr.Ok svalue)
                   (ResultMacroSexpr.Ok
                     (macro-form3-id
@@ -91446,18 +91501,18 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayTake array-id live-id index-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             live-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok slive)
-              (match (macro-child-to-spanned-sexpr session index-id span origin)
+              (match (macro-child-to-spanned-sexpr owner index-id span origin)
                 [(ResultMacroSexpr.Ok sindex)
                   (ResultMacroSexpr.Ok
                     (macro-form3-id
@@ -91471,16 +91526,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Replace place-id replacement-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         place-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok splace)
-          (match (macro-child-to-spanned-sexpr
-            session
-            replacement-id
-            span
-            origin)
+          (match (macro-child-to-spanned-sexpr owner replacement-id span origin)
             [(ResultMacroSexpr.Ok sreplacement)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91492,12 +91543,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayPush array-id value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
-          (match (macro-child-to-spanned-sexpr session value-id span origin)
+          (match (macro-child-to-spanned-sexpr owner value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91509,12 +91560,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StringRef string-id index-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         string-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sstring)
-          (match (macro-child-to-spanned-sexpr session index-id span origin)
+          (match (macro-child-to-spanned-sexpr owner index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91525,7 +91576,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StructGet receiver-id field)
-      (match (macro-child-to-spanned-sexpr session receiver-id span origin)
+      (match (macro-child-to-spanned-sexpr owner receiver-id span origin)
         [(ResultMacroSexpr.Ok sreceiver)
           (ResultMacroSexpr.Ok
             (macro-form2-id
@@ -91536,12 +91587,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StructSet receiver-id field value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         receiver-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sreceiver)
-          (match (macro-child-to-spanned-sexpr session value-id span origin)
+          (match (macro-child-to-spanned-sexpr owner value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
               (let
                 [starget : reader.SpannedSexpr
@@ -91572,13 +91623,13 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Cast inner-id ty-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         inner-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr
-            session
+            owner
             (ast.ty-node-get ty-id)
             span
             origin)
@@ -91594,13 +91645,13 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Ann inner-id ty-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         inner-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr
-            session
+            owner
             (ast.ty-node-get ty-id)
             span
             origin)
@@ -91615,7 +91666,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Borrow mutable lifetime-id place-id)
-      (match (macro-child-to-spanned-sexpr session place-id span origin)
+      (match (macro-child-to-spanned-sexpr owner place-id span origin)
         [(ResultMacroSexpr.Ok splace)
           (let
             [head-id : i64
@@ -91634,43 +91685,43 @@
                     span))]))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Return inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe "return") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Try inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe "try") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Box inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe "box") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxGet inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (ci.intern "__tl_box-get") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxTake inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (ci.intern "__tl_box-take") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxSet receiver-id value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         receiver-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sreceiver)
-          (match (macro-child-to-spanned-sexpr session value-id span origin)
+          (match (macro-child-to-spanned-sexpr owner value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91681,7 +91732,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.TupleRef tuple-id index)
-      (match (macro-child-to-spanned-sexpr session tuple-id span origin)
+      (match (macro-child-to-spanned-sexpr owner tuple-id span origin)
         [(ResultMacroSexpr.Ok stuple)
           (ResultMacroSexpr.Ok
             (macro-form2-id
@@ -91698,7 +91749,7 @@
               (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "init") span)
               span))]
         [(ast.AstMaybeType.Some ty)
-          (match (macro-type-to-spanned-sexpr session ty span origin)
+          (match (macro-type-to-spanned-sexpr owner ty span origin)
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91709,7 +91760,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.TypeLiteral ty-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         origin)
@@ -91719,7 +91770,7 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNull ty-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         origin)
@@ -91733,28 +91784,28 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNullCheck ptr-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-null?")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrAddrOf place-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-addr-of")
         place-id
         span
         origin)]
     [(ast.AstExpr.PtrRead ptr-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-read")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrWrite ptr-id value-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-write!")
         ptr-id
         value-id
@@ -91762,7 +91813,7 @@
         origin)]
     [(ast.AstExpr.PtrOffset ptr-id offset-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-offset")
         ptr-id
         offset-id
@@ -91770,7 +91821,7 @@
         origin)]
     [(ast.AstExpr.PtrCast ptr-id ty-id)
       (macro-child-type-form3-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-cast")
         ptr-id
         (ast.ty-node-get ty-id)
@@ -91778,14 +91829,14 @@
         origin)]
     [(ast.AstExpr.PtrToInt ptr-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr->int")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.IntToPtr value-id ty-id)
       (macro-child-type-form3-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "int->ptr")
         value-id
         (ast.ty-node-get ty-id)
@@ -91793,14 +91844,14 @@
         origin)]
     [(ast.AstExpr.StringData value-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "string-data")
         value-id
         span
         origin)]
     [(ast.AstExpr.StringFromBytes ptr-id len-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "string-from-bytes")
         ptr-id
         len-id
@@ -91808,7 +91859,7 @@
         origin)]
     [(ast.AstExpr.ArrayData value-id)
       (macro-child-form1-id
-        session
+        owner
         (ci.intern "__tl_array-data")
         value-id
         span
@@ -91833,7 +91884,7 @@
         (macro-form0-id (cbi.compiler-builtin-ctfe "program-envp") span))]
     [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-eax")
         leaf-id
         subleaf-id
@@ -91841,7 +91892,7 @@
         origin)]
     [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-ebx")
         leaf-id
         subleaf-id
@@ -91849,7 +91900,7 @@
         origin)]
     [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-ecx")
         leaf-id
         subleaf-id
@@ -91857,7 +91908,7 @@
         origin)]
     [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-edx")
         leaf-id
         subleaf-id
@@ -91865,14 +91916,14 @@
         origin)]
     [(ast.AstExpr.Xgetbv index-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "xgetbv")
         index-id
         span
         origin)]
     [(ast.AstExpr.Syscall args)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "syscall")
         args
         span
@@ -91885,11 +91936,11 @@
             "typecheck: module macro output contains syntax that cannot be parsed as a declaration")))]))
 
 (define (macro-expr-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span
-    session
+    owner
     expr
     (macro-zero-source-span)
     origin))
@@ -91910,14 +91961,14 @@
         (box (macro-output-syntax-diag origin message)))]))
 
 (define (macro-parse-decls-from-one-expr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr
-      session
+      owner
       expr
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok form)
@@ -91936,14 +91987,14 @@
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [exprs : ast.AstExprList]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (macro-parse-decls-from-exprs-at session dispatch (& exprs) 0 origin))
+  (macro-parse-decls-from-exprs-at owner dispatch (& exprs) 0 origin))
 
 (define (macro-parse-decls-from-exprs-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
@@ -91952,9 +92003,11 @@
     (ResultMacroParsedDecls.Ok (ast.ast-decl-list-new))
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (ast.ast-expr-segment-bases-get
+          owner.expr-bases
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-parse-decls-from-expr
-        session
+        owner
         dispatch
         head-expr
         (tc-global-shared-view origin))
@@ -91963,7 +92016,7 @@
             [rest-decls : ast.AstDeclList
               (try
                 (macro-parse-decls-from-exprs-at
-                  session
+                  owner
                   dispatch
                   exprs
                   (+ index 1)
@@ -91973,39 +92026,45 @@
         [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))))
 
 (define (macro-parse-decls-from-expr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    owner.expr-bases
+    (tc-global-shared-view expr))
     [(ast.AstExpr.Begin exprs)
-      (macro-parse-decls-from-exprs session dispatch exprs origin)]
+      (macro-parse-decls-from-exprs owner dispatch exprs origin)]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
-        (match (ast.ast-expr-unspan func)
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
+        (match (ast.ast-expr-unspan-with-segment-bases owner.expr-bases func)
           [(ast.AstExpr.Var name)
             (if (=
               (parser.compiler-parse-dispatch-tag-id
                 dispatch
-                (macro-output-syntax-id-at session name "parse-call-head"))
+                (macro-output-syntax-id-at
+                  (macro-sexpr-session owner)
+                  name
+                  "parse-call-head"))
               (parser.compiler-parse-tag-expr-begin))
-              (macro-parse-decls-from-exprs session dispatch args origin)
-              (macro-parse-decls-from-one-expr session dispatch expr origin))]
-          [_ (macro-parse-decls-from-one-expr session dispatch expr origin)]))]
-    [_ (macro-parse-decls-from-one-expr session dispatch expr origin)]))
+              (macro-parse-decls-from-exprs owner dispatch args origin)
+              (macro-parse-decls-from-one-expr owner dispatch expr origin))]
+          [_ (macro-parse-decls-from-one-expr owner dispatch expr origin)]))]
+    [_ (macro-parse-decls-from-one-expr owner dispatch expr origin)]))
 
 (define (macro-module-decls-from-ctfe-value
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [value : ctfe_support.CompilerCtfeValue]
   [origin : ast.AstExpr]
   [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(ctfe_support.CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr
-        session
+        owner
         dispatch
-        (ast.ast-node-get node)
+        (ast.ast-expr-segment-bases-get owner.expr-bases node)
         origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -92015,16 +92074,16 @@
             "typecheck: Module macro transformer did not produce Expr")))]))
 
 (define (macro-decls-from-ctfe-value
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [value : ctfe_support.CompilerCtfeValue]
   [origin : ast.AstExpr]
   [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(ctfe_support.CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr
-        session
+        owner
         dispatch
-        (ast.ast-node-get node)
+        (ast.ast-expr-segment-bases-get owner.expr-bases node)
         origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -92561,6 +92620,7 @@
           (tc-macro-surface-call-state-data-set! state cache))))))
 
 (define (macro-surface-decl-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [decl : (& decl cload.CompilerLoadSurfaceDecl)]
   [target-module-id : i64]
@@ -92581,11 +92641,12 @@
             -1
             (clone params)
             (clone ret)
-            (ast.ast-node-get body-box)))]
+            (ast.ast-expr-segment-bases-get expr-bases body-box)))]
       [_ (MacroMaybeDecl.No)])
     (MacroMaybeDecl.No)))
 
 (define (macro-surface-decls-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [decls : cload.CompilerLoadSurfaceDeclList]
   [target-module-id : i64]
@@ -92595,6 +92656,7 @@
     (begin
       (while (< index (cload.compiler-load-surface-decl-list-count decls))
         (match (macro-surface-decl-call-decl-in-module
+          expr-bases
           state
           (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)
           target-module-id
@@ -92618,6 +92680,7 @@
       (MacroMaybeDecl.No))))
 
 (define (macro-surface-summaries-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [summaries : cload.CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]
@@ -92632,6 +92695,7 @@
           [summary : cload.CompilerLoadSurfaceSummary
             (cload.compiler-load-surface-summary-list-at summaries index)]
           (match (macro-surface-decls-call-decl-in-module
+            expr-bases
             state
             summary.decls
             target-module-id
@@ -92655,12 +92719,14 @@
       (MacroMaybeDecl.No))))
 
 (define (macro-surface-call-decl-fill-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
   (let
     [result : MacroMaybeDecl
       (match (macro-surface-summaries-call-decl-in-module
+        expr-bases
         state
         (cload.compiler-load-surface-summaries)
         target-module-id
@@ -92710,6 +92776,7 @@
 ;; untouched; only the enum cell moves. Redirected only while a generation is
 ;; live, so every non-generational caller keeps its existing owner.
 (define (macro-surface-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
@@ -92720,12 +92787,14 @@
       [(MacroSurfaceCallDeclCacheLookup.Miss)
         (if (not (macro-generation-any-live? state))
           (macro-surface-call-decl-fill-in-module
+            expr-bases
             state
             target-module-id
             base-id)
           (in-arena
             (arena.Arena (macro-expand-scratch-arena-get state))
             (macro-surface-call-decl-fill-in-module
+              expr-bases
               state
               target-module-id
               base-id)))])))
@@ -93384,10 +93453,11 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.BracketClause items)
       (if (> items.len 0)
-        (match (ast.ast-expr-unspan
+        (match (ast.ast-expr-unspan-with-segment-bases
+          expr-bases
           (ast.ast-expr-segment-bases-get
             expr-bases
             (ast.ast-expr-list-get (& items) 0 0)))
@@ -93418,14 +93488,14 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(ast.AstExpr.Call func-box params)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [with-name : MacroHygieneEnv
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
             [(ast.AstExpr.Var name-id)
               (macro-hygiene-output-bind-id env name-id)]
             [_ env])]
@@ -93435,10 +93505,14 @@
 (define (macro-hygiene-output-declaration-name-env
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(ast.AstExpr.Call func-box _)
-      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
         [_ env])]
     [_ env]))
@@ -93446,7 +93520,9 @@
 (define (macro-hygiene-output-bind-var-expr
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [_ env]))
 
@@ -93467,13 +93543,17 @@
   [expr : ast.AstExpr]
   [pattern-name? : bool]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    (tc-global-shared-view expr))
     [(ast.AstExpr.Var name-id)
       (if pattern-name?
         (macro-hygiene-output-pattern-name-id env name-id)
         (macro-hygiene-output-bind-id env name-id))]
     [(ast.AstExpr.Call func-box _)
-      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id)
           (let
             [source-id : i64
@@ -93485,7 +93565,9 @@
               [(and
                   (ci.intern-colon-keyword-id? source-id)
                   (string.eq (ci.intern-str source-id) ":lifetimes"))
-                (match (ast.ast-expr-unspan expr)
+                (match (ast.ast-expr-unspan-with-segment-bases
+                  (macro-hygiene-expr-segment-bases env)
+                  expr)
                   [(ast.AstExpr.Call _ args)
                     (macro-hygiene-output-bind-var-list-env (& args) 0 env)]
                   [_ env])]
@@ -93520,7 +93602,8 @@
       (macro-hygiene-env-structural-session env)]
     [with-target : MacroHygieneEnv
       (if (> count 0)
-        (match (ast.ast-expr-unspan
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (macro-hygiene-expr-segment-bases env)
           (macro-hygiene-expr-get env (ast.ast-expr-list-get items 0 0)))
           [(ast.AstExpr.Var target-id)
             (macro-hygiene-output-bind-id env target-id)]
@@ -93540,13 +93623,17 @@
           (macro-hygiene-expr-get
             with-target
             (ast.ast-expr-list-get items (- count 1) 0))]
-        (match (ast.ast-expr-unspan as-expr)
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (macro-hygiene-expr-segment-bases env)
+          as-expr)
           [(ast.AstExpr.Var as-id)
             (if (string.eq
               (ci.intern-str
                 (tc-hygiene-template-source-id-or session as-id as-id))
               "as")
-              (match (ast.ast-expr-unspan alias-expr)
+              (match (ast.ast-expr-unspan-with-segment-bases
+                (macro-hygiene-expr-segment-bases env)
+                alias-expr)
                 [(ast.AstExpr.Var alias-id)
                   (macro-hygiene-output-bind-id
                     (macro-hygiene-output-bind-id with-target as-id)
@@ -93555,7 +93642,8 @@
               with-target)]
           [_ with-target]))
       (if (= count 1)
-        (match (ast.ast-expr-unspan
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (macro-hygiene-expr-segment-bases env)
           (macro-hygiene-expr-get with-target (ast.ast-expr-list-get items 0 0)))
           [(ast.AstExpr.Var target-id)
             (let
@@ -93589,7 +93677,9 @@
 (define (macro-hygiene-output-decl-env
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    expr)
     [(ast.AstExpr.Begin items)
       (macro-hygiene-output-decl-list-env (& items) 0 env)]
     [(ast.AstExpr.Unsafe items)
@@ -93597,7 +93687,9 @@
     [(ast.AstExpr.Comptime inner-box)
       (macro-hygiene-output-decl-env (macro-hygiene-expr-get env inner-box) env)]
     [(ast.AstExpr.Call func-box args)
-      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var head-id)
           (let
             [source-head-id : i64
@@ -94953,7 +95045,7 @@
   [func : ast.AstExpr]
   [args : (& args ast.AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
     [(ast.AstExpr.Var head-id)
       (let
         [source-head-id : i64
@@ -95598,7 +95690,7 @@
         (ast.ast-expr-call-with-pools
           env.pools
           (macro-hygiene-expr expr-bases func-box env macro-name depth)
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
             [(ast.AstExpr.Var name-id)
               (if (=
                 (tc-hygiene-template-source-id-or
@@ -96325,18 +96417,20 @@
   512)
 
 (define (macro-decl-from-decl
+  [expr-bases : i64]
   [decl : ast.AstDecl]
   [module-id : i64]
   [declaration-id : i64]) : MacroMaybeDecl
   (match decl
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (MacroMaybeDecl.Some name module-id declaration-id params ret body))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-        (macro-decl-from-decl inner module-id declaration-id))]
+        (macro-decl-from-decl expr-bases inner module-id declaration-id))]
     [_ (MacroMaybeDecl.No)]))
 
 ;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
@@ -96373,6 +96467,7 @@
   (match (csym.compiler-symbols-decl-at-index symbols target)
     [(parser.ResultAstDecl.Ok decl)
       (macro-decl-from-decl
+        (tc-context-expr-bases _ctx)
         decl
         (macro-decl-owner-module-or symbols target module-id)
         target)]
@@ -97752,6 +97847,7 @@
                 call-expr
                 (macro-missing-macro-message name))))])
       (match (macro-surface-call-decl-in-module
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         target-module-id
         base-id)
@@ -98034,6 +98130,7 @@
               body))]
         [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])
       (match (macro-surface-call-decl-in-module
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         target-module-id
         lookup-name-id)
@@ -98059,6 +98156,7 @@
               target-module-id
               lookup-name-id)
             (match (macro-surface-call-decl-in-module
+              (tc-context-expr-bases ctx)
               (tc-context-macro-state ctx)
               target-module-id
               lookup-name-id)
@@ -98221,6 +98319,7 @@
               body))]
         [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])
       (match (macro-surface-call-decl-in-module
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         module-id
         lookup-name-id)
@@ -98858,7 +98957,9 @@
     "; import the module or use a visible dotted module alias"))
 
 (define (macro-module-strategy-arg [ctx : TcContext] [arg : ast.AstExpr]) : ResultMacroModuleArg
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    (tc-global-shared-view arg))
     [(ast.AstExpr.Var name-id)
       (let
         [source-id : i64
@@ -98938,8 +99039,10 @@
       (box
         (ctfe_support.ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))))
 
-(define (macro-expr-clause-from-arg [arg : ast.AstExpr]) : ResultMacroClause
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+(define (macro-expr-clause-from-arg [expr-bases : i64] [arg : ast.AstExpr]) : ResultMacroClause
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
     [(ast.AstExpr.BracketClause items) (macro-expr-clause-from-items arg items)]
     [_
       (ResultMacroClause.Err
@@ -98948,15 +99051,22 @@
             arg
             "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
-(define (macro-expr-clause-list-from-args [args : ast.AstExprList]) : ResultMacroClauseList
+(define (macro-expr-clause-list-from-args
+  [expr-bases : i64]
+  [args : ast.AstExprList]) : ResultMacroClauseList
   (let
     [out : ast.AstExprClauseList
       (ast.ast-expr-clause-list-with-capacity args.len)]
-    (match (macro-expr-clause-list-from-args-into (& args) 0 (&mut out))
+    (match (macro-expr-clause-list-from-args-into
+      expr-bases
+      (& args)
+      0
+      (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroClauseList.Err diag)])))
 
 (define (macro-expr-clause-list-from-args-into
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprClauseList)]) : ResultMacroCheck
@@ -98964,23 +99074,33 @@
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (match (macro-expr-clause-from-arg head-expr)
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get args index 0))]
+      (match (macro-expr-clause-from-arg expr-bases head-expr)
         [(ResultMacroClause.Ok clause)
           (begin
             (ast.ast-expr-clause-list-push out clause)
-            (macro-expr-clause-list-from-args-into args (+ index 1) out))]
+            (macro-expr-clause-list-from-args-into
+              expr-bases
+              args
+              (+ index 1)
+              out))]
         [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
-(define (macro-expr-span-or-zero [arg : ast.AstExpr]) : ast.AstSourceSpan
+(define (macro-expr-span-or-zero [expr-bases : i64] [arg : ast.AstExpr]) : ast.AstSourceSpan
   (match arg
     [(ast.AstExpr.Spanned _ span) span]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-expr-span-or-zero (ast.ast-node-get inner-box))]
+      (macro-expr-span-or-zero
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [_ (ast.ast-source-span 0 0 0 0)]))
 
-(define (macro-expr-colon? [expr-id : i64]) : bool
-  (match (ast.ast-expr-unspan (ast.ast-node-get expr-id))
+(define (macro-expr-colon? [expr-bases : i64] [expr-id : i64]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases expr-id))
     [(ast.AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-colon)]
     [_ false]))
 
@@ -98992,6 +99112,7 @@
         (macro-binding-clause-shape-message)))))
 
 (define (macro-expr-binding-clause-from-name
+  [expr-bases : i64]
   [arg : ast.AstExpr]
   [name : i64]
   [rest : ast.AstExprList]) : ResultMacroBindingClause
@@ -99001,7 +99122,7 @@
       (macro-expr-binding-clause-shape-error arg)
       (let
         [first : i64 (ast.ast-expr-list-get (& rest) 0 0)]
-        (if (macro-expr-colon? first)
+        (if (macro-expr-colon? expr-bases first)
           (if (= len 3)
             (ResultMacroBindingClause.Ok
               (ast.ast-expr-binding-clause-id
@@ -99010,7 +99131,7 @@
                 (ast.ast-expr-list-get (& rest) 1 0)
                 (ast.ast-expr-list-get (& rest) 2 0)
                 (ctfe_support.ctfe-untyped-expr-type)
-                (macro-expr-span-or-zero arg)))
+                (macro-expr-span-or-zero expr-bases arg)))
             (macro-expr-binding-clause-shape-error arg))
           (if (= len 1)
             (ResultMacroBindingClause.Ok
@@ -99020,28 +99141,36 @@
                 (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
                 first
                 (ctfe_support.ctfe-untyped-expr-type)
-                (macro-expr-span-or-zero arg)))
+                (macro-expr-span-or-zero expr-bases arg)))
             (macro-expr-binding-clause-shape-error arg)))))))
 
 (define (macro-expr-binding-clause-from-items
+  [expr-bases : i64]
   [arg : ast.AstExpr]
   [items : ast.AstExprList]) : ResultMacroBindingClause
   (if (ast.ast-expr-list-empty? (& items))
     (macro-expr-binding-clause-shape-error arg)
     (let
       [name-expr : i64 (ast.ast-expr-list-get (& items) 0 0)]
-      (match (ast.ast-expr-unspan (ast.ast-node-get name-expr))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases name-expr))
         [(ast.AstExpr.Var name)
           (macro-expr-binding-clause-from-name
+            expr-bases
             arg
             name
             (ast.ast-expr-list-tail-from-ref (& items) 1))]
         [_ (macro-expr-binding-clause-shape-error arg)]))))
 
-(define (macro-expr-binding-clause-from-arg [arg : ast.AstExpr]) : ResultMacroBindingClause
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+(define (macro-expr-binding-clause-from-arg
+  [expr-bases : i64]
+  [arg : ast.AstExpr]) : ResultMacroBindingClause
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
     [(ast.AstExpr.BracketClause items)
-      (macro-expr-binding-clause-from-items arg items)]
+      (macro-expr-binding-clause-from-items expr-bases arg items)]
     [_
       (ResultMacroBindingClause.Err
         (box
@@ -99049,15 +99178,22 @@
             arg
             "typecheck: ExprBindingClause macro operand expects bracket syntax")))]))
 
-(define (macro-expr-binding-clause-list-from-args [args : ast.AstExprList]) : ResultMacroBindingClauseList
+(define (macro-expr-binding-clause-list-from-args
+  [expr-bases : i64]
+  [args : ast.AstExprList]) : ResultMacroBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity args.len)]
-    (match (macro-expr-binding-clause-list-from-args-into (& args) 0 (&mut out))
+    (match (macro-expr-binding-clause-list-from-args-into
+      expr-bases
+      (& args)
+      0
+      (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroBindingClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
 
 (define (macro-expr-binding-clause-list-from-args-into
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprBindingClauseList)]) : ResultMacroCheck
@@ -99065,21 +99201,29 @@
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (match (macro-expr-binding-clause-from-arg head-expr)
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get args index 0))]
+      (match (macro-expr-binding-clause-from-arg expr-bases head-expr)
         [(ResultMacroBindingClause.Ok clause)
           (begin
             (ast.ast-expr-binding-clause-list-push out clause)
-            (macro-expr-binding-clause-list-from-args-into args (+ index 1) out))]
+            (macro-expr-binding-clause-list-from-args-into
+              expr-bases
+              args
+              (+ index 1)
+              out))]
         [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-expr-binding-clause-prefix-from-args
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [start : i64]) : ResultMacroBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity (- args.len start))]
     (match (macro-expr-binding-clause-prefix-from-args-into
+      expr-bases
       args
       start
       (&mut out))
@@ -99087,6 +99231,7 @@
       [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
 
 (define (macro-expr-binding-clause-prefix-from-args-into
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprBindingClauseList)]) : ResultMacroCheck
@@ -99094,14 +99239,19 @@
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (match (ast.ast-expr-unspan (tc-global-shared-view head-expr))
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get args index 0))]
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (tc-global-shared-view head-expr))
         [(ast.AstExpr.BracketClause _)
-          (match (macro-expr-binding-clause-from-arg head-expr)
+          (match (macro-expr-binding-clause-from-arg expr-bases head-expr)
             [(ResultMacroBindingClause.Ok clause)
               (begin
                 (ast.ast-expr-binding-clause-list-push out clause)
                 (macro-expr-binding-clause-prefix-from-args-into
+                  expr-bases
                   args
                   (+ index 1)
                   out))]
@@ -99190,8 +99340,8 @@
         (tc-dotted-macro-journal-restore-to! macro-state journal-mark)
         result))))
 
-(define (macro-operand-bracket-clause? [arg : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan arg)
+(define (macro-operand-bracket-clause? [expr-bases : i64] [arg : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
     [(ast.AstExpr.BracketClause _) true]
     [_ false]))
 
@@ -99230,15 +99380,19 @@
   [arg : ast.AstExpr]) : ResultMacroCheck
   (cond
     [(tc-macro-expr-clause-type? (tc-global-shared-view resolved-expected))
-      (match (macro-expr-clause-from-arg arg)
+      (match (macro-expr-clause-from-arg (tc-context-expr-bases ctx) arg)
         [(ResultMacroClause.Ok _) ResultMacroCheck.Ok]
         [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)])]
     [(tc-macro-expr-binding-clause-type?
         (tc-global-shared-view resolved-expected))
-      (match (macro-expr-binding-clause-from-arg arg)
+      (match (macro-expr-binding-clause-from-arg
+        (tc-context-expr-bases ctx)
+        arg)
         [(ResultMacroBindingClause.Ok _) ResultMacroCheck.Ok]
         [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)])]
-    [(macro-operand-bracket-clause? (tc-global-shared-view arg))
+    [(macro-operand-bracket-clause?
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view arg))
       (ResultMacroCheck.Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
@@ -99684,7 +99838,8 @@
         (tc-global-shared-view ty))
       (let
         [clauses : ast.AstExprClauseList
-          (try (macro-expr-clause-list-from-args args))]
+          (try
+            (macro-expr-clause-list-from-args (tc-context-expr-bases ctx) args))]
         (ResultMacroCapturedValue.Ok
           (macro-captured-expr-clause-list-value
             ctx
@@ -99697,7 +99852,10 @@
         (tc-global-shared-view ty))
       (let
         [clauses : ast.AstExprBindingClauseList
-          (try (macro-expr-binding-clause-list-from-args args))]
+          (try
+            (macro-expr-binding-clause-list-from-args
+              (tc-context-expr-bases ctx)
+              args))]
         (ResultMacroCapturedValue.Ok
           (macro-captured-binding-clause-list-value
             ctx
@@ -99890,7 +100048,10 @@
               (tc-global-shared-view resolved-expected))
             (let
               [clause : ast.AstExprClause
-                (try (macro-expr-clause-from-arg arg-expr))]
+                (try
+                  (macro-expr-clause-from-arg
+                    (tc-context-expr-bases ctx)
+                    arg-expr))]
               (ResultMacroCapturedValue.Ok
                 (ctfe_support.CompilerCtfeValue.ExprClause
                   (macro-caller-origin-expr-clause ctx clause))))]
@@ -99898,7 +100059,10 @@
               (tc-global-shared-view resolved-expected))
             (let
               [clause : ast.AstExprBindingClause
-                (try (macro-expr-binding-clause-from-arg arg-expr))]
+                (try
+                  (macro-expr-binding-clause-from-arg
+                    (tc-context-expr-bases ctx)
+                    arg-expr))]
               (ResultMacroCapturedValue.Ok
                 (ctfe_support.CompilerCtfeValue.ExprBindingClause
                   (macro-captured-binding-clause
@@ -100070,6 +100234,7 @@
                   [clauses : ast.AstExprBindingClauseList
                     (try
                       (macro-expr-binding-clause-prefix-from-args
+                        (tc-context-expr-bases ctx)
                         args
                         arg-index))]
                   ;; Capture this definition-owned flag before typing a
@@ -100271,6 +100436,7 @@
                 fallback-module-id
                 pty)
                 (match (macro-expr-binding-clause-prefix-from-args
+                  (tc-context-expr-bases ctx)
                   args
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
@@ -102150,8 +102316,8 @@
           [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
           [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])])))
 
-(define (macro-binding-prefix-form? [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan expr)
+(define (macro-binding-prefix-form? [expr-bases : i64] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.BracketClause _) true]
     [_ false]))
 
@@ -102236,7 +102402,9 @@
     (let
       [head-id : i64 (ast.ast-expr-list-get args index 0)]
       [head : ast.AstExpr (tc-context-expr-get ctx head-id)]
-      (if (macro-binding-prefix-form? (tc-global-shared-view head))
+      (if (macro-binding-prefix-form?
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view head))
         (match (macro-expand-binding-prefix-form
           ctx
           type-env
@@ -103474,7 +103642,9 @@
   (let
     [structural-session : cis.InternStructuralSessionHandle
       (tc-context-structural-session ctx)]
-    (match (ast.ast-expr-unspan func)
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-bases ctx)
+      func)
       [(ast.AstExpr.Var name)
         (if (or
           (macro-hygiene-global-id? structural-session name)
@@ -103651,6 +103821,7 @@
         [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
         [callee-maybe-macro : bool
           (macro-call-callee-maybe-macro?
+            (tc-context-expr-bases ctx)
             (tc-context-macro-state ctx)
             (tc-global-shared-view func))]
         (if callee-maybe-macro
@@ -104852,9 +105023,13 @@
   [call-expr : ast.AstExpr]) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
     (tc-global-shared-view call-expr)
-    (match (ast.ast-expr-unspan call-expr)
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-bases ctx)
+      call-expr)
       [(ast.AstExpr.Call head-id _)
-        (match (ast.ast-expr-unspan (tc-context-expr-get ctx head-id))
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx head-id))
           [(ast.AstExpr.Var name-id)
             (macro-call-not-macro-message ctx decls module-id name-id)]
           [_ "typecheck: module-scope macro call has a non-symbol head"])]
@@ -105356,9 +105531,13 @@
                                         [parse-dispatch : sym_i64_env.SymI64Env
                                           (parser.compiler-parse-dispatch-env-from-cfg
                                             cfgs)]
+                                        [sexpr-owner : MacroSexprOwner
+                                          (macro-sexpr-owner
+                                            (tc-context-expr-bases call-ctx)
+                                            (tc-context-structural-session
+                                              call-ctx))]
                                         (match (macro-decls-from-ctfe-value
-                                          (tc-context-structural-session
-                                            call-ctx)
+                                          (& sexpr-owner)
                                           (macro-hygiene-ctfe-output
                                             (tc-context-macro-state call-ctx)
                                             (ctfe_support.ctfe-env-syntax-pool-context
@@ -105414,6 +105593,7 @@
                                                         macro-name
                                                         definition-module)))
                                                   (macro-expr-span-or-zero
+                                                    (tc-context-expr-bases ctx)
                                                     (tc-global-shared-view
                                                       call-expr)))]
                                               (macro-decls-splice-with-memo
@@ -105638,9 +105818,14 @@
                                               [parse-dispatch : sym_i64_env.SymI64Env
                                                 (parser.compiler-parse-dispatch-env-from-cfg
                                                   cfgs)]
+                                              [sexpr-owner : MacroSexprOwner
+                                                (macro-sexpr-owner
+                                                  (tc-context-expr-bases
+                                                    call-ctx)
+                                                  (tc-context-structural-session
+                                                    call-ctx))]
                                               (match (macro-module-decls-from-ctfe-value
-                                                (tc-context-structural-session
-                                                  call-ctx)
+                                                (& sexpr-owner)
                                                 (macro-hygiene-ctfe-output
                                                   (tc-context-macro-state
                                                     call-ctx)
@@ -106405,13 +106590,20 @@
 ;; non-variable callees (which `macro-call-decl` also treats as non-macro).
 ;; Allocation-free for plain unqualified names -- the hot path for the pre-filter.
 (define (macro-call-callee-name
+  [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [func : ast.AstExpr]) : TcMaybeString
   (match func
     [(ast.AstExpr.Spanned inner-box _)
-      (macro-call-callee-name session (ast.ast-node-get inner-box))]
+      (macro-call-callee-name
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-call-callee-name session (ast.ast-node-get inner-box))]
+      (macro-call-callee-name
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Var name)
       (let
         [name-text : String (tc-env-key-display session name)]
@@ -106458,13 +106650,20 @@
     (or (string.eq base "when") (string.eq base "unless"))))
 
 (define (macro-call-callee-base-name-id
+  [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [func : ast.AstExpr]) : TcMaybeNameId
   (match func
     [(ast.AstExpr.Spanned inner-box _)
-      (macro-call-callee-base-name-id session (ast.ast-node-get inner-box))]
+      (macro-call-callee-base-name-id
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-call-callee-base-name-id session (ast.ast-node-get inner-box))]
+      (macro-call-callee-base-name-id
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Var name-id)
       (cond
         [(csym.compiler-composite-triple-key-id? name-id)
@@ -106493,9 +106692,11 @@
     [_ TcMaybeNameId.No]))
 
 (define (macro-call-callee-maybe-macro?
+  [expr-bases : i64]
   [state : TcMacroState]
   [func : ast.AstExpr]) : bool
   (match (macro-call-callee-base-name-id
+    expr-bases
     (tc-macro-state-structural-session state)
     (tc-global-shared-view func))
     [(TcMaybeNameId.Some base-id)
@@ -106508,6 +106709,7 @@
           (= base-id cbi.compiler-builtin-id-fix-unless)))]
     [TcMaybeNameId.No
       (match (macro-call-callee-name
+        expr-bases
         (tc-macro-state-structural-session state)
         func)
         [(TcMaybeString.Some name) (macro-call-name-maybe-macro? name)]
@@ -106519,6 +106721,7 @@
   [func : ast.AstExpr]
   [call-expr : ast.AstExpr]) : bool
   (match (macro-call-callee-name
+    (tc-context-expr-bases ctx)
     (tc-context-structural-session ctx)
     (tc-global-shared-view func))
     [(TcMaybeString.Some name)
@@ -106527,6 +106730,7 @@
       ;; `string.length` on the cheap path while still resolving qualified macro
       ;; calls through `macro-call-decl`.
       (if (macro-call-callee-maybe-macro?
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         (tc-global-shared-view func))
         (match (macro-call-decl ctx func decls call-expr)
@@ -106838,7 +107042,10 @@
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
-          (macro-call-callee-maybe-macro? state (tc-global-shared-view func))
+          (macro-call-callee-maybe-macro?
+            expr-bases
+            state
+            (tc-global-shared-view func))
           (macro-expr-might-fire? state expr-bases func)
           (macro-expr-list-might-fire? state expr-bases args)))]
     [(ast.AstExpr.BracketClause items)

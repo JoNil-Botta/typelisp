@@ -184,18 +184,6 @@
       "alpha beta"
       "append order")
     (let
-      [items : (__tl_dyn-array String) (__tl_make-array String 5)]
-      (begin
-        (set! (array-ref items 0) "skip")
-        (set! (array-ref items 1) "alpha")
-        (set! (array-ref items 2) "")
-        (set! (array-ref items 3) "-beta")
-        (set! (array-ref items 4) "skip")
-        (test.assert-owned-string-eq
-          (stdlib.text_buf.chunks-render-array-range items 1 4)
-          "alpha-beta"
-          "array range render keeps order with empty chunks")))
-    (let
       [buf : TextBuf (stdlib.text_buf.empty)]
       (begin
         (stdlib.text_buf.append! buf "")

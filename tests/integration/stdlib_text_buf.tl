@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.byte_buf)
+(import stdlib.profile)
 
 (define (text-buf-integration-ok?) : bool
   (let
@@ -377,6 +378,112 @@
     [readback : String (byte_buf.to-string (io.read-file path))]
     (and (= status io.io-status-ok) (= (string-length (& readback)) 2097152))))
 
+;; Write `buf`, read the file back and compare it with the rendered buffer.
+(define (text-buf-write-matches-render?
+  [path : String]
+  [buf : text_buf.TextBuf]) : bool
+  (let
+    [status : i64 (text_buf.write-file (& path) buf)]
+    [readback : String (byte_buf.to-string (io.read-file path))]
+    (and (= status io.io-status-ok) (string.eq readback (text_buf.render buf)))))
+
+;; A distinct `size`-byte chunk for position `index`: its number, then filler
+;; built by doubling.
+(define (text-buf-numbered-chunk [index : i64] [size : i64]) : String
+  (let
+    [number : String (string.int->string index)]
+    [head : String (string.append (& number) ":")]
+    [filler : String "-"]
+    (begin
+      (while (< (string-length (& filler)) size)
+        (set! filler (string.append (& filler) (& filler))))
+      (let
+        [chunk : String (string.append (& head) (& filler))]
+        (string.substring (& chunk) 0 size)))))
+
+(define (text-buf-small-chunks [count : i64] [size : i64]) : text_buf.TextBuf
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (text_buf.append! buf (text-buf-numbered-chunk index size))
+          (set! index (+ index 1))))
+      buf)))
+
+(define (text-buf-write-shapes-integration-ok?) : i64
+  (let
+    [big : String (text-buf-large-text 21)]
+    [mixed : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.append
+          (text_buf.append (text-buf-small-chunks 50 1000) big)
+          "after-big")
+        "end")]
+    [reused : text_buf.TextBuf (text-buf-small-chunks 300 4000)]
+    [_clear : unit (text_buf.clear-ref! (&mut reused))]
+    [_refill : unit
+      (begin
+        (text_buf.append! reused "fresh ")
+        (text_buf.append! reused "content"))]
+    [prefix : text_buf.TextBuf (text-buf-small-chunks 5 10)]
+    [extended : text_buf.TextBuf
+      (unsafe
+        (ptr-read (ptr-addr-of prefix)))]
+    [_extend : unit (text_buf.append! extended "not-in-prefix")]
+    [missing-path : String "target/stdlib-text-buf-missing-dir/out.txt"]
+    [nothing : text_buf.TextBuf (text_buf.empty)]
+    (cond
+      [(not
+          (text-buf-write-matches-render?
+            "target/stdlib-text-buf-write-empty.txt"
+            (text_buf.empty)))
+        17]
+      [(not
+          (text-buf-write-matches-render?
+            "target/stdlib-text-buf-write-inline.txt"
+            (text_buf.append (text_buf.empty) "only")))
+        18]
+      [(not
+          (text-buf-write-matches-render?
+            "target/stdlib-text-buf-write-small.txt"
+            (text-buf-small-chunks 4000 997)))
+        19]
+      [(not
+          (text-buf-write-matches-render?
+            "target/stdlib-text-buf-write-mixed.txt"
+            mixed))
+        20]
+      [(not
+          (text-buf-write-matches-render?
+            "target/stdlib-text-buf-write-reused.txt"
+            reused))
+        21]
+      [(not
+          (and
+            (= (text_buf.length (& prefix)) 50)
+            (text-buf-write-matches-render?
+              "target/stdlib-text-buf-write-prefix.txt"
+              prefix)))
+        22]
+      [(not (= (text_buf.write-file (& missing-path) nothing) 1)) 23]
+      [else 0])))
+
+;; Writing a buffer of more than eight batches allocates a bounded batch, not
+;; copies of the buffer.
+(define (text-buf-write-file-bounded-allocation-ok?) : bool
+  (let
+    [buf : text_buf.TextBuf (text-buf-small-chunks 136 65536)]
+    [before : i64 (profile.alloc-total)]
+    [status : i64
+      (text_buf.write-file "target/stdlib-text-buf-write-bounded.txt" buf)]
+    [allocated : i64 (- (profile.alloc-total) before)]
+    (and
+      (= status io.io-status-ok)
+      (> (text_buf.length (& buf)) (* 8 (text_buf.batched-write-threshold)))
+      (< allocated (* 3 (text_buf.batched-write-threshold))))))
+
 (define (main) : i64
   (begin
     (unless (text-buf-integration-ok?) (return 2))
@@ -394,4 +501,8 @@
     (unless (text-buf-owned-clone-out-integration-ok?) (return 14))
     (unless (text-buf-batched-write-file-integration-ok?) (return 15))
     (unless (text-buf-oversized-chunk-write-file-integration-ok?) (return 16))
+    (let
+      [shapes : i64 (text-buf-write-shapes-integration-ok?)]
+      (unless (= shapes 0) (return shapes)))
+    (unless (text-buf-write-file-bounded-allocation-ok?) (return 24))
     42))

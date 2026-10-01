@@ -220,8 +220,8 @@ inline test in `src/tests/compiler_typecheck_core_tests.tl` gives three pools
 identical node IDs
 but different literal kinds and source positions, installs an unrelated owner,
 and checks integer/f32 results plus f32 overflow rejection. It also checks
-the explicit compatibility-pool route and the canonical/sparse-view span
-oracle. Keep those owner and source-view checks when changing literal walkers or
+that an active compatibility pool context does not redirect typechecker reads,
+and the canonical/sparse-view span oracle. Keep those owner and source-view checks when changing literal walkers or
 their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
 read.
 

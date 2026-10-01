@@ -46850,6 +46850,128 @@
               (set! slot (+ slot 1))))
           any))]))
 
+;; --- per-round generations --------------------------------------------------
+;; A fixpoint whose every round rebuilds the block list it carries would keep
+;; each rebuild until the function escapes. `OptRoundRegions` keeps two: a round
+;; works in the work arena, reset when the next round enters it, and the list it
+;; leaves is copied into whichever home does not hold the previous list, after
+;; which that home is reset. Nothing a round allocates outlives it except through
+;; that copy, the rule the per-function scratch already imposes on a function.
+(defstruct OptRoundRegions
+  (outer i64)
+  ;; The work arena, then the two homes, with the marks that empty them.
+  (arenas (__tl_dyn-array i64))
+  (marks (__tl_dyn-array i64))
+  ;; 1 or 2 while a home holds the carried list, 0 while the caller's arena does.
+  (holder i64))
+
+(define (opt-round-regions-new) : OptRoundRegions
+  (let
+    [outer : i64 (arena.tl_arena_current)]
+    [arenas : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [marks : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [slot : i64 0]
+    (begin
+      (while (< slot 3)
+        (let
+          [handle : i64 (arena.tl_arena_make)]
+          (begin
+            (set! (array-ref arenas slot) handle)
+            (unsafe
+              (arena.tl_arena_set handle))
+            (set! (array-ref marks slot) (arena.tl_region_mark))
+            (set! slot (+ slot 1)))))
+      (unsafe
+        (arena.tl_arena_set outer))
+      (OptRoundRegions outer arenas marks 0))))
+
+;; Make arena SLOT current and empty.
+(define (opt-round-regions-enter!
+  [regions : (& regions OptRoundRegions)]
+  [slot : i64]) : unit
+  (unsafe
+    (begin
+      (arena.tl_arena_set (array-ref regions.arenas slot))
+      (arena.tl_region_reset (array-ref regions.marks slot)))))
+
+(define (opt-round-regions-enter-work! [regions : (& regions OptRoundRegions)]) : unit
+  (opt-round-regions-enter! regions 0))
+
+;; Empty and enter the home that does not hold the carried list; the caller then
+;; copies the next list into it and commits.
+(define (opt-round-regions-enter-next-home!
+  [regions : (&mut regions OptRoundRegions)]) : unit
+  (opt-round-regions-enter!
+    regions
+    (if (= regions.holder 1)
+      2
+      1)))
+
+;; The copy just made is the carried list: empty the home that held the previous
+;; one, then return to the work arena.
+(define (opt-round-regions-commit! [regions : (&mut regions OptRoundRegions)]) : unit
+  (let
+    [previous : i64 regions.holder]
+    (begin
+      (set!
+        regions.holder
+        (if (= previous 1)
+          2
+          1))
+      (when (> previous 0) (opt-round-regions-enter! regions previous))
+      (unsafe
+        (arena.tl_arena_set (array-ref regions.arenas 0))))))
+
+(define (opt-round-regions-held? [regions : (& regions OptRoundRegions)]) : bool
+  (> regions.holder 0))
+
+(define (opt-round-regions-enter-outer! [regions : (& regions OptRoundRegions)]) : unit
+  (unsafe
+    (arena.tl_arena_set regions.outer)))
+
+;; Destroy the regions; a held list must already have been copied out.
+(define (opt-round-regions-destroy! [regions : (& regions OptRoundRegions)]) : unit
+  (let
+    [slot : i64 0]
+    (begin
+      (unsafe
+        (arena.tl_arena_set regions.outer))
+      (while (< slot 3)
+        (begin
+          (unsafe
+            (arena.tl_arena_destroy (array-ref regions.arenas slot)))
+          (set! slot (+ slot 1)))))))
+
+;; A list moving between regions is copied with every block, instruction and
+;; container it holds. Its types, values and symbols are shared: no round creates
+;; them, so they predate the regions. The copy keeps the list's representation.
+(define (opt-round-copy-instr-seq [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [out : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr count)]
+    [no-remap : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue 0)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (opt-region-clone-instr
+              (compiler-opt-global-shared-view no-remap)
+              (OptCloneLabels.Keep)
+              (compiler-opt-global-array-element-shared-view slots index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq out count))))
+
+(define (opt-round-copy-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Array _)
+      (opt-blocks-map-seq-array blocks opt-round-copy-instr-seq)]
+    [_ (opt-blocks-map-seq blocks opt-round-copy-instr-seq)]))
+
 ;; The dominator tree is what the live-out rule reads when a definition is not
 ;; edge-local (`opt-thread-def-blocked`); it is built once per round, from the
 ;; same index the round's predecessor rows come from, and a round only runs at
@@ -46887,36 +47009,75 @@
 (define (opt-thread-const-branch-fuel) : i64
   64)
 
-(define (opt-thread-const-branch-blocks-raw
+;; Rounds after the first. Each runs in the regions' reset work arena, and the
+;; list it leaves moves into the other home; the list that ends the fixpoint is
+;; copied back into the caller's arena. Round order, decisions and fuel are those
+;; of a plain recursion over the same lists.
+(define (opt-thread-const-branch-later-rounds
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
-  [remaining : i64]) : OptBlockListPassResult
+  [remaining : i64]) : ir.CompilerIrBlockList
   (if (<= remaining 0)
-    (OptBlockListPassResult.Result blocks false)
-    (if (opt-thread-const-branch-round!
-      type-segment-bases
-      (compiler-opt-global-shared-view blocks)
-      frame)
-      (match (opt-thread-const-branch-blocks-raw
-        type-segment-bases
-        (opt-cfg-simplify-blocks blocks)
-        frame
-        (- remaining 1))
-        [(OptBlockListPassResult.Result next _)
-          (OptBlockListPassResult.Result next true)])
-      (OptBlockListPassResult.Result blocks false))))
+    blocks
+    (let
+      [regions : OptRoundRegions (opt-round-regions-new)]
+      [current : ir.CompilerIrBlockList blocks]
+      [left : i64 remaining]
+      [running? : bool true]
+      (begin
+        (while running?
+          (begin
+            (opt-round-regions-enter-work! (& regions))
+            (if (and
+              (> left 0)
+              (opt-thread-const-branch-round!
+                type-segment-bases
+                (compiler-opt-global-shared-view current)
+                frame))
+              (let
+                [next : ir.CompilerIrBlockList
+                  (opt-cfg-simplify-blocks
+                    (compiler-opt-global-shared-view current))]
+                (begin
+                  (opt-round-regions-enter-next-home! (&mut regions))
+                  (set! current (opt-round-copy-blocks next))
+                  (opt-round-regions-commit! (&mut regions))
+                  (set! left (- left 1))))
+              (set! running? false))))
+        (opt-round-regions-enter-outer! (& regions))
+        (let
+          [result : ir.CompilerIrBlockList
+            (if (opt-round-regions-held? (& regions))
+              (opt-round-copy-blocks (compiler-opt-global-shared-view current))
+              current)]
+          (begin
+            (opt-round-regions-destroy! (& regions))
+            result))))))
 
+;; The first round runs in the caller's arena, so a function that threads once
+;; costs what it always did; every later round runs in `OptRoundRegions`.
 (define (opt-thread-const-branch-blocks
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBlockListPassResult
-  (opt-thread-const-branch-blocks-raw
-    type-segment-bases
-    (opt-bool-branch-clone-blocks blocks)
-    frame
-    remaining))
+  (let
+    [first : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
+    (if (and
+      (> remaining 0)
+      (opt-thread-const-branch-round!
+        type-segment-bases
+        (compiler-opt-global-shared-view first)
+        frame))
+      (OptBlockListPassResult.Result
+        (opt-thread-const-branch-later-rounds
+          type-segment-bases
+          (opt-cfg-simplify-blocks first)
+          frame
+          (- remaining 1))
+        true)
+      (OptBlockListPassResult.Result first false))))
 
 (define (opt-thread-phi-block-candidate?
   [type-segment-bases : i64]

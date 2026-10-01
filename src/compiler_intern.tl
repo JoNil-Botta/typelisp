@@ -907,6 +907,37 @@
       (ptr-cast (__tl_array-data ,from) : (Ptr u8))
       ,bytes)))
 
+;; Structural generation arenas this process has made and destroyed; made
+;; minus destroyed is the number still live.
+(define intern-structural-generations-made : i64
+  0)
+(define intern-structural-generations-destroyed : i64
+  0)
+
+(define (intern-structural-generation-make!) : i64
+  (begin
+    (set!
+      intern-structural-generations-made
+      (+ intern-structural-generations-made 1))
+    (tl_arena_make)))
+
+(define (intern-structural-generation-destroy! [generation : i64]) : unit
+  (if (= generation 0)
+    unit
+    (begin
+      (set!
+        intern-structural-generations-destroyed
+        (+ intern-structural-generations-destroyed 1))
+      (unsafe
+        (tl_arena_destroy generation)))))
+
+;; Compatibility-only observation for lifetime tests.
+(define (intern-structural-generations-made-count) : i64
+  intern-structural-generations-made)
+
+(define (intern-structural-generations-live) : i64
+  (- intern-structural-generations-made intern-structural-generations-destroyed))
+
 (define (intern-structural-table-grow-records!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
   (let
@@ -915,7 +946,7 @@
     [old-capacity : i64 (array-length table.kinds)]
     [new-capacity : i64 (* old-capacity 2)]
     [retired : i64 table.records-arena]
-    [generation : i64 (tl_arena_make)]
+    [generation : i64 (intern-structural-generation-make!)]
     (begin
       (in-arena
         (arena.Arena generation)
@@ -970,10 +1001,7 @@
                   (intern-i64-array-address next-rights)))
               unit))))
       (set! table.records-arena generation)
-      (if (= retired 0)
-        unit
-        (unsafe
-          (tl_arena_destroy retired))))))
+      (intern-structural-generation-destroy! retired))))
 
 (define (intern-structural-table-grow-map!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
@@ -981,7 +1009,7 @@
     [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
     [new-capacity : i64 (* (array-length table.map-slots) 2)]
     [retired : i64 table.map-arena]
-    [generation : i64 (tl_arena_make)]
+    [generation : i64 (intern-structural-generation-make!)]
     (begin
       (in-arena
         (arena.Arena generation)
@@ -996,13 +1024,11 @@
                   (intern-structural-table-map-put-index! table index)
                   (set! index (+ index 1))))))))
       (set! table.map-arena generation)
-      (if (= retired 0)
-        unit
-        (unsafe
-          (tl_arena_destroy retired))))))
+      (intern-structural-generation-destroy! retired))))
 
 ;; Destroy the record and map generations. Every persistent reset calls this
-;; before it rewinds or replaces the owning arena and reinitializes the table.
+;; before it rewinds or replaces the owning arena and reinitializes the table,
+;; and every owner release before it destroys that arena.
 (define (intern-structural-table-release-generations!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
   (let
@@ -1012,14 +1038,8 @@
     (begin
       (set! table.records-arena 0)
       (set! table.map-arena 0)
-      (if (= records 0)
-        unit
-        (unsafe
-          (tl_arena_destroy records)))
-      (if (= slots 0)
-        unit
-        (unsafe
-          (tl_arena_destroy slots))))))
+      (intern-structural-generation-destroy! records)
+      (intern-structural-generation-destroy! slots))))
 
 (defstruct InternStructuralProbe
   (found i64)
@@ -2198,6 +2218,13 @@
   (=
     (array-ref state.pool-macro-prefix-class-slots id)
     (cast (intern-macro-prefix-class-local) : u8)))
+
+;; A retiring state's structural generations are separate arenas; the caller
+;; releases them, then destroys the state's persistent arena.
+(define (intern-compat-state-release-structural-generations!
+  [state : (&mut state InternCompatState)]) : unit
+  (intern-structural-table-release-generations!
+    (&mut state.structural-table-cell)))
 
 (define (intern-compat-state-install! [state : (& state InternCompatState)]) : unit
   (let

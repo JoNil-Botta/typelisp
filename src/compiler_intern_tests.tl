@@ -394,6 +394,7 @@
 
 (define (intern-structural-generation-tests-ok?) : bool
   (let
+    [live : i64 (ci.intern-structural-generations-live)]
     [state : ci.InternCompatState (ci.intern-compat-state-new)]
     [other : ci.InternCompatState (ci.intern-compat-state-new)]
     [left : i64 (ci.intern-compat-state-intern (&mut state) "generation/left")]
@@ -433,6 +434,7 @@
     [first-records : i64 first.records-arena]
     [first-map : i64 first.map-arena]
     [first-capacity : i64 (array-length first.kinds)]
+    [first-live : i64 (ci.intern-structural-generations-live)]
     [_more : i64 (intern-structural-generation-fill! (&mut state) 5000000 6000)]
     ;; The other state grows over the same record indices in between.
     [_other : i64
@@ -445,6 +447,9 @@
       (and
         (= initial-records 0)
         (= initial-map 0)
+        ;; Each grown table keeps exactly its current two generations.
+        (= first-live (+ live 2))
+        (= (ci.intern-structural-generations-live) (+ live 4))
         (not (= first-records 0))
         (not (= first-map 0))
         ;; A released generation's address can be reused by a later one, so
@@ -487,7 +492,8 @@
       (and
         (= logical.len 0)
         (= logical.records-arena second.records-arena)
-        (= logical.map-arena second.map-arena))]
+        (= logical.map-arena second.map-arena)
+        (= (ci.intern-structural-generations-live) (+ live 4)))]
     ;; Floor and full persistent resets release both generations first. The
     ;; floor is marked while the state's persistent arena is current, as the
     ;; loader does.
@@ -510,7 +516,9 @@
         (= floor.len 0)
         (= floor.records-arena 0)
         (= floor.map-arena 0)
-        (>= (intern-structural-generation-fill! (&mut state) 8000000 600) 0))]
+        (= (ci.intern-structural-generations-live) (+ live 2))
+        (>= (intern-structural-generation-fill! (&mut state) 8000000 600) 0)
+        (= (ci.intern-structural-generations-live) (+ live 4)))]
     [_full : unit (ci.intern-compat-state-persistent-arena-reset! (&mut state))]
     [full : ci.InternStructuralTable
       (intern-structural-generation-table (& state))]
@@ -523,6 +531,7 @@
       (= full.len 0)
       (= full.records-arena 0)
       (= full.map-arena 0)
+      (= (ci.intern-structural-generations-live) (+ live 2))
       (not (= after-other.records-arena 0))
       (= (ci.intern-compat-state-composite-pair-id (&mut other) 3 4) other-pair))))
 

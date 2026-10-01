@@ -386,6 +386,7 @@ intern_pool_active_source_exhaustion|all|-|tests/integration/intern_pool_exhaust
 intern_pool_active_generated_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|1|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 intern_pool_state_source_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|2|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 intern_pool_state_generated_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|3|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_structural_generation_poison|all|-|tests/integration/intern_structural_generation_poison.tl|42|-|-|compiler_intern.tl compiler_intern_state.tl compiler_owned_view.tl stdlib/arena.tl stdlib/comptime.tl stdlib/string.tl|-
 bce_paired_underflow_sp0_trap|all|-|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:41:47: array index out of bounds: index=-1 length=4\n
 bce_paired_underflow_sp1_trap|all|-|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:42:46: array index out of bounds: index=-1 length=4\n
 bce_descending_counted_loop|all|-|tests/integration/bce_descending_counted_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-

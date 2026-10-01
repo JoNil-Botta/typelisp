@@ -3,9 +3,15 @@
 ;# The compiler drops explicit "fill the array I just allocated with its own
 ;# default" loops (packet Z1) because `lower-make-array-zero-fill-supported?`
 ;# lowers those allocations to `tl_array_zero`, so the slots are already the
-;# all-zero default. This fixture pins that contract for the three element
-;# shapes the dropped loops relied on -- i64, bool, and a fieldless-tag-0 enum
-;# -- and pins it in BOTH arena states: a virgin arena (where tl_array_zero is
+;# all-zero default. This fixture pins that contract for the element shapes the
+;# dropped loops relied on -- i64, bool, a fieldless-tag-0 enum -- and for an
+;# enum whose tag-0 variant carries zero-default fields (an i64 and a struct of
+;# i32s; an f64, a char and a bool), which zero-fills too (#8520). Enums whose
+;# tag-0 field is a String or a Box keep the per-element init loop (a Box
+;# default is a live allocation, so a wrongly zeroed slot would read through a
+;# null box), and so does one whose tag-0 field is such an enum; their defaults
+;# must read back as well. It pins
+;# the contract in BOTH arena states: a virgin arena (where tl_array_zero is
 ;# allowed to skip its fill) and a rewound one (where it must not).
 ;#
 ;# Sizes are past one 4 KiB page so a wrongly skipped fill cannot hide inside
@@ -15,6 +21,30 @@
 (defenum Slot
   (Empty)
   (Filled i64))
+
+(defstruct Span
+  (start i32)
+  (end i32))
+
+(defenum Cell
+  (At i64 Span)
+  (Gone))
+
+(defenum Named
+  (Label String)
+  (Anon))
+
+(defenum Holder
+  (Has (Box i64))
+  (Empty))
+
+(defenum Mixed
+  (Vals f64 char bool)
+  (NoVals))
+
+(defenum Wrapped
+  (Wrap Named)
+  (Bare))
 
 (define (dirty-i64! [items : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
@@ -63,12 +93,102 @@
           (set! i (+ i 1))))
       bad)))
 
+(define (count-non-default-cell [items : (__tl_dyn-array Cell)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Cell.At at span)
+              (if (and (= at 0) (= span.start 0) (= span.end 0))
+                unit
+                (set! bad (+ bad 1)))]
+            [(Cell.Gone) (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
+(define (count-non-default-named [items : (__tl_dyn-array Named)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Named.Label text)
+              (if (= (string-length text) 0)
+                unit
+                (set! bad (+ bad 1)))]
+            [(Named.Anon) (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
+(define (count-non-default-holder [items : (__tl_dyn-array Holder)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Holder.Has value)
+              (if (= (deref value) 0)
+                unit
+                (set! bad (+ bad 1)))]
+            [(Holder.Empty) (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
+(define (count-non-default-mixed [items : (__tl_dyn-array Mixed)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Mixed.Vals value code flag)
+              (if (and (= value 0.0) (= code '\0') (not flag))
+                unit
+                (set! bad (+ bad 1)))]
+            [(Mixed.NoVals) (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
+(define (count-non-default-wrapped [items : (__tl_dyn-array Wrapped)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref items i)
+            [(Wrapped.Wrap (Named.Label text))
+              (if (= (string-length text) 0)
+                unit
+                (set! bad (+ bad 1)))]
+            [_ (set! bad (+ bad 1))])
+          (set! i (+ i 1))))
+      bad)))
+
 (define (defaults-bad [n : i64]) : i64
   (+
     (count-nonzero-i64 (__tl_make-array i64 n) n)
     (+
       (count-true-bool (__tl_make-array bool n) n)
-      (count-non-empty-slot (__tl_make-array Slot n) n))))
+      (+
+        (count-non-empty-slot (__tl_make-array Slot n) n)
+        (+
+          (count-non-default-cell (__tl_make-array Cell n) n)
+          (+
+            (count-non-default-named (__tl_make-array Named n) n)
+            (+
+              (count-non-default-holder (__tl_make-array Holder n) n)
+              (+
+                (count-non-default-mixed (__tl_make-array Mixed n) n)
+                (count-non-default-wrapped (__tl_make-array Wrapped n) n)))))))))
 
 (define (main) : i64
   (let

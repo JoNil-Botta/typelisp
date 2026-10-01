@@ -437,6 +437,18 @@ compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
 still await migration are tracked in #4960.
 
+Each compile and each `compile --batch` entry resets the interner. Those resets
+cost what the compile used, not the tables' capacity (#8520).
+- **Hash maps.** The source and generated maps log every slot an insert fills.
+  The log travels with the map arrays: a state owns it, and it is installed and
+  captured with them. So `intern-compat-state-reset!`, `reset-to!` and the
+  installed-global resets empty only the logged slots.
+- **Fallback.** Past an eighth of a map's capacity the log saturates, and that
+  reset clears the whole map.
+- **Why a log.** An id range cannot stand in for it, because the state path and
+  the installed globals keep separate source cursors.
+- **Structural table.** Its reset clears by record in the same way.
+
 The move checker stores an ordinary cleanup-owning `let`'s obligation in its
 lexical locals entry and its discharge in the existing place-path facts.
 Private owner-count and loop-depth entries use reserved negative map keys;

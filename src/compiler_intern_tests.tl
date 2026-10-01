@@ -2,6 +2,8 @@
 ;; id-space capacity, generated names, slices, persistent arenas, resets,
 ;; source-name sessions and qualified metadata.
 (import compiler_intern as ci)
+(import compiler_str_cat as str_cat)
+(import stdlib.string)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
@@ -820,6 +822,173 @@
         (ci.intern-reset!)
         ok))))
 
+;; Resets empty the intern maps by their dirty logs rather than at full
+;; capacity (#8520). After every reset the maps must match what a full clear
+;; followed by a rebuild of the kept ids produced: the source map below,
+;; slot by slot, and an empty generated map.
+;;
+;; The source map a full clear and rebuild of ids [0, mark) leaves: each id, in
+;; id order, at the first empty slot probing from its spelling's bucket, stored
+;; as id + 1.
+(define (intern-map-rebuilt-model
+  [state : (& state ci.InternCompatState)]
+  [mark : i64]) : (__tl_dyn-array i64)
+  (let
+    [capacity : i64 (array-length state.map-id-slots)]
+    [model : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [id : i64 0]
+    (begin
+      (while (< id mark)
+        (let
+          [name : String (ci.intern-array-shared-view state.pool-slots id)]
+          [slot : i64 (ci.intern-bucket (ci.intern-hash (& name)) capacity)]
+          (begin
+            (while (not (= (array-ref model slot) 0))
+              (set! slot (ci.intern-bucket (+ slot 1) capacity)))
+            (set! (array-ref model slot) (+ id 1))
+            (set! id (+ id 1)))))
+      model)))
+
+(define (intern-maps-match-rebuild?
+  [state : (& state ci.InternCompatState)]
+  [mark : i64]) : bool
+  (let
+    [model : (__tl_dyn-array i64) (intern-map-rebuilt-model state mark)]
+    [ok : bool true]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length state.map-id-slots))
+        (begin
+          (unless
+            (=
+              (ci.intern-slot-id-value (array-ref state.map-id-slots index))
+              (array-ref model index))
+            (set! ok false))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (array-length state.generated-map-id-slots))
+        (begin
+          (unless
+            (=
+              (ci.intern-slot-id-value
+                (array-ref state.generated-map-id-slots index))
+              0)
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+;; Every seventh spelling is module-qualified and every fifth dotted, so
+;; metadata interning puts module, base and prefix ids in between.
+(define (intern-maps-fill-name [prefix : (& prefix str)] [index : i64]) : String
+  (let
+    [stem : String (str_cat.str-cat prefix (string.int->string index))]
+    (if (= (% index 7) 0)
+      (str_cat.str-cat "mod/" stem)
+      (if (= (% index 5) 0)
+        (str_cat.str-cat stem ".tail")
+        stem))))
+
+;; `count` source spellings, the first `generated` of them also as canonical
+;; generated names, through the state path.
+(define (intern-maps-fill!
+  [state : (&mut state ci.InternCompatState)]
+  [prefix : (& prefix str)]
+  [count : i64]
+  [generated : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (ci.intern-compat-state-intern
+          state
+          (intern-maps-fill-name prefix index))
+        (when
+          (< index generated)
+          (begin
+            (ci.intern-compat-state-generated-canonical-name
+              state
+              (str_cat.str-cat "gen-" (intern-maps-fill-name prefix index)))
+            unit))
+        (set! index (+ index 1))))))
+
+;; The same through the installed globals.
+(define (intern-maps-fill-installed!
+  [prefix : (& prefix str)]
+  [count : i64]
+  [generated : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (ci.intern (intern-maps-fill-name prefix index))
+        (when
+          (< index generated)
+          (begin
+            (ci.intern-generated-canonical-name
+              (str_cat.str-cat "gen-" (intern-maps-fill-name prefix index)))
+            unit))
+        (set! index (+ index 1))))))
+
+(define (intern-map-dirty-reset-tests-ok?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    ;; A mark equal to the count keeps every slot where it was.
+    [_same : unit (intern-maps-fill! (&mut state) "dirty-a" 300 40)]
+    [count : i64 (ci.intern-compat-state-pool-len (& state))]
+    [_same-reset : unit (ci.intern-compat-state-reset-to! (&mut state) count)]
+    [same-ok? : bool (intern-maps-match-rebuild? (& state) count)]
+    ;; A mark inside the source ids drops the later ones.
+    [_mid : unit (intern-maps-fill! (&mut state) "dirty-b" 200 40)]
+    [_mid-reset : unit (ci.intern-compat-state-reset-to! (&mut state) 137)]
+    [mid-ok? : bool (intern-maps-match-rebuild? (& state) 137)]
+    ;; Mark 0 and a full reset leave both maps empty.
+    [_zero : unit (intern-maps-fill! (&mut state) "dirty-c" 200 40)]
+    [_zero-reset : unit (ci.intern-compat-state-reset-to! (&mut state) 0)]
+    [zero-ok? : bool (intern-maps-match-rebuild? (& state) 0)]
+    [_full : unit (intern-maps-fill! (&mut state) "dirty-d" 200 40)]
+    [_full-reset : unit (ci.intern-compat-state-reset! (&mut state))]
+    [full-ok? : bool (intern-maps-match-rebuild? (& state) 0)]
+    ;; More inserts into each map than its log segment holds: that reset
+    ;; clears both maps in full, and the next one follows the logs again.
+    [_saturate : unit (intern-maps-fill! (&mut state) "dirty-e" 33000 33000)]
+    [saturated? : bool
+      (>
+        (ci.intern-compat-state-pool-len (& state))
+        (ci.intern-map-dirty-limit))]
+    [_saturated-reset : unit
+      (ci.intern-compat-state-reset-to! (&mut state) 5000)]
+    [saturated-ok? : bool (intern-maps-match-rebuild? (& state) 5000)]
+    [_after : unit (intern-maps-fill! (&mut state) "dirty-f" 200 40)]
+    [_after-reset : unit (ci.intern-compat-state-reset-to! (&mut state) 2500)]
+    [after-ok? : bool (intern-maps-match-rebuild? (& state) 2500)]
+    ;; Inserts through the installed globals advance the global cursor, not the
+    ;; state's own count cell, and the state's reset still empties their slots.
+    [_install : unit (ci.intern-compat-state-install! state)]
+    [stale : i64 (ci.intern-compat-state-pool-len (& state))]
+    [_installed : unit (intern-maps-fill-installed! "dirty-g" 300 40)]
+    [advanced? : bool (> (ci.intern-pool-len) stale)]
+    [_stale-reset : unit (ci.intern-compat-state-reset-to! (&mut state) 1200)]
+    [stale-ok? : bool (intern-maps-match-rebuild? (& state) 1200)]
+    ;; The installed-global resets read the same logs.
+    [_reinstall : unit (ci.intern-compat-state-install! state)]
+    [_global : unit (intern-maps-fill-installed! "dirty-h" 300 40)]
+    [_global-reset : unit (ci.intern-reset-to! 600)]
+    [global-ok? : bool (intern-maps-match-rebuild? (& state) 600)]
+    [_restore : unit (ci.intern-compat-state-install! installed)]
+    (and
+      same-ok?
+      mid-ok?
+      zero-ok?
+      full-ok?
+      saturated?
+      saturated-ok?
+      after-ok?
+      (= stale 2500)
+      advanced?
+      stale-ok?
+      global-ok?)))
+
 (define (intern-persistent-floor-reset-tests-ok?) : bool
   (begin
     (ci.intern-reset!)
@@ -1355,6 +1524,7 @@
           (intern-structural-generation-tests-ok?)
           (intern-structural-reset-tests-ok?)
           (intern-reset-to-tests-ok?)
+          (intern-map-dirty-reset-tests-ok?)
           (intern-persistent-floor-reset-tests-ok?)
           (intern-source-name-session-tests-ok?)
           (intern-generated-role-symbol-tests-ok?))]

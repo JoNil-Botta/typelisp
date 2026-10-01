@@ -9,7 +9,7 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg (any compile-profile test) 378 0))
+  (cfg (any compile-profile test) 379 0))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64

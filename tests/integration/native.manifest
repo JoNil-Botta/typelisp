@@ -151,6 +151,7 @@ compile_profile_vector_core|all|-|tests/integration/compile_profile_vector_core.
 compile_profile_vector_five_core|all|-|tests/integration/compile_profile_vector_five_core.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_vector_full|all|-|tests/integration/compile_profile_vector_full.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_macro_pool_prepare|all|-|tests/integration/compile_profile_macro_pool_prepare.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl|-
+compile_profile_module_view_release|all|-,0,1,2|tests/integration/compile_profile_module_view_release.tl|42|-|-|module_view_release_a.tl module_view_release_b.tl stdlib/comptime.tl|-
 compile_profile_vector_one_core|all|-|tests/integration/compile_profile_vector_one_core.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_vector_struct_full|all|-|tests/integration/compile_profile_vector_struct_full.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_layout_spec|all|-|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl|-

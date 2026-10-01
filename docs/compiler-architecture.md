@@ -181,6 +181,19 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Each function body typechecks against a function-local fork of the module
+environment (#8375): `tc-type-env-fork-function-store` creates a store in the
+function's rewound scratch with the parent's head and capabilities, and the
+fork's binding and cache segments grow there. Environment heads are raw node
+addresses, so the fork's records link to the parent's immutable nodes without
+copying them, and the parent store never receives a function-local record. The
+parent's explicit-layer chain index stays shared read-only until the fork's
+first layer registration, when `tc-chain-state-ensure!` copies it into the
+scratch. Only the parent environment reaches lowering. Retiring the scratch advances `tc-type-env-store-epoch`, so memos keyed
+by a store handle or node address cannot match a later fork reallocated at the
+same address, and clears the unbound-name suggestion snapshot that names the
+fork.
+
 File, package, check, test and semantic-index entry points pass their actual cfg
 environment through the lowerer/typecheck interfaces; a cache-scope String is
 only an identity key and cannot replace those semantic inputs.

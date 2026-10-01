@@ -10170,14 +10170,25 @@
     (ptr-write! (int->ptr (cast addr : u64) : (MutPtr TcChainIndex)) state)))
 
 ;; The index cell and everything it points at live in the store's owner arena,
-;; exactly like the cache nodes whose addresses it records.
+;; exactly like the cache nodes whose addresses it records. A function-local
+;; store inherits its parent's index read-only; before its first write the
+;; index is copied into the local owner, so the parent's map never names a
+;; local layer.
 (define (tc-chain-state-ensure! [store-handle : i64]) : i64
   (let
     [existing : i64 (tc-chain-state-address store-handle)]
-    (if (> existing 0)
+    [owner : i64 (tc-chain-store-owner store-handle)]
+    (if (and
+      (> existing 0)
+      (= (__tl-project-field (tc-chain-state-read existing) owner-arena) owner))
       existing
       (let
-        [owner : i64 (tc-chain-store-owner store-handle)]
+        [parent-len : i64
+          (if (> existing 0)
+            (let
+              [parent : TcChainIndex (tc-chain-state-read existing)]
+              (tc_i64_i64_map.len (& parent.map)))
+            0)]
         [cell : i64
           (in-arena
             (arena.Arena owner)
@@ -10187,7 +10198,18 @@
               (begin
                 (set!
                   (array-ref slots 0)
-                  (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
+                  (TcChainIndex
+                    (if (> parent-len 0)
+                      (let
+                        [parent : TcChainIndex (tc-chain-state-read existing)]
+                        (tc-moved-clone-id-map (& parent.map)))
+                      (tc_i64_i64_map.with-capacity 1024))
+                    (if (> existing 0)
+                      (__tl-project-field
+                        (tc-chain-state-read existing)
+                        next-seq)
+                      0)
+                    owner))
                 (unsafe
                   (cast
                     (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
@@ -111626,6 +111648,23 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
+;; A view of ENV for one function body: the parent's head, capabilities and
+;; chain index, but a store of its own, created in the current arena (the
+;; function scratch), whose binding and cache segments grow there too. Nothing
+;; the body binds lands in the parent's owner arena.
+(define (tc-type-env-fork-function-store [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [store : i64
+      (tc-type-env-store-handle-new-with-topenv-state-address
+        (__tl-project-field (tc-type-env-topenv-membership-state env) address)
+        (__tl-project-field (tc-type-env-structural-session env) address)
+        (__tl-project-field
+          (tc-type-env-type-resolution-cache-state env)
+          address))]
+    (begin
+      (tc-chain-state-set! store (tc-chain-state-address env.store))
+      (TcTypeEnv store env.head env.abi-pad))))
+
 ;; Function bodies dominate typecheck allocation and the check returns only
 ;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -111655,7 +111694,13 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
+          (tc-check-fn-decl-body
+            ctx
+            (tc-type-env-fork-function-store global-env)
+            name
+            params
+            ret
+            body-box)]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
@@ -111674,6 +111719,12 @@
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set new-enclosing))
+              ;; The function store and its nodes were just rewound: retire
+              ;; every memo keyed by a store handle or node address, and the
+              ;; unbound-name snapshot, which names a function-local env and
+              ;; was consumed above.
+              (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
+              (tc-unbound-suggestion-snapshot-reset!)
               ;; Single-entry name caches may hold strings allocated in the
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.

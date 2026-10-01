@@ -29876,8 +29876,8 @@
                 (let
                   [decl : ast.AstDecl
                     (try
-                      (csym.compiler-program-decl-at-index
-                        (tc-context-program ctx)
+                      (csym.compiler-symbols-decl-at-index
+                        (tc-context-symbols symbols-ctx)
                         (csym.compiler-symbol-handle-index handle)))]
                   [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
                   (match (tc-global-shared-view ty)
@@ -52204,8 +52204,8 @@
             (csym.compiler-registry-handle-owner-index handle))]
         [ty : ast.AstType
           (try
-            (csym.compiler-registries-struct-field-type
-              (tc-context-program ctx)
+            (csym.compiler-registries-struct-field-type-indexed
+              (tc-context-symbols ctx)
               handle))]
         [subst : TcLifetimeSubst
           (try
@@ -109170,11 +109170,12 @@
                         ;; with the newly loaded declarations, and continue the
                         ;; walk over the loaded content -- what the retired fixed-
                         ;; point loop's materialization + re-pass did, inline in
-                        ;; this pass. Source-file materialization remains a full
-                        ;; symbol/registry rebuild because it can add arbitrary
-                        ;; index-bearing declarations; the environment itself is
-                        ;; additive and can use the same refresh path as a macro
-                        ;; splice instead of retaining another whole-program env.
+                        ;; this pass. Source-file materialization that loads new
+                        ;; declarations remains a full symbol/registry rebuild
+                        ;; because it can add arbitrary index-bearing
+                        ;; declarations; the environment itself is additive and
+                        ;; can use the same refresh path as a macro splice instead
+                        ;; of retaining another whole-program env.
                         (begin
                           (macro-expand-program-structural-change-note!
                             macro-state
@@ -109215,14 +109216,50 @@
                                       walk-state
                                       (tc-global-shared-view materialized-decls)
                                       (tc-global-shared-view materialized-paths))]
-                                  ;; Source-file materialization is the explicit
-                                  ;; conservative fallback: arbitrary aliases and
-                                  ;; index-bearing declarations require fresh
-                                  ;; whole-program symbols and registries.
+                                  ;; An import of an already-loaded module loads
+                                  ;; nothing: it materializes only its alias
+                                  ;; markers, which take the same incremental
+                                  ;; symbol/registry append as a macro splice.
+                                  ;; Any other source-file materialization is the
+                                  ;; explicit conservative fallback: arbitrary
+                                  ;; aliases and index-bearing declarations
+                                  ;; require fresh whole-program symbols and
+                                  ;; registries.
+                                  [symbols-inserted : bool
+                                    (and
+                                      (macro-decls-imports-only?
+                                        (tc-global-shared-view
+                                          materialized-decls))
+                                      (csym.compiler-symbols-insert-aliases-self-contained?
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        (tc-global-shared-view
+                                          materialized-decls))
+                                      (macro-live-symbols-insert-decls!
+                                        (tc-context-macro-state cur-ctx)
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        cur-module-id))]
+                                  [incremental? : bool
+                                    (and
+                                      symbols-inserted
+                                      (macro-live-registries-append-decls!
+                                        (tc-context-macro-state cur-ctx)
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        (tc-global-shared-view
+                                          materialized-paths)
+                                        cur-module-id))]
                                   [flat-view : MacroSegmentedProgramFlatView
-                                    (macro-segmented-program-flatten-fallback
-                                      walk-state
-                                      2)]
+                                    (if incremental?
+                                      (MacroSegmentedProgramFlatView
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        (tc-global-shared-view
+                                          materialized-paths))
+                                      (macro-segmented-program-flatten-fallback
+                                        walk-state
+                                        2))]
                                   [next-decls : ast.AstDeclList flat-view.decls]
                                   [next-paths : ast.AstDeclPathList
                                     flat-view.paths]
@@ -109237,38 +109274,45 @@
                                     (set!
                                       cur-materialize-seen
                                       next-materialize-seen)
-                                    ;; The loaded file may add defmacros or
-                                    ;; expr-type macros: recompute the hoisted
-                                    ;; prescan over the new whole-program view
-                                    ;; before the context rebuild consumes its
-                                    ;; visible-name set.
-                                    (macro-live-symbols-invalidate!
-                                      (tc-context-macro-state cur-ctx))
-                                    ;; Source-file materialization can insert any
-                                    ;; index-bearing declaration or alias surface,
-                                    ;; so retain the full registry rebuild even
-                                    ;; when it contains no nominal declaration.
-                                    (macro-live-registries-invalidate!
-                                      (tc-context-macro-state cur-ctx))
-                                    (macro-live-prescan-ensure!
-                                      macro-state
-                                      (tc-global-shared-view next-decls))
-                                    (macro-expand-set-expr-type-macro-names!
-                                      macro-state
-                                      (tc-macro-walk-field
+                                    (if incremental?
+                                      (macro-live-prescan-append-decls!
                                         macro-state
-                                        macro-live-prescan-expr-type-names))
-                                    (tc-macro-walk-set!
-                                      macro-state
-                                      ctfe-needs-metadata
-                                      (or
-                                        (tc-macro-walk-field
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        cur-module-id)
+                                      (begin
+                                        ;; The loaded file may add defmacros or
+                                        ;; expr-type macros: recompute the hoisted
+                                        ;; prescan over the new whole-program view
+                                        ;; before the context rebuild consumes its
+                                        ;; visible-name set.
+                                        (macro-live-symbols-invalidate!
+                                          (tc-context-macro-state cur-ctx))
+                                        ;; Source-file materialization can insert
+                                        ;; any index-bearing declaration or alias
+                                        ;; surface, so retain the full registry
+                                        ;; rebuild even when it contains no
+                                        ;; nominal declaration.
+                                        (macro-live-registries-invalidate!
+                                          (tc-context-macro-state cur-ctx))
+                                        (macro-live-prescan-ensure!
                                           macro-state
-                                          ctfe-needs-metadata)
-                                        (tc-macro-walk-field
+                                          (tc-global-shared-view next-decls))
+                                        (macro-expand-set-expr-type-macro-names!
                                           macro-state
-                                          macro-live-prescan-has-defmacro)))
-                                    unit
+                                          (tc-macro-walk-field
+                                            macro-state
+                                            macro-live-prescan-expr-type-names))
+                                        (tc-macro-walk-set!
+                                          macro-state
+                                          ctfe-needs-metadata
+                                          (or
+                                            (tc-macro-walk-field
+                                              macro-state
+                                              ctfe-needs-metadata)
+                                            (tc-macro-walk-field
+                                              macro-state
+                                              macro-live-prescan-has-defmacro)))))
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
                                       (tc-global-shared-view next-decls)
@@ -109305,7 +109349,9 @@
                                               [_ unit])
                                             unit)
                                           (set! cur-ctx next-ctx)
-                                          (set! cur-orig-decls next-decls)
+                                          (if incremental?
+                                            unit
+                                            (set! cur-orig-decls next-decls))
                                           (set! cur-top-env next-top-env)
                                           unit)]
                                       [(ResultMacroSpliceRebuild.Err diag)
@@ -109529,6 +109575,20 @@
             rest
             when-id
             unless-id)))]))
+
+;; Whether every declaration is an import, as the materialization of an import
+;; of an already-loaded module is.
+(define (macro-decls-imports-only? [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) true]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (and
+          (match decl
+            [(ast.AstDecl.Import _ _) true]
+            [_ false])
+          (macro-decls-imports-only? rest)))]))
 
 (define (macro-program-has-defmacro? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)

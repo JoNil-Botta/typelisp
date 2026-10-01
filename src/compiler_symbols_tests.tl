@@ -133,27 +133,6 @@
     [(parser.ResultAstProgram.Err message)
       (csym.ResultCompilerRegistries.Err message)]))
 
-(define (compiler-registries-variant-fields
-  [program : ast.AstProgram]
-  [handle : i64]) : parser.ResultAstTypeList
-  (match (csym.compiler-program-decl-at-index
-    program
-    (csym.compiler-registry-handle-owner-index handle))
-    [(parser.ResultAstDecl.Ok decl)
-      (match decl
-        [(ast.AstDecl.DefEnum decl-meta _ _ variants)
-          (csym.compiler-variant-types-at-index
-            variants
-            (csym.compiler-registry-handle-child-index handle)
-            0)]
-        [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
-          (csym.compiler-variant-types-at-index
-            variants
-            (csym.compiler-registry-handle-child-index handle)
-            0)]
-        [_ (parser.ResultAstTypeList.Err "symbols: variant owner is not enum")])]
-    [(parser.ResultAstDecl.Err message) (parser.ResultAstTypeList.Err message)]))
-
 (define (compiler-symbols-owner-module-id-at-index
   [symbols : (& symbols csym.CompilerSymbols)]
   [target : i64]) : i64
@@ -346,7 +325,6 @@
                         (csym.compiler-symbols-lookup-type-id symbols -1)))))))))))))
 
 (define (compiler-registries-smoke-score
-  [program : ast.AstProgram]
   [symbols : (& symbols csym.CompilerSymbols)]
   [registries : (& registries csym.CompilerRegistries)]) : i64
   (let
@@ -391,8 +369,8 @@
               (match x-field
                 [(option_i64.Some handle)
                   (compiler-type-result-tag-score
-                    (csym.compiler-registries-struct-field-type
-                      (ast.ast-place-shared-view program)
+                    (csym.compiler-registries-struct-field-type-indexed
+                      symbols
                       handle)
                     (ast.ast-type-tag (ast.AstType.I64)))]
                 [(option_i64.None) 0])
@@ -400,7 +378,9 @@
                 (match some
                   [(option_i64.Some handle)
                     (compiler-type-list-single-tag-score
-                      (compiler-registries-variant-fields program handle)
+                      (csym.compiler-registries-variant-fields-indexed
+                        symbols
+                        handle)
                       (ast.ast-type-tag (ast.AstType.I64)))]
                   [(option_i64.None) 0])
                 (+
@@ -1166,9 +1146,7 @@
                     (csym.compiler-symbol-kind-defenum)
                     1)
                   1)
-                (=
-                  (compiler-registries-smoke-score program symbols registries)
-                  8))]
+                (= (compiler-registries-smoke-score symbols registries) 8))]
             [(csym.ResultCompilerRegistries.Err _) false])]
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
@@ -2290,10 +2268,7 @@
                         ok
                         (= (compiler-symbols-smoke-score symbols) 10)
                         (=
-                          (compiler-registries-smoke-score
-                            program
-                            symbols
-                            registries)
+                          (compiler-registries-smoke-score symbols registries)
                           8)
                         (compiler-registry-handle-bounds-ok?)
                         (compiler-symbols-duplicate-value-ok?)

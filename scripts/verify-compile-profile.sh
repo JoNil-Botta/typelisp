@@ -76,6 +76,9 @@ VECTOR_ONE_STDERR="$WORKDIR/profile-vector-one.stderr"
 VECTOR_FIVE_ASM="$WORKDIR/profile-vector-five.s"
 VECTOR_FIVE_STDOUT="$WORKDIR/profile-vector-five.stdout"
 VECTOR_FIVE_STDERR="$WORKDIR/profile-vector-five.stderr"
+VECTOR_STRUCT_ASM="$WORKDIR/profile-vector-struct-full.s"
+VECTOR_STRUCT_STDOUT="$WORKDIR/profile-vector-struct-full.stdout"
+VECTOR_STRUCT_STDERR="$WORKDIR/profile-vector-struct-full.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 CTFE_SPLICE_STDOUT="$WORKDIR/profile-ctfe-splice.stdout"
@@ -1939,6 +1942,20 @@ profile_rows "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR" <<'ROWS'
 c typecheck.macro.walk_segment_fallback_flattens = 0
 c typecheck.macro.walk_segment_splits >= 5
 c typecheck.macro.walk_segment_delta_decls >= 5
+ROWS
+
+# Full-mode struct and enum vectors instantiate `(eq.eq S)`, whose generated
+# body imports the already-loaded `stdlib.eq`. That import loads no new
+# declarations, so it extends the live tables instead of flattening the whole
+# program and rebuilding them.
+echo "[compile-profile] full-mode struct and enum vectors import loaded stdlib.eq"
+run_logged "$VECTOR_STRUCT_STDOUT" "$VECTOR_STRUCT_STDERR" "profiled struct-vector fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_vector_struct_full.tl \
+    -o "$VECTOR_STRUCT_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --opt-level 1
+profile_rows "$VECTOR_STRUCT_STDOUT" "$VECTOR_STRUCT_STDERR" <<'ROWS'
+c typecheck.macro.walk_segment_fallback_flattens = 0
+c typecheck.macro.live_rebuilds = 1
 ROWS
 
 for counter in \

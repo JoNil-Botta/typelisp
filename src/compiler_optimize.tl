@@ -3725,24 +3725,21 @@
 ;; address redefines the var without any instruction naming it as a dst, so
 ;; its single `mov` does not pin its value across the function: a pass that
 ;; forwards values by def must neither forward it nor forward through it.
-(define (opt-addr-taken-mark-instr!
-  [marks : (&mut marks (__tl_dyn-array bool))]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match instr
-    [(ir.CompilerIrInstr.AddrOf _ src)
-      (if (and (>= src 0) (< src (array-length marks)))
-        (set! (array-ref marks src) true)
-        unit)]
-    [_ unit]))
-
+;; LICM's scan builds the marks, so a function without an `addr_of` gets an
+;; empty array; every reader goes through the bounds-checked
+;; `opt-addr-taken-var?`, so that reads as nothing marked.
 (define (opt-addr-taken-vars
   [vars : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
   (let
-    [marks : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+    [scan : OptFunctionAddrTakenScan
+      (OptFunctionAddrTakenScan
+        vars
+        (__tl_make-array bool 0)
+        (opt_dense_i64_vec.new))]
     (begin
-      (opt-blocks-visit blocks opt-addr-taken-mark-instr! (&mut marks))
-      marks)))
+      (opt-blocks-visit blocks opt-function-addr-taken-scan-instr! (&mut scan))
+      scan.marks)))
 
 (define (opt-addr-taken-var?
   [marks : (& marks (__tl_dyn-array bool))]
@@ -3755,6 +3752,22 @@
   (match value
     [(ir.CompilerIrValue.Var id) (opt-addr-taken-var? marks (deref id))]
     [_ false]))
+
+(define (opt-addr-taken-value-seq?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [values : (& values ir.CompilerIrValueSeq)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (ir.compiler-ir-value-seq-count values)))
+        (let
+          [value : ir.CompilerIrValue
+            (ir.compiler-ir-value-seq-ref values index)]
+          (begin
+            (set! found (opt-addr-taken-value? marks (& value)))
+            (set! index (+ index 1)))))
+      found)))
 
 ;; Comparisons whose negation is another comparison on the same operands. Used
 ;; to turn `not (cmp a b)` into the inverted compare instead of a `xorq $1` over
@@ -9180,6 +9193,10 @@
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
 ;; defining instruction invalidates its destination. Stores and terminators
 ;; define no var, so the copy facts are unaffected (the env resets per block).
+;;
+;; No fact names an address-taken var, as destination or source (#7973): a call
+;; or store through the exposed address redefines it without naming it, and a
+;; call does not clear this env, so any fact about it could go stale.
 (define (opt-copy-update-env
   [env : OptCopyEnv]
   [instr : (& instr ir.CompilerIrInstr)]) : OptCopyEnv
@@ -9187,7 +9204,11 @@
     [(ir.CompilerIrInstr.Mov dst src ty)
       (let
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
-        (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
+        (if (and
+          (opt-copy-safe-source? src)
+          (not (opt-value-is-var? src dst))
+          (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst))
+          (not (opt-addr-taken-value? (& opt-function-addr-taken.marks) src)))
           (OptCopyEnv.Cons dst src (box e1))
           e1))]
     [(ir.CompilerIrInstr.AddrOf dst src)
@@ -9197,11 +9218,17 @@
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
         (if (and
           (opt-value-eq (compiler-opt-global-shared-view lhs) rhs)
-          (opt-copy-mask-source? lhs dst))
+          (opt-copy-mask-source? lhs dst)
+          (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst))
+          (not (opt-addr-taken-value? (& opt-function-addr-taken.marks) lhs)))
           (OptCopyEnv.Cons dst lhs (box e1))
           e1))]
     [(ir.CompilerIrInstr.Pack dst words _)
-      (opt-copy-update-pack-env env dst words)]
+      (if (or
+        (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)
+        (opt-addr-taken-value-seq? (& opt-function-addr-taken.marks) (& words)))
+        (opt-copy-invalidate-var env dst)
+        (opt-copy-update-pack-env env dst words))]
     [(ir.CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
@@ -21556,35 +21583,40 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-collect-defs-blocks (ir.compiler-ir-block-seq-to-list seq) set)]))
 
-;; Address-taken locals of the function LICM is rewriting (#7974). A write
-;; through the address -- in the loop body, or in a callee handed the address
-;; -- redefines the var without naming it as a dst, so no loop's def scan sees
-;; it, and a single `mov` outside the loop does not make its value invariant.
-;; LICM therefore counts every such var as defined in every loop
-;; (`opt-licm-loop-defs`): an instruction reading one is never invariant and a
-;; condition on one never unswitches. An instruction writing one is never
-;; hoisted either (`opt-licm-writes-addr-taken?`). Each LICM function entry
-;; installs the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
-;; before it examines one; a function without loops never reads it. `ids` lists
-;; the marked vars, so a loop pays for the few there are rather than for the
-;; whole frame.
-(defstruct OptLicmAddrTaken
+;; Address-taken locals of the function LICM or the block-local fold pipeline
+;; is rewriting (#7974, #7973). A write through the address -- in a loop body,
+;; or in a callee handed the address -- redefines the var without naming it as
+;; a dst.
+;; - LICM counts every such var as defined in every loop
+;;   (`opt-licm-loop-defs`): an instruction reading one is never invariant, a
+;;   condition on one never unswitches, and an instruction writing one is never
+;;   hoisted (`opt-licm-writes-addr-taken?`). Each LICM function entry installs
+;;   the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
+;;   before it examines one.
+;; - Fold keeps no copy or constant fact naming one (`opt-copy-update-env`,
+;;   `opt-const-forget-addr-taken!`); `optimize-block-list-for-function-pass`
+;;   installs the set before its block walk.
+;; Every reader runs after its own pass installed the set for the function it
+;; rewrites, so a set left from another function is never read. `ids` lists the
+;; marked vars, so a loop pays for the few there are rather than for the whole
+;; frame.
+(defstruct OptFunctionAddrTaken
   (marks (__tl_dyn-array bool))
   (ids opt_dense_i64_vec.Vec))
 
-(define opt-licm-addr-taken : OptLicmAddrTaken
-  (OptLicmAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
+(define opt-function-addr-taken : OptFunctionAddrTaken
+  (OptFunctionAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
 
 ;; One walk of the function: each `addr_of` source is marked and listed once.
 ;; The mark array is allocated at the first `addr_of`, so a function with none
 ;; allocates nothing and never scans its frame.
-(defstruct OptLicmAddrTakenScan
+(defstruct OptFunctionAddrTakenScan
   (frame i64)
   (marks (__tl_dyn-array bool))
   (ids opt_dense_i64_vec.Vec))
 
-(define (opt-licm-addr-taken-scan-instr!
-  [scan : (&mut scan OptLicmAddrTakenScan)]
+(define (opt-function-addr-taken-scan-instr!
+  [scan : (&mut scan OptFunctionAddrTakenScan)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
     [(ir.CompilerIrInstr.AddrOf _ src)
@@ -21601,18 +21633,18 @@
         unit)]
     [_ unit]))
 
-(define (opt-licm-addr-taken-install!
+(define (opt-function-addr-taken-install!
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : unit
   (let
-    [scan : OptLicmAddrTakenScan
-      (OptLicmAddrTakenScan
+    [scan : OptFunctionAddrTakenScan
+      (OptFunctionAddrTakenScan
         frame
         (__tl_make-array bool 0)
         (opt_dense_i64_vec.new))]
     (begin
-      (opt-blocks-visit blocks opt-licm-addr-taken-scan-instr! (&mut scan))
-      (set! opt-licm-addr-taken (OptLicmAddrTaken scan.marks scan.ids)))))
+      (opt-blocks-visit blocks opt-function-addr-taken-scan-instr! (&mut scan))
+      (set! opt-function-addr-taken (OptFunctionAddrTaken scan.marks scan.ids)))))
 
 (define (opt-licm-addr-taken-install-for-loops!
   [frame : i64]
@@ -21620,13 +21652,13 @@
   [loops : (& loops OptNaturalLoopList)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view loops)
     [(OptNaturalLoopList.Nil) unit]
-    [_ (opt-licm-addr-taken-install! frame blocks)]))
+    [_ (opt-function-addr-taken-install! frame blocks)]))
 
 (define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match (opt-instr-def-var
     (owned_view.compiler-owned-reference-shared-view instr))
     [(option_i64.Some dst)
-      (opt-addr-taken-var? (& opt-licm-addr-taken.marks) dst)]
+      (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
     [(option_i64.None) false]))
 
 ;; The vars a loop may redefine: its own defs plus every address-taken local.
@@ -21636,14 +21668,16 @@
       (opt-licm-collect-defs-blocks
         body
         (opt_i64_i64_map.with-capacity capacity))]
-    [count : i64 (opt_dense_i64_vec.len (& opt-licm-addr-taken.ids))]
+    [count : i64 (opt_dense_i64_vec.len (& opt-function-addr-taken.ids))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (set!
             defs
-            (opt-used-add defs (array-ref opt-licm-addr-taken.ids.slots index)))
+            (opt-used-add
+              defs
+              (array-ref opt-function-addr-taken.ids.slots index)))
           (set! index (+ index 1))))
       defs)))
 
@@ -61715,6 +61749,20 @@
       blocks)
     blocks))
 
+;; Drops the constant fact a fold or strength step just bound for an
+;; address-taken var (#7973), for the reason `opt-copy-update-env` gives: a call
+;; through the exposed address does not clear this env either. A step binds at
+;; most one fact, its dst's, and `opt-const-bind` puts it at the head, so the
+;; head is the only fact a step can have added. Dropping it leaves the var
+;; unbound: no earlier step left a fact for it below.
+(define (opt-const-forget-addr-taken! [env : (&mut env OptConstEnv)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(OptConstEnv.Cons var _ _ rest)
+      (if (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)
+        (set! (deref env) (deref rest))
+        unit)]
+    [_ unit]))
+
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
   [instrs : ir.CompilerIrInstrSeq]) : i64
@@ -61761,6 +61809,12 @@
                         rewritten)
                       (set! fold-state next-fold)
                       (set! strength-state next-strength)
+                      ;; Empty marks: the function takes no address.
+                      (if (> (array-length opt-function-addr-taken.marks) 0)
+                        (begin
+                          (opt-const-forget-addr-taken! (&mut fold-state))
+                          (opt-const-forget-addr-taken! (&mut strength-state)))
+                        unit)
                       (set! cse-state next-cse)
                       (set! index (+ index 1)))])])]))
       store-count)))
@@ -62946,6 +63000,10 @@
         ;; the blocks `opt-block-scan-skippable?` then skips.
         [work : OptLoadKindsDenseWork
           (opt-load-kinds-dense-work-with-size frame)]
+        [_addr-taken : unit
+          (opt-function-addr-taken-install!
+            frame
+            (compiler-opt-global-shared-view blocks))]
         [next : ir.CompilerIrBlockList
           (match (compiler-opt-global-shared-view blocks)
             [(ir.CompilerIrBlockList.Array seq)

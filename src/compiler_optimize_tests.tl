@@ -29836,6 +29836,119 @@
      tk-no:
        return 0"))
 
+;; D3 at scale: PREDS decided predecessors on one merge, reached through a chain
+;; of dispatch branches. At `opt-thread-pred-budget` redirects a round it takes
+;; PREDS / 4 rounds, each of which rebuilds the list.
+(define (opt-thread-many-round-merge-blocks [preds : i64]) : ir.CompilerIrBlockList
+  (let
+    [text : String "entry:\n branch %0, tm-p0, tm-g1\n"]
+    [phi : String "tm-merge:\n %4 = phi [true, tm-p0]"]
+    [index : i64 1]
+    (begin
+      (while (< index preds)
+        (begin
+          (set!
+            text
+            (if (< index (- preds 1))
+              (str_cat.str-cat
+                text
+                "tm-g"
+                (string.int->string index)
+                ":\n branch %0, tm-p"
+                (string.int->string index)
+                ", tm-g"
+                (string.int->string (+ index 1))
+                "\n")
+              (str_cat.str-cat
+                text
+                "tm-g"
+                (string.int->string index)
+                ":\n jump tm-p"
+                (string.int->string index)
+                "\n")))
+          (set!
+            phi
+            (str_cat.str-cat
+              phi
+              (if (= (bit-and index 1) 0)
+                ", [true, tm-p"
+                ", [false, tm-p")
+              (string.int->string index)
+              "]"))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index preds)
+        (begin
+          (set!
+            text
+            (str_cat.str-cat
+              text
+              "tm-p"
+              (string.int->string index)
+              ":\n jump tm-merge\n"))
+          (set! index (+ index 1))))
+      (irt.blocks
+        (str_cat.str-cat
+          text
+          phi
+          " : bool\n branch %4, tm-yes, tm-no\ntm-yes:\n return 1\ntm-no:\n return 0")))))
+
+;; Bytes the pass bumps in its caller's arena, rounds' regions excluded.
+(cfg
+  test
+  (define (opt-thread-pass-caller-bytes [preds : i64] [fuel : i64]) : i64
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [scratch : arena.Arena (arena.make)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set scratch.handle))]
+      [blocks : ir.CompilerIrBlockList
+        (opt-thread-many-round-merge-blocks preds)]
+      [start : i64
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+          scratch.handle)]
+      [_result : opt.OptBlockListPassResult
+        (opt-thread-pass-result blocks fuel)]
+      [bytes : i64
+        (-
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            scratch.handle)
+          start)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set home))
+        (arena.destroy-safe! scratch)
+        bytes))))
+
+;; Rounds after the first leave only one copy of the final list in the caller's
+;; arena, so 24 rounds cost it about what one round does instead of 24 times as
+;; much; the output is still the fully threaded, verified list.
+(test
+  opt-thread-later-rounds-keep-two-generations
+  (let
+    [one-round : i64 (opt-thread-pass-caller-bytes 96 1)]
+    [all-rounds : i64 (opt-thread-pass-caller-bytes 96 64)]
+    [blocks : ir.CompilerIrBlockList (opt-thread-many-round-merge-blocks 96)]
+    [partial : ir.CompilerIrBlockList (opt-thread-pass-blocks blocks 23)]
+    [threaded : ir.CompilerIrBlockList (opt-thread-pass-blocks blocks 64)]
+    (begin
+      (test.assert-true
+        (opt-block-list-has-label? partial (ir.compiler-ir-label "tm-merge"))
+        "23 rounds leave decided predecessors on the merge")
+      (test.assert-false
+        (opt-block-list-has-label? threaded (ir.compiler-ir-label "tm-merge"))
+        "24 rounds thread every predecessor past the merge")
+      (test.assert-true
+        (opt-thread-pass-verified? threaded)
+        "the threaded list verifies")
+      (test.assert-true
+        (> one-round 0)
+        "the first round runs in the caller's arena")
+      (test.assert-true
+        (< all-rounds (* one-round 3))
+        "later rounds do not grow the caller's arena with the round count"))))
+
 ;; --- forwarding-block straightening ----------------------------------------
 ;; Both arms are trampolines and neither destination carries a phi, so both
 ;; edges thread. The `true` arm goes through two of them, which is the chain

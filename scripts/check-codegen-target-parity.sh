@@ -86,7 +86,8 @@ check_optimizer_target_free() {
     fi
 }
 
-check_target_dispatch_allowlist() {
+check_target_dispatch_boundary() {
+    scripts/check-codegen-target-dispatch.sh --self-test
     scripts/check-codegen-target-dispatch.sh
 }
 
@@ -182,7 +183,7 @@ compare_outputs() {
 }
 
 check_optimizer_target_free
-check_target_dispatch_allowlist
+check_target_dispatch_boundary
 check_emit_ir_target_honored
 
 rm -rf "$LINUX_DIR" "$WINDOWS_DIR"

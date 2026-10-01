@@ -16,6 +16,19 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+Linux and Windows share one lowerer and one backend. Target choices live in
+four places:
+- the lowerer's target-aware C ABI shapes;
+- the target policy (`compiler-backend-target-policy-new`) and its facts;
+- the ABI tables in `compiler_abi.tl`;
+- the platform leaf modules (`compiler_backend_runtime_{linux,windows}.tl` and
+  `compiler_backend_object_target_{linux,windows}.tl`).
+
+Shared emission reads those facts and never tests the target itself.
+[`scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh)
+enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
+Codegen Parity*) describes its rules.
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;

@@ -10,13 +10,18 @@
 (define (compiler-backend-current-arena-store [src : String]) : String
   (str_cat.str-cat "    movq " src ", %gs:0x28\n"))
 
+;; Offset in an arena segment header of the bound an inline bump allocation
+;; must stay below: the end of the committed part of the segment.
+(define (compiler-backend-runtime-usable-end-offset) : String
+  "64")
+
 (define (compiler-backend-runtime-fast-alloc-functions
   [size-reg : String]
   [next-reg : String]
   [profile : bool]) : String
   (runtime_common.compiler-backend-runtime-fast-alloc-functions
     (compiler-backend-current-arena-load "%r8")
-    "64"
+    (compiler-backend-runtime-usable-end-offset)
     size-reg
     next-reg
     profile))

@@ -1045,6 +1045,49 @@
       (compiler_abi.compiler-abi-float-arg-register-count abi)
       (compiler_abi.compiler-abi-outgoing-shadow-space abi))))
 
+;; Facts for code that holds only a raw target. Each reads the target's policy,
+;; so `compiler-backend-target-policy-new` stays the one place a target is
+;; mapped to its ABI, unwind, object format and runtime choices.
+;; `scripts/check-codegen-target-dispatch.sh` keeps every other shared scope
+;; free of Linux/Windows tests (src/TESTING.md, Cross-Target Codegen Parity).
+(define (compiler-backend-target-object-format [target : CompilerBackendTarget]) : CompilerBackendObjectFormatPolicy
+  (compiler-backend-target-policy-new target).object-format)
+
+(define (compiler-backend-object-format-elf?
+  [format : CompilerBackendObjectFormatPolicy]) : bool
+  (match format
+    [(CompilerBackendObjectFormatPolicy.Elf) true]
+    [(CompilerBackendObjectFormatPolicy.Coff) false]))
+
+(define (compiler-backend-target-elf? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-object-format-elf?
+    (compiler-backend-target-object-format target)))
+
+(define (compiler-backend-target-coff? [target : CompilerBackendTarget]) : bool
+  (not (compiler-backend-target-elf? target)))
+
+(define (compiler-backend-target-seh-unwind? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-target-policy-new target).seh-unwind)
+
+(define (compiler-backend-target-stack-probe? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-target-policy-new target).stack-probe)
+
+(define (compiler-backend-target-sysv-aggregates?
+  [target : CompilerBackendTarget]) : bool
+  (compiler_abi.compiler-abi-aggregate-eightbyte-classes?
+    (compiler-backend-target-abi target)))
+
+;; The target's name as diagnostics and fallback categories spell it.
+(define (compiler-backend-target-triple [target : CompilerBackendTarget]) : String
+  (match target
+    [(CompilerBackendTarget.Linux) "linux-x86_64"]
+    [(CompilerBackendTarget.Windows) "windows-x86_64"]))
+
+;; Raw `syscall` instructions are admitted only on Linux; other targets report
+;; this. A literal, so the diagnostic owns no allocation.
+(define (compiler-backend-raw-syscall-diagnostic) : String
+  "backend: syscall is only supported on the linux-x86_64 target")
+
 ;; A backend job owns one exact intern capability and the small mutable state
 ;; that is safe to share across its emission phases.  Keep the public carrier
 ;; opaque and one machine word; all mutable data lives in the owner arena cell
@@ -14751,19 +14794,19 @@
 (define (compiler-backend-emit-windows-seh-proc
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     (str_cat.str-cat ".seh_proc " symbol "\n" "")
     ""))
 
 (define (compiler-backend-emit-windows-seh-push-rbp
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_pushreg %rbp\n"
     ""))
 
 (define (compiler-backend-emit-windows-seh-set-rbp
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_setframe %rbp, 0\n"
     ""))
 
@@ -14842,7 +14885,10 @@
   [vars : i64]
   [frame : i64]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (>
+    (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+      (compiler-backend-target-abi target))
+    0)
     (compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
       vars
@@ -14905,7 +14951,7 @@
   [frame : i64]
   [end-prologue : bool]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     (str_cat.str-cat
       (if (> frame 0)
         (str_cat.str-cat
@@ -14930,7 +14976,7 @@
 
 (define (compiler-backend-emit-windows-seh-endproc
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_endproc\n"
     ""))
 
@@ -14952,7 +14998,7 @@
 (define (compiler-backend-emit-function-type-directive
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-linux? target)
+  (if (compiler-backend-target-elf? target)
     (str_cat.str-cat "    .type " symbol ",@function\n")
     ""))
 
@@ -14961,7 +15007,7 @@
 (define (compiler-backend-emit-function-size-directive
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-linux? target)
+  (if (compiler-backend-target-elf? target)
     (str_cat.str-cat "    .size " symbol ", . - " symbol "\n")
     ""))
 
@@ -18784,7 +18830,7 @@
                 [path-id : i64 (array-ref paths path-index)]
                 [path : String
                   (compiler-backend-escape-string
-                    (if (compiler-backend-target-linux? target)
+                    (if (compiler-backend-target-elf? target)
                       (string.replace
                         (compiler_ir_types.compiler-debug-path-remap
                           (ci.intern-compat-state-str
@@ -18802,7 +18848,7 @@
                     buf
                     (text_buf.append
                       buf
-                      (if (compiler-backend-target-windows? target)
+                      (if (compiler-backend-target-coff? target)
                         (str_cat.str-cat
                           "    .cv_file "
                           file-number
@@ -18871,7 +18917,7 @@
   [span-index : CompilerBackendSourceSpanIndex]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
-    (if (compiler-backend-target-windows? target)
+    (if (compiler-backend-target-coff? target)
       (str_cat.str-cat
         "    .section .debug$S,\"dr\"\n"
         "    .long 4\n"
@@ -18900,7 +18946,7 @@
           [column : i64 (compiler_ast_types.ast-source-span-start-col span)]
           (if (or (<= file-number 0) (<= line 0))
             ""
-            (if (compiler-backend-target-windows? target)
+            (if (compiler-backend-target-coff? target)
               (match (compiler-backend-index-function-slot
                 program-index
                 function)
@@ -18973,7 +19019,7 @@
   [function : i64]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
-    (compiler-backend-target-windows? target))
+    (compiler-backend-target-coff? target))
     (match (compiler-backend-index-function-slot program-index function)
       [(backend_i64_i64_map.LookupFound function-id)
         (str_cat.str-cat
@@ -18989,7 +19035,7 @@
   [program-index : CompilerBackendProgramIndex]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
-    (compiler-backend-target-windows? target))
+    (compiler-backend-target-coff? target))
     (str_cat.str-cat
       "    .section .debug$S,\"dr\"\n"
       "    .cv_filechecksums\n"
@@ -18997,7 +19043,7 @@
       "    .text\n")
     (if (and
       (compiler_ir_types.compiler-debug-info-enabled?)
-      (compiler-backend-target-linux? target))
+      (compiler-backend-target-elf? target))
       "    .section .text.typelisp_runtime,\"ax\"\n"
       "")))
 
@@ -19011,13 +19057,13 @@
 ;; direct-object release builds therefore keep their existing section model.
 (define (compiler-backend-backtrace-map-section
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-coff? target)
     "    .section .rdata$TLBT,\"dr\"\n"
     "    .section .typelisp_backtrace,\"a\",@progbits\n"))
 
 (define (compiler-backend-backtrace-string-section
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-coff? target)
     "    .section .rdata$TLBS,\"dr\"\n"
     "    .section .rodata.typelisp_backtrace,\"a\",@progbits\n"))
 
@@ -19288,20 +19334,13 @@
 (define (compiler-backend-abort-arg-reg
   [backend-state : CompilerBackendState]
   [index : i64]) : String
-  (match (compiler-backend-function-state-abort-target
-    (compiler-backend-state-function-state backend-state))
-    [(CompilerBackendTarget.Linux)
-      (cond
-        [(= index 0) "%rdi"]
-        [(= index 1) "%rsi"]
-        [(= index 2) "%rdx"]
-        [else "%rcx"])]
-    [(CompilerBackendTarget.Windows)
-      (cond
-        [(= index 0) "%rcx"]
-        [(= index 1) "%rdx"]
-        [(= index 2) "%r8"]
-        [else "%r9"])]))
+  (compiler_abi.compiler-abi-gp-arg-register
+    (compiler-backend-target-abi
+      (compiler-backend-function-state-abort-target
+        (compiler-backend-state-function-state backend-state)))
+    (if (> index 3)
+      3
+      index)))
 
 (define (compiler-backend-abort-site-next-label
   [backend-state : CompilerBackendState]
@@ -23739,19 +23778,21 @@
     compiler_abi.compiler-reg-id-r8
     (compiler_regalloc.compiler-reg-id-seq-prepend
       compiler_abi.compiler-reg-id-r9
-      (match target
-        [(CompilerBackendTarget.Windows)
+      (let
+        [rbx : compiler_regalloc.CompilerRegIdSeq
           (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rbx
             (compiler_regalloc.compiler-reg-id-seq-empty))]
-        [(CompilerBackendTarget.Linux)
+        ;; rsi and rdi join where the ABI makes them caller-saved.
+        (if (compiler_abi.compiler-abi-caller-saved-gp-register?
+          (compiler-backend-target-abi target)
+          compiler_abi.compiler-reg-id-rsi)
           (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rsi
             (compiler_regalloc.compiler-reg-id-seq-prepend
               compiler_abi.compiler-reg-id-rdi
-              (compiler_regalloc.compiler-reg-id-seq-prepend
-                compiler_abi.compiler-reg-id-rbx
-                (compiler_regalloc.compiler-reg-id-seq-empty))))]))))
+              rbx))
+          rbx)))))
 
 (define (compiler-backend-const-hoist-uses-reg-id-from?
   [function-state : CompilerBackendFunctionState]
@@ -37295,9 +37336,7 @@
         dst
         "_profile_done")]
     [usable-end-offset : String
-      (if (compiler-backend-target-windows? target)
-        "64"
-        "24")]
+      (compiler-backend-runtime-usable-end-offset target)]
     [scav : String
       (compiler-backend-scavenge-reg
         dst
@@ -38534,7 +38573,7 @@
     [w1-sse : bool
       (compiler-backend-group-word-sse? type-segment-bases program-index ty 1)]
     (and
-      (compiler-backend-target-linux? target)
+      (compiler-backend-target-sysv-aggregates? target)
       (not
         (compiler-backend-stack-call-arg-for-banks?
           target
@@ -39137,25 +39176,24 @@
       (compiler-backend-extern-call-info-fixed-count extern-call-info)]
     (if (< fixed-count 0)
       ""
-      (match target
-        [(CompilerBackendTarget.Linux)
-          (str_cat.str-cat
-            "    movb $"
-            (string.int->string
-              (compiler-backend-varargs-linux-vector-count
-                type-segment-bases
-                param-types
-                0
-                0))
-            ", %al\n"
-            ""
-            "")]
-        [(CompilerBackendTarget.Windows)
-          (compiler-backend-windows-vararg-dup-asm
-            type-segment-bases
-            param-types
-            fixed-count
-            0)]))))
+      (if (compiler_abi.compiler-abi-varargs-vector-count-in-al?
+        (compiler-backend-target-abi target))
+        (str_cat.str-cat
+          "    movb $"
+          (string.int->string
+            (compiler-backend-varargs-linux-vector-count
+              type-segment-bases
+              param-types
+              0
+              0))
+          ", %al\n"
+          ""
+          "")
+        (compiler-backend-windows-vararg-dup-asm
+          type-segment-bases
+          param-types
+          fixed-count
+          0)))))
 
 (define (compiler-backend-call-param-types-index
   [name : i64]
@@ -39557,7 +39595,7 @@
   [ty : compiler_ast_types.AstType]) : bool
   (and
     c-abi?
-    (compiler-backend-target-linux? target)
+    (compiler-backend-target-sysv-aggregates? target)
     (not
       (string.eq
         (compiler-backend-aggregate-type-name type-segment-bases ty)
@@ -39635,7 +39673,9 @@
       ;; `position` there), so counting a Windows group arg as one scalar slot
       ;; made tail-call stack accounting diverge from emission.
       (cond
-        [(and (compiler-backend-target-linux? target) (> private-memory-size 0))
+        [(and
+            (compiler-backend-target-sysv-aggregates? target)
+            (> private-memory-size 0))
           (compiler-backend-call-stack-arg-count
             type-segment-bases
             target
@@ -39710,7 +39750,7 @@
                 float1
                 pos1)]
             (if (and
-              (compiler-backend-target-linux? target)
+              (compiler-backend-target-sysv-aggregates? target)
               (not linux-group-fits))
               (compiler-backend-call-stack-arg-count
                 type-segment-bases
@@ -39827,7 +39867,7 @@
           type-segment-bases
           (compiler-backend-global-shared-view arg-ty))]
       (if (and
-        (compiler-backend-target-linux? target)
+        (compiler-backend-target-sysv-aggregates? target)
         (> private-memory-size 0))
         (compiler-backend-type-list-stack-arg-count-at
           type-segment-bases
@@ -39890,7 +39930,7 @@
                 float1
                 (+ position 1))]
             (if (and
-              (compiler-backend-target-linux? target)
+              (compiler-backend-target-sysv-aggregates? target)
               (not linux-group-fits))
               (compiler-backend-type-list-stack-arg-count-at
                 type-segment-bases
@@ -40287,10 +40327,8 @@
   [_program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-call-arg-space-from target))
 
-(define (compiler-backend-call-arg-space-from [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Windows) 0]
-    [(CompilerBackendTarget.Linux) 0]))
+(define (compiler-backend-call-arg-space-from [_target : CompilerBackendTarget]) : i64
+  0)
 
 (define (compiler-backend-closure-call-arg-space
   [target : CompilerBackendTarget]
@@ -41594,7 +41632,9 @@
       ;; two stack slots when either bank cannot fit the whole group. Windows
       ;; retains the existing unified-position group convention.
       (cond
-        [(and (compiler-backend-target-linux? target) (> private-memory-size 0))
+        [(and
+            (compiler-backend-target-sysv-aggregates? target)
+            (> private-memory-size 0))
           (match (compiler-backend-emit-c-memory-stack-arg
             type-segment-bases
             target
@@ -41710,7 +41750,7 @@
                 float1
                 (+ position 1))]
             (if (and
-              (compiler-backend-target-linux? target)
+              (compiler-backend-target-sysv-aggregates? target)
               (not linux-group-fits))
               (match (compiler-backend-emit-group-stack-arg
                 target
@@ -47511,31 +47551,34 @@
     (string.eq name "tl_atomic_i32_fetch_add_ptr")))
 
 (define (compiler-backend-atomic-ptr-reg [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "%rcx"
-    "%rdi"))
+  (compiler_abi.compiler-abi-gp-arg-register
+    (compiler-backend-target-abi target)
+    0))
 
 (define (compiler-backend-atomic-value-reg
   [target : CompilerBackendTarget]
   [i32? : bool]) : String
-  (if (compiler-backend-target-windows? target)
-    (if i32?
-      "%edx"
-      "%rdx")
-    (if i32?
-      "%esi"
-      "%rsi")))
+  (compiler-backend-atomic-arg-reg target 1 i32?))
 
 (define (compiler-backend-atomic-new-reg
   [target : CompilerBackendTarget]
   [i32? : bool]) : String
-  (if (compiler-backend-target-windows? target)
+  (compiler-backend-atomic-arg-reg target 2 i32?))
+
+;; An atomic builtin's operands arrive in the target ABI's integer argument
+;; registers, narrowed to their 32-bit names for the i32 forms.
+(define (compiler-backend-atomic-arg-reg
+  [target : CompilerBackendTarget]
+  [index : i64]
+  [i32? : bool]) : String
+  (let
+    [reg : String
+      (compiler_abi.compiler-abi-gp-arg-register
+        (compiler-backend-target-abi target)
+        index)]
     (if i32?
-      "%r8d"
-      "%r8")
-    (if i32?
-      "%edx"
-      "%rdx")))
+      (compiler-backend-reg-part reg 4)
+      reg)))
 
 (define (compiler-backend-atomic-rax [i32? : bool]) : String
   (if i32?
@@ -49243,7 +49286,7 @@
       (box
         (compiler_diagnostic.compiler-diagnostic-at-start
           ""
-          "backend: syscall is only supported on the linux-x86_64 target")))
+          (compiler-backend-raw-syscall-diagnostic))))
     (let
       [count : i64
         (compiler-backend-call-args-count
@@ -63488,7 +63531,7 @@
           ;; stack placement for mixed-bank aggregate words.
           (cond
             [(and
-                (compiler-backend-target-linux? target)
+                (compiler-backend-target-sysv-aggregates? target)
                 (> private-memory-size 0))
               (match (compiler-backend-emit-param-spills-from
                 type-segment-bases
@@ -63582,7 +63625,7 @@
                     float1
                     (+ position 1))]
                 (if (and
-                  (compiler-backend-target-linux? target)
+                  (compiler-backend-target-sysv-aggregates? target)
                   (not linux-group-fits))
                   (match (compiler-backend-emit-group-word-stack-param
                     type-segment-bases
@@ -68315,7 +68358,7 @@
             compiler-backend-scratch-i64-emergency-used-count)
           outgoing
           backend-state)]
-      [(and (compiler-backend-target-windows? target) rebase-ok)
+      [(and (compiler-backend-target-seh-unwind? target) rebase-ok)
         (compiler-backend-sweep-record-win64!
           backend-state
           (compiler-backend-state-stream-state backend-state)
@@ -76160,7 +76203,7 @@
                           "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
                           (if (and
                             (compiler_ir_types.compiler-debug-info-enabled?)
-                            (compiler-backend-target-linux? target))
+                            (compiler-backend-target-elf? target))
                             "    .cfi_endproc\n"
                             "")
                           "")
@@ -78363,21 +78406,15 @@
   [target : CompilerBackendTarget]
   [symbol : String]
   [size : i64]) : String
-  (match target
-    [(CompilerBackendTarget.Linux)
-      (str_cat.str-cat
-        "    .comm "
-        symbol
-        ", "
-        (string.int->string size)
-        ", 8\n")]
-    [(CompilerBackendTarget.Windows)
-      (str_cat.str-cat
-        "    .comm "
-        symbol
-        ", "
-        (string.int->string size)
-        ", 3\n")]))
+  ;; ELF `.comm` takes the alignment in bytes, COFF its base-2 logarithm.
+  (str_cat.str-cat
+    "    .comm "
+    symbol
+    ", "
+    (string.int->string size)
+    (if (compiler-backend-target-elf? target)
+      ", 8\n"
+      ", 3\n")))
 
 (define (compiler-backend-emit-global
   [type-segment-bases : i64]
@@ -79499,6 +79536,14 @@
     [(CompilerBackendTarget.Windows)
       (runtime_windows.compiler-backend-current-arena-load dst)]))
 
+(define (compiler-backend-runtime-usable-end-offset
+  [target : CompilerBackendTarget]) : String
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (runtime_linux.compiler-backend-runtime-usable-end-offset)]
+    [(CompilerBackendTarget.Windows)
+      (runtime_windows.compiler-backend-runtime-usable-end-offset)]))
+
 (define (compiler-backend-current-arena-store
   [target : CompilerBackendTarget]
   [src : String]) : String
@@ -80378,7 +80423,7 @@
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (and (not pic-emit?) (not (compiler-backend-target-windows? target))))
+      (and (not pic-emit?) (compiler-backend-target-elf? target)))
     (cfg
       test
       (profile_state.compiler-profile-metrics-reset-range!
@@ -80883,9 +80928,7 @@
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [probe : bool
-      (match target
-        [(CompilerBackendTarget.Windows) (>= frame-size 4096)]
-        [_ false])]
+      (and (compiler-backend-target-stack-probe? target) (>= frame-size 4096))]
     [remaining : i64 frame-size]
     (begin
       (compiler-backend-object-push-u8! (&mut out) 0x55)
@@ -81777,13 +81820,12 @@
 (define (compiler-backend-object-call-space
   [target : CompilerBackendTarget]
   [args : compiler_ir_types.CompilerIrCallArgs]) : i64
-  (match target
-    [(CompilerBackendTarget.Linux) 0]
-    [(CompilerBackendTarget.Windows)
-      (compiler-backend-round-up-16
-        (+
-          (compiler-backend-outgoing-shadow-space target)
-          (* 8 (compiler-backend-object-call-stack-word-count target args))))]))
+  (if (compiler-backend-object-stack-args? target)
+    (compiler-backend-round-up-16
+      (+
+        (compiler-backend-outgoing-shadow-space target)
+        (* 8 (compiler-backend-object-call-stack-word-count target args))))
+    0))
 
 (define (compiler-backend-object-call-stack-arg
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -81815,22 +81857,21 @@
       (compiler-backend-global-shared-view args)))
     parts
     (if (>= index (compiler-backend-object-call-reg-count target))
-      (match target
-        [(CompilerBackendTarget.Linux) parts]
-        [(CompilerBackendTarget.Windows)
-          (compiler-backend-object-call-arg-moves
-            (compiler-backend-object-call-stack-arg
-              parts
-              target
-              (compiler-backend-global-shared-view site)
-              (compiler-backend-call-arg-at args index)
-              (- index (compiler-backend-object-call-reg-count target))
-              program-index)
+      (if (compiler-backend-object-stack-args? target)
+        (compiler-backend-object-call-arg-moves
+          (compiler-backend-object-call-stack-arg
+            parts
             target
-            site
-            args
-            (+ index 1)
-            program-index)])
+            (compiler-backend-global-shared-view site)
+            (compiler-backend-call-arg-at args index)
+            (- index (compiler-backend-object-call-reg-count target))
+            program-index)
+          target
+          site
+          args
+          (+ index 1)
+          program-index)
+        parts)
       (compiler-backend-object-call-arg-moves
         (compiler-backend-object-load-value-to-reg
           parts
@@ -81893,21 +81934,20 @@
             (+ param-index 1))
           (if (>= int-index (compiler-backend-object-call-reg-count target))
             (compiler-backend-object-param-spills-from
-              (match target
-                [(CompilerBackendTarget.Linux) parts]
-                [(CompilerBackendTarget.Windows)
-                  (compiler-backend-object-store-reg-to-var
-                    (compiler-backend-object-add-nonempty-bytes
-                      parts
-                      (compiler-backend-object-load-rbp-disp-bytes
-                        (compiler-backend-incoming-stack-arg-offset
-                          target
-                          (-
-                            int-index
-                            (compiler-backend-object-call-reg-count target)))
-                        "%rax"))
-                    var-id
-                    "%rax")])
+              (if (compiler-backend-object-stack-args? target)
+                (compiler-backend-object-store-reg-to-var
+                  (compiler-backend-object-add-nonempty-bytes
+                    parts
+                    (compiler-backend-object-load-rbp-disp-bytes
+                      (compiler-backend-incoming-stack-arg-offset
+                        target
+                        (-
+                          int-index
+                          (compiler-backend-object-call-reg-count target)))
+                      "%rax"))
+                  var-id
+                  "%rax")
+                parts)
               target
               params
               (+ int-index 1)
@@ -84219,6 +84259,29 @@
   [context : CompilerBackendObjectAbiContext]) : CompilerDirectObjectFallbackReason
   (CompilerDirectObjectFallbackReason.UnsupportedAbi target context))
 
+;; The fallback category of an unsupported object ABI, per target and context.
+;; These are literals because callers keep categories past their own scratch.
+(define (compiler-backend-unsupported-object-abi-category
+  [target : CompilerBackendTarget]
+  [context : CompilerBackendObjectAbiContext]) : String
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          "unsupported-object-abi:linux-x86_64:call"]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          "unsupported-object-abi:linux-x86_64:function-entry"]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          "unsupported-object-abi:linux-x86_64:function-return"])]
+    [(CompilerBackendTarget.Windows)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          "unsupported-object-abi:windows-x86_64:call"]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          "unsupported-object-abi:windows-x86_64:function-entry"]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          "unsupported-object-abi:windows-x86_64:function-return"])]))
+
 (define (compiler-direct-object-fallback-category
   [reason : CompilerDirectObjectFallbackReason]) : String
   (match reason
@@ -84231,23 +84294,7 @@
     [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
       "unsupported-object-semantics"]
     [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
-      (match target
-        [(CompilerBackendTarget.Linux)
-          (match context
-            [(CompilerBackendObjectAbiContext.Call)
-              "unsupported-object-abi:linux-x86_64:call"]
-            [(CompilerBackendObjectAbiContext.FunctionEntry)
-              "unsupported-object-abi:linux-x86_64:function-entry"]
-            [(CompilerBackendObjectAbiContext.FunctionReturn)
-              "unsupported-object-abi:linux-x86_64:function-return"])]
-        [(CompilerBackendTarget.Windows)
-          (match context
-            [(CompilerBackendObjectAbiContext.Call)
-              "unsupported-object-abi:windows-x86_64:call"]
-            [(CompilerBackendObjectAbiContext.FunctionEntry)
-              "unsupported-object-abi:windows-x86_64:function-entry"]
-            [(CompilerBackendObjectAbiContext.FunctionReturn)
-              "unsupported-object-abi:windows-x86_64:function-return"])])]
+      (compiler-backend-unsupported-object-abi-category target context)]
     [(CompilerDirectObjectFallbackReason.ObjectEncoding)
       "unsupported-object-encoding"]
     [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)
@@ -84270,9 +84317,7 @@
     [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable target kind)
       (str_cat.str-cat
         "target="
-        (match target
-          [(CompilerBackendTarget.Linux) "linux-x86_64"]
-          [(CompilerBackendTarget.Windows) "windows-x86_64"])
+        (compiler-backend-target-triple target)
         "|kind="
         (match kind
           [(CompilerDirectObjectArtifactKind.Bin) "bin"]
@@ -84294,14 +84339,20 @@
       category
       (str_cat.str-cat category "|" context))))
 
+;; Whether this target's direct-object encoder passes arguments past the
+;; integer registers on the stack. COFF's positional path does; the legacy ELF
+;; path passes register arguments only (see compiler-backend-object-abi-capacity).
+(define (compiler-backend-object-stack-args? [target : CompilerBackendTarget]) : bool
+  (not (compiler-backend-target-elf? target)))
+
 (define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
-  (match target
-    ;; The legacy ELF object path has no incoming or outgoing stack-argument
-    ;; implementation. Six integer registers are its complete proven subset.
-    [(CompilerBackendTarget.Linux) 6]
-    ;; COFF has a tested positional GP stack path through the eleven-argument
-    ;; NtCreateFile fixture. Do not silently widen that legacy subset here.
-    [(CompilerBackendTarget.Windows) 11]))
+  ;; The legacy ELF object path has no incoming or outgoing stack-argument
+  ;; implementation. Six integer registers are its complete proven subset.
+  ;; COFF has a tested positional GP stack path through the eleven-argument
+  ;; NtCreateFile fixture. Do not silently widen either legacy subset here.
+  (if (compiler-backend-target-elf? target)
+    6
+    11))
 
 (define (compiler-backend-object-abi-type-supported?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
@@ -84922,7 +84973,7 @@
     (begin
       (compiler-backend-state-set-absolute-switch-ok!
         backend-state
-        (not (compiler-backend-target-windows? target)))
+        (compiler-backend-target-elf? target))
       (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
         backend-state
         type-segment-bases
@@ -84964,7 +85015,7 @@
   (begin
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (not (compiler-backend-target-windows? target)))
+      (compiler-backend-target-elf? target))
     (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
       backend-state
       (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)

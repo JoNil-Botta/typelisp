@@ -2533,12 +2533,23 @@
       (unsafe
         (ptr-read (ptr-cast (ptr-addr-of decls-box) : (Ptr u64))))]))
 
+;; Typechecker pool reads follow the context's own pools and ignore a
+;; compatibility pool context, so none may be active when a root context is
+;; created. Lint, the only production user, clears its compatibility context
+;; around the checks it runs. Empty when creation is allowed.
+(define (tc-context-compat-guard-message) : String
+  (if (ast.ast-node-pool-compat-context-active?)
+    "typecheck: a typecheck context was created while a compatibility pool context is active"
+    ""))
+
 ;; Allocate a root context's shared block in the job's lifetime arena, which
 ;; outlives every context of the job (a caller's scratch arena might not).
 (define (tc-context-shared-new
   [job-state : TcJobState]
   [shared : TcContextShared]) : u64
   (let
+    [guard : String (tc-context-compat-guard-message)]
+    [_guard : unit (when (> (string.string-length guard) 0) (io.panic guard))]
     [owner : i64 (tc-job-state-field job-state owner-arena i64)]
     [home : i64 (arena.tl_arena_current)]
     [_enter : unit
@@ -4467,11 +4478,7 @@
 ;; at each use so nested installs cannot redirect the walk or add a TcContext-
 ;; sized helper frame to recursive expression checking.
 (defmacro (tc-context-expr-get [ctx : Expr] [id : Expr]) : Expr
-  `(ast.ast-expr-segment-bases-get
-    (if (ast.ast-node-pool-compat-context-active?)
-      (ast.ast-node-pool-active-expr-segment-bases)
-      (tc-context-expr-segment-bases ,ctx))
-    ,id))
+  `(ast.ast-expr-segment-bases-get (tc-context-expr-segment-bases ,ctx) ,id))
 
 ;; Expanded in place: expression reads are the hottest context access, and a
 ;; helper function here would not be inlined into the large walkers.
@@ -4507,17 +4514,11 @@
 
 ;; Type segment-bases for a pure read under `ctx`. Lifetime-elision walks may
 ;; append reconstructed nodes, but never install a different pool; the table is
-;; stable across push/grow. Compatibility callers keep following the
-;; installed pool that their no-context API selects.
+;; stable across push/grow.
 (define (tc-context-type-bases [ctx : TcContext]) : i64
-  (if (ast.ast-node-pool-compat-context-active?)
-    (let
-      [pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-capture-active)]
-      (ast.ast-node-pool-context-type-segment-bases pools))
-    (let
-      [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      (ast.ast-node-pool-context-type-segment-bases pools))))
+  (let
+    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+    (ast.ast-node-pool-context-type-segment-bases pools)))
 
 ;; Expression segment-bases for a read-only walk under `ctx`, snapshotted once
 ;; at the walk's entry and threaded down as a scalar.
@@ -4528,16 +4529,12 @@
 ;; token avoids that copy, so a converted walk is no dearer than the global
 ;; reader; the hoist, not the conversion, is what makes that true.
 ;;
-;; A compatibility pool context suppresses the ctx install (see
-;; `tc-context-install-pools!`), so under one the walk must follow the installed
-;; pool exactly as `ast-node-get` does. Only walks that cannot expand a macro or
+;; Typechecker reads always follow `ctx`'s own pools, never a compatibility
+;; pool context: no typecheck context is created while one is active
+;; (`tc-context-compat-guard-message`). Only walks that cannot expand a macro or
 ;; otherwise install a different pool mid-traversal may cache this.
 (define (tc-context-expr-bases [ctx : TcContext]) : i64
-  (if (ast.ast-node-pool-compat-context-active?)
-    (ast.ast-node-pool-active-expr-segment-bases)
-    ;; This query returns one scalar: read the pool cells from the shared block
-    ;; instead of materializing a pool view through tc-context-pools.
-    (tc-context-expr-segment-bases ctx)))
+  (tc-context-expr-segment-bases ctx))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps

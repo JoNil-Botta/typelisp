@@ -530,14 +530,40 @@
         (let
           [ok?
             : bool
-            ;; Compatibility callers intentionally follow their selected pool,
-            ;; even when the TcContext argument names another owner.
-            (match (tc_core.tc-context-expr-get ctx-b root-a)
-              [(ast.AstExpr.Var name) (= name 101)]
-              [_ false])]
+            ;; A compatibility pool context does not redirect typechecker
+            ;; reads, and no typecheck context may be created under one.
+            (and
+              (match (tc_core.tc-context-expr-get ctx-b root-a)
+                [(ast.AstExpr.Var name) (= name 202)]
+                [_ false])
+              (=
+                (tc_core.tc-context-expr-bases ctx-b)
+                (ast.ast-node-pool-context-expr-segment-bases (& pools-b)))
+              (>
+                (string.string-length (tc_core.tc-context-compat-guard-message))
+                0))]
           (begin
             (ast.ast-node-pool-compat-context-clear!)
-            ok?)))]
+            (and
+              ok?
+              (=
+                (string.string-length (tc_core.tc-context-compat-guard-message))
+                0)))))]
+    [installed-ok? : bool
+      (let
+        [saved : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (begin
+          ;; Neither does an ordinary install of another pool.
+          (ast.ast-node-pool-context-install! pools-b)
+          (let
+            [ok? : bool
+              (match (tc_core.tc-context-expr-get ctx-a root-b)
+                [(ast.AstExpr.Var name) (= name 101)]
+                [_ false])]
+            (begin
+              (ast.ast-node-pool-context-install! saved)
+              ok?))))]
     (if (and
       (= root-a root-b)
       (= next-a next-b)
@@ -546,6 +572,7 @@
       a-next-ok?
       b-next-ok?
       compat-ok?
+      installed-ok?
       (= (ast.ast-node-pool-context-expr-len pools-a) 2)
       (= (ast.ast-node-pool-context-expr-len pools-b) 2)
       (= (ast.ast-node-pool-len) installed-len))
@@ -5118,25 +5145,25 @@
             (tc_core.tc-float-literal-expr?
               ctx-a
               (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))))
-      ;; The explicit compatibility route intentionally selects its installed
-      ;; owner, even when the context argument names a different pool.
+      ;; A compatibility pool context does not redirect typechecker reads: the
+      ;; owner-A context still reads its integer literal at the shared id.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
         (and
-          (tc_core.tc-float-literal-expr?
+          (tc_core.tc-integer-literal-expr?
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b))
           (not
-            (tc_core.tc-integer-literal-expr?
+            (tc_core.tc-float-literal-expr?
               ctx-a
               (tc_core.tc-context-expr-get ctx-a root-b)))
-          (match (tc_core.tc-float-literal-expr-with-expected
+          (match (tc_core.tc-integer-literal-expr-with-expected
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b)
-            (ast.AstType.F32))
+            (ast.AstType.I64))
             [(tc_core.ResultTcType.Ok ty)
-              (tc_core.tc-type-eq ty (ast.AstType.F32))]
+              (tc_core.tc-type-eq ty (ast.AstType.I64))]
             [_ false])))
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-install! saved)
@@ -5759,8 +5786,8 @@
               ctx-b
               (ast.AstExpr.MacroExpansion 6 0 0))
             0)))
-      ;; The explicit compatibility route intentionally selects its installed
-      ;; owner, even when the context argument names a different pool.
+      ;; A compatibility pool context does not redirect typechecker reads: the
+      ;; owner-A context keeps its own keys for the same ids.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
@@ -5769,12 +5796,12 @@
             (tc_core.tc-call-arg-fact-key
               ctx-a
               (ast.AstExpr.MacroExpansion 2 0 0))
-            0)
+            1)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a
               (ast.AstExpr.MacroExpansion 3 0 0))
-            1)
+            2)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a

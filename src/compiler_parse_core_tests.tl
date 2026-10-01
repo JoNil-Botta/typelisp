@@ -1905,6 +1905,89 @@
           [_ false]))]
     [(parser.ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-first-struct-aligns [source : String] [field : i64]) : (Tuple
+    i64
+    i64)
+  (match (parser.parse-ast-source source)
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (let
+        [decls : ast.AstDeclList (deref decls-box)]
+        (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
+          [(ast.AstDecl.DefStruct _ _ repr _ _)
+            (tuple
+              (ast.ast-struct-repr-declared-align repr)
+              (ast.ast-struct-repr-field-declared-align repr field))]
+          [(ast.AstDecl.DefStructLifetimes _ _ _ repr _ _)
+            (tuple
+              (ast.ast-struct-repr-declared-align repr)
+              (ast.ast-struct-repr-field-declared-align repr field))]
+          [_ (tuple -1 -1)]))]
+    [(parser.ResultAstProgram.Err _) (tuple -2 -2)]))
+
+(define (compiler-parse-aligns-are?
+  [source : String]
+  [field : i64]
+  [struct-align : i64]
+  [field-align : i64]) : bool
+  (match (compiler-parse-first-struct-aligns source field)
+    [(tuple got-struct got-field)
+      (and (= got-struct struct-align) (= got-field field-align))]))
+
+;; A struct's field alignment list ends at its last aligned field.
+(define (compiler-parse-field-aligns-len-is? [source : String] [want : i64]) : bool
+  (match (parser.parse-ast-source source)
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (let
+        [decls : ast.AstDeclList (deref decls-box)]
+        (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
+          [(ast.AstDecl.DefStruct _ _ (ast.AstStructRepr.C _ aligns) _ _)
+            (= aligns.len want)]
+          [_ false]))]
+    [(parser.ResultAstProgram.Err _) false]))
+
+;; `(:align N)` metadata: the struct-level form joins `(:repr c)` in either
+;; order, and the field-level form is independent of the field's position.
+(define (compiler-parse-repr-c-align-ok?) : bool
+  (and
+    (compiler-parse-aligns-are?
+      "(defstruct Rseq (:repr c) (:align 32) (bytes (Array u8 64)))"
+      0
+      32
+      0)
+    (compiler-parse-aligns-are?
+      "(defstruct Rseq (:align 32) (:repr c) (bytes (Array u8 64)))"
+      0
+      32
+      0)
+    (compiler-parse-aligns-are?
+      "(defstruct T (:repr c) (kind u8) (schedule u8 (:align 8)))"
+      1
+      0
+      8)
+    (compiler-parse-aligns-are?
+      "(defstruct T (:repr c) (kind u8) (schedule u8 (:align 8)))"
+      0
+      0
+      0)
+    (compiler-parse-aligns-are?
+      "(defstruct T (:lifetimes a) (:align 4096) (:must-use) (:repr c) (p (Ptr u8) (:align 1)))"
+      0
+      4096
+      1)
+    (compiler-parse-aligns-are?
+      "(defstruct T (:repr c) (a u8) (b u8 (:align 4)) (c u8))"
+      2
+      0
+      0)
+    (compiler-parse-field-aligns-len-is?
+      "(defstruct T (:repr c) (a u8) (b u8 (:align 4)) (c u8))"
+      2)
+    (compiler-parse-field-aligns-len-is?
+      "(defstruct T (:repr c) (:align 8) (a u8))"
+      0)
+    (compiler-parse-aligns-are? "(defstruct Plain (:repr c) (x i64))" 0 0 0)
+    (compiler-parse-aligns-are? "(defstruct Plain (x i64))" 0 0 0)))
+
 (define (compiler-parse-inline-test-ok?) : bool
   (match (parser.parse-ast-source "(test parser-basic
   (+ 1 2)
@@ -2005,7 +2088,95 @@
       "parse: unknown defstruct metadata :layout")
     (compiler-parse-error-ok?
       "(defstruct Bad (:repr c))"
-      "parse: defstruct needs at least one field")))
+      "parse: defstruct needs at least one field")
+    (compiler-parse-repr-c-align-error-tests-ok?)))
+
+(define (compiler-parse-repr-c-align-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:align 8) (x i64))"
+      "parse: defstruct :align metadata requires (:repr c) metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close) (:align 8) (x i64))"
+      "parse: defstruct :align metadata requires (:repr c) metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align 8) (:align 8) (x i64))"
+      "parse: duplicate defstruct :align metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (x i64) (:align 8))"
+      "parse: defstruct metadata must appear before fields")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align) (x i64))"
+      "parse: malformed defstruct :align metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align 8 16) (x i64))"
+      "parse: malformed defstruct :align metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align n) (x i64))"
+      "parse: malformed defstruct :align metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align 0) (x i64))"
+      "parse: :align value must be a power of two from 1 through 4096")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align -8) (x i64))"
+      "parse: :align value must be a power of two from 1 through 4096")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align 24) (x i64))"
+      "parse: :align value must be a power of two from 1 through 4096")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (:align 8192) (x i64))"
+      "parse: :align value must be a power of two from 1 through 4096")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64 (:align 8)))"
+      "parse: field :align metadata requires struct (:repr c) metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close) (x i64 (:align 8)))"
+      "parse: field :align metadata requires struct (:repr c) metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (x i64 (:align 8) (:align 16)))"
+      "parse: duplicate field :align metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (x i64 (:align)))"
+      "parse: malformed field :align metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (x i64 (:align 3)))"
+      "parse: :align value must be a power of two from 1 through 4096")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:repr c) (x i64 (:cleanup close)))"
+      "parse: field cleanup metadata requires struct :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:align 8) (A))"
+      "parse: unknown defenum metadata :align")
+    (compiler-parse-error-ok?
+      "(defenum Bad (A i64 (:align 8)))"
+      "parse: enum payload cleanup metadata requires enum :cleanup metadata")
+    ;; Alignment errors are reported at the offending form.
+    (compiler-parse-diagnostic-location-ok?
+      "align-duplicate.tl"
+      "(defstruct Bad
+  (:repr c)
+  (:align 8)
+  (:align 8)
+  (x i64))"
+      "parse: duplicate defstruct :align metadata"
+      4
+      3)
+    (compiler-parse-diagnostic-location-ok?
+      "align-without-repr.tl"
+      "(defstruct Bad
+  (:align 8)
+  (x i64))"
+      "parse: defstruct :align metadata requires (:repr c) metadata"
+      2
+      3)
+    (compiler-parse-diagnostic-location-ok?
+      "align-field.tl"
+      "(defstruct Bad
+  (:repr c)
+  (x i64 (:align 6)))"
+      "parse: :align value must be a power of two from 1 through 4096"
+      3
+      10)))
 
 (define (compiler-parse-first-decl-must-use? [source : String]) : bool
   (match (parser.parse-ast-source source)
@@ -3697,6 +3868,7 @@
         (compiler-parse-bracket-cond-call-ok?)
         (compiler-parse-and-or-macro-call-candidates-ok?)
         (compiler-parse-repr-c-ok?)
+        (compiler-parse-repr-c-align-ok?)
         (compiler-parse-cleanup-metadata-ok?)
         (compiler-parse-raw-pointer-ok?)
         (compiler-parse-extern-metadata-ok?)

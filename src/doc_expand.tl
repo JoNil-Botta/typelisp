@@ -763,9 +763,16 @@
     0
     (ast.ast-macro-param-list-len (& params))))
 
+;; A declared `(:align N)` is layout metadata, so generated signatures keep it.
+(define (doc-ast-declared-align-source [align : i64]) : String
+  (if (= align 0)
+    ""
+    (doc-cat3 " (:align " (string.int->string align) ")")))
+
 (define (doc-ast-field-source
   [ctx : DocExpandContext]
-  [field : ast.AstFieldDef]) : String
+  [field : ast.AstFieldDef]
+  [align : i64]) : String
   (match field
     [(ast.AstFieldDef.Def name ty _)
       (doc-cat5
@@ -773,10 +780,20 @@
         (doc-expand-source-name ctx (ci.intern-syntax-id-value name))
         " "
         (doc-ast-type-source ctx ty)
-        ")")]))
+        (doc-cat2 (doc-ast-declared-align-source align) ")"))]))
+
+;; `(:repr c)` and the struct's declared alignment, in the canonical metadata
+;; order after `:lifetimes`.
+(define (doc-ast-struct-repr-source [repr : (& repr ast.AstStructRepr)]) : String
+  (if (ast.ast-struct-repr-c? repr)
+    (doc-cat2
+      " (:repr c)"
+      (doc-ast-declared-align-source (ast.ast-struct-repr-declared-align repr)))
+    ""))
 
 (define (doc-ast-field-list-source-from
   [ctx : DocExpandContext]
+  [repr : (& repr ast.AstStructRepr)]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]
   [count : i64]) : String
@@ -788,15 +805,18 @@
         (ast.ast-field-def-list-get
           (& fields)
           index
-          (ast.ast-field-def-fallback)))
-      (doc-ast-field-list-source-from ctx fields (+ index 1) count))))
+          (ast.ast-field-def-fallback))
+        (ast.ast-struct-repr-field-declared-align repr index))
+      (doc-ast-field-list-source-from ctx repr fields (+ index 1) count))))
 
 (define (doc-ast-field-list-source
   [ctx : DocExpandContext]
+  [repr : (& repr ast.AstStructRepr)]
   [fields : ast.AstFieldDefList]) : String
   (doc-ast-field-list-source-from
     ctx
-    fields
+    repr
+    (& fields)
     0
     (ast.ast-field-def-list-len (& fields))))
 
@@ -895,12 +915,13 @@
   [ctx : DocExpandContext]
   [name : i64]
   [lifetimes : String]
+  [repr : ast.AstStructRepr]
   [fields : ast.AstFieldDefList]) : String
   (doc-cat5
     "(defstruct "
     (doc-expand-source-name ctx name)
-    lifetimes
-    (doc-ast-field-list-source ctx fields)
+    (doc-cat2 lifetimes (doc-ast-struct-repr-source (& repr)))
+    (doc-ast-field-list-source ctx (& repr) fields)
     ")"))
 
 (define (doc-ast-enum-signature
@@ -980,15 +1001,15 @@
             (doc-ast-lifetime-list-source ctx lifetimes)
             variants)
           0))]
-    [(ast.AstDecl.DefStruct decl-meta name _ _ fields)
+    [(ast.AstDecl.DefStruct decl-meta name repr _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-struct-signature ctx name "" fields)
+          (doc-ast-struct-signature ctx name "" repr fields)
           0))]
-    [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ fields)
+    [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes repr _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
@@ -998,6 +1019,7 @@
             ctx
             name
             (doc-ast-lifetime-list-source ctx lifetimes)
+            repr
             fields)
           0))]
     [(ast.AstDecl.Unsafe inner-box) (doc-ast-decl-item ctx (deref inner-box))]

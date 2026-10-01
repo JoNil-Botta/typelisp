@@ -68,6 +68,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 13: `AstStructRepr.C` carries the declared struct `(:align N)` value (0
+  ;; when absent) and the per-field values up to the last declared one (#7445).
+  ;;
   ;; 12: AstType tag 39 carries a lifetime-invalidating parameter (#6670).
   ;;
   ;; 11: AstExpr tags 87 and 88 add ForeachActive and LaneValue.
@@ -108,7 +111,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  12)
+  13)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -273,11 +276,49 @@
   (define (surface-ast-write-struct-repr!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [repr : ast.AstStructRepr]) : unit
-    (codec.surface-ast-write-i64!
-      out
-      (match repr
-        [(ast.AstStructRepr.Default) 0]
-        [(ast.AstStructRepr.C) 1]))))
+    (match repr
+      [(ast.AstStructRepr.Default) (codec.surface-ast-write-i64! out 0)]
+      [(ast.AstStructRepr.C align fields)
+        (let
+          [index : i64 0]
+          (begin
+            (codec.surface-ast-write-i64! out 1)
+            (codec.surface-ast-write-i64! out align)
+            (codec.surface-ast-write-i64! out fields.len)
+            (while (< index fields.len)
+              (begin
+                (codec.surface-ast-write-i64!
+                  out
+                  (ast.ast-field-align-list-get (& fields) index 0))
+                (set! index (+ index 1))))))])))
+
+;; A declared `(:align N)` value: 0 when absent, otherwise a power of two
+;; within the parser's accepted range.
+(define (surface-ast-read-declared-align!
+  [reader : (&mut reader codec.SurfaceAstReader)]) : i64
+  (let
+    [align : i64 (codec.surface-ast-read-i64! reader)]
+    (if (ast.ast-declared-align-encodable? align)
+      align
+      (begin
+        (codec.surface-ast-reader-fail!
+          reader
+          "surface ast: invalid declared alignment")
+        0))))
+
+;; Field alignments name fields by index, so the list cannot outrun them.
+(define (surface-ast-check-field-aligns!
+  [reader : (&mut reader codec.SurfaceAstReader)]
+  [repr : (& repr ast.AstStructRepr)]
+  [fields : (& fields ast.AstFieldDefList)]) : unit
+  (match repr
+    [(ast.AstStructRepr.C _ aligns)
+      (when
+        (> aligns.len fields.len)
+        (codec.surface-ast-reader-fail!
+          reader
+          "surface ast: field alignments exceed the struct's fields"))]
+    [(ast.AstStructRepr.Default) unit]))
 
 (define (surface-ast-read-struct-repr!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstStructRepr
@@ -286,7 +327,28 @@
     (if (= tag 0)
       ast.AstStructRepr.Default
       (if (= tag 1)
-        ast.AstStructRepr.C
+        (let
+          [align : i64 (surface-ast-read-declared-align! reader)]
+          [count : i64 (codec.surface-ast-read-count! reader)]
+          [fields : ast.AstFieldAlignList
+            (ast.ast-field-align-list-with-capacity count)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (begin
+                (ast.ast-field-align-list-push
+                  (&mut fields)
+                  (surface-ast-read-declared-align! reader))
+                (set! index (+ index 1))))
+            ;; The parser ends the list at the last declared field alignment.
+            (when
+              (and
+                (> count 0)
+                (= (ast.ast-field-align-list-get (& fields) (- count 1) 0) 0))
+              (codec.surface-ast-reader-fail!
+                reader
+                "surface ast: field alignment list ends in an absent entry"))
+            (ast.AstStructRepr.C align fields)))
         (begin
           (codec.surface-ast-reader-fail!
             reader
@@ -1385,20 +1447,37 @@
           (surface-ast-read-enum-cleanup! reader)
           (surface-ast-read-variant-def-list! reader))]
       [(= tag 8)
-        (ast.AstDecl.DefStruct
-          (surface-ast-read-decl-meta! reader)
-          (codec.surface-ast-read-name! reader)
-          (surface-ast-read-struct-repr! reader)
-          (surface-ast-read-struct-cleanup! reader)
-          (surface-ast-read-field-def-list! reader))]
+        (let
+          [meta : ast.AstDeclMeta (surface-ast-read-decl-meta! reader)]
+          [name : i64 (codec.surface-ast-read-name! reader)]
+          [repr : ast.AstStructRepr (surface-ast-read-struct-repr! reader)]
+          [cleanup : ast.AstStructCleanup
+            (surface-ast-read-struct-cleanup! reader)]
+          [fields : ast.AstFieldDefList
+            (surface-ast-read-field-def-list! reader)]
+          (begin
+            (surface-ast-check-field-aligns! reader (& repr) (& fields))
+            (ast.AstDecl.DefStruct meta name repr cleanup fields)))]
       [(= tag 9)
-        (ast.AstDecl.DefStructLifetimes
-          (surface-ast-read-decl-meta! reader)
-          (codec.surface-ast-read-name! reader)
-          (codec.surface-ast-read-lifetime-list! reader)
-          (surface-ast-read-struct-repr! reader)
-          (surface-ast-read-struct-cleanup! reader)
-          (surface-ast-read-field-def-list! reader))]
+        (let
+          [meta : ast.AstDeclMeta (surface-ast-read-decl-meta! reader)]
+          [name : i64 (codec.surface-ast-read-name! reader)]
+          [lifetimes : ast.AstLifetimeList
+            (codec.surface-ast-read-lifetime-list! reader)]
+          [repr : ast.AstStructRepr (surface-ast-read-struct-repr! reader)]
+          [cleanup : ast.AstStructCleanup
+            (surface-ast-read-struct-cleanup! reader)]
+          [fields : ast.AstFieldDefList
+            (surface-ast-read-field-def-list! reader)]
+          (begin
+            (surface-ast-check-field-aligns! reader (& repr) (& fields))
+            (ast.AstDecl.DefStructLifetimes
+              meta
+              name
+              lifetimes
+              repr
+              cleanup
+              fields)))]
       [(= tag 10)
         (ast.AstDecl.Import
           (surface-ast-read-decl-meta! reader)

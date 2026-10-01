@@ -5147,6 +5147,19 @@
                 [(and
                     (= argc 1)
                     (or
+                      (string.eq head "comptime.type-declared-align")
+                      (string.eq head "type-declared-align")))
+                  (tlci_core.tlci-host-callback-name type-declared-align)]
+                [(and
+                    (= argc 2)
+                    (or
+                      (string.eq head "comptime.struct-field-declared-align")
+                      (string.eq head "struct-field-declared-align")))
+                  (tlci_core.tlci-host-callback-name
+                    struct-field-declared-align)]
+                [(and
+                    (= argc 1)
+                    (or
                       (string.eq head "comptime.tuple-element-count")
                       (string.eq head "tuple-element-count")))
                   (tlci_core.tlci-host-callback-name tuple-element-count)]

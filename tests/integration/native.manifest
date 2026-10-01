@@ -672,6 +672,7 @@ lint_driver_smoke|all|-|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_sur
 package_cache_smoke|all|-|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl|-
 array_push_aggregate|all|-|tests/integration/array_push_aggregate.tl|42|-|-|-|-
 nested_repr_c_aggregate|all|-|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-|-
+repr_c_explicit_alignment|all|-,0,2|tests/integration/repr_c_explicit_alignment.tl|42|-|-|benchmarks/repr_c_explicit_alignment/baseline.c|-
 nested_tuple_array_projection|all|-|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl|-
 lambda_capture_lifetime_aggregate|all|-|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl|-
 register_resident_enum|all|-|tests/integration/register_resident_enum.tl|42|-|-|-|-

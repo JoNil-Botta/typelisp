@@ -945,7 +945,18 @@
         (ctfe.ctfe-qualified-name-key-id
           cbi.compiler-builtin-id-fix-stdlib
           cbi.compiler-builtin-id-fix-Status))]
-    (ctfe-env-with-reflections infos)))
+    ;; Point declares `(:align 16)` and its `flag` field `(:align 8)`.
+    [point-repr : ast.AstStructRepr
+      (ast.ast-struct-repr-with-field-align
+        (ast.AstStructRepr.C 16 (ast.ast-field-align-list-new))
+        1
+        8)]
+    (ctfe-env-with-reflections
+      (ctfe.ctfe-reflect-info-list-add-aligns
+        infos
+        cbi.compiler-builtin-id-fix-Point
+        (& point-repr)
+        2))))
 
 (define (compiler-ctfe-reflection-query-ok?) : bool
   (let
@@ -1086,6 +1097,60 @@
           (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
         env
         (ast.AstType.I64))
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") point-ty)
+        env
+        16)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") maybe-ty)
+        env
+        0)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-declared-align") array-ty)
+        env
+        0)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call2
+          (ctfe.ctfe-builtin "struct-field-declared-align")
+          point-ty
+          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1))))
+        env
+        8)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call2
+          (ctfe.ctfe-builtin "struct-field-declared-align")
+          point-ty
+          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+        env
+        0)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call2
+          (ctfe.ctfe-builtin "struct-field-declared-align")
+          point-ty
+          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2))))
+        env
+        "struct-field-declared-align index out of range")
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call2
+          (ctfe.ctfe-builtin "struct-field-declared-align")
+          maybe-ty
+          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0))))
+        env
+        "struct-field-declared-align requires struct type")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?

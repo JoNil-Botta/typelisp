@@ -1284,8 +1284,207 @@
           [(csym.ResultCompilerSymbols.Err _) false])]
       [(parser.ResultAstProgram.Err _) false])))
 
+;; Explicit `(:align N)` layout: the repr-c field-address layout and the
+;; inline aggregate layout behind `size-of`/`align-of` must agree on the
+;; C11 `_Alignas` result (struct size 16, alignment 8, `data` at 8).
+(define (compiler-typecheck-repr-c-aligned-layout-source) : String
+  "(defstruct Frame
+  (:repr c)
+  (id u32)
+  (len u8)
+  (data (Array u8 8) (:align 8)))
+(defstruct Prefix
+  (:align 8)
+  (:repr c)
+  (kind u8)
+  (schedule u8 (:align 8)))
+(defstruct Holder
+  (:repr c)
+  (tag u8)
+  (inner Prefix)
+  (items (Array Prefix 2))
+  (tail u16))")
+
+(define (compiler-typecheck-aligned-pair-ok?
+  [ctx : tc_core.TcContext]
+  [program : ast.AstProgram]
+  [name : String]
+  [want-size : i64]
+  [want-align : i64]
+  [field : String]
+  [want-offset : i64]) : bool
+  (let
+    [name-id : i64
+      (compiler-typecheck-fixture-nominal-id
+        program
+        (tc_core.tc-global-shared-view name))]
+    (compiler-typecheck-aligned-pair-id-ok?
+      ctx
+      name
+      name-id
+      want-size
+      want-align
+      field
+      want-offset)))
+
+(define (compiler-typecheck-aligned-pair-id-ok?
+  [ctx : tc_core.TcContext]
+  [name : String]
+  [name-id : i64]
+  [want-size : i64]
+  [want-align : i64]
+  [field : String]
+  [want-offset : i64]) : bool
+  (match (tc_core.tc-repr-c-struct-layout-id ctx name name-id)
+    [(tc_core.ResultTcReprCLayout.Ok repr-c)
+      (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+        [(tc_core.ResultTcInlineAggregateLayout.Ok inline)
+          (and
+            (=
+              (tc_core.tc-repr-c-layout-size
+                (tc_core.tc-global-shared-view repr-c))
+              want-size)
+            (=
+              (tc_core.tc-repr-c-layout-align
+                (tc_core.tc-global-shared-view repr-c))
+              want-align)
+            (=
+              (core_tests.tc-repr-c-layout-field-offset
+                (tc_core.tc-repr-c-layout-fields
+                  (tc_core.tc-global-shared-view repr-c))
+                field)
+              want-offset)
+            (=
+              (tc_core.tc-inline-aggregate-layout-size
+                (tc_core.tc-global-shared-view inline))
+              want-size)
+            (= (tc_core.tc-inline-aggregate-layout-align inline) want-align))]
+        [(tc_core.ResultTcInlineAggregateLayout.Err _) false])]
+    [(tc_core.ResultTcReprCLayout.Err _) false]))
+
+(define (compiler-typecheck-repr-c-aligned-layout-ok?) : bool
+  (begin
+    (tc_core.tc-agg-caches-reset!)
+    (match (parser.parse-ast-source
+      (compiler-typecheck-repr-c-aligned-layout-source))
+      [(parser.ResultAstProgram.Ok program)
+        (match (csym.build-compiler-symbols program)
+          [(csym.ResultCompilerSymbols.Ok symbols)
+            (match (csym.build-compiler-registries program)
+              [(csym.ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : tc_core.TcContext
+                    (tc_core.tc-context-new
+                      (ast.ast-global-shared-view program)
+                      symbols
+                      registries
+                      ""
+                      cbi.compiler-builtin-id-fix-empty
+                      (ast.ast-node-pool-context-capture-active))]
+                  (and
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Frame"
+                      16
+                      8
+                      "data"
+                      8)
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Prefix"
+                      16
+                      8
+                      "schedule"
+                      8)
+                    ;; Nested and arrayed aligned structs propagate 8: the
+                    ;; array starts at 24 with a 16-byte stride.
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Holder"
+                      64
+                      8
+                      "tail"
+                      56)
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Holder"
+                      64
+                      8
+                      "items"
+                      24)))]
+              [(csym.ResultCompilerRegistries.Err _) false])]
+          [(csym.ResultCompilerSymbols.Err _) false])]
+      [(parser.ResultAstProgram.Err _) false])))
+
+(define (compiler-typecheck-repr-c-align-errors-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-aligned-layout-source))
+    (compiler-typecheck-ok?
+      "(defstruct Same
+  (:repr c)
+  (:align 8)
+  (x i64 (:align 8)))")
+    (compiler-typecheck-error-ok?
+      "(defstruct Weak
+  (:repr c)
+  (x i64 (:align 4)))"
+      "typecheck: repr c struct Weak field x declares (:align 4) below its type's natural alignment 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Weak
+  (:repr c)
+  (:align 4)
+  (x i64))"
+      "typecheck: repr c struct Weak declares (:align 4) below the alignment its fields require, 8")
+    ;; A raised field alignment counts toward the struct's requirement.
+    (compiler-typecheck-error-ok?
+      "(defstruct Weak
+  (:repr c)
+  (:align 4)
+  (x u8 (:align 8)))"
+      "typecheck: repr c struct Weak declares (:align 4) below the alignment its fields require, 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Inner
+  (:repr c)
+  (:align 8)
+  (x u8))
+(defstruct Weak
+  (:repr c)
+  (inner Inner (:align 4)))"
+      "typecheck: repr c struct Weak field inner declares (:align 4) below its type's natural alignment 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Empty
+  (:repr c)
+  (:align 8)
+  (x unit))"
+      "typecheck: repr c struct Empty declares (:align 8) but its fields occupy 0 bytes")
+    (compiler-typecheck-error-ok?
+      "(defstruct Wide
+  (:repr c)
+  (:align 16)
+  (x i64))"
+      "typecheck: repr c struct Wide declares (:align 16); storage cannot yet place values aligned above 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Wide
+  (:repr c)
+  (x u8 (:align 32)))"
+      "typecheck: repr c struct Wide field x declares (:align 32); storage cannot yet place values aligned above 8")
+    (compiler-typecheck-error-location-ok?
+      "(define (f) : i64 1)
+(defstruct Weak
+  (:repr c)
+  (x i64 (:align 4)))"
+      "typecheck: repr c struct Weak field x declares (:align 4) below its type's natural alignment 8"
+      2
+      1)))
+
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
+    (compiler-typecheck-repr-c-aligned-layout-ok?)
+    (compiler-typecheck-repr-c-align-errors-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-layout-source))
     (compiler-typecheck-repr-c-layout-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-f32-source))
@@ -3251,7 +3450,7 @@
     (ast.ast-decl-cons
       (ast.ast-decl-def-struct-id
         (ci.intern-generated-name "Bad")
-        (ast.AstStructRepr.C)
+        (ast.ast-struct-repr-c)
         (ast.ast-struct-cleanup-fn-id
           (ci.intern-syntax-id-from-raw
             (ci.intern-generated-name "cleanup-bad")))
@@ -10188,7 +10387,7 @@
                     (ast.AstDecl.DefStruct
                       (ast.ast-decl-meta-runtime-shared-view)
                       name
-                      (ast.AstStructRepr.C)
+                      (ast.ast-struct-repr-c)
                       cleanup
                       fields))
                   (match (tc_api.typecheck-compiler-program program)

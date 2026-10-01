@@ -5078,6 +5078,8 @@
                   scope.home-profile-surface)
                 (compiler_ast_types.ast-node-pool-context-destroy-storage!
                   retired)
+                (ci.intern-compat-state-release-structural-generations!
+                  (&mut (array-ref state.intern-state 0)))
                 (unsafe
                   (begin
                     (arena.tl_arena_destroy
@@ -5357,6 +5359,8 @@
               0))
           (compiler_ast_types.ast-node-pool-context-destroy-storage!
             retired-pools)
+          (ci.intern-compat-state-release-structural-generations!
+            (&mut interns))
           (unsafe
             (arena.tl_arena_destroy intern-arena))
           result)))))

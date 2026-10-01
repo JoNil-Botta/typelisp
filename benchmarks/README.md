@@ -49,7 +49,7 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `mul_small_constants` | Serial wrapping multiply/xor recurrence using factors 3, 5, and 9; exposes constant-multiply latency without affine recurrence folding. |
 | `mul_wide_power` | The same serial multiply/xor recurrence with the wide power-of-two factor 2^34. |
 | `array_sum` | `Vec i64` fill + repeated backing-storage sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
-| `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by a non-inlined direct call that writes through a distinct mutable-reference root (refs #5201, #5216). |
+| `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by a direct call that writes through a distinct mutable-reference root (refs #5201, #5216). The C baseline keeps that call `noinline`; the TypeLisp side inlines it since #8137 (see the benchmark header). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
 | `hashmap_get` | Generated i64/i64 hashmap hit/miss lookups on a fixed map, focused on the read probe path (refs #2166). |
 | `hashmap_insert` | Repeatedly build and populate a fresh generated i64/i64 hashmap, focused on the insert probe path (refs #2165). |

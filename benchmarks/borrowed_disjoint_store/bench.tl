@@ -1,9 +1,19 @@
 ;# Checked-reference load-GVN benchmark (#5201).
 ;#
 ;# `borrowed-disjoint-store-loop` repeatedly reads through an immutable checked
-;# reference while a non-inlined direct helper writes through a distinct
-;# exclusive mutable reference. Root-aware direct-call summaries keep the
-;# invariant load available across the call.
+;# reference while a direct helper writes through a distinct exclusive mutable
+;# reference. The benchmark was written for the call-crossing case, where
+;# root-aware direct-call summaries keep the invariant load available across
+;# the call.
+;#
+;# The TypeLisp side is now EXPECTED TO INLINE. `BorrowedPair` is a two-word
+;# register group, and since #8137 its multi-def variables are split into word
+;# variables before SSA, so both helpers inline into `main` and each iteration
+;# is a handful of register adds and a compare. `baseline.c` keeps its
+;# `noinline` pair on purpose: it still states the call-crossing cost the
+;# benchmark was written for, and its checked C rows stay as measured (#8234).
+;# The TypeLisp/C ratio of this row therefore compares an inlined loop against
+;# a call-crossing one.
 (import stdlib.io)
 
 (defstruct BorrowedPair
@@ -16,8 +26,8 @@
 (define (borrowed-disjoint-store-touch
   [write : (&mut write BorrowedPair)]
   [value : i64]) : unit
-  ;; The pre-optimization body exceeds the inliner budget; the helper's own
-  ;; scalar optimizer removes the identity chain before code generation.
+  ;; The identity chain makes the pre-optimization body larger than a trivial
+  ;; store; the optimizer removes it, and the helper inlines (see the header).
   (let
     [a : i64 (+ value 0)]
     [b : i64 (+ a 0)]

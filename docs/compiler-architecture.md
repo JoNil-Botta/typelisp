@@ -619,6 +619,29 @@ independent of cache storage: callers supply authority-checked package-relative
 paths and nominal compiler/child identities, while event capture, invalidation,
 result serialization, and reuse policy remain separate compiler services.
 
+[`compiler_incremental_graph.tl`](../src/compiler_incremental_graph.tl) holds a
+previous run's successful queries as one immutable graph (#7322).
+- **Nodes.** A node joins:
+  - a query identity;
+  - the semantic output identity its parents observed;
+  - the opaque key of its stored result, which is never compared with an output;
+  - its complete committed trace.
+
+  Child-result edges resolve by exact query transcript and must match the
+  child's published output.
+- **Roots** are typed purpose/name pairs.
+- **One parser.** Finalize encodes the sorted candidate and decodes it with the
+  same strict parser that admits persisted bytes. So a published graph has
+  passed framing, budgets, canonical order, referential integrity, reachability
+  from a root and acyclicity, and a failure publishes nothing.
+- **Validation memory.** The transient identity and trace decodes run in one
+  scratch arena per decode.
+- **Exposed.** The graph exposes deterministic lookup, dependency and dependent
+  rows, a dependencies-first order that releases the smallest canonical index
+  first, the canonical bytes, and their SHA-256 fingerprint.
+- **Out of scope.** Payloads, the result store and replanning stay with their
+  owners (#7187, #7023, #7188).
+
 Aggregate declaration markers live in `AstDeclMeta` in
 [`compiler_ast_types.tl`](../src/compiler_ast_types.tl), separate from runtime
 layout. Parsing and surface hydration share its runtime metadata constructor;

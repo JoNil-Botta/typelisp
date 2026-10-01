@@ -92334,44 +92334,55 @@
       bindings
       index
       (ast.ast-resource-binding-fallback))
-      [(ast.AstResourceBinding.Binding name init-id cleanup-id _)
-        (match (macro-child-to-spanned-sexpr
-          owner
-          init-id
-          span
-          (tc-global-shared-view origin))
-          [(ResultMacroSexpr.Err diag)
-            (begin
-              (reader.spanned-sexpr-builder-discard! builder)
-              (ResultMacroSexpr.Err diag))]
-          [(ResultMacroSexpr.Ok sinit)
-            (match (macro-child-to-spanned-sexpr
-              owner
-              cleanup-id
-              span
-              (tc-global-shared-view origin))
-              [(ResultMacroSexpr.Err diag)
-                (begin
-                  (reader.spanned-sexpr-builder-discard! builder)
-                  (ResultMacroSexpr.Err diag))]
-              [(ResultMacroSexpr.Ok scleanup)
-                (macro-resource-bindings-to-spanned-sexpr
-                  owner
-                  bindings
-                  (+ index 1)
-                  span
+      [(ast.AstResourceBinding.Binding name init-id cleanup-id move-aware?)
+        ;; A move-aware scope (`expr-resource-scope ... true`) disarms its
+        ;; cleanup when the resource moves. Declaration syntax has no spelling
+        ;; for that, and a plain `with` would run the cleanup anyway.
+        (if move-aware?
+          (begin
+            (reader.spanned-sexpr-builder-discard! builder)
+            (ResultMacroSexpr.Err
+              (box
+                (macro-output-syntax-diag
                   origin
-                  (reader.spanned-sexpr-builder-push
-                    builder
-                    (reader.spanned-sexpr-bracket-list
-                      (reader.spanned-sexpr-list3
-                        (macro-binder-symbol owner name "with-binding" span)
-                        sinit
-                        scleanup
-                        span)
-                      span)))])])])))
+                  "typecheck: module macro output contains a move-aware resource scope, which declaration syntax cannot spell"))))
+          (match (macro-child-to-spanned-sexpr
+            owner
+            init-id
+            span
+            (tc-global-shared-view origin))
+            [(ResultMacroSexpr.Err diag)
+              (begin
+                (reader.spanned-sexpr-builder-discard! builder)
+                (ResultMacroSexpr.Err diag))]
+            [(ResultMacroSexpr.Ok sinit)
+              (match (macro-child-to-spanned-sexpr
+                owner
+                cleanup-id
+                span
+                (tc-global-shared-view origin))
+                [(ResultMacroSexpr.Err diag)
+                  (begin
+                    (reader.spanned-sexpr-builder-discard! builder)
+                    (ResultMacroSexpr.Err diag))]
+                [(ResultMacroSexpr.Ok scleanup)
+                  (macro-resource-bindings-to-spanned-sexpr
+                    owner
+                    bindings
+                    (+ index 1)
+                    span
+                    origin
+                    (reader.spanned-sexpr-builder-push
+                      builder
+                      (reader.spanned-sexpr-bracket-list
+                        (reader.spanned-sexpr-list3
+                          (macro-binder-symbol owner name "with-binding" span)
+                          sinit
+                          scleanup
+                          span)
+                        span)))])]))])))
 
-;; `([name : T] ...)`, a lambda's parameter list. The parser refuses comptime
+;; `([name : T)] ...)`, a lambda's parameter list. The parser refuses comptime
 ;; parameters on a lambda, so every parameter is a plain typed one.
 (define (macro-lambda-params-to-spanned-sexpr
   [owner : (& owner MacroSexprOwner)]

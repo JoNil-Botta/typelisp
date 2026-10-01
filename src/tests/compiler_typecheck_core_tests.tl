@@ -1451,6 +1451,59 @@
           (set! i (+ i 1))))
       failed)))
 
+;; A move-aware resource scope has no declaration spelling; converting one must
+;; fail instead of re-parsing as a plain `with` that keeps its cleanup armed.
+(define (macro-output-move-aware-rejected?
+  [session : cis.InternStructuralSessionHandle]) : bool
+  (let
+    [body-id : i64 (macro-output-probe-body (macro-output-form 4))]
+    (if (< body-id 0)
+      false
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+        [parsed : ast.AstExpr (ast.ast-expr-segment-bases-get bases body-id)]
+        [owner : tc_core.MacroSexprOwner
+          (tc_core.macro-sexpr-owner bases session)]
+        (match (ast.ast-expr-unspan-with-segment-bases bases parsed)
+          [(ast.AstExpr.WithResource resource-box)
+            (match (__tl-box-place resource-box)
+              [(ast.AstWithResource.WithResource bindings body)
+                (let
+                  [moved : ast.AstResourceBindingList
+                    (ast.ast-resource-binding-list-new)]
+                  [index : i64 0]
+                  (begin
+                    (while (<
+                      index
+                      (ast.ast-resource-binding-list-len (& bindings)))
+                      (begin
+                        (match (ast.ast-resource-binding-list-get
+                          (& bindings)
+                          index
+                          (ast.ast-resource-binding-fallback))
+                          [(ast.AstResourceBinding.Binding name init cleanup _)
+                            (ast.ast-resource-binding-list-push
+                              (&mut moved)
+                              (ast.AstResourceBinding.Binding
+                                name
+                                init
+                                cleanup
+                                true))])
+                        (set! index (+ index 1))))
+                    (let
+                      [move-aware : ast.AstExpr
+                        (ast.AstExpr.WithResource
+                          (box (ast.AstWithResource.WithResource moved body)))]
+                      (match (tc_core.macro-expr-to-spanned-sexpr
+                        (& owner)
+                        (tc_core.tc-global-shared-view move-aware)
+                        (tc_core.tc-global-shared-view move-aware))
+                        [(tc_core.ResultMacroSexpr.Err _) true]
+                        [(tc_core.ResultMacroSexpr.Ok _) false]))))])]
+          [_ false])))))
+
 (test
   macro-output-expression-forms-round-trip
   (let
@@ -1466,12 +1519,18 @@
         (ast.ast-node-pool-context-capture-active))]
     [failed : String
       (macro-output-forms-failed (tc_core.tc-context-structural-session ctx))]
+    [move-aware-rejected? : bool
+      (macro-output-move-aware-rejected?
+        (tc_core.tc-context-structural-session ctx))]
     (begin
       (ast.ast-node-pool-context-install! installed)
       (test.assert-string-eq
         failed
         ""
-        "every expression form the parser accepts in a function body -- the scoped arena, scratch, escape and resource forms, break and continue, comptime, typed and untyped lambdas, foreach and the SPMD forms, and the compiler-private owned-iteration steps in both spellings -- converts from Decls/Module macro output back to syntax that re-parses as the same kind of expression and converts again to the same syntax"))))
+        "every expression form the parser accepts in a function body -- the scoped arena, scratch, escape and resource forms, break and continue, comptime, typed and untyped lambdas, foreach and the SPMD forms, and the compiler-private owned-iteration steps in both spellings -- converts from Decls/Module macro output back to syntax that re-parses as the same kind of expression and converts again to the same syntax")
+      (test.assert-true
+        move-aware-rejected?
+        "a move-aware resource scope in Decls/Module macro output is rejected, not spelled as a plain `with` whose cleanup stays armed"))))
 
 (define (tc-type-env-lookup-step [env : tc_core.TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
   (match (tc_core.tc-type-env-view env)

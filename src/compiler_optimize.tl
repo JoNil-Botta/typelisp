@@ -73381,6 +73381,15 @@
 (define (opt-bce-reason-unsatisfiable) : i64
   54)
 
+;; An inexact counter (a monotone cursor, OptBceMbShape.exact?) that no
+;; derivation read, or whose clone would keep a check: see the clauses at
+;; opt-bce-mb-guard-conds-ranged.
+(define (opt-bce-reason-cursor-unused) : i64
+  55)
+
+(define (opt-bce-reason-cursor-partial) : i64
+  56)
+
 ;; VERIFY: the rewrite was built and the post-application verifier refused it,
 ;; which retires the loop for the rest of the invocation.
 (define (opt-bce-reason-verify) : i64
@@ -73417,6 +73426,8 @@
     [(= reason (opt-bce-reason-region-inner)) "guard:region-gate"]
     [(= reason (opt-bce-reason-free-cost)) "guard:free-cost"]
     [(= reason (opt-bce-reason-unsatisfiable)) "guard:unsatisfiable"]
+    [(= reason (opt-bce-reason-cursor-unused)) "guard:cursor-unused"]
+    [(= reason (opt-bce-reason-cursor-partial)) "guard:cursor-partial"]
     [(= reason (opt-bce-reason-verify)) "verify:rejected"]
     [else "other"]))
 
@@ -78784,7 +78795,16 @@
   ;; Computed where the loop list is in hand
   ;; (`opt-bce-mb-loop-shape-with-preheader`) with the same
   ;; `opt-bce-mb-preheader-outside-loops?` test that clause uses.
-  (nested-entry? bool))
+  (nested-entry? bool)
+  ;; Does the counter advance by exactly `step` on every latch crossing (#8261)?
+  ;; False for a MONOTONE CURSOR, whose back-edge value is a merge of `iphi`
+  ;; and `iphi + 1` (`opt-bce-mb-counter-increment`): it still lies in
+  ;; `[seed, bound)` on every executed trip, so every derivation that reads the
+  ;; counter's VALUE range holds, but it may stall on a crossing. The families
+  ;; that count latch crossings against counter values -- derived inductions and
+  ;; bounded phis, both in `opt-bce-mb-derive-index` -- read this and stay out.
+  ;; True, and inert, for a counter-free shape.
+  (exact? bool))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -79614,6 +79634,38 @@
                   bottom?
                   offset)
                 (OptBceMbMaybeCounter.No)))]
+          ;; MONOTONE CURSOR (#8261): the back-edge value is a merge whose
+          ;; inputs are each `iphi` or `iphi + 1` (the bounded-value rule the
+          ;; conditionally advancing phis already use, here against the phi
+          ;; itself). Such a cursor never shrinks and the top-tested compare
+          ;; `iphi < bound` dominates the body, so every executed trip still
+          ;; sees `seed <= iphi < bound` -- the unit counter's value range --
+          ;; but a trip may leave it where it was. Only that plain spelling is
+          ;; recovered: ascending, top-tested, unshifted, compared directly.
+          ;; The shape records it as inexact (`opt-bce-mb-counter-exact?`).
+          [(ir.CompilerIrInstr.Phi _ _ _)
+            (if (and
+              (not descending?)
+              (not bottom?)
+              (= shift 0)
+              (= k 0)
+              (opt-bce-mb-counter-offset-none? offset)
+              (opt-bce-mb-bounded-value?
+                (owned_view.compiler-owned-reference-shared-view body-blocks)
+                iphi
+                (ir.CompilerIrValue.Var inext)
+                8))
+              (opt-bce-mb-counter-shifted
+                iphi
+                seed
+                inext
+                bound
+                1
+                shift
+                k
+                bottom?
+                offset)
+              (OptBceMbMaybeCounter.No))]
           [_ (OptBceMbMaybeCounter.No)])])))
 
 ;; The counter phi the peeled compare operand landed on: an i64 HEADER phi (only
@@ -80215,6 +80267,19 @@
           false
           (opt-bce-mb-fast-labels-fresh? blocks (opt-label-tail body-labels))))]))
 
+;; Is the counter's back-edge value its own increment `iphi + step`? Only the
+;; monotone-cursor recovery (`opt-bce-mb-counter-increment`) hands over a
+;; back-edge var defined any other way: a merge phi.
+(define (opt-bce-mb-counter-exact?
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
+  [inext : i64]) : bool
+  (match (opt-bce-mb-find-def body-blocks inext)
+    [(OptMaybeInstr.Some instr)
+      (match instr
+        [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+        [_ false])]
+    [(OptMaybeInstr.No) false]))
+
 (define (opt-bce-mb-loop-shape-finish
   [blocks : ir.CompilerIrBlockList]
   [header : i64]
@@ -80233,7 +80298,7 @@
     [(OptBceMbMaybeCounter.Some
         iphi
         seed
-        _
+        inext
         bound
         step
         delta
@@ -80253,6 +80318,8 @@
                     (opt-unroll-phi-prefix-count header-instrs 0)
                     latch
                     pred)]
+                [exact? : bool
+                  (opt-bce-mb-counter-exact? (& body-blocks) inext)]
                 (if (and phis-ok? (>= (opt-bce-mb-body-checks body-blocks 0) 1))
                   (OptBceMbMaybeShape.Some
                     (OptBceMbShape
@@ -80272,7 +80339,8 @@
                       inner
                       region?
                       true
-                      nested-entry?))
+                      nested-entry?
+                      exact?))
                   (opt-bce-trace-refuse-mb-shape
                     (if phis-ok?
                       (opt-bce-reason-no-check)
@@ -80347,7 +80415,8 @@
                   inner
                   region?
                   false
-                  nested-entry?))
+                  nested-entry?
+                  true))
               (opt-bce-trace-refuse-mb-shape
                 (if phis-ok?
                   (opt-bce-reason-no-check)
@@ -84043,6 +84112,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -84196,21 +84266,23 @@
                                                   ;; induction phi rather than a
                                                   ;; syntactic multiple of the
                                                   ;; counter.
-                                                  (opt-bce-mb-var-base-derived-add
-                                                    body-blocks
-                                                    defs
-                                                    latch
-                                                    preheader
-                                                    iphi
-                                                    seed
-                                                    bound
-                                                    k0
-                                                    core-lhs
-                                                    core-rhs
-                                                    length-value
-                                                    cell
-                                                    fan
-                                                    acc)]
+                                                  (if exact?
+                                                    (opt-bce-mb-var-base-derived-add
+                                                      body-blocks
+                                                      defs
+                                                      latch
+                                                      preheader
+                                                      iphi
+                                                      seed
+                                                      bound
+                                                      k0
+                                                      core-lhs
+                                                      core-rhs
+                                                      length-value
+                                                      cell
+                                                      fan
+                                                      acc)
+                                                    (OptBceVersionGuardAcc.No))]
                                                 [(OptBceCounterAffineBase.Some
                                                     scale
                                                     k2
@@ -84332,6 +84404,7 @@
                                                 ;; inert seed) must not enter it.
                                                 (if (and
                                                   (>= iphi 0)
+                                                  (or exact? (= core iphi))
                                                   (opt-bce-mb-bounded-phi?
                                                     all-blocks
                                                     (compiler-opt-global-shared-view
@@ -84362,7 +84435,9 @@
                                                   ;; single-block pass
                                                   ;; documents it at
                                                   ;; opt-bce-version-var-base-strided).
-                                                  (if (< iphi 0)
+                                                  (if (or
+                                                    (< iphi 0)
+                                                    (not exact?))
                                                     (OptBceVersionGuardAcc.No)
                                                     (match (opt-bce-mb-derived-induction
                                                       body-blocks
@@ -84457,15 +84532,21 @@
                             (compiler-opt-global-shared-view inputs)
                             latch)
                             [(OptUnrollPhiSplit.Split init back pred-label)
-                              (if (opt-bce-mb-bounded-phi?
-                                all-blocks
-                                (compiler-opt-global-shared-view body-blocks)
-                                preheader
-                                pred-label
-                                seed
-                                init
-                                id
-                                back)
+                              ;; An inexact cursor bounds only itself: another
+                              ;; phi's growth is counted per latch crossing,
+                              ;; which a stalling cursor does not keep pace
+                              ;; with (see OptBceMbShape.exact?).
+                              (if (and
+                                (or exact? (= id iphi))
+                                (opt-bce-mb-bounded-phi?
+                                  all-blocks
+                                  (compiler-opt-global-shared-view body-blocks)
+                                  preheader
+                                  pred-label
+                                  seed
+                                  init
+                                  id
+                                  back))
                                 (opt-bce-version-fan-admit-unit
                                   fan
                                   seed
@@ -84475,14 +84556,16 @@
                                   length-value
                                   cell
                                   acc)
-                                (match (opt-bce-mb-derived-induction
-                                  body-blocks
-                                  defs
-                                  latch
-                                  preheader
-                                  id
-                                  inputs
-                                  false)
+                                (match (if exact?
+                                  (opt-bce-mb-derived-induction
+                                    body-blocks
+                                    defs
+                                    latch
+                                    preheader
+                                    id
+                                    inputs
+                                    false)
+                                  (OptBceDerivedInduction.No))
                                   [(OptBceDerivedInduction.No)
                                     (opt-bce-mb-masked-guard
                                       all-blocks
@@ -84902,6 +84985,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -84922,6 +85006,7 @@
         latch
         preheader
         iphi
+        exact?
         seed
         bound
         cell
@@ -84983,6 +85068,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -85003,6 +85089,7 @@
       latch
       preheader
       iphi
+      exact?
       (compiler-opt-global-shared-view seed)
       (compiler-opt-global-shared-view bound)
       cell
@@ -85020,6 +85107,7 @@
                 latch
                 preheader
                 iphi
+                exact?
                 seed
                 bound
                 cell
@@ -85068,6 +85156,7 @@
                     latch
                     preheader
                     iphi
+                    exact?
                     seed
                     bound
                     cell
@@ -85113,6 +85202,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -85135,6 +85225,7 @@
             latch
             preheader
             iphi
+            exact?
             (compiler-opt-global-shared-view seed)
             (compiler-opt-global-shared-view bound)
             cell
@@ -85160,6 +85251,7 @@
                 latch
                 preheader
                 iphi
+                exact?
                 seed
                 bound
                 cell
@@ -85179,6 +85271,7 @@
           latch
           preheader
           iphi
+          exact?
           seed
           bound
           cell
@@ -85989,6 +86082,7 @@
         shape.latch
         shape.preheader
         shape.iphi
+        shape.exact?
         (compiler-opt-global-shared-view first)
         (compiler-opt-global-shared-view limit)
         cell
@@ -86004,6 +86098,27 @@
     [_trace : unit
       (opt-bce-trace-derivation! dr.derived (opt-bce-mb-keep-count dr.keep))]
     (if (or
+      ;; A MONOTONE CURSOR no derivation read. The cursor is recovered only to
+      ;; give its own indexes a range; when none used it (`counter-seen` is set
+      ;; by every derivation that reads the counter's range), the counted shape
+      ;; adds nothing the counter-free one lacks, yet would skip that shape's
+      ;; entry economics. Every open-addressing probe is this case: its `walked`
+      ;; cursor bounds the probe count and indexes nothing, and its masked slot
+      ;; is the counter-free shape's to price. Refusing hands the loop to that
+      ;; shape exactly as before cursors were recovered.
+      (and shape.counted? (not shape.exact?) (not counter-seen))
+      ;; A MONOTONE CURSOR whose clone would keep a check. Partial versioning
+      ;; pays the guard on every entry for a clone that still checks, and that
+      ;; is no longer eligible for the check-free downstream passes (see the
+      ;; bounded-phi note above opt-bce-mb-bounded-value?). An exact counter's
+      ;; trip-range clauses are evidence the loop iterates; a cursor's are not,
+      ;; since it may stall on any trip -- a two-pointer scan advances one
+      ;; cursor at a time. So a cursor is versioned only into a check-free
+      ;; clone, which is where those downstream passes repay the guard.
+      (and
+        shape.counted?
+        (not shape.exact?)
+        (> (opt-bce-mb-keep-count dr.keep) 0))
       ;; No removable check: cloning the loop would only duplicate it. A body
       ;; that duplicates CALL SITES owes more than one -- see
       ;; opt-bce-mb-call-clone-min-derived for the currency and the constant.
@@ -86026,11 +86141,18 @@
             (__tl-project-field shape body-blocks)
             shape.inner
             dr.keep))))
-      ;; Which of the two the clause above was: a body that derived NOTHING is
+      ;; Which of the clauses above it was: a body that derived NOTHING is
       ;; the pass's oldest rejection and reads differently in a census from a
       ;; body that derived checks and still owed more of them.
       (opt-bce-trace-refuse-mb-guard
         (cond
+          [(and shape.counted? (not shape.exact?) (not counter-seen))
+            (opt-bce-reason-cursor-unused)]
+          [(and
+              shape.counted?
+              (not shape.exact?)
+              (> (opt-bce-mb-keep-count dr.keep) 0))
+            (opt-bce-reason-cursor-partial)]
           [(= dr.derived 0) (opt-bce-reason-derived-zero)]
           [(<
               dr.derived
@@ -86193,7 +86315,9 @@
 ;; the finisher documents (step 1 gives `last + 1 <= bound <= MAX` from the
 ;; latch's `< bound`; a larger step gets the explicit
 ;; `wrap(bound + step - 1) >= bound` conjunct), the descending loop by strictly
-;; decreasing TOWARD `first`, which its latch's `>= first` is what tests. The
+;; decreasing TOWARD `first`, which its latch's `>= first` is what tests. A
+;; monotone cursor (OptBceMbShape.exact? false) may stall but never decreases
+;; from `first`, and its top-tested compare bounds it the same way. The
 ;; rule reads only the range's FLOOR, so it is the same rule either way. Hence
 ;; `counter >= first >= 0` at every point of the clone, and:
 ;;   counter >= k  /  counter > k   are TRUE  for k <= 0 / k < 0
@@ -87245,7 +87369,8 @@
       shape.inner
       shape.region?
       shape.counted?
-      shape.nested-entry?)
+      shape.nested-entry?
+      shape.exact?)
     (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
     cell
     frame))

@@ -32,13 +32,18 @@ tl_backtrace_stack_high:
 (define (compiler-backend-current-arena-store [src : String]) : String
   (str_cat.str-cat "    movq " src ", %fs:tl_current_arena@tpoff\n"))
 
+;; Offset in an arena segment header of the bound an inline bump allocation
+;; must stay below: the segment's fixed end.
+(define (compiler-backend-runtime-usable-end-offset) : String
+  "24")
+
 (define (compiler-backend-runtime-fast-alloc-functions
   [size-reg : String]
   [next-reg : String]
   [profile : bool]) : String
   (runtime_common.compiler-backend-runtime-fast-alloc-functions
     (compiler-backend-current-arena-load "%r8")
-    "24"
+    (compiler-backend-runtime-usable-end-offset)
     size-reg
     next-reg
     profile))

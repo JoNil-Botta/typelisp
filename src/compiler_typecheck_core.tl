@@ -13311,962 +13311,259 @@
     env
     (tc-bind-id env name-id ty)))
 
+;; The legacy unqualified macro helper signatures. New stdlib macro code
+;; imports `stdlib.comptime` and calls the public helpers via that module; keep
+;; only the old names still covered by compatibility tests and by the legacy
+;; type-query surface.
+;;
+;; Row k binds builtin slot k of `tc-macro-helper-slots` to the k-th
+;; `|`-terminated code of `tc-macro-helper-signatures`: a binder (`i` binds the
+;; id, `a` also its comptime helper aliases), then one type per parameter and
+;; the result type, each one character of `tc-macro-helper-type-codes`. A table
+;; instead of one binding call per row keeps this cold, cached setup small.
+(define tc-macro-helper-slots : (Array i64 132)
+  (array
+    (cbi.compiler-builtin-ctfe-slot "string-append")
+    (cbi.compiler-builtin-ctfe-slot "string-append")
+    (cbi.compiler-builtin-ctfe-slot "string-concat")
+    (cbi.compiler-builtin-ctfe-slot "string-concat")
+    (cbi.compiler-builtin-ctfe-slot "string-length")
+    (cbi.compiler-builtin-ctfe-slot "length")
+    (cbi.compiler-builtin-ctfe-slot "string-ref")
+    (cbi.compiler-builtin-ctfe-slot "char-at")
+    (cbi.compiler-builtin-ctfe-slot "string-eq")
+    (cbi.compiler-builtin-ctfe-slot "string=?")
+    (cbi.compiler-builtin-ctfe-slot ">int")
+    (cbi.compiler-builtin-ctfe-slot ">int")
+    (cbi.compiler-builtin-ctfe-slot "int->string")
+    (cbi.compiler-builtin-ctfe-slot "int->string")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool")
+    (cbi.compiler-builtin-ctfe-slot "expr-int")
+    (cbi.compiler-builtin-ctfe-slot "expr-int")
+    (cbi.compiler-builtin-ctfe-slot "expr-string")
+    (cbi.compiler-builtin-ctfe-slot "expr-var")
+    (cbi.compiler-builtin-ctfe-slot "expr-var")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-get")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-get")
+    (cbi.compiler-builtin-ctfe-slot "expr-tuple-ref")
+    (cbi.compiler-builtin-ctfe-slot "expr-tuple-ref")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-set")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-set")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-borrow")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-borrow")
+    (cbi.compiler-builtin-ctfe-slot "expr-call")
+    (cbi.compiler-builtin-ctfe-slot "expr-call")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-call0")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-call1")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-call2")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "expr-if")
+    (cbi.compiler-builtin-ctfe-slot "expr-if")
+    (cbi.compiler-builtin-ctfe-slot "pattern-wildcard")
+    (cbi.compiler-builtin-ctfe-slot "pattern-binding")
+    (cbi.compiler-builtin-ctfe-slot "pattern-variant")
+    (cbi.compiler-builtin-ctfe-slot "pattern-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "pattern-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "pattern-list-bindings")
+    (cbi.compiler-builtin-ctfe-slot "match-arm")
+    (cbi.compiler-builtin-ctfe-slot "match-arm-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "match-arm-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "expr-match")
+    (cbi.compiler-builtin-ctfe-slot "expr-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-type")
+    (cbi.compiler-builtin-ctfe-slot "type-expr")
+    (cbi.compiler-builtin-ctfe-slot "type-expr")
+    (cbi.compiler-builtin-ctfe-slot "expr-splice")
+    (cbi.compiler-builtin-ctfe-slot "type-info")
+    (cbi.compiler-builtin-ctfe-slot "module-name")
+    (cbi.compiler-builtin-ctfe-slot "module-export-macro?")
+    (cbi.compiler-builtin-ctfe-slot "module-hook")
+    (cbi.compiler-builtin-ctfe-slot "module-hook")
+    (cbi.compiler-builtin-ctfe-slot "module-value?")
+    (cbi.compiler-builtin-ctfe-slot "module-value-type")
+    (cbi.compiler-builtin-ctfe-slot "module-value-expr")
+    (cbi.compiler-builtin-ctfe-slot "function-shared-borrow-returns-string?")
+    (cbi.compiler-builtin-ctfe-slot "expr-shared-call1")
+    (cbi.compiler-builtin-ctfe-slot "reference-element-type")
+    (cbi.compiler-builtin-ctfe-slot "reference-element-type")
+    (cbi.compiler-builtin-ctfe-slot "comptime-error")
+    (cbi.compiler-builtin-ctfe-slot "comptime-error")
+    (cbi.compiler-builtin-ctfe-slot "type-kind")
+    (cbi.compiler-builtin-ctfe-slot "type-key")
+    (cbi.compiler-builtin-ctfe-slot "type-cleanup-owning?")
+    (cbi.compiler-builtin-ctfe-slot "type-cleanup-function")
+    (cbi.compiler-builtin-ctfe-slot "type-nominal-module")
+    (cbi.compiler-builtin-ctfe-slot "type-nominal-name")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-count")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-name")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-type")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-count")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-name")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-payload-count")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-payload-type")
+    (cbi.compiler-builtin-ctfe-slot "array-element-type")
+    (cbi.compiler-builtin-ctfe-slot "box-element-type")
+    (cbi.compiler-builtin-ctfe-slot "box-element-type")
+    (cbi.compiler-builtin-ctfe-slot "array-length")
+    (cbi.compiler-builtin-ctfe-slot "array-dynamic?")
+    (cbi.compiler-builtin-ctfe-slot "tuple-element-count")
+    (cbi.compiler-builtin-ctfe-slot "tuple-element-type")
+    (cbi.compiler-builtin-ctfe-slot "function-param-count")
+    (cbi.compiler-builtin-ctfe-slot "function-param-type")
+    (cbi.compiler-builtin-ctfe-slot "function-return-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool?")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool?")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool-value")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool-value")
+    (cbi.compiler-builtin-ctfe-slot "expr-if?")
+    (cbi.compiler-builtin-ctfe-slot "expr-if?")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-cond")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-cond")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-then")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-then")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-else")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-else")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-first")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-first")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-second")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-second")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list->expr-list")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list->expr-list")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-name")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-name")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-has-type?")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-has-type?")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-init")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-init")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list->expr-list")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list->expr-list")))
+(define tc-macro-helper-signatures : String
+  "isss|asss|isss|asss|isi|isi|isic|isic|issb|issb|isi|asi|iis|ais|ibe|abe|iie|aie|ase|ise|ase|iese|aese|ieie|aeie|iesee|aesee|iee|aee|iexe|aexe|ieee|ieeee|ieeeee|ix|ax|iexx|aexx|ieeee|aeeee|ip|isp|isPp|iP|ipPP|isiP|ipem|iM|imMM|ieMe|iee|aee|iee|aee|aee|aet|ass|assb|isse|asse|assb|asse|asse|aeeb|aeee|iee|aee|asn|isn|ies|ies|ieb|ies|ies|ies|iei|ieis|ieie|iei|ieis|ieii|ieiie|iee|iee|aee|iei|ieb|iei|ieie|iei|ieie|iee|ieb|aeb|ieb|aeb|ieb|aeb|iee|aee|iee|aee|iee|aee|ixi|axi|ixie|axie|iCe|aCe|iCe|aCe|iDi|aDi|iDiC|aDiC|iDx|aDx|iBs|aBs|iBb|aBb|iBe|aBe|iBe|aBe|iFi|aFi|iFiB|aFiB|iFx|aFx|")
+
+;; e Expr, x ExprList, s String, i i64, b bool, c char, n Never, C clause,
+;; D clause list, B binding clause, F binding clause list, p pattern,
+;; P pattern list, m match arm, M match arm list, t TypeInfo.
+(define tc-macro-helper-type-codes : String
+  "exsibcnCDBFpPmMt")
+
+(define (tc-macro-helper-code-type
+  [types : (__tl_dyn-array ast.AstType)]
+  [code : char]) : ast.AstType
+  (let
+    [index : i64 0]
+    (begin
+      (while (!= (string.string-ref tc-macro-helper-type-codes index) code)
+        (set! index (+ index 1)))
+      (tc-global-array-element-shared-view types index))))
+
+;; The type at signature position `at`, or unit past the parameters ending
+;; before `end`.
+(define (tc-macro-helper-param-type
+  [types : (__tl_dyn-array ast.AstType)]
+  [at : i64]
+  [end : i64]) : ast.AstType
+  (if (< at end)
+    (tc-macro-helper-code-type
+      types
+      (string.string-ref tc-macro-helper-signatures at))
+    (ast.AstType.Unit)))
+
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
-    [expr : ast.AstType (ast.AstType.Expr)]
-    [clause : ast.AstType (tc-macro-expr-clause-type)]
-    [clause-list : ast.AstType (tc-macro-expr-clause-list-type)]
-    [binding-clause : ast.AstType (tc-macro-expr-binding-clause-type)]
-    [binding-clause-list : ast.AstType (tc-macro-expr-binding-clause-list-type)]
-    [pattern : ast.AstType (tc-macro-pattern-type)]
-    [pattern-list : ast.AstType (tc-macro-pattern-list-type)]
-    [match-arm : ast.AstType (tc-macro-match-arm-type)]
-    [match-arm-list : ast.AstType (tc-macro-match-arm-list-type)]
-    [type-info : ast.AstType
-      (ast.AstType.Var
-        (tc-stdlib-comptime-type-key-id
-          "TypeInfo"
-          cbi.compiler-builtin-id-fix-TypeInfo))]
+    [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType 16)]
     [out : TcTypeEnv env]
+    [row : i64 0]
+    [pos : i64 0]
     (begin
-      ;; Legacy bridge for unqualified macro helper names. New stdlib macro
-      ;; code imports `stdlib.comptime` and calls the public helpers via that
-      ;; module; keep only the old names still covered by compatibility tests
-      ;; and by the legacy type-query surface.
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-append")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "string-append")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-concat")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "string-concat")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-length")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "length")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-ref")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "char-at")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-eq")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string=?")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe ">int")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe ">int")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "int->string")
-          (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "int->string")
-          (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool")
-          (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool")
-          (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-int")
-          (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-int")
-          (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-string")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-var")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-var")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-get")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-get")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-set")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-set")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-call")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-call")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-call0")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-call1")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-call2")
-          (tc-fn4
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-empty")
-          (tc-fn0 (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-empty")
-          (tc-fn0 (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-cons")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-cons")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-wildcard")
-          (tc-fn0 (tc-global-shared-view pattern))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-binding")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view pattern))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-variant")
-          (tc-fn2
-            (ast.AstType.String)
-            (tc-global-shared-view pattern-list)
-            (tc-global-shared-view pattern))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-list-empty")
-          (tc-fn0 (tc-global-shared-view pattern-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-list-cons")
-          (tc-fn2
-            (tc-global-shared-view pattern)
-            (tc-global-shared-view pattern-list)
-            (tc-global-shared-view pattern-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-list-bindings")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.I64) pattern-list)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "match-arm")
-          (tc-fn2
-            pattern
-            (tc-global-shared-view expr)
-            (tc-global-shared-view match-arm))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "match-arm-list-empty")
-          (tc-fn0 (tc-global-shared-view match-arm-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "match-arm-list-cons")
-          (tc-fn2
-            match-arm
-            (tc-global-shared-view match-arm-list)
-            (tc-global-shared-view match-arm-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-match")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            match-arm-list
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-expr")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "type-expr")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-splice")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "type-info")
-          (tc-fn1 (tc-global-shared-view expr) type-info)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-name")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-export-macro?")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "module-hook")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-hook")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-value?")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-value-type")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-value-expr")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "function-shared-borrow-returns-string?")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-shared-call1")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "reference-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "reference-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "comptime-error")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "comptime-error")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-kind")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-key")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-cleanup-owning?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-cleanup-function")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-nominal-module")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-nominal-name")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "struct-field-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "struct-field-name")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "struct-field-type")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-name")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-payload-count")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-payload-type")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "array-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "box-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "box-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "array-length")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "array-dynamic?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "tuple-element-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "tuple-element-type")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "function-param-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "function-param-type")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "function-return-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool-value")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool-value")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-cond")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-cond")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-then")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-then")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-else")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-else")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-length")
-          (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-length")
-          (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-nth")
-          (tc-fn2
-            (ast.AstType.ExprList)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-nth")
-          (tc-fn2
-            (ast.AstType.ExprList)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-first")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-first")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-second")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-second")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
-          (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
-          (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
-          (tc-fn2
-            (tc-global-shared-view clause-list)
-            (ast.AstType.I64)
-            (tc-global-shared-view clause))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
-          (tc-fn2 (tc-global-shared-view clause-list) (ast.AstType.I64) clause)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
-          (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
-          (tc-fn1 clause-list (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
-          (tc-fn1
-            (tc-global-shared-view binding-clause)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
-          (tc-fn1
-            (tc-global-shared-view binding-clause)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
-          (tc-fn1
-            (tc-global-shared-view binding-clause)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
-          (tc-fn1 (tc-global-shared-view binding-clause) expr)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
-          (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
-          (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
-          (tc-fn2
-            (tc-global-shared-view binding-clause-list)
-            (ast.AstType.I64)
-            (tc-global-shared-view binding-clause))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
-          (tc-fn2
-            (tc-global-shared-view binding-clause-list)
-            (ast.AstType.I64)
-            binding-clause)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
-          (tc-fn1
-            (tc-global-shared-view binding-clause-list)
-            (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
-          (tc-fn1 binding-clause-list (ast.AstType.ExprList))))
+      (set! (array-ref types 0) (ast.AstType.Expr))
+      (set! (array-ref types 1) (ast.AstType.ExprList))
+      (set! (array-ref types 2) (ast.AstType.String))
+      (set! (array-ref types 3) (ast.AstType.I64))
+      (set! (array-ref types 4) (ast.AstType.Bool))
+      (set! (array-ref types 5) (ast.AstType.Char))
+      (set! (array-ref types 6) (ast.AstType.Never))
+      (set! (array-ref types 7) (tc-macro-expr-clause-type))
+      (set! (array-ref types 8) (tc-macro-expr-clause-list-type))
+      (set! (array-ref types 9) (tc-macro-expr-binding-clause-type))
+      (set! (array-ref types 10) (tc-macro-expr-binding-clause-list-type))
+      (set! (array-ref types 11) (tc-macro-pattern-type))
+      (set! (array-ref types 12) (tc-macro-pattern-list-type))
+      (set! (array-ref types 13) (tc-macro-match-arm-type))
+      (set! (array-ref types 14) (tc-macro-match-arm-list-type))
+      (set!
+        (array-ref types 15)
+        (ast.AstType.Var
+          (tc-stdlib-comptime-type-key-id
+            "TypeInfo"
+            cbi.compiler-builtin-id-fix-TypeInfo)))
+      (while (< row 132)
+        (let
+          [start : i64 (+ pos 1)]
+          [end : i64 start]
+          (begin
+            (while (!= (string.string-ref tc-macro-helper-signatures end) '|')
+              (set! end (+ end 1)))
+            (let
+              [arity : i64 (- (- end start) 1)]
+              [ret : ast.AstType
+                (tc-macro-helper-code-type
+                  (tc-global-shared-view types)
+                  (string.string-ref tc-macro-helper-signatures (- end 1)))]
+              [a : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  start
+                  (- end 1))]
+              [b : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  (+ start 1)
+                  (- end 1))]
+              [c : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  (+ start 2)
+                  (- end 1))]
+              [d : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  (+ start 3)
+                  (- end 1))]
+              [ty : ast.AstType
+                (cond
+                  [(= arity 0) (tc-fn0 ret)]
+                  [(= arity 1) (tc-fn1 a ret)]
+                  [(= arity 2) (tc-fn2 a b ret)]
+                  [(= arity 3) (tc-fn3 a b c ret)]
+                  [else (tc-fn4 a b c d ret)])]
+              [id : i64
+                (cbi.compiler-builtin-ctfe-ref
+                  (array-ref tc-macro-helper-slots row))]
+              (set!
+                out
+                (if (= (string.string-ref tc-macro-helper-signatures pos) 'a')
+                  (tc-bind-comptime-helper-aliases out id ty)
+                  (tc-bind-id out id ty))))
+            (set! pos (+ end 1))
+            (set! row (+ row 1)))))
       out)))
 
 (defstruct TcMacroHelperStateData

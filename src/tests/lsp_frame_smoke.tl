@@ -504,6 +504,77 @@
         (lsp-transcript-frame exit))]
     (lsp-transcript-run input)))
 
+(define (lsp-memory-state) : lsp.LspFrameMemoryState
+  (owned_view.compiler-owned-shared-view lsp.lsp-frame-memory-state))
+
+;; Install, consume and write; reset and destroy the owner; reinstall into a
+;; fresh owner. Nothing of the first transport may survive the reset.
+(define (lsp-memory-reinstall-smoke-ok?) : bool
+  (let
+    [first-owner : arena.Arena (arena.make)]
+    [_install-first : unit
+      (lsp.lsp-frame-memory-install! "old\nlast" first-owner.handle)]
+    [line : io.StdinRead (lsp.lsp-frame-memory-read-line)]
+    [tail : io.StdinRead (lsp.lsp-frame-memory-read-bytes 20)]
+    [_write-first : unit
+      (begin
+        (lsp.lsp-frame-memory-stdout-append! "old output")
+        (lsp.lsp-frame-memory-stderr-append! "old error"))]
+    [first : lsp.LspFrameMemoryState (lsp-memory-state)]
+    [first-ok : bool
+      (and
+        first.active
+        (= first.owner.handle first-owner.handle)
+        (string.eq
+          (byte_buf.to-string
+            (io.stdin-read-buffer (owned_view.compiler-owned-shared-view line)))
+          "old")
+        (string.eq
+          (byte_buf.to-string
+            (io.stdin-read-buffer (owned_view.compiler-owned-shared-view tail)))
+          "last")
+        (io.stdin-read-eof? tail)
+        first.eof
+        (= first.input-offset 8)
+        (string.eq first.stdout "old output")
+        (string.eq first.stderr "old error"))]
+    [_reset-first : unit (lsp.lsp-frame-memory-reset!)]
+    [_destroy-first : unit (arena.destroy-safe! first-owner)]
+    [cleared : lsp.LspFrameMemoryState (lsp-memory-state)]
+    [reset-ok : bool
+      (and
+        (not cleared.active)
+        (= cleared.owner.handle 0)
+        (string.eq cleared.input "")
+        (= cleared.input-offset 0)
+        (not cleared.eof)
+        (string.eq cleared.stdout "")
+        (string.eq cleared.stderr ""))]
+    [second-owner : arena.Arena (arena.make)]
+    [_install-second : unit
+      (lsp.lsp-frame-memory-install! "new\n" second-owner.handle)]
+    [fresh : lsp.LspFrameMemoryState (lsp-memory-state)]
+    [second-line : io.StdinRead (lsp.lsp-frame-memory-read-line)]
+    [second : lsp.LspFrameMemoryState (lsp-memory-state)]
+    [second-ok : bool
+      (and
+        fresh.active
+        (= fresh.owner.handle second-owner.handle)
+        (= fresh.input-offset 0)
+        (not fresh.eof)
+        (string.eq fresh.stdout "")
+        (string.eq fresh.stderr "")
+        (string.eq
+          (byte_buf.to-string
+            (io.stdin-read-buffer
+              (owned_view.compiler-owned-shared-view second-line)))
+          "new")
+        (not (io.stdin-read-eof? second-line))
+        (= second.input-offset 4))]
+    [_reset-second : unit (lsp.lsp-frame-memory-reset!)]
+    [_destroy-second : unit (arena.destroy-safe! second-owner)]
+    (and first-ok reset-ok second-ok)))
+
 (define (lsp-transcript-reset-leakage-smoke-ok?) : bool
   (let
     [path : String "target/lsp_transcript_reset_missing.tl"]
@@ -536,7 +607,8 @@
       (lsp-transcript-result-contains? second failure)
       (= missing.status 0)
       (lsp-transcript-result-contains? missing unreadable)
-      (not lsp.lsp-frame-memory-active)
+      (not
+        (owned_view.compiler-owned-shared-view lsp.lsp-frame-memory-state).active)
       (= lsp.lsp-document-cache-arena 0)
       ;; Every transcript retires its standalone compiler arena. Its cold
       ;; spanned parse sidecars must be truncated before that arena is gone.
@@ -634,7 +706,8 @@
       (= result.status 0)
       (string.eq result.stdout "")
       (string.eq result.stderr "")
-      (not lsp.lsp-frame-memory-active))))
+      (not
+        (owned_view.compiler-owned-shared-view lsp.lsp-frame-memory-state).active))))
 
 (define (lsp-inlay-smoke-ok?) : bool
   (let
@@ -2721,6 +2794,7 @@
     (if (not (= base-result 42))
       base-result
       (begin
+        (unless (lsp-memory-reinstall-smoke-ok?) (return 51))
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
         (unless (lsp-inlay-transcript-smoke-ok?) (return 44))

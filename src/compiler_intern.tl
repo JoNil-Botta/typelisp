@@ -272,7 +272,6 @@
         [raw : i64
           (intern-structural-table-intern
             (&mut intern-structural-table-cell)
-            intern-persistent-arena
             (intern-structural-kind-pair)
             left-id
             0
@@ -365,7 +364,6 @@
         [raw : i64
           (intern-structural-table-intern
             (&mut intern-structural-table-cell)
-            intern-persistent-arena
             (intern-structural-kind-triple)
             left-id
             middle-id
@@ -620,7 +618,15 @@
   (generated-symbol-handles (__tl_dyn-array InternSlotId))
   (map-slots (__tl_dyn-array i64))
   (structural-cache-raws (__tl_dyn-array i64))
-  (len i64))
+  (len i64)
+  ;; Arenas holding the current record columns and the current map, or 0 while
+  ;; they are still the initial arrays in the owning arena. Growth builds the
+  ;; replacement in a fresh arena, publishes it, then destroys the previous
+  ;; generation, so only the current one is live; rendered names keep pointing
+  ;; at their spellings in the owning arena. A persistent reset releases both
+  ;; before it rewinds or replaces the owning arena.
+  (records-arena i64)
+  (map-arena i64))
 
 (define (intern-structural-key-base) : i64
   4611686018427387904)
@@ -708,6 +714,8 @@
     (__tl_make-array InternSlotId 256)
     (__tl_make-array i64 512)
     (__tl_make-array i64 (intern-structural-cache-capacity))
+    0
+    0
     0))
 
 (define (intern-structural-table-cell-new-in-arena [arena-handle : i64]) : (__tl_dyn-array
@@ -900,87 +908,118 @@
       ,bytes)))
 
 (define (intern-structural-table-grow-records!
-  [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
-  [arena-handle : i64]) : unit
+  [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
   (let
     [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
     [count : i64 table.len]
     [old-capacity : i64 (array-length table.kinds)]
     [new-capacity : i64 (* old-capacity 2)]
-    (in-arena
-      (arena.Arena arena-handle)
-      (let
-        [next-kinds : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
-        [next-lefts : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
-        [next-middles : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
-        [next-rights : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
-        [next-rendered-names : (__tl_dyn-array String)
-          (__tl_make-array String new-capacity)]
-        [next-generated-symbol-handles : (__tl_dyn-array InternSlotId)
-          (__tl_make-array InternSlotId new-capacity)]
-        (begin
-          (intern-structural-copy-array! table.kinds next-kinds count)
-          (intern-structural-copy-array! table.lefts next-lefts (* count 8))
-          (intern-structural-copy-array! table.middles next-middles (* count 8))
-          (intern-structural-copy-array! table.rights next-rights (* count 8))
-          (intern-structural-copy-array!
-            table.generated-symbol-handles
-            next-generated-symbol-handles
-            (* count 4))
-          (let
-            [index : i64 0]
-            (while (< index count)
+    [retired : i64 table.records-arena]
+    [generation : i64 (tl_arena_make)]
+    (begin
+      (in-arena
+        (arena.Arena generation)
+        (let
+          [next-kinds : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
+          [next-lefts : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
+          [next-middles : (__tl_dyn-array i64)
+            (__tl_make-array i64 new-capacity)]
+          [next-rights : (__tl_dyn-array i64)
+            (__tl_make-array i64 new-capacity)]
+          [next-rendered-names : (__tl_dyn-array String)
+            (__tl_make-array String new-capacity)]
+          [next-generated-symbol-handles : (__tl_dyn-array InternSlotId)
+            (__tl_make-array InternSlotId new-capacity)]
+          (begin
+            (intern-structural-copy-array! table.kinds next-kinds count)
+            (intern-structural-copy-array! table.lefts next-lefts (* count 8))
+            (intern-structural-copy-array!
+              table.middles
+              next-middles
+              (* count 8))
+            (intern-structural-copy-array! table.rights next-rights (* count 8))
+            (intern-structural-copy-array!
+              table.generated-symbol-handles
+              next-generated-symbol-handles
+              (* count (comptime (size-of (type InternSlotId)))))
+            ;; The lane holds String handles to spellings the owning arena
+            ;; keeps; the handles move, the spellings are not copied.
+            (intern-structural-copy-array!
+              table.rendered-names
+              next-rendered-names
+              (* count (comptime (size-of (type String)))))
+            (set! table.kinds next-kinds)
+            (set! table.lefts next-lefts)
+            (set! table.middles next-middles)
+            (set! table.rights next-rights)
+            (set! table.rendered-names next-rendered-names)
+            (set! table.generated-symbol-handles next-generated-symbol-handles)
+            (if (= table.owner intern-active-structural-owner)
               (begin
                 (set!
-                  (array-ref next-rendered-names index)
-                  (intern-substring
-                    (& (array-ref table.rendered-names index))
-                    0
-                    (intern-private-string-length
-                      (& (array-ref table.rendered-names index)))))
-                (set! index (+ index 1)))))
-          (set! table.kinds next-kinds)
-          (set! table.lefts next-lefts)
-          (set! table.middles next-middles)
-          (set! table.rights next-rights)
-          (set! table.rendered-names next-rendered-names)
-          (set! table.generated-symbol-handles next-generated-symbol-handles)
-          (if (= table.owner intern-active-structural-owner)
-            (begin
-              (set!
-                intern-active-structural-kinds-address
-                (intern-i64-array-address next-kinds))
-              (set!
-                intern-active-structural-lefts-address
-                (intern-i64-array-address next-lefts))
-              (set!
-                intern-active-structural-middles-address
-                (intern-i64-array-address next-middles))
-              (set!
-                intern-active-structural-rights-address
-                (intern-i64-array-address next-rights)))
-            unit)
-          unit)))))
+                  intern-active-structural-kinds-address
+                  (intern-i64-array-address next-kinds))
+                (set!
+                  intern-active-structural-lefts-address
+                  (intern-i64-array-address next-lefts))
+                (set!
+                  intern-active-structural-middles-address
+                  (intern-i64-array-address next-middles))
+                (set!
+                  intern-active-structural-rights-address
+                  (intern-i64-array-address next-rights)))
+              unit))))
+      (set! table.records-arena generation)
+      (if (= retired 0)
+        unit
+        (unsafe
+          (tl_arena_destroy retired))))))
 
 (define (intern-structural-table-grow-map!
-  [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
-  [arena-handle : i64]) : unit
+  [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
   (let
     [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
     [new-capacity : i64 (* (array-length table.map-slots) 2)]
-    (in-arena
-      (arena.Arena arena-handle)
-      (let
-        [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
-        (begin
-          (set! table.map-slots next-slots)
-          (let
-            [index : i64 0]
-            (while (< index table.len)
-              (begin
-                (intern-structural-table-map-put-index! table index)
-                (set! index (+ index 1)))))
-          unit)))))
+    [retired : i64 table.map-arena]
+    [generation : i64 (tl_arena_make)]
+    (begin
+      (in-arena
+        (arena.Arena generation)
+        (let
+          [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
+          (begin
+            (set! table.map-slots next-slots)
+            (let
+              [index : i64 0]
+              (while (< index table.len)
+                (begin
+                  (intern-structural-table-map-put-index! table index)
+                  (set! index (+ index 1))))))))
+      (set! table.map-arena generation)
+      (if (= retired 0)
+        unit
+        (unsafe
+          (tl_arena_destroy retired))))))
+
+;; Destroy the record and map generations. Every persistent reset calls this
+;; before it rewinds or replaces the owning arena and reinitializes the table.
+(define (intern-structural-table-release-generations!
+  [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
+  (let
+    [table : (&mut cell InternStructuralTable) (&mut (array-ref cell 0))]
+    [records : i64 table.records-arena]
+    [slots : i64 table.map-arena]
+    (begin
+      (set! table.records-arena 0)
+      (set! table.map-arena 0)
+      (if (= records 0)
+        unit
+        (unsafe
+          (tl_arena_destroy records)))
+      (if (= slots 0)
+        unit
+        (unsafe
+          (tl_arena_destroy slots))))))
 
 (defstruct InternStructuralProbe
   (found i64)
@@ -1030,7 +1069,6 @@
 
 (define (intern-structural-table-intern
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]
-  [arena : i64]
   [kind : i64]
   [left : i64]
   [middle : i64]
@@ -1042,10 +1080,10 @@
       (intern-structural-raw-for-index probe.owner probe.found)
       (begin
         (if probe.grow-records?
-          (intern-structural-table-grow-records! cell arena)
+          (intern-structural-table-grow-records! cell)
           unit)
         (if probe.grow-map?
-          (intern-structural-table-grow-map! cell arena)
+          (intern-structural-table-grow-map! cell)
           unit)
         (let
           [next-table : (&mut cell InternStructuralTable)
@@ -1541,6 +1579,8 @@
   (let
     [prev-arena : i64 (tl_arena_current)]
     (begin
+      (intern-structural-table-release-generations!
+        (&mut state.structural-table-cell))
       (intern-compat-state-persistent-arena-floor-ensure! state)
       (unsafe
         (tl_arena_set (intern-compat-state-persistent-arena state))
@@ -1564,6 +1604,8 @@
     [active? : bool
       (= (intern-active-table-id) (intern-compat-state-table-id state))]
     (begin
+      (intern-structural-table-release-generations!
+        (&mut state.structural-table-cell))
       (set! (array-ref state.persistent-arena 0) new-arena)
       (set! (array-ref state.persistent-arena-floor-mark 0) 0)
       (if active?
@@ -2222,6 +2264,8 @@
     [new-arena : i64 (tl_arena_make)]
     [prev-arena : i64 (tl_arena_current)]
     (begin
+      (intern-structural-table-release-generations!
+        (&mut intern-structural-table-cell))
       (set! intern-persistent-arena new-arena)
       (set! intern-persistent-arena-floor-mark 0)
       (if (= prev-arena old-arena)
@@ -2250,6 +2294,8 @@
   (let
     [prev-arena : i64 (tl_arena_current)]
     (begin
+      (intern-structural-table-release-generations!
+        (&mut intern-structural-table-cell))
       (intern-persistent-arena-floor-ensure!)
       (unsafe
         (tl_arena_set intern-persistent-arena)
@@ -3152,30 +3198,24 @@
   [state : (&mut state InternCompatState)]
   [left-id : i64]
   [right-id : i64]) : i64
-  (let
-    [arena : i64 (intern-compat-state-persistent-arena state)]
-    (intern-structural-table-intern
-      (&mut state.structural-table-cell)
-      arena
-      (intern-structural-kind-pair)
-      left-id
-      0
-      right-id)))
+  (intern-structural-table-intern
+    (&mut state.structural-table-cell)
+    (intern-structural-kind-pair)
+    left-id
+    0
+    right-id))
 
 (define (intern-compat-state-composite-triple-id
   [state : (&mut state InternCompatState)]
   [left-id : i64]
   [middle-id : i64]
   [right-id : i64]) : i64
-  (let
-    [arena : i64 (intern-compat-state-persistent-arena state)]
-    (intern-structural-table-intern
-      (&mut state.structural-table-cell)
-      arena
-      (intern-structural-kind-triple)
-      left-id
-      middle-id
-      right-id)))
+  (intern-structural-table-intern
+    (&mut state.structural-table-cell)
+    (intern-structural-kind-triple)
+    left-id
+    middle-id
+    right-id))
 
 (define (intern-compat-state-composite-pair-id?
   [state : (& state InternCompatState)]

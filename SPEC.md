@@ -2376,6 +2376,13 @@ callee does not return or store a reference tied to the argument lifetime ends
 after the call expression. If the reference result is bound, stored in a
 lifetime-parameterized aggregate, returned, or otherwise remains available as a
 reference value, the owner remains borrowed until that value's last proven use.
+Assignments inside the argument expression count: a reference assigned or
+stored in a sequence, branch, `let`, `match` arm, or loop of the argument keeps
+its owner borrowed when it can reach the argument's value, unless a later
+assignment that always runs overwrites it first. A store under bindings the
+checker does not follow (inside a `lambda`, `foreach`, `for` over a fixed
+array, or resource `with` within the argument) is rejected when its destination
+could hold one of the result's lifetimes.
 A mutable reference moved into a checker-known local closure carries the same
 lending fact: the referent remains exclusively borrowed through the closure's
 last direct call, then becomes available again.

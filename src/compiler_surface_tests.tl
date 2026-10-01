@@ -515,6 +515,66 @@
               (ast.ast-struct-repr-field-declared-align decoded 2)
               (ast.ast-struct-repr-field-declared-align repr 2))))))))
 
+;; Every extern ABI the codec writes reads back as itself, and consumes exactly
+;; its bytes. `TypeLisp` (tag 3, #8485) is written whenever a package that has
+;; dependencies is itself archived: its frontend AST holds the externs its
+;; loader synthesized for them.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-extern-abi-roundtrip-ok? [abi : ast.AstExternAbi]) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new structural-session 0 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (surface_ast.surface-ast-write-extern-abi!
+          (&mut out)
+          (&mut context)
+          (ast.ast-global-shared-view abi))
+        (let
+          [bytes : (__tl_dyn-array u8)
+            (byte_buf_core.byte-buf-builder-finish-array (& out))]
+          [byte-count : i64 (array-length bytes)]
+          [reader : codec.SurfaceAstReader
+            (codec.surface-ast-reader-new
+              bytes
+              structural-session
+              (__tl_make-array i64 0))]
+          [decoded : ast.AstExternAbi
+            (surface_ast.surface-ast-read-extern-abi! (&mut reader))]
+          (and
+            (codec.surface-ast-reader-valid? (& reader))
+            (= (codec.surface-ast-reader-offset (& reader)) byte-count)
+            (ast.ast-extern-abi-eq? decoded abi)))))))
+
+;; A tag past the last ABI fails the reader rather than decoding as any ABI.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-extern-abi-unknown-tag-rejected?) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (codec.surface-ast-write-i64! (&mut out) 4)
+        (let
+          [reader : codec.SurfaceAstReader
+            (codec.surface-ast-reader-new
+              (byte_buf_core.byte-buf-builder-finish-array (& out))
+              structural-session
+              (__tl_make-array i64 0))]
+          [_decoded : ast.AstExternAbi
+            (surface_ast.surface-ast-read-extern-abi! (&mut reader))]
+          (not (codec.surface-ast-reader-valid? (& reader))))))))
+
 ;; A decoded declared alignment must be absent (0) or a power of two within
 ;; the parser's range, and a field list must end at a declared value; anything
 ;; else fails the reader instead of reaching layout.
@@ -599,6 +659,10 @@
         true
         1)
       (surface-ast-decl-meta-invalid-flags-ok?)
+      (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.C)
+      (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.CVarargsOpen)
+      (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.TypeLisp)
+      (surface-ast-extern-abi-unknown-tag-rejected?)
       (surface-ast-declared-align-tests-ok?)
       (surface-ast-old-schema-rejected?)
       (surface-ast-c-function-reference-decode-ok? 1)

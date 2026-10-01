@@ -105948,6 +105948,18 @@
 (define opt-inline-census-slow-slots : (__tl_dyn-array bool)
   (__tl_make-array bool 64))
 
+;; INL-14 too: the versioner's GUARD, a `<header>__bce_guard` block or a block
+;; its chain was split into, whose header is another block of the same body.
+;; The guard runs once per entry to the loop it guards, which is one rung of
+;; the ladder below that loop. At or past opt-inline-census-depth-cap the
+;; ladder has no rung below, so it would charge the guard as much as the
+;; loop's own instructions -- a whole saturated nest's worth of guard code
+;; charged at its inner loop's weight, which can revert an inline whose merged
+;; loop the plan versioned (#8455). A guard there is charged one rung below
+;; the cap; below the cap its own depth already prices it once per entry.
+(define opt-inline-census-guard-slots : (__tl_dyn-array bool)
+  (__tl_make-array bool 64))
+
 (define (opt-inline-census-slow-reserve! [count : i64]) : unit
   (if (<= count (array-length opt-inline-census-slow-slots))
     unit
@@ -105958,7 +105970,9 @@
           (set! size (* size 2)))
         (in-arena
           (arena.Arena (ir.compiler-ir-label-arena))
-          (set! opt-inline-census-slow-slots (__tl_make-array bool size)))))))
+          (begin
+            (set! opt-inline-census-slow-slots (__tl_make-array bool size))
+            (set! opt-inline-census-guard-slots (__tl_make-array bool size))))))))
 
 (define (opt-inline-census-slow-clear! [count : i64]) : unit
   (let
@@ -105966,13 +105980,30 @@
     (while (< i count)
       (begin
         (set! (array-ref opt-inline-census-slow-slots i) false)
+        (set! (array-ref opt-inline-census-guard-slots i) false)
         (set! i (+ i 1))))))
 
+;; Only a label carrying the versioner's `__bce_` marker can be a slow copy's
+;; clone or a guard, and the marker is cached per label, so every other block
+;; costs one lookup.
 (define (opt-inline-census-slow-mark-label! [label : i64] [generation : i64]) : unit
+  (if (not (opt-label-has-marker? label (opt-label-marker-bce)))
+    unit
+    (opt-inline-census-versioned-mark-label! label generation)))
+
+(define (opt-inline-census-versioned-mark-label!
+  [label : i64]
+  [generation : i64]) : unit
   (let
     [prefix : String (opt-loop-call-versioned-prefix label)]
     (if (= (string.string-length (& prefix)) 0)
-      unit
+      (let
+        [guard : i64 (opt-inline-census-guard-position label generation)]
+        (if (and
+          (>= guard 0)
+          (< guard (array-length opt-inline-census-guard-slots)))
+          (set! (array-ref opt-inline-census-guard-slots guard) true)
+          unit))
       (let
         [slow : i64
           (opt-cfg-label-table-get (ir.compiler-ir-label prefix) generation)]
@@ -105981,6 +106012,39 @@
           (< slow (array-length opt-inline-census-slow-slots)))
           (set! (array-ref opt-inline-census-slow-slots slow) true)
           unit)))))
+
+;; The position of a guard block whose header is another block of the same
+;; body, or -1, for a label carrying the `__bce_` marker. Its label contains
+;; `__bce_guard`, and the text before its first `__bce_` names the header: the
+;; versioner appends its markers, and a later split of the chain appends its
+;; own.
+(define (opt-inline-census-guard-position [label : i64] [generation : i64]) : i64
+  (let
+    [text : String (ir.compiler-ir-label-text label)]
+    (if (not (string.contains (& text) "__bce_guard"))
+      -1
+      (let
+        [marker : String (opt-label-marker-text (opt-label-marker-bce))]
+        [n : i64 (string.string-length (& text))]
+        [m : i64 (string.string-length (& marker))]
+        [i : i64 0]
+        [start : i64 -1]
+        (begin
+          (while (and (< start 0) (<= (+ i m) n))
+            (begin
+              (if (string.eq (string.substring (& text) i m) marker)
+                (set! start i)
+                unit)
+              (set! i (+ i 1))))
+          (if (or
+            (<= start 0)
+            (<
+              (opt-cfg-label-table-get
+                (ir.compiler-ir-label (string.substring (& text) 0 start))
+                generation)
+              0))
+            -1
+            (opt-cfg-label-table-get label generation)))))))
 
 (define (opt-inline-census-slow-mark!
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -106010,6 +106074,22 @@
     (< position opt-inline-census-depth-count))
     (array-ref opt-inline-census-slow-slots position)
     false))
+
+;; What one instruction of the block at `position` weighs when the body sits at
+;; depth `offset` in its caller: its depth's rung, a guard at most one rung
+;; below the cap, a slow copy nothing (INL-14).
+(define (opt-inline-census-block-weight [position : i64] [offset : i64]) : i64
+  (let
+    [depth : i64 (+ offset (opt-inline-census-depth-at position))]
+    (cond
+      [(opt-inline-census-slow-at position) 0]
+      [(and
+          opt-inline-census-depth-active?
+          (< position opt-inline-census-depth-count)
+          (array-ref opt-inline-census-guard-slots position)
+          (>= depth (opt-inline-census-depth-cap)))
+        (opt-inline-census-depth-weight (- (opt-inline-census-depth-cap) 1))]
+      [else (opt-inline-census-depth-weight depth)])))
 
 (define (opt-inline-census-bump-map
   [map : opt_i64_i64_map.Map]
@@ -114959,14 +115039,11 @@
             (+ position 1)
             (+
               acc
-              ;; INL-14: a versioned loop's slow copy is cold, see
-              ;; opt-inline-census-slow-at.
-              (if (opt-inline-census-slow-at position)
-                0
-                (*
-                  (opt-inline-census-depth-weight
-                    (+ offset (opt-inline-census-depth-at position)))
-                  (ir.compiler-ir-instr-seq-count instrs)))))])]
+              ;; INL-14: a versioned loop's slow copy is cold and its guard
+              ;; runs once per entry, see opt-inline-census-block-weight.
+              (*
+                (opt-inline-census-block-weight position offset)
+                (ir.compiler-ir-instr-seq-count instrs))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-checked-weighted-instrs-from
         (ir.compiler-ir-block-seq-to-list seq)
@@ -115059,9 +115136,10 @@
     cost))
 
 ;; INL-15: the block weights of the tier's currency, for the allocator's cost
-;; model. Position `p` weighs opt-inline-census-depth-weight at the depth the
-;; body would sit at plus the block's own, and a versioned loop's slow copy
-;; weighs nothing (INL-14). The census must have been built for these blocks.
+;; model. Position `p` weighs opt-inline-census-block-weight at the depth the
+;; body would sit at plus the block's own: a versioned loop's slow copy weighs
+;; nothing and its guard at most one rung below the cap (INL-14). The census
+;; must have been built for these blocks.
 (define (opt-inline-checked-census-weights
   [blocks : ir.CompilerIrBlockList]
   [offset : i64]) : (__tl_dyn-array i64)
@@ -115072,12 +115150,7 @@
     (begin
       (while (< p count)
         (begin
-          (set!
-            (array-ref out p)
-            (if (opt-inline-census-slow-at p)
-              0
-              (opt-inline-census-depth-weight
-                (+ offset (opt-inline-census-depth-at p)))))
+          (set! (array-ref out p) (opt-inline-census-block-weight p offset))
           (set! p (+ p 1))))
       out)))
 

@@ -2961,10 +2961,10 @@
     "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
 
 (test
-  inline-checked-slow-copy-weighting
+  inline-checked-versioned-loop-weighting
   (test.assert-true
-    (ot.compiler-optimize-inline-checked-slow-copy-weighting-ok?)
-    "a versioned loop prices as one loop: the slow copy is the guard's failure path and is priced cold"))
+    (ot.compiler-optimize-inline-checked-versioned-loop-weighting-ok?)
+    "a versioned loop prices as one loop, and its guard runs once per entry: below the cap at its own depth, past it one rung below the cap"))
 
 (test
   inline-checked-sret-copy

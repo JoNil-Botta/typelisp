@@ -8,6 +8,8 @@
 (import compiler_ir_types as ir)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as live_label_map)
+(import stdlib.vector)
+(import (vector.vector i64 core) as live_ids)
 (import compiler_owned_view as owned_view)
 
 ;; Ownership-aware read view for compiler pass state. The pass treats these
@@ -1668,6 +1670,118 @@
       (CompilerLiveUseDef
         (compiler-live-scratch-freeze uses use-count)
         (compiler-live-scratch-freeze defs def-count)))))
+
+;; Sparse form of `compiler-live-block-use-def-seq-with-scratch` with
+;; conservative phi uses, for consumers whose per-block cost must not grow with
+;; the function's var count (#8417). Appends block `block`'s upward-exposed uses
+;; to `use-out` and its defs to `def-out`, each id once: the same bits the dense
+;; form freezes, under the same rules (a use counts unless an EARLIER
+;; instruction of the block defines it, and leading phis record every use
+;; before any def). `use-at` and `def-at` hold, per var, the last block that
+;; recorded it as a use or a def; no entry equals `block` on entry.
+(define (compiler-live-block-use-def-ids!
+  [instrs : ir.CompilerIrInstrSeq]
+  [block : i64]
+  [use-at : (&mut use-at (__tl_dyn-array i64))]
+  [def-at : (&mut def-at (__tl_dyn-array i64))]
+  [use-out : (&mut use-out live_ids.Vec)]
+  [def-out : (&mut def-out live_ids.Vec)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [phi-end : i64
+      (compiler-live-leading-phi-count (compiler-live-shared-view instrs))]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
+        [id-count : i64
+          (compiler-live-instr-use-ids! (compiler-live-shared-view instr))]
+        [id : i64 0]
+        (begin
+          (if (< id-count 0)
+            ;; Wider than the extraction buffer: walk the bitset instead.
+            (let
+              [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+              [bits : i64
+                (*
+                  (compiler-live-set-word-count uses)
+                  (compiler-live-set-word-bits))]
+              (while (< id bits)
+                (begin
+                  (when
+                    (!=
+                      (bit-and
+                        (compiler-live-set-word-at-bounded
+                          uses
+                          (compiler-live-set-word-index id))
+                        (compiler-live-set-bit-mask id))
+                      0)
+                    (compiler-live-use-id! use-at def-at block id use-out))
+                  (set! id (+ id 1)))))
+            (while (< id id-count)
+              (begin
+                (compiler-live-use-id!
+                  use-at
+                  def-at
+                  block
+                  (array-ref ids id)
+                  use-out)
+                (set! id (+ id 1)))))
+          (cond
+            [(< (+ index 1) phi-end) unit]
+            [(= (+ index 1) phi-end)
+              (let
+                [phi : i64 0]
+                (while (< phi phi-end)
+                  (let
+                    [phi-instr : ir.CompilerIrInstr
+                      (ir.compiler-ir-instr-seq-ref instrs phi)]
+                    (begin
+                      (compiler-live-def-id!
+                        def-at
+                        block
+                        (ir.compiler-ir-instr-dst phi-instr)
+                        def-out)
+                      (set! phi (+ phi 1))))))]
+            [else
+              (compiler-live-def-id!
+                def-at
+                block
+                (ir.compiler-ir-instr-dst instr)
+                def-out)])
+          (set! index (+ index 1)))))))
+
+;; Ids outside the stamp rows are not the function's vars and are skipped.
+(define (compiler-live-use-id!
+  [use-at : (&mut use-at (__tl_dyn-array i64))]
+  [def-at : (&mut def-at (__tl_dyn-array i64))]
+  [block : i64]
+  [var : i64]
+  [use-out : (&mut use-out live_ids.Vec)]) : unit
+  (when
+    (and
+      (>= var 0)
+      (< var (array-length use-at))
+      (!= (array-ref def-at var) block)
+      (!= (array-ref use-at var) block))
+    (begin
+      (set! (array-ref use-at var) block)
+      (live_ids.push-ref! use-out var))))
+
+(define (compiler-live-def-id!
+  [def-at : (&mut def-at (__tl_dyn-array i64))]
+  [block : i64]
+  [var : i64]
+  [def-out : (&mut def-out live_ids.Vec)]) : unit
+  (when
+    (and
+      (>= var 0)
+      (< var (array-length def-at))
+      (!= (array-ref def-at var) block))
+    (begin
+      (set! (array-ref def-at var) block)
+      (live_ids.push-ref! def-out var))))
 
 (define (compiler-live-instr-seq-last [instrs : ir.CompilerIrInstrSeq]) : CompilerLiveMaybeInstr
   (if (ir.compiler-ir-instr-seq-empty? instrs)

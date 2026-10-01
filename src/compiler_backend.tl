@@ -1083,10 +1083,10 @@
     [(CompilerBackendTarget.Linux) "linux-x86_64"]
     [(CompilerBackendTarget.Windows) "windows-x86_64"]))
 
-;; The one target whose programs may issue raw `syscall` instructions, named in
-;; the diagnostic the others report.
-(define (compiler-backend-raw-syscall-target-triple) : String
-  (compiler-backend-target-triple (CompilerBackendTarget.Linux)))
+;; Raw `syscall` instructions are admitted only on Linux; other targets report
+;; this. A literal, so the diagnostic owns no allocation.
+(define (compiler-backend-raw-syscall-diagnostic) : String
+  "backend: syscall is only supported on the linux-x86_64 target")
 
 ;; A backend job owns one exact intern capability and the small mutable state
 ;; that is safe to share across its emission phases.  Keep the public carrier
@@ -49286,10 +49286,7 @@
       (box
         (compiler_diagnostic.compiler-diagnostic-at-start
           ""
-          (str_cat.str-cat
-            "backend: syscall is only supported on the "
-            (compiler-backend-raw-syscall-target-triple)
-            " target"))))
+          (compiler-backend-raw-syscall-diagnostic))))
     (let
       [count : i64
         (compiler-backend-call-args-count
@@ -84262,6 +84259,29 @@
   [context : CompilerBackendObjectAbiContext]) : CompilerDirectObjectFallbackReason
   (CompilerDirectObjectFallbackReason.UnsupportedAbi target context))
 
+;; The fallback category of an unsupported object ABI, per target and context.
+;; These are literals because callers keep categories past their own scratch.
+(define (compiler-backend-unsupported-object-abi-category
+  [target : CompilerBackendTarget]
+  [context : CompilerBackendObjectAbiContext]) : String
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          "unsupported-object-abi:linux-x86_64:call"]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          "unsupported-object-abi:linux-x86_64:function-entry"]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          "unsupported-object-abi:linux-x86_64:function-return"])]
+    [(CompilerBackendTarget.Windows)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          "unsupported-object-abi:windows-x86_64:call"]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          "unsupported-object-abi:windows-x86_64:function-entry"]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          "unsupported-object-abi:windows-x86_64:function-return"])]))
+
 (define (compiler-direct-object-fallback-category
   [reason : CompilerDirectObjectFallbackReason]) : String
   (match reason
@@ -84274,13 +84294,7 @@
     [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
       "unsupported-object-semantics"]
     [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
-      (str_cat.str-cat
-        "unsupported-object-abi:"
-        (compiler-backend-target-triple target)
-        (match context
-          [(CompilerBackendObjectAbiContext.Call) ":call"]
-          [(CompilerBackendObjectAbiContext.FunctionEntry) ":function-entry"]
-          [(CompilerBackendObjectAbiContext.FunctionReturn) ":function-return"]))]
+      (compiler-backend-unsupported-object-abi-category target context)]
     [(CompilerDirectObjectFallbackReason.ObjectEncoding)
       "unsupported-object-encoding"]
     [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)

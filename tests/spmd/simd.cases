@@ -485,6 +485,18 @@ not-match %zmm[0-9]+|%k[0-7]
 match call _tl___tl_spmd_
 match leaq? .*\(%rsp\), %r10
 
+# The scalar helper call clobbers the caller-saved registers like any call, so
+# the constant hoister must not keep the loop's `% 3` magic in one across it
+# (#8198). Opt 2 scalar used to exit 1.
+case private-helper-mask-arg-run
+source tests/spmd/private_helper_mask_arg.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
 case private-helper-uniform-stack-avx2
 source tests/spmd/private_helper_uniform_stack.tl
 mode avx2

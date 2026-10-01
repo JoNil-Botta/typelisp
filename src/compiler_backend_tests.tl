@@ -5898,6 +5898,49 @@
     (compiler-backend-callful-preheader-wide-literal-target-ok?
       (backend.CompilerBackendTarget.Windows))))
 
+;; In scalar mode a `foreach` body that calls an out-of-line helper is a loop
+;; around an `SpmdCall`. That call clobbers the caller-saved registers like any
+;; other, so the loop is not a leaf region and the constant hoister must not
+;; carry the `% 3` magic across it in %r8 (#8198). A declined hoist
+;; rematerializes the magic at its use; `movabsq` then sits right before the
+;; `imulq`, never at the preheader label.
+(define compiler-backend-spmd-call-loop-divmod-source : String
+  "(define (store-flags
+  [out : (&mut out (__tl_dyn-array i64))]
+  [i : i64]
+  [small : bool]
+  [third : bool]) : unit
+  (if small
+    (set! (array-ref out i) (if third 1 2))
+    (set! (array-ref out i) 3)))
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n]) (store-flags out i (< i 7) (= (% i 3) 0))))
+(define (main) : i64
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 13)]
+    (begin
+      (fill (&mut out) 13)
+      (array-ref out 3))))")
+
+(define (compiler-backend-spmd-call-loop-divmod-target-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-spmd-call-loop-divmod-source))
+    target)
+    [(backend.ResultCompilerBackend.Ok asm)
+      (and
+        (asm-has? asm "    call _tl_f0\n")
+        (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
+        (asm-lacks? asm "__preheader:\n    movabsq $6148914691236517206"))]
+    [(backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-spmd-call-loop-divmod-ok?) : bool
+  (and
+    (compiler-backend-spmd-call-loop-divmod-target-ok?
+      (backend.CompilerBackendTarget.Linux))
+    (compiler-backend-spmd-call-loop-divmod-target-ok?
+      (backend.CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-tail-dispatch-no-csr-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
     (string.copy (& compiler-backend-tail-dispatch-source))
@@ -38210,6 +38253,7 @@ b_keep:
         (compiler-backend-const-hoist-award-weight-ok?)
         (compiler-backend-const-hoist-award-tie-ok?)
         (compiler-backend-callful-preheader-wide-literal-ok?)
+        (compiler-backend-spmd-call-loop-divmod-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-swb-global-guard-ok?)

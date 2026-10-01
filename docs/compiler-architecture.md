@@ -181,6 +181,15 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+The serial in-memory LSP transport keeps its arena handle, input snapshot,
+cursor, EOF flag and captured output in one `LspFrameMemoryState`
+(`src/lsp_frame_core.tl`). Install and reset replace the whole value; only the
+cursor, EOF flag and output fields change in place. The transcript runner copies
+captured output into its caller's arena, saves the transport handle, resets the
+state, then destroys the session and transport arenas, so no transport field
+stays globally reachable after its owner is gone. The LSP frame smoke covers
+reset and reinstall after the input was consumed and both outputs written.
+
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the
 function's rewound scratch with the parent's head and capabilities, and the

@@ -124,6 +124,13 @@ bench_cachegrind() {
 # benchmark_ci_case_csv ROOT SUITE
 #   Print SUITE's cases from perf/benchmark-ci-cases.tsv, the positive case
 #   membership of the Linux benchmark-related CI suites, as a CSV.
+#
+#   An instruction-main case may also belong to benchmark or optimization-opt2:
+#   each suite checks something the others do not. The benchmark suite builds
+#   TypeLisp at the default level (opt1), the opt2 corpus refuses compiler
+#   stderr and links through its own assembler path, and the instruction gate
+#   checks opt2 parity across TypeLisp, auto and scalar C and pins the counts.
+#   An instruction-heavy case must not also belong to benchmark.
 benchmark_ci_case_csv() {
     _bccc_root=$1
     _bccc_suite=$2
@@ -166,9 +173,7 @@ benchmark_ci_case_csv() {
         }
         {
             membership[$1 SUBSEP $2] = 1
-            if ($1 == "instruction-main") {
-                main_instruction[$2] = 1
-            } else if ($1 == "instruction-heavy") {
+            if ($1 == "instruction-heavy") {
                 heavy_instruction[$2] = 1
             }
         }
@@ -184,14 +189,6 @@ benchmark_ci_case_csv() {
                 wanted != "instruction-main" &&
                 wanted != "instruction-heavy") {
                 problem("unknown requested suite: " wanted)
-            }
-            for (case_name in main_instruction) {
-                if (membership["benchmark" SUBSEP case_name]) {
-                    problem("instruction-main case also belongs to benchmark: " case_name)
-                }
-                if (membership["optimization-opt2" SUBSEP case_name]) {
-                    problem("instruction-main case also belongs to optimization-opt2: " case_name)
-                }
             }
             for (case_name in heavy_instruction) {
                 if (membership["benchmark" SUBSEP case_name]) {

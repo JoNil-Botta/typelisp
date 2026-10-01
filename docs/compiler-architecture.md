@@ -529,6 +529,19 @@ it records one plan per read during the loop walk and builds the diamonds
 afterwards, so no loop's body or dominator facts change under the walk. The `licm-guard` optimizer test and `tests/integration/licm_guarded_read.tl`
 cover it.
 
+The multi-block bounds-check versioner clones a loop behind one entry guard
+and drops the checks the guard proves. Its derivations read a counter's value
+range `[seed, bound)`. A top-tested loop's counter may be a monotone cursor:
+its latch value merges `j` and `j + 1`, as in a scanner that stops instead of
+stepping. The cursor still lies in that range on every trip the test lets
+through, so it is recovered as an inexact counter. Rules that count latch
+crossings (derived inductions, phis that share the seed) stay off for it. A
+cursor loop versions only when the clone keeps no check and some check reads
+the cursor. Otherwise the loop is offered to the counter-free shape as before;
+a hash probe's `walked` cursor is that case. The
+`bce-version-mb-monotone-cursor` optimizer test and
+`tests/integration/bce_monotone_cursor.tl` cover it.
+
 Call-memory root scanning, summary accumulation and write predicates read the
 live prefix of dense block sequences directly through the block sequence accessor.
 These internal shallow reads require valid storage and an index below logical len.

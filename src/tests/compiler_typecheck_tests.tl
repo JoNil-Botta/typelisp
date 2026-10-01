@@ -1023,105 +1023,103 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
-                  (match (tc_core.tc-repr-c-struct-layout-id
+                  (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    "Packet"
                     (compiler-typecheck-fixture-nominal-id program "Packet"))
-                    [(tc_core.ResultTcReprCLayout.Ok packet)
-                      (match (tc_core.tc-repr-c-struct-layout-id
+                    [(tc_core.ResultTcInlineAggregateLayout.Ok packet)
+                      (match (tc_core.tc-inline-aggregate-layout-for-id
                         ctx
-                        "Outer"
                         (compiler-typecheck-fixture-nominal-id program "Outer"))
-                        [(tc_core.ResultTcReprCLayout.Ok outer)
-                          (match (tc_core.tc-repr-c-struct-layout-id
+                        [(tc_core.ResultTcInlineAggregateLayout.Ok outer)
+                          (match (tc_core.tc-inline-aggregate-layout-for-id
                             ctx
-                            "WideC"
                             (compiler-typecheck-fixture-nominal-id
                               program
                               "WideC"))
-                            [(tc_core.ResultTcReprCLayout.Ok wide)
+                            [(tc_core.ResultTcInlineAggregateLayout.Ok wide)
                               (let
-                                [wide-fields : tc_core.TcReprCFieldLayoutList
-                                  (tc_core.tc-repr-c-layout-fields
+                                [wide-fields : tc_core.TcInlineFieldLayoutList
+                                  (core_tests.tc-inline-layout-fields
                                     (tc_core.tc-global-shared-view wide))]
                                 (and
                                   (=
-                                    (tc_core.tc-repr-c-layout-size
+                                    (tc_core.tc-inline-aggregate-layout-size
                                       (tc_core.tc-global-shared-view packet))
                                     24)
                                   (=
-                                    (tc_core.tc-repr-c-layout-align
+                                    (tc_core.tc-inline-aggregate-layout-align
                                       (tc_core.tc-global-shared-view packet))
                                     8)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields
-                                        (tc_core.tc-global-shared-view packet))
+                                    (core_tests.tc-inline-layout-field-offset
+                                      (tc_core.tc-global-shared-view packet)
                                       "tag")
                                     0)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields
-                                        (tc_core.tc-global-shared-view packet))
+                                    (core_tests.tc-inline-layout-field-offset
+                                      (tc_core.tc-global-shared-view packet)
                                       "count")
                                     8)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields packet)
+                                    (core_tests.tc-inline-layout-field-offset
+                                      packet
                                       "flag")
                                     16)
                                   (=
-                                    (tc_core.tc-repr-c-layout-size
+                                    (tc_core.tc-inline-aggregate-layout-size
                                       (tc_core.tc-global-shared-view outer))
                                     16)
                                   (=
-                                    (tc_core.tc-repr-c-layout-align
+                                    (tc_core.tc-inline-aggregate-layout-align
                                       (tc_core.tc-global-shared-view outer))
                                     4)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields
-                                        (tc_core.tc-global-shared-view outer))
+                                    (core_tests.tc-inline-layout-field-offset
+                                      (tc_core.tc-global-shared-view outer)
                                       "inner")
                                     4)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
-                                      (tc_core.tc-repr-c-layout-fields outer)
+                                    (core_tests.tc-inline-layout-field-offset
+                                      outer
                                       "tail")
                                     12)
                                   (=
-                                    (tc_core.tc-repr-c-layout-size
+                                    (tc_core.tc-inline-aggregate-layout-size
                                       (tc_core.tc-global-shared-view wide))
                                     48)
-                                  (= (tc_core.tc-repr-c-layout-align wide) 8)
                                   (=
-                                    (tc_core.tc-repr-c-field-layout-list-count
-                                      wide-fields)
+                                    (tc_core.tc-inline-aggregate-layout-align
+                                      wide)
+                                    8)
+                                  (=
+                                    (tc_core.tc-inline-field-layout-list-count
+                                      (& wide-fields))
                                     12)
                                   (=
                                     (array-length
                                       (__tl-project-field wide-fields slots))
                                     12)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-inline-field-list-offset
                                       (tc_core.tc-global-shared-view
                                         wide-fields)
                                       "f0")
                                     0)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-inline-field-list-offset
                                       (tc_core.tc-global-shared-view
                                         wide-fields)
                                       "f8")
                                     24)
                                   (=
-                                    (core_tests.tc-repr-c-layout-field-offset
+                                    (core_tests.tc-inline-field-list-offset
                                       wide-fields
                                       "f11")
                                     42)))]
-                            [(tc_core.ResultTcReprCLayout.Err _) false])]
-                        [(tc_core.ResultTcReprCLayout.Err _) false])]
-                    [(tc_core.ResultTcReprCLayout.Err _) false]))]
+                            [(tc_core.ResultTcInlineAggregateLayout.Err _)
+                              false])]
+                        [(tc_core.ResultTcInlineAggregateLayout.Err _) false])]
+                    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
               [(csym.ResultCompilerRegistries.Err _) false])]
           [(csym.ResultCompilerSymbols.Err _) false])]
       [(parser.ResultAstProgram.Err _) false])))
@@ -1144,38 +1142,35 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
-                  (match (tc_core.tc-repr-c-struct-layout-id
+                  (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    "Vec2"
                     (compiler-typecheck-fixture-nominal-id program "Vec2"))
-                    [(tc_core.ResultTcReprCLayout.Ok layout)
+                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (and
                         (=
-                          (tc_core.tc-repr-c-layout-size
+                          (tc_core.tc-inline-aggregate-layout-size
                             (tc_core.tc-global-shared-view layout))
                           16)
                         (=
-                          (tc_core.tc-repr-c-layout-align
+                          (tc_core.tc-inline-aggregate-layout-align
                             (tc_core.tc-global-shared-view layout))
                           8)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                          (core_tests.tc-inline-layout-field-offset
+                            (tc_core.tc-global-shared-view layout)
                             "x")
                           0)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                          (core_tests.tc-inline-layout-field-offset
+                            (tc_core.tc-global-shared-view layout)
                             "y")
                           4)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields layout)
+                          (core_tests.tc-inline-layout-field-offset
+                            layout
                             "tag")
                           8))]
-                    [(tc_core.ResultTcReprCLayout.Err _) false]))]
+                    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
               [(csym.ResultCompilerRegistries.Err _) false])]
           [(csym.ResultCompilerSymbols.Err _) false])]
       [(parser.ResultAstProgram.Err _) false])))
@@ -1201,12 +1196,11 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
-                  (match (tc_core.tc-repr-c-struct-layout-id
+                  (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    (tc_core.tc-global-shared-view name)
                     (compiler-typecheck-fixture-nominal-id program name))
-                    [(tc_core.ResultTcReprCLayout.Ok _) false]
-                    [(tc_core.ResultTcReprCLayout.Err message)
+                    [(tc_core.ResultTcInlineAggregateLayout.Ok _) false]
+                    [(tc_core.ResultTcInlineAggregateLayout.Err message)
                       (string.eq message want)]))]
               [(csym.ResultCompilerRegistries.Err _) false])]
           [(csym.ResultCompilerSymbols.Err _) false])]
@@ -1242,50 +1236,230 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast.ast-node-pool-context-capture-active))]
-                  (match (tc_core.tc-repr-c-struct-layout-id
+                  (match (tc_core.tc-inline-aggregate-layout-for-id
                     ctx
-                    "Mixed"
                     (compiler-typecheck-fixture-nominal-id program "Mixed"))
-                    [(tc_core.ResultTcReprCLayout.Ok layout)
+                    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
                       (and
                         (=
-                          (tc_core.tc-repr-c-layout-size
+                          (tc_core.tc-inline-aggregate-layout-size
                             (tc_core.tc-global-shared-view layout))
                           48)
                         (=
-                          (tc_core.tc-repr-c-layout-align
+                          (tc_core.tc-inline-aggregate-layout-align
                             (tc_core.tc-global-shared-view layout))
                           8)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                          (core_tests.tc-inline-layout-field-offset
+                            (tc_core.tc-global-shared-view layout)
                             "lead")
                           0)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                          (core_tests.tc-inline-layout-field-offset
+                            (tc_core.tc-global-shared-view layout)
                             "point")
                           8)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields
-                              (tc_core.tc-global-shared-view layout))
+                          (core_tests.tc-inline-layout-field-offset
+                            (tc_core.tc-global-shared-view layout)
                             "tag")
                           24)
                         (=
-                          (core_tests.tc-repr-c-layout-field-offset
-                            (tc_core.tc-repr-c-layout-fields layout)
+                          (core_tests.tc-inline-layout-field-offset
+                            layout
                             "tail")
                           40))]
-                    [(tc_core.ResultTcReprCLayout.Err _) false]))]
+                    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))]
               [(csym.ResultCompilerRegistries.Err _) false])]
           [(csym.ResultCompilerSymbols.Err _) false])]
       [(parser.ResultAstProgram.Err _) false])))
 
+;; Explicit `(:align N)` layout: the one inline aggregate layout behind
+;; `size-of`/`align-of`/`offset-of` and field addresses gives the C11
+;; `_Alignas` result (struct size 16, alignment 8, `data` at 8).
+(define (compiler-typecheck-repr-c-aligned-layout-source) : String
+  "(defstruct Frame
+  (:repr c)
+  (id u32)
+  (len u8)
+  (data (Array u8 8) (:align 8)))
+(defstruct Prefix
+  (:align 8)
+  (:repr c)
+  (kind u8)
+  (schedule u8 (:align 8)))
+(defstruct Holder
+  (:repr c)
+  (tag u8)
+  (inner Prefix)
+  (items (Array Prefix 2))
+  (tail u16))")
+
+(define (compiler-typecheck-aligned-pair-ok?
+  [ctx : tc_core.TcContext]
+  [program : ast.AstProgram]
+  [name : String]
+  [want-size : i64]
+  [want-align : i64]
+  [field : String]
+  [want-offset : i64]) : bool
+  (let
+    [name-id : i64
+      (compiler-typecheck-fixture-nominal-id
+        program
+        (tc_core.tc-global-shared-view name))]
+    (compiler-typecheck-aligned-pair-id-ok?
+      ctx
+      name-id
+      want-size
+      want-align
+      field
+      want-offset)))
+
+(define (compiler-typecheck-aligned-pair-id-ok?
+  [ctx : tc_core.TcContext]
+  [name-id : i64]
+  [want-size : i64]
+  [want-align : i64]
+  [field : String]
+  [want-offset : i64]) : bool
+  (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+    [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+      (and
+        (=
+          (tc_core.tc-inline-aggregate-layout-size
+            (tc_core.tc-global-shared-view layout))
+          want-size)
+        (=
+          (tc_core.tc-inline-aggregate-layout-align
+            (tc_core.tc-global-shared-view layout))
+          want-align)
+        (= (core_tests.tc-inline-layout-field-offset layout field) want-offset))]
+    [(tc_core.ResultTcInlineAggregateLayout.Err _) false]))
+
+(define (compiler-typecheck-repr-c-aligned-layout-ok?) : bool
+  (begin
+    (tc_core.tc-agg-caches-reset!)
+    (match (parser.parse-ast-source
+      (compiler-typecheck-repr-c-aligned-layout-source))
+      [(parser.ResultAstProgram.Ok program)
+        (match (csym.build-compiler-symbols program)
+          [(csym.ResultCompilerSymbols.Ok symbols)
+            (match (csym.build-compiler-registries program)
+              [(csym.ResultCompilerRegistries.Ok registries)
+                (let
+                  [ctx : tc_core.TcContext
+                    (tc_core.tc-context-new
+                      (ast.ast-global-shared-view program)
+                      symbols
+                      registries
+                      ""
+                      cbi.compiler-builtin-id-fix-empty
+                      (ast.ast-node-pool-context-capture-active))]
+                  (and
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Frame"
+                      16
+                      8
+                      "data"
+                      8)
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Prefix"
+                      16
+                      8
+                      "schedule"
+                      8)
+                    ;; Nested and arrayed aligned structs propagate 8: the
+                    ;; array starts at 24 with a 16-byte stride.
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Holder"
+                      64
+                      8
+                      "tail"
+                      56)
+                    (compiler-typecheck-aligned-pair-ok?
+                      ctx
+                      (ast.ast-global-shared-view program)
+                      "Holder"
+                      64
+                      8
+                      "items"
+                      24)))]
+              [(csym.ResultCompilerRegistries.Err _) false])]
+          [(csym.ResultCompilerSymbols.Err _) false])]
+      [(parser.ResultAstProgram.Err _) false])))
+
+(define (compiler-typecheck-repr-c-align-errors-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-aligned-layout-source))
+    (compiler-typecheck-ok?
+      "(defstruct Same
+  (:repr c)
+  (:align 8)
+  (x i64 (:align 8)))")
+    (compiler-typecheck-error-ok?
+      "(defstruct Weak
+  (:repr c)
+  (x i64 (:align 4)))"
+      "typecheck: repr c struct Weak field x declares (:align 4) below its type's natural alignment 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Weak
+  (:repr c)
+  (:align 4)
+  (x i64))"
+      "typecheck: repr c struct Weak declares (:align 4) below the alignment its fields require, 8")
+    ;; A raised field alignment counts toward the struct's requirement.
+    (compiler-typecheck-error-ok?
+      "(defstruct Weak
+  (:repr c)
+  (:align 4)
+  (x u8 (:align 8)))"
+      "typecheck: repr c struct Weak declares (:align 4) below the alignment its fields require, 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Inner
+  (:repr c)
+  (:align 8)
+  (x u8))
+(defstruct Weak
+  (:repr c)
+  (inner Inner (:align 4)))"
+      "typecheck: repr c struct Weak field inner declares (:align 4) below its type's natural alignment 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Empty
+  (:repr c)
+  (:align 8)
+  (x unit))"
+      "typecheck: repr c struct Empty declares (:align 8) but its fields occupy 0 bytes")
+    (compiler-typecheck-error-ok?
+      "(defstruct Wide
+  (:repr c)
+  (:align 16)
+  (x i64))"
+      "typecheck: repr c struct Wide declares (:align 16); storage cannot yet place values aligned above 8")
+    (compiler-typecheck-error-ok?
+      "(defstruct Wide
+  (:repr c)
+  (x u8 (:align 32)))"
+      "typecheck: repr c struct Wide field x declares (:align 32); storage cannot yet place values aligned above 8")
+    (compiler-typecheck-error-location-ok?
+      "(define (f) : i64 1)
+(defstruct Weak
+  (:repr c)
+  (x i64 (:align 4)))"
+      "typecheck: repr c struct Weak field x declares (:align 4) below its type's natural alignment 8"
+      2
+      1)))
+
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
+    (compiler-typecheck-repr-c-aligned-layout-ok?)
+    (compiler-typecheck-repr-c-align-errors-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-layout-source))
     (compiler-typecheck-repr-c-layout-ok?)
     (compiler-typecheck-ok? (compiler-typecheck-repr-c-f32-source))
@@ -1298,9 +1472,12 @@
 (defstruct Bad
   (:repr c)
   (inner Inner))")
-    (compiler-typecheck-ok? "(defstruct Node
+    ;; A repr-c struct gets the same finite-layout check as any struct.
+    (compiler-typecheck-error-ok?
+      "(defstruct Node
   (:repr c)
-  (next Node))")
+  (next Node))"
+      "typecheck: inline aggregate layout cycle Node -> Node; insert (Box Node) at the recursive edge")
     (compiler-typecheck-repr-c-layout-error-ok?
       "(defstruct A
   (:repr c)
@@ -1309,7 +1486,7 @@
   (:repr c)
   (a A))"
       "A"
-      "typecheck: recursive repr c struct layout cycle involving A")
+      "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
     (compiler-typecheck-repr-c-layout-error-ok?
       "(defstruct Middle
   (back CRoot))
@@ -3251,7 +3428,7 @@
     (ast.ast-decl-cons
       (ast.ast-decl-def-struct-id
         (ci.intern-generated-name "Bad")
-        (ast.AstStructRepr.C)
+        (ast.ast-struct-repr-c)
         (ast.ast-struct-cleanup-fn-id
           (ci.intern-syntax-id-from-raw
             (ci.intern-generated-name "cleanup-bad")))
@@ -10188,7 +10365,7 @@
                     (ast.AstDecl.DefStruct
                       (ast.ast-decl-meta-runtime-shared-view)
                       name
-                      (ast.AstStructRepr.C)
+                      (ast.ast-struct-repr-c)
                       cleanup
                       fields))
                   (match (tc_api.typecheck-compiler-program program)

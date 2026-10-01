@@ -21,6 +21,19 @@
 ;# operation/count/EOF metadata without allocating per read.
 ;# `linux-rooted-read-file-rewind!` resets that same acquired file to offset
 ;# zero without allocation or reopening its path; it does not freeze contents.
+;#
+;# Source rewrites take an owned `FsLinuxRootedSourceSnapshot` from the read
+;# capability they read through, revalidate a name against it through the
+;# retained parent, and finish their private stage with the admitted source
+;# permissions, verified by a fresh `fstat` before flush and close.
+;#
+;# Cooperating rewriters serialize through `FsLinuxRootedGuard`: a cleanup-owning,
+;# move-only capability holding one exclusive `flock` on a permanent sidecar
+;# below the retained parent. Acquisition makes exactly one nonblocking attempt;
+;# retry, deadline and cancellation policy belong to the caller. The lock lives
+;# on the guard's own open file description, so an explicit release, the
+;# guard's cleanup, or process death releases it. No writer ever unlinks or
+;# replaces the sidecar.
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -47,7 +60,12 @@
   (LinuxRootedDirectoryNotEmpty)
   (LinuxRootedInvalidLength)
   (LinuxRootedLengthMismatch)
-  (LinuxRootedReadFailure))
+  (LinuxRootedReadFailure)
+  (LinuxRootedIdentityChanged)
+  (LinuxRootedSourceChanged)
+  (LinuxRootedInvalidPermissions)
+  (LinuxRootedModeMismatch)
+  (LinuxRootedLockConflict))
 
 ;: Portable file-mode intent owned by the Linux leaf.
 (defenum FsLinuxRootedFileMode
@@ -64,6 +82,22 @@
 (defstruct FsLinuxRootedFileMetadata
   (result FsLinuxRootedResult)
   (length i64))
+
+;: Owned identity and admission metadata of one regular source file, captured
+;: by `fstat` of an acquired descriptor. `device` and `inode` are its physical
+;: identity. `permissions` holds only the nine `rwx` bits: a source with
+;: setuid, setgid or sticky set is `LinuxRootedUnsupported`, never admitted,
+;: but keeps its linked file's identity so revalidation can compare it. The
+;: other fields are meaningful only when `result` is `LinuxRootedOk`.
+(defstruct FsLinuxRootedSourceSnapshot
+  (result FsLinuxRootedResult)
+  (device u64)
+  (inode u64)
+  (length i64)
+  (links u64)
+  (owner u32)
+  (group u32)
+  (permissions i64))
 
 ;: One bounded read from a retained regular-file descriptor. A short read is
 ;: successful and distinct from EOF; EOF is true only after a zero-byte read.
@@ -103,6 +137,22 @@
   (result FsLinuxRootedResult)
   (close FsLinuxRootedResult))
 
+;: Private state of one guard. `fd` is live only while an acquired lock is
+;: held; `device` and `inode` identify the sidecar that lock is on.
+(defstruct FsLinuxRootedGuardState
+  (fd i64)
+  (result FsLinuxRootedResult)
+  (device u64)
+  (inode u64)
+  (unlock FsLinuxRootedResult)
+  (close FsLinuxRootedResult))
+
+;: Outcome of releasing a guard: its one `LOCK_UN` attempt and its one close
+;: attempt, reported independently.
+(defstruct FsLinuxRootedGuardRelease
+  (unlock FsLinuxRootedResult)
+  (close FsLinuxRootedResult))
+
 ;: Return true exactly for successful rooted operations.
 (define (linux-rooted-result-ok? [result : FsLinuxRootedResult]) : bool
   (match result
@@ -130,6 +180,37 @@
 ;: Exact `st_size` captured from the retained regular-file descriptor.
 (define (linux-rooted-metadata-length [metadata : FsLinuxRootedFileMetadata]) : i64
   metadata.length)
+
+;: Admission status of a source snapshot.
+(define (linux-rooted-source-result
+  [source : (& source FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+  (clone source.result))
+
+;: Source `st_size` when the snapshot is admitted.
+(define (linux-rooted-source-length
+  [source : (& source FsLinuxRootedSourceSnapshot)]) : i64
+  source.length)
+
+;: Source `st_nlink`: a value above one means other names alias this inode.
+(define (linux-rooted-source-links
+  [source : (& source FsLinuxRootedSourceSnapshot)]) : u64
+  source.links)
+
+;: Admitted source permission bits, at most `0777`.
+(define (linux-rooted-source-permissions
+  [source : (& source FsLinuxRootedSourceSnapshot)]) : i64
+  source.permissions)
+
+;: True exactly when two admitted snapshots name the same physical file: equal
+;: device and inode. Names, hard-link spellings and contents do not matter.
+(define (linux-rooted-source-same-file?
+  [left : (& left FsLinuxRootedSourceSnapshot)]
+  [right : (& right FsLinuxRootedSourceSnapshot)]) : bool
+  (and
+    (linux-rooted-result-ok? (clone left.result))
+    (linux-rooted-result-ok? (clone right.result))
+    (= left.device right.device)
+    (= left.inode right.inode)))
 
 ;: Operation status returned by one bounded read.
 (define (linux-rooted-read-operation [read : (& read FsLinuxRootedReadResult)]) : FsLinuxRootedResult
@@ -207,6 +288,14 @@
 (define fs-linux-rooted-syscall-fchmod : i64
   91)
 
+;: Linux x86-64 `flock` syscall number.
+(define fs-linux-rooted-syscall-flock : i64
+  73)
+
+;: Linux x86-64 `geteuid` syscall number.
+(define fs-linux-rooted-syscall-geteuid : i64
+  107)
+
 ;: Linux x86-64 `openat` syscall number.
 (define fs-linux-rooted-syscall-openat : i64
   257)
@@ -255,6 +344,18 @@
 (define fs-linux-rooted-rename-noreplace : i64
   1)
 
+;: Linux `flock` operations: exclusive, nonblocking, and unlock.
+(define fs-linux-rooted-lock-exclusive : i64
+  2)
+
+;: Linux `LOCK_NB`.
+(define fs-linux-rooted-lock-nonblocking : i64
+  4)
+
+;: Linux `LOCK_UN`.
+(define fs-linux-rooted-lock-unlock : i64
+  8)
+
 ;: Linux open flags used by this boundary.
 (define fs-linux-rooted-o-wronly : u64
   (cast 1 : u64))
@@ -283,6 +384,10 @@
 ;: Linux `O_CLOEXEC` flag.
 (define fs-linux-rooted-o-cloexec : u64
   (cast 524288 : u64))
+
+;: Linux `O_PATH` flag: the descriptor names the file without opening it.
+(define fs-linux-rooted-o-path : u64
+  (cast 2097152 : u64))
 
 ;: Linux `openat2` resolution flags.
 (define fs-linux-rooted-resolve-no-xdev : u64
@@ -326,11 +431,32 @@
         fs-linux-rooted-o-excl
         (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))))
 
+;: Guard sidecar create-or-open flags: read-only (`flock` needs no write
+;: access), created without `O_EXCL` because the sidecar is permanent and
+;: shared, never following a final symlink, and nonblocking so a substituted
+;: FIFO is opened and then rejected by kind instead of stalling. `flock` needs a
+;: real open file description, so unlike revalidation this open cannot use
+;: `O_PATH`: a device node at the name is opened before its kind is rejected.
+(define fs-linux-rooted-guard-open-flags : u64
+  (bit-or
+    fs-linux-rooted-o-creat
+    (bit-or
+      fs-linux-rooted-o-nonblock
+      (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec))))
+
 ;: Existing-file read flags. `O_RDONLY` is zero on Linux.
 (define fs-linux-rooted-file-read-flags : u64
   (bit-or
     fs-linux-rooted-o-nonblock
     (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))
+
+;: Revalidation flags, for sources and guard sidecars. `O_PATH` only names the
+;: file for `fstat`, so a device, FIFO or socket at the name is never opened
+;: and a mode that no longer grants read access is still observed. Without `O_NOFOLLOW`, the policy's
+;: `RESOLVE_NO_SYMLINKS` rejects a symlink at the final name as it does
+;: everywhere else.
+(define fs-linux-rooted-revalidate-flags : u64
+  (bit-or fs-linux-rooted-o-path fs-linux-rooted-o-cloexec))
 
 ;: Creation and final mode values.
 (define fs-linux-rooted-private-directory-mode : u64
@@ -363,6 +489,42 @@
 ;: x86-64 Linux `stat.st_size` byte offset.
 (define fs-linux-rooted-stat-size-offset : i64
   48)
+
+;: x86-64 Linux `stat.st_dev` byte offset.
+(define fs-linux-rooted-stat-device-offset : i64
+  0)
+
+;: x86-64 Linux `stat.st_ino` byte offset.
+(define fs-linux-rooted-stat-inode-offset : i64
+  8)
+
+;: x86-64 Linux `stat.st_nlink` byte offset.
+(define fs-linux-rooted-stat-links-offset : i64
+  16)
+
+;: x86-64 Linux `stat.st_uid` byte offset.
+(define fs-linux-rooted-stat-owner-offset : i64
+  28)
+
+;: x86-64 Linux `stat.st_gid` byte offset.
+(define fs-linux-rooted-stat-group-offset : i64
+  32)
+
+;: The nine `rwx` permission bits a source rewrite preserves (`0777`).
+(define fs-linux-rooted-permission-mask : i64
+  511)
+
+;: setuid, setgid and sticky (`07000`). No admitted source carries them.
+(define fs-linux-rooted-special-mode-mask : i64
+  3584)
+
+;: Every mode bit below the file kind (`07777`).
+(define fs-linux-rooted-mode-bits-mask : i64
+  4095)
+
+;: Group and other write bits (`022`). A guard sidecar must carry neither.
+(define fs-linux-rooted-shared-write-mask : i64
+  18)
 
 ;: Linux `S_IFMT` mask.
 (define fs-linux-rooted-stat-kind-mask : i64
@@ -445,6 +607,18 @@
 ;: Fault-injection ID for retained-file rewind via `lseek`.
 (define fs-linux-rooted-syscall-kind-lseek : i64
   17)
+
+;: Fault-injection ID for the guard sidecar's create-or-open `openat2`.
+(define fs-linux-rooted-syscall-kind-guard-open : i64
+  18)
+
+;: Fault-injection ID for the guard's one `flock(LOCK_EX | LOCK_NB)`.
+(define fs-linux-rooted-syscall-kind-flock : i64
+  19)
+
+;: Fault-injection ID for the guard release's one `flock(LOCK_UN)`.
+(define fs-linux-rooted-syscall-kind-unlock : i64
+  20)
 
 ;: Sentinel distinct from every valid raw syscall result.
 (define fs-linux-rooted-no-injection : i64
@@ -538,6 +712,18 @@
     0))
 (cfg
   fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-guard-open-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-flock-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-unlock-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
   (define fs-linux-rooted-test-read-max : i64
     0))
 (cfg
@@ -552,6 +738,10 @@
   fs-rooted-linux-test-hooks
   (define fs-linux-rooted-test-after-mkdir-pause-ms : i64
     0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-mode-drift-enabled : bool
+    false))
 
 ;: Reset every focused fault-injection setting and call counter.
 (cfg
@@ -579,10 +769,14 @@
       (set! fs-linux-rooted-test-directory-fsync-calls 0)
       (set! fs-linux-rooted-test-reopen-directory-calls 0)
       (set! fs-linux-rooted-test-lseek-calls 0)
+      (set! fs-linux-rooted-test-guard-open-calls 0)
+      (set! fs-linux-rooted-test-flock-calls 0)
+      (set! fs-linux-rooted-test-unlock-calls 0)
       (set! fs-linux-rooted-test-read-max 0)
       (set! fs-linux-rooted-test-mkdir-race-enabled false)
       (set! fs-linux-rooted-test-mkdir-race-ok false)
-      (set! fs-linux-rooted-test-after-mkdir-pause-ms 0))))
+      (set! fs-linux-rooted-test-after-mkdir-pause-ms 0)
+      (set! fs-linux-rooted-test-mode-drift-enabled false))))
 
 ;: Inject `errno-code` (zero means a zero-progress return) for one numbered
 ;: syscall attempt of `kind`. A negative code injects a positive raw result,
@@ -629,6 +823,13 @@
   (define (linux-rooted-test-set-after-mkdir-pause-ms! [milliseconds : i64]) : unit
     (set! fs-linux-rooted-test-after-mkdir-pause-ms milliseconds)))
 
+;: Make the next source-permission finish see its stage mode drift: right
+;: after its checked `fchmod`, an uncounted `fchmod` sets the stage to `0600`.
+(cfg
+  fs-rooted-linux-test-hooks
+  (define (linux-rooted-test-enable-mode-drift!) : unit
+    (set! fs-linux-rooted-test-mode-drift-enabled true)))
+
 ;: Return one focused syscall call count.
 (cfg
   fs-rooted-linux-test-hooks
@@ -668,6 +869,12 @@
         fs-linux-rooted-test-reopen-directory-calls]
       [(= kind fs-linux-rooted-syscall-kind-lseek)
         fs-linux-rooted-test-lseek-calls]
+      [(= kind fs-linux-rooted-syscall-kind-guard-open)
+        fs-linux-rooted-test-guard-open-calls]
+      [(= kind fs-linux-rooted-syscall-kind-flock)
+        fs-linux-rooted-test-flock-calls]
+      [(= kind fs-linux-rooted-syscall-kind-unlock)
+        fs-linux-rooted-test-unlock-calls]
       [else 0])))
 
 ;: Record one syscall attempt and return an injected raw result or the sentinel.
@@ -779,6 +986,24 @@
                 fs-linux-rooted-test-lseek-calls
                 (+ fs-linux-rooted-test-lseek-calls 1))
               fs-linux-rooted-test-lseek-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-guard-open)
+            (begin
+              (set!
+                fs-linux-rooted-test-guard-open-calls
+                (+ fs-linux-rooted-test-guard-open-calls 1))
+              fs-linux-rooted-test-guard-open-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-flock)
+            (begin
+              (set!
+                fs-linux-rooted-test-flock-calls
+                (+ fs-linux-rooted-test-flock-calls 1))
+              fs-linux-rooted-test-flock-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-unlock)
+            (begin
+              (set!
+                fs-linux-rooted-test-unlock-calls
+                (+ fs-linux-rooted-test-unlock-calls 1))
+              fs-linux-rooted-test-unlock-calls)]
           [else 0])]
       (if (and
         (= kind fs-linux-rooted-test-fail-kind)
@@ -901,6 +1126,26 @@
           unit)
         (linux-rooted-test-pause-after-mkdir))
       unit)))
+
+;: Erased production bridge to the deterministic mode-drift hook.
+(define (linux-rooted-after-source-mode [_fd : i64]) : unit
+  (cfg
+    fs-rooted-linux-test-hooks
+    (if fs-linux-rooted-test-mode-drift-enabled
+      (begin
+        (set! fs-linux-rooted-test-mode-drift-enabled false)
+        (cfg
+          windows
+          unit
+          (begin
+            (unsafe
+              (syscall
+                fs-linux-rooted-syscall-fchmod
+                _fd
+                (cast fs-linux-rooted-private-file-mode : i64)))
+            unit)))
+      unit)
+    unit))
 
 ;: Raw Linux `openat` used only to acquire the caller-selected root prefix.
 (unsafe
@@ -1057,6 +1302,74 @@
           -38
           (unsafe
             (syscall fs-linux-rooted-syscall-lseek fd 0 0)))))))
+
+;: Raw Linux `openat2` dedicated to guard-sidecar create-or-open faults.
+(unsafe
+  (define (linux-rooted-raw-guard-openat2
+    [dirfd : i64]
+    [path : (Ptr u8)]
+    [how : FsLinuxOpenHow]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-guard-open)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-openat2
+              dirfd
+              (linux-rooted-ptr-arg path)
+              (cast (ptr->int (ptr-cast (ptr-addr-of how) : (Ptr u8))) : i64)
+              fs-linux-rooted-open-how-size)))))))
+
+;: Raw Linux `flock(fd, LOCK_EX | LOCK_NB)`.
+(unsafe
+  (define (linux-rooted-raw-lock [fd : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-flock)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-flock
+              fd
+              (bit-or
+                fs-linux-rooted-lock-exclusive
+                fs-linux-rooted-lock-nonblocking))))))))
+
+;: Raw Linux `flock(fd, LOCK_UN)`.
+(unsafe
+  (define (linux-rooted-raw-unlock [fd : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-unlock)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-flock
+              fd
+              fs-linux-rooted-lock-unlock)))))))
+
+;: The calling process's effective user ID. `geteuid` cannot fail.
+(define (linux-rooted-effective-user) : u32
+  (cfg
+    windows
+    (cast 0 : u32)
+    (cast
+      (unsafe
+        (syscall fs-linux-rooted-syscall-geteuid))
+      : u32)))
 
 ;: Raw Linux `read`, optionally bounded by the focused short-read hook.
 (unsafe
@@ -1256,6 +1569,14 @@
     [(= raw -39) LinuxRootedDirectoryNotEmpty]
     [else (linux-rooted-result-from-raw raw)]))
 
+;: Guard-acquire open normalization: the sidecar is opened for I/O so it can
+;: be locked, and opening a socket reports ENXIO, which for a sidecar name
+;: means the name is not a regular file.
+(define (linux-rooted-guard-open-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (if (= raw -6)
+    LinuxRootedWrongKind
+    (linux-rooted-result-from-raw raw)))
+
 ;: Cleanup-specific normalization treats both permitted nonempty-directory
 ;: errno values as one stable result while preserving ordinary EEXIST elsewhere.
 (define (linux-rooted-cleanup-result-from-raw [raw : i64]) : FsLinuxRootedResult
@@ -1299,6 +1620,12 @@
   (define (linux-rooted-stat-u32 [statbuf : (MutPtr u8)] [offset : i64]) : u32
     (unsafe
       (ptr-read (ptr-cast (ptr-offset statbuf offset) : (Ptr u32))))))
+
+;: Read a u64 field from an x86-64 `struct stat` buffer.
+(unsafe
+  (define (linux-rooted-stat-u64 [statbuf : (MutPtr u8)] [offset : i64]) : u64
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset statbuf offset) : (Ptr u64))))))
 
 ;: Read an i64 field from an x86-64 `struct stat` buffer.
 (unsafe
@@ -1513,6 +1840,86 @@
   (state
     (MutPtr FsLinuxRootedHandleState)
     (:cleanup linux-rooted-state-cleanup)))
+
+;: Allocate private active-arena state for one guard.
+(unsafe
+  (define (linux-rooted-guard-state-new [value : FsLinuxRootedGuardState]) : (MutPtr
+      FsLinuxRootedGuardState)
+    (let
+      [states : (__tl_dyn-array FsLinuxRootedGuardState)
+        (__tl_make-array FsLinuxRootedGuardState 1)]
+      [state : (MutPtr FsLinuxRootedGuardState)
+        (unsafe
+          (__tl_array-data states))]
+      (begin
+        (unsafe
+          (ptr-write! state value))
+        state))))
+
+;: Snapshot guard state, failing closed for a null pointer.
+(unsafe
+  (define (linux-rooted-guard-state-read
+    [state : (MutPtr FsLinuxRootedGuardState)]) : FsLinuxRootedGuardState
+    (if (ptr-null? state)
+      (FsLinuxRootedGuardState
+        -1
+        LinuxRootedClosed
+        (cast 0 : u64)
+        (cast 0 : u64)
+        LinuxRootedClosed
+        LinuxRootedClosed)
+      (unsafe
+        (ptr-read state)))))
+
+;: Store guard state after checking its opaque pointer.
+(unsafe
+  (define (linux-rooted-guard-state-write!
+    [state : (MutPtr FsLinuxRootedGuardState)]
+    [value : FsLinuxRootedGuardState]) : unit
+    (if (ptr-null? state)
+      unit
+      (unsafe
+        (ptr-write! state value)))))
+
+;: Cleanup-field adapter: one close of a still-held descriptor. Closing the
+;: guard's only open file description releases its lock; the outcome is
+;: observable only through `linux-rooted-guard-release!`.
+(define (linux-rooted-guard-state-cleanup
+  [state : (MutPtr FsLinuxRootedGuardState)]) : unit
+  (unsafe
+    (let
+      [held : FsLinuxRootedGuardState (linux-rooted-guard-state-read state)]
+      (if (< held.fd 0)
+        unit
+        (begin
+          (linux-rooted-guard-state-write!
+            state
+            (FsLinuxRootedGuardState
+              -1
+              held.result
+              held.device
+              held.inode
+              held.unlock
+              LinuxRootedClosed))
+          (let
+            [close-result : FsLinuxRootedResult
+              (linux-rooted-close-fd-once held.fd)]
+            (linux-rooted-guard-state-write!
+              state
+              (FsLinuxRootedGuardState
+                -1
+                held.result
+                held.device
+                held.inode
+                held.unlock
+                close-result))))))))
+
+;: Cleanup-owning, move-only exclusive lock on one rooted sidecar.
+(defstruct FsLinuxRootedGuard
+  (:cleanup cleanup-linux-rooted-guard)
+  (state
+    (MutPtr FsLinuxRootedGuardState)
+    (:cleanup linux-rooted-guard-state-cleanup)))
 
 ;: Return the stable construction/current result without exposing the fd.
 (define (linux-rooted-directory-result
@@ -1986,6 +2393,484 @@
           LinuxRootedOk
           LinuxRootedLengthMismatch)))))
 
+;: A rejected snapshot. Its identity fields are zero and never compared.
+(define (linux-rooted-failed-source-snapshot [result : FsLinuxRootedResult]) : FsLinuxRootedSourceSnapshot
+  (FsLinuxRootedSourceSnapshot
+    result
+    (cast 0 : u64)
+    (cast 0 : u64)
+    -1
+    (cast 0 : u64)
+    (cast 0 : u32)
+    (cast 0 : u32)
+    0))
+
+;: Admit or reject one filled x86-64 `struct stat` as a rewrite source. Only a
+;: linked regular file with a nonnegative size and no setuid, setgid or sticky
+;: bit is admitted; every other shape gets a stable result. A linked regular
+;: file carrying a special bit keeps all its fields under `Unsupported`, so a
+;: revalidation can tell another file from a changed one.
+(unsafe
+  (define (linux-rooted-source-snapshot-from-stat [statbuf : (MutPtr u8)]) : FsLinuxRootedSourceSnapshot
+    (let
+      [mode : i64
+        (cast
+          (unsafe
+            (linux-rooted-stat-u32 statbuf fs-linux-rooted-stat-mode-offset))
+          : i64)]
+      [length : i64
+        (unsafe
+          (linux-rooted-stat-i64 statbuf fs-linux-rooted-stat-size-offset))]
+      [links : u64
+        (unsafe
+          (linux-rooted-stat-u64 statbuf fs-linux-rooted-stat-links-offset))]
+      (cond
+        [(not
+            (=
+              (bit-and mode fs-linux-rooted-stat-kind-mask)
+              fs-linux-rooted-stat-regular-mode))
+          (linux-rooted-failed-source-snapshot LinuxRootedWrongKind)]
+        [(< length 0)
+          (linux-rooted-failed-source-snapshot LinuxRootedIoFailure)]
+        [(= links (cast 0 : u64))
+          (linux-rooted-failed-source-snapshot LinuxRootedNotFound)]
+        [else
+          (FsLinuxRootedSourceSnapshot
+            (if (= (bit-and mode fs-linux-rooted-special-mode-mask) 0)
+              LinuxRootedOk
+              LinuxRootedUnsupported)
+            (unsafe
+              (linux-rooted-stat-u64 statbuf fs-linux-rooted-stat-device-offset))
+            (unsafe
+              (linux-rooted-stat-u64 statbuf fs-linux-rooted-stat-inode-offset))
+            length
+            links
+            (unsafe
+              (linux-rooted-stat-u32 statbuf fs-linux-rooted-stat-owner-offset))
+            (unsafe
+              (linux-rooted-stat-u32 statbuf fs-linux-rooted-stat-group-offset))
+            (bit-and mode fs-linux-rooted-permission-mask))]))))
+
+;: Snapshot one acquired descriptor with a single `fstat`.
+(unsafe
+  (define (linux-rooted-fd-source-snapshot [fd : i64]) : FsLinuxRootedSourceSnapshot
+    (let
+      [stat-bytes : (__tl_dyn-array u8)
+        (__tl_make-array u8 fs-linux-rooted-stat-buffer-size)]
+      [statbuf : (MutPtr u8)
+        (unsafe
+          (__tl_array-data stat-bytes))]
+      [raw : i64
+        (unsafe
+          (linux-rooted-raw-fstat fd statbuf))]
+      (if (< raw 0)
+        (linux-rooted-failed-source-snapshot (linux-rooted-result-from-raw raw))
+        (unsafe
+          (linux-rooted-source-snapshot-from-stat statbuf))))))
+
+;: Snapshot the source behind a live read capability. Taking it from the same
+;: descriptor the caller reads through ties the identity to those bytes.
+(define (linux-rooted-read-file-source-snapshot
+  [file : (& file FsLinuxRootedReadFile)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedSourceSnapshot
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read file.state)]
+      (cond
+        [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+          (linux-rooted-failed-source-snapshot LinuxRootedClosed)]
+        [(cancel-check)
+          (linux-rooted-failed-source-snapshot LinuxRootedCancelled)]
+        [else (linux-rooted-fd-source-snapshot state.fd)]))))
+
+;: Compare a fresh snapshot of a name with the admitted one. A different
+;: physical file is `IdentityChanged`, whether or not it carries a special bit;
+;: the same file with any other admitted field changed, or newly carrying a
+;: special bit, is `SourceChanged`; a fresh snapshot that is no longer a linked
+;: regular file, or whose `fstat` failed, keeps its own result.
+(define (linux-rooted-source-compare
+  [admitted : (& admitted FsLinuxRootedSourceSnapshot)]
+  [current : (& current FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+  (match (clone current.result)
+    [(LinuxRootedOk)
+      (cond
+        [(not
+            (and
+              (= admitted.device current.device)
+              (= admitted.inode current.inode)))
+          LinuxRootedIdentityChanged]
+        [(not
+            (and
+              (= admitted.length current.length)
+              (= admitted.links current.links)
+              (= admitted.owner current.owner)
+              (= admitted.group current.group)
+              (= admitted.permissions current.permissions)))
+          LinuxRootedSourceChanged]
+        [else LinuxRootedOk])]
+    [(LinuxRootedUnsupported)
+      (cond
+        ;; A failed snapshot has no identity; only an admitted shape is linked.
+        [(= current.links (cast 0 : u64)) LinuxRootedUnsupported]
+        [(not
+            (and
+              (= admitted.device current.device)
+              (= admitted.inode current.inode)))
+          LinuxRootedIdentityChanged]
+        [else LinuxRootedSourceChanged])]
+    [_ (clone current.result)]))
+
+;: Revalidate `component` below the retained `parent` against an admitted
+;: snapshot: one `O_PATH` `openat2` with the complete descendant policy, one
+;: `fstat`, and one close. Nothing is resolved through a process-relative path
+;: and nothing at the name is opened for I/O. A symlink or mount crossing is
+;: `UnsafeResolution`, a missing name `NotFound`, a directory, FIFO, socket or
+;: device `WrongKind`. The close outcome is reported independently of the
+;: comparison.
+(define (linux-rooted-source-revalidate
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [admitted : (& admitted FsLinuxRootedSourceSnapshot)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedFinishResult
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (FsLinuxRootedFinishResult
+            LinuxRootedInvalidComponent
+            LinuxRootedClosed)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result)))
+          (FsLinuxRootedFinishResult LinuxRootedClosed LinuxRootedClosed)]
+        [(not (linux-rooted-result-ok? (clone admitted.result)))
+          (FsLinuxRootedFinishResult (clone admitted.result) LinuxRootedClosed)]
+        [(cancel-check)
+          (FsLinuxRootedFinishResult LinuxRootedCancelled LinuxRootedClosed)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [how : FsLinuxOpenHow
+              (FsLinuxOpenHow
+                fs-linux-rooted-revalidate-flags
+                (cast 0 : u64)
+                fs-linux-rooted-resolve-policy)]
+            [fd : i64
+              (linux-rooted-raw-reopenat2
+                parent-state.fd
+                (io.array-const-ptr component-bytes)
+                how)]
+            (if (< fd 0)
+              (FsLinuxRootedFinishResult
+                (linux-rooted-result-from-raw fd)
+                LinuxRootedClosed)
+              (let
+                [current : FsLinuxRootedSourceSnapshot
+                  (linux-rooted-fd-source-snapshot fd)]
+                [operation : FsLinuxRootedResult
+                  (linux-rooted-source-compare admitted (& current))]
+                (FsLinuxRootedFinishResult
+                  operation
+                  (linux-rooted-close-fd-once fd)))))]))))
+
+;: One nonblocking exclusive lock attempt. Another open file description
+;: holding the lock is `LockConflict`; a kernel or filesystem without `flock`
+;: support is `Unsupported`; an interrupted attempt is `Cancelled`.
+(define (linux-rooted-lock-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (cond
+    [(= raw 0) LinuxRootedOk]
+    [(= raw -11) LinuxRootedLockConflict]
+    [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+    [(or (= raw -22) (= raw -37) (= raw -38) (= raw -95))
+      LinuxRootedUnsupported]
+    [else LinuxRootedIoFailure]))
+
+;: One `LOCK_UN` attempt. It is never retried: the close that follows it
+;: releases the lock in any case.
+(define (linux-rooted-unlock-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (cond
+    [(= raw 0) LinuxRootedOk]
+    [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+    [else LinuxRootedIoFailure]))
+
+;: Sidecar policy, checked before locking: a linked regular file with exactly
+;: one name, owned by the effective user, writable by neither group nor
+;: others. Any other shape could let another user substitute or alias it, so
+;: it is not trusted to serialize writers.
+(define (linux-rooted-guard-sidecar-result
+  [sidecar : (& sidecar FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+  (cond
+    [(not (linux-rooted-result-ok? (clone sidecar.result)))
+      (clone sidecar.result)]
+    [(not (= sidecar.links (cast 1 : u64))) LinuxRootedUnsupported]
+    [(not (= sidecar.owner (linux-rooted-effective-user)))
+      LinuxRootedUnsupported]
+    [(not (= (bit-and sidecar.permissions fs-linux-rooted-shared-write-mask) 0))
+      LinuxRootedUnsupported]
+    [else LinuxRootedOk]))
+
+;: A guard that holds no descriptor and no lock.
+(define (linux-rooted-failed-guard [result : FsLinuxRootedResult]) : FsLinuxRootedGuard
+  (FsLinuxRootedGuard
+    (unsafe
+      (linux-rooted-guard-state-new
+        (FsLinuxRootedGuardState
+          -1
+          result
+          (cast 0 : u64)
+          (cast 0 : u64)
+          LinuxRootedClosed
+          LinuxRootedClosed)))))
+
+;: A failed guard after its acquired sidecar descriptor was closed once; the
+;: close outcome stays observable beside `result`.
+(unsafe
+  (define (linux-rooted-failed-guard-after-close
+    [result : FsLinuxRootedResult]
+    [fd : i64]) : FsLinuxRootedGuard
+    (FsLinuxRootedGuard
+      (unsafe
+        (linux-rooted-guard-state-new
+          (FsLinuxRootedGuardState
+            -1
+            result
+            (cast 0 : u64)
+            (cast 0 : u64)
+            LinuxRootedClosed
+            (unsafe
+              (linux-rooted-close-fd-once fd))))))))
+
+;: Create or open the permanent sidecar `component` below the retained parent
+;: and make exactly one nonblocking exclusive lock attempt on it. The open uses
+;: the complete descendant policy; the sidecar must pass
+;: `linux-rooted-guard-sidecar-result` before the lock is attempted, and
+;: cancellation is checked before each host step. A successful lock commits and
+;: is returned as a live guard. Every failure after the open closes its
+;: descriptor once and reports that close beside the failure. Blocking,
+;: retries and deadlines are the caller's policy.
+(define (linux-rooted-guard-acquire
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedGuard
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (linux-rooted-failed-guard LinuxRootedInvalidComponent)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result)))
+          (linux-rooted-failed-guard LinuxRootedClosed)]
+        [(cancel-check) (linux-rooted-failed-guard LinuxRootedCancelled)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [how : FsLinuxOpenHow
+              (FsLinuxOpenHow
+                fs-linux-rooted-guard-open-flags
+                fs-linux-rooted-private-file-mode
+                fs-linux-rooted-resolve-policy)]
+            [fd : i64
+              (linux-rooted-raw-guard-openat2
+                parent-state.fd
+                (io.array-const-ptr component-bytes)
+                how)]
+            (if (< fd 0)
+              (linux-rooted-failed-guard
+                (linux-rooted-guard-open-result-from-raw fd))
+              (let
+                [sidecar : FsLinuxRootedSourceSnapshot
+                  (linux-rooted-fd-source-snapshot fd)]
+                [policy : FsLinuxRootedResult
+                  (linux-rooted-guard-sidecar-result (& sidecar))]
+                (cond
+                  [(not (linux-rooted-result-ok? policy))
+                    (linux-rooted-failed-guard-after-close policy fd)]
+                  [(cancel-check)
+                    (linux-rooted-failed-guard-after-close
+                      LinuxRootedCancelled
+                      fd)]
+                  [else
+                    (let
+                      [locked : FsLinuxRootedResult
+                        (linux-rooted-lock-result-from-raw
+                          (linux-rooted-raw-lock fd))]
+                      (if (linux-rooted-result-ok? locked)
+                        (FsLinuxRootedGuard
+                          (linux-rooted-guard-state-new
+                            (FsLinuxRootedGuardState
+                              fd
+                              LinuxRootedOk
+                              sidecar.device
+                              sidecar.inode
+                              LinuxRootedClosed
+                              LinuxRootedClosed)))
+                        (linux-rooted-failed-guard-after-close locked fd)))]))))]))))
+
+;: Acquisition result of a guard. `LinuxRootedOk` means the lock was taken;
+;: it stays `Ok` after release, so use `linux-rooted-guard-locked?` for the
+;: current state.
+(define (linux-rooted-guard-result [guard : (& guard FsLinuxRootedGuard)]) : FsLinuxRootedResult
+  (let
+    [held : FsLinuxRootedGuardState
+      (unsafe
+        (linux-rooted-guard-state-read guard.state))]
+    held.result))
+
+;: True while the guard holds its lock.
+(define (linux-rooted-guard-locked? [guard : (& guard FsLinuxRootedGuard)]) : bool
+  (let
+    [held : FsLinuxRootedGuardState
+      (unsafe
+        (linux-rooted-guard-state-read guard.state))]
+    (and (>= held.fd 0) (linux-rooted-result-ok? held.result))))
+
+;: The recorded close of a failed acquisition or of a release.
+(define (linux-rooted-guard-close-result [guard : (& guard FsLinuxRootedGuard)]) : FsLinuxRootedResult
+  (let
+    [held : FsLinuxRootedGuardState
+      (unsafe
+        (linux-rooted-guard-state-read guard.state))]
+    held.close))
+
+;: Unlock outcome of a release.
+(define (linux-rooted-guard-release-unlock
+  [release : FsLinuxRootedGuardRelease]) : FsLinuxRootedResult
+  release.unlock)
+
+;: Close outcome of a release.
+(define (linux-rooted-guard-release-close [release : FsLinuxRootedGuardRelease]) : FsLinuxRootedResult
+  release.close)
+
+;: True when both the unlock and the close of a release succeeded.
+(define (linux-rooted-guard-release-ok? [release : FsLinuxRootedGuardRelease]) : bool
+  (and
+    (linux-rooted-result-ok? release.unlock)
+    (linux-rooted-result-ok? release.close)))
+
+;: Compare a fresh snapshot of a sidecar name with the locked sidecar's
+;: identity. Another physical file is `IdentityChanged`, whether or not it
+;: carries a special bit; the locked file is `Ok`, or `Unsupported` if it now
+;: carries a special bit; a snapshot without identity (not a linked regular
+;: file, or a failed `fstat`) keeps its own result.
+(define (linux-rooted-guard-compare
+  [device : u64]
+  [inode : u64]
+  [current : (& current FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+  (cond
+    [(= current.links (cast 0 : u64)) (clone current.result)]
+    [(not (and (= current.device device) (= current.inode inode)))
+      LinuxRootedIdentityChanged]
+    [else (clone current.result)]))
+
+;: Check, before a transaction's first source cutover, that `component` below
+;: the retained parent still names the sidecar this guard locked: one `O_PATH`
+;: `openat2` without create, one `fstat`, one close. Another file at the name
+;: (a hostile or careless substitution) is `IdentityChanged`, a symlink
+;: `UnsafeResolution`, a removed sidecar `NotFound`; none of them is reported
+;: as serialized. The close outcome is reported separately.
+(define (linux-rooted-guard-revalidate
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [guard : (& guard FsLinuxRootedGuard)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedFinishResult
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      [held : FsLinuxRootedGuardState
+        (linux-rooted-guard-state-read guard.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (FsLinuxRootedFinishResult
+            LinuxRootedInvalidComponent
+            LinuxRootedClosed)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result))
+            (< held.fd 0)
+            (not (linux-rooted-result-ok? held.result)))
+          (FsLinuxRootedFinishResult LinuxRootedClosed LinuxRootedClosed)]
+        [(cancel-check)
+          (FsLinuxRootedFinishResult LinuxRootedCancelled LinuxRootedClosed)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [how : FsLinuxOpenHow
+              (FsLinuxOpenHow
+                fs-linux-rooted-revalidate-flags
+                (cast 0 : u64)
+                fs-linux-rooted-resolve-policy)]
+            [fd : i64
+              (linux-rooted-raw-reopenat2
+                parent-state.fd
+                (io.array-const-ptr component-bytes)
+                how)]
+            (if (< fd 0)
+              (FsLinuxRootedFinishResult
+                (linux-rooted-result-from-raw fd)
+                LinuxRootedClosed)
+              (let
+                [current : FsLinuxRootedSourceSnapshot
+                  (linux-rooted-fd-source-snapshot fd)]
+                [operation : FsLinuxRootedResult
+                  (linux-rooted-guard-compare
+                    held.device
+                    held.inode
+                    (& current))]
+                (FsLinuxRootedFinishResult
+                  operation
+                  (linux-rooted-close-fd-once fd)))))]))))
+
+;: Release a guard: one `LOCK_UN` attempt while the lock is held, then one
+;: close regardless of its outcome. The descriptor is poisoned first, so later
+;: cleanup is a no-op. A guard that holds nothing reports `Closed` for the
+;: unlock and its recorded close.
+(define (linux-rooted-guard-release! [guard : (&mut guard FsLinuxRootedGuard)]) : FsLinuxRootedGuardRelease
+  (unsafe
+    (let
+      [held : FsLinuxRootedGuardState
+        (linux-rooted-guard-state-read guard.state)]
+      (if (< held.fd 0)
+        (FsLinuxRootedGuardRelease LinuxRootedClosed held.close)
+        (let
+          [unlock : FsLinuxRootedResult
+            (if (linux-rooted-result-ok? held.result)
+              (linux-rooted-unlock-result-from-raw
+                (linux-rooted-raw-unlock held.fd))
+              LinuxRootedClosed)]
+          (begin
+            (linux-rooted-guard-state-write!
+              guard.state
+              (FsLinuxRootedGuardState
+                -1
+                held.result
+                held.device
+                held.inode
+                unlock
+                LinuxRootedClosed))
+            (let
+              [close-result : FsLinuxRootedResult
+                (linux-rooted-close-fd-once held.fd)]
+              (begin
+                (linux-rooted-guard-state-write!
+                  guard.state
+                  (FsLinuxRootedGuardState
+                    -1
+                    held.result
+                    held.device
+                    held.inode
+                    unlock
+                    close-result))
+                (FsLinuxRootedGuardRelease unlock close-result)))))))))
+
 ;: Construct a no-data read outcome.
 (define (linux-rooted-empty-read-result
   [operation : FsLinuxRootedResult]
@@ -2345,6 +3230,135 @@
                 (linux-rooted-state-close-result file.state)]
               (FsLinuxRootedFinishResult operation close-result))))))))
 
+;: Prove a live stage descriptor is a regular file whose permission and
+;: special bits are exactly `permissions`.
+(unsafe
+  (define (linux-rooted-verify-stage-mode [fd : i64] [permissions : i64]) : FsLinuxRootedResult
+    (let
+      [stat-bytes : (__tl_dyn-array u8)
+        (__tl_make-array u8 fs-linux-rooted-stat-buffer-size)]
+      [statbuf : (MutPtr u8)
+        (unsafe
+          (__tl_array-data stat-bytes))]
+      [raw : i64
+        (unsafe
+          (linux-rooted-raw-fstat fd statbuf))]
+      (if (< raw 0)
+        (linux-rooted-result-from-raw raw)
+        (let
+          [mode : i64
+            (cast
+              (unsafe
+                (linux-rooted-stat-u32 statbuf fs-linux-rooted-stat-mode-offset))
+              : i64)]
+          (if (and
+            (=
+              (bit-and mode fs-linux-rooted-stat-kind-mask)
+              fs-linux-rooted-stat-regular-mode)
+            (= (bit-and mode fs-linux-rooted-mode-bits-mask) permissions))
+            LinuxRootedOk
+            LinuxRootedModeMismatch))))))
+
+;: Check before writing that a newly created stage already has the source's
+;: owner and group. Reproducing any other ownership would need privilege, so
+;: such a source is `LinuxRootedUnsupported` for an unprivileged rewrite.
+(unsafe
+  (define (linux-rooted-stage-ownership
+    [fd : i64]
+    [source : (& source FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
+    (let
+      [stat-bytes : (__tl_dyn-array u8)
+        (__tl_make-array u8 fs-linux-rooted-stat-buffer-size)]
+      [statbuf : (MutPtr u8)
+        (unsafe
+          (__tl_array-data stat-bytes))]
+      [raw : i64
+        (unsafe
+          (linux-rooted-raw-fstat fd statbuf))]
+      (cond
+        [(< raw 0) (linux-rooted-result-from-raw raw)]
+        [(and
+            (=
+              (unsafe
+                (linux-rooted-stat-u32
+                  statbuf
+                  fs-linux-rooted-stat-owner-offset))
+              source.owner)
+            (=
+              (unsafe
+                (linux-rooted-stat-u32
+                  statbuf
+                  fs-linux-rooted-stat-group-offset))
+              source.group))
+          LinuxRootedOk]
+        [else LinuxRootedUnsupported]))))
+
+;: Finish a private stage as the replacement for an admitted source. A source
+;: that is not admitted, or whose permissions are not within `0777`, is
+;: `InvalidPermissions`; a stage the caller cannot give the source's owner and
+;: group is `Unsupported`. Both are reported before any byte is written.
+;: Otherwise the contents are written, `fchmod` applies exactly the source
+;: permissions, and a fresh `fstat` must show a regular file with exactly those
+;: mode bits (`ModeMismatch` otherwise) before the optional flush. Every live
+;: stage gets one close, reported independently as in `linux-rooted-file-finish!`.
+(define (linux-rooted-file-finish-with-source-permissions!
+  [file : (&mut file FsLinuxRootedFile)]
+  [contents : (& contents bytes)]
+  [promised-length : i64]
+  [source : (& source FsLinuxRootedSourceSnapshot)]
+  [flush : bool]
+  [cancel-check : (-> bool)]) : FsLinuxRootedFinishResult
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read file.state)]
+      (if (or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+        (FsLinuxRootedFinishResult LinuxRootedClosed LinuxRootedClosed)
+        (let
+          [operation : FsLinuxRootedResult
+            (if (and
+              (linux-rooted-result-ok? (clone source.result))
+              (>= source.permissions 0)
+              (=
+                (bit-and source.permissions fs-linux-rooted-permission-mask)
+                source.permissions))
+              (linux-rooted-stage-ownership state.fd source)
+              LinuxRootedInvalidPermissions)]
+          (begin
+            (if (linux-rooted-result-ok? operation)
+              (set!
+                operation
+                (linux-rooted-write-all
+                  state.fd
+                  contents
+                  promised-length
+                  cancel-check))
+              unit)
+            (if (linux-rooted-result-ok? operation)
+              (set!
+                operation
+                (linux-rooted-apply-mode
+                  state.fd
+                  (cast source.permissions : u64)
+                  cancel-check))
+              unit)
+            (if (linux-rooted-result-ok? operation)
+              (begin
+                (linux-rooted-after-source-mode state.fd)
+                (set!
+                  operation
+                  (linux-rooted-verify-stage-mode state.fd source.permissions)))
+              unit)
+            (if (and (linux-rooted-result-ok? operation) flush)
+              (set! operation (linux-rooted-flush-fd state.fd cancel-check))
+              unit)
+            (linux-rooted-state-write!
+              file.state
+              (FsLinuxRootedHandleState state.fd operation LinuxRootedClosed))
+            (let
+              [close-result : FsLinuxRootedResult
+                (linux-rooted-state-close-result file.state)]
+              (FsLinuxRootedFinishResult operation close-result))))))))
+
 ;: Explicitly close a rooted directory and report the one close attempt. This
 ;: is used when overall operation success must include directory close success;
 ;: lexical cleanup remains the early-return fallback.
@@ -2392,7 +3406,12 @@
       [(LinuxRootedDirectoryNotEmpty) 16]
       [(LinuxRootedInvalidLength) 17]
       [(LinuxRootedLengthMismatch) 18]
-      [(LinuxRootedReadFailure) 19])))
+      [(LinuxRootedReadFailure) 19]
+      [(LinuxRootedIdentityChanged) 20]
+      [(LinuxRootedSourceChanged) 21]
+      [(LinuxRootedInvalidPermissions) 22]
+      [(LinuxRootedModeMismatch) 23]
+      [(LinuxRootedLockConflict) 24])))
 
 (cfg
   test
@@ -2424,6 +3443,423 @@
           (string-from-bytes
             (ptr-cast (__tl_array-data bytes) : (Ptr u8))
             length))))))
+
+(cfg
+  test
+  (define (linux-rooted-test-stat
+    [device : u64]
+    [inode : u64]
+    [links : u64]
+    [mode : u32]
+    [owner : u32]
+    [group : u32]
+    [length : i64]) : (__tl_dyn-array u8)
+    (let
+      [bytes : (__tl_dyn-array u8)
+        (__tl_make-array u8 fs-linux-rooted-stat-buffer-size)]
+      [data : (MutPtr u8)
+        (unsafe
+          (__tl_array-data bytes))]
+      (begin
+        (unsafe
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-device-offset)
+              : (MutPtr u64))
+            device)
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-inode-offset)
+              : (MutPtr u64))
+            inode)
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-links-offset)
+              : (MutPtr u64))
+            links)
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-mode-offset)
+              : (MutPtr u32))
+            mode)
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-owner-offset)
+              : (MutPtr u32))
+            owner)
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-group-offset)
+              : (MutPtr u32))
+            group)
+          (ptr-write!
+            (ptr-cast
+              (ptr-offset data fs-linux-rooted-stat-size-offset)
+              : (MutPtr i64))
+            length))
+        bytes))))
+
+(cfg
+  test
+  (define (linux-rooted-test-snapshot
+    [device : i64]
+    [inode : i64]
+    [links : i64]
+    [mode : i64]
+    [length : i64]) : FsLinuxRootedSourceSnapshot
+    (let
+      [bytes : (__tl_dyn-array u8)
+        (linux-rooted-test-stat
+          (cast device : u64)
+          (cast inode : u64)
+          (cast links : u64)
+          (cast mode : u32)
+          (cast 1000 : u32)
+          (cast 1001 : u32)
+          length)]
+      (unsafe
+        (linux-rooted-source-snapshot-from-stat (__tl_array-data bytes))))))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-source-snapshot-admission
+    (let
+      ;; 0100640: regular, rw-r-----.
+      [admitted : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 2 33184 10)]
+      [empty : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33188 0)]
+      [directory : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 2 16877 10)]
+      [fifo : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 4516 0)]
+      ;; 0104755 (setuid), 0102755 (setgid), 0101644 (sticky).
+      [setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 35309 10)]
+      [setgid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 34285 10)]
+      [sticky : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33700 10)]
+      [unlinked : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 0 33184 10)]
+      [negative : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33184 -1)]
+      (begin
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& admitted)))
+          0
+          "regular source is admitted")
+        (test.assert-i64-eq
+          (linux-rooted-source-permissions (& admitted))
+          416
+          "admitted permissions keep exactly 0640")
+        (test.assert-i64-eq
+          (linux-rooted-source-length (& admitted))
+          10
+          "length")
+        (test.assert-true
+          (= (linux-rooted-source-links (& admitted)) (cast 2 : u64))
+          "link count")
+        (test.assert-true
+          (and
+            (= admitted.owner (cast 1000 : u32))
+            (= admitted.group (cast 1001 : u32)))
+          "owner and group")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code (linux-rooted-source-result (& empty)))
+          0
+          "an empty regular file is admitted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& directory)))
+          5
+          "directory is wrong kind")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code (linux-rooted-source-result (& fifo)))
+          5
+          "FIFO is wrong kind")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& setuid)))
+          7
+          "setuid source is not admitted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& setgid)))
+          7
+          "setgid source is not admitted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& sticky)))
+          7
+          "sticky source is not admitted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& unlinked)))
+          2
+          "an unlinked source is not found")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-result (& negative)))
+          8
+          "a negative size is an I/O failure")))))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-source-compare
+    (let
+      [admitted : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33184 10)]
+      [same : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33184 10)]
+      [other-inode : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 33184 10)]
+      [other-device : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 8 99 1 33184 10)]
+      [rewritten : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33184 11)]
+      [linked : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 2 33184 10)]
+      [chmodded : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33188 10)]
+      [made-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 35232 10)]
+      [replaced-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 35232 10)]
+      [unreadable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
+      [now-directory : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 2 16877 10)]
+      (begin
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& same)))
+          0
+          "an unchanged source revalidates")
+        (test.assert-true
+          (linux-rooted-source-same-file? (& admitted) (& same))
+          "equal device and inode are the same file")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& other-inode)))
+          20
+          "another inode is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& other-device)))
+          20
+          "the same inode number on another device is a changed identity")
+        (test.assert-false
+          (linux-rooted-source-same-file? (& admitted) (& other-device))
+          "identity needs both device and inode")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& rewritten)))
+          21
+          "a size change on the same file is a changed source")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& linked)))
+          21
+          "a new hard link is a changed source")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& chmodded)))
+          21
+          "a permission change is a changed source")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& made-setuid)))
+          21
+          "a special bit added to the same file is a changed source")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& replaced-setuid)))
+          20
+          "another inode carrying a special bit is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& unreadable)))
+          7
+          "a failed fresh snapshot keeps its own result")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-source-compare (& admitted) (& now-directory)))
+          5
+          "a name that became a directory keeps its own result")))))
+
+(cfg
+  test
+  (define (linux-rooted-test-sidecar
+    [links : i64]
+    [owner : u32]
+    [permissions : i64]) : FsLinuxRootedSourceSnapshot
+    (FsLinuxRootedSourceSnapshot
+      LinuxRootedOk
+      (cast 7 : u64)
+      (cast 99 : u64)
+      0
+      (cast links : u64)
+      owner
+      (cast 1001 : u32)
+      permissions)))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-guard-policy
+    (let
+      [user : u32 (linux-rooted-effective-user)]
+      [private : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 384)]
+      [read-only : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 292)]
+      [aliased : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 2 user 384)]
+      [foreign : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 (+ user (cast 1 : u32)) 384)]
+      [group-writable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 432)]
+      [other-writable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-sidecar 1 user 386)]
+      [directory : FsLinuxRootedSourceSnapshot
+        (linux-rooted-failed-source-snapshot LinuxRootedWrongKind)]
+      (begin
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& private)))
+          0
+          "a private sidecar owned by the effective user is trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& read-only)))
+          0
+          "a read-only sidecar can still be locked")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& aliased)))
+          7
+          "a hard-linked sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& foreign)))
+          7
+          "another user's sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& group-writable)))
+          7
+          "a group-writable sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& other-writable)))
+          7
+          "an other-writable sidecar is not trusted")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-sidecar-result (& directory)))
+          5
+          "a sidecar that is not a regular file keeps its kind result")))))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-lock-taxonomy
+    (begin
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw 0))
+        0
+        "an acquired lock is Ok")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -11))
+        24
+        "EWOULDBLOCK is a lock conflict")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -4))
+        9
+        "EINTR is cancellation")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -37))
+        7
+        "ENOLCK is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -22))
+        7
+        "EINVAL is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -95))
+        7
+        "EOPNOTSUPP is unsupported")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-lock-result-from-raw -5))
+        8
+        "other lock errors are I/O failures")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw 0))
+        0
+        "an unlock is Ok")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw -4))
+        9
+        "an interrupted unlock is cancellation")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-unlock-result-from-raw -9))
+        8
+        "other unlock errors are I/O failures"))))
+
+(cfg
+  test
+  (test
+    fs-rooted-linux-guard-compare
+    (let
+      [same : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 33152 0)]
+      [other : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 33152 0)]
+      [other-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 100 1 35200 0)]
+      [same-setuid : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 1 35200 0)]
+      [now-directory : FsLinuxRootedSourceSnapshot
+        (linux-rooted-test-snapshot 7 99 2 16877 0)]
+      [unreadable : FsLinuxRootedSourceSnapshot
+        (linux-rooted-failed-source-snapshot LinuxRootedUnsupported)]
+      [device : u64 (cast 7 : u64)]
+      [inode : u64 (cast 99 : u64)]
+      (begin
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& same)))
+          0
+          "the locked sidecar revalidates")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& other)))
+          20
+          "another file at the name is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& other-setuid)))
+          20
+          "another file carrying a special bit is a changed identity")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& same-setuid)))
+          7
+          "the locked sidecar newly carrying a special bit is unsupported")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& now-directory)))
+          5
+          "a name that became a directory keeps its own result")
+        (test.assert-i64-eq
+          (linux-rooted-test-result-code
+            (linux-rooted-guard-compare device inode (& unreadable)))
+          7
+          "a failed fresh snapshot keeps its own result")))))
 
 (cfg
   test
@@ -2526,7 +3962,21 @@
       (test.assert-i64-eq
         (linux-rooted-test-result-code (linux-rooted-result-from-errno 5))
         8
-        "unclassified errno is generic I/O"))))
+        "unclassified errno is generic I/O")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code (linux-rooted-result-from-errno 40))
+        4
+        "a source symlink (ELOOP) is unsafe resolution")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-open-result-from-raw -6))
+        5
+        "a guard sidecar that is a socket (ENXIO) is wrong kind")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-guard-open-result-from-raw -40))
+        4
+        "a guard sidecar symlink (ELOOP) stays unsafe resolution"))))
 
 (cfg
   test
@@ -2602,6 +4052,45 @@
         fs-linux-rooted-stat-size-offset
         48
         "x86-64 stat.st_size offset")
+      (test.assert-i64-eq
+        fs-linux-rooted-stat-device-offset
+        0
+        "x86-64 stat.st_dev offset")
+      (test.assert-i64-eq
+        fs-linux-rooted-stat-inode-offset
+        8
+        "x86-64 stat.st_ino offset")
+      (test.assert-i64-eq
+        fs-linux-rooted-stat-links-offset
+        16
+        "x86-64 stat.st_nlink offset")
+      (test.assert-i64-eq
+        fs-linux-rooted-stat-owner-offset
+        28
+        "x86-64 stat.st_uid offset")
+      (test.assert-i64-eq
+        fs-linux-rooted-stat-group-offset
+        32
+        "x86-64 stat.st_gid offset")
+      (test.assert-i64-eq fs-linux-rooted-permission-mask 511 "0777 mask")
+      (test.assert-i64-eq fs-linux-rooted-special-mode-mask 3584 "07000 mask")
+      (test.assert-i64-eq fs-linux-rooted-mode-bits-mask 4095 "07777 mask")
+      (test.assert-i64-eq fs-linux-rooted-shared-write-mask 18 "022 mask")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-flock
+        73
+        "x86-64 flock syscall number")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-geteuid
+        107
+        "x86-64 geteuid syscall number")
+      (test.assert-i64-eq fs-linux-rooted-lock-exclusive 2 "LOCK_EX value")
+      (test.assert-i64-eq fs-linux-rooted-lock-nonblocking 4 "LOCK_NB value")
+      (test.assert-i64-eq fs-linux-rooted-lock-unlock 8 "LOCK_UN value")
+      (test.assert-i64-eq
+        (cast fs-linux-rooted-guard-open-flags : i64)
+        657472
+        "guard sidecar create-or-open flags")
       (test.assert-i64-eq
         fs-linux-rooted-read-max-bytes
         1048576

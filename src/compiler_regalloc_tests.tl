@@ -13108,6 +13108,352 @@
       (compiler-reg-sret-color-case true false false true))
     "sret calls reuse disjoint ranges; ordinary, derived and overlapping uses do not"))
 
+;; Coalescing class chains (#7874). The coalescer enumerates a class by
+;; walking `next` from its root; these fixtures hold that walk to a full scan of
+;; `parents`, the enumeration it replaced, after every merge.
+(cfg
+  test
+  (defstruct CompilerRegCoalesceTestMap
+    (parents (__tl_dyn-array i64))
+    (sizes (__tl_dyn-array i64))
+    (next (__tl_dyn-array i64))
+    (tail (__tl_dyn-array i64))
+    (starts (__tl_dyn-array i64))
+    (ends (__tl_dyn-array i64))))
+
+;; Every var starts as its own one-member class with no coarse extent.
+(cfg
+  test
+  (define (compiler-reg-coalesce-test-map [n : i64]) : CompilerRegCoalesceTestMap
+    (let
+      [parents : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [sizes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [next : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [tail : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [index : i64 0]
+      (begin
+        (reg.compiler-reg-coalesce-map-init! (&mut parents) (&mut sizes) 0)
+        (reg.compiler-reg-coalesce-chains-init! (&mut next) (&mut tail))
+        (while (< index n)
+          (begin
+            (set! (array-ref starts index) -1)
+            (set! (array-ref ends index) -1)
+            (set! index (+ index 1))))
+        (CompilerRegCoalesceTestMap parents sizes next tail starts ends)))))
+
+;; Merges the classes of `left` and `right` the way the coalescer does: the
+;; smaller root wins. Returns false when they already share a class.
+(cfg
+  test
+  (define (compiler-reg-coalesce-test-union!
+    [map : CompilerRegCoalesceTestMap]
+    [left : i64]
+    [right : i64]) : bool
+    (let
+      [left-root : i64 (array-ref map.parents left)]
+      [right-root : i64 (array-ref map.parents right)]
+      (if (= left-root right-root)
+        false
+        (begin
+          (reg.compiler-reg-coalesce-map-merge-root-into!
+            (owned_view.compiler-owned-shared-view map.parents)
+            (owned_view.compiler-owned-shared-view map.sizes)
+            (owned_view.compiler-owned-shared-view map.next)
+            (owned_view.compiler-owned-shared-view map.tail)
+            (owned_view.compiler-owned-shared-view map.starts)
+            (owned_view.compiler-owned-shared-view map.ends)
+            (if (< left-root right-root)
+              left-root
+              right-root)
+            (if (< left-root right-root)
+              right-root
+              left-root))
+          true)))))
+
+;; The chain from each root visits exactly the vars a full scan of `parents`
+;; assigns to that root, each once, ends at `tail[root]` and counts
+;; `sizes[root]`; a var that is no root heads no class and has size 0.
+(cfg
+  test
+  (define (compiler-reg-coalesce-test-chains-match-scan?
+    [map : (& map CompilerRegCoalesceTestMap)]) : bool
+    (let
+      [n : i64 (array-length map.parents)]
+      [seen : (__tl_dyn-array bool) (__tl_make-array bool n)]
+      [root : i64 0]
+      [ok : bool true]
+      (begin
+        (while (and ok (< root n))
+          (let
+            [scanned : i64 0]
+            [var : i64 0]
+            (begin
+              (while (< var n)
+                (begin
+                  (if (= (array-ref map.parents var) root)
+                    (set! scanned (+ scanned 1))
+                    unit)
+                  (set! var (+ var 1))))
+              (if (= (array-ref map.parents root) root)
+                (let
+                  [member : i64 root]
+                  [walked : i64 0]
+                  [last : i64 -1]
+                  (begin
+                    (while (and ok (>= member 0) (<= walked n))
+                      (begin
+                        (set!
+                          ok
+                          (and
+                            (= (array-ref map.parents member) root)
+                            (not (array-ref seen member))))
+                        (set! (array-ref seen member) true)
+                        (set! last member)
+                        (set! walked (+ walked 1))
+                        (set! member (array-ref map.next member))))
+                    (set!
+                      ok
+                      (and
+                        ok
+                        (< member 0)
+                        (= walked scanned)
+                        (= walked (array-ref map.sizes root))
+                        (= last (array-ref map.tail root))))))
+                (set! ok (and (= scanned 0) (= (array-ref map.sizes root) 0))))
+              (set! root (+ root 1)))))
+        ok))))
+
+;; The members of `root`'s class in chain order, as one comparable number:
+;; each member contributes a base-64 digit.
+(cfg
+  test
+  (define (compiler-reg-coalesce-test-chain-digits
+    [map : (& map CompilerRegCoalesceTestMap)]
+    [root : i64]) : i64
+    (let
+      [member : i64 root]
+      [digits : i64 0]
+      (begin
+        (while (>= member 0)
+          (begin
+            (set! digits (+ (* digits 64) member))
+            (set! member (array-ref map.next member))))
+        digits))))
+
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-singletons-ok?) : bool
+    (let
+      [map : CompilerRegCoalesceTestMap (compiler-reg-coalesce-test-map 5)]
+      (and
+        (compiler-reg-coalesce-test-chains-match-scan? (& map))
+        (= (compiler-reg-coalesce-test-chain-digits (& map) 3) 3)
+        (= (array-ref map.tail 3) 3)
+        (= (array-ref map.sizes 3) 1)))))
+
+;; Winner and loser are both multi-member: {0 1 2} absorbs {3 4}. The loser's
+;; chain is spliced behind the winner's, so the class reads 0 1 2 3 4.
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-multi-member-ok?) : bool
+    (let
+      [map : CompilerRegCoalesceTestMap (compiler-reg-coalesce-test-map 6)]
+      [built : bool
+        (and
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            0
+            1)
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            2
+            1)
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            4
+            3)
+          (compiler-reg-coalesce-test-chains-match-scan? (& map))
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            4
+            2))]
+      (and
+        built
+        (compiler-reg-coalesce-test-chains-match-scan? (& map))
+        (=
+          (compiler-reg-coalesce-test-chain-digits (& map) 0)
+          (+ (* 64 (+ (* 64 (+ (* 64 (+ (* 64 0) 1)) 2)) 3)) 4))
+        (= (array-ref map.tail 0) 4)
+        (= (array-ref map.sizes 0) 5)
+        (= (array-ref map.sizes 3) 0)
+        (= (compiler-reg-coalesce-test-chain-digits (& map) 5) 5)))))
+
+;; Three classes {0 1} {2 3 4} {5} joined in all six orders: the final class
+;; always holds all six vars, and every intermediate state matches the scan.
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-order-case-ok?
+    [first : i64]
+    [second : i64]
+    [third : i64]) : bool
+    (let
+      [map : CompilerRegCoalesceTestMap (compiler-reg-coalesce-test-map 6)]
+      [heads : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+      (begin
+        (set! (array-ref heads 0) 1)
+        (set! (array-ref heads 1) 4)
+        (set! (array-ref heads 2) 5)
+        (and
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            1
+            0)
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            3
+            2)
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            4
+            3)
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            (array-ref heads first)
+            (array-ref heads second))
+          (compiler-reg-coalesce-test-chains-match-scan? (& map))
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            (array-ref heads second)
+            (array-ref heads third))
+          (compiler-reg-coalesce-test-chains-match-scan? (& map))
+          (= (array-ref map.sizes 0) 6)
+          (= (array-ref map.parents 5) 0))))))
+
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-merge-orders-ok?) : bool
+    (and
+      (compiler-reg-coalesce-chains-order-case-ok? 0 1 2)
+      (compiler-reg-coalesce-chains-order-case-ok? 0 2 1)
+      (compiler-reg-coalesce-chains-order-case-ok? 1 0 2)
+      (compiler-reg-coalesce-chains-order-case-ok? 1 2 0)
+      (compiler-reg-coalesce-chains-order-case-ok? 2 0 1)
+      (compiler-reg-coalesce-chains-order-case-ok? 2 1 0))))
+
+;; A join of two vars that already share a class is declined before any
+;; interval or fact is read, and leaves every array as it was.
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-self-merge-declined-ok?) : bool
+    (let
+      [map : CompilerRegCoalesceTestMap (compiler-reg-coalesce-test-map 4)]
+      [intervals : reg.CompilerRegIntervalIndex
+        (reg.CompilerRegIntervalIndex
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array reg.CompilerRegIntervalSeq 0))]
+      [facts : reg.CompilerRegCoalesceFacts
+        (reg.CompilerRegCoalesceFacts
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0))]
+      [sv-parents : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [joined : bool
+        (and
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            1
+            2)
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            2
+            3))]
+      [before : i64 (compiler-reg-coalesce-test-chain-digits (& map) 1)]
+      (and
+        joined
+        (not
+          (reg.compiler-reg-coalesce-map-try-merge!
+            (owned_view.compiler-owned-shared-view map.parents)
+            (owned_view.compiler-owned-shared-view map.sizes)
+            (owned_view.compiler-owned-shared-view map.next)
+            (owned_view.compiler-owned-shared-view map.tail)
+            (owned_view.compiler-owned-shared-view map.starts)
+            (owned_view.compiler-owned-shared-view map.ends)
+            (& intervals)
+            (& facts)
+            3
+            2
+            false
+            (&mut sv-parents)))
+        (not
+          (compiler-reg-coalesce-test-union!
+            (owned_view.compiler-owned-shared-view map)
+            3
+            1))
+        (= (compiler-reg-coalesce-test-chain-digits (& map) 1) before)
+        (= (array-ref map.sizes 1) 3)
+        (= (array-ref map.tail 1) 3)
+        (compiler-reg-coalesce-test-chains-match-scan? (& map))))))
+
+;; Generated maps: a fixed linear congruential sequence picks var pairs and
+;; joins their classes; the chains must match the full scan after every join.
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-generated-case-ok?
+    [n : i64]
+    [steps : i64]
+    [seed : i64]) : bool
+    (let
+      [map : CompilerRegCoalesceTestMap (compiler-reg-coalesce-test-map n)]
+      [state : i64 seed]
+      [step : i64 0]
+      [joins : i64 0]
+      [ok : bool true]
+      (begin
+        (while (and ok (< step steps))
+          (let
+            [left : i64 0]
+            [right : i64 0]
+            (begin
+              (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+              (set! left (% (shr state 8) n))
+              (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+              (set! right (% (shr state 8) n))
+              (if (compiler-reg-coalesce-test-union!
+                (owned_view.compiler-owned-shared-view map)
+                left
+                right)
+                (begin
+                  (set! joins (+ joins 1))
+                  (set!
+                    ok
+                    (compiler-reg-coalesce-test-chains-match-scan? (& map))))
+                unit)
+              (set! step (+ step 1)))))
+        (and ok (>= joins (/ n 2)))))))
+
+(cfg
+  test
+  (define (compiler-reg-coalesce-chains-generated-ok?) : bool
+    (and
+      (compiler-reg-coalesce-chains-generated-case-ok? 2 4 7)
+      (compiler-reg-coalesce-chains-generated-case-ok? 17 40 1)
+      (compiler-reg-coalesce-chains-generated-case-ok? 64 120 7874)
+      (compiler-reg-coalesce-chains-generated-case-ok? 64 400 8022))))
+
+(test
+  regalloc-coalesce-class-chains
+  (test.assert-true
+    (and
+      (compiler-reg-coalesce-chains-singletons-ok?)
+      (compiler-reg-coalesce-chains-multi-member-ok?)
+      (compiler-reg-coalesce-chains-merge-orders-ok?)
+      (compiler-reg-coalesce-chains-self-merge-declined-ok?)
+      (compiler-reg-coalesce-chains-generated-ok?))
+    "coalescing class chains enumerate exactly the members a full scan of parents finds"))
+
 (define (compiler-reg-plan-function-stack-only [func : ir.CompilerIrFunction]) : reg.CompilerRegPlan
   (reg.compiler-reg-plan-function-stack-only-with-representations-and-metrics
     func

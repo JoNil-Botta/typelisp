@@ -3825,6 +3825,25 @@
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
+;; A dependency function reaches its consumer as an extern with the TypeLisp
+;; ABI (#8485), so a TypeLisp-internal convention can tell it from a C extern.
+(define (compiler-load-package-extern-typelisp-abi-ok?) : bool
+  (match (load.compiler-load-package-def-fn-extern
+    "dep"
+    "C:/dep/"
+    (svec.new)
+    "C:/dep/src/lib.tl"
+    ""
+    (ci.intern "helper")
+    (ast.ast-param-list-new)
+    (ast.AstType.I64)
+    load.CompilerLoadPackageSpmdInterface.Unavailable)
+    [(ast.AstDecl.Extern _ _ _ metadata _)
+      (match (ast.ast-extern-metadata-abi (deref metadata))
+        [(ast.AstExternAbi.TypeLisp) true]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-load-package-source-macro-preserved-ok?) : bool
   (let
     [name : i64 (ci.intern-generated-name "package-source-macro")]
@@ -5615,6 +5634,11 @@
       (compiler-load-package-owner-extern-symbol-ok?)
       (return
         (io.panic "compiler-load: package owner extern symbol smoke mismatch")))
+    (unless
+      (compiler-load-package-extern-typelisp-abi-ok?)
+      (return
+        (io.panic
+          "compiler-load: package extern does not carry the TypeLisp ABI")))
     (unless
       (compiler-load-package-source-macro-preserved-ok?)
       (return

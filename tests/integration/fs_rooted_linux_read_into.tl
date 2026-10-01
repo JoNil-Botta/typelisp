@@ -24,7 +24,12 @@
     [(rooted.LinuxRootedDirectoryNotEmpty) 16]
     [(rooted.LinuxRootedInvalidLength) 17]
     [(rooted.LinuxRootedLengthMismatch) 18]
-    [(rooted.LinuxRootedReadFailure) 19]))
+    [(rooted.LinuxRootedReadFailure) 19]
+    [(rooted.LinuxRootedIdentityChanged) 20]
+    [(rooted.LinuxRootedSourceChanged) 21]
+    [(rooted.LinuxRootedInvalidPermissions) 22]
+    [(rooted.LinuxRootedModeMismatch) 23]
+    [(rooted.LinuxRootedLockConflict) 24]))
 
 (define (create-text
   [directory : (& directory rooted.FsLinuxRootedDirectory)]

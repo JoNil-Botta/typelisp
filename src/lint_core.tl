@@ -2380,7 +2380,8 @@
   (match abi
     [(ast.AstExternAbi.C) names]
     [(ast.AstExternAbi.CVarargsOpen) names]
-    [(ast.AstExternAbi.CVarargsTyped tail-ty) (lint-type-names tail-ty names)]))
+    [(ast.AstExternAbi.CVarargsTyped tail-ty) (lint-type-names tail-ty names)]
+    [(ast.AstExternAbi.TypeLisp) names]))
 
 (define (lint-extern-metadata-names
   [meta : ast.AstExternMetadata]

@@ -2,7 +2,7 @@
 set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
-# rooted staging, publication, and reusable-read backend.
+# rooted staging, publication, reusable-read, and source-rewrite backend.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -506,6 +506,168 @@ if mount --bind "$WORKDIR/mount-probe-source" "$WORKDIR/mount-probe-target" \
 else
     echo "[fs-rooted-linux] bind-mount boundary unavailable; runner lacks mount permission"
 fi
+
+# Source snapshots, revalidation through the retained parent, and the
+# permission-preserving stage finish (#7559).
+SOURCE_SOURCE="$ROOT/tests/integration/fs_rooted_linux_source.tl"
+SOURCE_ASM="$WORKDIR/source.s"
+SOURCE_OBJ="$WORKDIR/source.o"
+SOURCE_BIN="$WORKDIR/source"
+echo "[fs-rooted-linux] compile rooted source snapshot coverage"
+"$COMPILER" compile "$SOURCE_SOURCE" -o "$SOURCE_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/source-compile.stdout" 2> "$WORKDIR/source-compile.stderr" ||
+    fail "source snapshot fixture compile failed"
+as "$SOURCE_ASM" -o "$SOURCE_OBJ"
+ld "$SOURCE_OBJ" -o "$SOURCE_BIN" -e _tl_start
+
+SOURCE_TREE="$WORKDIR/source-revalidate"
+mkdir -p "$SOURCE_TREE/dir" "$SOURCE_TREE/sub"
+printf 'source payload\n' > "$SOURCE_TREE/source.txt"
+chmod 640 "$SOURCE_TREE/source.txt"
+ln "$SOURCE_TREE/source.txt" "$SOURCE_TREE/alias.txt"
+printf 'other\n' > "$SOURCE_TREE/other.txt"
+printf 'setuid\n' > "$SOURCE_TREE/setuid-other.txt"
+chmod 4644 "$SOURCE_TREE/setuid-other.txt"
+mkfifo "$SOURCE_TREE/fifo"
+ln -s source.txt "$SOURCE_TREE/link"
+printf 'victim\n' > "$SOURCE_TREE/victim.txt"
+ln -s "$WORKDIR/outside/sentinel.txt" "$SOURCE_TREE/victim-link"
+printf 'inner\n' > "$SOURCE_TREE/sub/inner.txt"
+run_expect source-revalidate 42 "$SOURCE_BIN" revalidate "$SOURCE_TREE"
+printf 'replacement' > "$WORKDIR/source-replacement.expected"
+cmp -s "$WORKDIR/source-replacement.expected" "$SOURCE_TREE/source.txt" ||
+    fail "the replacement did not take the source name"
+printf 'source payload\n' > "$WORKDIR/source-original.expected"
+cmp -s "$WORKDIR/source-original.expected" "$SOURCE_TREE/alias.txt" ||
+    fail "the hard link lost the original source bytes"
+[ -L "$SOURCE_TREE/victim.txt" ] ||
+    fail "the substituted symlink did not stay at the victim name"
+cmp -s "$WORKDIR/outside.expected" "$WORKDIR/outside/sentinel.txt" ||
+    fail "revalidating a substituted symlink modified its target"
+[ -f "$SOURCE_TREE/sub-moved/inner.txt" ] ||
+    fail "the retained child directory was not renamed"
+assert_mode "$SOURCE_TREE/sealed.txt" 0
+assert_mode "$SOURCE_TREE/setuid-other.txt" 4644
+
+SOURCE_FINISH="$WORKDIR/source-finish"
+mkdir -p "$SOURCE_FINISH"
+printf 'source payload\n' > "$SOURCE_FINISH/source.txt"
+chmod 640 "$SOURCE_FINISH/source.txt"
+printf 'setuid\n' > "$SOURCE_FINISH/setuid.txt"
+chmod 4644 "$SOURCE_FINISH/setuid.txt"
+run_expect source-finish 42 "$SOURCE_BIN" finish "$SOURCE_FINISH"
+printf 'rewritten\n' > "$WORKDIR/source-finish.expected"
+cmp -s "$WORKDIR/source-finish.expected" "$SOURCE_FINISH/stage.txt" ||
+    fail "permission-preserving finish payload mismatch"
+assert_mode "$SOURCE_FINISH/stage.txt" 640
+for rejected in stage-setuid stage-wide stage-negative stage-foreign; do
+    [ -f "$SOURCE_FINISH/$rejected.txt" ] ||
+        fail "rejected finish $rejected left no private stage"
+    [ ! -s "$SOURCE_FINISH/$rejected.txt" ] ||
+        fail "rejected finish $rejected wrote bytes"
+    assert_mode "$SOURCE_FINISH/$rejected.txt" 600
+done
+printf 'drifted\n' > "$WORKDIR/source-drift.expected"
+cmp -s "$WORKDIR/source-drift.expected" "$SOURCE_FINISH/stage-drift.txt" ||
+    fail "mode-drift finish payload mismatch"
+assert_mode "$SOURCE_FINISH/stage-drift.txt" 600
+assert_mode "$SOURCE_FINISH/setuid.txt" 4644
+
+SOURCE_FAULTS="$WORKDIR/source-faults"
+mkdir -p "$SOURCE_FAULTS"
+printf 'source payload\n' > "$SOURCE_FAULTS/source.txt"
+chmod 640 "$SOURCE_FAULTS/source.txt"
+printf 'other\n' > "$SOURCE_FAULTS/other.txt"
+run_expect source-faults 42 "$SOURCE_BIN" faults "$SOURCE_FAULTS"
+for unwritten in stage-owner-fstat stage-invalid-close; do
+    [ ! -s "$SOURCE_FAULTS/$unwritten.txt" ] ||
+        fail "faulted finish $unwritten wrote bytes"
+    assert_mode "$SOURCE_FAULTS/$unwritten.txt" 600
+done
+printf 'faulted\n' > "$WORKDIR/source-faulted.expected"
+for written in stage-fchmod stage-verify-fstat stage-fsync stage-close; do
+    cmp -s "$WORKDIR/source-faulted.expected" "$SOURCE_FAULTS/$written.txt" ||
+        fail "faulted finish $written payload mismatch"
+done
+assert_mode "$SOURCE_FAULTS/stage-fchmod.txt" 600
+for applied in stage-verify-fstat stage-fsync stage-close; do
+    assert_mode "$SOURCE_FAULTS/$applied.txt" 640
+done
+
+# Rooted sidecar guards (#7559): lock semantics, sidecar policy, substitution,
+# faults, and serialization between processes.
+GUARD_SOURCE="$ROOT/tests/integration/fs_rooted_linux_guard.tl"
+GUARD_ASM="$WORKDIR/guard.s"
+GUARD_OBJ="$WORKDIR/guard.o"
+GUARD_BIN="$WORKDIR/guard"
+echo "[fs-rooted-linux] compile rooted sidecar guard coverage"
+"$COMPILER" compile "$GUARD_SOURCE" -o "$GUARD_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/guard-compile.stdout" 2> "$WORKDIR/guard-compile.stderr" ||
+    fail "sidecar guard fixture compile failed"
+as "$GUARD_ASM" -o "$GUARD_OBJ"
+ld "$GUARD_OBJ" -o "$GUARD_BIN" -e _tl_start
+
+GUARD_TREE="$WORKDIR/guard-tree"
+mkdir -p "$GUARD_TREE/dir-sidecar"
+ln -s "$WORKDIR/outside/guard-target" "$GUARD_TREE/link-sidecar"
+mkfifo "$GUARD_TREE/fifo-sidecar"
+: > "$GUARD_TREE/linked-sidecar"
+ln "$GUARD_TREE/linked-sidecar" "$GUARD_TREE/linked-alias"
+: > "$GUARD_TREE/shared-sidecar"
+chmod 664 "$GUARD_TREE/shared-sidecar"
+: > "$GUARD_TREE/setuid-replacement"
+chmod 4600 "$GUARD_TREE/setuid-replacement"
+run_expect guard 42 "$GUARD_BIN" guard "$GUARD_TREE"
+assert_mode "$GUARD_TREE/special-swap" 4600
+assert_mode "$GUARD_TREE/sealed" 0
+for sidecar in lock scoped-lock; do
+    [ -f "$GUARD_TREE/$sidecar" ] || fail "guard sidecar $sidecar was not kept"
+    [ ! -s "$GUARD_TREE/$sidecar" ] || fail "guard sidecar $sidecar gained bytes"
+    assert_mode "$GUARD_TREE/$sidecar" 600
+done
+[ ! -e "$GUARD_TREE/never-created" ] ||
+    fail "a cancelled guard acquisition created its sidecar"
+[ ! -e "$WORKDIR/outside/guard-target" ] ||
+    fail "a symlinked guard sidecar created its outside target"
+[ -L "$GUARD_TREE/link-sidecar" ] || fail "a symlinked guard sidecar was replaced"
+assert_mode "$GUARD_TREE/shared-sidecar" 664
+
+GUARD_FAULTS="$WORKDIR/guard-faults"
+mkdir -p "$GUARD_FAULTS"
+run_expect guard-faults 42 "$GUARD_BIN" faults "$GUARD_FAULTS"
+assert_mode "$GUARD_FAULTS/fault-lock" 600
+
+# One process holds the shared sidecar lock while another's single attempt
+# conflicts; after an explicit release, and after a holder exits without
+# releasing, a new attempt acquires it.
+GUARD_SHARED="$WORKDIR/guard-shared"
+mkdir -p "$GUARD_SHARED"
+"$GUARD_BIN" hold "$GUARD_SHARED" \
+    > "$WORKDIR/guard-hold.stdout" 2> "$WORKDIR/guard-hold.stderr" &
+GUARD_HOLD_PID=$!
+guard_waits=0
+while [ ! -e "$GUARD_SHARED/held" ] && [ "$guard_waits" -lt 100 ]; do
+    sleep 0.1
+    guard_waits=$((guard_waits + 1))
+done
+[ -e "$GUARD_SHARED/held" ] || fail "the guard holder never announced its lock"
+run_expect guard-try-held 60 "$GUARD_BIN" try "$GUARD_SHARED"
+set +e
+wait "$GUARD_HOLD_PID"
+GUARD_HOLD_STATUS=$?
+set -e
+[ "$GUARD_HOLD_STATUS" -eq 42 ] ||
+    fail "the guard holder exited $GUARD_HOLD_STATUS"
+[ ! -s "$WORKDIR/guard-hold.stdout" ] || fail "the guard holder wrote stdout"
+[ ! -s "$WORKDIR/guard-hold.stderr" ] || fail "the guard holder wrote stderr"
+run_expect guard-try-released 42 "$GUARD_BIN" try "$GUARD_SHARED"
+run_expect guard-die 42 "$GUARD_BIN" die "$GUARD_SHARED"
+run_expect guard-try-after-exit 42 "$GUARD_BIN" try "$GUARD_SHARED"
+assert_mode "$GUARD_SHARED/shared-lock" 600
 
 # Exercise the direct-object-enabled source planner. This backend closure uses
 # unsupported direct-object records today, so the asserted behavior is the

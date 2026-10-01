@@ -29837,6 +29837,119 @@
      tk-no:
        return 0"))
 
+;; D3 at scale: PREDS decided predecessors on one merge, reached through a chain
+;; of dispatch branches. At `opt-thread-pred-budget` redirects a round it takes
+;; PREDS / 4 rounds, each of which rebuilds the list.
+(define (opt-thread-many-round-merge-blocks [preds : i64]) : ir.CompilerIrBlockList
+  (let
+    [text : String "entry:\n branch %0, tm-p0, tm-g1\n"]
+    [phi : String "tm-merge:\n %4 = phi [true, tm-p0]"]
+    [index : i64 1]
+    (begin
+      (while (< index preds)
+        (begin
+          (set!
+            text
+            (if (< index (- preds 1))
+              (str_cat.str-cat
+                text
+                "tm-g"
+                (string.int->string index)
+                ":\n branch %0, tm-p"
+                (string.int->string index)
+                ", tm-g"
+                (string.int->string (+ index 1))
+                "\n")
+              (str_cat.str-cat
+                text
+                "tm-g"
+                (string.int->string index)
+                ":\n jump tm-p"
+                (string.int->string index)
+                "\n")))
+          (set!
+            phi
+            (str_cat.str-cat
+              phi
+              (if (= (bit-and index 1) 0)
+                ", [true, tm-p"
+                ", [false, tm-p")
+              (string.int->string index)
+              "]"))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index preds)
+        (begin
+          (set!
+            text
+            (str_cat.str-cat
+              text
+              "tm-p"
+              (string.int->string index)
+              ":\n jump tm-merge\n"))
+          (set! index (+ index 1))))
+      (irt.blocks
+        (str_cat.str-cat
+          text
+          phi
+          " : bool\n branch %4, tm-yes, tm-no\ntm-yes:\n return 1\ntm-no:\n return 0")))))
+
+;; Bytes the pass bumps in its caller's arena, rounds' regions excluded.
+(cfg
+  test
+  (define (opt-thread-pass-caller-bytes [preds : i64] [fuel : i64]) : i64
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [scratch : arena.Arena (arena.make)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set scratch.handle))]
+      [blocks : ir.CompilerIrBlockList
+        (opt-thread-many-round-merge-blocks preds)]
+      [start : i64
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+          scratch.handle)]
+      [_result : opt.OptBlockListPassResult
+        (opt-thread-pass-result blocks fuel)]
+      [bytes : i64
+        (-
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            scratch.handle)
+          start)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set home))
+        (arena.destroy-safe! scratch)
+        bytes))))
+
+;; Rounds after the first leave only one copy of the final list in the caller's
+;; arena, so 24 rounds cost it about what one round does instead of 24 times as
+;; much; the output is still the fully threaded, verified list.
+(test
+  opt-thread-later-rounds-keep-two-generations
+  (let
+    [one-round : i64 (opt-thread-pass-caller-bytes 96 1)]
+    [all-rounds : i64 (opt-thread-pass-caller-bytes 96 64)]
+    [blocks : ir.CompilerIrBlockList (opt-thread-many-round-merge-blocks 96)]
+    [partial : ir.CompilerIrBlockList (opt-thread-pass-blocks blocks 23)]
+    [threaded : ir.CompilerIrBlockList (opt-thread-pass-blocks blocks 64)]
+    (begin
+      (test.assert-true
+        (opt-block-list-has-label? partial (ir.compiler-ir-label "tm-merge"))
+        "23 rounds leave decided predecessors on the merge")
+      (test.assert-false
+        (opt-block-list-has-label? threaded (ir.compiler-ir-label "tm-merge"))
+        "24 rounds thread every predecessor past the merge")
+      (test.assert-true
+        (opt-thread-pass-verified? threaded)
+        "the threaded list verifies")
+      (test.assert-true
+        (> one-round 0)
+        "the first round runs in the caller's arena")
+      (test.assert-true
+        (< all-rounds (* one-round 3))
+        "later rounds do not grow the caller's arena with the round count"))))
+
 ;; --- forwarding-block straightening ----------------------------------------
 ;; Both arms are trampolines and neither destination carries a phi, so both
 ;; edges thread. The `true` arm goes through two of them, which is the chain
@@ -64061,6 +64174,273 @@
     (compiler-optimize-vt-offset-counter-self-test)
     42
     "a loop tested `base + i < n` with a loop-invariant base recovers its counter over the limit `n - base`, which the guard computes with one subtraction behind `base >= 0` and `n >= base`, and both checks leave the fast clone; a step of two, the descending mirror, and an offset the loop itself computes each keep the loop unversioned"))
+
+;; --- #8261: MONOTONE CURSORS ---------------------------------------------------
+;;
+;; The scanner shape, top-tested: `header` tests the `keep` flag, `test` the
+;; cursor `j < n`, and `body` stops (`keep = false`, `j` unchanged) or steps
+;; (`j + 1`), so `j`'s latch value is a MERGE of `j` and `j + 1` rather than a
+;; canonical increment. Variants:
+;;
+;;   0  POSITIVE. The check on `j` derives over [base, n); the clone is
+;;      check-free.
+;;   1  BACKWARDS. The stepping arm is `j - 1`: no cursor.
+;;   2  UNBOUNDED. The loop test compares `j` against a value the loop
+;;      computes: no invariant limit, no cursor.
+;;   3  STEP TWO. The stepping arm is `j + 2`, which the unit-step range
+;;      argument does not cover: no cursor.
+;;   4  DERIVED ALONGSIDE. A second phi `d = phi(0, d + 3)` is checked too. An
+;;      exact counter would derive it through the derived family, which counts
+;;      latch crossings in counter values; a cursor's values are not crossings,
+;;      so it stays, and the cursor shape refuses a clone that keeps a check.
+;;   5  Variant 4 with an EXACT counter (`j + 1` on every trip): both derive.
+;;   6  BOUNDED PHI. A second phi `q = phi(base, q + 1)` shares the cursor's
+;;      seed and grows by one per trip, which places it inside an exact
+;;      counter's range -- but not a cursor's, which may stall while `q` grows.
+;;      Nothing derives, and the shape names the cursor it never used.
+;;   7  Variant 6 with an EXACT counter: `q` derives.
+;;   8  PROBE. Only a loop-invariant index is checked: the cursor bounds the
+;;      trip count and indexes nothing, so the counted shape refuses and leaves
+;;      the loop to the counter-free one.
+;;   9  TWO POINTERS. Left and right cursors, each with its own chain compare,
+;;      advance on alternate arms. The counter is the left one; the right one's
+;;      check stays, so the shape refuses a partial clone.
+;;  10  Variant 4's derived phi read as `base + d` (the variable-base derived
+;;      family), next to a check on the cursor itself: refused as partial.
+;;  11  The same phi read as `d + 1` (the literal-offset member): partial.
+;;  12  Variant 6's seed-sharing phi read as `q + 1`: partial.
+(define (opt-mc-test-text [variant : i64]) : String
+  (cond
+    [(= variant 2)
+      "test:
+         %15 = add %3, 5 : i64
+         %5 = lt %3, %15 : bool
+         branch %5, body, exit"]
+    [else "test:
+         %5 = lt %3, %0 : bool
+         branch %5, body, exit"]))
+
+(define (opt-mc-body-text [variant : i64]) : String
+  (cond
+    [(or (= variant 4) (= variant 5))
+      "body:
+         bounds_check %3, %1 message \"mc_ok0\"
+         bounds_check %13, %1 message \"mc_ok1\"
+         %11 = eq %3, 7 : bool
+         branch %11, stop, step"]
+    [(or (= variant 6) (= variant 7))
+      "body:
+         bounds_check %13, %1 message \"mc_ok1\"
+         %11 = eq %3, 7 : bool
+         branch %11, stop, step"]
+    [(= variant 8)
+      "body:
+         bounds_check %2, %1 message \"mc_ok1\"
+         %11 = eq %3, 7 : bool
+         branch %11, stop, step"]
+    [(= variant 10)
+      "body:
+         bounds_check %3, %1 message \"mc_ok0\"
+         %20 = add %2, %13 : i64
+         bounds_check %20, %1 message \"mc_ok1\"
+         %11 = eq %3, 7 : bool
+         branch %11, stop, step"]
+    [(or (= variant 11) (= variant 12))
+      "body:
+         bounds_check %3, %1 message \"mc_ok0\"
+         %20 = add %13, 1 : i64
+         bounds_check %20, %1 message \"mc_ok1\"
+         %11 = eq %3, 7 : bool
+         branch %11, stop, step"]
+    [else
+      "body:
+         bounds_check %3, %1 message \"mc_ok0\"
+         %11 = eq %3, 7 : bool
+         branch %11, stop, step"]))
+
+(define (opt-mc-step-text [variant : i64]) : String
+  (cond
+    [(= variant 1) "step:
+         %8 = sub %3, 1 : i64
+         jump latch"]
+    [(= variant 3) "step:
+         %8 = add %3, 2 : i64
+         jump latch"]
+    [else "step:
+         %8 = add %3, 1 : i64
+         jump latch"]))
+
+(define (opt-mc-latch-text [variant : i64]) : String
+  (cond
+    [(or (= variant 4) (= variant 10) (= variant 11))
+      "latch:
+         %9 = phi [%3, stop], [%8, step] : i64
+         %10 = phi [false, stop], [true, step] : bool
+         %14 = add %13, 3 : i64
+         jump header"]
+    [(= variant 5)
+      "latch:
+         %10 = phi [false, stop], [true, step] : bool
+         %9 = add %3, 1 : i64
+         %14 = add %13, 3 : i64
+         jump header"]
+    [(or (= variant 6) (= variant 12))
+      "latch:
+         %9 = phi [%3, stop], [%8, step] : i64
+         %10 = phi [false, stop], [true, step] : bool
+         %14 = add %13, 1 : i64
+         jump header"]
+    [(= variant 7)
+      "latch:
+         %10 = phi [false, stop], [true, step] : bool
+         %9 = add %3, 1 : i64
+         %14 = add %13, 1 : i64
+         jump header"]
+    [else
+      "latch:
+         %9 = phi [%3, stop], [%8, step] : i64
+         %10 = phi [false, stop], [true, step] : bool
+         jump header"]))
+
+(define (opt-mc-header-text [variant : i64]) : String
+  (cond
+    [(or (= variant 4) (= variant 5) (= variant 10) (= variant 11))
+      "header:
+         %3 = phi [%2, entry], [%9, latch] : i64
+         %4 = phi [true, entry], [%10, latch] : bool
+         %13 = phi [0, entry], [%14, latch] : i64
+         branch %4, test, exit"]
+    [(or (= variant 6) (= variant 7) (= variant 12))
+      "header:
+         %3 = phi [%2, entry], [%9, latch] : i64
+         %4 = phi [true, entry], [%10, latch] : bool
+         %13 = phi [%2, entry], [%14, latch] : i64
+         branch %4, test, exit"]
+    [else
+      "header:
+         %3 = phi [%2, entry], [%9, latch] : i64
+         %4 = phi [true, entry], [%10, latch] : bool
+         branch %4, test, exit"]))
+
+(define (opt-mc-two-pointer-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       jump header
+     header:
+       %3 = phi [%2, entry], [%9, latch] : i64
+       %16 = phi [0, entry], [%17, latch] : i64
+       %5 = lt %3, %0 : bool
+       branch %5, test, exit
+     test:
+       %18 = lt %16, %0 : bool
+       branch %18, body, exit
+     body:
+       bounds_check %3, %1 message \"mc_ok0\"
+       bounds_check %16, %1 message \"mc_ok1\"
+       %11 = lt %3, %16 : bool
+       branch %11, left, right
+     left:
+       %8 = add %3, 1 : i64
+       jump latch
+     right:
+       %19 = add %16, 1 : i64
+       jump latch
+     latch:
+       %9 = phi [%8, left], [%3, right] : i64
+       %17 = phi [%16, left], [%19, right] : i64
+       jump header
+     exit:
+       %12 = phi [%3, header], [%3, test] : i64
+       return %12"))
+
+(define (opt-mc-blocks [variant : i64]) : ir.CompilerIrBlockList
+  (if (= variant 9)
+    (opt-mc-two-pointer-blocks)
+    (ir.compiler-ir-block-cons
+      (irt.block "entry:
+           jump header")
+      (ir.compiler-ir-block-cons
+        (irt.block (opt-mc-header-text variant))
+        (ir.compiler-ir-block-cons
+          (irt.block (opt-mc-test-text variant))
+          (ir.compiler-ir-block-cons
+            (irt.block (opt-mc-body-text variant))
+            (ir.compiler-ir-block-cons
+              (irt.block "stop:
+                   jump latch")
+              (ir.compiler-ir-block-cons
+                (irt.block (opt-mc-step-text variant))
+                (ir.compiler-ir-block-cons
+                  (irt.block (opt-mc-latch-text variant))
+                  (irt.blocks
+                    "exit:
+                       %12 = phi [%3, header], [%3, test] : i64
+                       return %12"))))))))))
+
+(define (opt-mc-reason [variant : i64]) : i64
+  (opt.opt-bce-version-reason-probe
+    (- 0 1)
+    (opt-bce-mb-test-function (opt-mc-blocks variant))))
+
+(define (opt-mc-versioned [variant : i64]) : ir.CompilerIrBlockList
+  (let
+    [func
+      (opt.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-mc-blocks variant)))]
+    (opt.opt-function-blocks func)))
+
+(define (opt-mc-verified? [variant : i64]) : bool
+  (opt.opt-verify-ok?
+    (opt.opt-verify-function
+      (opt.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-mc-blocks variant))))))
+
+(define (opt-mc-fast-checks [variant : i64]) : i64
+  (let
+    [blocks (opt-mc-versioned variant)]
+    (opt-bce-version-test-block-checks
+      blocks
+      (ir.compiler-ir-label "body__bce_fast"))))
+
+(define (compiler-optimize-mc-cursor-self-test) : i64
+  (cond
+    ;; positive: the scanner's cursor derives and the clone is check-free
+    [(not (= (opt-mc-reason 0) (opt.opt-bce-reason-ok))) 1]
+    [(not (= (opt-mc-fast-checks 0) 0)) 2]
+    [(not (opt-mc-verified? 0)) 3]
+    ;; no cursor: backwards, an in-loop limit, a step of two
+    [(not (= (opt-mc-reason 1) (opt.opt-bce-reason-not-a-counter))) 4]
+    [(not (= (opt-mc-reason 2) (opt.opt-bce-reason-not-a-counter))) 5]
+    [(not (= (opt-mc-reason 3) (opt.opt-bce-reason-not-a-counter))) 6]
+    [(not (= (opt-mc-fast-checks 1) (- 0 1))) 7]
+    ;; a derived induction is not derived off a cursor, so no partial clone...
+    [(not (= (opt-mc-reason 4) (opt.opt-bce-reason-cursor-partial))) 8]
+    [(not (= (opt-mc-fast-checks 4) (- 0 1))) 9]
+    ;; ...while an exact counter derives both checks
+    [(not (= (opt-mc-reason 5) (opt.opt-bce-reason-ok))) 10]
+    [(not (= (opt-mc-fast-checks 5) 0)) 11]
+    ;; a phi bounded only by an exact counter's range: not by a cursor's
+    [(not (= (opt-mc-reason 6) (opt.opt-bce-reason-cursor-unused))) 12]
+    [(not (= (opt-mc-fast-checks 6) (- 0 1))) 13]
+    [(not (= (opt-mc-reason 7) (opt.opt-bce-reason-ok))) 14]
+    [(not (= (opt-mc-fast-checks 7) 0)) 15]
+    ;; a probe whose cursor indexes nothing is the counter-free shape's
+    [(not (= (opt-mc-reason 8) (opt.opt-bce-reason-cursor-unused))) 16]
+    ;; two pointers: the second cursor's check stays, so no partial clone
+    [(not (= (opt-mc-reason 9) (opt.opt-bce-reason-cursor-partial))) 17]
+    [(not (= (opt-mc-fast-checks 9) (- 0 1))) 18]
+    ;; the same gates on the variable-base and literal-offset spellings
+    [(not (= (opt-mc-reason 10) (opt.opt-bce-reason-cursor-partial))) 19]
+    [(not (= (opt-mc-reason 11) (opt.opt-bce-reason-cursor-partial))) 20]
+    [(not (= (opt-mc-reason 12) (opt.opt-bce-reason-cursor-partial))) 21]
+    [else 42]))
+
+(test
+  bce-version-mb-monotone-cursor
+  (test.assert-i64-eq
+    (compiler-optimize-mc-cursor-self-test)
+    42
+    "a top-tested scanner whose cursor's latch value merges `j` and `j + 1` versions check-free over [seed, n); a cursor that steps backwards, by two, or against a limit the loop computes is no counter; a derived induction and a phi sharing the cursor's seed are derived off an exact counter but not off a cursor, whose clone is then refused rather than kept partial; a cursor that indexes nothing leaves the loop to the counter-free shape; and a two-pointer scan, whose second cursor's check would stay, is refused"))
 
 (test
   bce-version-refusal-reason-vocabulary

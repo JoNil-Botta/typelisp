@@ -47125,6 +47125,161 @@
               (set! slot (+ slot 1))))
           any))]))
 
+;; --- per-round generations --------------------------------------------------
+;; A fixpoint whose every round rebuilds the block list it carries would keep
+;; each rebuild until the function escapes. `OptRoundRegions` keeps two: a round
+;; works in the work arena, reset when the next round enters it, and the list it
+;; leaves is copied into whichever home does not hold the previous list, after
+;; which that home is reset. Nothing a round allocates outlives it except through
+;; that copy, the rule the per-function scratch already imposes on a function.
+(defstruct OptRoundRegions
+  (outer i64)
+  ;; The work arena, then the two homes, with the marks that empty them.
+  (arenas (__tl_dyn-array i64))
+  (marks (__tl_dyn-array i64))
+  ;; 1 or 2 while a home holds the carried list, 0 while the caller's arena does.
+  (holder i64))
+
+;; DELIBERATE-RAW (#6620): the three arenas are process storage, made on first
+;; use and emptied between uses, so a pass does not map fresh arenas for every
+;; function. Rounds never re-enter the pass, so one set serves every caller; the
+;; optimizer drivers release it with their function scratch.
+(define opt-round-region-arenas : (__tl_dyn-array i64)
+  (__tl_make-array i64 3))
+(define opt-round-region-marks : (__tl_dyn-array i64)
+  (__tl_make-array i64 3))
+
+(define (opt-round-regions-new) : OptRoundRegions
+  (let
+    [outer : i64 (arena.tl_arena_current)]
+    (begin
+      (when
+        (= (array-ref opt-round-region-arenas 0) 0)
+        (let
+          [slot : i64 0]
+          (begin
+            (while (< slot 3)
+              (let
+                [handle : i64 (arena.tl_arena_make)]
+                (begin
+                  (set! (array-ref opt-round-region-arenas slot) handle)
+                  (unsafe
+                    (arena.tl_arena_set handle))
+                  (set!
+                    (array-ref opt-round-region-marks slot)
+                    (arena.tl_region_mark))
+                  (set! slot (+ slot 1)))))
+            (unsafe
+              (arena.tl_arena_set outer)))))
+      (OptRoundRegions
+        outer
+        (compiler-opt-global-shared-view opt-round-region-arenas)
+        (compiler-opt-global-shared-view opt-round-region-marks)
+        0))))
+
+;; Make arena SLOT current and empty.
+(define (opt-round-regions-enter!
+  [regions : (& regions OptRoundRegions)]
+  [slot : i64]) : unit
+  (unsafe
+    (begin
+      (arena.tl_arena_set (array-ref regions.arenas slot))
+      (arena.tl_region_reset (array-ref regions.marks slot)))))
+
+(define (opt-round-regions-enter-work! [regions : (& regions OptRoundRegions)]) : unit
+  (opt-round-regions-enter! regions 0))
+
+;; Empty and enter the home that does not hold the carried list; the caller then
+;; copies the next list into it and commits.
+(define (opt-round-regions-enter-next-home!
+  [regions : (&mut regions OptRoundRegions)]) : unit
+  (opt-round-regions-enter!
+    regions
+    (if (= regions.holder 1)
+      2
+      1)))
+
+;; The copy just made is the carried list: empty the home that held the previous
+;; one, then return to the work arena.
+(define (opt-round-regions-commit! [regions : (&mut regions OptRoundRegions)]) : unit
+  (let
+    [previous : i64 regions.holder]
+    (begin
+      (set!
+        regions.holder
+        (if (= previous 1)
+          2
+          1))
+      (when (> previous 0) (opt-round-regions-enter! regions previous))
+      (unsafe
+        (arena.tl_arena_set (array-ref regions.arenas 0))))))
+
+(define (opt-round-regions-held? [regions : (& regions OptRoundRegions)]) : bool
+  (> regions.holder 0))
+
+(define (opt-round-regions-enter-outer! [regions : (& regions OptRoundRegions)]) : unit
+  (unsafe
+    (arena.tl_arena_set regions.outer)))
+
+;; Empty all three regions and return to the caller's arena; a held list must
+;; already have been copied out.
+(define (opt-round-regions-leave! [regions : (& regions OptRoundRegions)]) : unit
+  (let
+    [slot : i64 0]
+    (begin
+      (while (< slot 3)
+        (begin
+          (opt-round-regions-enter! regions slot)
+          (set! slot (+ slot 1))))
+      (unsafe
+        (arena.tl_arena_set regions.outer)))))
+
+;; Destroy the process's round regions, if a pass made them.
+(define (opt-round-regions-release!) : unit
+  (let
+    [slot : i64 0]
+    (while (< slot 3)
+      (let
+        [handle : i64 (array-ref opt-round-region-arenas slot)]
+        (begin
+          (when
+            (not (= handle 0))
+            (begin
+              (unsafe
+                (arena.tl_arena_destroy handle))
+              (set! (array-ref opt-round-region-arenas slot) 0)))
+          (set! slot (+ slot 1)))))))
+
+;; A list moving between regions is copied with every block, instruction and
+;; container it holds. Its types, values and symbols are shared: no round creates
+;; them, so they predate the regions. The copy keeps the list's representation.
+(define (opt-round-copy-instr-seq [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [out : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr count)]
+    [no-remap : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue 0)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (opt-region-clone-instr
+              (compiler-opt-global-shared-view no-remap)
+              (OptCloneLabels.Keep)
+              (compiler-opt-global-array-element-shared-view slots index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq out count))))
+
+(define (opt-round-copy-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Array _)
+      (opt-blocks-map-seq-array blocks opt-round-copy-instr-seq)]
+    [_ (opt-blocks-map-seq blocks opt-round-copy-instr-seq)]))
+
 ;; The dominator tree is what the live-out rule reads when a definition is not
 ;; edge-local (`opt-thread-def-blocked`); it is built once per round, from the
 ;; same index the round's predecessor rows come from, and a round only runs at
@@ -47162,36 +47317,75 @@
 (define (opt-thread-const-branch-fuel) : i64
   64)
 
-(define (opt-thread-const-branch-blocks-raw
+;; Rounds after the first. Each runs in the regions' reset work arena, and the
+;; list it leaves moves into the other home; the list that ends the fixpoint is
+;; copied back into the caller's arena. Round order, decisions and fuel are those
+;; of a plain recursion over the same lists.
+(define (opt-thread-const-branch-later-rounds
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
-  [remaining : i64]) : OptBlockListPassResult
+  [remaining : i64]) : ir.CompilerIrBlockList
   (if (<= remaining 0)
-    (OptBlockListPassResult.Result blocks false)
-    (if (opt-thread-const-branch-round!
-      type-segment-bases
-      (compiler-opt-global-shared-view blocks)
-      frame)
-      (match (opt-thread-const-branch-blocks-raw
-        type-segment-bases
-        (opt-cfg-simplify-blocks blocks)
-        frame
-        (- remaining 1))
-        [(OptBlockListPassResult.Result next _)
-          (OptBlockListPassResult.Result next true)])
-      (OptBlockListPassResult.Result blocks false))))
+    blocks
+    (let
+      [regions : OptRoundRegions (opt-round-regions-new)]
+      [current : ir.CompilerIrBlockList blocks]
+      [left : i64 remaining]
+      [running? : bool true]
+      (begin
+        (while running?
+          (begin
+            (opt-round-regions-enter-work! (& regions))
+            (if (and
+              (> left 0)
+              (opt-thread-const-branch-round!
+                type-segment-bases
+                (compiler-opt-global-shared-view current)
+                frame))
+              (let
+                [next : ir.CompilerIrBlockList
+                  (opt-cfg-simplify-blocks
+                    (compiler-opt-global-shared-view current))]
+                (begin
+                  (opt-round-regions-enter-next-home! (&mut regions))
+                  (set! current (opt-round-copy-blocks next))
+                  (opt-round-regions-commit! (&mut regions))
+                  (set! left (- left 1))))
+              (set! running? false))))
+        (opt-round-regions-enter-outer! (& regions))
+        (let
+          [result : ir.CompilerIrBlockList
+            (if (opt-round-regions-held? (& regions))
+              (opt-round-copy-blocks (compiler-opt-global-shared-view current))
+              current)]
+          (begin
+            (opt-round-regions-leave! (& regions))
+            result))))))
 
+;; The first round runs in the caller's arena, so a function that threads once
+;; costs what it always did; every later round runs in `OptRoundRegions`.
 (define (opt-thread-const-branch-blocks
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBlockListPassResult
-  (opt-thread-const-branch-blocks-raw
-    type-segment-bases
-    (opt-bool-branch-clone-blocks blocks)
-    frame
-    remaining))
+  (let
+    [first : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
+    (if (and
+      (> remaining 0)
+      (opt-thread-const-branch-round!
+        type-segment-bases
+        (compiler-opt-global-shared-view first)
+        frame))
+      (OptBlockListPassResult.Result
+        (opt-thread-const-branch-later-rounds
+          type-segment-bases
+          (opt-cfg-simplify-blocks first)
+          frame
+          (- remaining 1))
+        true)
+      (OptBlockListPassResult.Result first false))))
 
 (define (opt-thread-phi-block-candidate?
   [type-segment-bases : i64]
@@ -73674,6 +73868,15 @@
 (define (opt-bce-reason-unsatisfiable) : i64
   54)
 
+;; An inexact counter (a monotone cursor, OptBceMbShape.exact?) that no
+;; derivation read, or whose clone would keep a check: see the clauses at
+;; opt-bce-mb-guard-conds-ranged.
+(define (opt-bce-reason-cursor-unused) : i64
+  55)
+
+(define (opt-bce-reason-cursor-partial) : i64
+  56)
+
 ;; VERIFY: the rewrite was built and the post-application verifier refused it,
 ;; which retires the loop for the rest of the invocation.
 (define (opt-bce-reason-verify) : i64
@@ -73710,6 +73913,8 @@
     [(= reason (opt-bce-reason-region-inner)) "guard:region-gate"]
     [(= reason (opt-bce-reason-free-cost)) "guard:free-cost"]
     [(= reason (opt-bce-reason-unsatisfiable)) "guard:unsatisfiable"]
+    [(= reason (opt-bce-reason-cursor-unused)) "guard:cursor-unused"]
+    [(= reason (opt-bce-reason-cursor-partial)) "guard:cursor-partial"]
     [(= reason (opt-bce-reason-verify)) "verify:rejected"]
     [else "other"]))
 
@@ -79077,7 +79282,16 @@
   ;; Computed where the loop list is in hand
   ;; (`opt-bce-mb-loop-shape-with-preheader`) with the same
   ;; `opt-bce-mb-preheader-outside-loops?` test that clause uses.
-  (nested-entry? bool))
+  (nested-entry? bool)
+  ;; Does the counter advance by exactly `step` on every latch crossing (#8261)?
+  ;; False for a MONOTONE CURSOR, whose back-edge value is a merge of `iphi`
+  ;; and `iphi + 1` (`opt-bce-mb-counter-increment`): it still lies in
+  ;; `[seed, bound)` on every executed trip, so every derivation that reads the
+  ;; counter's VALUE range holds, but it may stall on a crossing. The families
+  ;; that count latch crossings against counter values -- derived inductions and
+  ;; bounded phis, both in `opt-bce-mb-derive-index` -- read this and stay out.
+  ;; True, and inert, for a counter-free shape.
+  (exact? bool))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -79907,6 +80121,38 @@
                   bottom?
                   offset)
                 (OptBceMbMaybeCounter.No)))]
+          ;; MONOTONE CURSOR (#8261): the back-edge value is a merge whose
+          ;; inputs are each `iphi` or `iphi + 1` (the bounded-value rule the
+          ;; conditionally advancing phis already use, here against the phi
+          ;; itself). Such a cursor never shrinks and the top-tested compare
+          ;; `iphi < bound` dominates the body, so every executed trip still
+          ;; sees `seed <= iphi < bound` -- the unit counter's value range --
+          ;; but a trip may leave it where it was. Only that plain spelling is
+          ;; recovered: ascending, top-tested, unshifted, compared directly.
+          ;; The shape records it as inexact (`opt-bce-mb-counter-exact?`).
+          [(ir.CompilerIrInstr.Phi _ _ _)
+            (if (and
+              (not descending?)
+              (not bottom?)
+              (= shift 0)
+              (= k 0)
+              (opt-bce-mb-counter-offset-none? offset)
+              (opt-bce-mb-bounded-value?
+                (owned_view.compiler-owned-reference-shared-view body-blocks)
+                iphi
+                (ir.CompilerIrValue.Var inext)
+                8))
+              (opt-bce-mb-counter-shifted
+                iphi
+                seed
+                inext
+                bound
+                1
+                shift
+                k
+                bottom?
+                offset)
+              (OptBceMbMaybeCounter.No))]
           [_ (OptBceMbMaybeCounter.No)])])))
 
 ;; The counter phi the peeled compare operand landed on: an i64 HEADER phi (only
@@ -80508,6 +80754,19 @@
           false
           (opt-bce-mb-fast-labels-fresh? blocks (opt-label-tail body-labels))))]))
 
+;; Is the counter's back-edge value its own increment `iphi + step`? Only the
+;; monotone-cursor recovery (`opt-bce-mb-counter-increment`) hands over a
+;; back-edge var defined any other way: a merge phi.
+(define (opt-bce-mb-counter-exact?
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
+  [inext : i64]) : bool
+  (match (opt-bce-mb-find-def body-blocks inext)
+    [(OptMaybeInstr.Some instr)
+      (match instr
+        [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+        [_ false])]
+    [(OptMaybeInstr.No) false]))
+
 (define (opt-bce-mb-loop-shape-finish
   [blocks : ir.CompilerIrBlockList]
   [header : i64]
@@ -80526,7 +80785,7 @@
     [(OptBceMbMaybeCounter.Some
         iphi
         seed
-        _
+        inext
         bound
         step
         delta
@@ -80546,6 +80805,8 @@
                     (opt-unroll-phi-prefix-count header-instrs 0)
                     latch
                     pred)]
+                [exact? : bool
+                  (opt-bce-mb-counter-exact? (& body-blocks) inext)]
                 (if (and phis-ok? (>= (opt-bce-mb-body-checks body-blocks 0) 1))
                   (OptBceMbMaybeShape.Some
                     (OptBceMbShape
@@ -80565,7 +80826,8 @@
                       inner
                       region?
                       true
-                      nested-entry?))
+                      nested-entry?
+                      exact?))
                   (opt-bce-trace-refuse-mb-shape
                     (if phis-ok?
                       (opt-bce-reason-no-check)
@@ -80640,7 +80902,8 @@
                   inner
                   region?
                   false
-                  nested-entry?))
+                  nested-entry?
+                  true))
               (opt-bce-trace-refuse-mb-shape
                 (if phis-ok?
                   (opt-bce-reason-no-check)
@@ -84336,6 +84599,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -84489,21 +84753,23 @@
                                                   ;; induction phi rather than a
                                                   ;; syntactic multiple of the
                                                   ;; counter.
-                                                  (opt-bce-mb-var-base-derived-add
-                                                    body-blocks
-                                                    defs
-                                                    latch
-                                                    preheader
-                                                    iphi
-                                                    seed
-                                                    bound
-                                                    k0
-                                                    core-lhs
-                                                    core-rhs
-                                                    length-value
-                                                    cell
-                                                    fan
-                                                    acc)]
+                                                  (if exact?
+                                                    (opt-bce-mb-var-base-derived-add
+                                                      body-blocks
+                                                      defs
+                                                      latch
+                                                      preheader
+                                                      iphi
+                                                      seed
+                                                      bound
+                                                      k0
+                                                      core-lhs
+                                                      core-rhs
+                                                      length-value
+                                                      cell
+                                                      fan
+                                                      acc)
+                                                    (OptBceVersionGuardAcc.No))]
                                                 [(OptBceCounterAffineBase.Some
                                                     scale
                                                     k2
@@ -84625,6 +84891,7 @@
                                                 ;; inert seed) must not enter it.
                                                 (if (and
                                                   (>= iphi 0)
+                                                  (or exact? (= core iphi))
                                                   (opt-bce-mb-bounded-phi?
                                                     all-blocks
                                                     (compiler-opt-global-shared-view
@@ -84655,7 +84922,9 @@
                                                   ;; single-block pass
                                                   ;; documents it at
                                                   ;; opt-bce-version-var-base-strided).
-                                                  (if (< iphi 0)
+                                                  (if (or
+                                                    (< iphi 0)
+                                                    (not exact?))
                                                     (OptBceVersionGuardAcc.No)
                                                     (match (opt-bce-mb-derived-induction
                                                       body-blocks
@@ -84750,15 +85019,21 @@
                             (compiler-opt-global-shared-view inputs)
                             latch)
                             [(OptUnrollPhiSplit.Split init back pred-label)
-                              (if (opt-bce-mb-bounded-phi?
-                                all-blocks
-                                (compiler-opt-global-shared-view body-blocks)
-                                preheader
-                                pred-label
-                                seed
-                                init
-                                id
-                                back)
+                              ;; An inexact cursor bounds only itself: another
+                              ;; phi's growth is counted per latch crossing,
+                              ;; which a stalling cursor does not keep pace
+                              ;; with (see OptBceMbShape.exact?).
+                              (if (and
+                                (or exact? (= id iphi))
+                                (opt-bce-mb-bounded-phi?
+                                  all-blocks
+                                  (compiler-opt-global-shared-view body-blocks)
+                                  preheader
+                                  pred-label
+                                  seed
+                                  init
+                                  id
+                                  back))
                                 (opt-bce-version-fan-admit-unit
                                   fan
                                   seed
@@ -84768,14 +85043,16 @@
                                   length-value
                                   cell
                                   acc)
-                                (match (opt-bce-mb-derived-induction
-                                  body-blocks
-                                  defs
-                                  latch
-                                  preheader
-                                  id
-                                  inputs
-                                  false)
+                                (match (if exact?
+                                  (opt-bce-mb-derived-induction
+                                    body-blocks
+                                    defs
+                                    latch
+                                    preheader
+                                    id
+                                    inputs
+                                    false)
+                                  (OptBceDerivedInduction.No))
                                   [(OptBceDerivedInduction.No)
                                     (opt-bce-mb-masked-guard
                                       all-blocks
@@ -85195,6 +85472,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -85215,6 +85493,7 @@
         latch
         preheader
         iphi
+        exact?
         seed
         bound
         cell
@@ -85276,6 +85555,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -85296,6 +85576,7 @@
       latch
       preheader
       iphi
+      exact?
       (compiler-opt-global-shared-view seed)
       (compiler-opt-global-shared-view bound)
       cell
@@ -85313,6 +85594,7 @@
                 latch
                 preheader
                 iphi
+                exact?
                 seed
                 bound
                 cell
@@ -85361,6 +85643,7 @@
                     latch
                     preheader
                     iphi
+                    exact?
                     seed
                     bound
                     cell
@@ -85406,6 +85689,7 @@
   [latch : i64]
   [preheader : i64]
   [iphi : i64]
+  [exact? : bool]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [cell : (&mut cell (__tl_dyn-array i64))]
@@ -85428,6 +85712,7 @@
             latch
             preheader
             iphi
+            exact?
             (compiler-opt-global-shared-view seed)
             (compiler-opt-global-shared-view bound)
             cell
@@ -85453,6 +85738,7 @@
                 latch
                 preheader
                 iphi
+                exact?
                 seed
                 bound
                 cell
@@ -85472,6 +85758,7 @@
           latch
           preheader
           iphi
+          exact?
           seed
           bound
           cell
@@ -86282,6 +86569,7 @@
         shape.latch
         shape.preheader
         shape.iphi
+        shape.exact?
         (compiler-opt-global-shared-view first)
         (compiler-opt-global-shared-view limit)
         cell
@@ -86297,6 +86585,27 @@
     [_trace : unit
       (opt-bce-trace-derivation! dr.derived (opt-bce-mb-keep-count dr.keep))]
     (if (or
+      ;; A MONOTONE CURSOR no derivation read. The cursor is recovered only to
+      ;; give its own indexes a range; when none used it (`counter-seen` is set
+      ;; by every derivation that reads the counter's range), the counted shape
+      ;; adds nothing the counter-free one lacks, yet would skip that shape's
+      ;; entry economics. Every open-addressing probe is this case: its `walked`
+      ;; cursor bounds the probe count and indexes nothing, and its masked slot
+      ;; is the counter-free shape's to price. Refusing hands the loop to that
+      ;; shape exactly as before cursors were recovered.
+      (and shape.counted? (not shape.exact?) (not counter-seen))
+      ;; A MONOTONE CURSOR whose clone would keep a check. Partial versioning
+      ;; pays the guard on every entry for a clone that still checks, and that
+      ;; is no longer eligible for the check-free downstream passes (see the
+      ;; bounded-phi note above opt-bce-mb-bounded-value?). An exact counter's
+      ;; trip-range clauses are evidence the loop iterates; a cursor's are not,
+      ;; since it may stall on any trip -- a two-pointer scan advances one
+      ;; cursor at a time. So a cursor is versioned only into a check-free
+      ;; clone, which is where those downstream passes repay the guard.
+      (and
+        shape.counted?
+        (not shape.exact?)
+        (> (opt-bce-mb-keep-count dr.keep) 0))
       ;; No removable check: cloning the loop would only duplicate it. A body
       ;; that duplicates CALL SITES owes more than one -- see
       ;; opt-bce-mb-call-clone-min-derived for the currency and the constant.
@@ -86319,11 +86628,18 @@
             (__tl-project-field shape body-blocks)
             shape.inner
             dr.keep))))
-      ;; Which of the two the clause above was: a body that derived NOTHING is
+      ;; Which of the clauses above it was: a body that derived NOTHING is
       ;; the pass's oldest rejection and reads differently in a census from a
       ;; body that derived checks and still owed more of them.
       (opt-bce-trace-refuse-mb-guard
         (cond
+          [(and shape.counted? (not shape.exact?) (not counter-seen))
+            (opt-bce-reason-cursor-unused)]
+          [(and
+              shape.counted?
+              (not shape.exact?)
+              (> (opt-bce-mb-keep-count dr.keep) 0))
+            (opt-bce-reason-cursor-partial)]
           [(= dr.derived 0) (opt-bce-reason-derived-zero)]
           [(<
               dr.derived
@@ -86486,7 +86802,9 @@
 ;; the finisher documents (step 1 gives `last + 1 <= bound <= MAX` from the
 ;; latch's `< bound`; a larger step gets the explicit
 ;; `wrap(bound + step - 1) >= bound` conjunct), the descending loop by strictly
-;; decreasing TOWARD `first`, which its latch's `>= first` is what tests. The
+;; decreasing TOWARD `first`, which its latch's `>= first` is what tests. A
+;; monotone cursor (OptBceMbShape.exact? false) may stall but never decreases
+;; from `first`, and its top-tested compare bounds it the same way. The
 ;; rule reads only the range's FLOOR, so it is the same rule either way. Hence
 ;; `counter >= first >= 0` at every point of the clone, and:
 ;;   counter >= k  /  counter > k   are TRUE  for k <= 0 / k < 0
@@ -87538,7 +87856,8 @@
       shape.inner
       shape.region?
       shape.counted?
-      shape.nested-entry?)
+      shape.nested-entry?
+      shape.exact?)
     (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
     cell
     frame))
@@ -105633,6 +105952,7 @@
           "optimizer-scratch"
           (arena.raw-handle scratch))
         (arena.destroy-safe! scratch)
+        (opt-round-regions-release!)
         result))))
 
 (define (optimize-function-level1-escaping-with-summaries
@@ -130856,6 +131176,7 @@
           "optimizer-late-scratch"
           (arena.raw-handle scratch))
         (arena.destroy-safe! scratch)
+        (opt-round-regions-release!)
         result))))
 
 ;; --- block-local redundant-load CSE -----------------------------------------

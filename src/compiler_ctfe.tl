@@ -468,10 +468,11 @@
     (= name-id (ctfe-builtin "box-element-type"))
     (= name-id (ctfe-builtin "reference-element-type"))
     (= name-id (ctfe-builtin "type-expr"))
-    (ctfe-builtin-id-any2?
+    (ctfe-builtin-id-any3?
       name-id
       (ctfe-builtin "type-cleanup-owning?")
-      (ctfe-builtin "type-cleanup-function"))))
+      (ctfe-builtin "type-cleanup-function")
+      (ctfe-builtin "type-declared-align"))))
 
 (define (ctfe-builtin-reflection-secondary-id? [name-id : i64]) : bool
   (or
@@ -481,11 +482,12 @@
       (ctfe-builtin "struct-field-type")
       (ctfe-builtin "enum-variant-name")
       (ctfe-builtin "enum-variant-payload-count"))
-    (ctfe-builtin-id-any3?
+    (ctfe-builtin-id-any4?
       name-id
       (ctfe-builtin "enum-variant-payload-type")
       (ctfe-builtin "tuple-element-type")
-      (ctfe-builtin "function-param-type"))))
+      (ctfe-builtin "function-param-type")
+      (ctfe-builtin "struct-field-declared-align"))))
 
 (define (ctfe-builtin-reflection-id? [name-id : i64]) : bool
   (or
@@ -1149,10 +1151,19 @@
   (Struct String String String i64 CtfeReflectCleanup CtfeReflectFieldList i64)
   (Enum String String String i64 CtfeReflectCleanup CtfeReflectVariantList i64))
 
+;; Declared `(:align N)` values of the `(:repr c)` structs that have any, as
+;; flat entries: canonical key, field count, the struct's own value, then one
+;; value per field (0 when absent). Structs without declared alignment have no
+;; entry, so a reflection table pays nothing for them.
+(defstruct CtfeReflectAlignTable
+  (words (__tl_dyn-array i64))
+  (len i64))
+
 (defstruct CtfeReflectInfoList
   (slots (__tl_dyn-array CtfeReflectInfo))
   (index ctfe_key_map.Map)
-  (len i64))
+  (len i64)
+  (aligns CtfeReflectAlignTable))
 
 (defenum CtfeMaybeReflectInfo
   (None)
@@ -1596,7 +1607,76 @@
   (CtfeReflectInfoList
     (__tl_make-array CtfeReflectInfo capacity)
     (ctfe_key_map.with-capacity (+ (* capacity 2) 1))
-    0))
+    0
+    (CtfeReflectAlignTable (__tl_make-array i64 0) 0)))
+
+;; Record a struct's declared alignments under its canonical key.
+(define (ctfe-reflect-info-list-add-aligns
+  [items : CtfeReflectInfoList]
+  [key-id : i64]
+  [repr : (& repr ast.AstStructRepr)]
+  [field-count : i64]) : CtfeReflectInfoList
+  (let
+    [aligns : CtfeReflectAlignTable items.aligns]
+    [start : i64 aligns.len]
+    [needed : i64 (+ start (+ 3 field-count))]
+    [words : (__tl_dyn-array i64)
+      (if (<= needed (array-length aligns.words))
+        aligns.words
+        (let
+          [grown : (__tl_dyn-array i64)
+            (__tl_make-array
+              i64
+              (ctfe-metadata-grown-capacity (array-length aligns.words) needed))]
+          [index : i64 0]
+          (begin
+            (while (< index start)
+              (begin
+                (set! (array-ref grown index) (array-ref aligns.words index))
+                (set! index (+ index 1))))
+            grown)))]
+    [field : i64 0]
+    (begin
+      (set! (array-ref words start) key-id)
+      (set! (array-ref words (+ start 1)) field-count)
+      (set!
+        (array-ref words (+ start 2))
+        (ast.ast-struct-repr-declared-align repr))
+      (while (< field field-count)
+        (begin
+          (set!
+            (array-ref words (+ (+ start 3) field))
+            (ast.ast-struct-repr-field-declared-align repr field))
+          (set! field (+ field 1))))
+      (CtfeReflectInfoList
+        items.slots
+        items.index
+        items.len
+        (CtfeReflectAlignTable words needed)))))
+
+;; The declared alignment of the struct with canonical key `key-id`: its own
+;; value for `field` -1, otherwise that field's. 0 when it declares none.
+(define (ctfe-reflect-declared-align
+  [items : (& items CtfeReflectInfoList)]
+  [key-id : i64]
+  [field : i64]) : i64
+  (let
+    [words : (__tl_dyn-array i64) items.aligns.words]
+    [len : i64 items.aligns.len]
+    [cursor : i64 0]
+    [found : i64 0]
+    (begin
+      (while (< cursor len)
+        (let
+          [count : i64 (array-ref words (+ cursor 1))]
+          (begin
+            (when
+              (and (= (array-ref words cursor) key-id) (< field count))
+              (begin
+                (set! found (array-ref words (+ (+ cursor 3) field)))
+                (set! cursor len)))
+            (set! cursor (+ cursor (+ 3 count))))))
+      found)))
 
 (define (ctfe-reflect-info-list-empty) : CtfeReflectInfoList
   (ctfe-reflect-info-list-with-capacity 0))
@@ -1621,7 +1701,7 @@
             (begin
               (set! (array-ref grown index) (array-ref slots index))
               (set! index (+ index 1))))
-          (CtfeReflectInfoList grown items.index len))))))
+          (CtfeReflectInfoList grown items.index len items.aligns))))))
 
 (define (ctfe-reflect-info-list-contains-key-id?
   [items : CtfeReflectInfoList]
@@ -1641,10 +1721,11 @@
     [n : i64 items.len]
     [slots : (__tl_dyn-array CtfeReflectInfo) items.slots]
     [index : ctfe_key_map.Map items.index]
+    [aligns : CtfeReflectAlignTable items.aligns]
     (begin
       (set! (array-ref slots n) value)
       (ctfe_key_map.insert-ref! (&mut index) key-id n)
-      (CtfeReflectInfoList slots index (+ n 1)))))
+      (CtfeReflectInfoList slots index (+ n 1) aligns))))
 
 ;; Retained as a compatibility hook for callers that delimit metadata builds.
 ;; Each metadata list now owns its id index, so no shared String-derived set is
@@ -2570,6 +2651,7 @@
   [name : i64]
   [cleanup : ast.AstStructCleanup]
   [markers : i64]
+  [repr : (& repr ast.AstStructRepr)]
   [fields : ast.AstFieldDefList]) : CtfeReflectInfoList
   (let
     [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
@@ -2588,9 +2670,16 @@
         (string.copy name-str)
         key-id
         (ctfe-reflect-struct-cleanup (string.copy module) module-id cleanup)
-        (ctfe-reflect-field-list-from-fields fields)
+        (ctfe-reflect-field-list-from-fields
+          (ast.ast-global-shared-view fields))
         markers)]
-    (ctfe-reflect-info-add-names infos info key-id name-str name module)))
+    [with-aligns : CtfeReflectInfoList
+      (if (and
+        (ast.ast-struct-repr-declares-align? repr)
+        (not (ctfe_key_map.contains? (& infos.index) key-id)))
+        (ctfe-reflect-info-list-add-aligns infos key-id repr fields.len)
+        infos)]
+    (ctfe-reflect-info-add-names with-aligns info key-id name-str name module)))
 
 (define (ctfe-reflections-add-enum
   [infos : CtfeReflectInfoList]
@@ -2651,7 +2740,7 @@
                     next-module
                     "<structural-module>"))
                 (set! current-module-id next-module))]
-            [(ast.AstDecl.DefStruct decl-meta name _ cleanup fields)
+            [(ast.AstDecl.DefStruct decl-meta name repr cleanup fields)
               (set!
                 current-infos
                 (ctfe-reflections-add-struct
@@ -2661,8 +2750,15 @@
                   name
                   cleanup
                   (ast.ast-decl-meta-aggregate-markers decl-meta)
+                  (& repr)
                   fields))]
-            [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
+            [(ast.AstDecl.DefStructLifetimes
+                decl-meta
+                name
+                _
+                repr
+                cleanup
+                fields)
               (set!
                 current-infos
                 (ctfe-reflections-add-struct
@@ -2672,6 +2768,7 @@
                   name
                   cleanup
                   (ast.ast-decl-meta-aggregate-markers decl-meta)
+                  (& repr)
                   fields))]
             [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
               (set!
@@ -5140,7 +5237,8 @@
   (or
     (string.eq name "struct-field-count")
     (string.eq name "struct-field-name")
-    (string.eq name "struct-field-type")))
+    (string.eq name "struct-field-type")
+    (string.eq name "struct-field-declared-align")))
 
 ;; The reflection queries answered from a nominal type's declaration metadata.
 (define (ctfe-nominal-reflection
@@ -5156,6 +5254,9 @@
       (cond
         [(string.eq name "type-cleanup-owning?")
           (CtfeBuilt.Ok (CompilerCtfeValue.Bool false))]
+        ;; Only a `(:repr c)` struct can declare an alignment.
+        [(string.eq name "type-declared-align")
+          (CtfeBuilt.Ok (CompilerCtfeValue.I64 0))]
         [(string.eq name "type-cleanup-function")
           (ctfe-reflection-requires name "cleanup-owning type")]
         [(or
@@ -5167,6 +5268,13 @@
         [else (ctfe-reflection-requires name "enum type")])]
     [(CtfeMaybeReflectInfo.Some info)
       (cond
+        [(string.eq name "type-declared-align")
+          (CtfeBuilt.Ok
+            (CompilerCtfeValue.I64
+              (match info
+                [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _ _)
+                  (ctfe-reflect-declared-align (& infos) canonical-id -1)]
+                [(CtfeReflectInfo.Enum _ _ _ _ _ _ _) 0])))]
         [(string.eq name "type-cleanup-owning?")
           (CtfeBuilt.Ok
             (CompilerCtfeValue.Bool
@@ -5192,8 +5300,19 @@
               (ctfe-reflect-info-nominal-name-id info)))]
         [(ctfe-struct-field-reflection? name)
           (match info
-            [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
+            [(CtfeReflectInfo.Struct _ _ _ canonical-id _ fields _)
               (cond
+                [(string.eq name "struct-field-declared-align")
+                  (if (or
+                    (< index 0)
+                    (>= index (ctfe-reflect-field-list-count (& fields))))
+                    (CtfeBuilt.Err (str_cat.str-cat name " index out of range"))
+                    (CtfeBuilt.Ok
+                      (CompilerCtfeValue.I64
+                        (ctfe-reflect-declared-align
+                          (& infos)
+                          canonical-id
+                          index))))]
                 [(string.eq name "struct-field-count")
                   (CtfeBuilt.Ok
                     (CompilerCtfeValue.I64

@@ -559,9 +559,19 @@
   (slots (__tl_dyn-array AstFieldDef))
   (len i64))
 
+;; The declared `(:align N)` values of a `(:repr c)` struct's fields, by field
+;; index (0 for a field that declares none). The array ends at the last field
+;; that declares one, so a struct without field alignment shares one empty
+;; array and the metadata costs nothing per field.
+(defstruct AstFieldAligns
+  (slots (__tl_dyn-array i64)))
+
+;; `(:repr c)` carries the struct's declared `(:align N)` value (0 when absent)
+;; and its fields' declared values. Explicit alignment is C-layout metadata
+;; only.
 (defenum AstStructRepr
   (Default)
-  (C))
+  (C i64 AstFieldAligns))
 
 (defenum AstExternAbi
   (C)
@@ -11026,7 +11036,7 @@
       (AstDecl.DefStruct
         (ast-compaction-remap-decl-meta remap decl-meta)
         name
-        repr
+        (ast-struct-repr-copy repr)
         (ast-compaction-remap-struct-cleanup cleanup)
         (ast-compaction-remap-field-def-list remap fields))]
     [(AstDecl.DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
@@ -11034,7 +11044,7 @@
         (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-lifetime-list-copy lifetimes)
-        repr
+        (ast-struct-repr-copy repr)
         (ast-compaction-remap-struct-cleanup cleanup)
         (ast-compaction-remap-field-def-list remap fields))]
     [(AstDecl.Import decl-meta spec)
@@ -11346,10 +11356,115 @@
           (ast-expr-segment-bases-shared-view segment-bases inner-id))]
       [_ fallback])))
 
-(define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
+(define (ast-struct-repr-c? [repr : (& repr AstStructRepr)]) : bool
   (match repr
-    [(AstStructRepr.C) true]
+    [(AstStructRepr.C _ _) true]
     [(AstStructRepr.Default) false]))
+
+;; The field alignments of a struct without any.
+(define ast-no-field-aligns-storage : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+(define (ast-no-field-aligns) : AstFieldAligns
+  (AstFieldAligns
+    (unsafe
+      (ptr-read (ptr-addr-of ast-no-field-aligns-storage)))))
+
+;; The number of field alignment entries.
+(define (ast-field-aligns-len [fields : (& fields AstFieldAligns)]) : i64
+  (array-length fields.slots))
+
+;; Field `index`'s declared alignment, or 0 past the last declared one.
+(define (ast-field-aligns-ref
+  [fields : (& fields AstFieldAligns)]
+  [index : i64]) : i64
+  (if (< index (array-length fields.slots))
+    (array-ref fields.slots index)
+    0))
+
+;; `(:repr c)` without declared alignment.
+(define (ast-struct-repr-c) : AstStructRepr
+  (AstStructRepr.C 0 (ast-no-field-aligns)))
+
+;; The struct's declared `(:align N)` value, or 0 when it has none.
+(define (ast-struct-repr-declared-align [repr : (& repr AstStructRepr)]) : i64
+  (match repr
+    [(AstStructRepr.C align _) (deref align)]
+    [(AstStructRepr.Default) 0]))
+
+;; Field `index`'s declared `(:align N)` value, or 0 when it has none.
+(define (ast-struct-repr-field-declared-align
+  [repr : (& repr AstStructRepr)]
+  [index : i64]) : i64
+  (match repr
+    [(AstStructRepr.C _ fields) (ast-field-aligns-ref fields index)]
+    [(AstStructRepr.Default) 0]))
+
+;; Whether the struct or any of its fields declares an alignment.
+(define (ast-struct-repr-declares-align? [repr : (& repr AstStructRepr)]) : bool
+  (match repr
+    [(AstStructRepr.C align fields)
+      (or (> (deref align) 0) (> (ast-field-aligns-len fields) 0))]
+    [(AstStructRepr.Default) false]))
+
+;; The first `count` field alignments of `fields` in fresh storage, padded
+;; with absent entries.
+(define (ast-field-aligns-copy
+  [fields : (& fields AstFieldAligns)]
+  [count : i64]) : AstFieldAligns
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref out index) (ast-field-aligns-ref fields index))
+          (set! index (+ index 1))))
+      (AstFieldAligns out))))
+
+;; `repr` with field `index` declaring `align`. The array grows only for a
+;; nonzero `align`, so it never ends in an absent entry.
+(define (ast-struct-repr-with-field-align
+  [repr : AstStructRepr]
+  [index : i64]
+  [align : i64]) : AstStructRepr
+  (if (= align 0)
+    repr
+    (match repr
+      [(AstStructRepr.C struct-align fields)
+        (let
+          [out : AstFieldAligns (ast-field-aligns-copy (& fields) (+ index 1))]
+          (begin
+            (set! (array-ref out.slots index) align)
+            (AstStructRepr.C struct-align out)))]
+      [(AstStructRepr.Default) AstStructRepr.Default])))
+
+;; A copy whose field array owns fresh storage, for moving a declaration into
+;; another arena.
+(define (ast-struct-repr-copy [repr : AstStructRepr]) : AstStructRepr
+  (match repr
+    [(AstStructRepr.C align fields)
+      (AstStructRepr.C
+        align
+        (if (= (ast-field-aligns-len (& fields)) 0)
+          (ast-no-field-aligns)
+          (ast-field-aligns-copy (& fields) (ast-field-aligns-len (& fields)))))]
+    [(AstStructRepr.Default) AstStructRepr.Default]))
+
+;; The shared cap on a declared `(:align N)` value: one page on both targets.
+(define ast-declared-align-max : i64
+  4096)
+
+;; A literal `(:align N)` value: a power of two from 1 through the cap.
+(define (ast-declared-align-valid? [align : i64]) : bool
+  (and
+    (> align 0)
+    (<= align ast-declared-align-max)
+    (= (bit-and align (- align 1)) 0)))
+
+;; A stored declared alignment: absent (0) or a valid literal value.
+(define (ast-declared-align-encodable? [align : i64]) : bool
+  (or (= align 0) (ast-declared-align-valid? align)))
 
 (define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
   (match abi

@@ -482,6 +482,107 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-struct-repr-roundtrip-ok? [repr : ast.AstStructRepr]) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (surface_ast.surface-ast-write-struct-repr!
+          (&mut out)
+          (ast.ast-global-shared-view repr))
+        (let
+          [reader : codec.SurfaceAstReader
+            (codec.surface-ast-reader-new
+              (byte_buf_core.byte-buf-builder-finish-array (& out))
+              structural-session
+              (__tl_make-array i64 0))]
+          [decoded : ast.AstStructRepr
+            (surface_ast.surface-ast-read-struct-repr! (&mut reader))]
+          (and
+            (codec.surface-ast-reader-valid? (& reader))
+            (= (ast.ast-struct-repr-c? decoded) (ast.ast-struct-repr-c? repr))
+            (=
+              (ast.ast-struct-repr-declared-align decoded)
+              (ast.ast-struct-repr-declared-align repr))
+            (=
+              (ast.ast-struct-repr-field-declared-align decoded 0)
+              (ast.ast-struct-repr-field-declared-align repr 0))
+            (=
+              (ast.ast-struct-repr-field-declared-align decoded 2)
+              (ast.ast-struct-repr-field-declared-align repr 2))))))))
+
+;; A decoded declared alignment must be absent (0) or a power of two within
+;; the parser's range, and a field list must end at a declared value; anything
+;; else fails the reader instead of reaching layout.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-declared-align-rejected?
+    [tag : i64]
+    [align : i64]
+    [field-count : i64]
+    [field-align : i64]) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (when (>= tag 0) (codec.surface-ast-write-i64! (&mut out) tag))
+        (codec.surface-ast-write-i64! (&mut out) align)
+        (when
+          (>= tag 0)
+          (begin
+            (codec.surface-ast-write-i64! (&mut out) field-count)
+            (when
+              (> field-count 0)
+              (codec.surface-ast-write-i64! (&mut out) field-align))))
+        (let
+          [reader : codec.SurfaceAstReader
+            (codec.surface-ast-reader-new
+              (byte_buf_core.byte-buf-builder-finish-array (& out))
+              structural-session
+              (__tl_make-array i64 0))]
+          (begin
+            (if (>= tag 0)
+              (surface_ast.surface-ast-read-struct-repr! (&mut reader))
+              (begin
+                (surface_ast.surface-ast-read-declared-align! (&mut reader))
+                ast.AstStructRepr.Default))
+            (not (codec.surface-ast-reader-valid? (& reader)))))))))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-declared-align-tests-ok?) : bool
+    (and
+      (surface-ast-struct-repr-roundtrip-ok? ast.AstStructRepr.Default)
+      (surface-ast-struct-repr-roundtrip-ok? (ast.ast-struct-repr-c))
+      (surface-ast-struct-repr-roundtrip-ok?
+        (ast.AstStructRepr.C 1 (ast.ast-no-field-aligns)))
+      (surface-ast-struct-repr-roundtrip-ok?
+        (ast.AstStructRepr.C 4096 (ast.ast-no-field-aligns)))
+      (surface-ast-struct-repr-roundtrip-ok?
+        (ast.ast-struct-repr-with-field-align
+          (ast.AstStructRepr.C 32 (ast.ast-no-field-aligns))
+          2
+          16))
+      (surface-ast-declared-align-rejected? 1 24 0 0)
+      (surface-ast-declared-align-rejected? 1 8192 0 0)
+      (surface-ast-declared-align-rejected? 1 -8 0 0)
+      ;; A field value outside the range, and a list ending in an absent
+      ;; entry, which the parser never produces.
+      (surface-ast-declared-align-rejected? 1 0 1 3)
+      (surface-ast-declared-align-rejected? 1 0 1 0)
+      (surface-ast-declared-align-rejected? -1 3 0 0)
+      (surface-ast-declared-align-rejected? -1 -1 0 0))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-decl-meta-tests-ok?) : bool
     (and
       (surface-ast-decl-meta-roundtrip-ok?
@@ -498,6 +599,7 @@
         true
         1)
       (surface-ast-decl-meta-invalid-flags-ok?)
+      (surface-ast-declared-align-tests-ok?)
       (surface-ast-old-schema-rejected?)
       (surface-ast-c-function-reference-decode-ok? 1)
       (surface-ast-c-function-reference-decode-ok? 0)
@@ -959,7 +1061,10 @@
           (ast.ast-decl-with-aggregate-markers
             (ast.ast-decl-def-struct-id
               struct-id
-              ast.AstStructRepr.Default
+              (ast.ast-struct-repr-with-field-align
+                (ast.AstStructRepr.C 16 (ast.ast-no-field-aligns))
+                0
+                8)
               ast.AstStructCleanup.No
               (ast.ast-field-def-cons
                 (ast.AstFieldDef.Def
@@ -1317,6 +1422,26 @@
                                     [decl
                                       (ast.ast-decl-list-ref hydration.decls 3)]
                                     (ast.ast-decl-must-use? decl))
+                                  (match (ast.ast-decl-list-ref
+                                    hydration.decls
+                                    3)
+                                    [(ast.AstDecl.DefStruct
+                                        _
+                                        _
+                                        hydrated-repr
+                                        _
+                                        _)
+                                      (and
+                                        (=
+                                          (ast.ast-struct-repr-declared-align
+                                            hydrated-repr)
+                                          16)
+                                        (=
+                                          (ast.ast-struct-repr-field-declared-align
+                                            hydrated-repr
+                                            0)
+                                          8))]
+                                    [_ false])
                                   (surface-ast-hydrated-tuple-set-ok?
                                     (owned_view.compiler-owned-shared-view
                                       hydration.pools))

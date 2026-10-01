@@ -21714,18 +21714,11 @@
             (+ index 1)
             rest-types))))))
 
-(define (lower-field-info-from-list
-  [ctx : tc_core.TcContext]
-  [fields : ast.AstFieldDefList]
-  [field-name : String]
-  [cursor : i64]) : ResultLowerFieldInfo
-  (lower-field-info-from-list-at ctx (& fields) field-name cursor 0))
-
 (define (lower-field-info-from-list-at
   [ctx : tc_core.TcContext]
+  [struct-id : i64]
   [fields : (& fields ast.AstFieldDefList)]
   [field-name : String]
-  [cursor : i64]
   [index : i64]) : ResultLowerFieldInfo
   (if (>= index fields.len)
     (ResultLowerFieldInfo.Err
@@ -21737,40 +21730,30 @@
       index
       (ast.ast-field-def-fallback))
       [(ast.AstFieldDef.Def name ty _)
-        (let
-          [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
-          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-          (if (string.eq
-            (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
-            field-name)
-            (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
-            (lower-field-info-from-list-at
-              ctx
-              fields
-              field-name
-              (+ offset (lower-type-size ctx resolved))
-              (+ index 1))))])))
+        (if (string.eq
+          (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
+          field-name)
+          (match (tc_core.tc-inline-aggregate-layout-for-id ctx struct-id)
+            [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
+              (ResultLowerFieldInfo.Ok
+                (LowerFieldInfo.Info
+                  (tc_core.tc-inline-aggregate-layout-field-offset-id
+                    layout
+                    (ci.intern-syntax-id-value name))
+                  (tc_core.tc-resolve-type ctx ty)))]
+            [(tc_core.ResultTcInlineAggregateLayout.Err message)
+              (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))])
+          (lower-field-info-from-list-at
+            ctx
+            struct-id
+            fields
+            field-name
+            (+ index 1)))])))
 
-(define (lower-field-info-from-repr-c-list
-  [fields : tc_core.TcReprCFieldLayoutList]
-  [field-name : String]) : ResultLowerFieldInfo
-  (lower-field-info-from-repr-c-list-at fields field-name 0))
-
-(define (lower-field-info-from-repr-c-list-at
-  [fields : tc_core.TcReprCFieldLayoutList]
-  [field-name : String]
-  [index : i64]) : ResultLowerFieldInfo
-  (if (>= index (tc_core.tc-repr-c-field-layout-list-count fields))
-    (ResultLowerFieldInfo.Err
-      (box
-        (lower-diagnostic
-          (str_cat.str-cat "lower: unknown struct field " field-name))))
-    (match (tc_core.tc-repr-c-field-layout-list-ref fields index)
-      [(tc_core.TcReprCFieldLayout.Field name ty offset)
-        (if (string.eq name field-name)
-          (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset ty))
-          (lower-field-info-from-repr-c-list-at fields field-name (+ index 1)))])))
-
+;; A struct field's offset, from the one inline aggregate layout that also
+;; answers `offset-of` (default and `(:repr c)` structs alike, including
+;; declared alignment), and its declared type resolved afresh: the cached
+;; layout's types are not retained beyond the cache.
 (define (lower-struct-field-info
   [ctx : tc_core.TcContext]
   [struct-id : i64]
@@ -21779,61 +21762,16 @@
   (let
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id ctx struct-id)]
-    (if (lower-struct-repr-c-id? field-ctx struct-id)
-      (match (tc_core.tc-repr-c-struct-layout-id
-        field-ctx
-        struct-name
-        struct-id)
-        [(tc_core.ResultTcReprCLayout.Ok layout)
-          (lower-field-info-from-repr-c-list
-            (tc_core.tc-repr-c-layout-fields layout)
-            field-name)]
-        [(tc_core.ResultTcReprCLayout.Err message)
-          (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))])
-      (match (lower-struct-fields-id field-ctx struct-id struct-name)
-        [(parser.ResultAstFieldDefList.Ok fields)
-          (lower-field-info-from-list field-ctx fields field-name 0)]
-        [(parser.ResultAstFieldDefList.Err message)
-          (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))]))))
-
-(define (lower-struct-inline-field-info
-  [ctx : tc_core.TcContext]
-  [struct-id : i64]
-  [struct-name : String]
-  [field-name-id : i64]
-  [field-name : String]) : ResultLowerFieldInfo
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id ctx struct-id)]
-    (match (lower-struct-field-info
-      field-ctx
-      struct-id
-      struct-name
-      (lower-global-shared-view field-name))
-      [(ResultLowerFieldInfo.Ok info)
-        (match info
-          [(LowerFieldInfo.Info _ field-ty)
-            (match (tc_core.tc-inline-aggregate-layout-for-id
-              field-ctx
-              struct-id)
-              [(tc_core.ResultTcInlineAggregateLayout.Ok layout)
-                (let
-                  [offset : i64
-                    (tc_core.tc-inline-aggregate-layout-field-offset-id
-                      layout
-                      field-name-id)]
-                  (if (< offset 0)
-                    (ResultLowerFieldInfo.Err
-                      (box
-                        (lower-diagnostic
-                          (str_cat.str-cat
-                            "lower: inline struct layout missing field "
-                            field-name))))
-                    (ResultLowerFieldInfo.Ok
-                      (LowerFieldInfo.Info offset field-ty))))]
-              [(tc_core.ResultTcInlineAggregateLayout.Err message)
-                (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))])])]
-      [(ResultLowerFieldInfo.Err message) (ResultLowerFieldInfo.Err message)])))
+    (match (lower-struct-fields-id field-ctx struct-id struct-name)
+      [(parser.ResultAstFieldDefList.Ok fields)
+        (lower-field-info-from-list-at
+          field-ctx
+          struct-id
+          (& fields)
+          field-name
+          0)]
+      [(parser.ResultAstFieldDefList.Err message)
+        (ResultLowerFieldInfo.Err (box (lower-diagnostic message)))])))
 
 (define (lower-var-id
   [state : LowerState]
@@ -30786,18 +30724,11 @@
   [receiver-value : ir.CompilerIrValue]
   [struct-id : i64]
   [struct-name : String]
-  [field-id : i64]
   [field : String]
   [result-ty : ast.AstType]) : ResultLowerExpr
   (let
     [info : LowerFieldInfo
-      (try
-        (lower-struct-inline-field-info
-          ctx
-          struct-id
-          struct-name
-          field-id
-          field))]
+      (try (lower-struct-field-info ctx struct-id struct-name field))]
     (match info
       [(LowerFieldInfo.Info offset field-ty)
         ;; When the receiver is a register-resident struct, its value is
@@ -30902,7 +30833,6 @@
   [referent-ty : ast.AstType]
   [struct-id : i64]
   [struct-name : String]
-  [field-id : i64]
   [field : String]
   [result-ty : ast.AstType]) : ResultLowerExpr
   (match (if (lower-type-register-resident?
@@ -30917,7 +30847,6 @@
         value
         struct-id
         struct-name
-        field-id
         field
         result-ty)]))
 
@@ -30949,7 +30878,6 @@
                   receiver-value
                   struct-name
                   (tc_core.tc-nominal-name-id-display struct-name)
-                  field
                   field-name
                   result-ty)]
               [(ast.AstType.StructArgs struct-name _)
@@ -30959,7 +30887,6 @@
                   receiver-value
                   struct-name
                   (tc_core.tc-nominal-name-id-display struct-name)
-                  field
                   field-name
                   result-ty)]
               [(ast.AstType.Ref _ referent-ty)
@@ -30975,7 +30902,6 @@
                       (tc_core.tc-context-type-get ctx referent-ty)
                       struct-name
                       (tc_core.tc-nominal-name-id-display struct-name)
-                      field
                       field-name
                       result-ty)]
                   [(ast.AstType.StructArgs struct-name _)
@@ -30986,7 +30912,6 @@
                       (tc_core.tc-context-type-get ctx referent-ty)
                       struct-name
                       (tc_core.tc-nominal-name-id-display struct-name)
-                      field
                       field-name
                       result-ty)]
                   [_
@@ -31009,7 +30934,6 @@
                       (tc_core.tc-context-type-get ctx referent-ty)
                       struct-name
                       (tc_core.tc-nominal-name-id-display struct-name)
-                      field
                       field-name
                       result-ty)]
                   [(ast.AstType.StructArgs struct-name _)
@@ -31020,7 +30944,6 @@
                       (tc_core.tc-context-type-get ctx referent-ty)
                       struct-name
                       (tc_core.tc-nominal-name-id-display struct-name)
-                      field
                       field-name
                       result-ty)]
                   [_
@@ -31265,8 +31188,8 @@
 
 ;; Locate the byte offset and resolved type of tuple element `target` within the
 ;; element-type list, laying fields out exactly like a struct over those types
-;; (each field aligned to its own alignment). Mirrors `lower-field-info-from-list`
-;; but indexes by position rather than name.
+;; (each field aligned to its own alignment), as the inline aggregate layout lays
+;; out struct fields, but indexed by position rather than name.
 (define (lower-tuple-elem-info
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
@@ -39525,10 +39448,6 @@
                 (let
                   [referent : ast.AstType
                     (tc_core.tc-context-type-get ctx referent-ty)]
-                  [interns : ci.InternCompatState
-                    (compiler-lower-state-interns (lower-state-owner state))]
-                  [slots-id : i64
-                    (ci.intern-compat-state-intern (&mut interns) "slots")]
                   (match (tc_core.tc-type-strip-region
                     (tc_core.tc-resolve-type
                       ctx
@@ -39541,7 +39460,6 @@
                         referent
                         struct-name
                         (tc_core.tc-nominal-name-id-display struct-name)
-                        slots-id
                         "slots"
                         array-ty)]
                     [(ast.AstType.StructArgs struct-name _)
@@ -39552,7 +39470,6 @@
                         referent
                         struct-name
                         (tc_core.tc-nominal-name-id-display struct-name)
-                        slots-id
                         "slots"
                         array-ty)]
                     [_
@@ -43456,7 +43373,6 @@
               (lower-struct-type-name-id-or ty -1))
             (lower-struct-type-name-or-empty
               (tc_core.tc-resolve-type ctx arena-ty))
-            cbi.compiler-builtin-id-fix-handle
             "handle"
             (ast.AstType.I64))
           (ResultLowerExpr.Err
@@ -63974,7 +63890,6 @@
   [base : ir.CompilerIrValue]
   [struct-id : i64]
   [struct-name : String]
-  [field-name-id : i64]
   [field-name : String]
   [pattern : ast.AstPattern]
   [field-ty : ast.AstType]) : ResultLowerEnv
@@ -63987,7 +63902,6 @@
         base
         struct-id
         struct-name
-        field-name-id
         field-name
         (lower-global-shared-view field-ty))
         [(ResultLowerExpr.Ok lowered)
@@ -64012,7 +63926,6 @@
         base
         struct-id
         struct-name
-        field-name-id
         field-name
         (lower-global-shared-view field-ty))
         [(ResultLowerExpr.Ok lowered)
@@ -64037,7 +63950,6 @@
         base
         struct-id
         struct-name
-        field-name-id
         field-name
         (lower-global-shared-view field-ty))
         [(ResultLowerExpr.Ok lowered)
@@ -64060,7 +63972,6 @@
         base
         struct-id
         struct-name
-        field-name-id
         field-name
         (lower-global-shared-view field-ty))
         [(ResultLowerExpr.Ok lowered)
@@ -64087,7 +63998,6 @@
           base
           struct-id
           struct-name
-          field-name-id
           field-name
           (lower-global-shared-view field-ty))
           [(ResultLowerExpr.Ok lowered)
@@ -64182,7 +64092,6 @@
                 (lower-global-shared-view base)
                 struct-id
                 (lower-global-shared-view struct-name)
-                (ci.intern-syntax-id-value field-name)
                 (tc_core.tc-env-key-name-text
                   (ci.intern-syntax-id-value field-name))
                 pattern

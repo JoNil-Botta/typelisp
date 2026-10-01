@@ -1414,10 +1414,6 @@
   (Ok)
   (Err String))
 
-(defenum ResultAstFieldDef
-  (Ok ast.AstFieldDef)
-  (Err String))
-
 (defenum ResultAstFieldDefList
   (Ok ast.AstFieldDefList)
   (Err String))
@@ -1428,6 +1424,15 @@
 
 (defenum ResultAstStructRepr
   (Ok ast.AstStructRepr)
+  (Err String))
+
+(defenum ResultAstDeclaredAlign
+  (Ok i64)
+  (Err String))
+
+;; A parsed field and its declared `(:align N)` value (0 when absent).
+(defenum ResultAstFieldParts
+  (Ok ast.AstFieldDef i64)
   (Err String))
 
 (defenum ResultAstStructCleanup
@@ -5351,52 +5356,143 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
-  [allow-cleanup : bool]) : ResultAstFieldDef
+  [allow-cleanup : bool]
+  [allow-align : bool]) : ResultAstFieldParts
   (match (reader.sexpr-view s)
     [(reader.SexprView.Cons name-node tail)
       (match (reader.sexpr-view name-node)
         [(reader.SexprView.Sym name)
           (match (reader.sexpr-view tail)
             [(reader.SexprView.Cons ty rest)
-              (match (reader.sexpr-view rest)
-                [(reader.SexprView.Nil)
-                  (match (parse-ast-type dispatch pools ty)
-                    [(ResultAstType.Ok parsed-ty)
-                      (ResultAstFieldDef.Ok
-                        (ast.ast-field-def-id
-                          name
-                          parsed-ty
-                          (ast.AstFieldCleanup.No)))]
-                    [(ResultAstType.Err message)
-                      (ResultAstFieldDef.Err message)])]
-                [(reader.SexprView.Cons cleanup-meta extra)
-                  (match (reader.sexpr-view extra)
-                    [(reader.SexprView.Nil)
-                      (if allow-cleanup
-                        (match (parse-ast-type dispatch pools ty)
-                          [(ResultAstType.Ok parsed-ty)
-                            (match (parse-ast-field-cleanup
-                              dispatch
-                              cleanup-meta)
-                              [(ResultAstFieldCleanup.Ok parsed-cleanup)
-                                (ResultAstFieldDef.Ok
-                                  (ast.ast-field-def-id
-                                    name
-                                    parsed-ty
-                                    parsed-cleanup))]
-                              [(ResultAstFieldCleanup.Err message)
-                                (ResultAstFieldDef.Err message)])]
-                          [(ResultAstType.Err message)
-                            (ResultAstFieldDef.Err message)])
-                        (ResultAstFieldDef.Err
-                          "parse: field cleanup metadata requires struct :cleanup metadata"))]
-                    [_
-                      (ResultAstFieldDef.Err
-                        "parse: duplicate field cleanup metadata")])]
-                [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
-            [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
-        [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
-    [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
+              (match (parse-ast-type dispatch pools ty)
+                [(ResultAstType.Ok parsed-ty)
+                  (parse-ast-field-metadata
+                    dispatch
+                    name
+                    parsed-ty
+                    rest
+                    allow-cleanup
+                    allow-align
+                    (ast.AstFieldCleanup.No)
+                    false
+                    0)]
+                [(ResultAstType.Err message) (ResultAstFieldParts.Err message)])]
+            [_ (ResultAstFieldParts.Err "parse: malformed field definition")])]
+        [_ (ResultAstFieldParts.Err "parse: malformed field definition")])]
+    [_ (ResultAstFieldParts.Err "parse: malformed field definition")]))
+
+;; A field's metadata forms after its type: at most one cleanup form (only in
+;; a `:cleanup` struct) and at most one `(:align N)` (only in a `(:repr c)`
+;; struct). The two slots are independent, in either order.
+(define (parse-ast-field-metadata
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : ci.InternSyntaxId]
+  [ty : ast.AstType]
+  [items : reader.SpannedSexpr]
+  [allow-cleanup : bool]
+  [allow-align : bool]
+  [cleanup : ast.AstFieldCleanup]
+  [seen-cleanup : bool]
+  [align : i64]) : ResultAstFieldParts
+  (match (reader.sexpr-view items)
+    [(reader.SexprView.Nil)
+      (ResultAstFieldParts.Ok (ast.ast-field-def-id name ty cleanup) align)]
+    [(reader.SexprView.Cons meta rest)
+      (if (parse-ast-align-metadata? (compiler-parse-place-shared-view meta))
+        (cond
+          [(not allow-align)
+            (parse-ast-field-align-error
+              dispatch
+              meta
+              "parse: field :align metadata requires struct (:repr c) metadata")]
+          [(> align 0)
+            (parse-ast-field-align-error
+              dispatch
+              meta
+              "parse: duplicate field :align metadata")]
+          [else
+            (match (parse-ast-declared-align-form
+              (compiler-parse-place-shared-view meta)
+              "parse: malformed field :align metadata")
+              [(ResultAstDeclaredAlign.Ok parsed-align)
+                (parse-ast-field-metadata
+                  dispatch
+                  name
+                  ty
+                  rest
+                  allow-cleanup
+                  allow-align
+                  cleanup
+                  seen-cleanup
+                  parsed-align)]
+              [(ResultAstDeclaredAlign.Err message)
+                (parse-ast-field-align-error dispatch meta message)])])
+        (cond
+          [(not allow-cleanup)
+            (ResultAstFieldParts.Err
+              "parse: field cleanup metadata requires struct :cleanup metadata")]
+          [seen-cleanup
+            (ResultAstFieldParts.Err "parse: duplicate field cleanup metadata")]
+          [else
+            (match (parse-ast-field-cleanup dispatch meta)
+              [(ResultAstFieldCleanup.Ok parsed-cleanup)
+                (parse-ast-field-metadata
+                  dispatch
+                  name
+                  ty
+                  rest
+                  allow-cleanup
+                  allow-align
+                  parsed-cleanup
+                  true
+                  align)]
+              [(ResultAstFieldCleanup.Err message)
+                (ResultAstFieldParts.Err message)])]))]
+    [_ (ResultAstFieldParts.Err "parse: malformed field definition")]))
+
+;; A field-level `(:align N)` error is located at the offending form.
+(define (parse-ast-field-align-error
+  [dispatch : sym_i64_env.SymI64Env]
+  [form : reader.SpannedSexpr]
+  [message : String]) : ResultAstFieldParts
+  (begin
+    (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span form))
+    (ResultAstFieldParts.Err message)))
+
+;; Whether `meta` is an `(:align ...)` form.
+(define (parse-ast-align-metadata? [meta : reader.SpannedSexpr]) : bool
+  (match (reader.sexpr-view meta)
+    [(reader.SexprView.Cons key-node _)
+      (match (reader.sexpr-view key-node)
+        [(reader.SexprView.Sym key)
+          (=
+            (ci.intern-syntax-id-value key)
+            (cbi.compiler-builtin-ctfe ":align"))]
+        [_ false])]
+    [_ false]))
+
+;; `(:align N)` takes one integer literal, a power of two from 1 through the
+;; shared cap. Whether it weakens the natural alignment is a layout question
+;; that typecheck answers once every field type is known.
+(define (parse-ast-declared-align-form
+  [form : reader.SpannedSexpr]
+  [malformed : String]) : ResultAstDeclaredAlign
+  (match (reader.sexpr-view form)
+    [(reader.SexprView.Cons _ tail)
+      (match (reader.sexpr-view tail)
+        [(reader.SexprView.Cons value-node end)
+          (match (reader.sexpr-view end)
+            [(reader.SexprView.Nil)
+              (match (reader.sexpr-view value-node)
+                [(reader.SexprView.Int value _)
+                  (if (ast.ast-declared-align-valid? value)
+                    (ResultAstDeclaredAlign.Ok value)
+                    (ResultAstDeclaredAlign.Err
+                      "parse: :align value must be a power of two from 1 through 4096"))]
+                [_ (ResultAstDeclaredAlign.Err malformed)])]
+            [_ (ResultAstDeclaredAlign.Err malformed)])]
+        [_ (ResultAstDeclaredAlign.Err malformed)])]
+    [_ (ResultAstDeclaredAlign.Err malformed)]))
 
 (define (compiler-parse-metadata-key?
   [dispatch : sym_i64_env.SymI64Env]
@@ -5429,7 +5525,7 @@
               (if (=
                 (ci.intern-syntax-id-value name)
                 cbi.compiler-builtin-id-fix-c)
-                (ResultAstStructRepr.Ok (ast.AstStructRepr.C))
+                (ResultAstStructRepr.Ok (ast.ast-struct-repr-c))
                 (if (=
                   (ci.intern-syntax-id-value name)
                   (cbi.compiler-builtin-ctfe "packed"))
@@ -5497,6 +5593,15 @@
           [_ unit]))]
     [_ unit]))
 
+;; A struct-level `(:align N)` error is located at the offending form.
+(define (parse-ast-defstruct-align-error
+  [dispatch : sym_i64_env.SymI64Env]
+  [form : reader.SpannedSexpr]
+  [message : String]) : ResultAstStructDefParts
+  (begin
+    (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span form))
+    (ResultAstStructDefParts.Err message)))
+
 (define (parse-ast-defstruct-field-item
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -5506,45 +5611,87 @@
   [repr : ast.AstStructRepr]
   [cleanup : ast.AstStructCleanup]
   [markers : i64]
+  [align : i64]
   [fields : ast.AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]) : ResultAstStructDefParts
-  (match (parse-ast-field-def
-    dispatch
-    pools
-    (compiler-parse-place-shared-view head)
-    (ast.ast-struct-cleanup? cleanup))
-    [(ResultAstFieldDef.Ok parsed-field)
-      (let
-        [next-fields : ast.AstFieldDefList fields]
-        (begin
-          (match (reader.spanned-sexpr-view
-            (compiler-parse-place-shared-view head))
-            [(reader.SpannedSexprView.BracketList items _)
-              (compiler-parse-semantic-field-definition-origins! dispatch items)]
-            [(reader.SpannedSexprView.Cons _ _ _)
-              (compiler-parse-semantic-field-definition-origins!
+  (match (parse-ast-defstruct-resolve-repr repr align)
+    [(ResultAstStructRepr.Ok field-repr)
+      (match (parse-ast-field-def
+        dispatch
+        pools
+        (compiler-parse-place-shared-view head)
+        (ast.ast-struct-cleanup? cleanup)
+        (ast.ast-struct-repr-c? (& field-repr)))
+        [(ResultAstFieldParts.Ok parsed-field field-align)
+          (let
+            [field-index : i64 fields.len]
+            [next-fields : ast.AstFieldDefList fields]
+            (begin
+              (match (reader.spanned-sexpr-view
+                (compiler-parse-place-shared-view head))
+                [(reader.SpannedSexprView.BracketList items _)
+                  (compiler-parse-semantic-field-definition-origins!
+                    dispatch
+                    items)]
+                [(reader.SpannedSexprView.Cons _ _ _)
+                  (compiler-parse-semantic-field-definition-origins!
+                    dispatch
+                    (compiler-parse-place-shared-view head))]
+                [_ unit])
+              (ast.ast-field-def-list-push (&mut next-fields) parsed-field)
+              (reader.sp-node-push
+                (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
+              (parse-ast-defstruct-items
                 dispatch
-                (compiler-parse-place-shared-view head))]
-            [_ unit])
-          (ast.ast-field-def-list-push (&mut next-fields) parsed-field)
-          (reader.sp-node-push
-            (reader.spanned-sexpr-empty (reader.spanned-sexpr-span head)))
-          (parse-ast-defstruct-items
-            dispatch
-            pools
-            tail
-            lifetimes
-            repr
-            cleanup
-            markers
-            next-fields
-            seen-lifetimes
-            seen-repr
-            seen-cleanup
-            true)))]
-    [(ResultAstFieldDef.Err message) (ResultAstStructDefParts.Err message)]))
+                pools
+                tail
+                lifetimes
+                (ast.ast-struct-repr-with-field-align
+                  field-repr
+                  field-index
+                  field-align)
+                cleanup
+                markers
+                0
+                next-fields
+                seen-lifetimes
+                seen-repr
+                seen-cleanup
+                true)))]
+        [(ResultAstFieldParts.Err message)
+          (ResultAstStructDefParts.Err message)])]
+    [(ResultAstStructRepr.Err message) (ResultAstStructDefParts.Err message)]))
+
+;; Struct metadata is order-independent, so a struct-level `(:align N)` joins
+;; `(:repr c)` only once every metadata form before the fields has been read.
+;; A pending alignment of 0 leaves the repr unchanged.
+(define (parse-ast-defstruct-align-needs-repr-c) : String
+  "parse: defstruct :align metadata requires (:repr c) metadata")
+
+;; Note the span of the first `(:align ...)` item before the fields.
+(define (parse-ast-defstruct-note-align-form!
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view items)
+    [(reader.SpannedSexprView.Cons head tail _)
+      (if (parse-ast-align-metadata? (compiler-parse-place-shared-view head))
+        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span head))
+        (parse-ast-defstruct-note-align-form! dispatch tail))]
+    [_ unit]))
+
+(define (parse-ast-defstruct-resolve-repr
+  [repr : ast.AstStructRepr]
+  [align : i64]) : ResultAstStructRepr
+  (cond
+    [(= align 0) (ResultAstStructRepr.Ok repr)]
+    [(ast.ast-struct-repr-c? (& repr))
+      (ResultAstStructRepr.Ok
+        (match repr
+          [(ast.AstStructRepr.C _ fields) (ast.AstStructRepr.C align fields)]
+          [(ast.AstStructRepr.Default) ast.AstStructRepr.Default]))]
+    [else (ResultAstStructRepr.Err (parse-ast-defstruct-align-needs-repr-c))]))
 
 (define (parse-ast-defstruct-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -5554,6 +5701,7 @@
   [repr : ast.AstStructRepr]
   [cleanup : ast.AstStructCleanup]
   [markers : i64]
+  [align : i64]
   [fields : ast.AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
@@ -5561,7 +5709,16 @@
   [seen-field : bool]) : ResultAstStructDefParts
   (match (reader.spanned-sexpr-view items)
     [(reader.SpannedSexprView.Nil _)
-      (ResultAstStructDefParts.Ok lifetimes repr cleanup markers fields)]
+      (match (parse-ast-defstruct-resolve-repr repr align)
+        [(ResultAstStructRepr.Ok final-repr)
+          (ResultAstStructDefParts.Ok
+            lifetimes
+            final-repr
+            cleanup
+            markers
+            fields)]
+        [(ResultAstStructRepr.Err message)
+          (ResultAstStructDefParts.Err message)])]
     [(reader.SpannedSexprView.Cons head tail _)
       (match (reader.sexpr-view (compiler-parse-place-shared-view head))
         [(reader.SexprView.Cons key-node after-key)
@@ -5590,6 +5747,7 @@
                             repr
                             cleanup
                             markers
+                            align
                             fields
                             true
                             seen-repr
@@ -5609,7 +5767,7 @@
                       (match (parse-ast-defstruct-repr-tail dispatch after-key)
                         [(ResultAstStructRepr.Ok next-repr)
                           (if (and
-                            (ast.ast-struct-repr-c? next-repr)
+                            (ast.ast-struct-repr-c? (& next-repr))
                             (ast.ast-struct-cleanup? cleanup))
                             (ResultAstStructDefParts.Err
                               "parse: defstruct cannot combine :repr c with :cleanup metadata")
@@ -5621,6 +5779,7 @@
                               next-repr
                               cleanup
                               markers
+                              align
                               fields
                               seen-lifetimes
                               true
@@ -5639,7 +5798,7 @@
                         "parse: duplicate defstruct :cleanup metadata")
                       (match (parse-ast-defstruct-cleanup-tail after-key)
                         [(ResultAstStructCleanup.Ok next-cleanup)
-                          (if (ast.ast-struct-repr-c? repr)
+                          (if (ast.ast-struct-repr-c? (& repr))
                             (ResultAstStructDefParts.Err
                               "parse: defstruct cannot combine :repr c with :cleanup metadata")
                             (parse-ast-defstruct-items
@@ -5650,6 +5809,7 @@
                               repr
                               next-cleanup
                               markers
+                              align
                               fields
                               seen-lifetimes
                               seen-repr
@@ -5657,6 +5817,44 @@
                               false))]
                         [(ResultAstStructCleanup.Err message)
                           (ResultAstStructDefParts.Err message)])))]
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe ":align"))
+                  (cond
+                    [seen-field
+                      (parse-ast-defstruct-align-error
+                        dispatch
+                        head
+                        "parse: defstruct metadata must appear before fields")]
+                    [(> align 0)
+                      (parse-ast-defstruct-align-error
+                        dispatch
+                        head
+                        "parse: duplicate defstruct :align metadata")]
+                    [else
+                      (match (parse-ast-declared-align-form
+                        (compiler-parse-place-shared-view head)
+                        "parse: malformed defstruct :align metadata")
+                        [(ResultAstDeclaredAlign.Ok next-align)
+                          (parse-ast-defstruct-items
+                            dispatch
+                            pools
+                            tail
+                            lifetimes
+                            repr
+                            cleanup
+                            markers
+                            next-align
+                            fields
+                            seen-lifetimes
+                            seen-repr
+                            seen-cleanup
+                            false)]
+                        [(ResultAstDeclaredAlign.Err message)
+                          (parse-ast-defstruct-align-error
+                            dispatch
+                            head
+                            message)])])]
                 [(=
                     (ci.intern-syntax-id-value key)
                     (cbi.compiler-builtin-ctfe ":must-use"))
@@ -5676,6 +5874,7 @@
                             repr
                             cleanup
                             (+ markers 1)
+                            align
                             fields
                             seen-lifetimes
                             seen-repr
@@ -5707,6 +5906,7 @@
                     repr
                     cleanup
                     markers
+                    align
                     fields
                     seen-lifetimes
                     seen-repr
@@ -5721,6 +5921,7 @@
                 repr
                 cleanup
                 markers
+                align
                 fields
                 seen-lifetimes
                 seen-repr
@@ -5735,6 +5936,7 @@
             repr
             cleanup
             markers
+            align
             fields
             seen-lifetimes
             seen-repr
@@ -11122,10 +11324,11 @@
               (match (parse-ast-defstruct-items
                 dispatch
                 pools
-                fields
+                (compiler-parse-place-shared-view fields)
                 (ast.ast-lifetime-list-new)
                 (ast.AstStructRepr.Default)
                 (ast.AstStructCleanup.No)
+                0
                 0
                 (ast.ast-field-def-list-new)
                 false
@@ -11173,7 +11376,15 @@
                               parsed-fields)
                             markers)))))]
                 [(ResultAstStructDefParts.Err message)
-                  (ResultAstDecl.Err message)])))]
+                  (begin
+                    ;; Only the walk's end knows a struct `(:align N)` lacks
+                    ;; `(:repr c)`; locate the error at that form.
+                    (when
+                      (string.eq
+                        message
+                        (parse-ast-defstruct-align-needs-repr-c))
+                      (parse-ast-defstruct-note-align-form! dispatch fields))
+                    (ResultAstDecl.Err message))])))]
         [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
     [_ (ResultAstDecl.Err "parse: malformed defstruct")]))
 

@@ -3632,19 +3632,6 @@
   (Ok TcLayoutInfo)
   (Err String))
 
-(defenum TcReprCFieldLayout
-  (Field String ast.AstType i64))
-
-(defstruct TcReprCFieldLayoutList
-  (slots (__tl_dyn-array TcReprCFieldLayout)))
-
-(defenum TcReprCLayout
-  (Layout i64 i64 TcReprCFieldLayoutList))
-
-(defenum ResultTcReprCLayout
-  (Ok TcReprCLayout)
-  (Err String))
-
 (defenum TcInlineFieldLayout
   (Field i64 ast.AstType i64))
 
@@ -3798,27 +3785,6 @@
         unit
         (unsafe
           (arena.destroy storage))))))
-
-;; Builders know the final cardinality from their AST vectors. Allocate one
-;; right-sized backing array in the retained cache arena, fill it in source
-;; order, and carry only the shallow array descriptor through cached layouts.
-(define (tc-repr-c-field-layout-list-with-count [count : i64]) : TcReprCFieldLayoutList
-  (TcReprCFieldLayoutList (__tl_make-array TcReprCFieldLayout count)))
-
-(define (tc-repr-c-field-layout-list-count
-  [items : (& items TcReprCFieldLayoutList)]) : i64
-  (array-length items.slots))
-
-(define (tc-repr-c-field-layout-list-ref
-  [items : (& items TcReprCFieldLayoutList)]
-  [index : i64]) : TcReprCFieldLayout
-  (tc-global-array-element-shared-view items.slots index))
-
-(define (tc-repr-c-field-layout-list-set!
-  [items : (& items TcReprCFieldLayoutList)]
-  [index : i64]
-  [value : TcReprCFieldLayout]) : unit
-  (set! (array-ref items.slots index) value))
 
 (define (tc-inline-field-layout-list-with-count-for-state
   [state : TcAggLayoutCacheState]
@@ -13357,7 +13323,7 @@
 ;; id, `a` also its comptime helper aliases), then one type per parameter and
 ;; the result type, each one character of `tc-macro-helper-type-codes`. A table
 ;; instead of one binding call per row keeps this cold, cached setup small.
-(define tc-macro-helper-slots : (Array i64 132)
+(define tc-macro-helper-slots : (Array i64 134)
   (array
     (cbi.compiler-builtin-ctfe-slot "string-append")
     (cbi.compiler-builtin-ctfe-slot "string-append")
@@ -13437,6 +13403,8 @@
     (cbi.compiler-builtin-ctfe-slot "struct-field-count")
     (cbi.compiler-builtin-ctfe-slot "struct-field-name")
     (cbi.compiler-builtin-ctfe-slot "struct-field-type")
+    (cbi.compiler-builtin-ctfe-slot "type-declared-align")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-declared-align")
     (cbi.compiler-builtin-ctfe-slot "enum-variant-count")
     (cbi.compiler-builtin-ctfe-slot "enum-variant-name")
     (cbi.compiler-builtin-ctfe-slot "enum-variant-payload-count")
@@ -13492,7 +13460,7 @@
     (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list->expr-list")
     (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list->expr-list")))
 (define tc-macro-helper-signatures : String
-  "isss|asss|isss|asss|isi|isi|isic|isic|issb|issb|isi|asi|iis|ais|ibe|abe|iie|aie|ase|ise|ase|iese|aese|ieie|aeie|iesee|aesee|iee|aee|iexe|aexe|ieee|ieeee|ieeeee|ix|ax|iexx|aexx|ieeee|aeeee|ip|isp|isPp|iP|ipPP|isiP|ipem|iM|imMM|ieMe|iee|aee|iee|aee|aee|aet|ass|assb|isse|asse|assb|asse|asse|aeeb|aeee|iee|aee|asn|isn|ies|ies|ieb|ies|ies|ies|iei|ieis|ieie|iei|ieis|ieii|ieiie|iee|iee|aee|iei|ieb|iei|ieie|iei|ieie|iee|ieb|aeb|ieb|aeb|ieb|aeb|iee|aee|iee|aee|iee|aee|ixi|axi|ixie|axie|iCe|aCe|iCe|aCe|iDi|aDi|iDiC|aDiC|iDx|aDx|iBs|aBs|iBb|aBb|iBe|aBe|iBe|aBe|iFi|aFi|iFiB|aFiB|iFx|aFx|")
+  "isss|asss|isss|asss|isi|isi|isic|isic|issb|issb|isi|asi|iis|ais|ibe|abe|iie|aie|ase|ise|ase|iese|aese|ieie|aeie|iesee|aesee|iee|aee|iexe|aexe|ieee|ieeee|ieeeee|ix|ax|iexx|aexx|ieeee|aeeee|ip|isp|isPp|iP|ipPP|isiP|ipem|iM|imMM|ieMe|iee|aee|iee|aee|aee|aet|ass|assb|isse|asse|assb|asse|asse|aeeb|aeee|iee|aee|asn|isn|ies|ies|ieb|ies|ies|ies|iei|ieis|ieie|iei|ieii|iei|ieis|ieii|ieiie|iee|iee|aee|iei|ieb|iei|ieie|iei|ieie|iee|ieb|aeb|ieb|aeb|ieb|aeb|iee|aee|iee|aee|iee|aee|ixi|axi|ixie|axie|iCe|aCe|iCe|aCe|iDi|aDi|iDiC|aDiC|iDx|aDx|iBs|aBs|iBb|aBb|iBe|aBe|iBe|aBe|iFi|aFi|iFiB|aFiB|iFx|aFx|")
 
 ;; e Expr, x ExprList, s String, i i64, b bool, c char, n Never, C clause,
 ;; D clause list, B binding clause, F binding clause list, p pattern,
@@ -13550,7 +13518,7 @@
           (tc-stdlib-comptime-type-key-id
             "TypeInfo"
             cbi.compiler-builtin-id-fix-TypeInfo)))
-      (while (< row 132)
+      (while (< row 134)
         (let
           [start : i64 (+ pos 1)]
           [end : i64 start]
@@ -23715,13 +23683,173 @@
       qualified-id
       TcStringList.Nil)))
 
-(define (tc-source-default-struct-layout-finite-ok
+(define (tc-source-struct-layout-ok
   [ctx : TcContext]
   [name-id : i64]
-  [repr : ast.AstStructRepr]) : ResultTcUnit
-  (if (ast.ast-struct-repr-c? repr)
-    ResultTcUnit.Ok
-    (tc-source-default-aggregate-layout-finite-ok ctx name-id)))
+  [repr : ast.AstStructRepr]
+  [fields : ast.AstFieldDefList]) : ResultTcUnit
+  (match (tc-source-default-aggregate-layout-finite-ok ctx name-id)
+    [(ResultTcUnit.Ok)
+      (if (ast.ast-struct-repr-c? (& repr))
+        (tc-repr-c-declared-align-ok ctx name-id (& repr) fields)
+        ResultTcUnit.Ok)]
+    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
+
+;; Storage placement guarantees 8-byte alignment for every owned instance
+;; (stack slots, `tl_alloc`, and data cells), so a declared alignment above it
+;; has no sound placement yet and is rejected.
+(define tc-declared-align-storage-max : i64
+  8)
+
+(define (tc-declared-align-message
+  [struct-id : i64]
+  [field-id : i64]
+  [declared : i64]
+  [problem : String]
+  [limit : i64]) : String
+  (str_cat.str-cat
+    "typecheck: repr c struct "
+    (tc-env-key-name-text struct-id)
+    (if (< field-id 0)
+      ""
+      (str_cat.str-cat " field " (tc-env-key-name-text field-id)))
+    " declares (:align "
+    (string.int->string declared)
+    ")"
+    problem
+    (string.int->string limit)))
+
+;; A `(:repr c)` struct's declared alignments, checked against the natural
+;; layout once every field type is known: like C11 `_Alignas`, a field's
+;; `(:align N)` may not weaken its type's alignment and a struct's may not
+;; weaken the alignment its fields already require. A struct whose fields
+;; are all zero-sized has no storage to align.
+(define (tc-repr-c-declared-align-ok
+  [ctx : TcContext]
+  [name-id : i64]
+  [repr : (& repr ast.AstStructRepr)]
+  [fields : ast.AstFieldDefList]) : ResultTcUnit
+  (let
+    [declared : i64 (ast.ast-struct-repr-declared-align repr)]
+    (match (tc-repr-c-declared-field-align-ok
+      ctx
+      name-id
+      repr
+      (& fields)
+      (> declared 0)
+      0
+      0
+      1)
+      [(ResultTcLayoutInfo.Ok (TcLayoutInfo field-bytes field-align))
+        (cond
+          [(= declared 0) ResultTcUnit.Ok]
+          [(= field-bytes 0)
+            (ResultTcUnit.Err
+              (str_cat.str-cat
+                (tc-declared-align-message
+                  name-id
+                  -1
+                  declared
+                  " but its fields occupy "
+                  0)
+                " bytes"))]
+          [(< declared field-align)
+            (ResultTcUnit.Err
+              (tc-declared-align-message
+                name-id
+                -1
+                declared
+                " below the alignment its fields require, "
+                field-align))]
+          [(> declared tc-declared-align-storage-max)
+            (ResultTcUnit.Err
+              (tc-declared-align-message
+                name-id
+                -1
+                declared
+                "; storage cannot yet place values aligned above "
+                tc-declared-align-storage-max))]
+          [else ResultTcUnit.Ok])]
+      [(ResultTcLayoutInfo.Err message) (ResultTcUnit.Err message)])))
+
+;; Check each field's declared alignment and return the total field bytes
+;; and the largest effective field alignment. Natural layouts are computed
+;; only for fields that declare an alignment, or for every field when the
+;; struct itself declares one.
+(define (tc-repr-c-declared-field-align-ok
+  [ctx : TcContext]
+  [struct-id : i64]
+  [repr : (& repr ast.AstStructRepr)]
+  [fields : (& fields ast.AstFieldDefList)]
+  [need-all : bool]
+  [index : i64]
+  [field-bytes : i64]
+  [max-align : i64]) : ResultTcLayoutInfo
+  (if (>= index fields.len)
+    (ResultTcLayoutInfo.Ok (TcLayoutInfo field-bytes max-align))
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def name ty _)
+        (let
+          [declared : i64 (ast.ast-struct-repr-field-declared-align repr index)]
+          (if (and (= declared 0) (not need-all))
+            (tc-repr-c-declared-field-align-ok
+              ctx
+              struct-id
+              repr
+              fields
+              need-all
+              (+ index 1)
+              field-bytes
+              max-align)
+            (match (tc-inline-aggregate-type-layout
+              ctx
+              (tc-resolve-type ctx ty))
+              [(ResultTcLayoutInfo.Ok info)
+                (let
+                  [natural : i64 (tc-layout-info-align info)]
+                  [next-bytes : i64 (+ field-bytes (tc-layout-info-size info))]
+                  (cond
+                    [(= declared 0)
+                      (tc-repr-c-declared-field-align-ok
+                        ctx
+                        struct-id
+                        repr
+                        fields
+                        need-all
+                        (+ index 1)
+                        next-bytes
+                        (tc-max-i64 max-align natural))]
+                    [(< declared natural)
+                      (ResultTcLayoutInfo.Err
+                        (tc-declared-align-message
+                          struct-id
+                          (ci.intern-syntax-id-value name)
+                          declared
+                          " below its type's natural alignment "
+                          natural))]
+                    [(> declared tc-declared-align-storage-max)
+                      (ResultTcLayoutInfo.Err
+                        (tc-declared-align-message
+                          struct-id
+                          (ci.intern-syntax-id-value name)
+                          declared
+                          "; storage cannot yet place values aligned above "
+                          tc-declared-align-storage-max))]
+                    [else
+                      (tc-repr-c-declared-field-align-ok
+                        ctx
+                        struct-id
+                        repr
+                        fields
+                        need-all
+                        (+ index 1)
+                        next-bytes
+                        (tc-max-i64 max-align declared))]))]
+              [(ResultTcLayoutInfo.Err message)
+                (ResultTcLayoutInfo.Err message)])))])))
 
 (define (tc-source-pattern-list-policy-ok
   [ctx : TcContext]
@@ -25393,7 +25521,9 @@
               (tc-source-default-aggregate-layout-finite-ok ctx name)]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
       [(ast.AstDecl.DefStruct decl-meta name repr cleanup fields)
-        (match (tc-source-field-list-policy-ok ctx fields)
+        (match (tc-source-field-list-policy-ok
+          ctx
+          (tc-global-shared-view fields))
           [(ResultTcUnit.Ok)
             (if (and
               (ast.ast-struct-repr-c? repr)
@@ -25403,7 +25533,7 @@
                   (csym.compiler-symbol-module-key
                     (tc-context-module ctx)
                     (tc-env-key-name-text name))))
-              (tc-source-default-struct-layout-finite-ok ctx name repr))]
+              (tc-source-struct-layout-ok ctx name repr fields))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
       [(ast.AstDecl.DefStructLifetimes
           decl-meta
@@ -25414,7 +25544,10 @@
           fields)
         (if (tc-lifetime-list-duplicates? lifetimes)
           (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
-          (match (tc-source-field-list-lifetimes-policy-ok ctx lifetimes fields)
+          (match (tc-source-field-list-lifetimes-policy-ok
+            ctx
+            lifetimes
+            (tc-global-shared-view fields))
             [(ResultTcUnit.Ok)
               (if (and
                 (ast.ast-struct-repr-c? repr)
@@ -25424,7 +25557,7 @@
                     (csym.compiler-symbol-module-key
                       (tc-context-module ctx)
                       (tc-env-key-name-text name))))
-                (tc-source-default-struct-layout-finite-ok ctx name repr))]
+                (tc-source-struct-layout-ok ctx name repr fields))]
             [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
       [(ast.AstDecl.DefDispatch decl-meta _ variants)
         (if (!= (tc-dispatch-variant-list-scalar-count variants) 1)
@@ -25473,7 +25606,8 @@
         "typecheck: defdispatch requires exactly one scalar variant")
       (string.eq text "typecheck: duplicate defdispatch ISA variant")
       (string.eq text "typecheck: duplicate lifetime parameter")
-      (string.contains (& text) " cannot use repr c"))))
+      (string.contains (& text) " cannot use repr c")
+      (string.contains (& text) " declares (:align "))))
 
 (define (tc-source-decl-list-policy-diagnostic-in-module
   [ctx : TcContext]
@@ -48495,18 +48629,6 @@
   (match info
     [(TcLayoutInfo _ align) align]))
 
-(define (tc-repr-c-layout-size [layout : TcReprCLayout]) : i64
-  (match layout
-    [(TcReprCLayout.Layout size _ _) size]))
-
-(define (tc-repr-c-layout-align [layout : TcReprCLayout]) : i64
-  (match layout
-    [(TcReprCLayout.Layout _ align _) align]))
-
-(define (tc-repr-c-layout-fields [layout : TcReprCLayout]) : TcReprCFieldLayoutList
-  (match layout
-    [(TcReprCLayout.Layout _ _ fields) fields]))
-
 (define (tc-inline-field-layout-name-id [field : TcInlineFieldLayout]) : i64
   (match field
     [(TcInlineFieldLayout.Field name _ _) name]))
@@ -49292,6 +49414,7 @@
 
 (define (tc-inline-aggregate-field-defs-layout
   [ctx : TcContext]
+  [repr : (& repr ast.AstStructRepr)]
   [fields : ast.AstFieldDefList]
   [cursor : i64]
   [max-align : i64]
@@ -49303,6 +49426,7 @@
         fields.len)]
     (tc-inline-aggregate-field-defs-layout-at
       ctx
+      repr
       (& fields)
       0
       cursor
@@ -49312,6 +49436,7 @@
 
 (define (tc-inline-aggregate-field-defs-layout-at
   [ctx : TcContext]
+  [repr : (& repr ast.AstStructRepr)]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]
   [cursor : i64]
@@ -49336,7 +49461,12 @@
             (tc-global-shared-view stack))
             [(ResultTcLayoutInfo.Ok info)
               (let
-                [field-align : i64 (tc-layout-info-align info)]
+                ;; A field's `(:align N)` raises only this field's placement
+                ;; and the containing struct's alignment, never its size.
+                [field-align : i64
+                  (tc-max-i64
+                    (tc-layout-info-align info)
+                    (ast.ast-struct-repr-field-declared-align repr index))]
                 [field-size : i64 (tc-layout-info-size info)]
                 [offset : i64 (tc-align-up cursor field-align)]
                 [next-cursor : i64 (+ offset field-size)]
@@ -49354,6 +49484,7 @@
                       offset))
                   (tc-inline-aggregate-field-defs-layout-at
                     ctx
+                    repr
                     fields
                     (+ index 1)
                     next-cursor
@@ -49501,15 +49632,18 @@
       [decl : TcStructDecl
         (try (tc-struct-decl-at-handle ctx handle struct-name-id struct-name))]
       (match decl
-        [(TcStructDecl _ _ fields)
+        [(TcStructDecl repr _ fields)
           (let
+            ;; A struct's `(:align N)` seeds the aggregate alignment, so it
+            ;; raises the final alignment and rounds the size up to it.
             [layout : TcInlineFieldsLayout
               (try
                 (tc-inline-aggregate-field-defs-layout
                   ctx
+                  (& repr)
                   fields
                   0
-                  0
+                  (ast.ast-struct-repr-declared-align (& repr))
                   (tc-string-list-cons stack struct-name)))]
             (match layout
               [(TcInlineFieldsLayout.Fields size align fields-layout)
@@ -50416,222 +50550,6 @@
     [(ResultTcInlineAggregateLayout.Ok layout)
       (tc-inline-aggregate-layout-register-resident? layout)]
     [(ResultTcInlineAggregateLayout.Err _) false]))
-
-(define (tc-repr-c-unsupported-field-message
-  [owner : String]
-  [field : String]
-  [ty : ast.AstType]) : String
-  (str_cat.str-cat
-    "typecheck: repr c struct "
-    owner
-    " field "
-    field
-    " has unsupported field type "
-    (tc-type-render ty)))
-
-(define (tc-repr-c-field-layout-info
-  [ctx : TcContext]
-  [owner : String]
-  [field : String]
-  [ty : ast.AstType]
-  [seen : TcStringList]) : ResultTcLayoutInfo
-  (match (tc-resolve-type ctx (tc-global-shared-view ty))
-    [(ast.AstType.I64) (ResultTcLayoutInfo.Ok (TcLayoutInfo 8 8))]
-    [(ast.AstType.U64) (ResultTcLayoutInfo.Ok (TcLayoutInfo 8 8))]
-    [(ast.AstType.F64) (ResultTcLayoutInfo.Ok (TcLayoutInfo 8 8))]
-    [(ast.AstType.F32) (ResultTcLayoutInfo.Ok (TcLayoutInfo 4 4))]
-    [(ast.AstType.I32) (ResultTcLayoutInfo.Ok (TcLayoutInfo 4 4))]
-    [(ast.AstType.U32) (ResultTcLayoutInfo.Ok (TcLayoutInfo 4 4))]
-    [(ast.AstType.I16) (ResultTcLayoutInfo.Ok (TcLayoutInfo 2 2))]
-    [(ast.AstType.U16) (ResultTcLayoutInfo.Ok (TcLayoutInfo 2 2))]
-    [(ast.AstType.I8) (ResultTcLayoutInfo.Ok (TcLayoutInfo 1 1))]
-    [(ast.AstType.U8) (ResultTcLayoutInfo.Ok (TcLayoutInfo 1 1))]
-    [(ast.AstType.Bool) (ResultTcLayoutInfo.Ok (TcLayoutInfo 1 1))]
-    [(ast.AstType.Char) (ResultTcLayoutInfo.Ok (TcLayoutInfo 1 1))]
-    [(ast.AstType.Ptr _) (ResultTcLayoutInfo.Ok (TcLayoutInfo 8 8))]
-    [(ast.AstType.MutPtr _) (ResultTcLayoutInfo.Ok (TcLayoutInfo 8 8))]
-    [(ast.AstType.Struct nested)
-      (let
-        [nested-str : String (tc-nominal-name-id-display nested)]
-        [decl : TcStructDecl (try (tc-struct-decl-id ctx nested))]
-        (match decl
-          [(TcStructDecl repr _ _)
-            (if (ast.ast-struct-repr-c? repr)
-              (let
-                [layout : TcReprCLayout
-                  (try
-                    (tc-repr-c-struct-layout-with-seen
-                      ctx
-                      nested-str
-                      nested
-                      seen))]
-                (ResultTcLayoutInfo.Ok
-                  (TcLayoutInfo
-                    (tc-repr-c-layout-size (tc-global-shared-view layout))
-                    (tc-repr-c-layout-align layout))))
-              ;; Embed a default-layout struct by value using its
-              ;; default inline C-rule layout (default layout follows C
-              ;; layout). `seen` carries the repr-c owners so a
-              ;; cycle back through this struct is still detected.
-              (tc-inline-aggregate-type-layout-with-stack
-                ctx
-                (ast.AstType.Struct nested)
-                seen))]))]
-    [(ast.AstType.StructArgs nested lifetimes)
-      (let
-        [nested-str : String (tc-nominal-name-id-display nested)]
-        [decl : TcStructDecl (try (tc-struct-decl-id ctx nested))]
-        (match decl
-          [(TcStructDecl repr _ _)
-            (if (ast.ast-struct-repr-c? repr)
-              (let
-                [layout : TcReprCLayout
-                  (try
-                    (tc-repr-c-struct-layout-with-seen
-                      ctx
-                      nested-str
-                      nested
-                      seen))]
-                (ResultTcLayoutInfo.Ok
-                  (TcLayoutInfo
-                    (tc-repr-c-layout-size (tc-global-shared-view layout))
-                    (tc-repr-c-layout-align layout))))
-              ;; Embed a default-layout struct (with type args) by value
-              ;; using its default inline C-rule layout.
-              (tc-inline-aggregate-type-layout-with-stack
-                ctx
-                (ast.AstType.StructArgs nested lifetimes)
-                seen))]))]
-    ;; Embed an enum by value using its default inline layout (tag +
-    ;; payload). Enums have no separate repr-c layout; the inline engine threads
-    ;; `seen` for cycle detection.
-    [(ast.AstType.Enum name)
-      (tc-inline-aggregate-type-layout-with-stack
-        ctx
-        (ast.AstType.Enum name)
-        seen)]
-    [(ast.AstType.EnumArgs name lifetimes)
-      (tc-inline-aggregate-type-layout-with-stack
-        ctx
-        (ast.AstType.EnumArgs name lifetimes)
-        seen)]
-    [_
-      (ResultTcLayoutInfo.Err
-        (tc-repr-c-unsupported-field-message owner field ty))]))
-
-(define (tc-repr-c-fields-layout
-  [ctx : TcContext]
-  [owner : String]
-  [fields : ast.AstFieldDefList]
-  [cursor : i64]
-  [max-align : i64]
-  [seen : TcStringList]) : ResultTcReprCLayout
-  (let
-    [layout : TcReprCFieldLayoutList
-      (tc-repr-c-field-layout-list-with-count fields.len)]
-    (tc-repr-c-fields-layout-at
-      ctx
-      owner
-      (& fields)
-      0
-      cursor
-      max-align
-      seen
-      layout)))
-
-(define (tc-repr-c-fields-layout-at
-  [ctx : TcContext]
-  [owner : String]
-  [fields : (& fields ast.AstFieldDefList)]
-  [index : i64]
-  [cursor : i64]
-  [max-align : i64]
-  [seen : TcStringList]
-  [layout : TcReprCFieldLayoutList]) : ResultTcReprCLayout
-  (if (>= index fields.len)
-    (if (= max-align 0)
-      (ResultTcReprCLayout.Err
-        "typecheck: repr c struct needs at least one field")
-      (ResultTcReprCLayout.Ok
-        (TcReprCLayout.Layout (tc-align-up cursor max-align) max-align layout)))
-    (match (ast.ast-field-def-list-get
-      fields
-      index
-      (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def name ty _)
-        (let
-          [resolved : ast.AstType (tc-resolve-type ctx ty)]
-          (match (tc-repr-c-field-layout-info
-            ctx
-            (tc-global-shared-view owner)
-            (tc-env-key-name-text (ci.intern-syntax-id-value name))
-            (tc-global-shared-view resolved)
-            (tc-global-shared-view seen))
-            [(ResultTcLayoutInfo.Ok info)
-              (let
-                [field-align : i64 (tc-layout-info-align info)]
-                [field-size : i64 (tc-layout-info-size info)]
-                [offset : i64 (tc-align-up cursor field-align)]
-                [next-cursor : i64 (+ offset field-size)]
-                [next-align : i64 (tc-max-i64 max-align field-align)]
-                (begin
-                  (cfg
-                    compile-profile
-                    (counters.bump! tc-profile-layout-repr-c-field-builds))
-                  (tc-repr-c-field-layout-list-set!
-                    layout
-                    index
-                    (TcReprCFieldLayout.Field
-                      (tc-env-key-name-text (ci.intern-syntax-id-value name))
-                      resolved
-                      offset))
-                  (tc-repr-c-fields-layout-at
-                    ctx
-                    owner
-                    fields
-                    (+ index 1)
-                    next-cursor
-                    next-align
-                    seen
-                    layout)))]
-            [(ResultTcLayoutInfo.Err message) (ResultTcReprCLayout.Err message)]))])))
-
-(define (tc-repr-c-struct-layout-with-seen
-  [ctx : TcContext]
-  [struct-name : String]
-  [struct-name-id : i64]
-  [seen : TcStringList]) : ResultTcReprCLayout
-  (if (tc-string-list-contains
-    (tc-global-shared-view seen)
-    (tc-global-shared-view struct-name))
-    (ResultTcReprCLayout.Err
-      (str_cat.str-cat
-        "typecheck: recursive repr c struct layout cycle involving "
-        struct-name))
-    (let
-      [decl : TcStructDecl (try (tc-struct-decl-id ctx struct-name-id))]
-      (match decl
-        [(TcStructDecl repr _ fields)
-          (if (ast.ast-struct-repr-c? repr)
-            (tc-repr-c-fields-layout
-              ctx
-              (tc-global-shared-view struct-name)
-              fields
-              0
-              0
-              (tc-string-list-add seen struct-name))
-            (ResultTcReprCLayout.Err
-              (str_cat.str-cat "typecheck: struct is not repr c: " struct-name)))]))))
-
-(define (tc-repr-c-struct-layout-id
-  [ctx : TcContext]
-  [struct-name : String]
-  [struct-name-id : i64]) : ResultTcReprCLayout
-  (tc-repr-c-struct-layout-with-seen
-    ctx
-    struct-name
-    struct-name-id
-    TcStringList.Nil))
 
 (define (tc-ctfe-inline-layout-fields-into
   [fields : TcInlineFieldLayoutList]
@@ -61589,7 +61507,8 @@
         (= call-id (cbi.compiler-builtin-ctfe "type-kind"))
         (= call-id (cbi.compiler-builtin-ctfe "type-key"))
         (= call-id (cbi.compiler-builtin-ctfe "type-cleanup-owning?"))
-        (= call-id (cbi.compiler-builtin-ctfe "type-expr")))
+        (= call-id (cbi.compiler-builtin-ctfe "type-expr"))
+        (= call-id (cbi.compiler-builtin-ctfe "type-declared-align")))
       true]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe "type-nominal-module"))
@@ -61599,7 +61518,8 @@
         (= call-id (cbi.compiler-builtin-ctfe "offset-of"))
         (= call-id (cbi.compiler-builtin-ctfe "struct-field-count"))
         (= call-id (cbi.compiler-builtin-ctfe "struct-field-name"))
-        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type")))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-declared-align")))
       (tc-macro-abstract-mask-allows? state (shl 1 19))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe "enum-variant-count"))
@@ -61648,7 +61568,8 @@
         (= call-id (cbi.compiler-builtin-ctfe "offset-of"))
         (= call-id (cbi.compiler-builtin-ctfe "struct-field-count"))
         (= call-id (cbi.compiler-builtin-ctfe "struct-field-name"))
-        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type")))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-type"))
+        (= call-id (cbi.compiler-builtin-ctfe "struct-field-declared-align")))
       "struct"]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe "enum-variant-count"))

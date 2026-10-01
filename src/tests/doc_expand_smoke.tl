@@ -63,6 +63,33 @@
     (io.panic "doc-expand: macro type-kind constraint signature mismatch")))
 
 (test
+  doc-struct-declared-align-source
+  (unless
+    (let
+      [parsed : parser.ResultAstProgram
+        (parser.parse-ast-source
+          "(defstruct Frame (:align 8) (:repr c) (id u32) (data (Array u8 8) (:align 8)))")]
+      [ctx : doc_expand.DocExpandContext
+        (let
+          [pools (ast.ast-node-pool-context-capture-active)]
+          [intern-state (ci.intern-compat-state-capture-active)]
+          (doc_expand.doc-expand-context-from-pools-and-intern-state
+            pools
+            intern-state))]
+      (match parsed
+        [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+          (match (ast.ast-decl-list-step (deref decls-box))
+            [(ast.AstDeclListStep.Cons
+                (ast.AstDecl.DefStruct _ name repr _ fields)
+                _)
+              (string.eq
+                (doc_expand.doc-ast-struct-signature ctx name "" repr fields)
+                "(defstruct Frame (:repr c) (:align 8)\n  (id u32)\n  (data (Array u8 8) (:align 8)))")]
+            [_ false])]
+        [(parser.ResultAstProgram.Err _) false]))
+    (io.panic "doc-expand: aligned struct signature mismatch")))
+
+(test
   doc-generated-vector-growth-order
   (let
     [items : doc_item_vec.Vec (doc_item_vec.new)]

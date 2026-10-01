@@ -679,7 +679,8 @@ before the first field:
 
 For struct layout, `(:repr c)` is a compatibility/ABI-intent marker and does
 not change field offsets, size, or alignment; omitting it does not select a
-different layout. Metadata forms must appear before all fields; a metadata
+different layout. Only explicit alignment metadata, described below, changes a
+`(:repr c)` layout. Metadata forms must appear before all fields; a metadata
 form after a field is rejected. Duplicate `:repr` metadata is rejected.
 Unknown metadata keys and unknown representation names are rejected. Cleanup
 ownership metadata is specified separately in section 4.7.1 and is not a layout
@@ -693,9 +694,10 @@ not alter value layout, ABI classification, construction, copying, ownership,
 or cleanup. It is not a warning or discard rule by itself. The marker may
 compose with valid `:lifetimes`, `:repr c` (structs), and `:cleanup` metadata;
 existing restrictions between those forms still apply. The canonical order
-for new declarations and emitted source is `:lifetimes`, `:repr`, `:cleanup`,
-then zero-argument markers (`:must-use`, followed by `:opaque` when that
-marker is introduced). Existing valid metadata orders remain accepted.
+for new declarations and emitted source is `:lifetimes`, `:repr`, `:align`,
+`:cleanup`, then zero-argument markers (`:must-use`, followed by `:opaque`
+when that marker is introduced). Existing valid metadata orders remain
+accepted.
 
 ```lisp test=ignore name=must-use-aggregate-metadata reason="declaration metadata only"
 (defstruct Receipt
@@ -707,6 +709,57 @@ marker is introduced). Existing valid metadata orders remain accepted.
   (Done Receipt)
   (Failed i64))
 ```
+
+A `(:repr c)` struct may raise its own alignment, and the alignment of any of
+its fields, with a literal `(:align N)` form:
+
+```lisp test=ignore name=repr-c-explicit-alignment-syntax reason="layout metadata example"
+(defstruct CanFrame
+  (:repr c)
+  (can-id u32)
+  (len u8)
+  (pad u8)
+  (res0 u8)
+  (len8-dlc u8)
+  (data (Array u8 8) (:align 8)))
+
+(defstruct TaskstatsPrefix
+  (:repr c)
+  (:align 8)
+  (kind u8)
+  (schedule u8 (:align 8)))
+```
+
+`N` is one integer literal, a power of two from 1 through 4096. The
+struct-level form appears with the other metadata before the first field, in
+any order relative to it, at most once. The field-level form follows the field
+type, at most once per field; it is independent of field cleanup metadata,
+which `(:repr c)` structs cannot carry. Both forms require `(:repr c)`: an
+`(:align N)` on a struct without it (including a `:cleanup` struct), on an
+enum, or after the first field is rejected, as are duplicate, malformed,
+non-literal, zero, negative, non-power-of-two, and out-of-range values.
+
+Field alignment places that field at the next offset that is a multiple of
+`max(natural field alignment, N)` and raises the containing struct's
+alignment to at least that value. It does not change the field's size, so the
+next field follows the field's ordinary extent. Struct alignment sets the
+struct's alignment to `max(natural alignment, N)` and rounds its size up to a
+multiple of it. Both propagate: a struct or enum that stores an aligned struct
+inline, and a fixed array of aligned elements, take its alignment, and an
+array's element stride is the aligned element size. These are the C11
+`_Alignas` rules (and the GCC, Clang, and MSVC aligned-attribute rules on both
+supported targets), so `size-of`, `align-of`, and `offset-of` report what C
+reports for the equivalent declaration.
+
+An explicit alignment never weakens a layout: a field's `N` below its type's
+natural alignment, a struct's `N` below the largest effective alignment of its
+fields, and a struct-level `N` on a struct whose fields occupy no bytes are
+rejected rather than ignored. Storage placement guarantees 8-byte alignment
+for every owned instance (stack storage, heap allocations, and global data),
+so a declared alignment above 8 is currently rejected with a diagnostic. The
+compile-time queries `type-declared-align` and `struct-field-declared-align`
+(section 5.17) return the literal declared values; the layout queries of
+section 5.18 return the effective layout.
 
 TypeLisp enum layout is a tagged union by default. The tag is an 8-byte
 integer at offset 0. Variant payload storage starts at offset 8; payloads are
@@ -5979,6 +6032,8 @@ Primitive names and signatures are fixed as follows:
 | `(struct-field-count type-expr)` | `i64` | Requires a struct type. |
 | `(struct-field-name type-expr index-expr)` | `String` | Zero-based field name. |
 | `(struct-field-type type-expr index-expr)` | `type` | Zero-based field type. |
+| `(struct-field-declared-align type-expr index-expr)` | `i64` | Literal `(:align N)` of the zero-based field, or 0 when it declares none. Requires a struct type. Interpreter-answered; no host callback yet. |
+| `(type-declared-align type-expr)` | `i64` | Literal struct-level `(:align N)`, or 0 when absent. Every type other than a `(:repr c)` struct with that metadata answers 0. Interpreter-answered; no host callback yet. |
 | `(enum-variant-count type-expr)` | `i64` | Requires an enum type. |
 | `(enum-variant-name type-expr index-expr)` | `String` | Zero-based variant constructor name. |
 | `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |
@@ -9216,8 +9271,10 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   handles in positions not covered by layout queries. That carriage is an
   implementation detail and not part of the source layout contract.
 - `(:repr c)` is accepted as struct compatibility/ABI-intent metadata and does
-  not change default struct field offsets. Backend extern lowering validates
-  target C ABI aggregate classes separately.
+  not change default struct field offsets. Explicit `(:align N)` metadata on a
+  `(:repr c)` struct or its fields raises offsets, alignment, and size exactly
+  as section 3.5.3 specifies. Backend extern lowering validates target C ABI
+  aggregate classes separately.
 
 ---
 
@@ -9425,6 +9482,7 @@ import-alias  ::= "as" ident
 defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
 defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
 struct-meta   ::= "(" ":repr" "c" ")"
+                | align-meta                        ; requires (:repr c)
                 | aggregate-lifetime-meta
                 | aggregate-cleanup-meta
 enum-meta     ::= aggregate-lifetime-meta
@@ -9438,8 +9496,10 @@ param         ::= "[" ident ":" type "]"
 field         ::= "(" ident type field-meta* ")"
 field-meta    ::= "(" ":cleanup" ident ")"
                 | "(" ":owned" ")"
+                | align-meta                        ; (:repr c) struct fields only
+align-meta    ::= "(" ":align" integer ")"          ; power of two, 1 through 4096
 variant       ::= "(" ident variant-payload* ")"
-variant-payload ::= type field-meta*
+variant-payload ::= type field-meta*               ; no align-meta
 
 expr          ::= literal
                 | ident

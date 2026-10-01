@@ -6482,33 +6482,41 @@
         unit
         (io.panic "typecheck: cleanup-owner result walk pool isolation failed")))))
 
-(define (tc-repr-c-field-layout-name [field : tc_core.TcReprCFieldLayout]) : String
-  (match field
-    [(tc_core.TcReprCFieldLayout.Field name _ _) name]))
+;; A struct's fields in the inline aggregate layout default and `(:repr c)`
+;; structs share.
+(define (tc-inline-layout-fields [layout : tc_core.TcInlineAggregateLayout]) : tc_core.TcInlineFieldLayoutList
+  (match layout
+    [(tc_core.TcInlineAggregateLayout.Struct _ _ fields) fields]
+    [(tc_core.TcInlineAggregateLayout.Enum _ _ _)
+      (tc_core.TcInlineFieldLayoutList
+        (__tl_make-array tc_core.TcInlineFieldLayout 0))]))
 
-(define (tc-repr-c-field-layout-offset [field : tc_core.TcReprCFieldLayout]) : i64
-  (match field
-    [(tc_core.TcReprCFieldLayout.Field _ _ offset) offset]))
-
-(define (tc-repr-c-layout-field-offset
-  [fields : tc_core.TcReprCFieldLayoutList]
+(define (tc-inline-layout-field-offset
+  [layout : tc_core.TcInlineAggregateLayout]
   [name : String]) : i64
-  (tc-repr-c-layout-field-offset-at fields name 0))
+  (tc-inline-field-list-offset (tc-inline-layout-fields layout) name))
 
-(define (tc-repr-c-layout-field-offset-at
-  [fields : tc_core.TcReprCFieldLayoutList]
-  [name : String]
-  [index : i64]) : i64
-  (if (>= index (tc_core.tc-repr-c-field-layout-list-count fields))
-    -1
-    (let
-      [field : tc_core.TcReprCFieldLayout
-        (tc_core.tc-repr-c-field-layout-list-ref fields index)]
-      (if (string.eq
-        (tc-repr-c-field-layout-name (tc_core.tc-global-shared-view field))
-        name)
-        (tc-repr-c-field-layout-offset field)
-        (tc-repr-c-layout-field-offset-at fields name (+ index 1))))))
+;; The offset of the field named `name`, or -1.
+(define (tc-inline-field-list-offset
+  [fields : tc_core.TcInlineFieldLayoutList]
+  [name : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (< index (tc_core.tc-inline-field-layout-list-count (& fields)))
+        (begin
+          (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
+            [(tc_core.TcInlineFieldLayout.Field field-name _ offset)
+              (when
+                (string.eq (tc_core.tc-env-key-name-text field-name) name)
+                (begin
+                  (set! found offset)
+                  (set!
+                    index
+                    (tc_core.tc-inline-field-layout-list-count (& fields)))))])
+          (set! index (+ index 1))))
+      found)))
 
 (define (tc-inline-variant-layout-size
   [variant : tc_core.TcInlineVariantLayout]) : i64

@@ -334,9 +334,13 @@
 (defstruct TcTypeHandleCacheStateData
   (owner-arena i64)
   ;; Raw pointers into fixed arena-owned lanes keep the multi-million-call hit
-  ;; path to scalar loads. The arena retains both allocations for the job.
+  ;; path to scalar loads. The arena retains all three allocations for the job.
   (keys-address i64)
   (handles-address i64)
+  ;; Top-level move kind of the slot's declaration: 0 unknown, 1 Copyable,
+  ;; 2 MoveOnly. Every store of a key into a slot resets its kind, so a kind is
+  ;; only ever read beside the key and stamp it was classified under.
+  (move-kinds-address i64)
   (symbols-owner i64)
   (symbols-generation i64))
 
@@ -1132,7 +1136,7 @@
       [cell : (__tl_dyn-array TcTypeHandleCacheStateData)
         (__tl_make-array TcTypeHandleCacheStateData 1)]
       (begin
-        (set! (array-ref cell 0) (TcTypeHandleCacheStateData owner 0 0 -1 -1))
+        (set! (array-ref cell 0) (TcTypeHandleCacheStateData owner 0 0 0 -1 -1))
         (TcTypeHandleCacheState
           (cast
             (unsafe
@@ -22346,10 +22350,23 @@
               (unsafe
                 (ptr->int (ptr-cast (__tl_array-data handles) : (Ptr i64))))
               : i64))))]
+    [move-kinds-address : i64
+      (if (> data.move-kinds-address 0)
+        data.move-kinds-address
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [move-kinds : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (__tl_array-data move-kinds) : (Ptr i64))))
+              : i64))))]
     (begin
       (tc-type-handle-cache-clear-keys! keys-address)
       (set! data.keys-address keys-address)
       (set! data.handles-address handles-address)
+      (set! data.move-kinds-address move-kinds-address)
       (set! data.symbols-owner stamp.owner)
       (set! data.symbols-generation stamp.generation)
       (tc-type-handle-cache-state-data-set! state data)
@@ -22382,11 +22399,73 @@
         (int->ptr
           (cast (tc-type-handle-cache-field state handles-address i64) : u64)
           : (MutPtr i64)))]
+    [move-kinds : (MutPtr i64)
+      (unsafe
+        (int->ptr
+          (cast (tc-type-handle-cache-field state move-kinds-address i64) : u64)
+          : (MutPtr i64)))]
     (begin
       (unsafe
         (ptr-write! (ptr-offset keys slot) key)
-        (ptr-write! (ptr-offset handles slot) handle))
+        (ptr-write! (ptr-offset handles slot) handle)
+        (ptr-write! (ptr-offset move-kinds slot) 0))
       handle)))
+
+;; The move-kind lane of LOOKUP-ID's slot while the cache is bound to SYMBOLS'
+;; stamp and the slot still holds LOOKUP-ID; otherwise 0 (unknown).
+(define (tc-type-handle-cache-move-kind-address
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : u64
+  (let
+    [state : TcTypeHandleCacheState
+      (tc-nominal-cache-type-handles nominal-state)]
+    [stamp : csym.CompilerSymbolsTypeMapStamp
+      (csym.compiler-symbols-type-map-stamp symbols)]
+    [slot : i64 (tc-type-handle-cache-slot lookup-id)]
+    (if (and
+      (= (tc-type-handle-cache-field state symbols-owner i64) stamp.owner)
+      (=
+        (tc-type-handle-cache-field state symbols-generation i64)
+        stamp.generation)
+      (=
+        (unsafe
+          (ptr-read
+            (ptr-offset
+              (int->ptr
+                (cast (tc-type-handle-cache-field state keys-address i64) : u64)
+                : (Ptr i64))
+              slot)))
+        lookup-id))
+      (+
+        (cast (tc-type-handle-cache-field state move-kinds-address i64) : u64)
+        (cast (* slot 8) : u64))
+      (cast 0 : u64))))
+
+(define (tc-type-handle-cache-move-kind
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : i64
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      0
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr i64)))))))
+
+(define (tc-type-handle-cache-move-kind-set!
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [kind : i64]) : unit
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      unit
+      (unsafe
+        (ptr-write! (int->ptr address : (MutPtr i64)) kind)))))
 
 (define (tc-type-handle-cache-lookup-id
   [nominal-state : TcNominalCacheState]
@@ -27819,94 +27898,143 @@
     stack
     0))
 
+(define (tc-move-kind-code [kind : TcMoveKind]) : i64
+  (match kind
+    [(TcMoveKind.Copyable) 1]
+    [(TcMoveKind.MoveOnly) 2]))
+
+;; A declaration's top-level move kind (empty stack, no lifetime arguments) is
+;; fixed for one CompilerSymbols stamp, so it is memoized beside the declaration's
+;; type-handle cache slot. Recursive and lifetime-applied queries classify
+;; directly: a cycle-truncated inner answer must not become the declaration's.
 (define (tc-type-move-kind-nominal-with-stack
   [ctx : TcContext]
   [name-id : i64]
   [lifetimes : ast.AstLifetimeList]
   [stack : TcNameIdList]) : TcMoveKind
   (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
     [handle : i64
       (tc-type-handle-lookup-id
-        (tc-job-state-nominal-cache (tc-context-job-state ctx))
+        nominal-state
         (tc-context-symbols-ref (& ctx))
         name-id
         tc-type-handle-lookup-caller-move-kind)]
     (if (not (csym.compiler-symbols-handle-found? handle))
       (TcMoveKind.MoveOnly)
-      (let
-        [kind : i64 (csym.compiler-symbol-handle-kind handle)]
-        [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-        (if (or
-          (< nominal-id 0)
-          (not
-            (or
-              (= kind (csym.compiler-symbol-kind-defstruct))
-              (= kind (csym.compiler-symbol-kind-defenum)))))
-          (TcMoveKind.MoveOnly)
-          (if (tc-name-id-list-contains stack nominal-id)
-            ;; Recursive by-value declarations are invalid layouts, but the
-            ;; classifier remains total and conservative instead of recursing
-            ;; forever.
-            (TcMoveKind.MoveOnly)
-            (let
-              [owner-ctx : TcContext
-                (tc-context-with-nominal-owner-index-module
-                  ctx
-                  (csym.compiler-symbol-handle-index handle))]
-              (match (csym.compiler-symbols-decl-at-index
-                (tc-context-symbols-ref (& owner-ctx))
-                (csym.compiler-symbol-handle-index handle))
-                [(parser.ResultAstDecl.Ok decl)
-                  (let
-                    [next-stack : TcNameIdList
-                      (tc-name-id-list-add stack nominal-id)]
-                    (match decl
-                      [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
-                        (if (ast.ast-struct-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-struct-fields?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            fields
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
-                        (if (ast.ast-struct-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-struct-fields?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            fields
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [(ast.AstDecl.DefEnum _ _ cleanup variants)
-                        (if (ast.ast-enum-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-enum-variants?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            variants
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
-                        (if (ast.ast-enum-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-enum-variants?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            variants
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [_ (TcMoveKind.MoveOnly)]))]
-                [(parser.ResultAstDecl.Err _) (TcMoveKind.MoveOnly)]))))))))
+      (if (and
+        (match stack
+          [(TcNameIdList.Nil) true]
+          [_ false])
+        (= (tc-lifetime-list-count (& lifetimes)) 0))
+        (let
+          [cached : i64
+            (tc-type-handle-cache-move-kind
+              nominal-state
+              (tc-context-symbols-ref (& ctx))
+              name-id)]
+          (if (= cached 1)
+            (TcMoveKind.Copyable)
+            (if (= cached 2)
+              (TcMoveKind.MoveOnly)
+              (let
+                [kind : TcMoveKind
+                  (tc-type-move-kind-nominal-handle
+                    ctx
+                    name-id
+                    handle
+                    lifetimes
+                    stack)]
+                (begin
+                  (tc-type-handle-cache-move-kind-set!
+                    nominal-state
+                    (tc-context-symbols-ref (& ctx))
+                    name-id
+                    (tc-move-kind-code kind))
+                  kind)))))
+        (tc-type-move-kind-nominal-handle ctx name-id handle lifetimes stack)))))
+
+(define (tc-type-move-kind-nominal-handle
+  [ctx : TcContext]
+  [name-id : i64]
+  [handle : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [stack : TcNameIdList]) : TcMoveKind
+  (let
+    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+    [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+    (if (or
+      (< nominal-id 0)
+      (not
+        (or
+          (= kind (csym.compiler-symbol-kind-defstruct))
+          (= kind (csym.compiler-symbol-kind-defenum)))))
+      (TcMoveKind.MoveOnly)
+      (if (tc-name-id-list-contains stack nominal-id)
+        ;; Recursive by-value declarations are invalid layouts, but the
+        ;; classifier remains total and conservative instead of recursing
+        ;; forever.
+        (TcMoveKind.MoveOnly)
+        (let
+          [owner-ctx : TcContext
+            (tc-context-with-nominal-owner-index-module
+              ctx
+              (csym.compiler-symbol-handle-index handle))]
+          (match (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols-ref (& owner-ctx))
+            (csym.compiler-symbol-handle-index handle))
+            [(parser.ResultAstDecl.Ok decl)
+              (let
+                [next-stack : TcNameIdList
+                  (tc-name-id-list-add stack nominal-id)]
+                (match decl
+                  [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
+                    (if (ast.ast-struct-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-struct-fields?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        fields
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
+                    (if (ast.ast-struct-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-struct-fields?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        fields
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [(ast.AstDecl.DefEnum _ _ cleanup variants)
+                    (if (ast.ast-enum-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-enum-variants?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        variants
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
+                    (if (ast.ast-enum-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-enum-variants?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        variants
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [_ (TcMoveKind.MoveOnly)]))]
+            [(parser.ResultAstDecl.Err _) (TcMoveKind.MoveOnly)]))))))
 
 (define (tc-type-move-kind-with-stack
   [ctx : TcContext]

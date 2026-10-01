@@ -3629,6 +3629,33 @@
     (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
     (tc_core.tc-type-move-only? ctx (ast.AstType.String))))
 
+(define (compiler-typecheck-move-kind-memo
+  [ctx : tc_core.TcContext]
+  [name : String]) : i64
+  (tc_core.tc-type-handle-cache-move-kind
+    (tc_core.tc-job-state-nominal-cache (tc_core.tc-context-job-state ctx))
+    (tc_core.tc-context-symbols-ref (& ctx))
+    (ci.intern name)))
+
+;; A top-level nominal kind is memoized beside its type-handle slot; one reached
+;; only through another declaration's fields is not. `Scalar` has no nominal
+;; field and `Cycle` looks up only itself, so no other key can evict them
+;; between the query and the check. A second pass is answered from the memo and
+;; must agree with the first.
+(define (compiler-typecheck-move-kind-memo-ok? [ctx : tc_core.TcContext]) : bool
+  (and
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "Scalar")))
+    (= (compiler-typecheck-move-kind-memo ctx "Scalar") 1)
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Cycle")))
+    (= (compiler-typecheck-move-kind-memo ctx "Cycle") 2)
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Struct (ci.intern "NestedPoison")))
+    (= (compiler-typecheck-move-kind-memo ctx "TextPacket") 0)
+    (compiler-typecheck-move-kind-copyable-group-ok? ctx)
+    (compiler-typecheck-move-kind-move-only-group-ok? ctx)
+    (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))
+
 (define (compiler-typecheck-move-kind-fixture-tests-ok?) : bool
   (match (parser.parse-ast-source
     "(defstruct Scalar (value i64))
@@ -3670,7 +3697,8 @@
                 (and
                   (compiler-typecheck-move-kind-copyable-group-ok? ctx)
                   (compiler-typecheck-move-kind-move-only-group-ok? ctx)
-                  (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))]
+                  (compiler-typecheck-move-kind-wrapper-group-ok? ctx)
+                  (compiler-typecheck-move-kind-memo-ok? ctx)))]
             [(csym.ResultCompilerRegistries.Err _) false])]
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))

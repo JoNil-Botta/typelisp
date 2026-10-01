@@ -1,7 +1,8 @@
 ;; #7445: explicit `(:align N)` on `(:repr c)` structs and their fields. Every
 ;; layout query must equal what C reports for the `_Alignas` equivalents in
 ;; benchmarks/repr_c_explicit_alignment/baseline.c, and C reading and writing
-;; through pointers must see the same field offsets. main returns 42 when all
+;; through pointers, and taking and returning the structs by value, must see the
+;; same field offsets. main returns 42 when all
 ;; agree and a distinct code for the first disagreement.
 (defstruct CanFrame
   (:repr c)
@@ -42,6 +43,10 @@
 (extern (align-c-sum-shelf [shelf : (MutPtr Shelf)]) : i64 (:symbol "tl_align_c_sum_shelf"))
 (extern (align-c-sum-halves [halves : (MutPtr Halves)]) : i64 (:symbol "tl_align_c_sum_halves"))
 (extern (align-c-sum-outer [outer : (MutPtr Outer)]) : i64 (:symbol "tl_align_c_sum_outer"))
+(extern (align-c-make-prefix [kind : i64] [schedule : i64]) : Prefix (:symbol "tl_align_c_make_prefix"))
+(extern (align-c-prefix-value [prefix : Prefix]) : i64 (:symbol "tl_align_c_prefix_value"))
+(extern (align-c-make-halves [a : i64] [b : i64] [c : i64]) : Halves (:symbol "tl_align_c_make_halves"))
+(extern (align-c-halves-value [halves : Halves]) : i64 (:symbol "tl_align_c_halves_value"))
 
 (define layouts : (Array i64 16)
   (array
@@ -139,4 +144,25 @@
         (return 10))
       (unless (= outer.inner.schedule (cast 7 : u8)) (return 11))
       (unless (= outer.tail (cast 11 : u16)) (return 12))
+      ;; By value: C passes and returns these at TypeLisp's offsets. On SysV
+      ;; `Prefix`'s `schedule` is alone in the second eightbyte.
+      (let
+        [made : Prefix (align-c-make-prefix 9 5)]
+        (begin
+          (unless (= made.kind (cast 9 : u8)) (return 13))
+          (unless (= made.schedule (cast 5 : u8)) (return 14))))
+      (unless
+        (=
+          (align-c-prefix-value (Prefix (cast 6 : u8) (cast 7 : u8)))
+          (+ (* 6 16) 7))
+        (return 15))
+      (let
+        [made : Halves (align-c-make-halves 3 513 9)]
+        (begin
+          (unless (= made.a (cast 3 : u8)) (return 16))
+          (unless (= made.b (cast 513 : u16)) (return 17))
+          (unless (= made.c (cast 9 : u8)) (return 18))))
+      (unless
+        (= (align-c-halves-value halves) (+ 3 (+ (* 513 16) (* 9 4096))))
+        (return 19))
       42)))

@@ -84,3 +84,29 @@ int64_t tl_align_c_sum_outer(const struct Outer *outer) {
   return outer->tag + outer->inner.kind * 16 + outer->inner.schedule * 256 +
          outer->tail * 4096;
 }
+
+/* By value: `struct Prefix` is two INTEGER eightbytes on SysV, with `schedule`
+   alone in the second, and goes by reference on Win64. `struct Halves` fits
+   one eightbyte on both. */
+struct Prefix tl_align_c_make_prefix(int64_t kind, int64_t schedule) {
+  struct Prefix prefix;
+  prefix.kind = (uint8_t)kind;
+  prefix.schedule = (uint8_t)schedule;
+  return prefix;
+}
+
+int64_t tl_align_c_prefix_value(struct Prefix prefix) {
+  return prefix.kind * 16 + prefix.schedule;
+}
+
+struct Halves tl_align_c_make_halves(int64_t a, int64_t b, int64_t c) {
+  struct Halves halves;
+  halves.a = (uint8_t)a;
+  halves.b = (uint16_t)b;
+  halves.c = (uint8_t)c;
+  return halves;
+}
+
+int64_t tl_align_c_halves_value(struct Halves halves) {
+  return halves.a + halves.b * 16 + halves.c * 4096;
+}

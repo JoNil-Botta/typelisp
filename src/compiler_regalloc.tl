@@ -16,6 +16,8 @@
 ;; Block labels are interned ids, so their maps are integer-keyed.
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
+(import stdlib.vector)
+(import (vector.vector i64 core) as reg_ids)
 (import compiler_ast_types as ast)
 (import compiler_abi as cabi)
 (import compiler_liveness as live)
@@ -5184,295 +5186,264 @@
       (CompilerRegIntervalIndex out-starts out-ends out-segs))))
 
 ;; ---------------------------------------------------------------------------
-;; Cheap block-level liveness for register planning (#perf).
+;; Block-level liveness for frame-slot and fallback intervals.
 ;;
-;; Register and stack-slot planning only need, per variable, a single
-;; [first-live, last-live] interval, which can be built from block-level
-;; live-in/live-out plus per-instruction mentions. This pass reuses the tested use/def/successor
-;; extraction from compiler-live-build-block-array, then runs the backward dataflow
-;; fixpoint over MUTABLE i64-word bitsets (in place, no per-operation allocation),
-;; instead of the shared liveness pass's immutable linked-list bitset unions and
-;; per-instruction live-after materialization. Block-level live-in/out keeps the
-;; intervals sound across control flow that pure mention ranges miss (a
-;; loop-carried value is live-out of the body and live-in of the header, so its
-;; interval covers the whole loop). 63 data bits per word avoid the i64 sign bit.
+;; Register and stack-slot planning only need, per variable, one
+;; [first-live, last-live] hull: its instruction mentions plus the boundaries of
+;; the blocks it is live into (block entry) and out of (block exit). Block-level
+;; live-in/out keeps the hull sound across control flow that mention ranges miss
+;; (a loop-carried value is live-out of the body and live-in of the header, so
+;; its hull covers the whole loop).
+;;
+;; Liveness is the least fixpoint of live-in(b) = uses(b) | (live-out(b) & ~defs(b))
+;; and live-out(b) = the union of live-in(s) over b's successors s, over the block
+;; uses/defs of `compiler-live-block-use-def-ids!`. It is solved one variable at
+;; a time (#8417): a backward walk from the blocks with an upward-exposed use
+;; marks each predecessor live-out and enters it live-in unless it defines the
+;; variable. A block is entered at most once per variable, so the work is the
+;; size of the live regions plus their predecessor edges, and storage is linear
+;; in blocks, vars and operands; the dense blocks x vars bit matrices this
+;; replaces grew quadratically on long functions. `compiler-reg-extend-interval`
+;; keeps a min/max, so the order in which points arrive does not matter.
 ;; ---------------------------------------------------------------------------
-(define (compiler-reg-bits-words [vars : i64]) : i64
-  (/ (+ vars 62) 63))
+;; Compressed rows: row r's items are items[starts[r] .. starts[r + 1]).
+(defstruct CompilerRegCsr
+  (starts (__tl_dyn-array i64))
+  (items (__tl_dyn-array i64)))
 
-(define (compiler-reg-bits-set!
-  [row : (&mut row (__tl_dyn-array i64))]
-  [base : i64]
-  [var : i64]) : unit
+;; Inverts per-block id lists (block b owns ids[ends[b - 1] .. ends[b]), from 0
+;; for b = 0) into rows keyed by id, each listing its blocks in increasing
+;; order. An id outside [0, rows) has no row: a var past the function's count,
+;; which no interval records.
+(define (compiler-reg-csr-invert
+  [rows : i64]
+  [id-list : reg_ids.Vec]
+  [ends : (__tl_dyn-array i64)]) : CompilerRegCsr
   (let
-    [w : i64 (+ base (/ var 63))]
-    (set! (array-ref row w) (bit-or (array-ref row w) (shl 1 (% var 63))))))
-
-(define (compiler-reg-chunk->row!
-  [row : (&mut row (__tl_dyn-array i64))]
-  [base : i64]
-  [bits : i64]
-  [var-base : i64]) : unit
-  (if (= bits 0)
-    unit
-    (let
-      [i : i64 (compiler-reg-low-bit-index32-nonzero bits)]
-      (begin
-        (compiler-reg-bits-set! row base (+ var-base i))
-        (compiler-reg-chunk->row! row base (bit-and bits (- bits 1)) var-base)))))
-
-(define (compiler-reg-set-words->row!
-  [set : live.CompilerLiveI64Set]
-  [row : (&mut row (__tl_dyn-array i64))]
-  [base : i64]
-  [word-index : i64]) : unit
-  (if (>= word-index (live.compiler-live-set-word-count set))
-    unit
+    ;; Reads are unchecked: an entry index is below the list's length, a row
+    ;; id is checked against `rows` before use, and `block - 1` indexes `ends`
+    ;; only for a block above 0.
+    [count : i64 (reg_ids.len (& id-list))]
+    [ids : (__tl_dyn-array i64) id-list.slots]
+    ;; Row r's count, then the end of row r, then its start after the
+    ;; backward fill below.
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ rows 1))]
+    [index : i64 0]
+    [block : i64 (array-length ends)]
     (begin
-      (compiler-reg-chunk->row!
-        row
-        base
-        (live.compiler-live-set-word-at-bounded set word-index)
-        (* word-index (live.compiler-live-set-word-bits)))
-      (compiler-reg-set-words->row! set row base (+ word-index 1)))))
-
-(define (compiler-reg-set->row!
-  [set : live.CompilerLiveI64Set]
-  [row : (&mut row (__tl_dyn-array i64))]
-  [base : i64]) : unit
-  (compiler-reg-set-words->row! set row base 0))
-
-(define (compiler-reg-live-block-succs [block : live.CompilerLiveBlock]) : live.CompilerLiveLabelSet
-  block.successors)
-
-(define (compiler-reg-bits-build-rows-from-array!
-  [blocks : (__tl_dyn-array live.CompilerLiveBlock)]
-  [idmap : reg_label_i64_map.Map]
-  [use-rows : (&mut use-rows (__tl_dyn-array i64))]
-  [def-rows : (&mut def-rows (__tl_dyn-array i64))]
-  [words : i64]
-  [index : i64]) : reg_label_i64_map.Map
-  (if (>= index (array-length blocks))
-    idmap
-    (let
-      [block : live.CompilerLiveBlock
-        (compiler-reg-global-array-element-shared-view blocks index)]
-      [next-idmap : reg_label_i64_map.Map idmap]
-      (begin
-        (compiler-reg-set->row! block.uses use-rows (* index words))
-        (compiler-reg-set->row! block.defs def-rows (* index words))
-        (reg_label_i64_map.insert-ref! (&mut next-idmap) block.label index)
-        (compiler-reg-bits-build-rows-from-array!
-          blocks
-          next-idmap
-          use-rows
-          def-rows
-          words
-          (+ index 1))))))
-
-(define (compiler-reg-bits-clear-row!
-  [row : (&mut row (__tl_dyn-array i64))]
-  [base : i64]
-  [words : i64]) : unit
-  (let
-    [w : i64 0]
-    (begin
-      (while (< w words)
-        (begin
-          (set! (array-ref row (+ base w)) 0)
-          (set! w (+ w 1))))
-      unit)))
-
-(define (compiler-reg-bits-or-row!
-  [dst : (&mut dst (__tl_dyn-array i64))]
-  [dbase : i64]
-  [src : (& src (__tl_dyn-array i64))]
-  [sbase : i64]
-  [words : i64]) : unit
-  (let
-    [w : i64 0]
-    (begin
-      (while (< w words)
+      (while (< index count)
+        (let
+          [id : i64 (compiler-reg-global-array-element-shared-view ids index)]
+          (begin
+            (when
+              (and (>= id 0) (< id rows))
+              (set!
+                (array-ref starts id)
+                (+ (compiler-reg-global-array-element-shared-view starts id) 1)))
+            (set! index (+ index 1)))))
+      (set! index 1)
+      (while (<= index rows)
         (begin
           (set!
-            (array-ref dst (+ dbase w))
-            (bit-or (array-ref dst (+ dbase w)) (array-ref src (+ sbase w))))
-          (set! w (+ w 1))))
-      unit)))
-
-(define (compiler-reg-bits-or-succs!
-  [live-out : (&mut live-out (__tl_dyn-array i64))]
-  [live-in : (& live-in (__tl_dyn-array i64))]
-  [succs : live.CompilerLiveLabelSet]
-  [idmap : (& idmap reg_label_i64_map.Map)]
-  [b : i64]
-  [words : i64]) : unit
-  (match (compiler-reg-global-shared-view succs)
-    [(live.CompilerLiveLabelSet.Nil) unit]
-    [(live.CompilerLiveLabelSet.Dense _ _)
-      (begin
-        (match (reg_label_i64_map.get
-          (& idmap)
-          (live.compiler-live-label-set-ref
-            (compiler-reg-global-shared-view succs)
-            0))
-          [(reg_label_i64_map.LookupFound idx)
-            (compiler-reg-bits-or-row!
-              live-out
-              (* b words)
-              live-in
-              (* idx words)
-              words)]
-          [(reg_label_i64_map.LookupMissing) unit])
-        (compiler-reg-bits-or-succs!
-          live-out
-          live-in
-          (live.compiler-live-label-set-tail succs)
-          idmap
-          b
-          words))]))
-
-(define (compiler-reg-bits-update-live-in!
-  [live-in : (&mut live-in (__tl_dyn-array i64))]
-  [use-rows : (& use-rows (__tl_dyn-array i64))]
-  [live-out : (& live-out (__tl_dyn-array i64))]
-  [def-rows : (& def-rows (__tl_dyn-array i64))]
-  [base : i64]
-  [words : i64]) : bool
-  (let
-    [w : i64 0]
-    [changed : bool false]
-    (begin
-      (while (< w words)
-        (let
-          [idx : i64 (+ base w)]
-          [next : i64
-            (bit-or
-              (array-ref use-rows idx)
-              (bit-and
-                (array-ref live-out idx)
-                (bit-xor (array-ref def-rows idx) -1)))]
-          (begin
-            (if (= next (array-ref live-in idx))
-              unit
-              (begin
-                (set! (array-ref live-in idx) next)
-                (set! changed true)))
-            (set! w (+ w 1)))))
-      changed)))
-
-(define (compiler-reg-bits-iterate!
-  [arr : (__tl_dyn-array live.CompilerLiveBlock)]
-  [idmap : (& idmap reg_label_i64_map.Map)]
-  [words : i64]
-  [use-rows : (& use-rows (__tl_dyn-array i64))]
-  [live-in : (&mut live-in (__tl_dyn-array i64))]
-  [live-out : (&mut live-out (__tl_dyn-array i64))]
-  [def-rows : (& def-rows (__tl_dyn-array i64))]
-  [b : i64]
-  [changed : bool]) : bool
-  (if (< b 0)
-    changed
-    (begin
-      (compiler-reg-bits-clear-row! live-out (* b words) words)
-      (compiler-reg-bits-or-succs!
-        live-out
-        live-in
-        (compiler-reg-live-block-succs
-          (compiler-reg-global-array-element-shared-view arr b))
-        idmap
-        b
-        words)
+            (array-ref starts index)
+            (+
+              (compiler-reg-global-array-element-shared-view starts index)
+              (compiler-reg-global-array-element-shared-view starts (- index 1))))
+          (set! index (+ index 1))))
       (let
-        [next-changed : bool
-          (if (compiler-reg-bits-update-live-in!
-            live-in
-            use-rows
-            live-out
-            def-rows
-            (* b words)
-            words)
-            true
-            changed)]
-        (compiler-reg-bits-iterate!
-          arr
-          idmap
-          words
-          use-rows
-          live-in
-          live-out
-          def-rows
-          (- b 1)
-          next-changed)))))
-
-(define (compiler-reg-bits-fixpoint!
-  [arr : (__tl_dyn-array live.CompilerLiveBlock)]
-  [idmap : reg_label_i64_map.Map]
-  [count : i64]
-  [words : i64]
-  [use-rows : (__tl_dyn-array i64)]
-  [live-in : (&mut live-in (__tl_dyn-array i64))]
-  [live-out : (&mut live-out (__tl_dyn-array i64))]
-  [def-rows : (__tl_dyn-array i64)]) : unit
-  (if (compiler-reg-bits-iterate!
-    (compiler-reg-global-shared-view arr)
-    idmap
-    words
-    use-rows
-    live-in
-    live-out
-    def-rows
-    (- count 1)
-    false)
-    (compiler-reg-bits-fixpoint!
-      arr
-      idmap
-      count
-      words
-      use-rows
-      live-in
-      live-out
-      def-rows)
-    unit))
-
-(define (compiler-reg-bits-extend-word!
-  [bits : i64]
-  [var-base : i64]
-  [starts : (&mut starts (__tl_dyn-array i64))]
-  [ends : (&mut ends (__tl_dyn-array i64))]
-  [point : i64]) : unit
-  (if (= bits 0)
-    unit
-    (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
-      (begin
-        (compiler-reg-extend-interval starts ends (+ var-base i) point)
-        (compiler-reg-bits-extend-word!
-          (bit-and bits (- bits 1))
-          var-base
-          starts
-          ends
-          point)))))
-
-(define (compiler-reg-bits-extend-row!
-  [row : (& row (__tl_dyn-array i64))]
-  [base : i64]
-  [words : i64]
-  [starts : (&mut starts (__tl_dyn-array i64))]
-  [ends : (&mut ends (__tl_dyn-array i64))]
-  [point : i64]) : unit
-  (let
-    [w : i64 0]
-    (begin
-      (while (< w words)
+        [items : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (compiler-reg-global-array-element-shared-view starts rows))]
         (begin
-          (compiler-reg-bits-extend-word!
-            (array-ref row (+ base w))
-            (* w 63)
-            starts
-            ends
-            point)
-          (set! w (+ w 1))))
+          (set! index count)
+          (while (> block 0)
+            (begin
+              (set! block (- block 1))
+              (while (and
+                (> index 0)
+                (or
+                  (= block 0)
+                  (>
+                    index
+                    (compiler-reg-global-array-element-shared-view
+                      ends
+                      (- block 1)))))
+                (let
+                  [id : i64
+                    (compiler-reg-global-array-element-shared-view
+                      ids
+                      (- index 1))]
+                  (begin
+                    (when
+                      (and (>= id 0) (< id rows))
+                      (begin
+                        (set!
+                          (array-ref starts id)
+                          (-
+                            (compiler-reg-global-array-element-shared-view
+                              starts
+                              id)
+                            1))
+                        (set!
+                          (array-ref
+                            items
+                            (compiler-reg-global-array-element-shared-view
+                              starts
+                              id))
+                          block)))
+                    (set! index (- index 1)))))))
+          (CompilerRegCsr starts items))))))
+
+;; Extends every var's hull over the block boundaries where it is live:
+;; bounds[b], block b's entry, when live-in at b, and bounds[b + 1], its exit,
+;; when live-out of b. Bounds grow with the block index, so the lowest and
+;; highest live-in and live-out blocks decide the hull.
+(define (compiler-reg-sparse-live-extend!
+  [vars : i64]
+  [use-blocks : CompilerRegCsr]
+  [def-blocks : CompilerRegCsr]
+  [preds : (__tl_dyn-array live.CompilerLiveIndexVec)]
+  [bounds : (__tl_dyn-array i64)]
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : unit
+  (let
+    ;; Reads are unchecked: every index is in range by construction -- a var
+    ;; below `vars` and its successor in the var rows' `vars + 1` starts, an
+    ;; offset between consecutive starts, a block below `count` (the rows'
+    ;; items, predecessor lists and stack entries) or one past it in the
+    ;; `count + 1` bounds, and a stack depth below `count` because each block
+    ;; is pushed at most once per var.
+    [count : i64 (- (array-length bounds) 1)]
+    ;; Per-block stamps: the var whose walk last set them.
+    [def-mark : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [in-mark : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    ;; Live-in blocks whose predecessors are still to visit; each block is
+    ;; pushed at most once per var.
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [var : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array (&mut def-mark) -1)
+      (compiler-reg-fill-i64-array (&mut in-mark) -1)
+      (while (< var vars)
+        (let
+          [index : i64
+            (compiler-reg-global-array-element-shared-view
+              def-blocks.starts
+              var)]
+          [top : i64 0]
+          [in-lo : i64 count]
+          [in-hi : i64 -1]
+          [out-lo : i64 count]
+          [out-hi : i64 -1]
+          (begin
+            (while (<
+              index
+              (compiler-reg-global-array-element-shared-view
+                def-blocks.starts
+                (+ var 1)))
+              (begin
+                (set!
+                  (array-ref
+                    def-mark
+                    (compiler-reg-global-array-element-shared-view
+                      def-blocks.items
+                      index))
+                  var)
+                (set! index (+ index 1))))
+            (set!
+              index
+              (compiler-reg-global-array-element-shared-view
+                use-blocks.starts
+                var))
+            (while (<
+              index
+              (compiler-reg-global-array-element-shared-view
+                use-blocks.starts
+                (+ var 1)))
+              (let
+                [block : i64
+                  (compiler-reg-global-array-element-shared-view
+                    use-blocks.items
+                    index)]
+                (begin
+                  (when
+                    (!=
+                      (compiler-reg-global-array-element-shared-view
+                        in-mark
+                        block)
+                      var)
+                    (begin
+                      (set! (array-ref in-mark block) var)
+                      (set! (array-ref stack top) block)
+                      (set! top (+ top 1))))
+                  (set! index (+ index 1)))))
+            (while (> top 0)
+              (let
+                [block : i64
+                  (compiler-reg-global-array-element-shared-view
+                    stack
+                    (- top 1))]
+                (begin
+                  (set! top (- top 1))
+                  (set! in-lo (live.compiler-live-set-min in-lo block))
+                  (set! in-hi (live.compiler-live-set-max in-hi block))
+                  (set! index 0)
+                  (while (< index (array-length (array-ref preds block).items))
+                    (let
+                      [pred : i64
+                        (array-ref (array-ref preds block).items index)]
+                      (begin
+                        (set! out-lo (live.compiler-live-set-min out-lo pred))
+                        (set! out-hi (live.compiler-live-set-max out-hi pred))
+                        (when
+                          (and
+                            (!=
+                              (compiler-reg-global-array-element-shared-view
+                                def-mark
+                                pred)
+                              var)
+                            (!=
+                              (compiler-reg-global-array-element-shared-view
+                                in-mark
+                                pred)
+                              var))
+                          (begin
+                            (set! (array-ref in-mark pred) var)
+                            (set! (array-ref stack top) pred)
+                            (set! top (+ top 1))))
+                        (set! index (+ index 1))))))))
+            (when
+              (>= in-hi 0)
+              (begin
+                (compiler-reg-extend-interval
+                  starts
+                  ends
+                  var
+                  (compiler-reg-global-array-element-shared-view bounds in-lo))
+                (compiler-reg-extend-interval
+                  starts
+                  ends
+                  var
+                  (compiler-reg-global-array-element-shared-view bounds in-hi))))
+            (when
+              (>= out-hi 0)
+              (begin
+                (compiler-reg-extend-interval
+                  starts
+                  ends
+                  var
+                  (compiler-reg-global-array-element-shared-view
+                    bounds
+                    (+ out-lo 1)))
+                (compiler-reg-extend-interval
+                  starts
+                  ends
+                  var
+                  (compiler-reg-global-array-element-shared-view
+                    bounds
+                    (+ out-hi 1)))))
+            (set! var (+ var 1)))))
       unit)))
 
 (define (compiler-reg-bits-mentions-instr-seq
@@ -5497,85 +5468,6 @@
           (set! out-point (+ out-point 2))
           (set! index (+ index 1))))
       out-point)))
-
-(define (compiler-reg-bits-intervals-walk
-  [ir-blocks : ir.CompilerIrBlockList]
-  [live-in : (__tl_dyn-array i64)]
-  [live-out : (__tl_dyn-array i64)]
-  [words : i64]
-  [b : i64]
-  [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
-  (match ir-blocks
-    [(ir.CompilerIrBlockList.Nil) point]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-bits-extend-row!
-              live-in
-              (* b words)
-              words
-              (&mut starts)
-              (&mut ends)
-              point)
-            (let
-              [end-point : i64
-                (compiler-reg-bits-mentions-instr-seq instrs point starts ends)]
-              (begin
-                (compiler-reg-bits-extend-row!
-                  live-out
-                  (* b words)
-                  words
-                  (&mut starts)
-                  (&mut ends)
-                  end-point)
-                (compiler-reg-bits-intervals-walk
-                  (deref rest)
-                  live-in
-                  live-out
-                  words
-                  (+ b 1)
-                  end-point
-                  starts
-                  ends))))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 0]
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [block-index : i64 b]
-        [out-point : i64 point]
-        (begin
-          (while (< i count)
-            (begin
-              (match (ir.compiler-ir-block-seq-ref seq i)
-                [(ir.CompilerIrBlock.Block _ instrs)
-                  (begin
-                    (compiler-reg-bits-extend-row!
-                      live-in
-                      (* block-index words)
-                      words
-                      (&mut starts)
-                      (&mut ends)
-                      out-point)
-                    (set!
-                      out-point
-                      (compiler-reg-bits-mentions-instr-seq
-                        instrs
-                        out-point
-                        starts
-                        ends))
-                    (compiler-reg-bits-extend-row!
-                      live-out
-                      (* block-index words)
-                      words
-                      (&mut starts)
-                      (&mut ends)
-                      out-point))])
-              (set! block-index (+ block-index 1))
-              (set! i (+ i 1))))
-          out-point))]))
 
 (define (compiler-reg-bits-map-capacity [count : i64]) : i64
   (if (< count 4)
@@ -5605,60 +5497,95 @@
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq
         (compiler-reg-global-shared-view blocks))]
-    [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)
-      (live.compiler-live-build-block-array seq vars)]
-    [count : i64 (array-length live-blocks)]
-    [words : i64 (compiler-reg-bits-words vars)]
-    [cells : i64 (* count words)]
-    [use-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-    [def-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-    [live-in : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-    [live-out : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [idmap : reg_label_i64_map.Map
+      (reg_label_i64_map.with-capacity (compiler-reg-bits-map-capacity count))]
+    ;; Per var, the last block that recorded it as a use or a def.
+    [use-at : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [def-at : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    ;; Per-block id lists in the layout `compiler-reg-csr-invert` reads.
+    [use-ids : reg_ids.Vec (reg_ids.new)]
+    [use-ends : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [def-ids : reg_ids.Vec (reg_ids.new)]
+    [def-ends : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    ;; Successor block indices; a label with no block has none.
+    [succs : (__tl_dyn-array live.CompilerLiveIndexVec)
+      (__tl_make-array live.CompilerLiveIndexVec count)]
+    ;; Program points, two per instruction: block b is entered at bounds[b]
+    ;; and left at bounds[b + 1], the next block's entry.
+    [bounds : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [block : i64 0]
     (begin
       (compiler-reg-fill-i64-array (&mut starts) -1)
       (compiler-reg-fill-i64-array (&mut ends) -1)
-      (let
-        [idmap : reg_label_i64_map.Map
-          (compiler-reg-bits-build-rows-from-array!
-            (compiler-reg-global-shared-view live-blocks)
-            (reg_label_i64_map.with-capacity
-              (compiler-reg-bits-map-capacity count))
-            (&mut use-rows)
-            (&mut def-rows)
-            words
-            0)]
+      (compiler-reg-fill-i64-array (&mut use-at) -1)
+      (compiler-reg-fill-i64-array (&mut def-at) -1)
+      (while (< block count)
         (begin
-          (compiler-reg-bits-fixpoint!
-            live-blocks
-            idmap
-            count
-            words
-            use-rows
-            (&mut live-in)
-            (&mut live-out)
-            def-rows)
-          (compiler-reg-bits-intervals-walk
-            blocks
-            live-in
-            live-out
-            words
-            0
-            0
-            starts
-            ends)
-          (compiler-reg-interval-arrays-to-seq
-            starts
-            ends
-            (- vars 1)
-            (compiler-reg-interval-seq-empty)))))))
+          (match (ir.compiler-ir-block-seq-ref seq block)
+            [(ir.CompilerIrBlock.Block label _)
+              (reg_label_i64_map.insert-ref! (&mut idmap) label block)])
+          (set! block (+ block 1))))
+      (set! block 0)
+      (while (< block count)
+        (let
+          [ir-block : ir.CompilerIrBlock
+            (ir.compiler-ir-block-seq-ref seq block)]
+          (begin
+            (match (compiler-reg-global-shared-view ir-block)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (begin
+                  (set!
+                    (array-ref bounds (+ block 1))
+                    (compiler-reg-bits-mentions-instr-seq
+                      (compiler-reg-global-shared-view instrs)
+                      (array-ref bounds block)
+                      starts
+                      ends))
+                  (live.compiler-live-block-use-def-ids!
+                    instrs
+                    block
+                    (&mut use-at)
+                    (&mut def-at)
+                    (&mut use-ids)
+                    (&mut def-ids))
+                  (set! (array-ref use-ends block) (reg_ids.len (& use-ids)))
+                  (set! (array-ref def-ends block) (reg_ids.len (& def-ids)))
+                  (set!
+                    (array-ref succs block)
+                    (live.compiler-live-label-set-to-index-vec
+                      (live.compiler-live-block-successors
+                        (compiler-reg-global-shared-view ir-block))
+                      (& idmap))))])
+            (set! block (+ block 1)))))
+      (let
+        [use-blocks : CompilerRegCsr
+          (compiler-reg-csr-invert vars use-ids use-ends)]
+        [def-blocks : CompilerRegCsr
+          (compiler-reg-csr-invert vars def-ids def-ends)]
+        [preds : (__tl_dyn-array live.CompilerLiveIndexVec)
+          (live.compiler-live-predecessors-build succs)]
+        (compiler-reg-sparse-live-extend!
+          vars
+          use-blocks
+          def-blocks
+          preds
+          bounds
+          (&mut starts)
+          (&mut ends)))
+      (compiler-reg-interval-arrays-to-seq
+        starts
+        ends
+        (- vars 1)
+        (compiler-reg-interval-seq-empty)))))
 
 ;; Most stack-only functions are one straight-line block. Parameters and every
 ;; other frame value are stack-resident, so instruction mention hulls suffice
-;; for slot interference; avoid building block use/def sets, four CFG bit
-;; matrices, and a label map for that common case. A block with a successor
-;; (including a self-loop) keeps the full CFG fixpoint.
+;; for slot interference; skip the block use/def lists, label map and
+;; per-variable liveness walk for that common case. A block with a successor
+;; (including a self-loop) keeps the full block liveness.
 (define (compiler-reg-stack-only-block-intervals [func : ir.CompilerIrFunction]) : CompilerRegIntervalSeq
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks _)
@@ -26063,7 +25990,7 @@
         (compiler-reg-call-set-in-range?
           clobber-points
           (compiler-reg-global-array-element-shared-view starts var)
-          (compiler-reg-global-array-element-shared-view ends var))
+          (array-ref ends var))
         (if (compiler-reg-interval-index-var-has-segments? interval-index var)
           (compiler-reg-segments-span-clobber?
             (compiler-reg-global-array-element-shared-view
@@ -28479,9 +28406,7 @@
                 (set! i (+ i 1))))
             acc))
         (-
-          (compiler-reg-trace-prefix-at
-            prefix
-            (compiler-reg-global-array-element-shared-view ends var))
+          (compiler-reg-trace-prefix-at prefix (array-ref ends var))
           (compiler-reg-trace-prefix-at
             prefix
             (+ (compiler-reg-global-array-element-shared-view starts var) 1)))))))
@@ -30202,8 +30127,8 @@
         metrics)]
     ;; The stack-only opt0/opt1 path deliberately skips scalar register
     ;; allocation, but frame-slot coloring still needs conservative lifetimes.
-    ;; Reuse the compact block-CFG bitset fixpoint instead of running the much
-    ;; more expensive scalar allocator just to obtain its fallback intervals.
+    ;; Reuse the block-level liveness hulls instead of running the much more
+    ;; expensive scalar allocator just to obtain its fallback intervals.
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-stack-only-block-intervals func)]
     (CompilerRegPlan.Plan

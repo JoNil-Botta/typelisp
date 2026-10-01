@@ -12249,6 +12249,160 @@
        return
      }"))
 
+;; Block-level hulls (`compiler-reg-block-intervals`), rendered as
+;; `var:start-end` and pinned to what the dense bit-matrix fixpoint produced
+;; before the per-variable walk replaced it (#8417).
+(define (compiler-reg-block-hulls-text [func : ir.CompilerIrFunction]) : String
+  (let
+    [hulls : reg.CompilerRegIntervalSeq (reg.compiler-reg-block-intervals func)]
+    [slots : (__tl_dyn-array reg.CompilerRegInterval) hulls.slots]
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index hulls.len)
+        (let
+          [hull : reg.CompilerRegInterval (array-ref slots index)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (string.int->string hull.var)
+                ":"
+                (string.int->string hull.start)
+                "-"
+                (string.int->string hull.end)
+                " "))
+            (set! index (+ index 1)))))
+      out)))
+
+;; A loop: the phi'd counter and the bound stay live around the back edge.
+(define (compiler-reg-block-hulls-loop-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @hulls_loop(bound=%0:i64) -> i64 vars 6 {
+     entry:
+       %1 = mov 0 : i64
+       jump header
+     header:
+       %2 = phi [%1, entry], [%4, body] : i64
+       %3 = lt %2, %0 : i64
+       branch %3, body, exit
+     body:
+       %4 = add %2, 1 : i64
+       jump header
+     exit:
+       %5 = add %2, %0 : i64
+       return %5
+     }"))
+
+;; A self-looping block whose leading phis read each other's previous values:
+;; the lagged copy keeps `%3` live around the back edge.
+(define (compiler-reg-block-hulls-lagged-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @hulls_lagged(bound=%0:i64) -> i64 vars 6 {
+     entry:
+       %1 = mov 0 : i64
+       jump header
+     header:
+       %2 = phi [%1, entry], [%3, header] : i64
+       %3 = phi [%1, entry], [%4, header] : i64
+       %4 = add %3, 1 : i64
+       %5 = lt %4, %0 : i64
+       branch %5, header, exit
+     exit:
+       return %2
+     }"))
+
+;; Vars in three different scratch words. `%65` is used before its redefinition
+;; in `middle` (upward-exposed); `%40` is defined before its use there (not).
+(define (compiler-reg-block-hulls-words-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @hulls_words(x=%0:i64) -> i64 vars 70 {
+     entry:
+       %65 = add %0, 1 : i64
+       %33 = add %65, %0 : i64
+       jump middle
+     middle:
+       %66 = add %65, 2 : i64
+       %65 = add %66, 3 : i64
+       %40 = add %0, 4 : i64
+       %41 = add %40, %66 : i64
+       jump last
+     last:
+       %67 = add %33, %65 : i64
+       %68 = add %67, %41 : i64
+       return %68
+     }"))
+
+;; A call with 65 distinct arguments, wider than the id extraction buffer, so
+;; its uses take the bitset path.
+(define (compiler-reg-block-hulls-wide-function) : ir.CompilerIrFunction
+  (let
+    [text : String "function @hulls_wide() -> i64 vars 67 {\n entry:\n"]
+    [args : String ""]
+    [index : i64 1]
+    (begin
+      (while (<= index 65)
+        (begin
+          (set!
+            text
+            (str_cat.str-cat
+              text
+              "   %"
+              (string.int->string index)
+              " = mov "
+              (string.int->string index)
+              " : i64\n"))
+          (set!
+            args
+            (str_cat.str-cat
+              args
+              (if (= index 1)
+                ""
+                ", ")
+              "%"
+              (string.int->string index)))
+          (set! index (+ index 1))))
+      (irt.func
+        (str_cat.str-cat
+          text
+          "   jump call\n call:\n   %66 = call wide("
+          args
+          ") : i64\n   return %66\n }")))))
+
+(define (compiler-reg-block-hulls-wide-expected) : String
+  (let
+    [out : String ""]
+    [index : i64 1]
+    (begin
+      (while (<= index 65)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (string.int->string index)
+              ":"
+              (string.int->string (* 2 (- index 1)))
+              "-132 "))
+          (set! index (+ index 1))))
+      (str_cat.str-cat out "66:132-134 "))))
+
+(define (compiler-reg-block-hulls-ok?) : bool
+  (and
+    (string.eq
+      (compiler-reg-block-hulls-text (compiler-reg-block-hulls-loop-function))
+      "0:0-14 1:0-14 2:4-14 3:6-8 4:0-14 5:14-16 ")
+    (string.eq
+      (compiler-reg-block-hulls-text (compiler-reg-block-hulls-lagged-function))
+      "0:0-14 1:0-14 2:4-14 3:0-14 4:0-14 5:10-12 ")
+    (string.eq
+      (compiler-reg-block-hulls-text (compiler-reg-block-hulls-words-function))
+      "0:0-10 33:2-16 40:10-12 41:12-18 65:0-16 66:6-12 67:16-18 68:18-20 ")
+    (string.eq
+      (compiler-reg-block-hulls-text (compiler-reg-block-hulls-wide-function))
+      (compiler-reg-block-hulls-wide-expected))))
+
 (define (compiler-reg-color-pointer-assignments) : reg.CompilerRegAssignmentTable
   (reg.compiler-reg-assignment-insert
     (reg.compiler-reg-assignment-insert
@@ -13910,6 +14064,7 @@
       (compiler-reg-color-storage-ranges-ok?)
       (compiler-reg-stack-only-storage-branch-ok?)
       (compiler-reg-stack-only-storage-escape-ok?)
+      (compiler-reg-block-hulls-ok?)
       (cfg test (compiler-reg-trace-reason-vocabulary-ok?) true))
     true))
 

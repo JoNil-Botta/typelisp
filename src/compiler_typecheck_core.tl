@@ -91888,12 +91888,558 @@
         args
         span
         origin)]
-    [_
-      (ResultMacroSexpr.Err
-        (box
-          (macro-output-syntax-diag
-            origin
-            "typecheck: module macro output contains syntax that cannot be parsed as a declaration")))]))
+    ;; Scoped forms: a head, sometimes one leading operand or binder, then the
+    ;; body list exactly as the parser keeps it (#7918).
+    [(ast.AstExpr.InArena arena-id body)
+      (macro-operand-body-form owner "in-arena" arena-id body span origin)]
+    [(ast.AstExpr.WithEscape scratch-id body)
+      (macro-operand-body-form owner "with-escape" scratch-id body span origin)]
+    [(ast.AstExpr.WithScratch body)
+      (macro-expr-list-with-head-symbol-id
+        owner
+        (ci.intern "with-scratch")
+        body
+        span
+        origin)]
+    [(ast.AstExpr.WithRegion region body)
+      (let
+        [sbody : reader.SpannedSexpr
+          (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (ci.intern "with-arena") span)
+            (reader.spanned-sexpr-list-prepend
+              (macro-binder-symbol owner region "with-arena-region" span)
+              sbody
+              span)
+            span)))]
+    [(ast.AstExpr.WithResource resource-box)
+      (match (__tl-box-place resource-box)
+        [(ast.AstWithResource.WithResource bindings body)
+          (let
+            [sbindings-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sbindings : reader.SpannedSexpr
+              (try
+                (macro-resource-bindings-to-spanned-sexpr
+                  owner
+                  (& bindings)
+                  0
+                  span
+                  sbindings-origin
+                  (reader.spanned-sexpr-builder-new)))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-list-prepend
+                (macro-spanned-symbol-id (ci.intern "with") span)
+                (reader.spanned-sexpr-list-prepend sbindings sbody span)
+                span)))])]
+    [(ast.AstExpr.Break)
+      (ResultMacroSexpr.Ok (macro-form0-id (ci.intern "break") span))]
+    [(ast.AstExpr.Continue)
+      (ResultMacroSexpr.Ok (macro-form0-id (ci.intern "continue") span))]
+    [(ast.AstExpr.Comptime inner-id)
+      (macro-child-form1-id owner (ci.intern "comptime") inner-id span origin)]
+    [(ast.AstExpr.Lambda lambda-box)
+      (match (__tl-box-place lambda-box)
+        [(ast.AstLambda.Lambda params maybe-ret body-id)
+          (let
+            [sparams-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sparams : reader.SpannedSexpr
+              (try
+                (macro-lambda-params-to-spanned-sexpr
+                  owner
+                  (& params)
+                  0
+                  span
+                  sparams-origin
+                  (reader.spanned-sexpr-builder-new)))]
+            [sbody-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sbody : reader.SpannedSexpr
+              (try
+                (macro-child-to-spanned-sexpr owner body-id span sbody-origin))]
+            [head : reader.SpannedSexpr
+              (macro-spanned-symbol-id (ci.intern "lambda") span)]
+            (match maybe-ret
+              [(ast.AstMaybeType.No)
+                (ResultMacroSexpr.Ok
+                  (reader.spanned-sexpr-list3 head sparams sbody span))]
+              [(ast.AstMaybeType.Some ret)
+                (let
+                  [sret : reader.SpannedSexpr
+                    (try (macro-type-to-spanned-sexpr owner ret span origin))]
+                  (ResultMacroSexpr.Ok
+                    (reader.spanned-sexpr-list-from-builder
+                      (reader.spanned-sexpr-builder-push
+                        (reader.spanned-sexpr-builder-push
+                          (reader.spanned-sexpr-builder-push
+                            (reader.spanned-sexpr-builder-push
+                              (reader.spanned-sexpr-builder-push
+                                (reader.spanned-sexpr-builder-new)
+                                head)
+                              sparams)
+                            (macro-spanned-symbol-id
+                              (cbi.compiler-builtin-ctfe ":")
+                              span))
+                          sret)
+                        sbody)
+                      span)))]))])]
+    [(ast.AstExpr.Foreach foreach-box)
+      (match (__tl-box-place foreach-box)
+        [(ast.AstForeach.Foreach name index-ty start-id end-id body-id)
+          (let
+            [srange-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "foreach-index"
+                  index-ty
+                  start-id
+                  end-id
+                  span
+                  srange-origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr owner body-id span origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-list3
+                (macro-spanned-symbol-id (ci.intern "foreach") span)
+                (reader.spanned-sexpr-list1 srange span)
+                sbody
+                span)))])]
+    [(ast.AstExpr.ForeachActive lane body-id)
+      (let
+        [sbody : reader.SpannedSexpr
+          (try (macro-child-to-spanned-sexpr owner body-id span origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list3
+            (macro-spanned-symbol-id (ci.intern "foreach-active") span)
+            (reader.spanned-sexpr-bracket-list
+              (reader.spanned-sexpr-list3
+                (macro-binder-symbol owner lane "foreach-active-lane" span)
+                (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
+                (macro-spanned-symbol-id (ci.intern "i64") span)
+                span)
+              span)
+            sbody
+            span)))]
+    [(ast.AstExpr.SpmdReduce reduce-box)
+      (match (__tl-box-place reduce-box)
+        [(ast.AstSpmdReduce.Reduce op name ty start-id end-id init-id value-id)
+          (let
+            [srange-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "spmd-reduce-index"
+                  ty
+                  start-id
+                  end-id
+                  span
+                  srange-origin))]
+            [sinit-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sinit : reader.SpannedSexpr
+              (try
+                (macro-child-to-spanned-sexpr owner init-id span sinit-origin))]
+            [svalue : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr owner value-id span origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-list-from-builder
+                (reader.spanned-sexpr-builder-push
+                  (reader.spanned-sexpr-builder-push
+                    (reader.spanned-sexpr-builder-push
+                      (reader.spanned-sexpr-builder-push
+                        (reader.spanned-sexpr-builder-push
+                          (reader.spanned-sexpr-builder-new)
+                          (macro-spanned-symbol-id
+                            (ci.intern "spmd-reduce")
+                            span))
+                        (macro-reduce-op-symbol op span))
+                      (reader.spanned-sexpr-list1 srange span))
+                    sinit)
+                  svalue)
+                span)))])]
+    [(ast.AstExpr.SpmdScan scan-box)
+      (match (__tl-box-place scan-box)
+        [(ast.AstSpmdScan.Scan
+            op
+            name
+            ty
+            start-id
+            end-id
+            prefix
+            prefix-ty
+            init-id
+            value-id
+            body-id)
+          (let
+            [srange-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "spmd-scan-index"
+                  ty
+                  start-id
+                  end-id
+                  span
+                  srange-origin))]
+            [sprefix-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sprefix : reader.SpannedSexpr
+              (try
+                (macro-state-binder-bracket
+                  owner
+                  prefix
+                  "spmd-scan-prefix"
+                  prefix-ty
+                  init-id
+                  span
+                  sprefix-origin))]
+            [svalue-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [svalue : reader.SpannedSexpr
+              (try
+                (macro-child-to-spanned-sexpr owner value-id span svalue-origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr owner body-id span origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-list-from-builder
+                (reader.spanned-sexpr-builder-push
+                  (reader.spanned-sexpr-builder-push
+                    (reader.spanned-sexpr-builder-push
+                      (reader.spanned-sexpr-builder-push
+                        (reader.spanned-sexpr-builder-push
+                          (reader.spanned-sexpr-builder-new)
+                          (macro-spanned-symbol-id (ci.intern "spmd-scan") span))
+                        (macro-reduce-op-symbol op span))
+                      (reader.spanned-sexpr-list2 srange sprefix span))
+                    svalue)
+                  sbody)
+                span)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            name
+            ty
+            start-id
+            end-id
+            slot
+            slot-ty
+            init-id
+            keep-id
+            body-id)
+          (let
+            [srange-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "spmd-compact-index"
+                  ty
+                  start-id
+                  end-id
+                  span
+                  srange-origin))]
+            [sslot-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sslot : reader.SpannedSexpr
+              (try
+                (macro-state-binder-bracket
+                  owner
+                  slot
+                  "spmd-compact-slot"
+                  slot-ty
+                  init-id
+                  span
+                  sslot-origin))]
+            [skeep-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [skeep : reader.SpannedSexpr
+              (try
+                (macro-child-to-spanned-sexpr owner keep-id span skeep-origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr owner body-id span origin))]
+            (ResultMacroSexpr.Ok
+              (reader.spanned-sexpr-list4
+                (macro-spanned-symbol-id (ci.intern "spmd-compact") span)
+                (reader.spanned-sexpr-list2 srange sslot span)
+                skeep
+                sbody
+                span)))])]
+    [(ast.AstExpr.SpmdBroadcast value-id lane-id)
+      (macro-child-form2-id
+        owner
+        (ci.intern "spmd-broadcast")
+        value-id
+        lane-id
+        span
+        origin)]
+    [(ast.AstExpr.SpmdShuffle value-id lane-id)
+      (macro-child-form2-id
+        owner
+        (ci.intern "spmd-shuffle")
+        value-id
+        lane-id
+        span
+        origin)]
+    [(ast.AstExpr.SpmdProgramIndex)
+      (ResultMacroSexpr.Ok (macro-form0-id (ci.intern "program-index") span))]
+    [(ast.AstExpr.SpmdProgramCount)
+      (ResultMacroSexpr.Ok (macro-form0-id (ci.intern "program-count") span))]
+    [(ast.AstExpr.LaneValue value-id)
+      (macro-child-form1-id owner (ci.intern "lane-value") value-id span origin)]
+    ;; The compiler-private owned-iteration forms keep their operands as
+    ;; expression ids. A step's expected type is -1 unless it was written with
+    ;; the typed spelling, which takes it as an extra fourth operand.
+    [(ast.AstExpr.ForOwnedState payload)
+      (macro-expr-list-with-head-symbol-id
+        owner
+        (ci.intern "__tl_for-owned-state")
+        payload
+        span
+        origin)]
+    [(ast.AstExpr.ForOwnedStep payload)
+      (if (< (ast.ast-for-owned-payload-get (& payload) 3) 0)
+        (macro-expr-list-with-head-symbol-id
+          owner
+          (ci.intern "__tl_for-owned-step")
+          (macro-expr-list-without (& payload) 3)
+          span
+          origin)
+        (macro-expr-list-with-head-symbol-id
+          owner
+          (ci.intern "__tl_for-owned-step-typed")
+          payload
+          span
+          origin))]))
+
+;; A binder the output declares again -- a loop index, lambda parameter,
+;; resource or region name -- spelled with its macro-output source identity,
+;; as `let` names are.
+(define (macro-binder-symbol
+  [owner : (& owner MacroSexprOwner)]
+  [name : i64]
+  [label : String]
+  [span : token.SourceSpan]) : reader.SpannedSexpr
+  (macro-spanned-symbol-id
+    (macro-output-source-identity-id-at (macro-sexpr-session owner) name label)
+    span))
+
+;; `(HEAD operand body...)`: `in-arena` and `with-escape`.
+(define (macro-operand-body-form
+  [owner : (& owner MacroSexprOwner)]
+  [head : String]
+  [operand-id : i64]
+  [body : ast.AstExprList]
+  [span : token.SourceSpan]
+  [origin : ast.AstExpr]) : ResultMacroSexpr
+  (let
+    [soperand-origin : ast.AstExpr (tc-global-shared-view origin)]
+    [soperand : reader.SpannedSexpr
+      (try (macro-child-to-spanned-sexpr owner operand-id span soperand-origin))]
+    [sbody : reader.SpannedSexpr
+      (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
+    (ResultMacroSexpr.Ok
+      (reader.spanned-sexpr-list-prepend
+        (macro-spanned-symbol-id (ci.intern head) span)
+        (reader.spanned-sexpr-list-prepend soperand sbody span)
+        span))))
+
+;; `[name : T start end]`, the SPMD and `foreach` range binding.
+(define (macro-range-binder-bracket
+  [owner : (& owner MacroSexprOwner)]
+  [name : i64]
+  [label : String]
+  [ty : ast.AstType]
+  [start-id : i64]
+  [end-id : i64]
+  [span : token.SourceSpan]
+  [origin : ast.AstExpr]) : ResultMacroSexpr
+  (let
+    [sty-origin : ast.AstExpr (tc-global-shared-view origin)]
+    [sty : reader.SpannedSexpr
+      (try (macro-type-to-spanned-sexpr owner ty span sty-origin))]
+    [sstart-origin : ast.AstExpr (tc-global-shared-view origin)]
+    [sstart : reader.SpannedSexpr
+      (try (macro-child-to-spanned-sexpr owner start-id span sstart-origin))]
+    [send : reader.SpannedSexpr
+      (try (macro-child-to-spanned-sexpr owner end-id span origin))]
+    (ResultMacroSexpr.Ok
+      (reader.spanned-sexpr-bracket-list
+        (reader.spanned-sexpr-list-from-builder
+          (reader.spanned-sexpr-builder-push
+            (reader.spanned-sexpr-builder-push
+              (reader.spanned-sexpr-builder-push
+                (reader.spanned-sexpr-builder-push
+                  (reader.spanned-sexpr-builder-push
+                    (reader.spanned-sexpr-builder-new)
+                    (macro-binder-symbol owner name label span))
+                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span))
+                sty)
+              sstart)
+            send)
+          span)
+        span))))
+
+;; `[name : T init]`, the SPMD scan prefix and compact slot binding.
+(define (macro-state-binder-bracket
+  [owner : (& owner MacroSexprOwner)]
+  [name : i64]
+  [label : String]
+  [ty : ast.AstType]
+  [init-id : i64]
+  [span : token.SourceSpan]
+  [origin : ast.AstExpr]) : ResultMacroSexpr
+  (let
+    [sty-origin : ast.AstExpr (tc-global-shared-view origin)]
+    [sty : reader.SpannedSexpr
+      (try (macro-type-to-spanned-sexpr owner ty span sty-origin))]
+    [sinit : reader.SpannedSexpr
+      (try (macro-child-to-spanned-sexpr owner init-id span origin))]
+    (ResultMacroSexpr.Ok
+      (reader.spanned-sexpr-bracket-list
+        (reader.spanned-sexpr-list4
+          (macro-binder-symbol owner name label span)
+          (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
+          sty
+          sinit
+          span)
+        span))))
+
+(define (macro-reduce-op-symbol
+  [op : ast.AstReduceOp]
+  [span : token.SourceSpan]) : reader.SpannedSexpr
+  (macro-spanned-symbol-id
+    (match op
+      [(ast.AstReduceOp.Sum) (cbi.compiler-builtin-ctfe "sum")]
+      [(ast.AstReduceOp.Min) (cbi.compiler-builtin-ctfe "min")]
+      [(ast.AstReduceOp.Max) (cbi.compiler-builtin-ctfe "max")]
+      [(ast.AstReduceOp.All) (cbi.compiler-builtin-ctfe "all")]
+      [(ast.AstReduceOp.Any) (cbi.compiler-builtin-ctfe "any")])
+    span))
+
+;; `([name init cleanup] ...)`, a `with` binding list.
+(define (macro-resource-bindings-to-spanned-sexpr
+  [owner : (& owner MacroSexprOwner)]
+  [bindings : (& bindings ast.AstResourceBindingList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : ast.AstExpr]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
+  (if (>= index (ast.ast-resource-binding-list-len bindings))
+    (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
+    (match (ast.ast-resource-binding-list-get
+      bindings
+      index
+      (ast.ast-resource-binding-fallback))
+      [(ast.AstResourceBinding.Binding name init-id cleanup-id move-aware?)
+        ;; A move-aware scope (`expr-resource-scope ... true`) disarms its
+        ;; cleanup when the resource moves. Declaration syntax has no spelling
+        ;; for that, and a plain `with` would run the cleanup anyway.
+        (if move-aware?
+          (begin
+            (reader.spanned-sexpr-builder-discard! builder)
+            (ResultMacroSexpr.Err
+              (box
+                (macro-output-syntax-diag
+                  origin
+                  "typecheck: module macro output contains a move-aware resource scope, which declaration syntax cannot spell"))))
+          (match (macro-child-to-spanned-sexpr
+            owner
+            init-id
+            span
+            (tc-global-shared-view origin))
+            [(ResultMacroSexpr.Err diag)
+              (begin
+                (reader.spanned-sexpr-builder-discard! builder)
+                (ResultMacroSexpr.Err diag))]
+            [(ResultMacroSexpr.Ok sinit)
+              (match (macro-child-to-spanned-sexpr
+                owner
+                cleanup-id
+                span
+                (tc-global-shared-view origin))
+                [(ResultMacroSexpr.Err diag)
+                  (begin
+                    (reader.spanned-sexpr-builder-discard! builder)
+                    (ResultMacroSexpr.Err diag))]
+                [(ResultMacroSexpr.Ok scleanup)
+                  (macro-resource-bindings-to-spanned-sexpr
+                    owner
+                    bindings
+                    (+ index 1)
+                    span
+                    origin
+                    (reader.spanned-sexpr-builder-push
+                      builder
+                      (reader.spanned-sexpr-bracket-list
+                        (reader.spanned-sexpr-list3
+                          (macro-binder-symbol owner name "with-binding" span)
+                          sinit
+                          scleanup
+                          span)
+                        span)))])]))])))
+
+;; `([name : T)] ...)`, a lambda's parameter list. The parser refuses comptime
+;; parameters on a lambda, so every parameter is a plain typed one.
+(define (macro-lambda-params-to-spanned-sexpr
+  [owner : (& owner MacroSexprOwner)]
+  [params : (& params ast.AstParamList)]
+  [index : i64]
+  [span : token.SourceSpan]
+  [origin : ast.AstExpr]
+  [builder : reader.SpannedSexprBuilder]) : ResultMacroSexpr
+  (if (>= index (ast.ast-param-list-len params))
+    (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name ty _)
+        (match (macro-type-to-spanned-sexpr
+          owner
+          ty
+          span
+          (tc-global-shared-view origin))
+          [(ResultMacroSexpr.Err diag)
+            (begin
+              (reader.spanned-sexpr-builder-discard! builder)
+              (ResultMacroSexpr.Err diag))]
+          [(ResultMacroSexpr.Ok sty)
+            (macro-lambda-params-to-spanned-sexpr
+              owner
+              params
+              (+ index 1)
+              span
+              origin
+              (reader.spanned-sexpr-builder-push
+                builder
+                (reader.spanned-sexpr-bracket-list
+                  (reader.spanned-sexpr-list3
+                    (macro-binder-symbol owner name "lambda-param" span)
+                    (macro-spanned-symbol-id
+                      (cbi.compiler-builtin-ctfe ":")
+                      span)
+                    sty
+                    span)
+                  span)))])])))
+
+;; `exprs` without the element at `skip`.
+(define (macro-expr-list-without
+  [exprs : (& exprs ast.AstExprList)]
+  [skip : i64]) : ast.AstExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
+    [i : i64 0]
+    (begin
+      (while (< i exprs.len)
+        (begin
+          (if (= i skip)
+            unit
+            (ast.ast-expr-list-push
+              (&mut out)
+              (ast.ast-expr-list-get exprs i 0)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (macro-expr-to-spanned-sexpr
   [owner : (& owner MacroSexprOwner)]

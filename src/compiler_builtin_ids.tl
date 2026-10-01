@@ -799,657 +799,1120 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 
-;; The reset-aware builtin id table. A row `(id global slot "spelling")` ties
-;; a `compiler-builtin-id-*` global (declared above) to its slot in
-;; `CompilerBuiltinIdsState.ids` and to the source spelling it interns. Slots are
-;; append-only and retired slots stay unused. Rows are in load order, which is
-;; the order their spellings enter the intern table.
-;; `(compiler-builtin-id-table collector args...)` expands to
-;; `(collector args... rows...)`: `compiler-builtin-id-statements` emits one
-;; capture or install statement per row, `compiler-builtin-id-spellings` the
-;; load table.
-(defmacro (compiler-builtin-id-table
-  [collector : comptime.Expr]
-  [args : comptime.Expr ...]) : comptime.Expr
-  `(,collector
-    ,@args
-    (id compiler-builtin-id-tl-alloc 0 "tl_alloc")
-    ;; Append-only slot for the compiler-private aligned allocator.
-    (id compiler-builtin-id-tl-alloc-aligned 319 "tl_alloc_aligned")
-    (id compiler-builtin-id-tl-region-mark 1 "tl_region_mark")
-    (id compiler-builtin-id-tl-region-reset 2 "tl_region_reset")
-    (id compiler-builtin-id-tl-arena-make 3 "tl_arena_make")
-    (id compiler-builtin-id-tl-arena-make-small 310 "tl_arena_make_small")
-    (id compiler-builtin-id-tl-arena-make-atomic 4 "tl_arena_make_atomic")
-    (id compiler-builtin-id-tl-arena-current 5 "tl_arena_current")
-    (id compiler-builtin-id-tl-arena-set 6 "tl_arena_set")
-    (id compiler-builtin-id-tl-arena-destroy 7 "tl_arena_destroy")
-    (id compiler-builtin-id-tl-arena-poison-enable 8 "tl_arena_poison_enable")
-    (id
-      compiler-builtin-id-tl-arena-debug-retire-protected
-      320
-      "tl_arena_debug_retire_protected")
-    (id
-      compiler-builtin-id-tl-arena-debug-protect-never-reset
-      313
-      "tl_arena_debug_protect_never_reset")
-    (id
-      compiler-builtin-id-tl-arena-debug-assert-pool-install
-      314
-      "tl_arena_debug_assert_pool_install")
-    (id compiler-builtin-id-tl-thread-entry-ptr 9 "tl_thread_entry_ptr")
-    (id compiler-builtin-id-tl-thread-init 10 "tl_thread_init")
-    (id compiler-builtin-id-tl-atomic-i64-load-ptr 11 "tl_atomic_i64_load_ptr")
-    (id
-      compiler-builtin-id-tl-atomic-i64-store-ptr
-      12
-      "tl_atomic_i64_store_ptr")
-    (id compiler-builtin-id-tl-atomic-i64-add-ptr 13 "tl_atomic_i64_add_ptr")
-    (id
-      compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
-      14
-      "tl_atomic_i64_fetch_add_ptr")
-    (id compiler-builtin-id-tl-atomic-i64-cas-ptr 62 "tl_atomic_i64_cas_ptr")
-    (id compiler-builtin-id-tl-atomic-i32-load-ptr 15 "tl_atomic_i32_load_ptr")
-    (id
-      compiler-builtin-id-tl-atomic-i32-store-ptr
-      16
-      "tl_atomic_i32_store_ptr")
-    (id compiler-builtin-id-tl-atomic-i32-add-ptr 17 "tl_atomic_i32_add_ptr")
-    (id
-      compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
-      18
-      "tl_atomic_i32_fetch_add_ptr")
-    (id compiler-builtin-id-tl-atomic-i32-cas-ptr 63 "tl_atomic_i32_cas_ptr")
-    (id compiler-builtin-id-atomic-i64-load 284 "atomic-i64-load")
-    (id compiler-builtin-id-atomic-i64-store 285 "atomic-i64-store!")
-    (id compiler-builtin-id-atomic-i64-add 286 "atomic-i64-add!")
-    (id compiler-builtin-id-atomic-i64-fetch-add 287 "atomic-i64-fetch-add!")
-    (id compiler-builtin-id-atomic-i64-cas 288 "atomic-i64-cas!")
-    (id compiler-builtin-id-atomic-i32-load 289 "atomic-i32-load")
-    (id compiler-builtin-id-atomic-i32-store 290 "atomic-i32-store!")
-    (id compiler-builtin-id-atomic-i32-add 291 "atomic-i32-add!")
-    (id compiler-builtin-id-atomic-i32-fetch-add 292 "atomic-i32-fetch-add!")
-    (id compiler-builtin-id-atomic-i32-cas 293 "atomic-i32-cas!")
-    (id compiler-builtin-id-tl-profile-alloc-total 19 "tl_profile_alloc_total")
-    (id compiler-builtin-id-tl-profile-alloc-live 20 "tl_profile_alloc_live")
-    (id compiler-builtin-id-tl-profile-alloc-peak 21 "tl_profile_alloc_peak")
-    (id
-      compiler-builtin-id-tl-profile-alloc-reset-peak
-      22
-      "tl_profile_alloc_reset_peak")
-    (id compiler-builtin-id-tl-substring 23 "tl_substring")
-    (id compiler-builtin-id-tl-str-view 24 "tl_str_view")
-    (id compiler-builtin-id-tl-private-string-length 65 "__tl_string_length")
-    (id compiler-builtin-id-tl-private-string-ref 66 "__tl_string_ref")
-    (id compiler-builtin-id-tl-private-string-eq 67 "__tl_string_eq")
-    (id compiler-builtin-id-tl-private-string-to-int 68 "__tl_string_to_int")
-    (id compiler-builtin-id-tl-string-concat 25 "tl_string_concat")
-    (id compiler-builtin-id-tl-string-concat3 26 "tl_string_concat3")
-    (id compiler-builtin-id-tl-string-concat4 27 "tl_string_concat4")
-    (id compiler-builtin-id-tl-string-concat5 28 "tl_string_concat5")
-    (id compiler-builtin-id-tl-string-eq 29 "tl_string_eq")
-    (id compiler-builtin-id-tl-string-to-int 30 "tl_string_to_int")
-    (id compiler-builtin-id-tl-int-to-string 31 "tl_int_to_string")
-    (id compiler-builtin-id-tl-hash-string 32 "tl_hash_string")
-    (id compiler-builtin-id-tl-env-var-exists 33 "tl_env_var_exists")
-    (id compiler-builtin-id-tl-env-var-value 34 "tl_env_var_value")
-    (id compiler-builtin-id-env-path-separator 35 "path-separator")
-    (id compiler-builtin-id-tl-oob-abort 36 "tl_oob_abort")
-    (id compiler-builtin-id-tl-abort-label 37 ".L_tl_abort")
-    (id compiler-builtin-id-tl-div-abort 38 "tl_div_abort")
-    (id compiler-builtin-id-tl-shift-abort 39 "tl_shift_abort")
-    (id compiler-builtin-id-tl-stdin-eof-label 308 ".L_tl_stdin_eof")
-    (id compiler-builtin-id-tl-flush-stdout-label 309 ".L_tl_flush_stdout")
-    (id compiler-builtin-id-tl-array-fill8 40 "tl_array_fill8")
-    (id compiler-builtin-id-tl-array-zero 41 "tl_array_zero")
-    (id compiler-builtin-id-c-fn-check 321 "c-fn-check")
-    (id compiler-builtin-id-tl-c-fn-null-abort 322 "tl_c_fn_null_abort")
-    (id compiler-builtin-id-tl-mem-fill8 316 "tl_mem_fill8")
-    (id compiler-builtin-id-tl-mem-copy-fwd 317 "tl_mem_copy_fwd")
-    (id compiler-builtin-id-tl-mem-copy8-fwd 318 "tl_mem_copy8_fwd")
-    (id
-      compiler-builtin-id-tl-tlci-call-macro-entry
-      294
-      "tl_tlci_call_macro_entry")
-    (id compiler-builtin-id-tl-private-float-sqrt 296 "__tl_float_sqrt")
-    (id compiler-builtin-id-tl-private-float-to-bits 297 "__tl_float_to_bits")
-    (id
-      compiler-builtin-id-tl-private-float-from-bits
-      298
-      "__tl_float_from_bits")
-    (id compiler-builtin-id-string-length 44 "string-length")
-    (id compiler-builtin-id-length 45 "length")
-    (id compiler-builtin-id-string-eq 46 "string-eq")
-    (id compiler-builtin-id-string-eq-question 47 "string=?")
-    (id compiler-builtin-id-eq 192 "eq")
-    (id compiler-builtin-id-string-append 193 "string-append")
-    (id compiler-builtin-id-string-concat 194 "string-concat")
-    (id compiler-builtin-id-string-to-int 48 ">int")
-    (id compiler-builtin-id-string-ref 49 "string-ref")
-    (id compiler-builtin-id-char-at 50 "char-at")
-    (id compiler-builtin-id-array-length 51 "array-length")
-    (id compiler-builtin-id-private-array-length 64 "__tl_array-length")
-    (id compiler-builtin-id-cpuid 52 "cpuid")
-    (id compiler-builtin-id-xgetbv 53 "xgetbv")
-    (id compiler-builtin-id-clone 54 "clone")
-    (id compiler-builtin-id-arena-make 55 "arena-make")
-    (id compiler-builtin-id-arena-make-atomic 56 "arena-make-atomic")
-    (id compiler-builtin-id-arena-current 57 "arena-current")
-    (id compiler-builtin-id-arena-mark 58 "arena-mark")
-    (id compiler-builtin-id-arena-set-bang 59 "arena-set!")
-    (id compiler-builtin-id-arena-destroy 60 "arena-destroy")
-    (id compiler-builtin-id-arena-rewind 61 "arena-rewind")
-    (id compiler-builtin-id-tls-current-arena 69 "tls-current-arena")
-    (id
-      compiler-builtin-id-tls-current-arena-set-bang
-      70
-      "tls-current-arena-set!")
-    (id
-      compiler-builtin-id-tl-tls-current-arena-load
-      71
-      "tl_tls_current_arena_load")
-    (id
-      compiler-builtin-id-tl-tls-current-arena-store
-      72
-      "tl_tls_current_arena_store")
-    (id compiler-builtin-id-fix-empty 73 "")
-    (id
-      compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
-      74
-      "$lower.precise-type-dce")
-    (id compiler-builtin-id-fix-colon 75 ":")
-    (id
-      compiler-builtin-id-fix-tl_unquote_set_target
-      76
-      "__tl_unquote_set_target")
-    (id
-      compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt
-      77
-      "<ast-decl-list-fallback>")
-    (id compiler-builtin-id-fix-acc 78 "acc")
-    (id compiler-builtin-id-fix-alias 79 "alias")
-    (id compiler-builtin-id-fix-arena_dot_Arena 80 "arena.Arena")
-    (id compiler-builtin-id-fix-ArenaMark 81 "ArenaMark")
-    (id compiler-builtin-id-fix-arm 82 "arm")
-    (id compiler-builtin-id-fix-Box 83 "Box")
-    (id compiler-builtin-id-fix-c 84 "c")
-    (id compiler-builtin-id-fix-callback_target 85 "callback-target")
-    (id compiler-builtin-id-fix-Choice 86 "Choice")
-    (id compiler-builtin-id-fix-clone 87 "clone")
-    (id compiler-builtin-id-fix-CloneShortList 88 "CloneShortList")
-    (id compiler-builtin-id-fix-comptime 89 "comptime")
-    (id
-      compiler-builtin-id-fix-comptime_dot_comptime_error
-      90
-      "comptime.comptime-error")
-    (id compiler-builtin-id-fix-comptime_dot_error 91 "comptime.error")
-    (id
-      compiler-builtin-id-fix-comptime_slash_comptime_error
-      92
-      "comptime/comptime-error")
-    (id compiler-builtin-id-fix-comptime_slash_error 93 "comptime/error")
-    (id compiler-builtin-id-fix-comptime_error 94 "comptime-error")
-    (id compiler-builtin-id-fix-cond 95 "cond")
-    (id compiler-builtin-id-fix-when 268 "when")
-    (id compiler-builtin-id-fix-unless 269 "unless")
-    (id compiler-builtin-id-fix-Cons 96 "Cons")
-    (id compiler-builtin-id-fix-count 97 "count")
-    (id compiler-builtin-id-fix-e 98 "e")
-    (id compiler-builtin-id-fix-else 99 "else")
-    (id compiler-builtin-id-fix-Expr 100 "Expr")
-    (id compiler-builtin-id-fix-ExprBindingClause 101 "ExprBindingClause")
-    (id
-      compiler-builtin-id-fix-ExprBindingClauseList
-      102
-      "ExprBindingClauseList")
-    (id compiler-builtin-id-fix-ExprClause 103 "ExprClause")
-    (id compiler-builtin-id-fix-ExprClauseList 104 "ExprClauseList")
-    (id compiler-builtin-id-fix-ExprList 105 "ExprList")
-    (id compiler-builtin-id-fix-Failed 106 "Failed")
-    (id compiler-builtin-id-fix-field 107 "field")
-    (id compiler-builtin-id-fix-flag 108 "flag")
-    (id compiler-builtin-id-fix-h 109 "h")
-    (id compiler-builtin-id-fix-helper 110 "helper")
-    (id compiler-builtin-id-fix-id 111 "id")
-    (id compiler-builtin-id-fix-import 112 "import")
-    (id compiler-builtin-id-fix-ImportedMark 113 "ImportedMark")
-    (id compiler-builtin-id-fix-info 114 "info")
-    (id compiler-builtin-id-fix-input 115 "input")
-    (id compiler-builtin-id-fix-item 116 "item")
-    (id compiler-builtin-id-fix-items 117 "items")
-    (id compiler-builtin-id-fix-label 118 "label")
-    (id compiler-builtin-id-fix-left 119 "left")
-    (id compiler-builtin-id-fix-left_slash_same 120 "left/same")
-    (id compiler-builtin-id-fix-m 121 "m")
-    (id compiler-builtin-id-fix-macro_only_helper 122 "macro-only-helper")
-    (id compiler-builtin-id-fix-main 123 "main")
-    (id compiler-builtin-id-fix-MatchArm 124 "MatchArm")
-    (id compiler-builtin-id-fix-MatchArmList 125 "MatchArmList")
-    (id compiler-builtin-id-fix-Maybe 126 "Maybe")
-    (id compiler-builtin-id-fix-missing 127 "missing")
-    (id compiler-builtin-id-fix-n 128 "n")
-    (id
-      compiler-builtin-id-fix-name_cache_split_alias_3940
-      129
-      "name_cache_split_alias_3940")
-    (id
-      compiler-builtin-id-fix-name_cache_split_value_3940
-      130
-      "name_cache_split_value_3940")
-    (id compiler-builtin-id-fix-Nil 131 "Nil")
-    (id compiler-builtin-id-fix-Packet 132 "Packet")
-    (id compiler-builtin-id-fix-Pattern 133 "Pattern")
-    (id compiler-builtin-id-fix-PatternList 134 "PatternList")
-    (id compiler-builtin-id-fix-point 135 "point")
-    (id compiler-builtin-id-fix-Point 136 "Point")
-    (id compiler-builtin-id-fix-Ready 137 "Ready")
-    (id compiler-builtin-id-fix-record 138 "record")
-    (id compiler-builtin-id-fix-Record 139 "Record")
-    (id compiler-builtin-id-fix-Result 140 "Result")
-    (id compiler-builtin-id-fix-ResultIoString 141 "ResultIoString")
-    (id compiler-builtin-id-fix-right 142 "right")
-    (id compiler-builtin-id-fix-right_slash_Some 143 "right/Some")
-    (id compiler-builtin-id-fix-same 144 "same")
-    (id compiler-builtin-id-fix-second 145 "second")
-    (id compiler-builtin-id-fix-Some 146 "Some")
-    (id compiler-builtin-id-fix-Status 147 "Status")
-    (id compiler-builtin-id-fix-stdlib 148 "stdlib")
-    (id compiler-builtin-id-fix-stdlib_dot_comptime 195 "stdlib.comptime")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error
-      149
-      "stdlib.comptime.comptime-error")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_dot_error
-      150
-      "stdlib.comptime.error")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error
-      151
-      "stdlib.comptime/comptime-error")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_error
-      152
-      "stdlib.comptime/error")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause
-      153
-      "stdlib.comptime/ExprBindingClause")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList
-      154
-      "stdlib.comptime/ExprBindingClauseList")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause
-      155
-      "stdlib.comptime/ExprClause")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList
-      156
-      "stdlib.comptime/ExprClauseList")
-    (id compiler-builtin-id-fix-stdlib_slash_comptime 157 "stdlib/comptime")
-    (id
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error
-      158
-      "stdlib/comptime.comptime-error")
-    (id
-      compiler-builtin-id-fix-stdlib_slash_comptime_dot_error
-      159
-      "stdlib/comptime.error")
-    (id
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error
-      160
-      "stdlib/comptime/comptime-error")
-    (id
-      compiler-builtin-id-fix-stdlib_slash_comptime_slash_error
-      161
-      "stdlib/comptime/error")
-    (id compiler-builtin-id-fix-stdlib_slash_string 162 "stdlib/string")
-    (id compiler-builtin-id-fix-string 163 "string")
-    (id compiler-builtin-id-fix-subject 164 "subject")
-    (id compiler-builtin-id-fix-t 165 "t")
-    (id compiler-builtin-id-fix-T 166 "T")
-    (id compiler-builtin-id-fix-tag 167 "tag")
-    (id compiler-builtin-id-fix-target 168 "target")
-    (id compiler-builtin-id-fix-ThreadBox 169 "ThreadBox")
-    (id compiler-builtin-id-fix-type 170 "type")
-    (id compiler-builtin-id-fix-TypeField 196 "TypeField")
-    (id compiler-builtin-id-fix-TypeFieldList 197 "TypeFieldList")
-    (id compiler-builtin-id-fix-TypeInfo 198 "TypeInfo")
-    (id compiler-builtin-id-fix-TypeInfoList 199 "TypeInfoList")
-    (id compiler-builtin-id-comptime-type-info-array-variant 171 "Array")
-    (id compiler-builtin-id-comptime-type-info-builtin-variant 172 "Builtin")
-    (id compiler-builtin-id-comptime-type-info-dyn-array-variant 173 "DynArray")
-    (id compiler-builtin-id-comptime-type-info-enum-variant 174 "Enum")
-    (id compiler-builtin-id-comptime-type-info-function-variant 175 "Function")
-    (id compiler-builtin-id-comptime-type-info-struct-variant 176 "Struct")
-    (id compiler-builtin-id-comptime-type-info-tuple-variant 177 "Tuple")
-    (id compiler-builtin-id-fix-TypeParam 200 "TypeParam")
-    (id compiler-builtin-id-fix-TypeParamList 201 "TypeParamList")
-    (id compiler-builtin-id-fix-TypeVariant 202 "TypeVariant")
-    (id compiler-builtin-id-fix-TypeVariantList 203 "TypeVariantList")
-    (id compiler-builtin-id-fix-TypeVariantPayload 204 "TypeVariantPayload")
-    (id
-      compiler-builtin-id-fix-TypeVariantPayloadList
-      205
-      "TypeVariantPayloadList")
-    (id compiler-builtin-id-fix-U 178 "U")
-    (id compiler-builtin-id-fix-unquote 179 "unquote")
-    (id compiler-builtin-id-fix-UsedBox 180 "UsedBox")
-    (id compiler-builtin-id-fix-UsedEnum 181 "UsedEnum")
-    (id compiler-builtin-id-fix-value 182 "value")
-    (id compiler-builtin-id-fix-x 183 "x")
-    (id compiler-builtin-id-fix-xs 184 "xs")
-    (id compiler-builtin-id-fix-y 185 "y")
-    (id compiler-builtin-id-fix-module 186 "module")
-    (id compiler-builtin-id-fix-Module 187 "Module")
-    (id compiler-builtin-id-fix-decls 188 "decls")
-    (id compiler-builtin-id-fix-Decls 189 "Decls")
-    (id compiler-builtin-id-fix-expr 190 "expr")
-    (id
-      compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt
-      191
-      "<parse-ast-decl-vec-fallback>")
-    (id compiler-builtin-id-fix-append 206 "append")
-    (id compiler-builtin-id-fix-concat 207 "concat")
-    (id compiler-builtin-id-fix-stdlib_dot_string 208 "stdlib.string")
-    (id compiler-builtin-id-runtime-module 209 "stdlib.runtime")
-    (id compiler-builtin-id-runtime-int-to-string 210 "int-to-string")
-    (id compiler-builtin-id-runtime-substring 211 "substring")
-    (id compiler-builtin-id-runtime-str-view 212 "str-view")
-    (id compiler-builtin-id-runtime-string-concat3 213 "string-concat3")
-    (id compiler-builtin-id-runtime-string-concat4 214 "string-concat4")
-    (id compiler-builtin-id-runtime-string-concat5 215 "string-concat5")
-    (id
-      compiler-builtin-id-runtime-atomic-i64-load-ptr
-      216
-      "atomic-i64-load-ptr")
-    (id
-      compiler-builtin-id-runtime-atomic-i64-store-ptr
-      217
-      "atomic-i64-store-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i64-add-ptr
-      218
-      "atomic-i64-add-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr
-      219
-      "atomic-i64-fetch-add-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i64-cas-ptr
-      220
-      "atomic-i64-cas-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i32-load-ptr
-      221
-      "atomic-i32-load-ptr")
-    (id
-      compiler-builtin-id-runtime-atomic-i32-store-ptr
-      222
-      "atomic-i32-store-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i32-add-ptr
-      223
-      "atomic-i32-add-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr
-      224
-      "atomic-i32-fetch-add-ptr!")
-    (id
-      compiler-builtin-id-runtime-atomic-i32-cas-ptr
-      225
-      "atomic-i32-cas-ptr!")
-    (id
-      compiler-builtin-id-tl-bytes-view-from-str-parts
-      226
-      "tl_bytes_view_from_str_parts")
-    (id
-      compiler-builtin-id-tl-bytes-view-from-buf-parts
-      227
-      "tl_bytes_view_from_buf_parts")
-    (id
-      compiler-builtin-id-tl-bytes-mut-view-from-buf-parts
-      228
-      "tl_bytes_mut_view_from_buf_parts")
-    (id
-      compiler-builtin-id-tl-bytes-view-from-bytes-parts
-      229
-      "tl_bytes_view_from_bytes_parts")
-    (id
-      compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts
-      230
-      "tl_bytes_mut_view_from_bytes_parts")
-    (id compiler-builtin-id-core-macros-module 231 "stdlib.core_macros")
-    (id compiler-builtin-id-core-macros-legacy-module 232 "stdlib.core-macros")
-    (id compiler-builtin-id-fix-slots 233 "slots")
-    (id compiler-builtin-id-tc-default-boundary 234 "__tl_default_boundary")
-    (id compiler-builtin-id-tc-active-region 235 "__tl_active_region")
-    (id compiler-builtin-id-tc-cleanup-owner 236 " __tl_cleanup_owner")
-    (id
-      compiler-builtin-id-tc-ordinary-arena-owner
-      237
-      " __tl_ordinary_arena_owner")
-    (id
-      compiler-builtin-id-tc-atomic-arena-owner
-      238
-      " __tl_atomic_arena_owner")
-    (id compiler-builtin-id-tc-return-type 239 "__tl_return_type")
-    (id compiler-builtin-id-tc-loop-target 240 "__tl_loop_target")
-    (id
-      compiler-builtin-id-tc-hygiene-global-boundary
-      241
-      "__tl_hygiene_global_boundary")
-    (id compiler-builtin-id-tc-unsafe-context 242 " __tl_unsafe_context")
-    (id compiler-builtin-id-fix-body 243 "body")
-    (id compiler-builtin-id-comptime-expr-begin-variant 244 "Begin")
-    (id compiler-builtin-id-comptime-expr-bool-variant 245 "Bool")
-    (id compiler-builtin-id-comptime-expr-call-variant 246 "Call")
-    (id compiler-builtin-id-comptime-expr-if-variant 247 "If")
-    (id compiler-builtin-id-comptime-expr-int-variant 248 "Int")
-    (id compiler-builtin-id-comptime-expr-quasiquote-variant 249 "Quasiquote")
-    (id compiler-builtin-id-comptime-expr-quote-variant 250 "Quote")
-    (id compiler-builtin-id-comptime-expr-splice-variant 251 "Splice")
-    (id compiler-builtin-id-comptime-expr-unquote-variant 252 "Unquote")
-    (id
-      compiler-builtin-id-comptime-expr-unquote-splicing-variant
-      253
-      "UnquoteSplicing")
-    (id compiler-builtin-id-comptime-expr-var-variant 254 "Var")
-    (id compiler-builtin-id-fix-first 255 "first")
-    (id compiler-builtin-id-fix-has_type 256 "has-type")
-    (id compiler-builtin-id-fix-init 257 "init")
-    (id compiler-builtin-id-fix-len 258 "len")
-    (id compiler-builtin-id-comptime-pattern-binding-variant 259 "Binding")
-    (id compiler-builtin-id-comptime-pattern-variant-variant 260 "Variant")
-    (id compiler-builtin-id-comptime-pattern-wildcard-variant 261 "Wildcard")
-    (id compiler-builtin-id-fix-payloads 262 "payloads")
-    (id compiler-builtin-id-comptime-type-info-opaque-variant 263 "Opaque")
-    (id compiler-builtin-id-comptime-type-info-slice-variant 315 "Slice")
-    (id compiler-builtin-id-fix-name 264 "name")
-    (id compiler-builtin-id-fix-pattern 265 "pattern")
-    (id compiler-builtin-id-fix-ty 266 "ty")
-    (id compiler-builtin-id-fix-handle 267 "handle")
-    (id compiler-builtin-id-fix-stdlib_dot_clone 270 "stdlib.clone")
-    (id compiler-builtin-id-fix-synthesize_helpers 271 "synthesize-helpers")
-    (id
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
-      272
-      "stdlib.clone.synthesize-helpers")
-    (id compiler-builtin-id-arena-module 299 "stdlib.arena")
-    (id compiler-builtin-id-arena-type 300 "stdlib.arena/Arena")
-    (id compiler-builtin-id-arena-mark-type 301 "stdlib.arena/ArenaMark")
-    (id compiler-builtin-id-arena-phase-type 302 "stdlib.arena/ArenaPhase")
-    (id compiler-builtin-id-arena-make-base 303 "make")
-    (id compiler-builtin-id-arena-make-atomic-base 304 "make-atomic")
-    (id compiler-builtin-id-arena-phase-base 305 "phase")
-    (id compiler-builtin-id-arena-rewind-safe-base 306 "rewind-safe!")
-    (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
-    ;; Captured into their slots but never loaded, so they stay -1.
-    (id compiler-builtin-id-fix-LetBinding 311)
-    (id compiler-builtin-id-fix-LetBindingList 312)))
-
-;; `capture` copies each global to its slot of the state `context`; `install`
-;; copies it back. Rows without a spelling are captured only. Loading interns
-;; the spellings into a state first (`compiler-builtin-id-load-chunks`).
-(defmacro (compiler-builtin-id-statements
-  [mode : comptime.Expr]
-  [context : comptime.Expr]
-  [rows : comptime.Expr ...]) : unit
-  (let
-    [mode-name : String
-      (match mode
-        [(comptime.Expr.Var name) name]
-        [_
-          (comptime.comptime-error
-            "compiler-builtin-id-statements: mode is capture or install")])]
-    [statements : comptime.ExprList (comptime.expr-list-empty)]
-    [index : i64 (- (comptime.expr-list-length rows) 1)]
-    (begin
-      ;; Prepend back to front so the statements keep table order.
-      (while (>= index 0)
-        (begin
-          (match (comptime.expr-list-nth rows index)
-            [(comptime.Expr.Call _ fields)
-              (match (comptime.expr-list-nth fields 0)
-                [(comptime.Expr.Var _)
-                  (let
-                    [global : comptime.Expr (comptime.expr-list-nth fields 0)]
-                    [slot : comptime.Expr (comptime.expr-list-nth fields 1)]
-                    [loaded? : bool (> (comptime.expr-list-length fields) 2)]
-                    (if (string-eq mode-name "capture")
-                      (set!
-                        statements
-                        (comptime.expr-list-cons
-                          `(unsafe
-                            (ptr-write!
-                              (ptr-offset compiler-builtin-ids-data ,slot)
-                              ,global))
-                          statements))
-                      (if loaded?
-                        (set!
-                          statements
-                          (comptime.expr-list-cons
-                            `(set!
-                              ,global
-                              (unsafe
-                                (ptr-read
-                                  (ptr-offset compiler-builtin-ids-data ,slot))))
-                            statements))
-                        unit)))]
-                [_
-                  (comptime.comptime-error
-                    "compiler-builtin-id-statements: a row names its global first")])]
-            [_
-              (comptime.comptime-error
-                "compiler-builtin-id-statements: rows are (id global slot \"spelling\")")])
-          (set! index (- index 1))))
-      ;; Capture and install read the state's id array through its data
-      ;; pointer once: each row is then one load and one store instead of a
-      ;; `state-ref`/`state-set!` call. Every slot is below the array's fixed
-      ;; length (see `state-new`).
-      `(let
-        [compiler-builtin-ids-data : (MutPtr i64)
-          (unsafe
-            (__tl_array-data (__tl-project-field ,context ids)))]
-        (begin
-          ,@statements)))))
-
-;; Loading: one `compiler-builtin-load-id-rows!` call per chunk of 16 rows that
-;; intern a spelling, each row `slot:spelling|`, in load order. Chunks keep the
-;; comptime string building short; one call per chunk replaces a resolve call
-;; and a store per row.
-(defmacro (compiler-builtin-id-load-chunks
-  [state : comptime.Expr]
-  [insert-missing : comptime.Expr]
-  [rows : comptime.Expr ...]) : unit
-  (let
-    [calls : comptime.ExprList (comptime.expr-list-empty)]
-    [chunk : String ""]
-    [count : i64 0]
-    [index : i64 (- (comptime.expr-list-length rows) 1)]
-    (begin
-      ;; Walk back to front, prepending, so chunks and calls keep load order.
-      (while (>= index 0)
-        (begin
-          (match (comptime.expr-list-nth rows index)
-            [(comptime.Expr.Call _ fields)
-              (if (> (comptime.expr-list-length fields) 2)
-                (match (comptime.expr-list-nth fields 1)
-                  [(comptime.Expr.Int slot)
-                    (begin
-                      (set!
-                        chunk
-                        (comptime.string-append
-                          (comptime.string-append
-                            (comptime.string-append (int->string slot) ":")
-                            (comptime.string-append
-                              (comptime.expr-string-value
-                                (comptime.expr-list-nth fields 2))
-                              "|"))
-                          chunk))
-                      (set! count (+ count 1))
-                      (if (= count 16)
-                        (begin
-                          (set!
-                            calls
-                            (comptime.expr-list-cons
-                              `(compiler-builtin-load-id-rows!
-                                ,state
-                                ,insert-missing
-                                ,(comptime.expr-string chunk))
-                              calls))
-                          (set! chunk "")
-                          (set! count 0))
-                        unit))]
-                  [_
-                    (comptime.comptime-error
-                      "compiler-builtin-id-load-chunks: a row's slot is an integer")])
-                unit)]
-            [_
-              (comptime.comptime-error
-                "compiler-builtin-id-load-chunks: rows are (id global slot \"spelling\")")])
-          (set! index (- index 1))))
-      (if (> count 0)
-        (set!
-          calls
-          (comptime.expr-list-cons
-            `(compiler-builtin-load-id-rows!
-              ,state
-              ,insert-missing
-              ,(comptime.expr-string chunk))
-            calls))
-        unit)
-      `(begin
-        ,@calls))))
-
-(define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 302))
-
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
   (metadata (__tl_dyn-array i64))
   (ids (__tl_dyn-array i64))
   (ctfe-ids (__tl_dyn-array i64)))
 
+;; The builtin id tables. `(compiler-builtin-id-table fixed)` and
+;; `(compiler-builtin-id-table ctfe)` each declare one table from its rows, so a
+;; table's rows are read once and each expansion stays within the CTFE budget.
+;;
+;; The fixed table: a row `(id global slot "spelling")` ties a
+;; `compiler-builtin-id-*` global (declared above) to its slot in
+;; `CompilerBuiltinIdsState.ids` and to the source spelling it interns. A row
+;; without a spelling is captured but never loaded, so its global stays -1.
+;; Rows are in load order, which is the order their spellings enter the intern
+;; table. It declares:
+;; - `compiler-builtin-id-slot-count`, one past the largest slot: the length
+;;   of the id array, so every row's slot is in bounds;
+;; - `state-capture-fixed-ids!` and `state-install-fixed-ids!`: one load and one
+;;   store per row through the id array's data pointer;
+;; - `state-load-fixed-ids!`, which interns the spellings into a state.
+;;
+;; The CTFE catalog: a row `(ctfe slot "spelling")` ties a CTFE builtin's
+;; spelling to its slot in `CompilerBuiltinIdsState.ctfe-ids`. Rows are in
+;; ascending slot order, which is the order the loader interns them. A
+;; `(ctfe slot "spelling" repeat)` row loads a spelling that an earlier row
+;; already maps to its own slot. It declares:
+;; - `compiler-builtin-ctfe-ids`, one past the largest slot long;
+;; - `compiler-builtin-ctfe-slot`, a `match` from each spelling to the slot of
+;;   its first row; any other spelling fails to compile;
+;; - `state-load-ctfe-ids!`, which interns the spellings into a state.
+;;
+;; Slots are append-only; a slot without a row is retired or reserved and stays
+;; -1. Loading makes one `compiler-builtin-load-id-rows!` call per 16 rows, each
+;; row `slot:spelling|`; chunks keep the comptime string building short.
+(defmacro (compiler-builtin-id-table [which : comptime.Expr]) : Decls
+  (let
+    [fixed? : bool
+      (match which
+        [(comptime.Expr.Var name)
+          (if (string-eq name "fixed")
+            true
+            (if (string-eq name "ctfe")
+              false
+              (comptime.comptime-error
+                "compiler-builtin-id-table: the table is fixed or ctfe")))]
+        [_
+          (comptime.comptime-error
+            "compiler-builtin-id-table: the table is fixed or ctfe")])]
+    [rows : comptime.ExprList
+      (match (if fixed?
+        `(rows
+          (id compiler-builtin-id-tl-alloc 0 "tl_alloc")
+          ;; Append-only slot for the compiler-private aligned allocator.
+          (id compiler-builtin-id-tl-alloc-aligned 319 "tl_alloc_aligned")
+          (id compiler-builtin-id-tl-region-mark 1 "tl_region_mark")
+          (id compiler-builtin-id-tl-region-reset 2 "tl_region_reset")
+          (id compiler-builtin-id-tl-arena-make 3 "tl_arena_make")
+          (id compiler-builtin-id-tl-arena-make-small 310 "tl_arena_make_small")
+          (id compiler-builtin-id-tl-arena-make-atomic 4 "tl_arena_make_atomic")
+          (id compiler-builtin-id-tl-arena-current 5 "tl_arena_current")
+          (id compiler-builtin-id-tl-arena-set 6 "tl_arena_set")
+          (id compiler-builtin-id-tl-arena-destroy 7 "tl_arena_destroy")
+          (id
+            compiler-builtin-id-tl-arena-poison-enable
+            8
+            "tl_arena_poison_enable")
+          (id
+            compiler-builtin-id-tl-arena-debug-retire-protected
+            320
+            "tl_arena_debug_retire_protected")
+          (id
+            compiler-builtin-id-tl-arena-debug-protect-never-reset
+            313
+            "tl_arena_debug_protect_never_reset")
+          (id
+            compiler-builtin-id-tl-arena-debug-assert-pool-install
+            314
+            "tl_arena_debug_assert_pool_install")
+          (id compiler-builtin-id-tl-thread-entry-ptr 9 "tl_thread_entry_ptr")
+          (id compiler-builtin-id-tl-thread-init 10 "tl_thread_init")
+          (id
+            compiler-builtin-id-tl-atomic-i64-load-ptr
+            11
+            "tl_atomic_i64_load_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i64-store-ptr
+            12
+            "tl_atomic_i64_store_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i64-add-ptr
+            13
+            "tl_atomic_i64_add_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
+            14
+            "tl_atomic_i64_fetch_add_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i64-cas-ptr
+            62
+            "tl_atomic_i64_cas_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i32-load-ptr
+            15
+            "tl_atomic_i32_load_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i32-store-ptr
+            16
+            "tl_atomic_i32_store_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i32-add-ptr
+            17
+            "tl_atomic_i32_add_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
+            18
+            "tl_atomic_i32_fetch_add_ptr")
+          (id
+            compiler-builtin-id-tl-atomic-i32-cas-ptr
+            63
+            "tl_atomic_i32_cas_ptr")
+          (id compiler-builtin-id-atomic-i64-load 284 "atomic-i64-load")
+          (id compiler-builtin-id-atomic-i64-store 285 "atomic-i64-store!")
+          (id compiler-builtin-id-atomic-i64-add 286 "atomic-i64-add!")
+          (id
+            compiler-builtin-id-atomic-i64-fetch-add
+            287
+            "atomic-i64-fetch-add!")
+          (id compiler-builtin-id-atomic-i64-cas 288 "atomic-i64-cas!")
+          (id compiler-builtin-id-atomic-i32-load 289 "atomic-i32-load")
+          (id compiler-builtin-id-atomic-i32-store 290 "atomic-i32-store!")
+          (id compiler-builtin-id-atomic-i32-add 291 "atomic-i32-add!")
+          (id
+            compiler-builtin-id-atomic-i32-fetch-add
+            292
+            "atomic-i32-fetch-add!")
+          (id compiler-builtin-id-atomic-i32-cas 293 "atomic-i32-cas!")
+          (id
+            compiler-builtin-id-tl-profile-alloc-total
+            19
+            "tl_profile_alloc_total")
+          (id
+            compiler-builtin-id-tl-profile-alloc-live
+            20
+            "tl_profile_alloc_live")
+          (id
+            compiler-builtin-id-tl-profile-alloc-peak
+            21
+            "tl_profile_alloc_peak")
+          (id
+            compiler-builtin-id-tl-profile-alloc-reset-peak
+            22
+            "tl_profile_alloc_reset_peak")
+          (id compiler-builtin-id-tl-substring 23 "tl_substring")
+          (id compiler-builtin-id-tl-str-view 24 "tl_str_view")
+          (id
+            compiler-builtin-id-tl-private-string-length
+            65
+            "__tl_string_length")
+          (id compiler-builtin-id-tl-private-string-ref 66 "__tl_string_ref")
+          (id compiler-builtin-id-tl-private-string-eq 67 "__tl_string_eq")
+          (id
+            compiler-builtin-id-tl-private-string-to-int
+            68
+            "__tl_string_to_int")
+          (id compiler-builtin-id-tl-string-concat 25 "tl_string_concat")
+          (id compiler-builtin-id-tl-string-concat3 26 "tl_string_concat3")
+          (id compiler-builtin-id-tl-string-concat4 27 "tl_string_concat4")
+          (id compiler-builtin-id-tl-string-concat5 28 "tl_string_concat5")
+          (id compiler-builtin-id-tl-string-eq 29 "tl_string_eq")
+          (id compiler-builtin-id-tl-string-to-int 30 "tl_string_to_int")
+          (id compiler-builtin-id-tl-int-to-string 31 "tl_int_to_string")
+          (id compiler-builtin-id-tl-hash-string 32 "tl_hash_string")
+          (id compiler-builtin-id-tl-env-var-exists 33 "tl_env_var_exists")
+          (id compiler-builtin-id-tl-env-var-value 34 "tl_env_var_value")
+          (id compiler-builtin-id-env-path-separator 35 "path-separator")
+          (id compiler-builtin-id-tl-oob-abort 36 "tl_oob_abort")
+          (id compiler-builtin-id-tl-abort-label 37 ".L_tl_abort")
+          (id compiler-builtin-id-tl-div-abort 38 "tl_div_abort")
+          (id compiler-builtin-id-tl-shift-abort 39 "tl_shift_abort")
+          (id compiler-builtin-id-tl-stdin-eof-label 308 ".L_tl_stdin_eof")
+          (id
+            compiler-builtin-id-tl-flush-stdout-label
+            309
+            ".L_tl_flush_stdout")
+          (id compiler-builtin-id-tl-array-fill8 40 "tl_array_fill8")
+          (id compiler-builtin-id-tl-array-zero 41 "tl_array_zero")
+          (id compiler-builtin-id-c-fn-check 321 "c-fn-check")
+          (id compiler-builtin-id-tl-c-fn-null-abort 322 "tl_c_fn_null_abort")
+          (id compiler-builtin-id-tl-mem-fill8 316 "tl_mem_fill8")
+          (id compiler-builtin-id-tl-mem-copy-fwd 317 "tl_mem_copy_fwd")
+          (id compiler-builtin-id-tl-mem-copy8-fwd 318 "tl_mem_copy8_fwd")
+          (id
+            compiler-builtin-id-tl-tlci-call-macro-entry
+            294
+            "tl_tlci_call_macro_entry")
+          (id compiler-builtin-id-tl-private-float-sqrt 296 "__tl_float_sqrt")
+          (id
+            compiler-builtin-id-tl-private-float-to-bits
+            297
+            "__tl_float_to_bits")
+          (id
+            compiler-builtin-id-tl-private-float-from-bits
+            298
+            "__tl_float_from_bits")
+          (id compiler-builtin-id-string-length 44 "string-length")
+          (id compiler-builtin-id-length 45 "length")
+          (id compiler-builtin-id-string-eq 46 "string-eq")
+          (id compiler-builtin-id-string-eq-question 47 "string=?")
+          (id compiler-builtin-id-eq 192 "eq")
+          (id compiler-builtin-id-string-append 193 "string-append")
+          (id compiler-builtin-id-string-concat 194 "string-concat")
+          (id compiler-builtin-id-string-to-int 48 ">int")
+          (id compiler-builtin-id-string-ref 49 "string-ref")
+          (id compiler-builtin-id-char-at 50 "char-at")
+          (id compiler-builtin-id-array-length 51 "array-length")
+          (id compiler-builtin-id-private-array-length 64 "__tl_array-length")
+          (id compiler-builtin-id-cpuid 52 "cpuid")
+          (id compiler-builtin-id-xgetbv 53 "xgetbv")
+          (id compiler-builtin-id-clone 54 "clone")
+          (id compiler-builtin-id-arena-make 55 "arena-make")
+          (id compiler-builtin-id-arena-make-atomic 56 "arena-make-atomic")
+          (id compiler-builtin-id-arena-current 57 "arena-current")
+          (id compiler-builtin-id-arena-mark 58 "arena-mark")
+          (id compiler-builtin-id-arena-set-bang 59 "arena-set!")
+          (id compiler-builtin-id-arena-destroy 60 "arena-destroy")
+          (id compiler-builtin-id-arena-rewind 61 "arena-rewind")
+          (id compiler-builtin-id-tls-current-arena 69 "tls-current-arena")
+          (id
+            compiler-builtin-id-tls-current-arena-set-bang
+            70
+            "tls-current-arena-set!")
+          (id
+            compiler-builtin-id-tl-tls-current-arena-load
+            71
+            "tl_tls_current_arena_load")
+          (id
+            compiler-builtin-id-tl-tls-current-arena-store
+            72
+            "tl_tls_current_arena_store")
+          (id compiler-builtin-id-fix-empty 73 "")
+          (id
+            compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
+            74
+            "$lower.precise-type-dce")
+          (id compiler-builtin-id-fix-colon 75 ":")
+          (id
+            compiler-builtin-id-fix-tl_unquote_set_target
+            76
+            "__tl_unquote_set_target")
+          (id
+            compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt
+            77
+            "<ast-decl-list-fallback>")
+          (id compiler-builtin-id-fix-acc 78 "acc")
+          (id compiler-builtin-id-fix-alias 79 "alias")
+          (id compiler-builtin-id-fix-arena_dot_Arena 80 "arena.Arena")
+          (id compiler-builtin-id-fix-ArenaMark 81 "ArenaMark")
+          (id compiler-builtin-id-fix-arm 82 "arm")
+          (id compiler-builtin-id-fix-Box 83 "Box")
+          (id compiler-builtin-id-fix-c 84 "c")
+          (id compiler-builtin-id-fix-callback_target 85 "callback-target")
+          (id compiler-builtin-id-fix-Choice 86 "Choice")
+          (id compiler-builtin-id-fix-clone 87 "clone")
+          (id compiler-builtin-id-fix-CloneShortList 88 "CloneShortList")
+          (id compiler-builtin-id-fix-comptime 89 "comptime")
+          (id
+            compiler-builtin-id-fix-comptime_dot_comptime_error
+            90
+            "comptime.comptime-error")
+          (id compiler-builtin-id-fix-comptime_dot_error 91 "comptime.error")
+          (id
+            compiler-builtin-id-fix-comptime_slash_comptime_error
+            92
+            "comptime/comptime-error")
+          (id compiler-builtin-id-fix-comptime_slash_error 93 "comptime/error")
+          (id compiler-builtin-id-fix-comptime_error 94 "comptime-error")
+          (id compiler-builtin-id-fix-cond 95 "cond")
+          (id compiler-builtin-id-fix-when 268 "when")
+          (id compiler-builtin-id-fix-unless 269 "unless")
+          (id compiler-builtin-id-fix-Cons 96 "Cons")
+          (id compiler-builtin-id-fix-count 97 "count")
+          (id compiler-builtin-id-fix-e 98 "e")
+          (id compiler-builtin-id-fix-else 99 "else")
+          (id compiler-builtin-id-fix-Expr 100 "Expr")
+          (id compiler-builtin-id-fix-ExprBindingClause 101 "ExprBindingClause")
+          (id
+            compiler-builtin-id-fix-ExprBindingClauseList
+            102
+            "ExprBindingClauseList")
+          (id compiler-builtin-id-fix-ExprClause 103 "ExprClause")
+          (id compiler-builtin-id-fix-ExprClauseList 104 "ExprClauseList")
+          (id compiler-builtin-id-fix-ExprList 105 "ExprList")
+          (id compiler-builtin-id-fix-Failed 106 "Failed")
+          (id compiler-builtin-id-fix-field 107 "field")
+          (id compiler-builtin-id-fix-flag 108 "flag")
+          (id compiler-builtin-id-fix-h 109 "h")
+          (id compiler-builtin-id-fix-helper 110 "helper")
+          (id compiler-builtin-id-fix-id 111 "id")
+          (id compiler-builtin-id-fix-import 112 "import")
+          (id compiler-builtin-id-fix-ImportedMark 113 "ImportedMark")
+          (id compiler-builtin-id-fix-info 114 "info")
+          (id compiler-builtin-id-fix-input 115 "input")
+          (id compiler-builtin-id-fix-item 116 "item")
+          (id compiler-builtin-id-fix-items 117 "items")
+          (id compiler-builtin-id-fix-label 118 "label")
+          (id compiler-builtin-id-fix-left 119 "left")
+          (id compiler-builtin-id-fix-left_slash_same 120 "left/same")
+          (id compiler-builtin-id-fix-m 121 "m")
+          (id compiler-builtin-id-fix-macro_only_helper 122 "macro-only-helper")
+          (id compiler-builtin-id-fix-main 123 "main")
+          (id compiler-builtin-id-fix-MatchArm 124 "MatchArm")
+          (id compiler-builtin-id-fix-MatchArmList 125 "MatchArmList")
+          (id compiler-builtin-id-fix-Maybe 126 "Maybe")
+          (id compiler-builtin-id-fix-missing 127 "missing")
+          (id compiler-builtin-id-fix-n 128 "n")
+          (id
+            compiler-builtin-id-fix-name_cache_split_alias_3940
+            129
+            "name_cache_split_alias_3940")
+          (id
+            compiler-builtin-id-fix-name_cache_split_value_3940
+            130
+            "name_cache_split_value_3940")
+          (id compiler-builtin-id-fix-Nil 131 "Nil")
+          (id compiler-builtin-id-fix-Packet 132 "Packet")
+          (id compiler-builtin-id-fix-Pattern 133 "Pattern")
+          (id compiler-builtin-id-fix-PatternList 134 "PatternList")
+          (id compiler-builtin-id-fix-point 135 "point")
+          (id compiler-builtin-id-fix-Point 136 "Point")
+          (id compiler-builtin-id-fix-Ready 137 "Ready")
+          (id compiler-builtin-id-fix-record 138 "record")
+          (id compiler-builtin-id-fix-Record 139 "Record")
+          (id compiler-builtin-id-fix-Result 140 "Result")
+          (id compiler-builtin-id-fix-ResultIoString 141 "ResultIoString")
+          (id compiler-builtin-id-fix-right 142 "right")
+          (id compiler-builtin-id-fix-right_slash_Some 143 "right/Some")
+          (id compiler-builtin-id-fix-same 144 "same")
+          (id compiler-builtin-id-fix-second 145 "second")
+          (id compiler-builtin-id-fix-Some 146 "Some")
+          (id compiler-builtin-id-fix-Status 147 "Status")
+          (id compiler-builtin-id-fix-stdlib 148 "stdlib")
+          (id compiler-builtin-id-fix-stdlib_dot_comptime 195 "stdlib.comptime")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error
+            149
+            "stdlib.comptime.comptime-error")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_dot_error
+            150
+            "stdlib.comptime.error")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error
+            151
+            "stdlib.comptime/comptime-error")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_slash_error
+            152
+            "stdlib.comptime/error")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause
+            153
+            "stdlib.comptime/ExprBindingClause")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList
+            154
+            "stdlib.comptime/ExprBindingClauseList")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause
+            155
+            "stdlib.comptime/ExprClause")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList
+            156
+            "stdlib.comptime/ExprClauseList")
+          (id
+            compiler-builtin-id-fix-stdlib_slash_comptime
+            157
+            "stdlib/comptime")
+          (id
+            compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error
+            158
+            "stdlib/comptime.comptime-error")
+          (id
+            compiler-builtin-id-fix-stdlib_slash_comptime_dot_error
+            159
+            "stdlib/comptime.error")
+          (id
+            compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error
+            160
+            "stdlib/comptime/comptime-error")
+          (id
+            compiler-builtin-id-fix-stdlib_slash_comptime_slash_error
+            161
+            "stdlib/comptime/error")
+          (id compiler-builtin-id-fix-stdlib_slash_string 162 "stdlib/string")
+          (id compiler-builtin-id-fix-string 163 "string")
+          (id compiler-builtin-id-fix-subject 164 "subject")
+          (id compiler-builtin-id-fix-t 165 "t")
+          (id compiler-builtin-id-fix-T 166 "T")
+          (id compiler-builtin-id-fix-tag 167 "tag")
+          (id compiler-builtin-id-fix-target 168 "target")
+          (id compiler-builtin-id-fix-ThreadBox 169 "ThreadBox")
+          (id compiler-builtin-id-fix-type 170 "type")
+          (id compiler-builtin-id-fix-TypeField 196 "TypeField")
+          (id compiler-builtin-id-fix-TypeFieldList 197 "TypeFieldList")
+          (id compiler-builtin-id-fix-TypeInfo 198 "TypeInfo")
+          (id compiler-builtin-id-fix-TypeInfoList 199 "TypeInfoList")
+          (id compiler-builtin-id-comptime-type-info-array-variant 171 "Array")
+          (id
+            compiler-builtin-id-comptime-type-info-builtin-variant
+            172
+            "Builtin")
+          (id
+            compiler-builtin-id-comptime-type-info-dyn-array-variant
+            173
+            "DynArray")
+          (id compiler-builtin-id-comptime-type-info-enum-variant 174 "Enum")
+          (id
+            compiler-builtin-id-comptime-type-info-function-variant
+            175
+            "Function")
+          (id
+            compiler-builtin-id-comptime-type-info-struct-variant
+            176
+            "Struct")
+          (id compiler-builtin-id-comptime-type-info-tuple-variant 177 "Tuple")
+          (id compiler-builtin-id-fix-TypeParam 200 "TypeParam")
+          (id compiler-builtin-id-fix-TypeParamList 201 "TypeParamList")
+          (id compiler-builtin-id-fix-TypeVariant 202 "TypeVariant")
+          (id compiler-builtin-id-fix-TypeVariantList 203 "TypeVariantList")
+          (id
+            compiler-builtin-id-fix-TypeVariantPayload
+            204
+            "TypeVariantPayload")
+          (id
+            compiler-builtin-id-fix-TypeVariantPayloadList
+            205
+            "TypeVariantPayloadList")
+          (id compiler-builtin-id-fix-U 178 "U")
+          (id compiler-builtin-id-fix-unquote 179 "unquote")
+          (id compiler-builtin-id-fix-UsedBox 180 "UsedBox")
+          (id compiler-builtin-id-fix-UsedEnum 181 "UsedEnum")
+          (id compiler-builtin-id-fix-value 182 "value")
+          (id compiler-builtin-id-fix-x 183 "x")
+          (id compiler-builtin-id-fix-xs 184 "xs")
+          (id compiler-builtin-id-fix-y 185 "y")
+          (id compiler-builtin-id-fix-module 186 "module")
+          (id compiler-builtin-id-fix-Module 187 "Module")
+          (id compiler-builtin-id-fix-decls 188 "decls")
+          (id compiler-builtin-id-fix-Decls 189 "Decls")
+          (id compiler-builtin-id-fix-expr 190 "expr")
+          (id
+            compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt
+            191
+            "<parse-ast-decl-vec-fallback>")
+          (id compiler-builtin-id-fix-append 206 "append")
+          (id compiler-builtin-id-fix-concat 207 "concat")
+          (id compiler-builtin-id-fix-stdlib_dot_string 208 "stdlib.string")
+          (id compiler-builtin-id-runtime-module 209 "stdlib.runtime")
+          (id compiler-builtin-id-runtime-int-to-string 210 "int-to-string")
+          (id compiler-builtin-id-runtime-substring 211 "substring")
+          (id compiler-builtin-id-runtime-str-view 212 "str-view")
+          (id compiler-builtin-id-runtime-string-concat3 213 "string-concat3")
+          (id compiler-builtin-id-runtime-string-concat4 214 "string-concat4")
+          (id compiler-builtin-id-runtime-string-concat5 215 "string-concat5")
+          (id
+            compiler-builtin-id-runtime-atomic-i64-load-ptr
+            216
+            "atomic-i64-load-ptr")
+          (id
+            compiler-builtin-id-runtime-atomic-i64-store-ptr
+            217
+            "atomic-i64-store-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i64-add-ptr
+            218
+            "atomic-i64-add-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr
+            219
+            "atomic-i64-fetch-add-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i64-cas-ptr
+            220
+            "atomic-i64-cas-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i32-load-ptr
+            221
+            "atomic-i32-load-ptr")
+          (id
+            compiler-builtin-id-runtime-atomic-i32-store-ptr
+            222
+            "atomic-i32-store-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i32-add-ptr
+            223
+            "atomic-i32-add-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr
+            224
+            "atomic-i32-fetch-add-ptr!")
+          (id
+            compiler-builtin-id-runtime-atomic-i32-cas-ptr
+            225
+            "atomic-i32-cas-ptr!")
+          (id
+            compiler-builtin-id-tl-bytes-view-from-str-parts
+            226
+            "tl_bytes_view_from_str_parts")
+          (id
+            compiler-builtin-id-tl-bytes-view-from-buf-parts
+            227
+            "tl_bytes_view_from_buf_parts")
+          (id
+            compiler-builtin-id-tl-bytes-mut-view-from-buf-parts
+            228
+            "tl_bytes_mut_view_from_buf_parts")
+          (id
+            compiler-builtin-id-tl-bytes-view-from-bytes-parts
+            229
+            "tl_bytes_view_from_bytes_parts")
+          (id
+            compiler-builtin-id-tl-bytes-mut-view-from-bytes-parts
+            230
+            "tl_bytes_mut_view_from_bytes_parts")
+          (id compiler-builtin-id-core-macros-module 231 "stdlib.core_macros")
+          (id
+            compiler-builtin-id-core-macros-legacy-module
+            232
+            "stdlib.core-macros")
+          (id compiler-builtin-id-fix-slots 233 "slots")
+          (id
+            compiler-builtin-id-tc-default-boundary
+            234
+            "__tl_default_boundary")
+          (id compiler-builtin-id-tc-active-region 235 "__tl_active_region")
+          (id compiler-builtin-id-tc-cleanup-owner 236 " __tl_cleanup_owner")
+          (id
+            compiler-builtin-id-tc-ordinary-arena-owner
+            237
+            " __tl_ordinary_arena_owner")
+          (id
+            compiler-builtin-id-tc-atomic-arena-owner
+            238
+            " __tl_atomic_arena_owner")
+          (id compiler-builtin-id-tc-return-type 239 "__tl_return_type")
+          (id compiler-builtin-id-tc-loop-target 240 "__tl_loop_target")
+          (id
+            compiler-builtin-id-tc-hygiene-global-boundary
+            241
+            "__tl_hygiene_global_boundary")
+          (id compiler-builtin-id-tc-unsafe-context 242 " __tl_unsafe_context")
+          (id compiler-builtin-id-fix-body 243 "body")
+          (id compiler-builtin-id-comptime-expr-begin-variant 244 "Begin")
+          (id compiler-builtin-id-comptime-expr-bool-variant 245 "Bool")
+          (id compiler-builtin-id-comptime-expr-call-variant 246 "Call")
+          (id compiler-builtin-id-comptime-expr-if-variant 247 "If")
+          (id compiler-builtin-id-comptime-expr-int-variant 248 "Int")
+          (id
+            compiler-builtin-id-comptime-expr-quasiquote-variant
+            249
+            "Quasiquote")
+          (id compiler-builtin-id-comptime-expr-quote-variant 250 "Quote")
+          (id compiler-builtin-id-comptime-expr-splice-variant 251 "Splice")
+          (id compiler-builtin-id-comptime-expr-unquote-variant 252 "Unquote")
+          (id
+            compiler-builtin-id-comptime-expr-unquote-splicing-variant
+            253
+            "UnquoteSplicing")
+          (id compiler-builtin-id-comptime-expr-var-variant 254 "Var")
+          (id compiler-builtin-id-fix-first 255 "first")
+          (id compiler-builtin-id-fix-has_type 256 "has-type")
+          (id compiler-builtin-id-fix-init 257 "init")
+          (id compiler-builtin-id-fix-len 258 "len")
+          (id
+            compiler-builtin-id-comptime-pattern-binding-variant
+            259
+            "Binding")
+          (id
+            compiler-builtin-id-comptime-pattern-variant-variant
+            260
+            "Variant")
+          (id
+            compiler-builtin-id-comptime-pattern-wildcard-variant
+            261
+            "Wildcard")
+          (id compiler-builtin-id-fix-payloads 262 "payloads")
+          (id
+            compiler-builtin-id-comptime-type-info-opaque-variant
+            263
+            "Opaque")
+          (id compiler-builtin-id-comptime-type-info-slice-variant 315 "Slice")
+          (id compiler-builtin-id-fix-name 264 "name")
+          (id compiler-builtin-id-fix-pattern 265 "pattern")
+          (id compiler-builtin-id-fix-ty 266 "ty")
+          (id compiler-builtin-id-fix-handle 267 "handle")
+          (id compiler-builtin-id-fix-stdlib_dot_clone 270 "stdlib.clone")
+          (id
+            compiler-builtin-id-fix-synthesize_helpers
+            271
+            "synthesize-helpers")
+          (id
+            compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
+            272
+            "stdlib.clone.synthesize-helpers")
+          (id compiler-builtin-id-arena-module 299 "stdlib.arena")
+          (id compiler-builtin-id-arena-type 300 "stdlib.arena/Arena")
+          (id compiler-builtin-id-arena-mark-type 301 "stdlib.arena/ArenaMark")
+          (id
+            compiler-builtin-id-arena-phase-type
+            302
+            "stdlib.arena/ArenaPhase")
+          (id compiler-builtin-id-arena-make-base 303 "make")
+          (id compiler-builtin-id-arena-make-atomic-base 304 "make-atomic")
+          (id compiler-builtin-id-arena-phase-base 305 "phase")
+          (id compiler-builtin-id-arena-rewind-safe-base 306 "rewind-safe!")
+          (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
+          ;; Captured into their slots but never loaded, so they stay -1.
+          (id compiler-builtin-id-fix-LetBinding 311)
+          (id compiler-builtin-id-fix-LetBindingList 312))
+        `(rows
+          (ctfe 0 "size-of")
+          (ctfe 1 "align-of")
+          (ctfe 2 "offset-of")
+          (ctfe 3 "__tl_string_eq")
+          (ctfe 4 "string-eq")
+          (ctfe 5 "string=?")
+          (ctfe 6 "__tl_string_length")
+          (ctfe 7 "string-length")
+          (ctfe 8 "length")
+          (ctfe 9 "__tl_string_ref")
+          (ctfe 10 "string-ref")
+          (ctfe 11 "char-at")
+          (ctfe 12 "__tl_string_to_int")
+          (ctfe 13 ">int")
+          (ctfe 14 "string-append")
+          (ctfe 15 "string-concat")
+          (ctfe 16 "int->string")
+          (ctfe 17 "comptime-error")
+          (ctfe 18 "error")
+          (ctfe 19 "expr-bool?")
+          (ctfe 20 "expr-bool-value")
+          (ctfe 21 "expr-if?")
+          (ctfe 22 "expr-if-cond")
+          (ctfe 23 "expr-if-then")
+          (ctfe 24 "expr-if-else")
+          (ctfe 25 "expr-clause-first")
+          (ctfe 26 "expr-clause-second")
+          (ctfe 27 "expr-bool")
+          (ctfe 28 "expr-int")
+          (ctfe 29 "expr-string")
+          (ctfe 30 "expr-var")
+          (ctfe 31 "expr-struct-get")
+          (ctfe 32 "expr-tuple-ref")
+          (ctfe 33 "expr-struct-set")
+          (ctfe 34 "expr-splice")
+          (ctfe 35 "expr-if")
+          (ctfe 36 "pattern-wildcard")
+          (ctfe 37 "pattern-binding")
+          (ctfe 38 "pattern-variant")
+          (ctfe 39 "pattern-list-empty")
+          (ctfe 40 "pattern-list-cons")
+          (ctfe 41 "match-arm")
+          (ctfe 42 "match-arm-list-empty")
+          (ctfe 43 "match-arm-list-cons")
+          (ctfe 44 "expr-match")
+          (ctfe 45 "expr-type")
+          (ctfe 46 "type-info")
+          (ctfe 47 "module-name")
+          (ctfe 48 "module-export-macro?")
+          (ctfe 49 "module-hook")
+          (ctfe 51 "expr-list-length")
+          (ctfe 54 "expr-list-nth")
+          (ctfe 56 "expr-clause-list-length")
+          (ctfe 59 "expr-clause-list-nth")
+          (ctfe 60 "expr-clause-list->expr-list")
+          (ctfe 61 "expr-binding-clause-name")
+          (ctfe 62 "expr-binding-clause-has-type?")
+          (ctfe 63 "expr-binding-clause-type")
+          (ctfe 64 "expr-binding-clause-init")
+          (ctfe 66 "expr-binding-clause-list-length")
+          (ctfe 69 "expr-binding-clause-list-nth")
+          (ctfe 70 "expr-binding-clause-list->expr-list")
+          (ctfe 71 "type-kind")
+          (ctfe 72 "type-key")
+          (ctfe 73 "type-nominal-module")
+          (ctfe 74 "type-nominal-name")
+          (ctfe 75 "struct-field-count")
+          (ctfe 76 "struct-field-name")
+          (ctfe 77 "struct-field-type")
+          (ctfe 78 "enum-variant-count")
+          (ctfe 79 "enum-variant-name")
+          (ctfe 80 "enum-variant-payload-count")
+          (ctfe 81 "enum-variant-payload-type")
+          (ctfe 82 "array-element-type")
+          (ctfe 83 "array-length")
+          (ctfe 84 "array-dynamic?")
+          (ctfe 85 "tuple-element-count")
+          (ctfe 86 "tuple-element-type")
+          (ctfe 87 "function-param-count")
+          (ctfe 88 "function-param-type")
+          (ctfe 89 "function-return-type")
+          (ctfe 90 "pattern-list-bindings")
+          (ctfe 91 "expr-string?")
+          (ctfe 92 "expr-string-value")
+          (ctfe 93 "string-slice")
+          (ctfe 94 "expr-mut-borrow")
+          (ctfe 95 "expr-call")
+          (ctfe 96 "expr-list-empty")
+          (ctfe 97 "expr-list-cons")
+          (ctfe 98 "expr-mut-call0")
+          (ctfe 99 "expr-mut-call1")
+          (ctfe 100 "expr-mut-call2")
+          (ctfe 101 "expr-list-fold-if")
+          (ctfe 102 "expr-clause-list-fold-if")
+          (ctfe 103 "append")
+          (ctfe 104 "concat")
+          (ctfe 105 ">int" repeat)
+          (ctfe 106 "__typelisp internal resolved struct type")
+          (ctfe 107 "__typelisp internal resolved enum type")
+          (ctfe 108 "None")
+          (ctfe 109 "Array")
+          (ctfe 110 "&")
+          (ctfe 111 "&mut")
+          (ctfe 112 "in")
+          (ctfe 113 "while")
+          (ctfe 114 "make-array")
+          (ctfe 115 "array-ref")
+          (ctfe 116 "array-push!")
+          (ctfe 117 "string-ref" repeat)
+          (ctfe 118 "init")
+          (ctfe 119 "ptr-null")
+          (ctfe 120 ":")
+          (ctfe 121 "if")
+          (ctfe 122 "begin")
+          (ctfe 123 "unsafe")
+          (ctfe 124 "tuple")
+          (ctfe 125 "array")
+          (ctfe 126 "quote")
+          (ctfe 127 "quasiquote")
+          (ctfe 128 "unquote")
+          (ctfe 129 "unquote-splicing")
+          (ctfe 130 "return")
+          (ctfe 131 "try")
+          (ctfe 132 "box")
+          (ctfe 133 "box-get")
+          (ctfe 134 "box-take")
+          (ctfe 135 "type")
+          (ctfe 136 "syscall")
+          (ctfe 137 "+")
+          (ctfe 138 "-")
+          (ctfe 139 "*")
+          (ctfe 140 "/")
+          (ctfe 141 "%")
+          (ctfe 142 "=")
+          (ctfe 143 "!=")
+          (ctfe 144 "<")
+          (ctfe 145 "<=")
+          (ctfe 146 ">")
+          (ctfe 147 ">=")
+          (ctfe 148 "and")
+          (ctfe 149 "or")
+          (ctfe 150 "bit-and")
+          (ctfe 151 "bit-or")
+          (ctfe 152 "bit-xor")
+          (ctfe 153 "shl")
+          (ctfe 154 "shr")
+          (ctfe 155 "not")
+          (ctfe 156 "bit-not")
+          (ctfe 157 "set!")
+          (ctfe 158 "String")
+          (ctfe 159 "i64")
+          (ctfe 160 "i32")
+          (ctfe 161 "i16")
+          (ctfe 162 "i8")
+          (ctfe 163 "u64")
+          (ctfe 164 "u32")
+          (ctfe 165 "u16")
+          (ctfe 166 "u8")
+          (ctfe 167 "f64")
+          (ctfe 168 "f32")
+          (ctfe 169 "bool")
+          (ctfe 170 "char")
+          (ctfe 171 "str")
+          (ctfe 172 "bytes")
+          (ctfe 173 "unit")
+          (ctfe 174 "never")
+          (ctfe 175 "Tuple")
+          (ctfe 176 "->")
+          (ctfe 177 "Ptr")
+          (ctfe 178 "MutPtr")
+          (ctfe 179 ":consume")
+          (ctfe 180 "_")
+          (ctfe 181 "let")
+          (ctfe 182 "match")
+          (ctfe 183 "struct-get")
+          (ctfe 184 "array-set!")
+          (ctfe 186 "cast")
+          (ctfe 187 "ann")
+          (ctfe 188 "tuple-ref")
+          (ctfe 189 "ptr-null?")
+          (ctfe 190 "ptr-addr-of")
+          (ctfe 191 "ptr-read")
+          (ctfe 192 "ptr-write!")
+          (ctfe 193 "ptr-offset")
+          (ctfe 194 "ptr-cast")
+          (ctfe 195 "ptr->int")
+          (ctfe 196 "int->ptr")
+          (ctfe 197 "string-data")
+          (ctfe 198 "string-from-bytes")
+          (ctfe 199 "array-data")
+          (ctfe 200 "program-argc")
+          (ctfe 201 "program-argv")
+          (ctfe 202 "program-envp")
+          (ctfe 203 "cpuid-eax")
+          (ctfe 204 "cpuid-ebx")
+          (ctfe 205 "cpuid-ecx")
+          (ctfe 206 "cpuid-edx")
+          (ctfe 207 "xgetbv")
+          (ctfe 208 "true")
+          (ctfe 209 "false")
+          (ctfe 210 "type-cleanup-owning?")
+          (ctfe 211 "type-cleanup-function")
+          (ctfe 212 "expr-binary-data")
+          (ctfe 213 "__typelisp internal binary data")
+          (ctfe 214 "box-element-type")
+          (ctfe 215 "expr-list-type-nth")
+          (ctfe 216 "module-value?")
+          (ctfe 217 "module-value-type")
+          (ctfe 218 "reference-element-type")
+          (ctfe 219 "all")
+          (ctfe 220 "any")
+          (ctfe 221 ":kind")
+          (ctfe 222 "...")
+          (ctfe 223 "string")
+          (ctfe 224 "dyn-array")
+          (ctfe 225 "function")
+          (ctfe 226 "struct")
+          (ctfe 227 "enum")
+          (ctfe 228 "ptr")
+          (ctfe 229 "mut-ptr")
+          (ctfe 230 "ref")
+          (ctfe 231 "mut-ref")
+          (ctfe 232 "region")
+          (ctfe 233 "type-var")
+          (ctfe 234 ":cleanup")
+          (ctfe 235 ":owned")
+          (ctfe 236 ":lifetimes")
+          (ctfe 237 ":repr")
+          (ctfe 238 ":packed")
+          (ctfe 239 "packed")
+          (ctfe 240 "scalar")
+          (ctfe 241 "avx2")
+          (ctfe 242 "avx512")
+          (ctfe 243 "cfg")
+          (ctfe 244 "uniform")
+          (ctfe 245 "varying")
+          (ctfe 246 "none")
+          (ctfe 247 "lanes")
+          (ctfe 248 "args")
+          (ctfe 249 "result")
+          (ctfe 250 "index-param")
+          (ctfe 251 "specialization")
+          (ctfe 252 ":export-symbol")
+          (ctfe 253 ":spmd-callable")
+          (ctfe 254 "c-varargs")
+          (ctfe 255 ":abi")
+          (ctfe 256 ":symbol")
+          (ctfe 257 ":link-lib")
+          (ctfe 258 ":link-search")
+          (ctfe 259 ":link-arg")
+          (ctfe 260 "as")
+          (ctfe 261 ":as")
+          (ctfe 262 "sum")
+          (ctfe 263 "min")
+          (ctfe 264 "max")
+          (ctfe 265 "defgeneric")
+          (ctfe 266 "generic")
+          (ctfe 267 "deftrait")
+          (ctfe 268 "trait")
+          (ctfe 269 "interface")
+          (ctfe 270 "impl")
+          (ctfe 271 "where")
+          (ctfe 272 "pattern-binding-typed")
+          (ctfe 273 "expr-resource-scope")
+          (ctfe 274 "expr-let-scope")
+          (ctfe 275 "expr-set-var")
+          (ctfe 276 "expr-begin-unit")
+          (ctfe 277 "expr-not")
+          (ctfe 278 "expr-while")
+          (ctfe 279 "syntax-name-fresh")
+          (ctfe 280 "__tl_dyn-array")
+          (ctfe 281 "slice")
+          (ctfe 282 "expr-borrow")
+          (ctfe 283 "expr-array-ref")
+          (ctfe 284 "expr-replace")
+          (ctfe 285 "module-value-expr")
+          (ctfe 286 "function-shared-borrow-returns-string?")
+          (ctfe 287 "expr-shared-call1")
+          (ctfe 288 "expr-shared-let-scope")
+          (ctfe 289 "type-expr")
+          (ctfe 290 "expr-lambda1")
+          (ctfe 291 ":ignore")
+          (ctfe 292 ":slow")
+          (ctfe 293 ":must-use")
+          (ctfe 294 "c-function")
+          (ctfe 295 "CFunc")
+          (ctfe 296 "nullable")
+          (ctfe 297 "non-null")
+          (ctfe 298 "unsafe-nullable")
+          (ctfe 299 "unsafe-non-null")
+          (ctfe 300 ":invalidate")
+          (ctfe 301 "invalidate")))
+        [(comptime.Expr.Call _ items) items]
+        [_
+          (comptime.comptime-error
+            "compiler-builtin-id-table: a table is (rows row...)")])]
+    [limit : i64 0]
+    [capture : comptime.ExprList (comptime.expr-list-empty)]
+    [install : comptime.ExprList (comptime.expr-list-empty)]
+    [loads : comptime.ExprList (comptime.expr-list-empty)]
+    [arms : comptime.ExprList
+      (comptime.expr-list-cons
+        `(_
+          (comptime.comptime-error
+            (comptime.string-append
+              "compiler-builtin-ctfe-slot: not a CTFE builtin spelling: "
+              (comptime.expr-string-value spelling))))
+        (comptime.expr-list-empty))]
+    [ids : comptime.Expr
+      (if fixed?
+        `(&mut state.ids)
+        `(&mut state.ctfe-ids))]
+    [chunk : String ""]
+    [count : i64 0]
+    [index : i64 (- (comptime.expr-list-length rows) 1)]
+    (begin
+      ;; Walk back to front: prepending keeps every list in row order.
+      (while (>= index 0)
+        (begin
+          (match (comptime.expr-list-nth rows index)
+            [(comptime.Expr.Call _ fields)
+              (let
+                [field-count : i64 (comptime.expr-list-length fields)]
+                [slot : i64 -1]
+                [spelling : String ""]
+                [spelled? : bool false]
+                [field : i64 0]
+                (begin
+                  ;; A row's slot is its first integer field and its spelling,
+                  ;; if any, its string field.
+                  (while (< field field-count)
+                    (begin
+                      (match (comptime.expr-list-nth fields field)
+                        [(comptime.Expr.Int value)
+                          (if (< slot 0)
+                            (set! slot value)
+                            unit)]
+                        [_
+                          (if (comptime.expr-string?
+                            (comptime.expr-list-nth fields field))
+                            (begin
+                              (set!
+                                spelling
+                                (comptime.expr-string-value
+                                  (comptime.expr-list-nth fields field)))
+                              (set! spelled? true))
+                            unit)])
+                      (set! field (+ field 1))))
+                  (if (< slot 0)
+                    (comptime.comptime-error
+                      "compiler-builtin-id-table: a row's slot is an integer")
+                    unit)
+                  (if (>= slot limit)
+                    (set! limit (+ slot 1))
+                    unit)
+                  (if fixed?
+                    (let
+                      [global : comptime.Expr (comptime.expr-list-nth fields 0)]
+                      [at : comptime.Expr
+                        `(ptr-offset
+                          compiler-builtin-ids-data
+                          ,(comptime.expr-int slot))]
+                      (begin
+                        (set!
+                          capture
+                          (comptime.expr-list-cons
+                            `(unsafe
+                              (ptr-write! ,at ,global))
+                            capture))
+                        (if spelled?
+                          (set!
+                            install
+                            (comptime.expr-list-cons
+                              `(set!
+                                ,global
+                                (unsafe
+                                  (ptr-read ,at)))
+                              install))
+                          unit)))
+                    (if (= field-count 2)
+                      (set!
+                        arms
+                        (comptime.expr-list-cons
+                          (comptime.expr-call
+                            (comptime.expr-string spelling)
+                            (comptime.expr-list-cons
+                              (comptime.expr-int slot)
+                              (comptime.expr-list-empty)))
+                          arms))
+                      unit))
+                  (if spelled?
+                    (begin
+                      (set!
+                        chunk
+                        (comptime.string-append
+                          (comptime.string-append
+                            (comptime.string-append (int->string slot) ":")
+                            (comptime.string-append spelling "|"))
+                          chunk))
+                      (set! count (+ count 1)))
+                    unit)
+                  (if (= count 16)
+                    (begin
+                      (set!
+                        loads
+                        (comptime.expr-list-cons
+                          `(compiler-builtin-load-id-rows!
+                            ,ids
+                            insert-missing
+                            ,(comptime.expr-string chunk))
+                          loads))
+                      (set! chunk "")
+                      (set! count 0))
+                    unit)))]
+            [_
+              (comptime.comptime-error
+                "compiler-builtin-id-table: a row is a call")])
+          (set! index (- index 1))))
+      (if (> count 0)
+        (set!
+          loads
+          (comptime.expr-list-cons
+            `(compiler-builtin-load-id-rows!
+              ,ids
+              insert-missing
+              ,(comptime.expr-string chunk))
+            loads))
+        unit)
+      (if fixed?
+        `(begin
+          (define compiler-builtin-id-slot-count : i64
+            ,(comptime.expr-int limit))
+          (define (state-capture-fixed-ids!
+            [state : (&mut state CompilerBuiltinIdsState)]) : unit
+            (let
+              [compiler-builtin-ids-data : (MutPtr i64)
+                (unsafe
+                  (__tl_array-data (__tl-project-field state ids)))]
+              (begin
+                ,@capture)))
+          (define (state-install-fixed-ids!
+            [state : (& state CompilerBuiltinIdsState)]) : unit
+            (let
+              [compiler-builtin-ids-data : (MutPtr i64)
+                (unsafe
+                  (__tl_array-data (__tl-project-field state ids)))]
+              (begin
+                ,@install)))
+          (define (state-load-fixed-ids!
+            [state : (&mut state CompilerBuiltinIdsState)]
+            [insert-missing : bool]) : unit
+            (begin
+              ,@loads)))
+        `(begin
+          (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
+            (__tl_make-array i64 ,(comptime.expr-int limit)))
+          (defmacro (compiler-builtin-ctfe-slot [spelling : comptime.Expr]) : i64
+            (comptime.expr-int
+              ,(comptime.expr-call
+                (comptime.expr-var "match")
+                (comptime.expr-list-cons
+                  `(comptime.expr-string-value spelling)
+                  arms))))
+          (define (state-load-ctfe-ids!
+            [state : (&mut state CompilerBuiltinIdsState)]
+            [insert-missing : bool]) : unit
+            (begin
+              ,@loads)))))))
+
+(compiler-builtin-id-table fixed)
+
+(compiler-builtin-id-table ctfe)
+
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 323)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 302)]
+    [ids : (__tl_dyn-array i64)
+      (__tl_make-array i64 compiler-builtin-id-slot-count)]
+    [ctfe-ids : (__tl_dyn-array i64)
+      (__tl_make-array i64 (array-length compiler-builtin-ctfe-ids))]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
       (set! (array-ref metadata 1) -1)
       (set! (array-ref metadata 2) -1)
       (set! (array-ref metadata 3) 0)
-      (while (< i 323)
+      (while (< i (array-length ids))
         (begin
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 302)
+      (while (< i (array-length ctfe-ids))
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -1524,7 +1987,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 302)
+    (while (< i (array-length state.ctfe-ids))
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -1532,7 +1995,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 302)
+    (while (< i (array-length state.ctfe-ids))
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1564,7 +2027,7 @@
       compiler-builtin-table-id
       compiler-builtin-pool-len
       compiler-builtin-parse-initialized)
-    (compiler-builtin-id-table compiler-builtin-id-statements capture state)
+    (state-capture-fixed-ids! state)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1573,9 +2036,6 @@
     (begin
       (state-capture-from-globals! (&mut state))
       state)))
-
-(define (state-install-fixed-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
-  (compiler-builtin-id-table compiler-builtin-id-statements install state))
 
 (define (state-install! [state : (& state CompilerBuiltinIdsState)]) : unit
   (begin
@@ -1598,356 +2058,11 @@
     (ci.intern-source-slice name 0 (ci.intern-private-string-length name))
     (io.panic "compiler builtin IDs must be installed with their intern table")))
 
-(define (compiler-builtin-clear-ctfe-ids!) : unit
-  (let
-    [index : i64 0]
-    (while (< index 302)
-      (begin
-        (compiler-builtin-ctfe-set! index -1)
-        (set! index (+ index 1))))))
-
-;; The CTFE builtin spellings by slot, each `|`-terminated: the loader interns
-;; them in slot order. A retired or reserved slot has an empty entry and stays
-;; -1. Slot 105 repeats the spelling of slot 13 and slot 117 that of slot 10.
-;; A spelling added to `compiler-builtin-ctfe-slot` is appended here at its
-;; slot.
-(define (compiler-builtin-ctfe-spellings) : String
-  "size-of|align-of|offset-of|__tl_string_eq|string-eq|string=?|__tl_string_length|string-length|length|__tl_string_ref|string-ref|char-at|__tl_string_to_int|>int|string-append|string-concat|int->string|comptime-error|error|expr-bool?|expr-bool-value|expr-if?|expr-if-cond|expr-if-then|expr-if-else|expr-clause-first|expr-clause-second|expr-bool|expr-int|expr-string|expr-var|expr-struct-get|expr-tuple-ref|expr-struct-set|expr-splice|expr-if|pattern-wildcard|pattern-binding|pattern-variant|pattern-list-empty|pattern-list-cons|match-arm|match-arm-list-empty|match-arm-list-cons|expr-match|expr-type|type-info|module-name|module-export-macro?|module-hook||expr-list-length|||expr-list-nth||expr-clause-list-length|||expr-clause-list-nth|expr-clause-list->expr-list|expr-binding-clause-name|expr-binding-clause-has-type?|expr-binding-clause-type|expr-binding-clause-init||expr-binding-clause-list-length|||expr-binding-clause-list-nth|expr-binding-clause-list->expr-list|type-kind|type-key|type-nominal-module|type-nominal-name|struct-field-count|struct-field-name|struct-field-type|enum-variant-count|enum-variant-name|enum-variant-payload-count|enum-variant-payload-type|array-element-type|array-length|array-dynamic?|tuple-element-count|tuple-element-type|function-param-count|function-param-type|function-return-type|pattern-list-bindings|expr-string?|expr-string-value|string-slice|expr-mut-borrow|expr-call|expr-list-empty|expr-list-cons|expr-mut-call0|expr-mut-call1|expr-mut-call2|expr-list-fold-if|expr-clause-list-fold-if|append|concat|>int|__typelisp internal resolved struct type|__typelisp internal resolved enum type|None|Array|&|&mut|in|while|make-array|array-ref|array-push!|string-ref|init|ptr-null|:|if|begin|unsafe|tuple|array|quote|quasiquote|unquote|unquote-splicing|return|try|box|box-get|box-take|type|syscall|+|-|*|/|%|=|!=|<|<=|>|>=|and|or|bit-and|bit-or|bit-xor|shl|shr|not|bit-not|set!|String|i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|str|bytes|unit|never|Tuple|->|Ptr|MutPtr|:consume|_|let|match|struct-get|array-set!||cast|ann|tuple-ref|ptr-null?|ptr-addr-of|ptr-read|ptr-write!|ptr-offset|ptr-cast|ptr->int|int->ptr|string-data|string-from-bytes|array-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|true|false|type-cleanup-owning?|type-cleanup-function|expr-binary-data|__typelisp internal binary data|box-element-type|expr-list-type-nth|module-value?|module-value-type|reference-element-type|all|any|:kind|...|string|dyn-array|function|struct|enum|ptr|mut-ptr|ref|mut-ref|region|type-var|:cleanup|:owned|:lifetimes|:repr|:packed|packed|scalar|avx2|avx512|cfg|uniform|varying|none|lanes|args|result|index-param|specialization|:export-symbol|:spmd-callable|c-varargs|:abi|:symbol|:link-lib|:link-search|:link-arg|as|:as|sum|min|max|defgeneric|generic|deftrait|trait|interface|impl|where|pattern-binding-typed|expr-resource-scope|expr-let-scope|expr-set-var|expr-begin-unit|expr-not|expr-while|syntax-name-fresh|__tl_dyn-array|slice|expr-borrow|expr-array-ref|expr-replace|module-value-expr|function-shared-borrow-returns-string?|expr-shared-call1|expr-shared-let-scope|type-expr|expr-lambda1|:ignore|:slow|:must-use|c-function|CFunc|nullable|non-null|unsafe-nullable|unsafe-non-null|:invalidate|invalidate|")
-
-;; The CTFE builtin catalog: each CTFE builtin's source spelling and its slot
-;; in `compiler-builtin-ctfe-ids`. Slots are append-only; a slot missing here is
-;; retired or reserved and stays -1. `compiler-builtin-ctfe` reads the intern
-;; id of a spelling, and `compiler-builtin-ctfe-spellings` lists each slot's
-;; spelling for the loader.
-(defmacro (compiler-builtin-ctfe-slot [spelling : comptime.Expr]) : i64
-  (comptime.expr-int
-    (match (comptime.expr-string-value spelling)
-      ["size-of" 0]
-      ["align-of" 1]
-      ["offset-of" 2]
-      ["__tl_string_eq" 3]
-      ["string-eq" 4]
-      ["string=?" 5]
-      ["__tl_string_length" 6]
-      ["string-length" 7]
-      ["length" 8]
-      ["__tl_string_ref" 9]
-      ["string-ref" 10]
-      ["char-at" 11]
-      ["__tl_string_to_int" 12]
-      [">int" 13]
-      ["string-append" 14]
-      ["string-concat" 15]
-      ["int->string" 16]
-      ["comptime-error" 17]
-      ["error" 18]
-      ["expr-bool?" 19]
-      ["expr-bool-value" 20]
-      ["expr-if?" 21]
-      ["expr-if-cond" 22]
-      ["expr-if-then" 23]
-      ["expr-if-else" 24]
-      ["expr-clause-first" 25]
-      ["expr-clause-second" 26]
-      ["expr-bool" 27]
-      ["expr-int" 28]
-      ["expr-string" 29]
-      ["expr-var" 30]
-      ["expr-struct-get" 31]
-      ["expr-tuple-ref" 32]
-      ["expr-struct-set" 33]
-      ["expr-splice" 34]
-      ["expr-if" 35]
-      ["pattern-wildcard" 36]
-      ["pattern-binding" 37]
-      ["pattern-variant" 38]
-      ["pattern-list-empty" 39]
-      ["pattern-list-cons" 40]
-      ["match-arm" 41]
-      ["match-arm-list-empty" 42]
-      ["match-arm-list-cons" 43]
-      ["expr-match" 44]
-      ["expr-type" 45]
-      ["type-info" 46]
-      ["module-name" 47]
-      ["module-export-macro?" 48]
-      ["module-hook" 49]
-      ["expr-list-length" 51]
-      ["expr-list-nth" 54]
-      ["expr-clause-list-length" 56]
-      ["expr-clause-list-nth" 59]
-      ["expr-clause-list->expr-list" 60]
-      ["expr-binding-clause-name" 61]
-      ["expr-binding-clause-has-type?" 62]
-      ["expr-binding-clause-type" 63]
-      ["expr-binding-clause-init" 64]
-      ["expr-binding-clause-list-length" 66]
-      ["expr-binding-clause-list-nth" 69]
-      ["expr-binding-clause-list->expr-list" 70]
-      ["type-kind" 71]
-      ["type-key" 72]
-      ["type-nominal-module" 73]
-      ["type-nominal-name" 74]
-      ["struct-field-count" 75]
-      ["struct-field-name" 76]
-      ["struct-field-type" 77]
-      ["enum-variant-count" 78]
-      ["enum-variant-name" 79]
-      ["enum-variant-payload-count" 80]
-      ["enum-variant-payload-type" 81]
-      ["array-element-type" 82]
-      ["array-length" 83]
-      ["array-dynamic?" 84]
-      ["tuple-element-count" 85]
-      ["tuple-element-type" 86]
-      ["function-param-count" 87]
-      ["function-param-type" 88]
-      ["function-return-type" 89]
-      ["pattern-list-bindings" 90]
-      ["expr-string?" 91]
-      ["expr-string-value" 92]
-      ["string-slice" 93]
-      ["expr-mut-borrow" 94]
-      ["expr-call" 95]
-      ["expr-list-empty" 96]
-      ["expr-list-cons" 97]
-      ["expr-mut-call0" 98]
-      ["expr-mut-call1" 99]
-      ["expr-mut-call2" 100]
-      ["expr-list-fold-if" 101]
-      ["expr-clause-list-fold-if" 102]
-      ["append" 103]
-      ["concat" 104]
-      ["__typelisp internal resolved struct type" 106]
-      ["__typelisp internal resolved enum type" 107]
-      ["None" 108]
-      ["Array" 109]
-      ["&" 110]
-      ["&mut" 111]
-      ["in" 112]
-      ["while" 113]
-      ["make-array" 114]
-      ["array-ref" 115]
-      ["array-push!" 116]
-      ["init" 118]
-      ["ptr-null" 119]
-      [":" 120]
-      ["if" 121]
-      ["begin" 122]
-      ["unsafe" 123]
-      ["tuple" 124]
-      ["array" 125]
-      ["quote" 126]
-      ["quasiquote" 127]
-      ["unquote" 128]
-      ["unquote-splicing" 129]
-      ["return" 130]
-      ["try" 131]
-      ["box" 132]
-      ["box-get" 133]
-      ["box-take" 134]
-      ["type" 135]
-      ["syscall" 136]
-      ["+" 137]
-      ["-" 138]
-      ["*" 139]
-      ["/" 140]
-      ["%" 141]
-      ["=" 142]
-      ["!=" 143]
-      ["<" 144]
-      ["<=" 145]
-      [">" 146]
-      [">=" 147]
-      ["and" 148]
-      ["or" 149]
-      ["bit-and" 150]
-      ["bit-or" 151]
-      ["bit-xor" 152]
-      ["shl" 153]
-      ["shr" 154]
-      ["not" 155]
-      ["bit-not" 156]
-      ["set!" 157]
-      ["String" 158]
-      ["i64" 159]
-      ["i32" 160]
-      ["i16" 161]
-      ["i8" 162]
-      ["u64" 163]
-      ["u32" 164]
-      ["u16" 165]
-      ["u8" 166]
-      ["f64" 167]
-      ["f32" 168]
-      ["bool" 169]
-      ["char" 170]
-      ["str" 171]
-      ["bytes" 172]
-      ["unit" 173]
-      ["never" 174]
-      ["Tuple" 175]
-      ["->" 176]
-      ["Ptr" 177]
-      ["MutPtr" 178]
-      [":consume" 179]
-      ["_" 180]
-      ["let" 181]
-      ["match" 182]
-      ["struct-get" 183]
-      ["array-set!" 184]
-      ["cast" 186]
-      ["ann" 187]
-      ["tuple-ref" 188]
-      ["ptr-null?" 189]
-      ["ptr-addr-of" 190]
-      ["ptr-read" 191]
-      ["ptr-write!" 192]
-      ["ptr-offset" 193]
-      ["ptr-cast" 194]
-      ["ptr->int" 195]
-      ["int->ptr" 196]
-      ["string-data" 197]
-      ["string-from-bytes" 198]
-      ["array-data" 199]
-      ["program-argc" 200]
-      ["program-argv" 201]
-      ["program-envp" 202]
-      ["cpuid-eax" 203]
-      ["cpuid-ebx" 204]
-      ["cpuid-ecx" 205]
-      ["cpuid-edx" 206]
-      ["xgetbv" 207]
-      ["true" 208]
-      ["false" 209]
-      ["type-cleanup-owning?" 210]
-      ["type-cleanup-function" 211]
-      ["expr-binary-data" 212]
-      ["__typelisp internal binary data" 213]
-      ["box-element-type" 214]
-      ["expr-list-type-nth" 215]
-      ["module-value?" 216]
-      ["module-value-type" 217]
-      ["reference-element-type" 218]
-      ["all" 219]
-      ["any" 220]
-      [":kind" 221]
-      ["..." 222]
-      ["string" 223]
-      ["dyn-array" 224]
-      ["function" 225]
-      ["struct" 226]
-      ["enum" 227]
-      ["ptr" 228]
-      ["mut-ptr" 229]
-      ["ref" 230]
-      ["mut-ref" 231]
-      ["region" 232]
-      ["type-var" 233]
-      [":cleanup" 234]
-      [":owned" 235]
-      [":lifetimes" 236]
-      [":repr" 237]
-      [":packed" 238]
-      ["packed" 239]
-      ["scalar" 240]
-      ["avx2" 241]
-      ["avx512" 242]
-      ["cfg" 243]
-      ["uniform" 244]
-      ["varying" 245]
-      ["none" 246]
-      ["lanes" 247]
-      ["args" 248]
-      ["result" 249]
-      ["index-param" 250]
-      ["specialization" 251]
-      [":export-symbol" 252]
-      [":spmd-callable" 253]
-      ["c-varargs" 254]
-      [":abi" 255]
-      [":symbol" 256]
-      [":link-lib" 257]
-      [":link-search" 258]
-      [":link-arg" 259]
-      ["as" 260]
-      [":as" 261]
-      ["sum" 262]
-      ["min" 263]
-      ["max" 264]
-      ["defgeneric" 265]
-      ["generic" 266]
-      ["deftrait" 267]
-      ["trait" 268]
-      ["interface" 269]
-      ["impl" 270]
-      ["where" 271]
-      ["pattern-binding-typed" 272]
-      ["expr-resource-scope" 273]
-      ["expr-let-scope" 274]
-      ["expr-set-var" 275]
-      ["expr-begin-unit" 276]
-      ["expr-not" 277]
-      ["expr-while" 278]
-      ["syntax-name-fresh" 279]
-      ["__tl_dyn-array" 280]
-      ["slice" 281]
-      ["expr-borrow" 282]
-      ["expr-array-ref" 283]
-      ["expr-replace" 284]
-      ["module-value-expr" 285]
-      ["function-shared-borrow-returns-string?" 286]
-      ["expr-shared-call1" 287]
-      ["expr-shared-let-scope" 288]
-      ["type-expr" 289]
-      ["expr-lambda1" 290]
-      [":ignore" 291]
-      [":slow" 292]
-      [":must-use" 293]
-      ["c-function" 294]
-      ["CFunc" 295]
-      ["nullable" 296]
-      ["non-null" 297]
-      ["unsafe-nullable" 298]
-      ["unsafe-non-null" 299]
-      [":invalidate" 300]
-      ["invalidate" 301]
-      [_
-        (comptime.comptime-error
-          "compiler-builtin-ctfe-slot: not a CTFE builtin spelling")])))
-
 (defmacro (compiler-builtin-ctfe [spelling : comptime.Expr]) : i64
   `(compiler-builtin-ctfe-ref (compiler-builtin-ctfe-slot ,spelling)))
 
-(define (compiler-builtin-load-ctfe-ids! [insert-missing : bool]) : unit
-  (let
-    [table : String (compiler-builtin-ctfe-spellings)]
-    [slot : i64 0]
-    [start : i64 0]
-    [index : i64 0]
-    (begin
-      ;; Clear unassigned and retired slots as well as populated ones. This keeps
-      ;; catalog holes from retaining zero or an id loaded by an older snapshot.
-      (compiler-builtin-clear-ctfe-ids!)
-      (while (< index (string.string-length table))
-        (begin
-          (when
-            (= (string.string-ref table index) '|')
-            (begin
-              (when
-                (> index start)
-                (compiler-builtin-ctfe-set!
-                  slot
-                  (if insert-missing
-                    (ci.intern-source-slice table start (- index start))
-                    (io.panic
-                      "compiler builtin IDs must be installed with their intern table"))))
-              (set! slot (+ slot 1))
-              (set! start (+ index 1))))
-          (set! index (+ index 1)))))))
-
 (define (compiler-builtin-load-id-rows!
-  [state : (&mut state CompilerBuiltinIdsState)]
+  [ids : (&mut ids (__tl_dyn-array i64))]
   [insert-missing : bool]
   [rows : String]) : unit
   (let
@@ -1966,9 +2081,8 @@
                 (set! slot (+ (* slot 10) (- (cast c : i64) 48))))]
             [(= c '|')
               (begin
-                (state-set!
-                  state
-                  slot
+                (set!
+                  (array-ref ids slot)
                   (if insert-missing
                     (ci.intern-source-slice rows start (- index start))
                     (io.panic
@@ -1978,24 +2092,20 @@
             [else unit])
           (set! index (+ index 1)))))))
 
-(define (compiler-builtin-load-fixed-ids! [insert-missing : bool]) : unit
+;; Interns the CTFE spellings in slot order, then the fixed ids' in table order,
+;; into a fresh state, and installs it. Slots without a spelling stay -1.
+(define (compiler-builtin-load! [insert-missing : bool]) : unit
   (let
     [state : CompilerBuiltinIdsState (state-new)]
     (begin
-      (compiler-builtin-id-table
-        compiler-builtin-id-load-chunks
-        (&mut state)
-        insert-missing)
-      (state-install-fixed-ids! (& state)))))
-
-(define (compiler-builtin-load! [insert-missing : bool]) : unit
-  (begin
-    (compiler-builtin-load-ctfe-ids! insert-missing)
-    (compiler-builtin-load-fixed-ids! insert-missing)
-    (set! compiler-builtin-generation (ci.intern-generation))
-    (set! compiler-builtin-table-id (ci.intern-active-table-id))
-    (set! compiler-builtin-pool-len (ci.intern-pool-len))
-    (set! compiler-builtin-parse-initialized insert-missing)))
+      (state-load-ctfe-ids! (&mut state) insert-missing)
+      (state-load-fixed-ids! (&mut state) insert-missing)
+      (state-install-ctfe-ids! (& state))
+      (state-install-fixed-ids! (& state))
+      (set! compiler-builtin-generation (ci.intern-generation))
+      (set! compiler-builtin-table-id (ci.intern-active-table-id))
+      (set! compiler-builtin-pool-len (ci.intern-pool-len))
+      (set! compiler-builtin-parse-initialized insert-missing))))
 
 (define (compiler-builtin-table-current?) : bool
   (and

@@ -1048,6 +1048,8 @@
 ;; Facts for code that holds only a raw target. Each reads the target's policy,
 ;; so `compiler-backend-target-policy-new` stays the one place a target is
 ;; mapped to its ABI, unwind, object format and runtime choices.
+;; `scripts/check-codegen-target-dispatch.sh` keeps every other shared scope
+;; free of Linux/Windows tests (src/TESTING.md, Cross-Target Codegen Parity).
 (define (compiler-backend-target-object-format [target : CompilerBackendTarget]) : CompilerBackendObjectFormatPolicy
   (compiler-backend-target-policy-new target).object-format)
 

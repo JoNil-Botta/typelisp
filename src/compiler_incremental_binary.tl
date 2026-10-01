@@ -92,12 +92,15 @@
   [bytes : (& bytes (__tl_dyn-array u8))]) : unit
   (byte_buf_core.byte-buf-builder-append-array out bytes))
 
-(define (compiler-incremental-binary-continuation? [byte : i64]) : bool
-  (and (>= byte 0x80) (<= byte 0xbf)))
-
 ;; Validate Unicode scalar UTF-8.  Overlong encodings, surrogate scalars, NUL,
 ;; and values above U+10ffff are rejected so one logical spelling has one byte
 ;; representation at this boundary.
+;;
+;; A lead byte fixes the sequence length and the one range its second byte may
+;; take (Unicode Table 3-7): 0xe0 and 0xf0 exclude the overlong low halves, 0xed
+;; the surrogates and 0xf4 everything above U+10ffff; every later byte is a
+;; plain continuation 0x80..0xbf. A sequence is read only once it fits before
+;; `end`.
 (define (compiler-incremental-binary-utf8-range-valid?
   [bytes : (& bytes (__tl_dyn-array u8))]
   [start : i64]
@@ -110,48 +113,29 @@
       (while (and ok? (< index end))
         (let
           [first : i64 (cast (array-ref bytes index) : i64)]
-          (cond
-            [(and (>= first 1) (<= first 0x7f)) (set! index (+ index 1))]
-            [(and (>= first 0xc2) (<= first 0xdf))
-              (if (and
-                (< (+ index 1) end)
-                (compiler-incremental-binary-continuation?
-                  (cast (array-ref bytes (+ index 1)) : i64)))
-                (set! index (+ index 2))
-                (set! ok? false))]
-            [(and (>= first 0xe0) (<= first 0xef))
-              (if (< (+ index 2) end)
-                (let
-                  [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
-                  [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
-                  (if (and
-                    (compiler-incremental-binary-continuation? third)
-                    (if (= first 0xe0)
-                      (and (>= second 0xa0) (<= second 0xbf))
-                      (if (= first 0xed)
-                        (and (>= second 0x80) (<= second 0x9f))
-                        (compiler-incremental-binary-continuation? second))))
-                    (set! index (+ index 3))
-                    (set! ok? false)))
-                (set! ok? false))]
-            [(and (>= first 0xf0) (<= first 0xf4))
-              (if (< (+ index 3) end)
-                (let
-                  [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
-                  [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
-                  [fourth : i64 (cast (array-ref bytes (+ index 3)) : i64)]
-                  (if (and
-                    (compiler-incremental-binary-continuation? third)
-                    (compiler-incremental-binary-continuation? fourth)
-                    (if (= first 0xf0)
-                      (and (>= second 0x90) (<= second 0xbf))
-                      (if (= first 0xf4)
-                        (and (>= second 0x80) (<= second 0x8f))
-                        (compiler-incremental-binary-continuation? second))))
-                    (set! index (+ index 4))
-                    (set! ok? false)))
-                (set! ok? false))]
-            [else (set! ok? false)])))
+          [count : i64
+            (cond
+              [(and (>= first 1) (<= first 0x7f)) 1]
+              [(and (>= first 0xc2) (<= first 0xdf)) 2]
+              [(and (>= first 0xe0) (<= first 0xef)) 3]
+              [(and (>= first 0xf0) (<= first 0xf4)) 4]
+              [else 0])]
+          [low : i64
+            (cond [(= first 0xe0) 0xa0] [(= first 0xf0) 0x90] [else 0x80])]
+          [high : i64
+            (cond [(= first 0xed) 0x9f] [(= first 0xf4) 0x8f] [else 0xbf])]
+          [k : i64 1]
+          (begin
+            (set! ok? (and (> count 0) (<= (+ index count) end)))
+            (while (and ok? (< k count))
+              (let
+                [byte : i64 (cast (array-ref bytes (+ index k)) : i64)]
+                (begin
+                  (set! ok? (and (>= byte low) (<= byte high)))
+                  (set! low 0x80)
+                  (set! high 0xbf)
+                  (set! k (+ k 1)))))
+            (set! index (+ index count)))))
       ok?)))
 
 (define (compiler-incremental-binary-path-range-valid?

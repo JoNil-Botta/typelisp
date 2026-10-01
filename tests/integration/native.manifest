@@ -572,7 +572,7 @@ macro_import_order_format_first|all|-|tests/integration/macro_import_order_forma
 macro_untaken_comptime_error|all|-|tests/integration/macro_untaken_comptime_error.tl|42|-|-|stdlib/comptime.tl|-
 stdlib_serialize|all|-|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl stdlib/option.tl stdlib/result.tl stdlib/serialize.tl stdlib/string.tl serialize_toy_format.tl serialize_enum_fixture.tl|-
 stdlib_byte_copy|all|-|tests/integration/stdlib_byte_copy.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/io.tl|-
-stdlib_text_buf|all|-|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl|-
+stdlib_text_buf|all|-|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl stdlib/profile.tl|-
 stdlib_string|all|-|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n0\n123456789\n-42\n9223372036854775807\n-9223372036854775808\n|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_str_cat_fixed_arity|all|-|tests/integration/stdlib_str_cat_fixed_arity.tl|42|-|-|stdlib/string.tl stdlib/str_cat.tl|-
 str_cat_native_arities|all|-|tests/integration/str_cat_native_arities.tl|42|-|-|stdlib/io.tl stdlib/string.tl stdlib/str_cat.tl|-

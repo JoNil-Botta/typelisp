@@ -26727,15 +26727,17 @@
         lifetime-id
         stack
         position)]
-    ;; Compatibility dynamic arrays expose mutable element storage and are
-    ;; therefore invariant. Native Slice is a view and follows its context.
+    ;; An owned dynamic array is a move-only handle whose elements change only
+    ;; through its owning place or a `&mut` to it (invariant in its referent),
+    ;; never through a shared reference. Like Box and Slice it follows its
+    ;; context: shortening moves the handle and leaves no longer-typed alias.
     [(ast.AstType.DynArray elem)
       (tc-type-lifetime-variance
         ctx
         (ast.ty-node-get elem)
         lifetime-id
         stack
-        (TcVariance.TcVarianceInvariant))]
+        position)]
     [(ast.AstType.Slice elem)
       (tc-type-lifetime-variance
         ctx
@@ -27005,6 +27007,16 @@
       [(ast.AstType.Box expected-elem)
         (match actual
           [(ast.AstType.Box actual-elem)
+            (tc-type-coercible-core?
+              ctx
+              env
+              (ast.ty-node-get expected-elem)
+              (ast.ty-node-get actual-elem))]
+          [_ false])]
+      ;; Covariant like Box; see `tc-type-lifetime-variance`.
+      [(ast.AstType.DynArray expected-elem)
+        (match actual
+          [(ast.AstType.DynArray actual-elem)
             (tc-type-coercible-core?
               ctx
               env
@@ -27353,11 +27365,13 @@
               (ast.ty-node-get want-inner)
               (ast.ty-node-get got-inner))]
           [_ ""])]
+      ;; Covariant, so a failure is its element's.
       [(ast.AstType.DynArray want-inner)
         (match got
           [(ast.AstType.DynArray got-inner)
-            (tc-lifetime-coercion-invariant-detail
-              "dynamic array element type"
+            (tc-type-coercion-failure-detail
+              ctx
+              env
               (ast.ty-node-get want-inner)
               (ast.ty-node-get got-inner))]
           [_ ""])]
@@ -35511,7 +35525,7 @@
               subst
               (ast.ty-node-get formal-elem)
               (ast.ty-node-get actual-elem)
-              (TcVariance.TcVarianceInvariant))]
+              position)]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]

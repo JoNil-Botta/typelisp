@@ -436,6 +436,7 @@ lexer|all|-|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl|-
 lifetime_nullary_variant|all|-|tests/integration/lifetime_nullary_variant.tl|42|-|-|-|-
 lifetime_enum_borrow_return|all|-|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|stdlib/string.tl|-
 lifetime_shortening_variance|all|-|tests/integration/lifetime_shortening_variance.tl|42|-|-|-|-
+dyn_array_covariance|all|0,1,2|tests/integration/dyn_array_covariance.tl|42|-|-|stdlib/string.tl|-
 many_args|all|-|tests/integration/many_args.tl|36|-|-|-|-
 maybe_result|all|-|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl|-
 min_div_neg1_trap|all|-|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:5:7: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n

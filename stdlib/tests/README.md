@@ -154,6 +154,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   message vector are decoded, and warmed readers allocate nothing.
   `net_tls_wire_encode_reject.tl` checks that an encoder traps rather than
   write a ClientHello whose random is not 32 bytes.
+- `net_url_api.tl` resolves every RFC 3986 section 5.4 normal and abnormal
+  example. It checks canonical formatting, request targets, and origin,
+  redirect-identity and complete keys: default ports are equivalent, while
+  schemes, ports and hosts stay separate. A malformed corpus checks each kind
+  and byte offset, and component limits are checked at their boundaries. Every
+  byte value is inserted into a host, path, query and fragment and checked
+  against RFC 3986's byte classes. Each URL in a valid corpus round-trips with
+  equal keys; every prefix fails inside itself, and a control byte, space or
+  backslash inserted at any position is reported at exactly that position.
 - `format_primitive_display.tl` covers zero, one, signed minima, and maxima for
   every fixed-width integer type, including the full `u64` range. Its pinned
   Rust Display tables cover binary32/binary64 signed zero, source-width

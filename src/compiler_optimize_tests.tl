@@ -384,10 +384,18 @@
     [count : i64 instrs.len]
     [state : opt.OptCopyEnv env]
     [index : i64 0]
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (owned_view.compiler-owned-reference-shared-view instrs))
+        (ir.CompilerIrBlockList.Nil))]
+    [addr-taken : (__tl_dyn-array bool) (opt-test-addr-taken-marks (& own))]
     (while (< index count)
       (match (opt.opt-copy-instr
         (opt.compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index)))
+        (clone (array-ref instrs.slots index))
+        (& addr-taken))
         [(opt.OptCopyResult.Result next-state rewritten)
           (begin
             (set! (array-ref instrs.slots index) rewritten)
@@ -554,10 +562,52 @@
     (match (opt.opt-thread-const-branch-final-pass type-segment-bases converted)
       [(opt.OptFunctionPassResult.Result next _) next])))
 
+;; One past the highest var a block's `addr_of` reads, so the marks below cover
+;; every address-taken var whether a block defines it or reads it as a param.
+(define (opt-test-addr-of-bound-instr-seq
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [index : i64 0]
+    [bound : i64 0]
+    (begin
+      (while (< index (ir.compiler-ir-instr-seq-count instrs))
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs index)
+            [(ir.CompilerIrInstr.AddrOf _ src)
+              (if (> (+ src 1) bound)
+                (set! bound (+ src 1))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      bound)))
+
+(define (opt-test-addr-of-bound [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [here : i64 (opt-test-addr-of-bound-instr-seq instrs)]
+            [later : i64 (opt-test-addr-of-bound (deref rest))]
+            (if (> here later)
+              here
+              later))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [blocks (ir.compiler-ir-block-seq-to-list seq)]
+        (opt-test-addr-of-bound blocks))]))
+
+;; The address-taken marks the function pass computes, from `blocks` alone.
+(define (opt-test-addr-taken-marks [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array
+    bool)
+  (opt.opt-addr-taken-vars (opt-test-addr-of-bound blocks) blocks))
+
 ;; The block-local pipeline (fold, CSE, load-CSE, DSE, copy, bounds) on one
 ;; block with no header-typed handles, load kinds, alias seeds or scan scratch:
 ;; the context-free form of the per-block step optimize-block-list-for-function
-;; runs.
+;; runs. The block's own `addr_of`s mark its address-taken vars, as the
+;; function pass's whole-function scan would.
 (define (opt-test-optimize-block
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -566,6 +616,11 @@
     [profile-state
       (profile_state.compiler-profile-state-metrics
         (profile_state.compiler-profile-state-new))]
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (opt.compiler-opt-global-shared-view block)
+        (ir.CompilerIrBlockList.Nil))]
+    [addr-taken : (__tl_dyn-array bool) (opt-test-addr-taken-marks (& own))]
     [hs (opt.opt-load-header-set-empty)]
     [dead-kinds (opt.opt-load-kinds-empty)]
     [load-kinds (opt.opt-load-kinds-empty)]
@@ -581,6 +636,7 @@
       entry-label
       seed-facts
       (__tl_make-array i64 0)
+      (& addr-taken)
       block)))
 
 (define (opt-test-optimize-block-list
@@ -28679,6 +28735,26 @@
        %9 = add %7, %11 : i64
        return %9"))
 
+;; Block-local fold (#7973): `%3 = mov 5` is a `set!` after the address was
+;; taken and `%8` copies `%3` before a second call, so neither the constant 5
+;; nor the copy `%8 -> %3` survives the call that may rewrite `%3`. `%11` is the
+;; same constant on a local whose address is never taken, which still folds.
+(define (opt-addr-taken-fold-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %3 = mov %1 : i64
+       %5 = addr_of %3
+       %3 = mov 5 : i64
+       %6 = call write-through(%5) : i64
+       %7 = add %3, 1 : i64
+       %8 = mov %3 : i64
+       %9 = call write-through(%5) : i64
+       %10 = add %8, %7 : i64
+       %11 = mov 4 : i64
+       %12 = add %11, 1 : i64
+       %13 = add %10, %12 : i64
+       return %13"))
+
 (define (compiler-optimize-addr-taken-forwarding-self-test) : i64
   (let
     [global : ir.CompilerIrBlockList
@@ -28694,6 +28770,11 @@
         (opt.opt-function-blocks func))]
     [affine : ir.CompilerIrBlockList
       (opt.opt-affine-fold-blocks 16 (opt-addr-taken-affine-blocks))]
+    [fold : ir.CompilerIrBlockList
+      (opt-test-optimize-block-list
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-addr-taken-fold-blocks))]
     (cond
       ;; Global CSE kept the post-call multiply ...
       [(not (= (opt-count-mov-dst-blocks global 8) 0)) 1]
@@ -28708,6 +28789,12 @@
       [(not (= (opt-wide-literal-lhs-var affine 7) 3)) 6]
       ;; ... and still folded the control chain through %10 = mov %2.
       [(not (= (opt-wide-literal-lhs-var affine 11) 2)) 7]
+      ;; Fold kept the post-call read of %3 rather than folding 5 + 1 ...
+      [(not (= (opt-wide-literal-lhs-var fold 7) 3)) 8]
+      ;; ... and the pre-call copy %8 rather than forwarding %3 into it.
+      [(not (= (opt-wide-literal-lhs-var fold 10) 8)) 9]
+      ;; Control: the constant of the untaken %11 still folds %12 away.
+      [(not (= (opt-wide-literal-lhs-var fold 12) (- 0 2))) 10]
       [else 42])))
 
 ;; --- sccp honours the wide-literal left-operand refusal ----------------------
@@ -52525,6 +52612,7 @@
           (ir.compiler-ir-label "entry")
           (opt.compiler-opt-global-shared-view instrs))
         (ir.CompilerIrBlockList.Nil))]
+    [addr-taken : (__tl_dyn-array bool) (opt-test-addr-taken-marks (& blocks))]
     [hs : opt.OptLoadHeaderSet
       (opt.opt-load-header-set-from-function
         type-segment-bases
@@ -52543,7 +52631,8 @@
           (opt.opt-load-cse-kinds-cap-for-size
             (ir.compiler-ir-instr-seq-count seq))
           (opt.opt-alias-seed-params type-segment-bases params))
-        (opt.compiler-opt-global-shared-view seq))
+        (opt.compiler-opt-global-shared-view seq)
+        (& addr-taken))
       seq)))
 
 (define (opt-load-cse-run-with-params-and-call-memory

@@ -3725,24 +3725,21 @@
 ;; address redefines the var without any instruction naming it as a dst, so
 ;; its single `mov` does not pin its value across the function: a pass that
 ;; forwards values by def must neither forward it nor forward through it.
-(define (opt-addr-taken-mark-instr!
-  [marks : (&mut marks (__tl_dyn-array bool))]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match instr
-    [(ir.CompilerIrInstr.AddrOf _ src)
-      (if (and (>= src 0) (< src (array-length marks)))
-        (set! (array-ref marks src) true)
-        unit)]
-    [_ unit]))
-
+;; LICM's scan builds the marks, so a function without an `addr_of` gets an
+;; empty array; every reader goes through the bounds-checked
+;; `opt-addr-taken-var?`, so that reads as nothing marked.
 (define (opt-addr-taken-vars
   [vars : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
   (let
-    [marks : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+    [scan : OptLicmAddrTakenScan
+      (OptLicmAddrTakenScan
+        vars
+        (__tl_make-array bool 0)
+        (opt_dense_i64_vec.new))]
     (begin
-      (opt-blocks-visit blocks opt-addr-taken-mark-instr! (&mut marks))
-      marks)))
+      (opt-blocks-visit blocks opt-licm-addr-taken-scan-instr! (&mut scan))
+      scan.marks)))
 
 (define (opt-addr-taken-var?
   [marks : (& marks (__tl_dyn-array bool))]
@@ -3755,6 +3752,22 @@
   (match value
     [(ir.CompilerIrValue.Var id) (opt-addr-taken-var? marks (deref id))]
     [_ false]))
+
+(define (opt-addr-taken-value-seq?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [values : (& values ir.CompilerIrValueSeq)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (ir.compiler-ir-value-seq-count values)))
+        (let
+          [value : ir.CompilerIrValue
+            (ir.compiler-ir-value-seq-ref values index)]
+          (begin
+            (set! found (opt-addr-taken-value? marks (& value)))
+            (set! index (+ index 1)))))
+      found)))
 
 ;; Comparisons whose negation is another comparison on the same operands. Used
 ;; to turn `not (cmp a b)` into the inverted compare instead of a `xorq $1` over
@@ -9180,14 +9193,23 @@
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
 ;; defining instruction invalidates its destination. Stores and terminators
 ;; define no var, so the copy facts are unaffected (the env resets per block).
+;;
+;; No fact names an address-taken var, as destination or source (#7973): a call
+;; or store through the exposed address redefines it without naming it, and a
+;; call does not clear this env, so any fact about it could go stale.
 (define (opt-copy-update-env
   [env : OptCopyEnv]
-  [instr : (& instr ir.CompilerIrInstr)]) : OptCopyEnv
+  [instr : (& instr ir.CompilerIrInstr)]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]) : OptCopyEnv
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst src ty)
       (let
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
-        (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
+        (if (and
+          (opt-copy-safe-source? src)
+          (not (opt-value-is-var? src dst))
+          (not (opt-addr-taken-var? addr-taken dst))
+          (not (opt-addr-taken-value? addr-taken src)))
           (OptCopyEnv.Cons dst src (box e1))
           e1))]
     [(ir.CompilerIrInstr.AddrOf dst src)
@@ -9197,11 +9219,17 @@
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
         (if (and
           (opt-value-eq (compiler-opt-global-shared-view lhs) rhs)
-          (opt-copy-mask-source? lhs dst))
+          (opt-copy-mask-source? lhs dst)
+          (not (opt-addr-taken-var? addr-taken dst))
+          (not (opt-addr-taken-value? addr-taken lhs)))
           (OptCopyEnv.Cons dst lhs (box e1))
           e1))]
     [(ir.CompilerIrInstr.Pack dst words _)
-      (opt-copy-update-pack-env env dst words)]
+      (if (or
+        (opt-addr-taken-var? addr-taken dst)
+        (opt-addr-taken-value-seq? addr-taken (& words)))
+        (opt-copy-invalidate-var env dst)
+        (opt-copy-update-pack-env env dst words))]
     [(ir.CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
@@ -9214,11 +9242,16 @@
 (defenum OptCopyResult
   (Result OptCopyEnv ir.CompilerIrInstr))
 
-(define (opt-copy-instr [env : OptCopyEnv] [instr : ir.CompilerIrInstr]) : OptCopyResult
+(define (opt-copy-instr
+  [env : OptCopyEnv]
+  [instr : ir.CompilerIrInstr]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]) : OptCopyResult
   (let
     [rewritten : ir.CompilerIrInstr
       (opt-copy-subst-instr (compiler-opt-global-shared-view env) instr)]
-    (OptCopyResult.Result (opt-copy-update-env env rewritten) rewritten)))
+    (OptCopyResult.Result
+      (opt-copy-update-env env rewritten addr-taken)
+      rewritten)))
 
 ;; --- block-local redundant bounds-check elimination -------------------------
 ;;
@@ -61715,9 +61748,26 @@
       blocks)
     blocks))
 
+;; Drops the constant fact a fold or strength step just bound for an
+;; address-taken var (#7973), for the reason `opt-copy-update-env` gives: a call
+;; through the exposed address does not clear this env either. A step binds at
+;; most one fact, its dst's, and `opt-const-bind` puts it at the head, so the
+;; head is the only fact a step can have added. Dropping it leaves the var
+;; unbound: no earlier step left a fact for it below.
+(define (opt-const-forget-addr-taken!
+  [env : (&mut env OptConstEnv)]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(OptConstEnv.Cons var _ _ rest)
+      (if (opt-addr-taken-var? addr-taken var)
+        (set! (deref env) (deref rest))
+        unit)]
+    [_ unit]))
+
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
-  [instrs : ir.CompilerIrInstrSeq]) : i64
+  [instrs : ir.CompilerIrInstrSeq]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]) : i64
   (let
     [index : i64 0]
     [store-count : i64 0]
@@ -61761,6 +61811,16 @@
                         rewritten)
                       (set! fold-state next-fold)
                       (set! strength-state next-strength)
+                      ;; Empty marks: the function takes no address.
+                      (if (> (array-length addr-taken) 0)
+                        (begin
+                          (opt-const-forget-addr-taken!
+                            (&mut fold-state)
+                            addr-taken)
+                          (opt-const-forget-addr-taken!
+                            (&mut strength-state)
+                            addr-taken))
+                        unit)
                       (set! cse-state next-cse)
                       (set! index (+ index 1)))])])]))
       store-count)))
@@ -61869,7 +61929,8 @@
   [type-segment-bases : i64]
   [hs : (& hs OptLoadHeaderSet)]
   [state : OptLoadCseState]
-  [instrs : ir.CompilerIrInstrSeq]) : unit
+  [instrs : ir.CompilerIrInstrSeq]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]) : unit
   (let
     [index : i64 0]
     [sources : OptValueSources (opt-value-sources-new)]
@@ -61909,7 +61970,8 @@
               [(OptLoadCseResult.Result next-load loaded)
                 (match (opt-copy-instr
                   (compiler-opt-global-shared-view copy-state)
-                  loaded)
+                  loaded
+                  addr-taken)
                   [(OptCopyResult.Result next-copy rewritten)
                     (begin
                       (ir.compiler-ir-instr-seq-set!
@@ -62693,6 +62755,7 @@
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
   [load-facts : OptAliasFacts]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
@@ -62714,7 +62777,8 @@
             store-capacity
             (opt-fold-strength-cse-instr-seq-rewrite!
               type-segment-bases
-              (compiler-opt-global-shared-view work)))
+              (compiler-opt-global-shared-view work)
+              addr-taken))
           (set!
             work
             (opt-dead-store-instr-seq-known-with-kinds
@@ -62732,7 +62796,8 @@
               (ir.compiler-ir-instr-seq-count work)
               load-kinds
               load-facts)
-            (compiler-opt-global-shared-view work))
+            (compiler-opt-global-shared-view work)
+            addr-taken)
           (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
           (ir.CompilerIrBlock.Block label work)))]))
 
@@ -62746,6 +62811,7 @@
   [entry-label : i64]
   [seed-facts : (& seed-facts OptAliasFacts)]
   [scan-work : (__tl_dyn-array i64)]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (if (opt-block-scan-skippable?
     scan-work
@@ -62759,6 +62825,7 @@
       dead-kinds
       load-kinds
       (optimize-block-entry-facts block entry-label seed-facts)
+      addr-taken
       block)))
 
 (define (optimize-block-entry-facts
@@ -62788,6 +62855,7 @@
   [seed-facts : OptAliasFacts]
   [scan-work : (__tl_dyn-array i64)]
   [work : OptLoadKindsDenseWork]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]
   [generation : i64]
   [blocks : ir.CompilerIrBlockSeq]) : ir.CompilerIrBlockList
   (let
@@ -62821,6 +62889,7 @@
                 entry-label
                 seed-facts
                 (compiler-opt-global-shared-view scan-work)
+                addr-taken
                 block))
             (set! index (+ index 1)))))
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
@@ -62837,6 +62906,7 @@
   [seed-facts : OptAliasFacts]
   [scan-work : (__tl_dyn-array i64)]
   [work : OptLoadKindsDenseWork]
+  [addr-taken : (& addr-taken (__tl_dyn-array bool))]
   [generation : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (match (owned_view.compiler-owned-reference-shared-view blocks)
@@ -62859,6 +62929,7 @@
           entry-label
           seed-facts
           (compiler-opt-global-shared-view scan-work)
+          addr-taken
           block)
         (optimize-block-list-hs-dense
           profile-state
@@ -62869,6 +62940,7 @@
           seed-facts
           scan-work
           work
+          addr-taken
           (+ generation 2)
           (deref rest)))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -62881,6 +62953,7 @@
         seed-facts
         scan-work
         work
+        addr-taken
         generation
         seq)]))
 
@@ -62946,6 +63019,8 @@
         ;; the blocks `opt-block-scan-skippable?` then skips.
         [work : OptLoadKindsDenseWork
           (opt-load-kinds-dense-work-with-size frame)]
+        [addr-taken : (__tl_dyn-array bool)
+          (opt-addr-taken-vars frame (& blocks))]
         [next : ir.CompilerIrBlockList
           (match (compiler-opt-global-shared-view blocks)
             [(ir.CompilerIrBlockList.Array seq)
@@ -62958,6 +63033,7 @@
                 seed-facts
                 scan-work
                 work
+                (& addr-taken)
                 1
                 seq)]
             [_
@@ -62970,6 +63046,7 @@
                 seed-facts
                 scan-work
                 work
+                (& addr-taken)
                 1
                 blocks)])]
         [changed : bool

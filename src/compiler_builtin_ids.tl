@@ -803,14 +803,16 @@
 ;; a `compiler-builtin-id-*` global (declared above) to its slot in
 ;; `CompilerBuiltinIdsState.ids` and to the source spelling it interns. Slots are
 ;; append-only and retired slots stay unused. Rows are in load order, which is
-;; the order their spellings enter the intern table. The table expands into a
-;; `compiler-builtin-id-statements` call, which emits one statement per row.
+;; the order their spellings enter the intern table.
+;; `(compiler-builtin-id-table collector args...)` expands to
+;; `(collector args... rows...)`: `compiler-builtin-id-statements` emits one
+;; capture or install statement per row, `compiler-builtin-id-spellings` the
+;; load table.
 (defmacro (compiler-builtin-id-table
-  [mode : comptime.Expr]
-  [context : comptime.Expr]) : unit
-  `(compiler-builtin-id-statements
-    ,mode
-    ,context
+  [collector : comptime.Expr]
+  [args : comptime.Expr ...]) : comptime.Expr
+  `(,collector
+    ,@args
     (id compiler-builtin-id-tl-alloc 0 "tl_alloc")
     ;; Append-only slot for the compiler-private aligned allocator.
     (id compiler-builtin-id-tl-alloc-aligned 319 "tl_alloc_aligned")
@@ -1288,9 +1290,9 @@
     (id compiler-builtin-id-fix-LetBinding 311)
     (id compiler-builtin-id-fix-LetBindingList 312)))
 
-;; `load` interns every row's spelling into its global; `capture` copies each
-;; global to its slot of the state `context`; `install` copies it back. Rows
-;; without a spelling are captured only.
+;; `capture` copies each global to its slot of the state `context`; `install`
+;; copies it back. Rows without a spelling are captured only. Loading interns
+;; the spellings into a state first (`compiler-builtin-id-load-chunks`).
 (defmacro (compiler-builtin-id-statements
   [mode : comptime.Expr]
   [context : comptime.Expr]
@@ -1301,7 +1303,7 @@
         [(comptime.Expr.Var name) name]
         [_
           (comptime.comptime-error
-            "compiler-builtin-id-statements: mode is load, capture or install")])]
+            "compiler-builtin-id-statements: mode is capture or install")])]
     [statements : comptime.ExprList (comptime.expr-list-empty)]
     [index : i64 (- (comptime.expr-list-length rows) 1)]
     (begin
@@ -1320,19 +1322,20 @@
                       (set!
                         statements
                         (comptime.expr-list-cons
-                          `(state-set! ,context ,slot ,global)
+                          `(unsafe
+                            (ptr-write!
+                              (ptr-offset compiler-builtin-ids-data ,slot)
+                              ,global))
                           statements))
                       (if loaded?
                         (set!
                           statements
                           (comptime.expr-list-cons
-                            (if (string-eq mode-name "load")
-                              `(set!
-                                ,global
-                                (compiler-builtin-resolve-name
-                                  ,context
-                                  ,(comptime.expr-list-nth fields 2)))
-                              `(set! ,global (state-ref ,context ,slot)))
+                            `(set!
+                              ,global
+                              (unsafe
+                                (ptr-read
+                                  (ptr-offset compiler-builtin-ids-data ,slot))))
                             statements))
                         unit)))]
                 [_
@@ -1342,8 +1345,84 @@
               (comptime.comptime-error
                 "compiler-builtin-id-statements: rows are (id global slot \"spelling\")")])
           (set! index (- index 1))))
+      ;; Capture and install read the state's id array through its data
+      ;; pointer once: each row is then one load and one store instead of a
+      ;; `state-ref`/`state-set!` call. Every slot is below the array's fixed
+      ;; length (see `state-new`).
+      `(let
+        [compiler-builtin-ids-data : (MutPtr i64)
+          (unsafe
+            (__tl_array-data (__tl-project-field ,context ids)))]
+        (begin
+          ,@statements)))))
+
+;; Loading: one `compiler-builtin-load-id-rows!` call per chunk of 16 rows that
+;; intern a spelling, each row `slot:spelling|`, in load order. Chunks keep the
+;; comptime string building short; one call per chunk replaces a resolve call
+;; and a store per row.
+(defmacro (compiler-builtin-id-load-chunks
+  [state : comptime.Expr]
+  [insert-missing : comptime.Expr]
+  [rows : comptime.Expr ...]) : unit
+  (let
+    [calls : comptime.ExprList (comptime.expr-list-empty)]
+    [chunk : String ""]
+    [count : i64 0]
+    [index : i64 (- (comptime.expr-list-length rows) 1)]
+    (begin
+      ;; Walk back to front, prepending, so chunks and calls keep load order.
+      (while (>= index 0)
+        (begin
+          (match (comptime.expr-list-nth rows index)
+            [(comptime.Expr.Call _ fields)
+              (if (> (comptime.expr-list-length fields) 2)
+                (match (comptime.expr-list-nth fields 1)
+                  [(comptime.Expr.Int slot)
+                    (begin
+                      (set!
+                        chunk
+                        (comptime.string-append
+                          (comptime.string-append
+                            (comptime.string-append (int->string slot) ":")
+                            (comptime.string-append
+                              (comptime.expr-string-value
+                                (comptime.expr-list-nth fields 2))
+                              "|"))
+                          chunk))
+                      (set! count (+ count 1))
+                      (if (= count 16)
+                        (begin
+                          (set!
+                            calls
+                            (comptime.expr-list-cons
+                              `(compiler-builtin-load-id-rows!
+                                ,state
+                                ,insert-missing
+                                ,(comptime.expr-string chunk))
+                              calls))
+                          (set! chunk "")
+                          (set! count 0))
+                        unit))]
+                  [_
+                    (comptime.comptime-error
+                      "compiler-builtin-id-load-chunks: a row's slot is an integer")])
+                unit)]
+            [_
+              (comptime.comptime-error
+                "compiler-builtin-id-load-chunks: rows are (id global slot \"spelling\")")])
+          (set! index (- index 1))))
+      (if (> count 0)
+        (set!
+          calls
+          (comptime.expr-list-cons
+            `(compiler-builtin-load-id-rows!
+              ,state
+              ,insert-missing
+              ,(comptime.expr-string chunk))
+            calls))
+        unit)
       `(begin
-        ,@statements))))
+        ,@calls))))
 
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
   (__tl_make-array i64 302))
@@ -1485,7 +1564,7 @@
       compiler-builtin-table-id
       compiler-builtin-pool-len
       compiler-builtin-parse-initialized)
-    (compiler-builtin-id-table capture state)
+    (compiler-builtin-id-table compiler-builtin-id-statements capture state)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1495,11 +1574,14 @@
       (state-capture-from-globals! (&mut state))
       state)))
 
+(define (state-install-fixed-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
+  (compiler-builtin-id-table compiler-builtin-id-statements install state))
+
 (define (state-install! [state : (& state CompilerBuiltinIdsState)]) : unit
   (begin
     (state-install-ctfe-ids! state)
     (set! compiler-builtin-generation (state-generation state))
-    (compiler-builtin-id-table install state)
+    (state-install-fixed-ids! state)
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1516,14 +1598,6 @@
     (ci.intern-source-slice name 0 (ci.intern-private-string-length name))
     (io.panic "compiler builtin IDs must be installed with their intern table")))
 
-(define (compiler-builtin-load-ctfe-id!
-  [insert-missing : bool]
-  [index : i64]
-  [name : String]) : unit
-  (compiler-builtin-ctfe-set!
-    index
-    (compiler-builtin-resolve-name insert-missing name)))
-
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
@@ -1532,10 +1606,19 @@
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
 
+;; The CTFE builtin spellings by slot, each `|`-terminated: the loader interns
+;; them in slot order. A retired or reserved slot has an empty entry and stays
+;; -1. Slot 105 repeats the spelling of slot 13 and slot 117 that of slot 10.
+;; A spelling added to `compiler-builtin-ctfe-slot` is appended here at its
+;; slot.
+(define (compiler-builtin-ctfe-spellings) : String
+  "size-of|align-of|offset-of|__tl_string_eq|string-eq|string=?|__tl_string_length|string-length|length|__tl_string_ref|string-ref|char-at|__tl_string_to_int|>int|string-append|string-concat|int->string|comptime-error|error|expr-bool?|expr-bool-value|expr-if?|expr-if-cond|expr-if-then|expr-if-else|expr-clause-first|expr-clause-second|expr-bool|expr-int|expr-string|expr-var|expr-struct-get|expr-tuple-ref|expr-struct-set|expr-splice|expr-if|pattern-wildcard|pattern-binding|pattern-variant|pattern-list-empty|pattern-list-cons|match-arm|match-arm-list-empty|match-arm-list-cons|expr-match|expr-type|type-info|module-name|module-export-macro?|module-hook||expr-list-length|||expr-list-nth||expr-clause-list-length|||expr-clause-list-nth|expr-clause-list->expr-list|expr-binding-clause-name|expr-binding-clause-has-type?|expr-binding-clause-type|expr-binding-clause-init||expr-binding-clause-list-length|||expr-binding-clause-list-nth|expr-binding-clause-list->expr-list|type-kind|type-key|type-nominal-module|type-nominal-name|struct-field-count|struct-field-name|struct-field-type|enum-variant-count|enum-variant-name|enum-variant-payload-count|enum-variant-payload-type|array-element-type|array-length|array-dynamic?|tuple-element-count|tuple-element-type|function-param-count|function-param-type|function-return-type|pattern-list-bindings|expr-string?|expr-string-value|string-slice|expr-mut-borrow|expr-call|expr-list-empty|expr-list-cons|expr-mut-call0|expr-mut-call1|expr-mut-call2|expr-list-fold-if|expr-clause-list-fold-if|append|concat|>int|__typelisp internal resolved struct type|__typelisp internal resolved enum type|None|Array|&|&mut|in|while|make-array|array-ref|array-push!|string-ref|init|ptr-null|:|if|begin|unsafe|tuple|array|quote|quasiquote|unquote|unquote-splicing|return|try|box|box-get|box-take|type|syscall|+|-|*|/|%|=|!=|<|<=|>|>=|and|or|bit-and|bit-or|bit-xor|shl|shr|not|bit-not|set!|String|i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|str|bytes|unit|never|Tuple|->|Ptr|MutPtr|:consume|_|let|match|struct-get|array-set!||cast|ann|tuple-ref|ptr-null?|ptr-addr-of|ptr-read|ptr-write!|ptr-offset|ptr-cast|ptr->int|int->ptr|string-data|string-from-bytes|array-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|true|false|type-cleanup-owning?|type-cleanup-function|expr-binary-data|__typelisp internal binary data|box-element-type|expr-list-type-nth|module-value?|module-value-type|reference-element-type|all|any|:kind|...|string|dyn-array|function|struct|enum|ptr|mut-ptr|ref|mut-ref|region|type-var|:cleanup|:owned|:lifetimes|:repr|:packed|packed|scalar|avx2|avx512|cfg|uniform|varying|none|lanes|args|result|index-param|specialization|:export-symbol|:spmd-callable|c-varargs|:abi|:symbol|:link-lib|:link-search|:link-arg|as|:as|sum|min|max|defgeneric|generic|deftrait|trait|interface|impl|where|pattern-binding-typed|expr-resource-scope|expr-let-scope|expr-set-var|expr-begin-unit|expr-not|expr-while|syntax-name-fresh|__tl_dyn-array|slice|expr-borrow|expr-array-ref|expr-replace|module-value-expr|function-shared-borrow-returns-string?|expr-shared-call1|expr-shared-let-scope|type-expr|expr-lambda1|:ignore|:slow|:must-use|c-function|CFunc|nullable|non-null|unsafe-nullable|unsafe-non-null|:invalidate|invalidate|")
+
 ;; The CTFE builtin catalog: each CTFE builtin's source spelling and its slot
 ;; in `compiler-builtin-ctfe-ids`. Slots are append-only; a slot missing here is
 ;; retired or reserved and stays -1. `compiler-builtin-ctfe` reads the intern
-;; id of a spelling, and the loader below fills the slots in slot order.
+;; id of a spelling, and `compiler-builtin-ctfe-spellings` lists each slot's
+;; spelling for the loader.
 (defmacro (compiler-builtin-ctfe-slot [spelling : comptime.Expr]) : i64
   (comptime.expr-int
     (match (comptime.expr-string-value spelling)
@@ -1836,330 +1919,79 @@
 (defmacro (compiler-builtin-ctfe [spelling : comptime.Expr]) : i64
   `(compiler-builtin-ctfe-ref (compiler-builtin-ctfe-slot ,spelling)))
 
-(defmacro (compiler-builtin-load-ctfe!
-  [insert-missing : comptime.Expr]
-  [spelling : comptime.Expr]) : unit
-  `(compiler-builtin-load-ctfe-id!
-    ,insert-missing
-    (compiler-builtin-ctfe-slot ,spelling)
-    ,spelling))
-
 (define (compiler-builtin-load-ctfe-ids! [insert-missing : bool]) : unit
-  (begin
-    ;; Clear unassigned and retired slots as well as populated ones. This keeps
-    ;; catalog holes from retaining zero or an id loaded by an older snapshot.
-    (compiler-builtin-clear-ctfe-ids!)
-    (compiler-builtin-load-ctfe! insert-missing "size-of")
-    (compiler-builtin-load-ctfe! insert-missing "align-of")
-    (compiler-builtin-load-ctfe! insert-missing "offset-of")
-    (compiler-builtin-load-ctfe! insert-missing "__tl_string_eq")
-    (compiler-builtin-load-ctfe! insert-missing "string-eq")
-    (compiler-builtin-load-ctfe! insert-missing "string=?")
-    (compiler-builtin-load-ctfe! insert-missing "__tl_string_length")
-    (compiler-builtin-load-ctfe! insert-missing "string-length")
-    (compiler-builtin-load-ctfe! insert-missing "length")
-    (compiler-builtin-load-ctfe! insert-missing "__tl_string_ref")
-    (compiler-builtin-load-ctfe! insert-missing "string-ref")
-    (compiler-builtin-load-ctfe! insert-missing "char-at")
-    (compiler-builtin-load-ctfe! insert-missing "__tl_string_to_int")
-    (compiler-builtin-load-ctfe! insert-missing ">int")
-    (compiler-builtin-load-ctfe! insert-missing "string-append")
-    (compiler-builtin-load-ctfe! insert-missing "string-concat")
-    (compiler-builtin-load-ctfe! insert-missing "int->string")
-    (compiler-builtin-load-ctfe! insert-missing "comptime-error")
-    (compiler-builtin-load-ctfe! insert-missing "error")
-    (compiler-builtin-load-ctfe! insert-missing "expr-bool?")
-    (compiler-builtin-load-ctfe! insert-missing "expr-bool-value")
-    (compiler-builtin-load-ctfe! insert-missing "expr-if?")
-    (compiler-builtin-load-ctfe! insert-missing "expr-if-cond")
-    (compiler-builtin-load-ctfe! insert-missing "expr-if-then")
-    (compiler-builtin-load-ctfe! insert-missing "expr-if-else")
-    (compiler-builtin-load-ctfe! insert-missing "expr-clause-first")
-    (compiler-builtin-load-ctfe! insert-missing "expr-clause-second")
-    (compiler-builtin-load-ctfe! insert-missing "expr-bool")
-    (compiler-builtin-load-ctfe! insert-missing "expr-int")
-    (compiler-builtin-load-ctfe! insert-missing "expr-string")
-    (compiler-builtin-load-ctfe! insert-missing "expr-var")
-    (compiler-builtin-load-ctfe! insert-missing "expr-struct-get")
-    (compiler-builtin-load-ctfe! insert-missing "expr-tuple-ref")
-    (compiler-builtin-load-ctfe! insert-missing "expr-struct-set")
-    (compiler-builtin-load-ctfe! insert-missing "expr-splice")
-    (compiler-builtin-load-ctfe! insert-missing "expr-if")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-wildcard")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-binding")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-variant")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-list-empty")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-list-cons")
-    (compiler-builtin-load-ctfe! insert-missing "match-arm")
-    (compiler-builtin-load-ctfe! insert-missing "match-arm-list-empty")
-    (compiler-builtin-load-ctfe! insert-missing "match-arm-list-cons")
-    (compiler-builtin-load-ctfe! insert-missing "expr-match")
-    (compiler-builtin-load-ctfe! insert-missing "expr-type")
-    (compiler-builtin-load-ctfe! insert-missing "type-info")
-    (compiler-builtin-load-ctfe! insert-missing "module-name")
-    (compiler-builtin-load-ctfe! insert-missing "module-export-macro?")
-    (compiler-builtin-load-ctfe! insert-missing "module-hook")
-    (compiler-builtin-load-ctfe! insert-missing "expr-list-length")
-    (compiler-builtin-load-ctfe! insert-missing "expr-list-nth")
-    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list-length")
-    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list-nth")
-    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list->expr-list")
-    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-name")
-    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-has-type?")
-    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-type")
-    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-init")
-    (compiler-builtin-load-ctfe!
-      insert-missing
-      "expr-binding-clause-list-length")
-    (compiler-builtin-load-ctfe! insert-missing "expr-binding-clause-list-nth")
-    (compiler-builtin-load-ctfe!
-      insert-missing
-      "expr-binding-clause-list->expr-list")
-    (compiler-builtin-load-ctfe! insert-missing "type-kind")
-    (compiler-builtin-load-ctfe! insert-missing "type-key")
-    (compiler-builtin-load-ctfe! insert-missing "type-nominal-module")
-    (compiler-builtin-load-ctfe! insert-missing "type-nominal-name")
-    (compiler-builtin-load-ctfe! insert-missing "struct-field-count")
-    (compiler-builtin-load-ctfe! insert-missing "struct-field-name")
-    (compiler-builtin-load-ctfe! insert-missing "struct-field-type")
-    (compiler-builtin-load-ctfe! insert-missing "enum-variant-count")
-    (compiler-builtin-load-ctfe! insert-missing "enum-variant-name")
-    (compiler-builtin-load-ctfe! insert-missing "enum-variant-payload-count")
-    (compiler-builtin-load-ctfe! insert-missing "enum-variant-payload-type")
-    (compiler-builtin-load-ctfe! insert-missing "array-element-type")
-    (compiler-builtin-load-ctfe! insert-missing "array-length")
-    (compiler-builtin-load-ctfe! insert-missing "array-dynamic?")
-    (compiler-builtin-load-ctfe! insert-missing "tuple-element-count")
-    (compiler-builtin-load-ctfe! insert-missing "tuple-element-type")
-    (compiler-builtin-load-ctfe! insert-missing "function-param-count")
-    (compiler-builtin-load-ctfe! insert-missing "function-param-type")
-    (compiler-builtin-load-ctfe! insert-missing "function-return-type")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-list-bindings")
-    (compiler-builtin-load-ctfe! insert-missing "expr-string?")
-    (compiler-builtin-load-ctfe! insert-missing "expr-string-value")
-    (compiler-builtin-load-ctfe! insert-missing "string-slice")
-    (compiler-builtin-load-ctfe! insert-missing "expr-mut-borrow")
-    (compiler-builtin-load-ctfe! insert-missing "expr-call")
-    (compiler-builtin-load-ctfe! insert-missing "expr-list-empty")
-    (compiler-builtin-load-ctfe! insert-missing "expr-list-cons")
-    (compiler-builtin-load-ctfe! insert-missing "expr-mut-call0")
-    (compiler-builtin-load-ctfe! insert-missing "expr-mut-call1")
-    (compiler-builtin-load-ctfe! insert-missing "expr-mut-call2")
-    (compiler-builtin-load-ctfe! insert-missing "expr-list-fold-if")
-    (compiler-builtin-load-ctfe! insert-missing "expr-clause-list-fold-if")
-    (compiler-builtin-load-ctfe! insert-missing "append")
-    (compiler-builtin-load-ctfe! insert-missing "concat")
-    ;; Slot 105 repeats the spelling of slot 13.
-    (compiler-builtin-load-ctfe-id! insert-missing 105 ">int")
-    (compiler-builtin-load-ctfe!
-      insert-missing
-      "__typelisp internal resolved struct type")
-    (compiler-builtin-load-ctfe!
-      insert-missing
-      "__typelisp internal resolved enum type")
-    (compiler-builtin-load-ctfe! insert-missing "None")
-    (compiler-builtin-load-ctfe! insert-missing "Array")
-    (compiler-builtin-load-ctfe! insert-missing "&")
-    (compiler-builtin-load-ctfe! insert-missing "&mut")
-    (compiler-builtin-load-ctfe! insert-missing "in")
-    (compiler-builtin-load-ctfe! insert-missing "while")
-    (compiler-builtin-load-ctfe! insert-missing "make-array")
-    (compiler-builtin-load-ctfe! insert-missing "array-ref")
-    (compiler-builtin-load-ctfe! insert-missing "array-push!")
-    ;; Slot 117 repeats the spelling of slot 10.
-    (compiler-builtin-load-ctfe-id! insert-missing 117 "string-ref")
-    (compiler-builtin-load-ctfe! insert-missing "init")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-null")
-    (compiler-builtin-load-ctfe! insert-missing ":")
-    (compiler-builtin-load-ctfe! insert-missing "if")
-    (compiler-builtin-load-ctfe! insert-missing "begin")
-    (compiler-builtin-load-ctfe! insert-missing "unsafe")
-    (compiler-builtin-load-ctfe! insert-missing "tuple")
-    (compiler-builtin-load-ctfe! insert-missing "array")
-    (compiler-builtin-load-ctfe! insert-missing "quote")
-    (compiler-builtin-load-ctfe! insert-missing "quasiquote")
-    (compiler-builtin-load-ctfe! insert-missing "unquote")
-    (compiler-builtin-load-ctfe! insert-missing "unquote-splicing")
-    (compiler-builtin-load-ctfe! insert-missing "return")
-    (compiler-builtin-load-ctfe! insert-missing "try")
-    (compiler-builtin-load-ctfe! insert-missing "box")
-    (compiler-builtin-load-ctfe! insert-missing "box-get")
-    (compiler-builtin-load-ctfe! insert-missing "box-take")
-    (compiler-builtin-load-ctfe! insert-missing "type")
-    (compiler-builtin-load-ctfe! insert-missing "syscall")
-    (compiler-builtin-load-ctfe! insert-missing "+")
-    (compiler-builtin-load-ctfe! insert-missing "-")
-    (compiler-builtin-load-ctfe! insert-missing "*")
-    (compiler-builtin-load-ctfe! insert-missing "/")
-    (compiler-builtin-load-ctfe! insert-missing "%")
-    (compiler-builtin-load-ctfe! insert-missing "=")
-    (compiler-builtin-load-ctfe! insert-missing "!=")
-    (compiler-builtin-load-ctfe! insert-missing "<")
-    (compiler-builtin-load-ctfe! insert-missing "<=")
-    (compiler-builtin-load-ctfe! insert-missing ">")
-    (compiler-builtin-load-ctfe! insert-missing ">=")
-    (compiler-builtin-load-ctfe! insert-missing "and")
-    (compiler-builtin-load-ctfe! insert-missing "or")
-    (compiler-builtin-load-ctfe! insert-missing "bit-and")
-    (compiler-builtin-load-ctfe! insert-missing "bit-or")
-    (compiler-builtin-load-ctfe! insert-missing "bit-xor")
-    (compiler-builtin-load-ctfe! insert-missing "shl")
-    (compiler-builtin-load-ctfe! insert-missing "shr")
-    (compiler-builtin-load-ctfe! insert-missing "not")
-    (compiler-builtin-load-ctfe! insert-missing "bit-not")
-    (compiler-builtin-load-ctfe! insert-missing "set!")
-    (compiler-builtin-load-ctfe! insert-missing "String")
-    (compiler-builtin-load-ctfe! insert-missing "i64")
-    (compiler-builtin-load-ctfe! insert-missing "i32")
-    (compiler-builtin-load-ctfe! insert-missing "i16")
-    (compiler-builtin-load-ctfe! insert-missing "i8")
-    (compiler-builtin-load-ctfe! insert-missing "u64")
-    (compiler-builtin-load-ctfe! insert-missing "u32")
-    (compiler-builtin-load-ctfe! insert-missing "u16")
-    (compiler-builtin-load-ctfe! insert-missing "u8")
-    (compiler-builtin-load-ctfe! insert-missing "f64")
-    (compiler-builtin-load-ctfe! insert-missing "f32")
-    (compiler-builtin-load-ctfe! insert-missing "bool")
-    (compiler-builtin-load-ctfe! insert-missing "char")
-    (compiler-builtin-load-ctfe! insert-missing "str")
-    (compiler-builtin-load-ctfe! insert-missing "bytes")
-    (compiler-builtin-load-ctfe! insert-missing "unit")
-    (compiler-builtin-load-ctfe! insert-missing "never")
-    (compiler-builtin-load-ctfe! insert-missing "Tuple")
-    (compiler-builtin-load-ctfe! insert-missing "->")
-    (compiler-builtin-load-ctfe! insert-missing "Ptr")
-    (compiler-builtin-load-ctfe! insert-missing "MutPtr")
-    (compiler-builtin-load-ctfe! insert-missing ":consume")
-    (compiler-builtin-load-ctfe! insert-missing "_")
-    (compiler-builtin-load-ctfe! insert-missing "let")
-    (compiler-builtin-load-ctfe! insert-missing "match")
-    (compiler-builtin-load-ctfe! insert-missing "struct-get")
-    (compiler-builtin-load-ctfe! insert-missing "array-set!")
-    (compiler-builtin-load-ctfe! insert-missing "cast")
-    (compiler-builtin-load-ctfe! insert-missing "ann")
-    (compiler-builtin-load-ctfe! insert-missing "tuple-ref")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-null?")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-addr-of")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-read")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-write!")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-offset")
-    (compiler-builtin-load-ctfe! insert-missing "ptr-cast")
-    (compiler-builtin-load-ctfe! insert-missing "ptr->int")
-    (compiler-builtin-load-ctfe! insert-missing "int->ptr")
-    (compiler-builtin-load-ctfe! insert-missing "string-data")
-    (compiler-builtin-load-ctfe! insert-missing "string-from-bytes")
-    (compiler-builtin-load-ctfe! insert-missing "array-data")
-    (compiler-builtin-load-ctfe! insert-missing "program-argc")
-    (compiler-builtin-load-ctfe! insert-missing "program-argv")
-    (compiler-builtin-load-ctfe! insert-missing "program-envp")
-    (compiler-builtin-load-ctfe! insert-missing "cpuid-eax")
-    (compiler-builtin-load-ctfe! insert-missing "cpuid-ebx")
-    (compiler-builtin-load-ctfe! insert-missing "cpuid-ecx")
-    (compiler-builtin-load-ctfe! insert-missing "cpuid-edx")
-    (compiler-builtin-load-ctfe! insert-missing "xgetbv")
-    (compiler-builtin-load-ctfe! insert-missing "true")
-    (compiler-builtin-load-ctfe! insert-missing "false")
-    (compiler-builtin-load-ctfe! insert-missing "type-cleanup-owning?")
-    (compiler-builtin-load-ctfe! insert-missing "type-cleanup-function")
-    (compiler-builtin-load-ctfe! insert-missing "expr-binary-data")
-    (compiler-builtin-load-ctfe!
-      insert-missing
-      "__typelisp internal binary data")
-    (compiler-builtin-load-ctfe! insert-missing "box-element-type")
-    (compiler-builtin-load-ctfe! insert-missing "expr-list-type-nth")
-    (compiler-builtin-load-ctfe! insert-missing "module-value?")
-    (compiler-builtin-load-ctfe! insert-missing "module-value-type")
-    (compiler-builtin-load-ctfe! insert-missing "reference-element-type")
-    (compiler-builtin-load-ctfe! insert-missing "all")
-    (compiler-builtin-load-ctfe! insert-missing "any")
-    (compiler-builtin-load-ctfe! insert-missing ":kind")
-    (compiler-builtin-load-ctfe! insert-missing "...")
-    (compiler-builtin-load-ctfe! insert-missing "string")
-    (compiler-builtin-load-ctfe! insert-missing "dyn-array")
-    (compiler-builtin-load-ctfe! insert-missing "function")
-    (compiler-builtin-load-ctfe! insert-missing "struct")
-    (compiler-builtin-load-ctfe! insert-missing "enum")
-    (compiler-builtin-load-ctfe! insert-missing "ptr")
-    (compiler-builtin-load-ctfe! insert-missing "mut-ptr")
-    (compiler-builtin-load-ctfe! insert-missing "ref")
-    (compiler-builtin-load-ctfe! insert-missing "mut-ref")
-    (compiler-builtin-load-ctfe! insert-missing "region")
-    (compiler-builtin-load-ctfe! insert-missing "type-var")
-    (compiler-builtin-load-ctfe! insert-missing ":cleanup")
-    (compiler-builtin-load-ctfe! insert-missing ":owned")
-    (compiler-builtin-load-ctfe! insert-missing ":lifetimes")
-    (compiler-builtin-load-ctfe! insert-missing ":repr")
-    (compiler-builtin-load-ctfe! insert-missing ":packed")
-    (compiler-builtin-load-ctfe! insert-missing "packed")
-    (compiler-builtin-load-ctfe! insert-missing "scalar")
-    (compiler-builtin-load-ctfe! insert-missing "avx2")
-    (compiler-builtin-load-ctfe! insert-missing "avx512")
-    (compiler-builtin-load-ctfe! insert-missing "cfg")
-    (compiler-builtin-load-ctfe! insert-missing "uniform")
-    (compiler-builtin-load-ctfe! insert-missing "varying")
-    (compiler-builtin-load-ctfe! insert-missing "none")
-    (compiler-builtin-load-ctfe! insert-missing "lanes")
-    (compiler-builtin-load-ctfe! insert-missing "args")
-    (compiler-builtin-load-ctfe! insert-missing "result")
-    (compiler-builtin-load-ctfe! insert-missing "index-param")
-    (compiler-builtin-load-ctfe! insert-missing "specialization")
-    (compiler-builtin-load-ctfe! insert-missing ":export-symbol")
-    (compiler-builtin-load-ctfe! insert-missing ":spmd-callable")
-    (compiler-builtin-load-ctfe! insert-missing "c-varargs")
-    (compiler-builtin-load-ctfe! insert-missing ":abi")
-    (compiler-builtin-load-ctfe! insert-missing ":symbol")
-    (compiler-builtin-load-ctfe! insert-missing ":link-lib")
-    (compiler-builtin-load-ctfe! insert-missing ":link-search")
-    (compiler-builtin-load-ctfe! insert-missing ":link-arg")
-    (compiler-builtin-load-ctfe! insert-missing "as")
-    (compiler-builtin-load-ctfe! insert-missing ":as")
-    (compiler-builtin-load-ctfe! insert-missing "sum")
-    (compiler-builtin-load-ctfe! insert-missing "min")
-    (compiler-builtin-load-ctfe! insert-missing "max")
-    (compiler-builtin-load-ctfe! insert-missing "defgeneric")
-    (compiler-builtin-load-ctfe! insert-missing "generic")
-    (compiler-builtin-load-ctfe! insert-missing "deftrait")
-    (compiler-builtin-load-ctfe! insert-missing "trait")
-    (compiler-builtin-load-ctfe! insert-missing "interface")
-    (compiler-builtin-load-ctfe! insert-missing "impl")
-    (compiler-builtin-load-ctfe! insert-missing "where")
-    (compiler-builtin-load-ctfe! insert-missing "pattern-binding-typed")
-    (compiler-builtin-load-ctfe! insert-missing "expr-resource-scope")
-    (compiler-builtin-load-ctfe! insert-missing "expr-let-scope")
-    (compiler-builtin-load-ctfe! insert-missing "expr-set-var")
-    (compiler-builtin-load-ctfe! insert-missing "expr-begin-unit")
-    (compiler-builtin-load-ctfe! insert-missing "expr-not")
-    (compiler-builtin-load-ctfe! insert-missing "expr-while")
-    (compiler-builtin-load-ctfe! insert-missing "syntax-name-fresh")
-    (compiler-builtin-load-ctfe! insert-missing "__tl_dyn-array")
-    (compiler-builtin-load-ctfe! insert-missing "slice")
-    (compiler-builtin-load-ctfe! insert-missing "expr-borrow")
-    (compiler-builtin-load-ctfe! insert-missing "expr-array-ref")
-    (compiler-builtin-load-ctfe! insert-missing "expr-replace")
-    (compiler-builtin-load-ctfe! insert-missing "module-value-expr")
-    (compiler-builtin-load-ctfe!
-      insert-missing
-      "function-shared-borrow-returns-string?")
-    (compiler-builtin-load-ctfe! insert-missing "expr-shared-call1")
-    (compiler-builtin-load-ctfe! insert-missing "expr-shared-let-scope")
-    (compiler-builtin-load-ctfe! insert-missing "type-expr")
-    (compiler-builtin-load-ctfe! insert-missing "expr-lambda1")
-    (compiler-builtin-load-ctfe! insert-missing ":ignore")
-    (compiler-builtin-load-ctfe! insert-missing ":slow")
-    (compiler-builtin-load-ctfe! insert-missing ":must-use")
-    (compiler-builtin-load-ctfe! insert-missing "c-function")
-    (compiler-builtin-load-ctfe! insert-missing "CFunc")
-    (compiler-builtin-load-ctfe! insert-missing "nullable")
-    (compiler-builtin-load-ctfe! insert-missing "non-null")
-    (compiler-builtin-load-ctfe! insert-missing "unsafe-nullable")
-    (compiler-builtin-load-ctfe! insert-missing "unsafe-non-null")
-    (compiler-builtin-load-ctfe! insert-missing ":invalidate")
-    (compiler-builtin-load-ctfe! insert-missing "invalidate")))
+  (let
+    [table : String (compiler-builtin-ctfe-spellings)]
+    [slot : i64 0]
+    [start : i64 0]
+    [index : i64 0]
+    (begin
+      ;; Clear unassigned and retired slots as well as populated ones. This keeps
+      ;; catalog holes from retaining zero or an id loaded by an older snapshot.
+      (compiler-builtin-clear-ctfe-ids!)
+      (while (< index (string.string-length table))
+        (begin
+          (when
+            (= (string.string-ref table index) '|')
+            (begin
+              (when
+                (> index start)
+                (compiler-builtin-ctfe-set!
+                  slot
+                  (if insert-missing
+                    (ci.intern-source-slice table start (- index start))
+                    (io.panic
+                      "compiler builtin IDs must be installed with their intern table"))))
+              (set! slot (+ slot 1))
+              (set! start (+ index 1))))
+          (set! index (+ index 1)))))))
+
+(define (compiler-builtin-load-id-rows!
+  [state : (&mut state CompilerBuiltinIdsState)]
+  [insert-missing : bool]
+  [rows : String]) : unit
+  (let
+    [slot : i64 0]
+    [start : i64 -1]
+    [index : i64 0]
+    ;; `start` is -1 while reading a row's slot digits.
+    (while (< index (string.string-length rows))
+      (let
+        [c : char (string.string-ref rows index)]
+        (begin
+          (cond
+            [(< start 0)
+              (if (= c ':')
+                (set! start (+ index 1))
+                (set! slot (+ (* slot 10) (- (cast c : i64) 48))))]
+            [(= c '|')
+              (begin
+                (state-set!
+                  state
+                  slot
+                  (if insert-missing
+                    (ci.intern-source-slice rows start (- index start))
+                    (io.panic
+                      "compiler builtin IDs must be installed with their intern table")))
+                (set! slot 0)
+                (set! start -1))]
+            [else unit])
+          (set! index (+ index 1)))))))
+
+(define (compiler-builtin-load-fixed-ids! [insert-missing : bool]) : unit
+  (let
+    [state : CompilerBuiltinIdsState (state-new)]
+    (begin
+      (compiler-builtin-id-table
+        compiler-builtin-id-load-chunks
+        (&mut state)
+        insert-missing)
+      (state-install-fixed-ids! (& state)))))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
     (compiler-builtin-load-ctfe-ids! insert-missing)
-    (compiler-builtin-id-table load insert-missing)
+    (compiler-builtin-load-fixed-ids! insert-missing)
     (set! compiler-builtin-generation (ci.intern-generation))
     (set! compiler-builtin-table-id (ci.intern-active-table-id))
     (set! compiler-builtin-pool-len (ci.intern-pool-len))

@@ -158,6 +158,27 @@ The view aliases the array, so element accesses and bounds checks are
 unchanged; any other occurrence keeps the array binding, and a shared reference
 never gets a writable view (#8346).
 
+Under debug info (`--debug`), lowering also builds the debug type graph
+(#8237): one target-independent description of every type a debug binding can
+have, which the DWARF and CodeView emitters lower without reconstructing a
+layout or asking the typechecker. Until the binding table (#8236) lands, its
+roots are every function's parameter and result types and every `let`
+binding's type, interned in lowering order into a job-owned
+`CompilerLowerState` cell in the job's own arena. Nodes (`CompilerDebugTypeNode`
+in `compiler_ir_types.tl`) are dense and preordered: scalars; structs and
+tuples with field offsets and register-resident words; enums with an i64 tag
+at offset 0 and variants in declaration (tag) order with payload offsets;
+fixed arrays; pointers; `{data, len}` views for borrowed Slices and bytes;
+handles to a `{data, len}` header for String, str, dynamic arrays and borrows
+of str or a dynamic array; function pointers; and forward nodes, so a nominal
+type reached again while its own layout is being built never forms a cycle.
+Every struct and enum layout comes from `tc-inline-aggregate-layout-for-id`,
+and tuple offsets follow lowering's own addressing. `--debug --verify-ir`
+re-checks each node against independent typechecker queries (type size and
+alignment, member offsets looked up by name, tuple offsets from the
+typechecker's sizes) and fails the compile on the first disagreement. Without
+debug info nothing is recorded.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

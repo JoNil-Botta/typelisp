@@ -311,4 +311,29 @@ if [ "$(grep -c '^function @' "$WORKDIR/dump_ir_stress.ir")" -ne 6001 ]; then
     exit 1
 fi
 
-echo "[ir-observability] dump golden, pass trace, verifier, and scaled dump passed"
+# Debug type graph (#8237): with debug info, `--verify-ir` re-checks every
+# struct, enum, tuple and array layout in the graph against independent
+# typechecker queries and fails the compile on a disagreement. These fixtures
+# carry the corpus's densest nested, register-resident, C-ABI, generated and
+# tuple aggregates.
+for fixture in \
+    comptime_type_expr_worklist \
+    c_abi_win64_nested_aggregate \
+    c_abi_sysv_register_aggregate_args \
+    factored_addresses \
+    stdlib_hash_generated \
+    nested_tuple_array_projection \
+    generated_option_result_families \
+    aggregate_return_no_alloc; do
+    if ! "$COMPILER" compile "$ROOT/tests/integration/$fixture.tl" \
+        --debug \
+        --verify-ir \
+        -o "$WORKDIR/debug-types-$fixture.s" \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/tests/integration"; then
+        echo "debug type graph verification failed for $fixture" >&2
+        exit 1
+    fi
+done
+
+echo "[ir-observability] dump golden, pass trace, verifier, and scaled dump, and debug type graph passed"

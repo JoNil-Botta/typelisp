@@ -8341,6 +8341,17 @@
 (define (compiler-debug-info-enabled?) : bool
   compiler-debug-info-enabled)
 
+;; Set with debug info under `--verify-ir`: lowering then checks every debug
+;; type graph layout against the typechecker and fails on a mismatch.
+(define compiler-debug-type-graph-verify : bool
+  false)
+
+(define (compiler-debug-type-graph-verify-set! [enabled : bool]) : unit
+  (set! compiler-debug-type-graph-verify enabled))
+
+(define (compiler-debug-type-graph-verify?) : bool
+  compiler-debug-type-graph-verify)
+
 (define (compiler-debug-path-remap-clear!) : unit
   (begin
     (set! compiler-debug-path-remap-from "")
@@ -10601,3 +10612,238 @@
       args
       result
       (compiler-ir-spmd-call-origin-private abi))))
+
+;; --- debug type graph (#8237) ----------------------------------------------
+;; Under debug info, lowering records one target-independent graph of the
+;; types a debug binding can have, with every layout the DWARF and CodeView
+;; emitters need, so neither reconstructs a layout or asks the typechecker.
+;; Node ids are dense, in first-reach order from the roots, and a parent always
+;; precedes its children. A nominal type reached again while its own layout is
+;; still being built is referenced through a `forward` node, so the graph has
+;; no cycle. A node's members are contiguous: a struct or tuple lists its
+;; fields; an enum lists each variant as a header (type -1, variant = its tag,
+;; offset -1) followed by that variant's payload fields.
+;;
+;; Kinds and what `target`/`count` mean:
+;; - scalar: an integer, float, bool, char or zero-sized unit/never.
+;; - struct, tuple: inline fields; `register-words` is 1 or 2 when the value
+;;   travels in one register or a register pair.
+;; - enum: an i64 tag at offset 0 (`target` is its node), `count` variants;
+;;   a variant's tag value is its declaration index.
+;; - array: `count` inline elements of `target`.
+;; - pointer: 8 bytes addressing a `target` value (Box, Ptr, and references
+;;   other than the views and handles below).
+;; - view: 16 bytes {data@0, len@8} over `target` elements: `(& (Slice T))`
+;;   and `(& bytes)`.
+;; - handle: 8 bytes addressing a {data@0, len@8} header over `target`
+;;   elements: String, str, DynArray, and borrows of str or DynArray, which
+;;   reuse the referent's handle.
+;; - function: an 8-byte code pointer; forward: the nominal `target`;
+;;   opaque: a type with no runtime layout.
+(define compiler-debug-type-scalar : i64
+  0)
+(define compiler-debug-type-struct : i64
+  1)
+(define compiler-debug-type-tuple : i64
+  2)
+(define compiler-debug-type-enum : i64
+  3)
+(define compiler-debug-type-array : i64
+  4)
+(define compiler-debug-type-pointer : i64
+  5)
+(define compiler-debug-type-view : i64
+  6)
+(define compiler-debug-type-handle : i64
+  7)
+(define compiler-debug-type-function : i64
+  8)
+(define compiler-debug-type-forward : i64
+  9)
+(define compiler-debug-type-opaque : i64
+  10)
+
+(defstruct CompilerDebugTypeNode
+  (kind i64)
+  (name String)
+  (size i64)
+  (align i64)
+  (target i64)
+  (count i64)
+  (register-words i64)
+  (first-member i64)
+  (member-count i64))
+
+(defstruct CompilerDebugTypeMember
+  (variant i64)
+  (name String)
+  (name-id i64)
+  (type i64)
+  (offset i64))
+
+(defstruct CompilerDebugTypeGraph
+  (nodes (__tl_dyn-array CompilerDebugTypeNode))
+  (node-count i64)
+  (members (__tl_dyn-array CompilerDebugTypeMember))
+  (member-count i64))
+
+(define (compiler-debug-type-graph-empty) : CompilerDebugTypeGraph
+  (CompilerDebugTypeGraph
+    (__tl_make-array CompilerDebugTypeNode 0)
+    0
+    (__tl_make-array CompilerDebugTypeMember 0)
+    0))
+
+;; Append NODE and return its id.
+(define (compiler-debug-type-graph-push-node!
+  [graph : (&mut graph CompilerDebugTypeGraph)]
+  [node : CompilerDebugTypeNode]) : i64
+  (let
+    [id : i64 graph.node-count]
+    (begin
+      (when
+        (>= id (array-length graph.nodes))
+        (let
+          [grown : (__tl_dyn-array CompilerDebugTypeNode)
+            (__tl_make-array CompilerDebugTypeNode (+ 16 (* 2 id)))]
+          [index : i64 0]
+          (begin
+            (while (< index id)
+              (begin
+                (set!
+                  (array-ref grown index)
+                  (owned_view.compiler-owned-array-element-shared-view
+                    graph.nodes
+                    index))
+                (set! index (+ index 1))))
+            (set! graph.nodes grown))))
+      (set! (array-ref graph.nodes id) node)
+      (set! graph.node-count (+ id 1))
+      id)))
+
+(define (compiler-debug-type-graph-set-node!
+  [graph : (&mut graph CompilerDebugTypeGraph)]
+  [id : i64]
+  [node : CompilerDebugTypeNode]) : unit
+  (set! (array-ref graph.nodes id) node))
+
+(define (compiler-debug-type-graph-push-member!
+  [graph : (&mut graph CompilerDebugTypeGraph)]
+  [member : CompilerDebugTypeMember]) : unit
+  (let
+    [index : i64 graph.member-count]
+    (begin
+      (when
+        (>= index (array-length graph.members))
+        (let
+          [grown : (__tl_dyn-array CompilerDebugTypeMember)
+            (__tl_make-array CompilerDebugTypeMember (+ 16 (* 2 index)))]
+          [copy : i64 0]
+          (begin
+            (while (< copy index)
+              (begin
+                (set!
+                  (array-ref grown copy)
+                  (owned_view.compiler-owned-array-element-shared-view
+                    graph.members
+                    copy))
+                (set! copy (+ copy 1))))
+            (set! graph.members grown))))
+      (set! (array-ref graph.members index) member)
+      (set! graph.member-count (+ index 1)))))
+
+(define (compiler-debug-type-kind-name [kind : i64]) : String
+  (cond
+    [(= kind compiler-debug-type-scalar) "scalar"]
+    [(= kind compiler-debug-type-struct) "struct"]
+    [(= kind compiler-debug-type-tuple) "tuple"]
+    [(= kind compiler-debug-type-enum) "enum"]
+    [(= kind compiler-debug-type-array) "array"]
+    [(= kind compiler-debug-type-pointer) "pointer"]
+    [(= kind compiler-debug-type-view) "view"]
+    [(= kind compiler-debug-type-handle) "handle"]
+    [(= kind compiler-debug-type-function) "function"]
+    [(= kind compiler-debug-type-forward) "forward"]
+    [else "opaque"]))
+
+;; One line per node and per member, deterministic for golden tests:
+;; `tN kind name size=S align=A [target=tM] [count=C] [regs=R]`, then
+;; `  .field tM @offset` or `  variant name =tag` / `    .index tM @offset`.
+(define (compiler-debug-type-graph-render
+  [graph : (& graph CompilerDebugTypeGraph)]) : String
+  (let
+    [buf : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.empty)
+        (str_cat.str-cat
+          "debug-types v1 nodes="
+          (string.int->string graph.node-count)
+          "\n"))]
+    [id : i64 0]
+    (begin
+      (while (< id graph.node-count)
+        (let
+          [node : CompilerDebugTypeNode
+            (owned_view.compiler-owned-array-element-shared-view graph.nodes id)]
+          [member : i64 node.first-member]
+          (begin
+            (set!
+              buf
+              (text_buf.append
+                buf
+                (str_cat.str-cat
+                  "t"
+                  (string.int->string id)
+                  " "
+                  (compiler-debug-type-kind-name node.kind)
+                  " "
+                  node.name
+                  " size="
+                  (string.int->string node.size)
+                  " align="
+                  (string.int->string node.align)
+                  (if (>= node.target 0)
+                    (str_cat.str-cat
+                      " target=t"
+                      (string.int->string node.target))
+                    "")
+                  (if (>= node.count 0)
+                    (str_cat.str-cat " count=" (string.int->string node.count))
+                    "")
+                  (if (> node.register-words 0)
+                    (str_cat.str-cat
+                      " regs="
+                      (string.int->string node.register-words))
+                    "")
+                  "\n")))
+            (while (< member (+ node.first-member node.member-count))
+              (let
+                [row : CompilerDebugTypeMember
+                  (owned_view.compiler-owned-array-element-shared-view
+                    graph.members
+                    member)]
+                (begin
+                  (set!
+                    buf
+                    (text_buf.append
+                      buf
+                      (if (< row.type 0)
+                        (str_cat.str-cat
+                          "  variant "
+                          row.name
+                          " ="
+                          (string.int->string row.variant)
+                          "\n")
+                        (str_cat.str-cat
+                          (if (< row.variant 0)
+                            "  ."
+                            "    .")
+                          row.name
+                          " t"
+                          (string.int->string row.type)
+                          " @"
+                          (string.int->string row.offset)
+                          "\n"))))
+                  (set! member (+ member 1)))))
+            (set! id (+ id 1)))))
+      (text_buf.render buf))))

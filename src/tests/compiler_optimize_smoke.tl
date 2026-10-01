@@ -2961,6 +2961,12 @@
     "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
 
 (test
+  dominance-frontier-table-matches-scan
+  (test.assert-true
+    (ot.compiler-optimize-dominance-frontier-table-ok?)
+    "the per-function dominance frontier table equals the per-label scan on random CFGs"))
+
+(test
   inline-checked-versioned-loop-weighting
   (test.assert-true
     (ot.compiler-optimize-inline-checked-versioned-loop-weighting-ok?)

@@ -74862,9 +74862,218 @@
   [blocks : ir.CompilerIrBlockList]
   [label : i64]) : opt.OptLabelSet
   (let
-    [context
+    [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
-    (opt.opt-cfg-dominance-frontier-with-context blocks context label)))
+    [frontiers : (__tl_dyn-array opt.OptLabelSet)
+      (opt.opt-cfg-dominance-frontiers (& context))]
+    (opt.opt-cfg-dominance-frontier-of (& context.index) (& frontiers) label)))
+
+;; The frontier scan #8287 replaced, one pass over every block per label, kept
+;; as the reference the property test below holds `opt-cfg-dominance-frontiers`
+;; to.
+(define (opt-cfg-frontier-reference-has-reachable-pred-id?
+  [index : (& index opt.OptCfgIndex)]
+  [doms : (& doms opt.OptDomInfo)]
+  [label-id : i64]
+  [edge : i64]
+  [end : i64]) : bool
+  (if (>= edge end)
+    false
+    (let
+      [pred-id : i64 (array-ref index.preds.edges edge)]
+      (if (and
+        (array-ref index.reachable pred-id)
+        (opt.opt-dom-info-dominates-id? doms label-id pred-id))
+        true
+        (opt-cfg-frontier-reference-has-reachable-pred-id?
+          index
+          doms
+          label-id
+          (+ edge 1)
+          end)))))
+
+(define (opt-cfg-frontier-reference-block?
+  [index : (& index opt.OptCfgIndex)]
+  [doms : (& doms opt.OptDomInfo)]
+  [label-id : i64]
+  [block-id : i64]) : bool
+  (let
+    [preds (& index.preds)]
+    (and
+      (array-ref index.reachable block-id)
+      (opt-cfg-frontier-reference-has-reachable-pred-id?
+        index
+        doms
+        label-id
+        (array-ref preds.offsets block-id)
+        (array-ref preds.offsets (+ block-id 1)))
+      (not
+        (and
+          (!= label-id block-id)
+          (opt.opt-dom-info-dominates-id? doms label-id block-id))))))
+
+;; `remaining` starts as the block list `index` was built from, so the walk
+;; position is the block id.
+(define (opt-cfg-frontier-reference-blocks
+  [remaining : (& remaining ir.CompilerIrBlockList)]
+  [index : (& index opt.OptCfgIndex)]
+  [doms : (& doms opt.OptDomInfo)]
+  [label-id : i64]
+  [block-id : i64]) : opt.OptLabelSet
+  (match (owned_view.compiler-owned-reference-shared-view remaining)
+    [(ir.CompilerIrBlockList.Nil) (opt.OptLabelSet.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block block-label _)
+          (let
+            [tail : opt.OptLabelSet
+              (opt-cfg-frontier-reference-blocks
+                (deref rest)
+                index
+                doms
+                label-id
+                (+ block-id 1))]
+            (if (and
+              (< block-id (opt.opt-cfg-index-block-count index))
+              (opt-cfg-frontier-reference-block? index doms label-id block-id))
+              (opt.opt-label-add tail block-label)
+              tail))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [remaining (ir.compiler-ir-block-seq-to-list seq)]
+        (opt-cfg-frontier-reference-blocks
+          remaining
+          index
+          doms
+          label-id
+          block-id))]))
+
+(define (opt-cfg-dominance-frontier-reference
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [context : opt.OptCfgContext]
+  [label : i64]) : opt.OptLabelSet
+  (let
+    [index : opt.OptCfgIndex (__tl-project-field context index)]
+    [label-id : i64
+      (match (opt.opt-cfg-index-id index label)
+        [(option_i64.Some id) id]
+        [(option_i64.None) (- 0 1)])]
+    (opt-cfg-frontier-reference-blocks blocks index context.doms label-id 0)))
+
+(define (opt-frontier-random-next [state : i64]) : i64
+  (% (+ (* state 1103515245) 12345) 2147483648))
+
+;; A random CFG over blocks b0..b<count - 1>, each ending in a return, a jump or
+;; a two-way branch to random blocks: loops, irreducible cycles, self-loops,
+;; back edges into the entry, duplicate edges, multiple exits and unreachable
+;; blocks all occur.
+(define (opt-frontier-random-cfg-text [seed : i64] [count : i64]) : String
+  (let
+    [text : String ""]
+    [state : i64 seed]
+    [block : i64 0]
+    [kind : i64 0]
+    [first : i64 0]
+    (begin
+      (while (< block count)
+        (begin
+          (set! state (opt-frontier-random-next state))
+          (set! kind (% state 4))
+          (set! state (opt-frontier-random-next state))
+          (set! first (% state count))
+          (set! state (opt-frontier-random-next state))
+          (set!
+            text
+            (str_cat.str-cat
+              text
+              "b"
+              (string.int->string block)
+              ":\n  "
+              (cond
+                [(= kind 0) "return 0"]
+                [(= kind 1)
+                  (str_cat.str-cat "jump b" (string.int->string first))]
+                [else
+                  (str_cat.str-cat
+                    "branch true, b"
+                    (string.int->string first)
+                    ", b"
+                    (string.int->string (% state count)))])
+              "\n"))
+          (set! block (+ block 1))))
+      text)))
+
+(define (opt-label-sets-same-order? [a : opt.OptLabelSet] [b : opt.OptLabelSet]) : bool
+  (let
+    [count : i64 (opt.opt-label-count a)]
+    [index : i64 0]
+    [same : bool (= count (opt.opt-label-count b))]
+    (begin
+      (while (and same (< index count))
+        (begin
+          (set!
+            same
+            (= (opt.opt-label-ref a index) (opt.opt-label-ref b index)))
+          (set! index (+ index 1))))
+      same)))
+
+;; Blocks whose table frontier differs from the reference scan's, contents or
+;; order.
+(define (opt-frontier-table-mismatches [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
+    [frontiers : (__tl_dyn-array opt.OptLabelSet)
+      (opt.opt-cfg-dominance-frontiers (& context))]
+    [count : i64 (opt.opt-cfg-index-block-count (& context.index))]
+    [id : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< id count)
+        (let
+          [label : i64 (opt.opt-cfg-index-label (& context.index) id)]
+          (begin
+            (when
+              (not
+                (opt-label-sets-same-order?
+                  (opt-cfg-dominance-frontier-reference
+                    (& blocks)
+                    (opt.compiler-opt-global-shared-view context)
+                    label)
+                  (opt.opt-cfg-dominance-frontier-of
+                    (& context.index)
+                    (& frontiers)
+                    label)))
+              (set! bad (+ bad 1)))
+            (set! id (+ id 1)))))
+      bad)))
+
+;; #8287: the per-function frontier table equals the per-label scan, set and
+;; order, on 300 random CFGs of 1 to 12 blocks, and an unknown label has no
+;; frontier.
+(define (compiler-optimize-dominance-frontier-table-ok?) : bool
+  (let
+    [seed : i64 1]
+    [bad : i64 0]
+    (begin
+      (while (<= seed 300)
+        (begin
+          (set!
+            bad
+            (+
+              bad
+              (opt-frontier-table-mismatches
+                (irt.blocks
+                  (opt-frontier-random-cfg-text seed (+ 1 (% seed 12)))))))
+          (set! seed (+ seed 1))))
+      (and
+        (= bad 0)
+        (=
+          (opt.opt-label-count
+            (opt-cfg-dominance-frontier
+              (irt.blocks "b0:\n  jump b0\n")
+              (ir.compiler-ir-label "missing")))
+          0)))))
 
 (define (opt-verify-error-ok?
   [result : opt.ResultCompilerOptimizeVerify]

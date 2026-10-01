@@ -2,6 +2,7 @@
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_identity as identity)
 (import compiler_owned_view as owned_view)
+(import stdlib.byte_reader)
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.string)
 
@@ -1031,5 +1032,180 @@
 (test
   compiler-incremental-identity-misses-and-corruption
   (if (incremental-test-miss-and-corruption?)
+    unit
+    (string.tl_oob_abort)))
+
+(define (incremental-test-utf8-reference-continuation? [byte : i64]) : bool
+  (and (>= byte 0x80) (<= byte 0xbf)))
+
+;; The branch-per-lead-byte validator `compiler-incremental-binary-utf8-range-
+;; valid?` replaced (#8376), kept as the oracle its table form must match.
+(define (incremental-test-utf8-reference-valid?
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [start : i64]
+  [length : i64]) : bool
+  (let
+    [index : i64 start]
+    [end : i64 (+ start length)]
+    [ok? : bool (byte_reader.range-present? (array-length bytes) start length)]
+    (begin
+      (while (and ok? (< index end))
+        (let
+          [first : i64 (cast (array-ref bytes index) : i64)]
+          (cond
+            [(and (>= first 1) (<= first 0x7f)) (set! index (+ index 1))]
+            [(and (>= first 0xc2) (<= first 0xdf))
+              (if (and
+                (< (+ index 1) end)
+                (incremental-test-utf8-reference-continuation?
+                  (cast (array-ref bytes (+ index 1)) : i64)))
+                (set! index (+ index 2))
+                (set! ok? false))]
+            [(and (>= first 0xe0) (<= first 0xef))
+              (if (< (+ index 2) end)
+                (let
+                  [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
+                  [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
+                  (if (and
+                    (incremental-test-utf8-reference-continuation? third)
+                    (if (= first 0xe0)
+                      (and (>= second 0xa0) (<= second 0xbf))
+                      (if (= first 0xed)
+                        (and (>= second 0x80) (<= second 0x9f))
+                        (incremental-test-utf8-reference-continuation? second))))
+                    (set! index (+ index 3))
+                    (set! ok? false)))
+                (set! ok? false))]
+            [(and (>= first 0xf0) (<= first 0xf4))
+              (if (< (+ index 3) end)
+                (let
+                  [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
+                  [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
+                  [fourth : i64 (cast (array-ref bytes (+ index 3)) : i64)]
+                  (if (and
+                    (incremental-test-utf8-reference-continuation? third)
+                    (incremental-test-utf8-reference-continuation? fourth)
+                    (if (= first 0xf0)
+                      (and (>= second 0x90) (<= second 0xbf))
+                      (if (= first 0xf4)
+                        (and (>= second 0x80) (<= second 0x8f))
+                        (incremental-test-utf8-reference-continuation? second))))
+                    (set! index (+ index 4))
+                    (set! ok? false)))
+                (set! ok? false))]
+            [else (set! ok? false)])))
+      ok?)))
+
+;; Every 1- and 2-byte input, every 3-byte input led by 0xc0..0xff, and every
+;; 4-byte input led by 0xf0..0xf7 with each byte after the second drawn from the
+;; boundaries of the continuation ranges, validated at offset 1 of a padded
+;; buffer, at every length up to the input's (so each truncation is checked),
+;; must give the reference's answer; so must ranges outside the buffer.
+(define (incremental-test-utf8-agree?
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [length : i64]) : bool
+  (let
+    [cut : i64 0]
+    [same : bool true]
+    (begin
+      (while (and same (<= cut length))
+        (begin
+          (set!
+            same
+            (=
+              (binary.compiler-incremental-binary-utf8-range-valid? bytes 1 cut)
+              (incremental-test-utf8-reference-valid? bytes 1 cut)))
+          (set! cut (+ cut 1))))
+      same)))
+
+(define (incremental-test-utf8-table-matches-reference?) : bool
+  (let
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 6)]
+    [edges : (__tl_dyn-array u8) (__tl_make-array u8 10)]
+    [same : bool true]
+    [a : i64 0]
+    [b : i64 0]
+    [c : i64 0]
+    [d : i64 0]
+    (begin
+      (set! (array-ref edges 0) (cast 0x00 : u8))
+      (set! (array-ref edges 1) (cast 0x7f : u8))
+      (set! (array-ref edges 2) (cast 0x80 : u8))
+      (set! (array-ref edges 3) (cast 0x8f : u8))
+      (set! (array-ref edges 4) (cast 0x90 : u8))
+      (set! (array-ref edges 5) (cast 0x9f : u8))
+      (set! (array-ref edges 6) (cast 0xa0 : u8))
+      (set! (array-ref edges 7) (cast 0xbf : u8))
+      (set! (array-ref edges 8) (cast 0xc0 : u8))
+      (set! (array-ref edges 9) (cast 0xff : u8))
+      (set! (array-ref bytes 0) (cast 0xff : u8))
+      ;; 1- and 2-byte inputs.
+      (while (and same (< a 256))
+        (begin
+          (set! (array-ref bytes 1) (cast a : u8))
+          (set! b 0)
+          (while (and same (< b 256))
+            (begin
+              (set! (array-ref bytes 2) (cast b : u8))
+              (set! same (incremental-test-utf8-agree? (& bytes) 2))
+              (set! b (+ b 1))))
+          (set! a (+ a 1))))
+      ;; 3-byte inputs.
+      (set! a 0xc0)
+      (while (and same (< a 256))
+        (begin
+          (set! (array-ref bytes 1) (cast a : u8))
+          (set! b 0)
+          (while (and same (< b 256))
+            (begin
+              (set! (array-ref bytes 2) (cast b : u8))
+              (set! c 0)
+              (while (and same (< c 256))
+                (begin
+                  (set! (array-ref bytes 3) (cast c : u8))
+                  (set! same (incremental-test-utf8-agree? (& bytes) 3))
+                  (set! c (+ c 1))))
+              (set! b (+ b 1))))
+          (set! a (+ a 1))))
+      ;; 4-byte inputs, then a trailing ASCII byte so a valid sequence is
+      ;; followed by more input.
+      (set! a 0xf0)
+      (while (and same (< a 0xf8))
+        (begin
+          (set! (array-ref bytes 1) (cast a : u8))
+          (set! b 0)
+          (while (and same (< b 256))
+            (begin
+              (set! (array-ref bytes 2) (cast b : u8))
+              (set! c 0)
+              (while (and same (< c 10))
+                (begin
+                  (set! (array-ref bytes 3) (array-ref edges c))
+                  (set! d 0)
+                  (while (and same (< d 10))
+                    (begin
+                      (set! (array-ref bytes 4) (array-ref edges d))
+                      (set! (array-ref bytes 5) (cast 0x41 : u8))
+                      (set! same (incremental-test-utf8-agree? (& bytes) 5))
+                      (set! d (+ d 1))))
+                  (set! c (+ c 1))))
+              (set! b (+ b 1))))
+          (set! a (+ a 1))))
+      ;; Ranges the buffer does not hold.
+      (and
+        same
+        (not
+          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 4 3))
+        (not
+          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) -1 1))
+        (not
+          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 0 -1))
+        (=
+          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 6 0)
+          (incremental-test-utf8-reference-valid? (& bytes) 6 0))))))
+
+(test
+  compiler-incremental-binary-utf8-table-matches-reference
+  (if (incremental-test-utf8-table-matches-reference?)
     unit
     (string.tl_oob_abort)))

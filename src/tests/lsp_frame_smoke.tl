@@ -2752,6 +2752,7 @@
         (unless (lsp-code-action-workspace-edit-smoke-ok?) (return 33))
         (unless (lsp-code-action-lint-smoke-ok?) (return 34))
         (unless (lsp-code-action-lint-structured-fix-ok?) (return 49))
+        (unless (lsp_tests.lsp-percent-decode-bytes-ok?) (return 50))
         (unless (lsp-code-action-transcript-smoke-ok?) (return 35))
         (unless (lsp-second-diagnostic-code-action-smoke-ok?) (return 38))
         (unless (lsp-workspace-index-smoke-ok?) (return 39))

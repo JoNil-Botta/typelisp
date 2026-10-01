@@ -384,6 +384,16 @@
     [count : i64 instrs.len]
     [state : opt.OptCopyEnv env]
     [index : i64 0]
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (owned_view.compiler-owned-reference-shared-view instrs))
+        (ir.CompilerIrBlockList.Nil))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (& own))
+        (opt.compiler-opt-global-shared-view own))]
     (while (< index count)
       (match (opt.opt-copy-instr
         (opt.compiler-opt-global-shared-view state)
@@ -554,10 +564,48 @@
     (match (opt.opt-thread-const-branch-final-pass type-segment-bases converted)
       [(opt.OptFunctionPassResult.Result next _) next])))
 
+;; One past the highest var a block's `addr_of` reads: the frame a test driver
+;; installs address-taken marks for, so they cover every address-taken var
+;; whether the block defines it or reads it as a param.
+(define (opt-test-addr-of-bound-instr-seq
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [index : i64 0]
+    [bound : i64 0]
+    (begin
+      (while (< index (ir.compiler-ir-instr-seq-count instrs))
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs index)
+            [(ir.CompilerIrInstr.AddrOf _ src)
+              (if (> (+ src 1) bound)
+                (set! bound (+ src 1))
+                unit)]
+            [_ unit])
+          (set! index (+ index 1))))
+      bound)))
+
+(define (opt-test-addr-of-bound [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [here : i64 (opt-test-addr-of-bound-instr-seq instrs)]
+            [later : i64 (opt-test-addr-of-bound (deref rest))]
+            (if (> here later)
+              here
+              later))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [blocks (ir.compiler-ir-block-seq-to-list seq)]
+        (opt-test-addr-of-bound blocks))]))
+
 ;; The block-local pipeline (fold, CSE, load-CSE, DSE, copy, bounds) on one
 ;; block with no header-typed handles, load kinds, alias seeds or scan scratch:
 ;; the context-free form of the per-block step optimize-block-list-for-function
-;; runs.
+;; runs. It installs the block's own `addr_of`s as the fold pipeline's
+;; address-taken marks, as the function pass installs its whole-function scan.
 (define (opt-test-optimize-block
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -566,6 +614,14 @@
     [profile-state
       (profile_state.compiler-profile-state-metrics
         (profile_state.compiler-profile-state-new))]
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-block-cons
+        (opt.compiler-opt-global-shared-view block)
+        (ir.CompilerIrBlockList.Nil))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (& own))
+        (opt.compiler-opt-global-shared-view own))]
     [hs (opt.opt-load-header-set-empty)]
     [dead-kinds (opt.opt-load-kinds-empty)]
     [load-kinds (opt.opt-load-kinds-empty)]
@@ -16213,17 +16269,28 @@
 ;; INL-14: a versioned loop prices as ONE loop. The slow copy is the guard's
 ;; failure path and is priced cold, so the pair costs exactly what either copy
 ;; costs alone; a clone with no original beside it, or an original with no
-;; clone, is an ordinary loop.
-(define (compiler-optimize-inline-checked-slow-copy-weighting-ok?) : bool
+;; clone, is an ordinary loop. The guard runs once per entry: below the cap its
+;; own depth prices that, and at or past the cap it is charged one rung below
+;; the cap rather than at its inner loop's weight (#8455). A guard whose header
+;; is not in the body is ordinary code.
+(define (compiler-optimize-inline-checked-versioned-loop-weighting-ok?) : bool
   (let
     [base : i64 (opt.opt-inline-census-depth-base)]
+    [w1 : i64 (opt.opt-inline-census-depth-weight 1)]
+    [w2 : i64 (opt.opt-inline-census-depth-weight 2)]
+    [rung : i64
+      (opt.opt-inline-census-depth-weight
+        (- (opt.opt-inline-census-depth-cap) 1))]
     [pair : i64
       (let
         [func
           (irt.func
             "function @checked_versioned_pair() -> i64 vars 1 {
            entry:
-             jump loop
+             jump loop__bce_guard
+           loop__bce_guard:
+             %0 = mov 1 : i64
+             branch true, loop__bce_fast, loop
            loop:
              %0 = mov 1 : i64
              %0 = mov 1 : i64
@@ -16232,8 +16299,37 @@
            loop__bce_fast:
              %0 = mov 1 : i64
              %0 = mov 1 : i64
-             %0 = mov 1 : i64
              jump loop__bce_fast
+           }")]
+        (opt.opt-inline-checked-weighted-instrs-at func 0))]
+    [nested : i64
+      (let
+        [func
+          (irt.func
+            "function @checked_versioned_nested() -> i64 vars 1 {
+           entry:
+             jump outer
+           outer:
+             %0 = mov 1 : i64
+             jump mid
+           mid:
+             jump gone__bce_guard
+           gone__bce_guard:
+             jump loop__bce_guard
+           loop__bce_guard:
+             %0 = mov 1 : i64
+             branch true, loop__bce_fast, loop
+           loop:
+             %0 = mov 1 : i64
+             branch true, loop, mid_latch
+           loop__bce_fast:
+             branch true, loop__bce_fast, mid_latch
+           mid_latch:
+             branch true, mid, outer_latch
+           outer_latch:
+             branch true, outer, exit
+           exit:
+             return 0
            }")]
         (opt.opt-inline-checked-weighted-instrs-at func 0))]
     [fast-only : i64
@@ -16268,8 +16364,15 @@
       ;; one entry instruction at depth 0 plus four loop instructions at depth 1
       (= fast-only (+ 1 (* base 4)))
       (= slow-only (+ 1 (* base 4)))
-      ;; and the pair prices the clone alone: the original is cold
-      (= pair fast-only))))
+      ;; the entry and the two-instruction guard at depth 0, the clone at
+      ;; depth 1, and not the original
+      (= pair (+ 3 (* base 3)))
+      ;; the entry and exit at depth 0; `outer`, `outer_latch` and the
+      ;; two-instruction guard at depth 2 charged one rung below the cap;
+      ;; `mid`, the headerless guard, the clone and `mid_latch` saturated;
+      ;; and not the original
+      (= rung w1)
+      (= nested (+ 2 (* 5 w1) (* 4 w2))))))
 
 ;; The accept window. A free inline saves exactly `boundary`; the tier keeps a
 ;; site only when the model lands between half of that and two and a half
@@ -28633,6 +28736,26 @@
        %9 = add %7, %11 : i64
        return %9"))
 
+;; Block-local fold (#7973): `%3 = mov 5` is a `set!` after the address was
+;; taken and `%8` copies `%3` before a second call, so neither the constant 5
+;; nor the copy `%8 -> %3` survives the call that may rewrite `%3`. `%11` is the
+;; same constant on a local whose address is never taken, which still folds.
+(define (opt-addr-taken-fold-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %3 = mov %1 : i64
+       %5 = addr_of %3
+       %3 = mov 5 : i64
+       %6 = call write-through(%5) : i64
+       %7 = add %3, 1 : i64
+       %8 = mov %3 : i64
+       %9 = call write-through(%5) : i64
+       %10 = add %8, %7 : i64
+       %11 = mov 4 : i64
+       %12 = add %11, 1 : i64
+       %13 = add %10, %12 : i64
+       return %13"))
+
 (define (compiler-optimize-addr-taken-forwarding-self-test) : i64
   (let
     [global : ir.CompilerIrBlockList
@@ -28648,6 +28771,11 @@
         (opt.opt-function-blocks func))]
     [affine : ir.CompilerIrBlockList
       (opt.opt-affine-fold-blocks 16 (opt-addr-taken-affine-blocks))]
+    [fold : ir.CompilerIrBlockList
+      (opt-test-optimize-block-list
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-addr-taken-fold-blocks))]
     (cond
       ;; Global CSE kept the post-call multiply ...
       [(not (= (opt-count-mov-dst-blocks global 8) 0)) 1]
@@ -28662,6 +28790,12 @@
       [(not (= (opt-wide-literal-lhs-var affine 7) 3)) 6]
       ;; ... and still folded the control chain through %10 = mov %2.
       [(not (= (opt-wide-literal-lhs-var affine 11) 2)) 7]
+      ;; Fold kept the post-call read of %3 rather than folding 5 + 1 ...
+      [(not (= (opt-wide-literal-lhs-var fold 7) 3)) 8]
+      ;; ... and the pre-call copy %8 rather than forwarding %3 into it.
+      [(not (= (opt-wide-literal-lhs-var fold 10) 8)) 9]
+      ;; Control: the constant of the untaken %11 still folds %12 away.
+      [(not (= (opt-wide-literal-lhs-var fold 12) (- 0 2))) 10]
       [else 42])))
 
 ;; --- sccp honours the wide-literal left-operand refusal ----------------------
@@ -52479,6 +52613,10 @@
           (ir.compiler-ir-label "entry")
           (opt.compiler-opt-global-shared-view instrs))
         (ir.CompilerIrBlockList.Nil))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (& blocks))
+        (opt.compiler-opt-global-shared-view blocks))]
     [hs : opt.OptLoadHeaderSet
       (opt.opt-load-header-set-from-function
         type-segment-bases
@@ -75172,9 +75310,218 @@
   [blocks : ir.CompilerIrBlockList]
   [label : i64]) : opt.OptLabelSet
   (let
-    [context
+    [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
-    (opt.opt-cfg-dominance-frontier-with-context blocks context label)))
+    [frontiers : (__tl_dyn-array opt.OptLabelSet)
+      (opt.opt-cfg-dominance-frontiers (& context))]
+    (opt.opt-cfg-dominance-frontier-of (& context.index) (& frontiers) label)))
+
+;; The frontier scan #8287 replaced, one pass over every block per label, kept
+;; as the reference the property test below holds `opt-cfg-dominance-frontiers`
+;; to.
+(define (opt-cfg-frontier-reference-has-reachable-pred-id?
+  [index : (& index opt.OptCfgIndex)]
+  [doms : (& doms opt.OptDomInfo)]
+  [label-id : i64]
+  [edge : i64]
+  [end : i64]) : bool
+  (if (>= edge end)
+    false
+    (let
+      [pred-id : i64 (array-ref index.preds.edges edge)]
+      (if (and
+        (array-ref index.reachable pred-id)
+        (opt.opt-dom-info-dominates-id? doms label-id pred-id))
+        true
+        (opt-cfg-frontier-reference-has-reachable-pred-id?
+          index
+          doms
+          label-id
+          (+ edge 1)
+          end)))))
+
+(define (opt-cfg-frontier-reference-block?
+  [index : (& index opt.OptCfgIndex)]
+  [doms : (& doms opt.OptDomInfo)]
+  [label-id : i64]
+  [block-id : i64]) : bool
+  (let
+    [preds (& index.preds)]
+    (and
+      (array-ref index.reachable block-id)
+      (opt-cfg-frontier-reference-has-reachable-pred-id?
+        index
+        doms
+        label-id
+        (array-ref preds.offsets block-id)
+        (array-ref preds.offsets (+ block-id 1)))
+      (not
+        (and
+          (!= label-id block-id)
+          (opt.opt-dom-info-dominates-id? doms label-id block-id))))))
+
+;; `remaining` starts as the block list `index` was built from, so the walk
+;; position is the block id.
+(define (opt-cfg-frontier-reference-blocks
+  [remaining : (& remaining ir.CompilerIrBlockList)]
+  [index : (& index opt.OptCfgIndex)]
+  [doms : (& doms opt.OptDomInfo)]
+  [label-id : i64]
+  [block-id : i64]) : opt.OptLabelSet
+  (match (owned_view.compiler-owned-reference-shared-view remaining)
+    [(ir.CompilerIrBlockList.Nil) (opt.OptLabelSet.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block block-label _)
+          (let
+            [tail : opt.OptLabelSet
+              (opt-cfg-frontier-reference-blocks
+                (deref rest)
+                index
+                doms
+                label-id
+                (+ block-id 1))]
+            (if (and
+              (< block-id (opt.opt-cfg-index-block-count index))
+              (opt-cfg-frontier-reference-block? index doms label-id block-id))
+              (opt.opt-label-add tail block-label)
+              tail))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [remaining (ir.compiler-ir-block-seq-to-list seq)]
+        (opt-cfg-frontier-reference-blocks
+          remaining
+          index
+          doms
+          label-id
+          block-id))]))
+
+(define (opt-cfg-dominance-frontier-reference
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [context : opt.OptCfgContext]
+  [label : i64]) : opt.OptLabelSet
+  (let
+    [index : opt.OptCfgIndex (__tl-project-field context index)]
+    [label-id : i64
+      (match (opt.opt-cfg-index-id index label)
+        [(option_i64.Some id) id]
+        [(option_i64.None) (- 0 1)])]
+    (opt-cfg-frontier-reference-blocks blocks index context.doms label-id 0)))
+
+(define (opt-frontier-random-next [state : i64]) : i64
+  (% (+ (* state 1103515245) 12345) 2147483648))
+
+;; A random CFG over blocks b0..b<count - 1>, each ending in a return, a jump or
+;; a two-way branch to random blocks: loops, irreducible cycles, self-loops,
+;; back edges into the entry, duplicate edges, multiple exits and unreachable
+;; blocks all occur.
+(define (opt-frontier-random-cfg-text [seed : i64] [count : i64]) : String
+  (let
+    [text : String ""]
+    [state : i64 seed]
+    [block : i64 0]
+    [kind : i64 0]
+    [first : i64 0]
+    (begin
+      (while (< block count)
+        (begin
+          (set! state (opt-frontier-random-next state))
+          (set! kind (% state 4))
+          (set! state (opt-frontier-random-next state))
+          (set! first (% state count))
+          (set! state (opt-frontier-random-next state))
+          (set!
+            text
+            (str_cat.str-cat
+              text
+              "b"
+              (string.int->string block)
+              ":\n  "
+              (cond
+                [(= kind 0) "return 0"]
+                [(= kind 1)
+                  (str_cat.str-cat "jump b" (string.int->string first))]
+                [else
+                  (str_cat.str-cat
+                    "branch true, b"
+                    (string.int->string first)
+                    ", b"
+                    (string.int->string (% state count)))])
+              "\n"))
+          (set! block (+ block 1))))
+      text)))
+
+(define (opt-label-sets-same-order? [a : opt.OptLabelSet] [b : opt.OptLabelSet]) : bool
+  (let
+    [count : i64 (opt.opt-label-count a)]
+    [index : i64 0]
+    [same : bool (= count (opt.opt-label-count b))]
+    (begin
+      (while (and same (< index count))
+        (begin
+          (set!
+            same
+            (= (opt.opt-label-ref a index) (opt.opt-label-ref b index)))
+          (set! index (+ index 1))))
+      same)))
+
+;; Blocks whose table frontier differs from the reference scan's, contents or
+;; order.
+(define (opt-frontier-table-mismatches [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
+    [frontiers : (__tl_dyn-array opt.OptLabelSet)
+      (opt.opt-cfg-dominance-frontiers (& context))]
+    [count : i64 (opt.opt-cfg-index-block-count (& context.index))]
+    [id : i64 0]
+    [bad : i64 0]
+    (begin
+      (while (< id count)
+        (let
+          [label : i64 (opt.opt-cfg-index-label (& context.index) id)]
+          (begin
+            (when
+              (not
+                (opt-label-sets-same-order?
+                  (opt-cfg-dominance-frontier-reference
+                    (& blocks)
+                    (opt.compiler-opt-global-shared-view context)
+                    label)
+                  (opt.opt-cfg-dominance-frontier-of
+                    (& context.index)
+                    (& frontiers)
+                    label)))
+              (set! bad (+ bad 1)))
+            (set! id (+ id 1)))))
+      bad)))
+
+;; #8287: the per-function frontier table equals the per-label scan, set and
+;; order, on 300 random CFGs of 1 to 12 blocks, and an unknown label has no
+;; frontier.
+(define (compiler-optimize-dominance-frontier-table-ok?) : bool
+  (let
+    [seed : i64 1]
+    [bad : i64 0]
+    (begin
+      (while (<= seed 300)
+        (begin
+          (set!
+            bad
+            (+
+              bad
+              (opt-frontier-table-mismatches
+                (irt.blocks
+                  (opt-frontier-random-cfg-text seed (+ 1 (% seed 12)))))))
+          (set! seed (+ seed 1))))
+      (and
+        (= bad 0)
+        (=
+          (opt.opt-label-count
+            (opt-cfg-dominance-frontier
+              (irt.blocks "b0:\n  jump b0\n")
+              (ir.compiler-ir-label "missing")))
+          0)))))
 
 (define (opt-verify-error-ok?
   [result : opt.ResultCompilerOptimizeVerify]

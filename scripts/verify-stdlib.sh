@@ -230,8 +230,10 @@ net/http_trailer_policy.tl
 net/http_types.tl
 net/ip.tl
 net/tls_wire.tl
+net/url.tl
 net_windows_winsock.tl
 ssh_known_hosts_parse.tl
+ssh_wire_core.tl
 json.tl
 local_ipc.tl
 local_ipc_fake.tl
@@ -315,7 +317,9 @@ stdlib/tests/http_trailer_policy.tl|42|-|-|-
 stdlib/tests/net_ip_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_encode_reject.tl|134|-|printf:tl: array index out of bounds\n|-
+stdlib/tests/net_url_api.tl|42|-|-|-
 stdlib/tests/ssh_known_hosts_parse_api.tl|42|-|-|-
+stdlib/tests/ssh_wire_core_api.tl|42|-|-|-
 stdlib/tests/format_negative_dynamic_precision.tl|134|-|literal:format: precision count must be nonnegative|-
 stdlib/tests/format_negative_dynamic_width.tl|134|-|literal:format: dynamic width argument must be nonnegative|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega

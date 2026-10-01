@@ -476,6 +476,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "ir-label-index"
+        (compiler_ir_types.compiler-ir-label-generation-arena-handle-value))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "ir-symbols"
         (compiler_ir_types.compiler-ir-symbol-arena-handle-value))
       (allocation_profile.compiler-allocation-profile-control!
@@ -5073,6 +5078,8 @@
                   scope.home-profile-surface)
                 (compiler_ast_types.ast-node-pool-context-destroy-storage!
                   retired)
+                (ci.intern-compat-state-release-structural-generations!
+                  (&mut (array-ref state.intern-state 0)))
                 (unsafe
                   (begin
                     (arena.tl_arena_destroy
@@ -5352,6 +5359,8 @@
               0))
           (compiler_ast_types.ast-node-pool-context-destroy-storage!
             retired-pools)
+          (ci.intern-compat-state-release-structural-generations!
+            (&mut interns))
           (unsafe
             (arena.tl_arena_destroy intern-arena))
           result)))))

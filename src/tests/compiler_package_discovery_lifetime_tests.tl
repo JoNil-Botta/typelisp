@@ -4,6 +4,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector.vector String) as roots_vec)
 (import compiler_ast_types as ast)
@@ -383,3 +384,64 @@
           [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) unit]
           [(load.ResultCompilerLoadDependencyCatalogUnit.Err _)
             (io.panic "enclosing catalog must retain sole mapping release")])))))
+
+;; `(import wide.*)` notes two structural pairs per imported item, so each
+;; discovery job grows its child interner across several generations.
+(define (discovery-test-write-wide-fixture! [count : i64]) : unit
+  (let
+    [source : text_buf.TextBuf (text_buf.empty)]
+    [index : i64 0]
+    (begin
+      (text_buf.append! source "(module wide)")
+      (while (< index count)
+        (begin
+          (text_buf.append! source "\n(define wide_item_")
+          (text_buf.append-int! source index)
+          (text_buf.append! source " : i64 1)")
+          (set! index (+ index 1))))
+      (load.compiler-load-test-mkdir "target/exp")
+      (load.compiler-load-test-mkdir "target/exp/package-discovery-lifetime")
+      (load.compiler-load-test-mkdir
+        "target/exp/package-discovery-lifetime/src")
+      (load_tests.compiler-load-write-file-text
+        "target/exp/package-discovery-lifetime/src/wide.tl"
+        (text_buf.render source))
+      (load_tests.compiler-load-write-file-text
+        "target/exp/package-discovery-lifetime/src/wide_main.tl"
+        "(import wide.*)\n(define (main) : i64 wide_item_0)"))))
+
+(define (discovery-test-wide-load-ok?) : bool
+  (match (discovery-test-load
+    "target/exp/package-discovery-lifetime/src/wide_main.tl"
+    (backend.CompilerBackendTarget.Linux))
+    [(driver.ResultCompilerDriverPackagePaths.Ok _) true]
+    [(driver.ResultCompilerDriverPackagePaths.Err _) false]))
+
+(test
+  package-discovery-releases-structural-generations
+  (begin
+    (discovery-test-write-wide-fixture! 4000)
+    (driver.compiler-driver-reset-file-state!)
+    (let
+      [table-id : i64 (ci.intern-active-table-id)]
+      [live : i64 (ci.intern-structural-generations-live)]
+      [ok? : bool true]
+      [index : i64 0]
+      (begin
+        ;; Each job grows its child's records and map at least once, then
+        ;; releases every generation before the parent is used again.
+        (while (< index 3)
+          (let
+            [made : i64 (ci.intern-structural-generations-made-count)]
+            (begin
+              (set!
+                ok?
+                (and
+                  ok?
+                  (discovery-test-wide-load-ok?)
+                  (>= (ci.intern-structural-generations-made-count) (+ made 2))
+                  (= (ci.intern-structural-generations-live) live)))
+              (set! index (+ index 1)))))
+        (unless
+          (and ok? (= table-id (ci.intern-active-table-id)))
+          (io.panic "package discovery retained structural generations"))))))

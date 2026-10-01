@@ -70,12 +70,20 @@ VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
 VECTOR_FULL_STDERR="$WORKDIR/profile-vector-full.stderr"
+POOL_PREPARE_STDOUT="$WORKDIR/profile-macro-pool-prepare.stdout"
+POOL_PREPARE_STDERR="$WORKDIR/profile-macro-pool-prepare.stderr"
+MODULE_VIEW_ASM="$WORKDIR/profile-module-view-release.s"
+MODULE_VIEW_STDOUT="$WORKDIR/profile-module-view-release.stdout"
+MODULE_VIEW_STDERR="$WORKDIR/profile-module-view-release.stderr"
 VECTOR_ONE_ASM="$WORKDIR/profile-vector-one.s"
 VECTOR_ONE_STDOUT="$WORKDIR/profile-vector-one.stdout"
 VECTOR_ONE_STDERR="$WORKDIR/profile-vector-one.stderr"
 VECTOR_FIVE_ASM="$WORKDIR/profile-vector-five.s"
 VECTOR_FIVE_STDOUT="$WORKDIR/profile-vector-five.stdout"
 VECTOR_FIVE_STDERR="$WORKDIR/profile-vector-five.stderr"
+VECTOR_STRUCT_ASM="$WORKDIR/profile-vector-struct-full.s"
+VECTOR_STRUCT_STDOUT="$WORKDIR/profile-vector-struct-full.stdout"
+VECTOR_STRUCT_STDERR="$WORKDIR/profile-vector-struct-full.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 CTFE_SPLICE_STDOUT="$WORKDIR/profile-ctfe-splice.stdout"
@@ -317,7 +325,7 @@ assert_lifetime_ledger_in() {
     _lll_stderr=$3
     if ! awk -F'|' '
         BEGIN {
-            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|remainder|unattributed"
+            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|intern-storage|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|intern-storage|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|remainder|unattributed"
             expected_count = split(expected_text, expected, " ")
         }
         $1 == "compile-profile-lifetime" && $2 == "boundary" {
@@ -348,12 +356,11 @@ assert_lifetime_ledger_in() {
             for (i = 1; i <= count; i++) {
                 boundary = boundaries[i]
                 if (total[boundary] <= 0 || owners[boundary] + remainder[boundary] != total[boundary]) exit 1
-                # Named owners cover at least 89% of each boundary. The owners
-                # scale with the compiled source; the ~56 MB session remainder
-                # does not, so a smaller compiler source lowers the share: on
-                # the shrunk source the main-branch compiler and this one both
-                # measure about 90.0% at macro.lower-handoff (Windows CI 89.85).
-                if (owners[boundary] * 100 < total[boundary] * 89) exit 1
+                # Named owners cover at least 95% of each boundary. The macro
+                # boundaries name the session intern-storage growth, which
+                # was a ~47 MB unattributed remainder; the rest is about 9 MB
+                # (98.2% named at macro.lower-handoff on the Linux selfhost).
+                if (owners[boundary] * 100 < total[boundary] * 95) exit 1
             }
             if (value["load.handoff|token-storage"] != 0) exit 1
             if (value["macro.pre-detach|retired-symbols-registry"] != 0) exit 1
@@ -823,6 +830,52 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
 
+# Each pool context allocates two cells in the long-lived load+macro arena, so
+# the macro walk may build only a bounded number per fired declaration.
+# Preparing a transformer compares pool lengths and builds none (#7937); a path
+# that builds one per transformer run exceeds the bound on this fixture, whose
+# fired declarations each run several expression macros.
+echo "[compile-profile] verify macro transformer preparation builds no pool context"
+run_logged "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR" "profiled macro pool preparation fixture check failed" \
+    "$PROFILE_BIN" check tests/integration/compile_profile_macro_pool_prepare.tl \
+    --stdlib-root . --stdlib-root stdlib
+POOL_PREPARE_FIRES=$(profile_counter_value_in "$POOL_PREPARE_STDERR" "typecheck.macro.walk_decl_fire_count") &&
+    POOL_PREPARE_CONTEXTS=$(profile_counter_value_in "$POOL_PREPARE_STDERR" "typecheck.macro.walk_decl_fire_pool_contexts") || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "missing macro pool-context counters"
+}
+[ "$POOL_PREPARE_FIRES" -ge 30 ] || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "macro pool preparation fixture fired $POOL_PREPARE_FIRES declarations, expected at least 30"
+}
+[ "$POOL_PREPARE_CONTEXTS" -le $((7 * POOL_PREPARE_FIRES)) ] || {
+    show_failure_logs "$POOL_PREPARE_STDOUT" "$POOL_PREPARE_STDERR"
+    fail "macro walk built $POOL_PREPARE_CONTEXTS pool contexts for $POOL_PREPARE_FIRES fired declarations, more than 7 per fire"
+}
+
+# Lowering releases each module's local view after the module's last
+# declaration segment (#8372): every view built is released, including on a
+# fixture whose modules are left and revisited.
+echo "[compile-profile] verify module-local views are released after their last segment"
+run_logged "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR" "profiled module view release fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_module_view_release.tl \
+    -o "$MODULE_VIEW_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --stdlib-root tests/integration
+MODULE_VIEW_BUILT=$(profile_live_counter_value_in "$MODULE_VIEW_STDERR" "lower.module_local_view.entries") &&
+    MODULE_VIEW_RELEASED=$(profile_live_counter_value_in "$MODULE_VIEW_STDERR" "lower.module_local_view.released") &&
+    MODULE_VIEW_REVISITS=$(profile_live_counter_value_in "$MODULE_VIEW_STDERR" "lower.module_local_view.hits") || {
+    show_failure_logs "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR"
+    fail "missing module-local view counters"
+}
+[ "$MODULE_VIEW_BUILT" -ge 3 ] && [ "$MODULE_VIEW_REVISITS" -ge 1 ] || {
+    show_failure_logs "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR"
+    fail "module view fixture built $MODULE_VIEW_BUILT views with $MODULE_VIEW_REVISITS revisits, expected at least 3 and 1"
+}
+[ "$MODULE_VIEW_RELEASED" -eq "$MODULE_VIEW_BUILT" ] || {
+    show_failure_logs "$MODULE_VIEW_STDOUT" "$MODULE_VIEW_STDERR"
+    fail "lowering released $MODULE_VIEW_RELEASED of $MODULE_VIEW_BUILT module-local views"
+}
+
 echo "[compile-profile] verify compile-wide peak survives nested reset"
 run_logged "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR" "compile-wide nested peak reset fixture failed" \
     "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
@@ -1016,13 +1069,14 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # The selfhost walk's generated imports all target loaded modules and
+    # extend the live tables (#8135), so it retires no symbol table; the
+    # generated-import fixture covers retired-symbol retention instead.
     profile_rows "$SELFHOST_STDOUT" "$SELFHOST_STDERR" <<'ROWS'
-c typecheck.macro.retention_retired_symbol_rotations >= 1
 c typecheck.macro.retention_expansion_scratch_creations >= 1
 c typecheck.macro.retention_active_generation_rotations >= 1
 c typecheck.macro.retention_retired_generation_rotations >= 1
 c typecheck.macro.retention_live_symbols_max_bytes >= 1
-c typecheck.macro.retention_retired_symbols_max_bytes >= 1
 c typecheck.macro.retention_expansion_scratch_max_bytes >= 1
 c typecheck.macro.retention_active_generations_max_bytes >= 1
 c typecheck.macro.retention_retired_generations_max_bytes >= 1
@@ -1040,16 +1094,21 @@ ROWS
     SELFHOST_MATERIALIZED_SPLICES=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_decl_sp_mat_count")
+    SELFHOST_INCREMENTAL_IMPORTS=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro.walk_segment_incremental_imports")
     SELFHOST_SEGMENT_ALIAS_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_segment_fallback_alias_flattens")
     SELFHOST_REGISTRY_INVALIDATIONS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_splice_registry_invalidated")
-    if [ "$SELFHOST_SEGMENT_FILE_FLATTENS" -ne "$SELFHOST_MATERIALIZED_SPLICES" ] ||
+    # Every materialized generated import takes exactly one path: the file
+    # fallback, or the incremental append when it loads nothing new.
+    if [ "$((SELFHOST_SEGMENT_FILE_FLATTENS + SELFHOST_INCREMENTAL_IMPORTS))" -ne "$SELFHOST_MATERIALIZED_SPLICES" ] ||
         [ "$SELFHOST_SEGMENT_ALIAS_FLATTENS" -ne "$SELFHOST_REGISTRY_INVALIDATIONS" ]; then
         show_failure_logs "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-        fail "segmented-program fallbacks do not match their conservative paths: file=$SELFHOST_SEGMENT_FILE_FLATTENS materialized=$SELFHOST_MATERIALIZED_SPLICES alias=$SELFHOST_SEGMENT_ALIAS_FLATTENS invalidated=$SELFHOST_REGISTRY_INVALIDATIONS"
+        fail "segmented-program fallbacks do not match their conservative paths: file=$SELFHOST_SEGMENT_FILE_FLATTENS incremental=$SELFHOST_INCREMENTAL_IMPORTS materialized=$SELFHOST_MATERIALIZED_SPLICES alias=$SELFHOST_SEGMENT_ALIAS_FLATTENS invalidated=$SELFHOST_REGISTRY_INVALIDATIONS"
     fi
     # The compiler source currently exercises ordinary Decls, generated
     # Modules, and generated-file nominal deltas. All are additive: the CTFE
@@ -1941,6 +2000,21 @@ c typecheck.macro.walk_segment_splits >= 5
 c typecheck.macro.walk_segment_delta_decls >= 5
 ROWS
 
+# Full-mode struct and enum vectors instantiate `(eq.eq S)`, whose generated
+# body imports the already-loaded `stdlib.eq`. That import loads no new
+# declarations, so it extends the live tables instead of flattening the whole
+# program and rebuilding them.
+echo "[compile-profile] full-mode struct and enum vectors import loaded stdlib.eq"
+run_logged "$VECTOR_STRUCT_STDOUT" "$VECTOR_STRUCT_STDERR" "profiled struct-vector fixture compile failed" \
+    "$PROFILE_BIN" compile tests/integration/compile_profile_vector_struct_full.tl \
+    -o "$VECTOR_STRUCT_ASM" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --stdlib-root . --stdlib-root stdlib --opt-level 1
+profile_rows "$VECTOR_STRUCT_STDOUT" "$VECTOR_STRUCT_STDERR" <<'ROWS'
+c typecheck.macro.walk_segment_fallback_flattens = 0
+c typecheck.macro.walk_segment_incremental_imports >= 2
+c typecheck.macro.live_rebuilds = 1
+ROWS
+
 for counter in \
     checked_program.pre_decls.functions \
     checked_program.reachable.decls \
@@ -1973,10 +2047,15 @@ assert_segmented_program_view_in \
     "$GEN_IMPORT_STDERR"
 
 # The generated module imports stdlib.string; the single demand-driven pass
-# loads and forces that file import inline.
+# loads and forces that file import inline. Loading new declarations takes the
+# file fallback, which rebuilds the live tables and retires the old symbols.
 profile_rows "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR" <<'ROWS'
 lacks typecheck.macro.fixed_point_
 has compile-profile|typecheck.macro_scratch_release|
+c typecheck.macro.walk_segment_fallback_file_flattens >= 1
+c typecheck.macro.walk_segment_incremental_imports = 0
+c typecheck.macro.retention_retired_symbol_rotations >= 1
+c typecheck.macro.retention_retired_symbols_max_bytes >= 1
 ROWS
 
 echo "[compile-profile] check additive CTFE splice fixture"

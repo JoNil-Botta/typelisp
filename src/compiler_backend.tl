@@ -1841,15 +1841,15 @@
   [build : CompilerBackendDebugFileBuildState]) : CompilerBackendDebugFileBuildState
   (if (>= index entries.len)
     build
-    (match (array-ref entries.slots index)
-      [(compiler_ir_types.CompilerSourceSpansEntry.Entry _ path-id _)
-        (let
-          [next : CompilerBackendDebugFileBuildState
-            (compiler-backend-debug-file-add! build path-id)]
-          (compiler-backend-debug-files-from-function-entries
-            entries
-            (+ index 1)
-            next))])))
+    (let
+      [span-entry : compiler_ir_types.CompilerSourceSpansEntry
+        (array-ref entries.slots index)]
+      [next : CompilerBackendDebugFileBuildState
+        (compiler-backend-debug-file-add! build span-entry.path-id)]
+      (compiler-backend-debug-files-from-function-entries
+        entries
+        (+ index 1)
+        next))))
 
 (define (compiler-backend-debug-files-from-instr-entries
   [entries : compiler_ir_types.CompilerSourceSpansInstrEntryList]
@@ -1857,15 +1857,12 @@
   [build : CompilerBackendDebugFileBuildState]) : CompilerBackendDebugFileBuildState
   (if (>= index entries.len)
     build
-    (match (array-ref entries.slots index)
-      [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry _ path-id _)
-        (let
-          [next : CompilerBackendDebugFileBuildState
-            (compiler-backend-debug-file-add! build path-id)]
-          (compiler-backend-debug-files-from-instr-entries
-            entries
-            (+ index 1)
-            next))])))
+    (let
+      [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+        (array-ref entries.slots index)]
+      [next : CompilerBackendDebugFileBuildState
+        (compiler-backend-debug-file-add! build span-entry.path-id)]
+      (compiler-backend-debug-files-from-instr-entries entries (+ index 1) next))))
 
 (define (compiler-backend-debug-file-index-build-with-backend-state
   [backend-state : CompilerBackendState]
@@ -4427,29 +4424,32 @@
     [out : backend_i64_i64_map.Map map]
     (if (< index 0)
       out
-      (match (array-ref slots index)
-        [(compiler_ir_types.CompilerSourceSpansEntry.Entry name _ span)
-          (if (backend_i64_i64_map.contains?
-            (& out)
-            (compiler_ir_types.compiler-ir-symbol-id-value name))
+      (let
+        [span-entry : compiler_ir_types.CompilerSourceSpansEntry
+          (array-ref slots index)]
+        [name : compiler_ir_types.CompilerIrSymbolId span-entry.name]
+        [span : compiler_ast_types.AstSourceSpan span-entry.span]
+        (if (backend_i64_i64_map.contains?
+          (& out)
+          (compiler_ir_types.compiler-ir-symbol-id-value name))
+          (compiler-backend-source-span-index-add-array
+            slots
+            (- index 1)
+            out
+            values)
+          (begin
+            (backend_i64_i64_map.insert-ref!
+              (&mut out)
+              (compiler_ir_types.compiler-ir-symbol-id-value name)
+              index)
+            (set!
+              (array-ref values index)
+              (compiler_ir_types.CompilerMaybeSourceSpan.Some span))
             (compiler-backend-source-span-index-add-array
               slots
               (- index 1)
               out
-              values)
-            (begin
-              (backend_i64_i64_map.insert-ref!
-                (&mut out)
-                (compiler_ir_types.compiler-ir-symbol-id-value name)
-                index)
-              (set!
-                (array-ref values index)
-                (compiler_ir_types.CompilerMaybeSourceSpan.Some span))
-              (compiler-backend-source-span-index-add-array
-                slots
-                (- index 1)
-                out
-                values)))]))))
+              values)))))))
 
 (define (compiler-backend-source-span-index-build-with-backend-state
   [backend-state : CompilerBackendState]
@@ -4535,29 +4535,30 @@
             (begin
               (while (< index instr-entries.len)
                 (begin
-                  (match (array-ref instr-entries.slots index)
-                    [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                        key
-                        _
-                        _)
-                      (match key
-                        [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
-                            key-function
-                            var)
-                          (if (and
-                            (=
-                              (compiler_ir_types.compiler-ir-symbol-id-value
-                                key-function)
-                              function)
-                            (>= var 0)
-                            (< var vars))
-                            (begin
-                              (compiler_liveness.compiler-live-set-builder-insert!
-                                (&mut words)
-                                var)
-                              (set! pinned true))
-                            unit)]
-                        [_ unit])])
+                  (let
+                    [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                      (array-ref instr-entries.slots index)]
+                    [key : compiler_ir_types.CompilerSourceSpansInstrKey
+                      (compiler_ir_types.compiler-source-spans-instr-entry-key
+                        (& span-entry))]
+                    (match key
+                      [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
+                          key-function
+                          var)
+                        (if (and
+                          (=
+                            (compiler_ir_types.compiler-ir-symbol-id-value
+                              key-function)
+                            function)
+                          (>= var 0)
+                          (< var vars))
+                          (begin
+                            (compiler_liveness.compiler-live-set-builder-insert!
+                              (&mut words)
+                              var)
+                            (set! pinned true))
+                          unit)]
+                      [_ unit]))
                   (set! index (+ index 1))))
               (if pinned
                 (compiler_liveness.compiler-live-set-from-words-trimmed
@@ -4599,20 +4600,23 @@
         (begin
           (while (< index instr-entries.len)
             (begin
-              (match (array-ref instr-entries.slots index)
-                [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                    key
+              (let
+                [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                  (array-ref instr-entries.slots index)]
+                [key : compiler_ir_types.CompilerSourceSpansInstrKey
+                  (compiler_ir_types.compiler-source-spans-instr-entry-key
+                    (& span-entry))]
+                [path-id : i64 span-entry.path-id]
+                [span : compiler_ast_types.AstSourceSpan span-entry.span]
+                (set!
+                  (array-ref slots index)
+                  (compiler_ir_types.compiler-source-spans-instr-entry
+                    (compiler-backend-remap-source-span-key
+                      key
+                      function
+                      (compiler-backend-global-shared-view remap))
                     path-id
-                    span)
-                  (set!
-                    (array-ref slots index)
-                    (compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                      (compiler-backend-remap-source-span-key
-                        key
-                        function
-                        (compiler-backend-global-shared-view remap))
-                      path-id
-                      span))])
+                    span)))
               (set! index (+ index 1))))
           (compiler_ir_types.CompilerSourceSpans.Spans
             entries
@@ -19850,12 +19854,13 @@
           reg
           "\n")
         (ResultCompilerBackend.Ok ""))]
-    [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _)
+    ;; `RuntimeGlobal` and `StaticArray` only initialize globals.
+    [_
       (ResultCompilerBackend.Err
         (box
           (compiler_diagnostic.compiler-diagnostic-at-start
             ""
-            "backend: runtime-global marker used as an instruction value")))]))
+            "backend: global initializer marker used as an instruction value")))]))
 
 ;; Float argument loads stay on the String emitter (a cold family next to the
 ;; scalar loads); the sequence buffer takes their text in one append.
@@ -76985,21 +76990,20 @@
         (begin
           (while (< index count)
             (begin
-              (match (array-ref slots index)
-                [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                    _
-                    path-id
-                    _)
-                  (when
-                    (> path-id 0)
-                    (set!
+              (let
+                [span-entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                  (array-ref slots index)]
+                [path-id : i64 span-entry.path-id]
+                (when
+                  (> path-id 0)
+                  (set!
+                    out
+                    (compiler-backend-program-collections-add-string
                       out
-                      (compiler-backend-program-collections-add-string
-                        out
-                        (compiler_ir_types.compiler-debug-path-remap
-                          (ci.intern-compat-state-str
-                            (compiler-backend-state-intern backend-state)
-                            path-id)))))])
+                      (compiler_ir_types.compiler-debug-path-remap
+                        (ci.intern-compat-state-str
+                          (compiler-backend-state-intern backend-state)
+                          path-id))))))
               (set! index (+ index 1))))
           out))]))
 
@@ -78286,6 +78290,19 @@
           "\n"))]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
       (ResultCompilerBackend.Ok (compiler-backend-float-bits-directive ty bits))]
+    ;; A static-array global (#8369) is a cell holding the address of the
+    ;; element bytes that follow it: writable, one copy per global (never
+    ;; deduplicated, so a store through one global's elements cannot show
+    ;; through another's), and padded to 8 bytes so the next global stays
+    ;; aligned. The cell keeps the pointer every `(Array T N)` value is.
+    [(compiler_ir_types.CompilerIrValue.StaticArray bytes)
+      (ResultCompilerBackend.Ok
+        (text_buf.render
+          (text_buf.append
+            (compiler-backend-emit-byte-directives-into
+              bytes
+              (text_buf.append (text_buf.empty) "    .quad .+8\n"))
+            "    .balign 8\n")))]
     [(compiler_ir_types.CompilerIrValue.Global name)
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
@@ -81106,7 +81123,7 @@
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value program-index)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) parts]))
+    [_ parts]))
 
 (define (compiler-backend-object-load-value-to-reg-with-type
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -83997,6 +84014,9 @@
       (and (>= value -2147483648) (<= value 2147483647))]
     ;; This placeholder only records the initializer reference today.
     [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
+    ;; The object encoder has no static-array record yet (#8369): a program with
+    ;; one keeps the assembly path.
+    [(compiler_ir_types.CompilerIrValue.StaticArray _) false]
     [_ true]))
 
 (define (compiler-backend-object-semantic-call-args-array-supported?

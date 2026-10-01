@@ -87,6 +87,14 @@ covers equal numeric IDs with different spellings. `compiler_ast_types_smoke.tl`
 owns synthetic AST construction, empty-name compatibility, and pool reset
 cases; `compiler_parse_smoke.tl` owns parsed-token identity.
 
+`tests/compiler_module_name_tests.tl` pins the shared complete dotted-import
+grammar across parser symbols and LSP names, including byte-level Unicode,
+punctuation, path rejection, long names, diagnostics, and import metadata.
+Source-token fixtures also compare parser and LSP acceptance. Separate editor
+prefix cases and unsupported-byte fixtures ensure incomplete or invalid operands
+cannot resolve a valid prefix. The existing parser and LSP smokes retain alias,
+wildcard, string-path diagnostics, and editor integration coverage.
+
 ## Optimizer dense block scans
 
 The `call-memory-dense-scan` inline test in `compiler_optimize_tests.tl`
@@ -212,8 +220,8 @@ inline test in `src/tests/compiler_typecheck_core_tests.tl` gives three pools
 identical node IDs
 but different literal kinds and source positions, installs an unrelated owner,
 and checks integer/f32 results plus f32 overflow rejection. It also checks
-the explicit compatibility-pool route and the canonical/sparse-view span
-oracle. Keep those owner and source-view checks when changing literal walkers or
+that an active compatibility pool context does not redirect typechecker reads,
+and the canonical/sparse-view span oracle. Keep those owner and source-view checks when changing literal walkers or
 their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
 read.
 
@@ -239,6 +247,7 @@ transition that can occur before the last use. Use these operational classes:
 | Retained phase data | A dedicated phase arena; it may cross scratch rewinds, but reset or destroy it only at the documented phase boundary after all consumers finish. |
 | AST/type nodes | The installed `AstNodePoolContext`; allocate through the pool APIs and release with that pool context. |
 | State crossing pool installs or intern resets | A separate arena created once for the required lifetime. Never rewind or destroy it during that lifetime; clear the collection logically by rebinding or resetting metadata. |
+| Growable index over such state | A generation arena holding only the current arrays (slots of descriptors, hash index). Growth builds the replacement in a fresh arena, publishes it, then destroys the old one. The values the arrays point to stay in the lifetime arena, and no reader holds a generation's arrays across a call that can grow them. The IR label table (`compiler-ir-label-generation-install!` in `src/compiler_ir_types.tl`) is the reference. The structural interner's record columns and map follow it (`intern-structural-table-grow-records!` and `-grow-map!` in `src/compiler_intern.tl`); every persistent reset releases both generations before it rewinds or replaces the owning arena, and every owner teardown releases them (`intern-compat-state-release-structural-generations!`) before it destroys that arena. |
 
 Do not allocate unrelated long-lived sidecars by temporarily switching to
 `node-pool-base-arena`. An `AstNodePoolContext` captures the base-arena head.
@@ -252,7 +261,8 @@ The intern persistent arena is not a substitute. A floor reset through
 `intern-compat-state-persistent-arena-reset-to-floor!` rewinds allocations
 above its mark, and a full reset replaces or destroys the arena. State that
 must cross either boundary needs its own owner. Allocate the initial collection,
-owned keys/values, and every capacity growth in that same dedicated arena.
+owned keys/values, and every capacity growth in that same dedicated arena, or
+put the growable arrays in a generation arena as described in the table.
 Restore the caller's active arena after each operation, but never reclaim the
 dedicated arena until its complete required lifetime ends.
 
@@ -923,10 +933,11 @@ deterministic output, one-byte source mutation propagation, and byte-for-byte
 decoding with a branch-built compiler.
 
 CI's isolated TLCI mutation bootstrap enables the deterministic same-commit
-mutation witness. It copies `src/` and `stdlib/` below that bootstrap's target
-workdir, changes only the zero-body sentinel in the already-native
-`stdlib.core_macros/when` transformer, and builds every generation from that
-tree. Stage1 must emit exact package-qualified source-route evidence and the
+mutation witness. It starts from the same published stage0 seed as the main
+bootstrap and runs beside it rather than after it. It copies `src/` and
+`stdlib/` below that bootstrap's target workdir, changes only the zero-body
+sentinel in the already-native `stdlib.core_macros/when` transformer, and
+builds every generation from that tree. Stage1 must emit exact package-qualified source-route evidence and the
 changed diagnostic. Stage2, with the newly produced image embedded, must emit
 the matching native-route evidence with no contradictory source record and the
 same changed diagnostic. Stage1, stage2, and the final converged producer must
@@ -1276,7 +1287,7 @@ host bootstraps the full `src/main.tl` CLI as described under
 [Stage0 and the bootstrap](#stage0-and-the-bootstrap); all downstream gates
 receive the converged compiler, and the previous bootstrap generation is
 retained for the cross-mode differential. The separate TLCI mutation bootstrap
-keeps its independent build. Other producers hand their compilers and
+keeps its independent build from the same seed. Other producers hand their compilers and
 references to later gates through path files under `target/` (see
 `scripts/README.md`). Both hosts must run every applicable gate. Linux-only
 obligations include build invariance, instruction counts and Linux runtime

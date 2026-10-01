@@ -16,6 +16,13 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+`compiler_module_name.tl` owns the complete dotted import-name contract used by
+both the parser and LSP: nonempty components, no path separators or colon, and
+no final `.tl` suffix. It preserves the existing byte-level name predicate;
+source tokenization still belongs to the lexer. The LSP classifies incomplete
+editor prefixes separately and resolves only complete names at token boundaries,
+so an unsupported byte cannot turn an invalid operand into a valid prefix.
+
 `AstType.CFunc` separates a native code address from an ordinary TypeLisp
 function/closure descriptor. Its pooled `Func` operand records only argument and
 result shape; its second operand records nullability and the unsafe-call effect.
@@ -174,6 +181,19 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Each function body typechecks against a function-local fork of the module
+environment (#8375): `tc-type-env-fork-function-store` creates a store in the
+function's rewound scratch with the parent's head and capabilities, and the
+fork's binding and cache segments grow there. Environment heads are raw node
+addresses, so the fork's records link to the parent's immutable nodes without
+copying them, and the parent store never receives a function-local record. The
+parent's explicit-layer chain index stays shared read-only until the fork's
+first layer registration, when `tc-chain-state-ensure!` copies it into the
+scratch. Only the parent environment reaches lowering. Retiring the scratch advances `tc-type-env-store-epoch`, so memos keyed
+by a store handle or node address cannot match a later fork reallocated at the
+same address, and clears the unbound-name suggestion snapshot that names the
+fork.
+
 File, package, check, test and semantic-index entry points pass their actual cfg
 environment through the lowerer/typecheck interfaces; a cache-scope String is
 only an identity key and cannot replace those semantic inputs.
@@ -217,6 +237,14 @@ verifier checks retained arena bytes before that compaction, and
 `src/tests/scan_storage_growth.tl` covers relocation, current-owner retirement,
 failed reads and shared-session reuse. Whole-load scan release empties the
 token scratch, while reusable sessions retain their current capacity.
+
+The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
+inline records: function entries (symbol, path id, span; 32 bytes) and
+instruction entries (value, store or bounds key, path id, span; 48 bytes). The
+records carry no variant tag, so a slot costs exactly its fields. An append with
+spare capacity writes the shared slot and growth copies the live prefix;
+escaping a table copies only that prefix into the current arena, which leaves
+no pointer into the arena that built it.
 
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
@@ -363,6 +391,21 @@ intern session; dotted projections must not consult another installed pool.
 Unrelated globals remain pruned. The global-field inline fixture and harness
 retention test guard this boundary.
 
+A global's IR initializer takes one of three forms:
+- **A constant value**, emitted as static data.
+- **`RuntimeGlobal`**, naming the hidden `__global_init_*` function that the
+  entry code calls before `main`.
+- **`StaticArray`**, the exact little-endian element bytes of a fixed array of
+  constant scalars (#8369).
+  - It appears only as a global initializer. The optimizer copies only `I64`
+    initializers into instructions, and the backend's operand load rejects a
+    `StaticArray`.
+  - The backend emits one writable copy per global behind the cell and never
+    deduplicates them, so the cell keeps the pointer representation of every
+    `(Array T N)` value.
+  - The direct-object encoder has no static-array record, so such programs
+    take the assembly path.
+
 Mutable typecheck caches, indexes and traversal state belong to the compiler
 job's `TcJobState`, never to process-wide cells, so resetting or destroying one
 job cannot disturb another. A value that is a pure function of intern ids is
@@ -406,6 +449,18 @@ environment. Layout and reflection queries therefore see the declaration an
 annotation would name, not the spelling: `(type other.Point)` through an import
 alias reaches the layout of its defining module's `Point` (#8112).
 
+
+An array allocation (`make-array`, `__tl_make-array`) whose element default
+is all-zero bytes lowers to `tl_array_zero`. That runtime fill skips memory
+the arena has never handed out. Other defaults lower to a per-element init
+loop. `lower-make-array-zero-fill-supported?` decides which applies:
+- scalars and raw pointers;
+- default-layout structs whose fields all qualify;
+- enums whose tag-0 variant's payload fields all qualify, including a
+  fieldless tag-0 variant (#8520).
+
+Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
+default, for one, is a live allocation.
 
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
@@ -570,6 +625,21 @@ late IR may still contain mutable locals when SSA construction declines a
 function. `opt-def-counts-*` counts entry parameters and all destinations through
 the verifier's canonical instruction classifier.
 
+A local whose address is taken (`addr_of v` anywhere in the function) is
+memory, not a value: a store or call through the exposed address redefines it
+without naming it. No pass that forwards values by definition records a copy or
+constant fact naming such a var, as destination or source.
+- Global copy/CSE and affine folding read the marks of `opt-addr-taken-vars`.
+- LICM and the block-local `fold` pipeline read the installed per-function set
+  `opt-function-addr-taken`. Each installs it before rewriting a function:
+  LICM once it has found a loop, and `optimize-block-list-for-function-pass`
+  before its block walk. `fold` keeps it out of its constant environments and
+  its copy environment (#7973).
+- One scan builds both, and allocates nothing for a function without an
+  `addr_of`. The loop call cache keeps a separate scan.
+
+#8190 tracks making this one pass-wide rule with an adversarial matrix.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded
@@ -577,6 +647,29 @@ binary transcript and exact SHA-256 fingerprint. The layer is relocatable and
 independent of cache storage: callers supply authority-checked package-relative
 paths and nominal compiler/child identities, while event capture, invalidation,
 result serialization, and reuse policy remain separate compiler services.
+
+[`compiler_incremental_graph.tl`](../src/compiler_incremental_graph.tl) holds a
+previous run's successful queries as one immutable graph (#7322).
+- **Nodes.** A node joins:
+  - a query identity;
+  - the semantic output identity its parents observed;
+  - the opaque key of its stored result, which is never compared with an output;
+  - its complete committed trace.
+
+  Child-result edges resolve by exact query transcript and must match the
+  child's published output.
+- **Roots** are typed purpose/name pairs.
+- **One parser.** Finalize encodes the sorted candidate and decodes it with the
+  same strict parser that admits persisted bytes. So a published graph has
+  passed framing, budgets, canonical order, referential integrity, reachability
+  from a root and acyclicity, and a failure publishes nothing.
+- **Validation memory.** The transient identity and trace decodes run in one
+  scratch arena per decode.
+- **Exposed.** The graph exposes deterministic lookup, dependency and dependent
+  rows, a dependencies-first order that releases the smallest canonical index
+  first, the canonical bytes, and their SHA-256 fingerprint.
+- **Out of scope.** Payloads, the result store and replanning stay with their
+  owners (#7187, #7023, #7188).
 
 Aggregate declaration markers live in `AstDeclMeta` in
 [`compiler_ast_types.tl`](../src/compiler_ast_types.tl), separate from runtime

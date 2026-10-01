@@ -334,9 +334,13 @@
 (defstruct TcTypeHandleCacheStateData
   (owner-arena i64)
   ;; Raw pointers into fixed arena-owned lanes keep the multi-million-call hit
-  ;; path to scalar loads. The arena retains both allocations for the job.
+  ;; path to scalar loads. The arena retains all three allocations for the job.
   (keys-address i64)
   (handles-address i64)
+  ;; Top-level move kind of the slot's declaration: 0 unknown, 1 Copyable,
+  ;; 2 MoveOnly. Every store of a key into a slot resets its kind, so a kind is
+  ;; only ever read beside the key and stamp it was classified under.
+  (move-kinds-address i64)
   (symbols-owner i64)
   (symbols-generation i64))
 
@@ -1132,7 +1136,7 @@
       [cell : (__tl_dyn-array TcTypeHandleCacheStateData)
         (__tl_make-array TcTypeHandleCacheStateData 1)]
       (begin
-        (set! (array-ref cell 0) (TcTypeHandleCacheStateData owner 0 0 -1 -1))
+        (set! (array-ref cell 0) (TcTypeHandleCacheStateData owner 0 0 0 -1 -1))
         (TcTypeHandleCacheState
           (cast
             (unsafe
@@ -2529,12 +2533,23 @@
       (unsafe
         (ptr-read (ptr-cast (ptr-addr-of decls-box) : (Ptr u64))))]))
 
+;; Typechecker pool reads follow the context's own pools and ignore a
+;; compatibility pool context, so none may be active when a root context is
+;; created. Lint, the only production user, clears its compatibility context
+;; around the checks it runs. Empty when creation is allowed.
+(define (tc-context-compat-guard-message) : String
+  (if (ast.ast-node-pool-compat-context-active?)
+    "typecheck: a typecheck context was created while a compatibility pool context is active"
+    ""))
+
 ;; Allocate a root context's shared block in the job's lifetime arena, which
 ;; outlives every context of the job (a caller's scratch arena might not).
 (define (tc-context-shared-new
   [job-state : TcJobState]
   [shared : TcContextShared]) : u64
   (let
+    [guard : String (tc-context-compat-guard-message)]
+    [_guard : unit (when (> (string.string-length guard) 0) (io.panic guard))]
     [owner : i64 (tc-job-state-field job-state owner-arena i64)]
     [home : i64 (arena.tl_arena_current)]
     [_enter : unit
@@ -4463,11 +4478,7 @@
 ;; at each use so nested installs cannot redirect the walk or add a TcContext-
 ;; sized helper frame to recursive expression checking.
 (defmacro (tc-context-expr-get [ctx : Expr] [id : Expr]) : Expr
-  `(ast.ast-expr-segment-bases-get
-    (if (ast.ast-node-pool-compat-context-active?)
-      (ast.ast-node-pool-active-expr-segment-bases)
-      (tc-context-expr-segment-bases ,ctx))
-    ,id))
+  `(ast.ast-expr-segment-bases-get (tc-context-expr-segment-bases ,ctx) ,id))
 
 ;; Expanded in place: expression reads are the hottest context access, and a
 ;; helper function here would not be inlined into the large walkers.
@@ -4503,17 +4514,11 @@
 
 ;; Type segment-bases for a pure read under `ctx`. Lifetime-elision walks may
 ;; append reconstructed nodes, but never install a different pool; the table is
-;; stable across push/grow. Compatibility callers keep following the
-;; installed pool that their no-context API selects.
+;; stable across push/grow.
 (define (tc-context-type-bases [ctx : TcContext]) : i64
-  (if (ast.ast-node-pool-compat-context-active?)
-    (let
-      [pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-capture-active)]
-      (ast.ast-node-pool-context-type-segment-bases pools))
-    (let
-      [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      (ast.ast-node-pool-context-type-segment-bases pools))))
+  (let
+    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+    (ast.ast-node-pool-context-type-segment-bases pools)))
 
 ;; Expression segment-bases for a read-only walk under `ctx`, snapshotted once
 ;; at the walk's entry and threaded down as a scalar.
@@ -4524,16 +4529,12 @@
 ;; token avoids that copy, so a converted walk is no dearer than the global
 ;; reader; the hoist, not the conversion, is what makes that true.
 ;;
-;; A compatibility pool context suppresses the ctx install (see
-;; `tc-context-install-pools!`), so under one the walk must follow the installed
-;; pool exactly as `ast-node-get` does. Only walks that cannot expand a macro or
+;; Typechecker reads always follow `ctx`'s own pools, never a compatibility
+;; pool context: no typecheck context is created while one is active
+;; (`tc-context-compat-guard-message`). Only walks that cannot expand a macro or
 ;; otherwise install a different pool mid-traversal may cache this.
 (define (tc-context-expr-bases [ctx : TcContext]) : i64
-  (if (ast.ast-node-pool-compat-context-active?)
-    (ast.ast-node-pool-active-expr-segment-bases)
-    ;; This query returns one scalar: read the pool cells from the shared block
-    ;; instead of materializing a pool view through tc-context-pools.
-    (tc-context-expr-segment-bases ctx)))
+  (tc-context-expr-segment-bases ctx))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
@@ -5362,6 +5363,10 @@
       "typecheck.macro.walk_decl_fire_survivor_expr_nodes")
     (tc-profile-fire-survivor-type-nodes
       "typecheck.macro.walk_decl_fire_survivor_type_nodes")
+    (tc-profile-fire-pool-contexts
+      "typecheck.macro.walk_decl_fire_pool_contexts")
+    (tc-profile-prepare-pools-installs
+      "typecheck.macro.walk_prepare_pools_installs")
     (tc-profile-decl-generations "typecheck.macro.walk_decl_generations")
     (tc-profile-decl-generation-rotations
       "typecheck.macro.walk_decl_generation_rotations")
@@ -5373,7 +5378,11 @@
       "typecheck.macro.walk_rewalk_zero_fire_calls")
     (tc-profile-rewalk-provenance-skips
       "typecheck.macro.walk_rewalk_provenance_skips")
-    (tc-profile-materialized-splices "typecheck.macro.walk_decl_sp_mat_count")))
+    (tc-profile-materialized-splices "typecheck.macro.walk_decl_sp_mat_count")
+    ;; Materialized generated imports that loaded nothing new and took the
+    ;; incremental append instead of a file fallback.
+    (tc-profile-segment-incremental-imports
+      "typecheck.macro.walk_segment_incremental_imports")))
 
 ;; Additive top-env splice accounting: candidates are unresolved cache entries
 ;; revisited against a new symbol surface, updates are entries whose type
@@ -5600,6 +5609,10 @@
   compile-profile
   (define compiler-tc-walk-decl-sample-start-captures : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sample-start-pool-contexts : i64
+    0))
 
 (cfg
   compile-profile
@@ -5773,11 +5786,19 @@
               (counters.add!
                 tc-profile-fire-live
                 (- (profile.alloc-live) compiler-tc-walk-decl-sample-start-live))
+              (counters.add!
+                tc-profile-fire-pool-contexts
+                (-
+                  ast.ast-node-pool-context-profile-allocations
+                  compiler-tc-walk-decl-sample-start-pool-contexts))
               (counters.bump! tc-profile-fire-count))]
           [else unit])
         (set! compiler-tc-walk-decl-sample-kind 0)
         (set! compiler-tc-walk-decl-sample-start-ns (compiler-tc-walk-now-ns))
         (set! compiler-tc-walk-decl-sample-start-live (profile.alloc-live))
+        (set!
+          compiler-tc-walk-decl-sample-start-pool-contexts
+          ast.ast-node-pool-context-profile-allocations)
         (set!
           compiler-tc-walk-decl-sample-start-captures
           compiler-tc-walk-operand-captures)))))
@@ -6159,7 +6180,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    132))
+    133))
 
 (cfg
   (any compile-profile test)
@@ -6181,7 +6202,8 @@
     (compiler-tc-macro-lifetime-start-enclosing-handle-metric)
     (compiler-tc-macro-lifetime-start-enclosing-bytes-metric)
     (compiler-tc-macro-lifetime-start-job-owner-bytes-metric)
-    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)))
+    (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)
+    (compiler-tc-macro-lifetime-start-intern-bytes-metric)))
 
 (cfg
   (any compile-profile test)
@@ -10162,14 +10184,25 @@
     (ptr-write! (int->ptr (cast addr : u64) : (MutPtr TcChainIndex)) state)))
 
 ;; The index cell and everything it points at live in the store's owner arena,
-;; exactly like the cache nodes whose addresses it records.
+;; exactly like the cache nodes whose addresses it records. A function-local
+;; store inherits its parent's index read-only; before its first write the
+;; index is copied into the local owner, so the parent's map never names a
+;; local layer.
 (define (tc-chain-state-ensure! [store-handle : i64]) : i64
   (let
     [existing : i64 (tc-chain-state-address store-handle)]
-    (if (> existing 0)
+    [owner : i64 (tc-chain-store-owner store-handle)]
+    (if (and
+      (> existing 0)
+      (= (__tl-project-field (tc-chain-state-read existing) owner-arena) owner))
       existing
       (let
-        [owner : i64 (tc-chain-store-owner store-handle)]
+        [parent-len : i64
+          (if (> existing 0)
+            (let
+              [parent : TcChainIndex (tc-chain-state-read existing)]
+              (tc_i64_i64_map.len (& parent.map)))
+            0)]
         [cell : i64
           (in-arena
             (arena.Arena owner)
@@ -10179,7 +10212,18 @@
               (begin
                 (set!
                   (array-ref slots 0)
-                  (TcChainIndex (tc_i64_i64_map.with-capacity 1024) 0 owner))
+                  (TcChainIndex
+                    (if (> parent-len 0)
+                      (let
+                        [parent : TcChainIndex (tc-chain-state-read existing)]
+                        (tc-moved-clone-id-map (& parent.map)))
+                      (tc_i64_i64_map.with-capacity 1024))
+                    (if (> existing 0)
+                      (__tl-project-field
+                        (tc-chain-state-read existing)
+                        next-seq)
+                      0)
+                    owner))
                 (unsafe
                   (cast
                     (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
@@ -13303,962 +13347,259 @@
     env
     (tc-bind-id env name-id ty)))
 
+;; The legacy unqualified macro helper signatures. New stdlib macro code
+;; imports `stdlib.comptime` and calls the public helpers via that module; keep
+;; only the old names still covered by compatibility tests and by the legacy
+;; type-query surface.
+;;
+;; Row k binds builtin slot k of `tc-macro-helper-slots` to the k-th
+;; `|`-terminated code of `tc-macro-helper-signatures`: a binder (`i` binds the
+;; id, `a` also its comptime helper aliases), then one type per parameter and
+;; the result type, each one character of `tc-macro-helper-type-codes`. A table
+;; instead of one binding call per row keeps this cold, cached setup small.
+(define tc-macro-helper-slots : (Array i64 132)
+  (array
+    (cbi.compiler-builtin-ctfe-slot "string-append")
+    (cbi.compiler-builtin-ctfe-slot "string-append")
+    (cbi.compiler-builtin-ctfe-slot "string-concat")
+    (cbi.compiler-builtin-ctfe-slot "string-concat")
+    (cbi.compiler-builtin-ctfe-slot "string-length")
+    (cbi.compiler-builtin-ctfe-slot "length")
+    (cbi.compiler-builtin-ctfe-slot "string-ref")
+    (cbi.compiler-builtin-ctfe-slot "char-at")
+    (cbi.compiler-builtin-ctfe-slot "string-eq")
+    (cbi.compiler-builtin-ctfe-slot "string=?")
+    (cbi.compiler-builtin-ctfe-slot ">int")
+    (cbi.compiler-builtin-ctfe-slot ">int")
+    (cbi.compiler-builtin-ctfe-slot "int->string")
+    (cbi.compiler-builtin-ctfe-slot "int->string")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool")
+    (cbi.compiler-builtin-ctfe-slot "expr-int")
+    (cbi.compiler-builtin-ctfe-slot "expr-int")
+    (cbi.compiler-builtin-ctfe-slot "expr-string")
+    (cbi.compiler-builtin-ctfe-slot "expr-var")
+    (cbi.compiler-builtin-ctfe-slot "expr-var")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-get")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-get")
+    (cbi.compiler-builtin-ctfe-slot "expr-tuple-ref")
+    (cbi.compiler-builtin-ctfe-slot "expr-tuple-ref")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-set")
+    (cbi.compiler-builtin-ctfe-slot "expr-struct-set")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-borrow")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-borrow")
+    (cbi.compiler-builtin-ctfe-slot "expr-call")
+    (cbi.compiler-builtin-ctfe-slot "expr-call")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-call0")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-call1")
+    (cbi.compiler-builtin-ctfe-slot "expr-mut-call2")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "expr-if")
+    (cbi.compiler-builtin-ctfe-slot "expr-if")
+    (cbi.compiler-builtin-ctfe-slot "pattern-wildcard")
+    (cbi.compiler-builtin-ctfe-slot "pattern-binding")
+    (cbi.compiler-builtin-ctfe-slot "pattern-variant")
+    (cbi.compiler-builtin-ctfe-slot "pattern-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "pattern-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "pattern-list-bindings")
+    (cbi.compiler-builtin-ctfe-slot "match-arm")
+    (cbi.compiler-builtin-ctfe-slot "match-arm-list-empty")
+    (cbi.compiler-builtin-ctfe-slot "match-arm-list-cons")
+    (cbi.compiler-builtin-ctfe-slot "expr-match")
+    (cbi.compiler-builtin-ctfe-slot "expr-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-type")
+    (cbi.compiler-builtin-ctfe-slot "type-expr")
+    (cbi.compiler-builtin-ctfe-slot "type-expr")
+    (cbi.compiler-builtin-ctfe-slot "expr-splice")
+    (cbi.compiler-builtin-ctfe-slot "type-info")
+    (cbi.compiler-builtin-ctfe-slot "module-name")
+    (cbi.compiler-builtin-ctfe-slot "module-export-macro?")
+    (cbi.compiler-builtin-ctfe-slot "module-hook")
+    (cbi.compiler-builtin-ctfe-slot "module-hook")
+    (cbi.compiler-builtin-ctfe-slot "module-value?")
+    (cbi.compiler-builtin-ctfe-slot "module-value-type")
+    (cbi.compiler-builtin-ctfe-slot "module-value-expr")
+    (cbi.compiler-builtin-ctfe-slot "function-shared-borrow-returns-string?")
+    (cbi.compiler-builtin-ctfe-slot "expr-shared-call1")
+    (cbi.compiler-builtin-ctfe-slot "reference-element-type")
+    (cbi.compiler-builtin-ctfe-slot "reference-element-type")
+    (cbi.compiler-builtin-ctfe-slot "comptime-error")
+    (cbi.compiler-builtin-ctfe-slot "comptime-error")
+    (cbi.compiler-builtin-ctfe-slot "type-kind")
+    (cbi.compiler-builtin-ctfe-slot "type-key")
+    (cbi.compiler-builtin-ctfe-slot "type-cleanup-owning?")
+    (cbi.compiler-builtin-ctfe-slot "type-cleanup-function")
+    (cbi.compiler-builtin-ctfe-slot "type-nominal-module")
+    (cbi.compiler-builtin-ctfe-slot "type-nominal-name")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-count")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-name")
+    (cbi.compiler-builtin-ctfe-slot "struct-field-type")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-count")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-name")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-payload-count")
+    (cbi.compiler-builtin-ctfe-slot "enum-variant-payload-type")
+    (cbi.compiler-builtin-ctfe-slot "array-element-type")
+    (cbi.compiler-builtin-ctfe-slot "box-element-type")
+    (cbi.compiler-builtin-ctfe-slot "box-element-type")
+    (cbi.compiler-builtin-ctfe-slot "array-length")
+    (cbi.compiler-builtin-ctfe-slot "array-dynamic?")
+    (cbi.compiler-builtin-ctfe-slot "tuple-element-count")
+    (cbi.compiler-builtin-ctfe-slot "tuple-element-type")
+    (cbi.compiler-builtin-ctfe-slot "function-param-count")
+    (cbi.compiler-builtin-ctfe-slot "function-param-type")
+    (cbi.compiler-builtin-ctfe-slot "function-return-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool?")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool?")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool-value")
+    (cbi.compiler-builtin-ctfe-slot "expr-bool-value")
+    (cbi.compiler-builtin-ctfe-slot "expr-if?")
+    (cbi.compiler-builtin-ctfe-slot "expr-if?")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-cond")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-cond")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-then")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-then")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-else")
+    (cbi.compiler-builtin-ctfe-slot "expr-if-else")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-first")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-first")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-second")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-second")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list->expr-list")
+    (cbi.compiler-builtin-ctfe-slot "expr-clause-list->expr-list")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-name")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-name")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-has-type?")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-has-type?")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-type")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-init")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-init")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-length")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list-nth")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list->expr-list")
+    (cbi.compiler-builtin-ctfe-slot "expr-binding-clause-list->expr-list")))
+(define tc-macro-helper-signatures : String
+  "isss|asss|isss|asss|isi|isi|isic|isic|issb|issb|isi|asi|iis|ais|ibe|abe|iie|aie|ase|ise|ase|iese|aese|ieie|aeie|iesee|aesee|iee|aee|iexe|aexe|ieee|ieeee|ieeeee|ix|ax|iexx|aexx|ieeee|aeeee|ip|isp|isPp|iP|ipPP|isiP|ipem|iM|imMM|ieMe|iee|aee|iee|aee|aee|aet|ass|assb|isse|asse|assb|asse|asse|aeeb|aeee|iee|aee|asn|isn|ies|ies|ieb|ies|ies|ies|iei|ieis|ieie|iei|ieis|ieii|ieiie|iee|iee|aee|iei|ieb|iei|ieie|iei|ieie|iee|ieb|aeb|ieb|aeb|ieb|aeb|iee|aee|iee|aee|iee|aee|ixi|axi|ixie|axie|iCe|aCe|iCe|aCe|iDi|aDi|iDiC|aDiC|iDx|aDx|iBs|aBs|iBb|aBb|iBe|aBe|iBe|aBe|iFi|aFi|iFiB|aFiB|iFx|aFx|")
+
+;; e Expr, x ExprList, s String, i i64, b bool, c char, n Never, C clause,
+;; D clause list, B binding clause, F binding clause list, p pattern,
+;; P pattern list, m match arm, M match arm list, t TypeInfo.
+(define tc-macro-helper-type-codes : String
+  "exsibcnCDBFpPmMt")
+
+(define (tc-macro-helper-code-type
+  [types : (__tl_dyn-array ast.AstType)]
+  [code : char]) : ast.AstType
+  (let
+    [index : i64 0]
+    (begin
+      (while (!= (string.string-ref tc-macro-helper-type-codes index) code)
+        (set! index (+ index 1)))
+      (tc-global-array-element-shared-view types index))))
+
+;; The type at signature position `at`, or unit past the parameters ending
+;; before `end`.
+(define (tc-macro-helper-param-type
+  [types : (__tl_dyn-array ast.AstType)]
+  [at : i64]
+  [end : i64]) : ast.AstType
+  (if (< at end)
+    (tc-macro-helper-code-type
+      types
+      (string.string-ref tc-macro-helper-signatures at))
+    (ast.AstType.Unit)))
+
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
-    [expr : ast.AstType (ast.AstType.Expr)]
-    [clause : ast.AstType (tc-macro-expr-clause-type)]
-    [clause-list : ast.AstType (tc-macro-expr-clause-list-type)]
-    [binding-clause : ast.AstType (tc-macro-expr-binding-clause-type)]
-    [binding-clause-list : ast.AstType (tc-macro-expr-binding-clause-list-type)]
-    [pattern : ast.AstType (tc-macro-pattern-type)]
-    [pattern-list : ast.AstType (tc-macro-pattern-list-type)]
-    [match-arm : ast.AstType (tc-macro-match-arm-type)]
-    [match-arm-list : ast.AstType (tc-macro-match-arm-list-type)]
-    [type-info : ast.AstType
-      (ast.AstType.Var
-        (tc-stdlib-comptime-type-key-id
-          "TypeInfo"
-          cbi.compiler-builtin-id-fix-TypeInfo))]
+    [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType 16)]
     [out : TcTypeEnv env]
+    [row : i64 0]
+    [pos : i64 0]
     (begin
-      ;; Legacy bridge for unqualified macro helper names. New stdlib macro
-      ;; code imports `stdlib.comptime` and calls the public helpers via that
-      ;; module; keep only the old names still covered by compatibility tests
-      ;; and by the legacy type-query surface.
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-append")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "string-append")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-concat")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "string-concat")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-length")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "length")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-ref")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "char-at")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.I64) (ast.AstType.Char))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string-eq")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "string=?")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe ">int")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe ">int")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "int->string")
-          (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "int->string")
-          (tc-fn1 (ast.AstType.I64) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool")
-          (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool")
-          (tc-fn1 (ast.AstType.Bool) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-int")
-          (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-int")
-          (tc-fn1 (ast.AstType.I64) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-string")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-var")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-var")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-get")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-get")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-tuple-ref")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-set")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-struct-set")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (ast.AstType.String)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-borrow")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-call")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-call")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-call0")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-call1")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-mut-call2")
-          (tc-fn4
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-empty")
-          (tc-fn0 (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-empty")
-          (tc-fn0 (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-cons")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-cons")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.ExprList)
-            (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-wildcard")
-          (tc-fn0 (tc-global-shared-view pattern))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-binding")
-          (tc-fn1 (ast.AstType.String) (tc-global-shared-view pattern))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-variant")
-          (tc-fn2
-            (ast.AstType.String)
-            (tc-global-shared-view pattern-list)
-            (tc-global-shared-view pattern))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-list-empty")
-          (tc-fn0 (tc-global-shared-view pattern-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-list-cons")
-          (tc-fn2
-            (tc-global-shared-view pattern)
-            (tc-global-shared-view pattern-list)
-            (tc-global-shared-view pattern-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "pattern-list-bindings")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.I64) pattern-list)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "match-arm")
-          (tc-fn2
-            pattern
-            (tc-global-shared-view expr)
-            (tc-global-shared-view match-arm))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "match-arm-list-empty")
-          (tc-fn0 (tc-global-shared-view match-arm-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "match-arm-list-cons")
-          (tc-fn2
-            match-arm
-            (tc-global-shared-view match-arm-list)
-            (tc-global-shared-view match-arm-list))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-match")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            match-arm-list
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-expr")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "type-expr")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-splice")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "type-info")
-          (tc-fn1 (tc-global-shared-view expr) type-info)))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-name")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-export-macro?")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "module-hook")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-hook")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-value?")
-          (tc-fn2 (ast.AstType.String) (ast.AstType.String) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-value-type")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "module-value-expr")
-          (tc-fn2
-            (ast.AstType.String)
-            (ast.AstType.String)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "function-shared-borrow-returns-string?")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-shared-call1")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "reference-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "reference-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "comptime-error")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "comptime-error")
-          (tc-fn1 (ast.AstType.String) (ast.AstType.Never))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-kind")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-key")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-cleanup-owning?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-cleanup-function")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-nominal-module")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "type-nominal-name")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "struct-field-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "struct-field-name")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "struct-field-type")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-name")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-payload-count")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "enum-variant-payload-type")
-          (tc-fn3
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "array-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "box-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "box-element-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "array-length")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "array-dynamic?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "tuple-element-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "tuple-element-type")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "function-param-count")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "function-param-type")
-          (tc-fn2
-            (tc-global-shared-view expr)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "function-return-type")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool-value")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-bool-value")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if?")
-          (tc-fn1 (tc-global-shared-view expr) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-cond")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-cond")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-then")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-then")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-else")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-if-else")
-          (tc-fn1 (tc-global-shared-view expr) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-length")
-          (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-length")
-          (tc-fn1 (ast.AstType.ExprList) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-nth")
-          (tc-fn2
-            (ast.AstType.ExprList)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-list-nth")
-          (tc-fn2
-            (ast.AstType.ExprList)
-            (ast.AstType.I64)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-first")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-first")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-second")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-second")
-          (tc-fn1 (tc-global-shared-view clause) (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
-          (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-length")
-          (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
-          (tc-fn2
-            (tc-global-shared-view clause-list)
-            (ast.AstType.I64)
-            (tc-global-shared-view clause))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list-nth")
-          (tc-fn2 (tc-global-shared-view clause-list) (ast.AstType.I64) clause)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
-          (tc-fn1 (tc-global-shared-view clause-list) (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-clause-list->expr-list")
-          (tc-fn1 clause-list (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-name")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.String))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-has-type?")
-          (tc-fn1 (tc-global-shared-view binding-clause) (ast.AstType.Bool))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
-          (tc-fn1
-            (tc-global-shared-view binding-clause)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-type")
-          (tc-fn1
-            (tc-global-shared-view binding-clause)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
-          (tc-fn1
-            (tc-global-shared-view binding-clause)
-            (tc-global-shared-view expr))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-init")
-          (tc-fn1 (tc-global-shared-view binding-clause) expr)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
-          (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-length")
-          (tc-fn1 (tc-global-shared-view binding-clause-list) (ast.AstType.I64))))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
-          (tc-fn2
-            (tc-global-shared-view binding-clause-list)
-            (ast.AstType.I64)
-            (tc-global-shared-view binding-clause))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list-nth")
-          (tc-fn2
-            (tc-global-shared-view binding-clause-list)
-            (ast.AstType.I64)
-            binding-clause)))
-      (set!
-        out
-        (tc-bind-id
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
-          (tc-fn1
-            (tc-global-shared-view binding-clause-list)
-            (ast.AstType.ExprList))))
-      (set!
-        out
-        (tc-bind-comptime-helper-aliases
-          out
-          (cbi.compiler-builtin-ctfe "expr-binding-clause-list->expr-list")
-          (tc-fn1 binding-clause-list (ast.AstType.ExprList))))
+      (set! (array-ref types 0) (ast.AstType.Expr))
+      (set! (array-ref types 1) (ast.AstType.ExprList))
+      (set! (array-ref types 2) (ast.AstType.String))
+      (set! (array-ref types 3) (ast.AstType.I64))
+      (set! (array-ref types 4) (ast.AstType.Bool))
+      (set! (array-ref types 5) (ast.AstType.Char))
+      (set! (array-ref types 6) (ast.AstType.Never))
+      (set! (array-ref types 7) (tc-macro-expr-clause-type))
+      (set! (array-ref types 8) (tc-macro-expr-clause-list-type))
+      (set! (array-ref types 9) (tc-macro-expr-binding-clause-type))
+      (set! (array-ref types 10) (tc-macro-expr-binding-clause-list-type))
+      (set! (array-ref types 11) (tc-macro-pattern-type))
+      (set! (array-ref types 12) (tc-macro-pattern-list-type))
+      (set! (array-ref types 13) (tc-macro-match-arm-type))
+      (set! (array-ref types 14) (tc-macro-match-arm-list-type))
+      (set!
+        (array-ref types 15)
+        (ast.AstType.Var
+          (tc-stdlib-comptime-type-key-id
+            "TypeInfo"
+            cbi.compiler-builtin-id-fix-TypeInfo)))
+      (while (< row 132)
+        (let
+          [start : i64 (+ pos 1)]
+          [end : i64 start]
+          (begin
+            (while (!= (string.string-ref tc-macro-helper-signatures end) '|')
+              (set! end (+ end 1)))
+            (let
+              [arity : i64 (- (- end start) 1)]
+              [ret : ast.AstType
+                (tc-macro-helper-code-type
+                  (tc-global-shared-view types)
+                  (string.string-ref tc-macro-helper-signatures (- end 1)))]
+              [a : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  start
+                  (- end 1))]
+              [b : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  (+ start 1)
+                  (- end 1))]
+              [c : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  (+ start 2)
+                  (- end 1))]
+              [d : ast.AstType
+                (tc-macro-helper-param-type
+                  (tc-global-shared-view types)
+                  (+ start 3)
+                  (- end 1))]
+              [ty : ast.AstType
+                (cond
+                  [(= arity 0) (tc-fn0 ret)]
+                  [(= arity 1) (tc-fn1 a ret)]
+                  [(= arity 2) (tc-fn2 a b ret)]
+                  [(= arity 3) (tc-fn3 a b c ret)]
+                  [else (tc-fn4 a b c d ret)])]
+              [id : i64
+                (cbi.compiler-builtin-ctfe-ref
+                  (array-ref tc-macro-helper-slots row))]
+              (set!
+                out
+                (if (= (string.string-ref tc-macro-helper-signatures pos) 'a')
+                  (tc-bind-comptime-helper-aliases out id ty)
+                  (tc-bind-id out id ty))))
+            (set! pos (+ end 1))
+            (set! row (+ row 1)))))
       out)))
 
 (defstruct TcMacroHelperStateData
@@ -22346,10 +21687,23 @@
               (unsafe
                 (ptr->int (ptr-cast (__tl_array-data handles) : (Ptr i64))))
               : i64))))]
+    [move-kinds-address : i64
+      (if (> data.move-kinds-address 0)
+        data.move-kinds-address
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [move-kinds : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (__tl_array-data move-kinds) : (Ptr i64))))
+              : i64))))]
     (begin
       (tc-type-handle-cache-clear-keys! keys-address)
       (set! data.keys-address keys-address)
       (set! data.handles-address handles-address)
+      (set! data.move-kinds-address move-kinds-address)
       (set! data.symbols-owner stamp.owner)
       (set! data.symbols-generation stamp.generation)
       (tc-type-handle-cache-state-data-set! state data)
@@ -22382,11 +21736,73 @@
         (int->ptr
           (cast (tc-type-handle-cache-field state handles-address i64) : u64)
           : (MutPtr i64)))]
+    [move-kinds : (MutPtr i64)
+      (unsafe
+        (int->ptr
+          (cast (tc-type-handle-cache-field state move-kinds-address i64) : u64)
+          : (MutPtr i64)))]
     (begin
       (unsafe
         (ptr-write! (ptr-offset keys slot) key)
-        (ptr-write! (ptr-offset handles slot) handle))
+        (ptr-write! (ptr-offset handles slot) handle)
+        (ptr-write! (ptr-offset move-kinds slot) 0))
       handle)))
+
+;; The move-kind lane of LOOKUP-ID's slot while the cache is bound to SYMBOLS'
+;; stamp and the slot still holds LOOKUP-ID; otherwise 0 (unknown).
+(define (tc-type-handle-cache-move-kind-address
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : u64
+  (let
+    [state : TcTypeHandleCacheState
+      (tc-nominal-cache-type-handles nominal-state)]
+    [stamp : csym.CompilerSymbolsTypeMapStamp
+      (csym.compiler-symbols-type-map-stamp symbols)]
+    [slot : i64 (tc-type-handle-cache-slot lookup-id)]
+    (if (and
+      (= (tc-type-handle-cache-field state symbols-owner i64) stamp.owner)
+      (=
+        (tc-type-handle-cache-field state symbols-generation i64)
+        stamp.generation)
+      (=
+        (unsafe
+          (ptr-read
+            (ptr-offset
+              (int->ptr
+                (cast (tc-type-handle-cache-field state keys-address i64) : u64)
+                : (Ptr i64))
+              slot)))
+        lookup-id))
+      (+
+        (cast (tc-type-handle-cache-field state move-kinds-address i64) : u64)
+        (cast (* slot 8) : u64))
+      (cast 0 : u64))))
+
+(define (tc-type-handle-cache-move-kind
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : i64
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      0
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr i64)))))))
+
+(define (tc-type-handle-cache-move-kind-set!
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [kind : i64]) : unit
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      unit
+      (unsafe
+        (ptr-write! (int->ptr address : (MutPtr i64)) kind)))))
 
 (define (tc-type-handle-cache-lookup-id
   [nominal-state : TcNominalCacheState]
@@ -26648,15 +26064,17 @@
         lifetime-id
         stack
         position)]
-    ;; Compatibility dynamic arrays expose mutable element storage and are
-    ;; therefore invariant. Native Slice is a view and follows its context.
+    ;; An owned dynamic array is a move-only handle whose elements change only
+    ;; through its owning place or a `&mut` to it (invariant in its referent),
+    ;; never through a shared reference. Like Box and Slice it follows its
+    ;; context: shortening moves the handle and leaves no longer-typed alias.
     [(ast.AstType.DynArray elem)
       (tc-type-lifetime-variance
         ctx
         (ast.ty-node-get elem)
         lifetime-id
         stack
-        (TcVariance.TcVarianceInvariant))]
+        position)]
     [(ast.AstType.Slice elem)
       (tc-type-lifetime-variance
         ctx
@@ -26926,6 +26344,16 @@
       [(ast.AstType.Box expected-elem)
         (match actual
           [(ast.AstType.Box actual-elem)
+            (tc-type-coercible-core?
+              ctx
+              env
+              (ast.ty-node-get expected-elem)
+              (ast.ty-node-get actual-elem))]
+          [_ false])]
+      ;; Covariant like Box; see `tc-type-lifetime-variance`.
+      [(ast.AstType.DynArray expected-elem)
+        (match actual
+          [(ast.AstType.DynArray actual-elem)
             (tc-type-coercible-core?
               ctx
               env
@@ -27274,11 +26702,13 @@
               (ast.ty-node-get want-inner)
               (ast.ty-node-get got-inner))]
           [_ ""])]
+      ;; Covariant, so a failure is its element's.
       [(ast.AstType.DynArray want-inner)
         (match got
           [(ast.AstType.DynArray got-inner)
-            (tc-lifetime-coercion-invariant-detail
-              "dynamic array element type"
+            (tc-type-coercion-failure-detail
+              ctx
+              env
               (ast.ty-node-get want-inner)
               (ast.ty-node-get got-inner))]
           [_ ""])]
@@ -27819,94 +27249,143 @@
     stack
     0))
 
+(define (tc-move-kind-code [kind : TcMoveKind]) : i64
+  (match kind
+    [(TcMoveKind.Copyable) 1]
+    [(TcMoveKind.MoveOnly) 2]))
+
+;; A declaration's top-level move kind (empty stack, no lifetime arguments) is
+;; fixed for one CompilerSymbols stamp, so it is memoized beside the declaration's
+;; type-handle cache slot. Recursive and lifetime-applied queries classify
+;; directly: a cycle-truncated inner answer must not become the declaration's.
 (define (tc-type-move-kind-nominal-with-stack
   [ctx : TcContext]
   [name-id : i64]
   [lifetimes : ast.AstLifetimeList]
   [stack : TcNameIdList]) : TcMoveKind
   (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
     [handle : i64
       (tc-type-handle-lookup-id
-        (tc-job-state-nominal-cache (tc-context-job-state ctx))
+        nominal-state
         (tc-context-symbols-ref (& ctx))
         name-id
         tc-type-handle-lookup-caller-move-kind)]
     (if (not (csym.compiler-symbols-handle-found? handle))
       (TcMoveKind.MoveOnly)
-      (let
-        [kind : i64 (csym.compiler-symbol-handle-kind handle)]
-        [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-        (if (or
-          (< nominal-id 0)
-          (not
-            (or
-              (= kind (csym.compiler-symbol-kind-defstruct))
-              (= kind (csym.compiler-symbol-kind-defenum)))))
-          (TcMoveKind.MoveOnly)
-          (if (tc-name-id-list-contains stack nominal-id)
-            ;; Recursive by-value declarations are invalid layouts, but the
-            ;; classifier remains total and conservative instead of recursing
-            ;; forever.
-            (TcMoveKind.MoveOnly)
-            (let
-              [owner-ctx : TcContext
-                (tc-context-with-nominal-owner-index-module
-                  ctx
-                  (csym.compiler-symbol-handle-index handle))]
-              (match (csym.compiler-symbols-decl-at-index
-                (tc-context-symbols-ref (& owner-ctx))
-                (csym.compiler-symbol-handle-index handle))
-                [(parser.ResultAstDecl.Ok decl)
-                  (let
-                    [next-stack : TcNameIdList
-                      (tc-name-id-list-add stack nominal-id)]
-                    (match decl
-                      [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
-                        (if (ast.ast-struct-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-struct-fields?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            fields
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
-                        (if (ast.ast-struct-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-struct-fields?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            fields
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [(ast.AstDecl.DefEnum _ _ cleanup variants)
-                        (if (ast.ast-enum-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-enum-variants?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            variants
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
-                        (if (ast.ast-enum-cleanup? cleanup)
-                          (TcMoveKind.MoveOnly)
-                          (if (tc-type-move-kind-copyable-enum-variants?
-                            owner-ctx
-                            nominal-id
-                            lifetimes
-                            variants
-                            next-stack)
-                            (TcMoveKind.Copyable)
-                            (TcMoveKind.MoveOnly)))]
-                      [_ (TcMoveKind.MoveOnly)]))]
-                [(parser.ResultAstDecl.Err _) (TcMoveKind.MoveOnly)]))))))))
+      (if (and
+        (match stack
+          [(TcNameIdList.Nil) true]
+          [_ false])
+        (= (tc-lifetime-list-count (& lifetimes)) 0))
+        (let
+          [cached : i64
+            (tc-type-handle-cache-move-kind
+              nominal-state
+              (tc-context-symbols-ref (& ctx))
+              name-id)]
+          (if (= cached 1)
+            (TcMoveKind.Copyable)
+            (if (= cached 2)
+              (TcMoveKind.MoveOnly)
+              (let
+                [kind : TcMoveKind
+                  (tc-type-move-kind-nominal-handle
+                    ctx
+                    name-id
+                    handle
+                    lifetimes
+                    stack)]
+                (begin
+                  (tc-type-handle-cache-move-kind-set!
+                    nominal-state
+                    (tc-context-symbols-ref (& ctx))
+                    name-id
+                    (tc-move-kind-code kind))
+                  kind)))))
+        (tc-type-move-kind-nominal-handle ctx name-id handle lifetimes stack)))))
+
+(define (tc-type-move-kind-nominal-handle
+  [ctx : TcContext]
+  [name-id : i64]
+  [handle : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [stack : TcNameIdList]) : TcMoveKind
+  (let
+    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+    [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+    (if (or
+      (< nominal-id 0)
+      (not
+        (or
+          (= kind (csym.compiler-symbol-kind-defstruct))
+          (= kind (csym.compiler-symbol-kind-defenum)))))
+      (TcMoveKind.MoveOnly)
+      (if (tc-name-id-list-contains stack nominal-id)
+        ;; Recursive by-value declarations are invalid layouts, but the
+        ;; classifier remains total and conservative instead of recursing
+        ;; forever.
+        (TcMoveKind.MoveOnly)
+        (let
+          [owner-ctx : TcContext
+            (tc-context-with-nominal-owner-index-module
+              ctx
+              (csym.compiler-symbol-handle-index handle))]
+          (match (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols-ref (& owner-ctx))
+            (csym.compiler-symbol-handle-index handle))
+            [(parser.ResultAstDecl.Ok decl)
+              (let
+                [next-stack : TcNameIdList
+                  (tc-name-id-list-add stack nominal-id)]
+                (match decl
+                  [(ast.AstDecl.DefStruct _ _ _ cleanup fields)
+                    (if (ast.ast-struct-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-struct-fields?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        fields
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [(ast.AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
+                    (if (ast.ast-struct-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-struct-fields?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        fields
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [(ast.AstDecl.DefEnum _ _ cleanup variants)
+                    (if (ast.ast-enum-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-enum-variants?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        variants
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [(ast.AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
+                    (if (ast.ast-enum-cleanup? cleanup)
+                      (TcMoveKind.MoveOnly)
+                      (if (tc-type-move-kind-copyable-enum-variants?
+                        owner-ctx
+                        nominal-id
+                        lifetimes
+                        variants
+                        next-stack)
+                        (TcMoveKind.Copyable)
+                        (TcMoveKind.MoveOnly)))]
+                  [_ (TcMoveKind.MoveOnly)]))]
+            [(parser.ResultAstDecl.Err _) (TcMoveKind.MoveOnly)]))))))
 
 (define (tc-type-move-kind-with-stack
   [ctx : TcContext]
@@ -29734,8 +29213,8 @@
                 (let
                   [decl : ast.AstDecl
                     (try
-                      (csym.compiler-program-decl-at-index
-                        (tc-context-program ctx)
+                      (csym.compiler-symbols-decl-at-index
+                        (tc-context-symbols symbols-ctx)
                         (csym.compiler-symbol-handle-index handle)))]
                   [ty : ast.AstType (try (tc-top-decl-type ctx decl))]
                   (match (tc-global-shared-view ty)
@@ -35383,7 +34862,7 @@
               subst
               (ast.ty-node-get formal-elem)
               (ast.ty-node-get actual-elem)
-              (TcVariance.TcVarianceInvariant))]
+              position)]
           [_
             (ResultTcLifetimeSubst.Err
               (tc-call-lifetime-subst-mismatch-message))])]
@@ -52062,8 +51541,8 @@
             (csym.compiler-registry-handle-owner-index handle))]
         [ty : ast.AstType
           (try
-            (csym.compiler-registries-struct-field-type
-              (tc-context-program ctx)
+            (csym.compiler-registries-struct-field-type-indexed
+              (tc-context-symbols ctx)
               handle))]
         [subst : TcLifetimeSubst
           (try
@@ -65443,8 +64922,33 @@
   [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)
     [(ResultTcType.Ok ty)
-      (tc-move-local-or-type-move-only? ctx locals name-id ty)]
+      (or
+        (tc-move-local-or-type-move-only?
+          ctx
+          locals
+          name-id
+          (tc-global-shared-view ty))
+        (and (tc-arena-type? ctx ty) (tc-move-arena-owner-local? env name-id)))]
     [(ResultTcType.Err _) false]))
+
+;; A direct local owner tracked from `arena.make`/`arena.make-atomic`. A bare
+;; `arena.Arena` handle is Copy, but a copy stored in another binding, an
+;; aggregate or a result would outlive the owner's destroy or rewind, so storing
+;; the owner moves it like a move-only value. Passing it to a bare-Arena
+;; parameter stays a borrow: call arguments move only for move-only parameters.
+(define (tc-move-arena-owner-local? [env : TcTypeEnv] [name-id : i64]) : bool
+  (or
+    (tc-ordinary-arena-owner-active-id? env name-id)
+    (tc-atomic-arena-owner-active-id? env name-id)))
+
+;; Whether `expr` is a bare reference to a tracked arena owner local.
+(define (tc-move-arena-owner-var?
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : bool
+  (match (tc-move-bare-var expr-bases expr)
+    [(TcMaybeMoveName.Some v-id _) (tc-move-arena-owner-local? env v-id)]
+    [(TcMaybeMoveName.No) false]))
 
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.
@@ -66493,7 +65997,7 @@
       ;; at the first value form whether to move the leaves below it.
       (if move?
         -1
-        0))
+        1))
       [(TcMoveResult.Ok moved1)
         (if move?
           (tc-move-after-consuming-projection
@@ -66960,7 +66464,7 @@
     moved
     expr
     target-ty
-    0))
+    1))
 
 (define (tc-move-after-move-only-value
   [ctx : TcContext]
@@ -67004,7 +66508,7 @@
           ;; at the first value form whether to move the leaves below it.
           (if move?
             -1
-            0))
+            1))
           [(TcMoveResult.Ok moved1)
             (tc-move-after-moving-value
               ctx
@@ -68012,7 +67516,12 @@
                 [(ResultTcType.Ok visible-ty)
                   (if (if transfer-only
                     (and
-                      (not (tc-atomic-arena-owner-active-id? root key))
+                      (not
+                        (and
+                          (tc-arena-type?
+                            ctx
+                            (tc-global-shared-view visible-ty))
+                          (tc-move-arena-owner-local? root key)))
                       (not
                         (tc-type-move-only?
                           ctx
@@ -68033,11 +67542,18 @@
                         visible-ty)
                         [(TcThreadTransferClass.Transferable) true]
                         [_ false]))
-                    (tc-move-local-or-type-move-only?
-                      ctx
-                      (tc-global-shared-view locals)
-                      key
-                      visible-ty))
+                    ;; A captured ordinary arena owner moves into the closure.
+                    ;; A captured atomic owner instead becomes a tracked user
+                    ;; that its destroy or rewind must see released.
+                    (or
+                      (tc-move-local-or-type-move-only?
+                        ctx
+                        (tc-global-shared-view locals)
+                        key
+                        (tc-global-shared-view visible-ty))
+                      (and
+                        (tc-arena-type? ctx (tc-global-shared-view visible-ty))
+                        (tc-ordinary-arena-owner-active-id? root key))))
                     (if (or
                       (tc-moved-contains? moved key)
                       (tc-moved-partial? moved key))
@@ -73494,8 +73010,10 @@
 ;; avoids cloning the full move-state maps at every result branch. A leaf that
 ;; names an unshadowed local place is also moved, as the consumer would move it
 ;; in its own position (#8268, #8269): `consume` 2 moves every such leaf, 0 none,
-;; and -1 is decided by `tc-move-consume-mode` at the first value form. The
-;; operand of a nested `return` or `try` is consumed by that form instead.
+;; 1 only a leaf naming a tracked arena owner (a store of a Copy value, which
+;; must still move the owner; a call argument walks with 0 and borrows it), and
+;; -1 is decided by `tc-move-consume-mode` at the first value form. The operand
+;; of a nested `return` or `try` is consumed by that form instead.
 (define (tc-move-check-global-result-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -73873,7 +73391,15 @@
                   (tc-global-shared-view result-ty)
                   (tc-global-shared-view result-ty)))
                 [(TcMoveResult.Ok moved1)
-                  (if (= consume-here 2)
+                  (if (or
+                    (= consume-here 2)
+                    (and
+                      (= consume-here 1)
+                      (tc-arena-type? ctx (tc-global-shared-view result-ty))
+                      (tc-move-arena-owner-var?
+                        expr-bases
+                        env
+                        (tc-global-shared-view expr))))
                     ;; `origin` keeps the leaf's span for move diagnostics.
                     (match (tc-move-after-consuming-projection
                       ctx
@@ -84477,6 +84003,22 @@
   (Ok reader.SpannedSexpr)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+;; What stays fixed while macro output is converted to sexprs and parsed: the
+;; expression pool's segment bases that child reads go through, and the
+;; structural session that spells names. One reference carries both through
+;; the recursive converters.
+(defstruct MacroSexprOwner
+  (expr-bases i64)
+  (session-address i64))
+
+(define (macro-sexpr-owner
+  [expr-bases : i64]
+  [session : cis.InternStructuralSessionHandle]) : MacroSexprOwner
+  (MacroSexprOwner expr-bases session.address))
+
+(define (macro-sexpr-session [owner : (& owner MacroSexprOwner)]) : cis.InternStructuralSessionHandle
+  (cis.InternStructuralSessionHandle owner.session-address))
+
 (defenum ResultMacroParsedDecls
   (Ok ast.AstDeclList)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -86373,7 +85915,12 @@
           metrics-address
           compiler-tc-macro-lifetime-start-scoped-env-bytes-metric
           (compiler-tc-macro-lifetime-arena-bytes
-            (tc-job-state-type-env-scoped-state-arena job-state)))))))
+            (tc-job-state-type-env-scoped-state-arena job-state)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-intern-bytes-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (ci.intern-persistent-arena-handle)))))))
 
 (cfg
   compile-profile
@@ -86452,6 +85999,15 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
+      ;; Spellings interned during expansion (generated names, hygiene
+      ;; renames) persist in the intern arena for the whole session.
+      [intern-handle : i64 (ci.intern-persistent-arena-handle)]
+      [interns : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          intern-handle
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-intern-bytes-metric))]
       [job-owner : i64
         (if (or
           (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
@@ -86482,7 +86038,8 @@
           (=
             job-owner-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
-          (= job-owner-handle scoped-env-handle))
+          (= job-owner-handle scoped-env-handle)
+          (= job-owner-handle intern-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             job-owner-handle
@@ -86524,7 +86081,8 @@
           (=
             enclosing-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
-          (= enclosing-handle scoped-env-handle))
+          (= enclosing-handle scoped-env-handle)
+          (= enclosing-handle intern-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             enclosing-handle
@@ -86533,24 +86091,26 @@
               compiler-tc-macro-lifetime-start-enclosing-bytes-metric)))]
       [named : i64
         (+
-          scoped-env
+          interns
           (+
-            job-owner
+            scoped-env
             (+
-              enclosing
+              job-owner
               (+
-                pool-base
+                enclosing
                 (+
-                  expr-pool
+                  pool-base
                   (+
-                    type-pool
+                    expr-pool
                     (+
-                      symbols-current
+                      type-pool
                       (+
-                        symbols-retired
+                        symbols-current
                         (+
-                          expansion-pool
-                          (+ active-generations retired-generations))))))))))]
+                          symbols-retired
+                          (+
+                            expansion-pool
+                            (+ active-generations retired-generations)))))))))))]
       [remainder : i64 (- live-delta named)]
       (begin
         (compiler-tc-macro-lifetime-emit-row!
@@ -86573,6 +86133,13 @@
           "session"
           cumulative-alloc
           job-owner
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "intern-storage"
+          "session"
+          cumulative-alloc
+          interns
           peak-delta)
         (compiler-tc-macro-lifetime-emit-row!
           (tc-global-shared-view boundary)
@@ -88764,6 +88331,7 @@
     [(ctfe_support.ResultCtfe.Err diag) (spec.ResultGenKey.Err diag)]))
 
 (define (macro-identity-key-string-exprs-at
+  [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [env : ctfe_support.CtfeEnv]
@@ -88772,10 +88340,13 @@
     (spec.ResultGenKey.Ok "" fuel)
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-identity-key-string-expr head-expr env fuel)
         [(spec.ResultGenKey.Ok head-key head-fuel)
           (match (macro-identity-key-string-exprs-at
+            expr-bases
             exprs
             (+ index 1)
             env
@@ -88822,14 +88393,16 @@
         (spec.spec-string-key (macro-identity-key-sexpr session items)))]))
 
 (define (macro-identity-key-syntax-expr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]
   [fuel : i64]) : spec.ResultGenKey
-  (match (macro-expr-to-spanned-sexpr session expr origin)
+  (match (macro-expr-to-spanned-sexpr owner expr origin)
     [(ResultMacroSexpr.Ok sexpr)
       (spec.ResultGenKey.Ok
-        (str_cat.str-cat "syntax:" (macro-identity-key-sexpr session sexpr))
+        (str_cat.str-cat
+          "syntax:"
+          (macro-identity-key-sexpr (macro-sexpr-session owner) sexpr))
         fuel)]
     [(ResultMacroSexpr.Err diag) (spec.ResultGenKey.Err diag)]))
 
@@ -88874,11 +88447,12 @@
       [(spec.ResultGenKey.Ok key next-fuel)
         (spec.ResultGenKey.Ok key next-fuel)]
       [(spec.ResultGenKey.Err _)
-        (macro-identity-key-syntax-expr
-          (tc-context-structural-session ctx)
-          expr
-          call-expr
-          fuel)])
+        (let
+          [sexpr-owner : MacroSexprOwner
+            (macro-sexpr-owner
+              (tc-context-expr-bases ctx)
+              (tc-context-structural-session ctx))]
+          (macro-identity-key-syntax-expr (& sexpr-owner) expr call-expr fuel))])
     (macro-identity-key-string-expr expr env fuel)))
 
 (define (macro-identity-key-param-exprs-at
@@ -89069,13 +88643,19 @@
                     fuel
                     call-expr)]
                 [else
-                  (macro-identity-key-string-exprs-at args arg-index env fuel)])
+                  (macro-identity-key-string-exprs-at
+                    (tc-context-expr-bases ctx)
+                    args
+                    arg-index
+                    env
+                    fuel)])
               (if (macro-param-expr-binding-clause?
                 ctx
                 (tc-global-shared-view fallback-module)
                 fallback-module-id
                 (tc-global-shared-view ty))
                 (match (macro-expr-binding-clause-prefix-from-args
+                  (tc-context-expr-bases ctx)
                   args
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
@@ -90686,14 +90266,14 @@
   (reader.SpannedSexpr.Sym (ci.intern-syntax-id-from-raw name-id) span))
 
 (define (macro-expr-list-with-head-symbol-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [exprs : ast.AstExprList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (let
     [tail : reader.SpannedSexpr
-      (try (macro-expr-list-to-spanned-sexpr session exprs span origin))]
+      (try (macro-expr-list-to-spanned-sexpr owner exprs span origin))]
     (ResultMacroSexpr.Ok
       (reader.spanned-sexpr-list-prepend
         (macro-spanned-symbol-id name-id span)
@@ -90705,13 +90285,13 @@
 ;; rebuild non-trivial function bodies (arithmetic, struct/array access, let,
 ;; while, set!, ...) that the quasiquote evaluator stores as typed AST nodes.
 (define (macro-child-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span
-    session
-    (ast.ast-node-get id)
+    owner
+    (ast.ast-expr-segment-bases-get owner.expr-bases id)
     span
     origin))
 
@@ -90813,20 +90393,20 @@
     span))
 
 (define (macro-type-list-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [items : ast.AstTypeList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (macro-type-list-to-spanned-sexpr-at session (& items) span origin 0))
+  (macro-type-list-to-spanned-sexpr-at owner (& items) span origin 0))
 
 (define (macro-type-list-to-spanned-sexpr-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [items : (& items ast.AstTypeList)]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
   [index : i64]) : ResultMacroSexpr
   (macro-type-list-to-spanned-sexpr-into
-    session
+    owner
     items
     span
     origin
@@ -90834,7 +90414,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-type-list-to-spanned-sexpr-into
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [items : (& items ast.AstTypeList)]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]
@@ -90843,14 +90423,14 @@
   (if (>= index (ast.ast-type-list-len items))
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-type-to-spanned-sexpr
-      session
+      owner
       (ast.ty-node-get
         (ast.ast-type-list-get items index (ast.ast-type-id-fallback)))
       span
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok shead)
         (macro-type-list-to-spanned-sexpr-into
-          session
+          owner
           items
           span
           origin
@@ -90862,13 +90442,13 @@
           (ResultMacroSexpr.Err diag))])))
 
 (define (macro-type-unary-sexpr-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [inner-id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (macro-type-to-spanned-sexpr
-    session
+    owner
     (ast.ty-node-get inner-id)
     span
     origin)
@@ -90886,8 +90466,8 @@
       (macro-lifetime-list-to-spanned-sexpr lifetimes span)
       span)))
 
-(define (macro-output-origin-arg-name [expr : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan expr)
+(define (macro-output-origin-arg-name [expr-bases : i64] [expr : ast.AstExpr]) : String
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
@@ -90903,12 +90483,14 @@
           [_ (tc-type-render ty)]))]
     [_ "<expression>"]))
 
-(define (macro-output-origin-name [origin : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan origin)
+(define (macro-output-origin-name [expr-bases : i64] [origin : ast.AstExpr]) : String
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases origin)
     [(ast.AstExpr.Call func-box args)
       (let
         [func-name : String
-          (match (ast.ast-expr-unspan (ast.ast-node-get func-box))
+          (match (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases func-box))
             [(ast.AstExpr.Var name-id)
               (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
                 (ci.intern-str name-id)
@@ -90917,7 +90499,10 @@
         [arg-name : String
           (if (> (ast.ast-expr-list-len (& args)) 0)
             (macro-output-origin-arg-name
-              (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
+              expr-bases
+              (ast.ast-expr-segment-bases-get
+                expr-bases
+                (ast.ast-expr-list-get (& args) 0 0)))
             "<no-args>")]
         (str_cat.str-cat func-name "(" arg-name ")"))]
     [(ast.AstExpr.Var name-id)
@@ -90929,7 +90514,7 @@
 ;; Serialize an AstType back to a spanned sexpr so type positions embedded in
 ;; expression nodes (__tl_make-array, cast, ann, typed let bindings) round-trip.
 (define (macro-type-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [ty : ast.AstType]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
@@ -90993,19 +90578,19 @@
         (macro-spanned-symbol-id cbi.compiler-builtin-id-fix-ExprList span))]
     [(ast.AstType.DynArray elem)
       (macro-type-unary-sexpr-id
-        session
+        owner
         (ci.intern "__tl_dyn-array")
         elem
         span
         origin)]
     [(ast.AstType.Slice elem)
-      (macro-type-unary-sexpr-id session (ci.intern "Slice") elem span origin)]
+      (macro-type-unary-sexpr-id owner (ci.intern "Slice") elem span origin)]
     [(ast.AstType.Array elem count)
       (let
         [selem : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get elem)
               span
               origin))]
@@ -91017,21 +90602,21 @@
             span)))]
     [(ast.AstType.Box inner)
       (macro-type-unary-sexpr-id
-        session
+        owner
         cbi.compiler-builtin-id-fix-Box
         inner
         span
         origin)]
     [(ast.AstType.Ptr inner)
       (macro-type-unary-sexpr-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "Ptr")
         inner
         span
         origin)]
     [(ast.AstType.MutPtr inner)
       (macro-type-unary-sexpr-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "MutPtr")
         inner
         span
@@ -91041,7 +90626,7 @@
         [stail : reader.SpannedSexpr
           (try
             (macro-type-list-to-spanned-sexpr
-              session
+              owner
               (ast.ast-type-list-box-shared-view items)
               span
               origin))]
@@ -91052,7 +90637,7 @@
             span)))]
     [(ast.AstType.Func args ret)
       (match (macro-type-list-to-spanned-sexpr
-        session
+        owner
         (ast.ast-type-list-box-shared-view args)
         span
         (tc-global-shared-view origin))
@@ -91061,7 +90646,7 @@
             [sret : reader.SpannedSexpr
               (try
                 (macro-type-to-spanned-sexpr
-                  session
+                  owner
                   (ast.ty-node-get ret)
                   span
                   origin))]
@@ -91083,7 +90668,7 @@
         [signature-sexpr : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get signature)
               span
               origin))]
@@ -91120,10 +90705,13 @@
         (io.panic
           (str_cat.str-cat
             "macro output received invalid type-var id in origin "
-            (macro-output-origin-name origin)))
+            (macro-output-origin-name owner.expr-bases origin)))
         (ResultMacroSexpr.Ok
           (macro-spanned-symbol-id
-            (macro-output-source-identity-id-at session name "type-var")
+            (macro-output-source-identity-id-at
+              (macro-sexpr-session owner)
+              name
+              "type-var")
             span)))]
     [(ast.AstType.StructArgs name lifetimes)
       (ResultMacroSexpr.Ok
@@ -91141,7 +90729,10 @@
           span))]
     [(ast.AstType.VarArgs name lifetimes)
       (macro-type-named-args-sexpr
-        (macro-output-source-identity-id-at session name "type-var-args")
+        (macro-output-source-identity-id-at
+          (macro-sexpr-session owner)
+          name
+          "type-var-args")
         (ast.ast-lifetime-list-box-shared-view lifetimes)
         span)]
     [(ast.AstType.Ref region inner)
@@ -91149,7 +90740,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -91166,7 +90757,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -91183,7 +90774,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -91198,7 +90789,7 @@
         [sinner : reader.SpannedSexpr
           (try
             (macro-type-to-spanned-sexpr
-              session
+              owner
               (ast.ty-node-get inner)
               span
               origin))]
@@ -91210,51 +90801,51 @@
             span)))]))
 
 (define (macro-child-form1-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (match (macro-child-to-spanned-sexpr session id span origin)
+  (match (macro-child-to-spanned-sexpr owner id span origin)
     [(ResultMacroSexpr.Ok sexpr)
       (ResultMacroSexpr.Ok (macro-form1-id name-id sexpr span))]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-child-form2-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [left-id : i64]
   [right-id : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr
-    session
+    owner
     left-id
     span
     (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sleft)
       (let
         [sright : reader.SpannedSexpr
-          (try (macro-child-to-spanned-sexpr session right-id span origin))]
+          (try (macro-child-to-spanned-sexpr owner right-id span origin))]
         (ResultMacroSexpr.Ok (macro-form2-id name-id sleft sright span)))]
     [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-child-type-form3-id
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [name-id : i64]
   [expr-id : i64]
   [ty : ast.AstType]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr
-    session
+    owner
     expr-id
     span
     (tc-global-shared-view origin))
     [(ResultMacroSexpr.Ok sexpr)
       (let
         [sty : reader.SpannedSexpr
-          (try (macro-type-to-spanned-sexpr session ty span origin))]
+          (try (macro-type-to-spanned-sexpr owner ty span origin))]
         (ResultMacroSexpr.Ok
           (macro-form3-id
             name-id
@@ -91401,21 +90992,21 @@
             "typecheck: module macro output typed patterns cannot be parsed as source declarations")))]))
 
 (define (macro-match-arm-bracket
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arm : ast.AstMatchArm]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match arm
     [(ast.AstMatchArm.Arm pattern body-id)
       (match (macro-pattern-to-spanned-sexpr
-        session
+        (macro-sexpr-session owner)
         pattern
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok spattern)
           (let
             [sbody : reader.SpannedSexpr
-              (try (macro-child-to-spanned-sexpr session body-id span origin))]
+              (try (macro-child-to-spanned-sexpr owner body-id span origin))]
             (ResultMacroSexpr.Ok
               (reader.spanned-sexpr-bracket-list
                 (reader.spanned-sexpr-list2 spattern sbody span)
@@ -91423,20 +91014,20 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-match-arm-list-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arms : ast.AstMatchArmList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
-  (macro-match-arm-list-to-spanned-sexpr-at session (& arms) 0 span origin))
+  (macro-match-arm-list-to-spanned-sexpr-at owner (& arms) 0 span origin))
 
 (define (macro-match-arm-list-to-spanned-sexpr-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-match-arm-list-to-spanned-sexpr-into
-    session
+    owner
     arms
     index
     span
@@ -91444,7 +91035,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-match-arm-list-to-spanned-sexpr-into
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
   [span : token.SourceSpan]
@@ -91453,13 +91044,13 @@
   (if (>= index arms.len)
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (match (macro-match-arm-bracket
-      session
+      owner
       (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       span
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok shead)
         (macro-match-arm-list-to-spanned-sexpr-into
-          session
+          owner
           arms
           (+ index 1)
           span
@@ -91471,14 +91062,14 @@
           (ResultMacroSexpr.Err diag))])))
 
 (define (macro-let-binding-bracket
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [binding : ast.AstLetBinding]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match binding
     [(ast.AstLetBinding.Binding name maybe-ty value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         value-id
         span
         (tc-global-shared-view origin))
@@ -91490,7 +91081,7 @@
                   (reader.spanned-sexpr-list2
                     (macro-spanned-symbol-id
                       (macro-output-source-identity-id-at
-                        session
+                        (macro-sexpr-session owner)
                         name
                         "let-binding")
                       span)
@@ -91500,13 +91091,13 @@
             [(ast.AstMaybeType.Some ty)
               (let
                 [sty : reader.SpannedSexpr
-                  (try (macro-type-to-spanned-sexpr session ty span origin))]
+                  (try (macro-type-to-spanned-sexpr owner ty span origin))]
                 (ResultMacroSexpr.Ok
                   (reader.spanned-sexpr-bracket-list
                     (reader.spanned-sexpr-list4
                       (macro-spanned-symbol-id
                         (macro-output-source-identity-id-at
-                          session
+                          (macro-sexpr-session owner)
                           name
                           "typed-let-binding")
                         span)
@@ -91520,13 +91111,13 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-let-tail
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [bindings : ast.AstLetBindingList]
   [body : reader.SpannedSexpr]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-let-tail-at
-    session
+    owner
     (& bindings)
     body
     span
@@ -91535,7 +91126,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-let-tail-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [bindings : (& bindings ast.AstLetBindingList)]
   [body : reader.SpannedSexpr]
   [span : token.SourceSpan]
@@ -91548,7 +91139,7 @@
         (reader.spanned-sexpr-builder-push builder body)
         span))
     (match (macro-let-binding-bracket
-      session
+      owner
       (ast.ast-let-binding-list-get
         bindings
         index
@@ -91557,7 +91148,7 @@
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok sbracket)
         (macro-let-tail-at
-          session
+          owner
           bindings
           body
           span
@@ -91570,12 +91161,12 @@
           (ResultMacroSexpr.Err diag))])))
 
 (define (macro-expr-list-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [exprs : ast.AstExprList]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-expr-list-to-spanned-sexpr-at
-    session
+    owner
     (& exprs)
     0
     span
@@ -91583,7 +91174,7 @@
     (reader.spanned-sexpr-builder-new)))
 
 (define (macro-expr-list-to-spanned-sexpr-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [span : token.SourceSpan]
@@ -91593,15 +91184,17 @@
     (ResultMacroSexpr.Ok (reader.spanned-sexpr-list-from-builder builder span))
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (ast.ast-expr-segment-bases-get
+          owner.expr-bases
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-expr-to-spanned-sexpr-with-span
-        session
+        owner
         head-expr
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok shead)
           (macro-expr-list-to-spanned-sexpr-at
-            session
+            owner
             exprs
             (+ index 1)
             span
@@ -91613,27 +91206,30 @@
             (ResultMacroSexpr.Err diag))]))))
 
 (define (macro-call-head-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box ast-span)
       (macro-call-head-to-spanned-sexpr
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         (macro-source-span-from-ast ast-span)
         origin)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-call-head-to-spanned-sexpr
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         span
         origin)]
     [(ast.AstExpr.Var name-id)
       (let
         [source-id : i64
-          (macro-output-syntax-id-at session name-id "call-head")]
+          (macro-output-syntax-id-at
+            (macro-sexpr-session owner)
+            name-id
+            "call-head")]
         [tag : i64
           (parser.compiler-parse-dispatch-tag-id
             (parser.compiler-parse-dispatch-env)
@@ -91642,28 +91238,31 @@
           (macro-spanned-symbol-id
             (if (or
               (= tag (parser.compiler-parse-tag-unknown))
-              (macro-hygiene-global-id? session name-id))
-              (macro-output-source-identity-id-at session name-id "call-head")
+              (macro-hygiene-global-id? (macro-sexpr-session owner) name-id))
+              (macro-output-source-identity-id-at
+                (macro-sexpr-session owner)
+                name-id
+                "call-head")
               source-id)
             span)))]
-    [_ (macro-expr-to-spanned-sexpr-with-span session expr span origin)]))
+    [_ (macro-expr-to-spanned-sexpr-with-span owner expr span origin)]))
 
 (define (macro-expr-to-spanned-sexpr-with-span
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [span : token.SourceSpan]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (match expr
     [(ast.AstExpr.Spanned inner-box ast-span)
       (macro-expr-to-spanned-sexpr-with-span
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         (macro-source-span-from-ast ast-span)
         origin)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (macro-expr-to-spanned-sexpr-with-span
-        session
-        (ast.ast-node-get inner-box)
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         span
         origin)]
     [(ast.AstExpr.Literal lit)
@@ -91671,31 +91270,35 @@
     [(ast.AstExpr.Var name)
       (ResultMacroSexpr.Ok
         (macro-spanned-symbol-id
-          (macro-output-source-identity-id-at session name "expr-var")
+          (macro-output-source-identity-id-at
+            (macro-sexpr-session owner)
+            name
+            "expr-var")
           span))]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
         (match (macro-call-head-to-spanned-sexpr
-          session
+          owner
           func
           span
           (tc-global-shared-view origin))
           [(ResultMacroSexpr.Ok head)
-            (match (macro-expr-list-to-spanned-sexpr session args span origin)
+            (match (macro-expr-list-to-spanned-sexpr owner args span origin)
               [(ResultMacroSexpr.Ok tail)
                 (ResultMacroSexpr.Ok
                   (reader.spanned-sexpr-list-prepend head tail span))]
               [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
           [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))]
     [(ast.AstExpr.BracketClause items)
-      (match (macro-expr-list-to-spanned-sexpr session items span origin)
+      (match (macro-expr-list-to-spanned-sexpr owner items span origin)
         [(ResultMacroSexpr.Ok list)
           (ResultMacroSexpr.Ok (reader.spanned-sexpr-bracket-list list span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.If cond-box then-box else-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "if")
         (ast.ast-expr-cons
           cond-box
@@ -91706,82 +91309,82 @@
         origin)]
     [(ast.AstExpr.Begin exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "begin")
         exprs
         span
         origin)]
     [(ast.AstExpr.Unsafe exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "unsafe")
         exprs
         span
         origin)]
     [(ast.AstExpr.Tuple exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "tuple")
         exprs
         span
         origin)]
     [(ast.AstExpr.Array exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "array")
         exprs
         span
         origin)]
     [(ast.AstExpr.DynArray exprs)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (ci.intern "__tl_make-array")
         exprs
         span
         origin)]
     [(ast.AstExpr.Quote inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "quote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Quasiquote inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "quasiquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Unquote inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "unquote")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "unquote-splicing")
         (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
         span
         origin)]
     [(ast.AstExpr.Binary op left-id right-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         left-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sleft)
-          (match (macro-child-to-spanned-sexpr session right-id span origin)
+          (match (macro-child-to-spanned-sexpr owner right-id span origin)
             [(ResultMacroSexpr.Ok sright)
               (ResultMacroSexpr.Ok
                 (macro-form2-id (macro-binop-symbol-id op) sleft sright span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Unary op inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (macro-unop-symbol-id op) sinner span))]
@@ -91790,12 +91393,12 @@
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-id)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             body-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sbody)
-              (match (macro-let-tail session bindings sbody span origin)
+              (match (macro-let-tail owner bindings sbody span origin)
                 [(ResultMacroSexpr.Ok stail)
                   (ResultMacroSexpr.Ok
                     (reader.spanned-sexpr-list-prepend
@@ -91808,12 +91411,12 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.While cond-id body-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         cond-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok scond)
-          (match (macro-child-to-spanned-sexpr session body-id span origin)
+          (match (macro-child-to-spanned-sexpr owner body-id span origin)
             [(ResultMacroSexpr.Ok sbody)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91827,13 +91430,13 @@
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-id arms)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             scrutinee-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sscrutinee)
               (match (macro-match-arm-list-to-spanned-sexpr
-                session
+                owner
                 arms
                 span
                 origin)
@@ -91853,25 +91456,28 @@
                 [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.Set name value-id)
-      (match (macro-child-to-spanned-sexpr session value-id span origin)
+      (match (macro-child-to-spanned-sexpr owner value-id span origin)
         [(ResultMacroSexpr.Ok svalue)
           (ResultMacroSexpr.Ok
             (macro-form2-id
               (cbi.compiler-builtin-ctfe "set!")
               (macro-spanned-symbol-id
-                (macro-output-source-identity-id-at session name "expr-set")
+                (macro-output-source-identity-id-at
+                  (macro-sexpr-session owner)
+                  name
+                  "expr-set")
                 span)
               svalue
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.FixedMakeArray ty-id len-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sty)
-          (match (macro-child-to-spanned-sexpr session len-id span origin)
+          (match (macro-child-to-spanned-sexpr owner len-id span origin)
             [(ResultMacroSexpr.Ok slen)
               (ResultMacroSexpr.Ok
                 (macro-form2-id (ci.intern "make-array") sty slen span))]
@@ -91879,12 +91485,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.MakeArray ty-id len-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sty)
-          (match (macro-child-to-spanned-sexpr session len-id span origin)
+          (match (macro-child-to-spanned-sexpr owner len-id span origin)
             [(ResultMacroSexpr.Ok slen)
               (ResultMacroSexpr.Ok
                 (macro-form2-id (ci.intern "__tl_make-array") sty slen span))]
@@ -91892,12 +91498,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayRef array-id index-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
-          (match (macro-child-to-spanned-sexpr session index-id span origin)
+          (match (macro-child-to-spanned-sexpr owner index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91909,18 +91515,18 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArraySet array-id index-id value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             index-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok sindex)
-              (match (macro-child-to-spanned-sexpr session value-id span origin)
+              (match (macro-child-to-spanned-sexpr owner value-id span origin)
                 [(ResultMacroSexpr.Ok svalue)
                   (ResultMacroSexpr.Ok
                     (macro-form3-id
@@ -91934,18 +91540,18 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayTake array-id live-id index-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr
-            session
+            owner
             live-id
             span
             (tc-global-shared-view origin))
             [(ResultMacroSexpr.Ok slive)
-              (match (macro-child-to-spanned-sexpr session index-id span origin)
+              (match (macro-child-to-spanned-sexpr owner index-id span origin)
                 [(ResultMacroSexpr.Ok sindex)
                   (ResultMacroSexpr.Ok
                     (macro-form3-id
@@ -91959,16 +91565,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Replace place-id replacement-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         place-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok splace)
-          (match (macro-child-to-spanned-sexpr
-            session
-            replacement-id
-            span
-            origin)
+          (match (macro-child-to-spanned-sexpr owner replacement-id span origin)
             [(ResultMacroSexpr.Ok sreplacement)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91980,12 +91582,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayPush array-id value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         array-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sarray)
-          (match (macro-child-to-spanned-sexpr session value-id span origin)
+          (match (macro-child-to-spanned-sexpr owner value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -91997,12 +91599,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StringRef string-id index-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         string-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sstring)
-          (match (macro-child-to-spanned-sexpr session index-id span origin)
+          (match (macro-child-to-spanned-sexpr owner index-id span origin)
             [(ResultMacroSexpr.Ok sindex)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -92013,7 +91615,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StructGet receiver-id field)
-      (match (macro-child-to-spanned-sexpr session receiver-id span origin)
+      (match (macro-child-to-spanned-sexpr owner receiver-id span origin)
         [(ResultMacroSexpr.Ok sreceiver)
           (ResultMacroSexpr.Ok
             (macro-form2-id
@@ -92024,12 +91626,12 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.StructSet receiver-id field value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         receiver-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sreceiver)
-          (match (macro-child-to-spanned-sexpr session value-id span origin)
+          (match (macro-child-to-spanned-sexpr owner value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
               (let
                 [starget : reader.SpannedSexpr
@@ -92060,13 +91662,13 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Cast inner-id ty-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         inner-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr
-            session
+            owner
             (ast.ty-node-get ty-id)
             span
             origin)
@@ -92082,13 +91684,13 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Ann inner-id ty-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         inner-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr
-            session
+            owner
             (ast.ty-node-get ty-id)
             span
             origin)
@@ -92103,7 +91705,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Borrow mutable lifetime-id place-id)
-      (match (macro-child-to-spanned-sexpr session place-id span origin)
+      (match (macro-child-to-spanned-sexpr owner place-id span origin)
         [(ResultMacroSexpr.Ok splace)
           (let
             [head-id : i64
@@ -92122,43 +91724,43 @@
                     span))]))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Return inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe "return") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Try inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe "try") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.Box inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (cbi.compiler-builtin-ctfe "box") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxGet inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (ci.intern "__tl_box-get") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxTake inner-id)
-      (match (macro-child-to-spanned-sexpr session inner-id span origin)
+      (match (macro-child-to-spanned-sexpr owner inner-id span origin)
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form1-id (ci.intern "__tl_box-take") sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.BoxSet receiver-id value-id)
       (match (macro-child-to-spanned-sexpr
-        session
+        owner
         receiver-id
         span
         (tc-global-shared-view origin))
         [(ResultMacroSexpr.Ok sreceiver)
-          (match (macro-child-to-spanned-sexpr session value-id span origin)
+          (match (macro-child-to-spanned-sexpr owner value-id span origin)
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -92169,7 +91771,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.TupleRef tuple-id index)
-      (match (macro-child-to-spanned-sexpr session tuple-id span origin)
+      (match (macro-child-to-spanned-sexpr owner tuple-id span origin)
         [(ResultMacroSexpr.Ok stuple)
           (ResultMacroSexpr.Ok
             (macro-form2-id
@@ -92186,7 +91788,7 @@
               (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "init") span)
               span))]
         [(ast.AstMaybeType.Some ty)
-          (match (macro-type-to-spanned-sexpr session ty span origin)
+          (match (macro-type-to-spanned-sexpr owner ty span origin)
             [(ResultMacroSexpr.Ok sty)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
@@ -92197,7 +91799,7 @@
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(ast.AstExpr.TypeLiteral ty-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         origin)
@@ -92207,7 +91809,7 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNull ty-id)
       (match (macro-type-to-spanned-sexpr
-        session
+        owner
         (ast.ty-node-get ty-id)
         span
         origin)
@@ -92221,28 +91823,28 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.PtrNullCheck ptr-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-null?")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrAddrOf place-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-addr-of")
         place-id
         span
         origin)]
     [(ast.AstExpr.PtrRead ptr-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-read")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.PtrWrite ptr-id value-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-write!")
         ptr-id
         value-id
@@ -92250,7 +91852,7 @@
         origin)]
     [(ast.AstExpr.PtrOffset ptr-id offset-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-offset")
         ptr-id
         offset-id
@@ -92258,7 +91860,7 @@
         origin)]
     [(ast.AstExpr.PtrCast ptr-id ty-id)
       (macro-child-type-form3-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr-cast")
         ptr-id
         (ast.ty-node-get ty-id)
@@ -92266,14 +91868,14 @@
         origin)]
     [(ast.AstExpr.PtrToInt ptr-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "ptr->int")
         ptr-id
         span
         origin)]
     [(ast.AstExpr.IntToPtr value-id ty-id)
       (macro-child-type-form3-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "int->ptr")
         value-id
         (ast.ty-node-get ty-id)
@@ -92281,14 +91883,14 @@
         origin)]
     [(ast.AstExpr.StringData value-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "string-data")
         value-id
         span
         origin)]
     [(ast.AstExpr.StringFromBytes ptr-id len-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "string-from-bytes")
         ptr-id
         len-id
@@ -92296,7 +91898,7 @@
         origin)]
     [(ast.AstExpr.ArrayData value-id)
       (macro-child-form1-id
-        session
+        owner
         (ci.intern "__tl_array-data")
         value-id
         span
@@ -92321,7 +91923,7 @@
         (macro-form0-id (cbi.compiler-builtin-ctfe "program-envp") span))]
     [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-eax")
         leaf-id
         subleaf-id
@@ -92329,7 +91931,7 @@
         origin)]
     [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-ebx")
         leaf-id
         subleaf-id
@@ -92337,7 +91939,7 @@
         origin)]
     [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-ecx")
         leaf-id
         subleaf-id
@@ -92345,7 +91947,7 @@
         origin)]
     [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
       (macro-child-form2-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "cpuid-edx")
         leaf-id
         subleaf-id
@@ -92353,14 +91955,14 @@
         origin)]
     [(ast.AstExpr.Xgetbv index-id)
       (macro-child-form1-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "xgetbv")
         index-id
         span
         origin)]
     [(ast.AstExpr.Syscall args)
       (macro-expr-list-with-head-symbol-id
-        session
+        owner
         (cbi.compiler-builtin-ctfe "syscall")
         args
         span
@@ -92373,11 +91975,11 @@
             "typecheck: module macro output contains syntax that cannot be parsed as a declaration")))]))
 
 (define (macro-expr-to-spanned-sexpr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span
-    session
+    owner
     expr
     (macro-zero-source-span)
     origin))
@@ -92398,14 +92000,14 @@
         (box (macro-output-syntax-diag origin message)))]))
 
 (define (macro-parse-decls-from-one-expr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr
-      session
+      owner
       expr
       (tc-global-shared-view origin))
       [(ResultMacroSexpr.Ok form)
@@ -92424,14 +92026,14 @@
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [exprs : ast.AstExprList]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (macro-parse-decls-from-exprs-at session dispatch (& exprs) 0 origin))
+  (macro-parse-decls-from-exprs-at owner dispatch (& exprs) 0 origin))
 
 (define (macro-parse-decls-from-exprs-at
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
@@ -92440,9 +92042,11 @@
     (ResultMacroParsedDecls.Ok (ast.ast-decl-list-new))
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+        (ast.ast-expr-segment-bases-get
+          owner.expr-bases
+          (ast.ast-expr-list-get exprs index 0))]
       (match (macro-parse-decls-from-expr
-        session
+        owner
         dispatch
         head-expr
         (tc-global-shared-view origin))
@@ -92451,7 +92055,7 @@
             [rest-decls : ast.AstDeclList
               (try
                 (macro-parse-decls-from-exprs-at
-                  session
+                  owner
                   dispatch
                   exprs
                   (+ index 1)
@@ -92461,39 +92065,45 @@
         [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))))
 
 (define (macro-parse-decls-from-expr
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [dispatch : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    owner.expr-bases
+    (tc-global-shared-view expr))
     [(ast.AstExpr.Begin exprs)
-      (macro-parse-decls-from-exprs session dispatch exprs origin)]
+      (macro-parse-decls-from-exprs owner dispatch exprs origin)]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
-        (match (ast.ast-expr-unspan func)
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
+        (match (ast.ast-expr-unspan-with-segment-bases owner.expr-bases func)
           [(ast.AstExpr.Var name)
             (if (=
               (parser.compiler-parse-dispatch-tag-id
                 dispatch
-                (macro-output-syntax-id-at session name "parse-call-head"))
+                (macro-output-syntax-id-at
+                  (macro-sexpr-session owner)
+                  name
+                  "parse-call-head"))
               (parser.compiler-parse-tag-expr-begin))
-              (macro-parse-decls-from-exprs session dispatch args origin)
-              (macro-parse-decls-from-one-expr session dispatch expr origin))]
-          [_ (macro-parse-decls-from-one-expr session dispatch expr origin)]))]
-    [_ (macro-parse-decls-from-one-expr session dispatch expr origin)]))
+              (macro-parse-decls-from-exprs owner dispatch args origin)
+              (macro-parse-decls-from-one-expr owner dispatch expr origin))]
+          [_ (macro-parse-decls-from-one-expr owner dispatch expr origin)]))]
+    [_ (macro-parse-decls-from-one-expr owner dispatch expr origin)]))
 
 (define (macro-module-decls-from-ctfe-value
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [value : ctfe_support.CompilerCtfeValue]
   [origin : ast.AstExpr]
   [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(ctfe_support.CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr
-        session
+        owner
         dispatch
-        (ast.ast-node-get node)
+        (ast.ast-expr-segment-bases-get owner.expr-bases node)
         origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -92503,16 +92113,16 @@
             "typecheck: Module macro transformer did not produce Expr")))]))
 
 (define (macro-decls-from-ctfe-value
-  [session : cis.InternStructuralSessionHandle]
+  [owner : (& owner MacroSexprOwner)]
   [value : ctfe_support.CompilerCtfeValue]
   [origin : ast.AstExpr]
   [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(ctfe_support.CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr
-        session
+        owner
         dispatch
-        (ast.ast-node-get node)
+        (ast.ast-expr-segment-bases-get owner.expr-bases node)
         origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -93049,6 +92659,7 @@
           (tc-macro-surface-call-state-data-set! state cache))))))
 
 (define (macro-surface-decl-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [decl : (& decl cload.CompilerLoadSurfaceDecl)]
   [target-module-id : i64]
@@ -93069,11 +92680,12 @@
             -1
             (clone params)
             (clone ret)
-            (ast.ast-node-get body-box)))]
+            (ast.ast-expr-segment-bases-get expr-bases body-box)))]
       [_ (MacroMaybeDecl.No)])
     (MacroMaybeDecl.No)))
 
 (define (macro-surface-decls-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [decls : cload.CompilerLoadSurfaceDeclList]
   [target-module-id : i64]
@@ -93083,6 +92695,7 @@
     (begin
       (while (< index (cload.compiler-load-surface-decl-list-count decls))
         (match (macro-surface-decl-call-decl-in-module
+          expr-bases
           state
           (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)
           target-module-id
@@ -93106,6 +92719,7 @@
       (MacroMaybeDecl.No))))
 
 (define (macro-surface-summaries-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [summaries : cload.CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]
@@ -93120,6 +92734,7 @@
           [summary : cload.CompilerLoadSurfaceSummary
             (cload.compiler-load-surface-summary-list-at summaries index)]
           (match (macro-surface-decls-call-decl-in-module
+            expr-bases
             state
             summary.decls
             target-module-id
@@ -93143,12 +92758,14 @@
       (MacroMaybeDecl.No))))
 
 (define (macro-surface-call-decl-fill-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
   (let
     [result : MacroMaybeDecl
       (match (macro-surface-summaries-call-decl-in-module
+        expr-bases
         state
         (cload.compiler-load-surface-summaries)
         target-module-id
@@ -93198,6 +92815,7 @@
 ;; untouched; only the enum cell moves. Redirected only while a generation is
 ;; live, so every non-generational caller keeps its existing owner.
 (define (macro-surface-call-decl-in-module
+  [expr-bases : i64]
   [state : TcMacroState]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
@@ -93208,12 +92826,14 @@
       [(MacroSurfaceCallDeclCacheLookup.Miss)
         (if (not (macro-generation-any-live? state))
           (macro-surface-call-decl-fill-in-module
+            expr-bases
             state
             target-module-id
             base-id)
           (in-arena
             (arena.Arena (macro-expand-scratch-arena-get state))
             (macro-surface-call-decl-fill-in-module
+              expr-bases
               state
               target-module-id
               base-id)))])))
@@ -93872,10 +93492,11 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.BracketClause items)
       (if (> items.len 0)
-        (match (ast.ast-expr-unspan
+        (match (ast.ast-expr-unspan-with-segment-bases
+          expr-bases
           (ast.ast-expr-segment-bases-get
             expr-bases
             (ast.ast-expr-list-get (& items) 0 0)))
@@ -93906,14 +93527,14 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(ast.AstExpr.Call func-box params)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [with-name : MacroHygieneEnv
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
             [(ast.AstExpr.Var name-id)
               (macro-hygiene-output-bind-id env name-id)]
             [_ env])]
@@ -93923,10 +93544,14 @@
 (define (macro-hygiene-output-declaration-name-env
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(ast.AstExpr.Call func-box _)
-      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
         [_ env])]
     [_ env]))
@@ -93934,7 +93559,9 @@
 (define (macro-hygiene-output-bind-var-expr
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    expr)
     [(ast.AstExpr.Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [_ env]))
 
@@ -93955,13 +93582,17 @@
   [expr : ast.AstExpr]
   [pattern-name? : bool]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    (tc-global-shared-view expr))
     [(ast.AstExpr.Var name-id)
       (if pattern-name?
         (macro-hygiene-output-pattern-name-id env name-id)
         (macro-hygiene-output-bind-id env name-id))]
     [(ast.AstExpr.Call func-box _)
-      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id)
           (let
             [source-id : i64
@@ -93973,7 +93604,9 @@
               [(and
                   (ci.intern-colon-keyword-id? source-id)
                   (string.eq (ci.intern-str source-id) ":lifetimes"))
-                (match (ast.ast-expr-unspan expr)
+                (match (ast.ast-expr-unspan-with-segment-bases
+                  (macro-hygiene-expr-segment-bases env)
+                  expr)
                   [(ast.AstExpr.Call _ args)
                     (macro-hygiene-output-bind-var-list-env (& args) 0 env)]
                   [_ env])]
@@ -94008,7 +93641,8 @@
       (macro-hygiene-env-structural-session env)]
     [with-target : MacroHygieneEnv
       (if (> count 0)
-        (match (ast.ast-expr-unspan
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (macro-hygiene-expr-segment-bases env)
           (macro-hygiene-expr-get env (ast.ast-expr-list-get items 0 0)))
           [(ast.AstExpr.Var target-id)
             (macro-hygiene-output-bind-id env target-id)]
@@ -94028,13 +93662,17 @@
           (macro-hygiene-expr-get
             with-target
             (ast.ast-expr-list-get items (- count 1) 0))]
-        (match (ast.ast-expr-unspan as-expr)
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (macro-hygiene-expr-segment-bases env)
+          as-expr)
           [(ast.AstExpr.Var as-id)
             (if (string.eq
               (ci.intern-str
                 (tc-hygiene-template-source-id-or session as-id as-id))
               "as")
-              (match (ast.ast-expr-unspan alias-expr)
+              (match (ast.ast-expr-unspan-with-segment-bases
+                (macro-hygiene-expr-segment-bases env)
+                alias-expr)
                 [(ast.AstExpr.Var alias-id)
                   (macro-hygiene-output-bind-id
                     (macro-hygiene-output-bind-id with-target as-id)
@@ -94043,7 +93681,8 @@
               with-target)]
           [_ with-target]))
       (if (= count 1)
-        (match (ast.ast-expr-unspan
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (macro-hygiene-expr-segment-bases env)
           (macro-hygiene-expr-get with-target (ast.ast-expr-list-get items 0 0)))
           [(ast.AstExpr.Var target-id)
             (let
@@ -94077,7 +93716,9 @@
 (define (macro-hygiene-output-decl-env
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (macro-hygiene-expr-segment-bases env)
+    expr)
     [(ast.AstExpr.Begin items)
       (macro-hygiene-output-decl-list-env (& items) 0 env)]
     [(ast.AstExpr.Unsafe items)
@@ -94085,7 +93726,9 @@
     [(ast.AstExpr.Comptime inner-box)
       (macro-hygiene-output-decl-env (macro-hygiene-expr-get env inner-box) env)]
     [(ast.AstExpr.Call func-box args)
-      (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var head-id)
           (let
             [source-head-id : i64
@@ -95441,7 +95084,7 @@
   [func : ast.AstExpr]
   [args : (& args ast.AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
     [(ast.AstExpr.Var head-id)
       (let
         [source-head-id : i64
@@ -96086,7 +95729,7 @@
         (ast.ast-expr-call-with-pools
           env.pools
           (macro-hygiene-expr expr-bases func-box env macro-name depth)
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
             [(ast.AstExpr.Var name-id)
               (if (=
                 (tc-hygiene-template-source-id-or
@@ -96813,18 +96456,20 @@
   512)
 
 (define (macro-decl-from-decl
+  [expr-bases : i64]
   [decl : ast.AstDecl]
   [module-id : i64]
   [declaration-id : i64]) : MacroMaybeDecl
   (match decl
     [(ast.AstDecl.DefMacro decl-meta name params ret body-box)
       (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (MacroMaybeDecl.Some name module-id declaration-id params ret body))]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-        (macro-decl-from-decl inner module-id declaration-id))]
+        (macro-decl-from-decl expr-bases inner module-id declaration-id))]
     [_ (MacroMaybeDecl.No)]))
 
 ;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
@@ -96861,6 +96506,7 @@
   (match (csym.compiler-symbols-decl-at-index symbols target)
     [(parser.ResultAstDecl.Ok decl)
       (macro-decl-from-decl
+        (tc-context-expr-bases _ctx)
         decl
         (macro-decl-owner-module-or symbols target module-id)
         target)]
@@ -98240,6 +97886,7 @@
                 call-expr
                 (macro-missing-macro-message name))))])
       (match (macro-surface-call-decl-in-module
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         target-module-id
         base-id)
@@ -98522,6 +98169,7 @@
               body))]
         [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])
       (match (macro-surface-call-decl-in-module
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         target-module-id
         lookup-name-id)
@@ -98547,6 +98195,7 @@
               target-module-id
               lookup-name-id)
             (match (macro-surface-call-decl-in-module
+              (tc-context-expr-bases ctx)
               (tc-context-macro-state ctx)
               target-module-id
               lookup-name-id)
@@ -98709,6 +98358,7 @@
               body))]
         [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])
       (match (macro-surface-call-decl-in-module
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         module-id
         lookup-name-id)
@@ -99346,7 +98996,9 @@
     "; import the module or use a visible dotted module alias"))
 
 (define (macro-module-strategy-arg [ctx : TcContext] [arg : ast.AstExpr]) : ResultMacroModuleArg
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    (tc-global-shared-view arg))
     [(ast.AstExpr.Var name-id)
       (let
         [source-id : i64
@@ -99426,8 +99078,10 @@
       (box
         (ctfe_support.ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))))
 
-(define (macro-expr-clause-from-arg [arg : ast.AstExpr]) : ResultMacroClause
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+(define (macro-expr-clause-from-arg [expr-bases : i64] [arg : ast.AstExpr]) : ResultMacroClause
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
     [(ast.AstExpr.BracketClause items) (macro-expr-clause-from-items arg items)]
     [_
       (ResultMacroClause.Err
@@ -99436,15 +99090,22 @@
             arg
             "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
-(define (macro-expr-clause-list-from-args [args : ast.AstExprList]) : ResultMacroClauseList
+(define (macro-expr-clause-list-from-args
+  [expr-bases : i64]
+  [args : ast.AstExprList]) : ResultMacroClauseList
   (let
     [out : ast.AstExprClauseList
       (ast.ast-expr-clause-list-with-capacity args.len)]
-    (match (macro-expr-clause-list-from-args-into (& args) 0 (&mut out))
+    (match (macro-expr-clause-list-from-args-into
+      expr-bases
+      (& args)
+      0
+      (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroClauseList.Err diag)])))
 
 (define (macro-expr-clause-list-from-args-into
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprClauseList)]) : ResultMacroCheck
@@ -99452,23 +99113,33 @@
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (match (macro-expr-clause-from-arg head-expr)
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get args index 0))]
+      (match (macro-expr-clause-from-arg expr-bases head-expr)
         [(ResultMacroClause.Ok clause)
           (begin
             (ast.ast-expr-clause-list-push out clause)
-            (macro-expr-clause-list-from-args-into args (+ index 1) out))]
+            (macro-expr-clause-list-from-args-into
+              expr-bases
+              args
+              (+ index 1)
+              out))]
         [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
-(define (macro-expr-span-or-zero [arg : ast.AstExpr]) : ast.AstSourceSpan
+(define (macro-expr-span-or-zero [expr-bases : i64] [arg : ast.AstExpr]) : ast.AstSourceSpan
   (match arg
     [(ast.AstExpr.Spanned _ span) span]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-expr-span-or-zero (ast.ast-node-get inner-box))]
+      (macro-expr-span-or-zero
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [_ (ast.ast-source-span 0 0 0 0)]))
 
-(define (macro-expr-colon? [expr-id : i64]) : bool
-  (match (ast.ast-expr-unspan (ast.ast-node-get expr-id))
+(define (macro-expr-colon? [expr-bases : i64] [expr-id : i64]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases expr-id))
     [(ast.AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-colon)]
     [_ false]))
 
@@ -99480,6 +99151,7 @@
         (macro-binding-clause-shape-message)))))
 
 (define (macro-expr-binding-clause-from-name
+  [expr-bases : i64]
   [arg : ast.AstExpr]
   [name : i64]
   [rest : ast.AstExprList]) : ResultMacroBindingClause
@@ -99489,7 +99161,7 @@
       (macro-expr-binding-clause-shape-error arg)
       (let
         [first : i64 (ast.ast-expr-list-get (& rest) 0 0)]
-        (if (macro-expr-colon? first)
+        (if (macro-expr-colon? expr-bases first)
           (if (= len 3)
             (ResultMacroBindingClause.Ok
               (ast.ast-expr-binding-clause-id
@@ -99498,7 +99170,7 @@
                 (ast.ast-expr-list-get (& rest) 1 0)
                 (ast.ast-expr-list-get (& rest) 2 0)
                 (ctfe_support.ctfe-untyped-expr-type)
-                (macro-expr-span-or-zero arg)))
+                (macro-expr-span-or-zero expr-bases arg)))
             (macro-expr-binding-clause-shape-error arg))
           (if (= len 1)
             (ResultMacroBindingClause.Ok
@@ -99508,28 +99180,36 @@
                 (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
                 first
                 (ctfe_support.ctfe-untyped-expr-type)
-                (macro-expr-span-or-zero arg)))
+                (macro-expr-span-or-zero expr-bases arg)))
             (macro-expr-binding-clause-shape-error arg)))))))
 
 (define (macro-expr-binding-clause-from-items
+  [expr-bases : i64]
   [arg : ast.AstExpr]
   [items : ast.AstExprList]) : ResultMacroBindingClause
   (if (ast.ast-expr-list-empty? (& items))
     (macro-expr-binding-clause-shape-error arg)
     (let
       [name-expr : i64 (ast.ast-expr-list-get (& items) 0 0)]
-      (match (ast.ast-expr-unspan (ast.ast-node-get name-expr))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases name-expr))
         [(ast.AstExpr.Var name)
           (macro-expr-binding-clause-from-name
+            expr-bases
             arg
             name
             (ast.ast-expr-list-tail-from-ref (& items) 1))]
         [_ (macro-expr-binding-clause-shape-error arg)]))))
 
-(define (macro-expr-binding-clause-from-arg [arg : ast.AstExpr]) : ResultMacroBindingClause
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+(define (macro-expr-binding-clause-from-arg
+  [expr-bases : i64]
+  [arg : ast.AstExpr]) : ResultMacroBindingClause
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
     [(ast.AstExpr.BracketClause items)
-      (macro-expr-binding-clause-from-items arg items)]
+      (macro-expr-binding-clause-from-items expr-bases arg items)]
     [_
       (ResultMacroBindingClause.Err
         (box
@@ -99537,15 +99217,22 @@
             arg
             "typecheck: ExprBindingClause macro operand expects bracket syntax")))]))
 
-(define (macro-expr-binding-clause-list-from-args [args : ast.AstExprList]) : ResultMacroBindingClauseList
+(define (macro-expr-binding-clause-list-from-args
+  [expr-bases : i64]
+  [args : ast.AstExprList]) : ResultMacroBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity args.len)]
-    (match (macro-expr-binding-clause-list-from-args-into (& args) 0 (&mut out))
+    (match (macro-expr-binding-clause-list-from-args-into
+      expr-bases
+      (& args)
+      0
+      (&mut out))
       [(ResultMacroCheck.Ok) (ResultMacroBindingClauseList.Ok out)]
       [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
 
 (define (macro-expr-binding-clause-list-from-args-into
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprBindingClauseList)]) : ResultMacroCheck
@@ -99553,21 +99240,29 @@
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (match (macro-expr-binding-clause-from-arg head-expr)
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get args index 0))]
+      (match (macro-expr-binding-clause-from-arg expr-bases head-expr)
         [(ResultMacroBindingClause.Ok clause)
           (begin
             (ast.ast-expr-binding-clause-list-push out clause)
-            (macro-expr-binding-clause-list-from-args-into args (+ index 1) out))]
+            (macro-expr-binding-clause-list-from-args-into
+              expr-bases
+              args
+              (+ index 1)
+              out))]
         [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
 (define (macro-expr-binding-clause-prefix-from-args
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [start : i64]) : ResultMacroBindingClauseList
   (let
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity (- args.len start))]
     (match (macro-expr-binding-clause-prefix-from-args-into
+      expr-bases
       args
       start
       (&mut out))
@@ -99575,6 +99270,7 @@
       [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
 
 (define (macro-expr-binding-clause-prefix-from-args-into
+  [expr-bases : i64]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprBindingClauseList)]) : ResultMacroCheck
@@ -99582,14 +99278,19 @@
     ResultMacroCheck.Ok
     (let
       [head-expr : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get args index 0))]
-      (match (ast.ast-expr-unspan (tc-global-shared-view head-expr))
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get args index 0))]
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (tc-global-shared-view head-expr))
         [(ast.AstExpr.BracketClause _)
-          (match (macro-expr-binding-clause-from-arg head-expr)
+          (match (macro-expr-binding-clause-from-arg expr-bases head-expr)
             [(ResultMacroBindingClause.Ok clause)
               (begin
                 (ast.ast-expr-binding-clause-list-push out clause)
                 (macro-expr-binding-clause-prefix-from-args-into
+                  expr-bases
                   args
                   (+ index 1)
                   out))]
@@ -99678,8 +99379,8 @@
         (tc-dotted-macro-journal-restore-to! macro-state journal-mark)
         result))))
 
-(define (macro-operand-bracket-clause? [arg : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan arg)
+(define (macro-operand-bracket-clause? [expr-bases : i64] [arg : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
     [(ast.AstExpr.BracketClause _) true]
     [_ false]))
 
@@ -99718,15 +99419,19 @@
   [arg : ast.AstExpr]) : ResultMacroCheck
   (cond
     [(tc-macro-expr-clause-type? (tc-global-shared-view resolved-expected))
-      (match (macro-expr-clause-from-arg arg)
+      (match (macro-expr-clause-from-arg (tc-context-expr-bases ctx) arg)
         [(ResultMacroClause.Ok _) ResultMacroCheck.Ok]
         [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)])]
     [(tc-macro-expr-binding-clause-type?
         (tc-global-shared-view resolved-expected))
-      (match (macro-expr-binding-clause-from-arg arg)
+      (match (macro-expr-binding-clause-from-arg
+        (tc-context-expr-bases ctx)
+        arg)
         [(ResultMacroBindingClause.Ok _) ResultMacroCheck.Ok]
         [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)])]
-    [(macro-operand-bracket-clause? (tc-global-shared-view arg))
+    [(macro-operand-bracket-clause?
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view arg))
       (ResultMacroCheck.Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
@@ -100172,7 +99877,8 @@
         (tc-global-shared-view ty))
       (let
         [clauses : ast.AstExprClauseList
-          (try (macro-expr-clause-list-from-args args))]
+          (try
+            (macro-expr-clause-list-from-args (tc-context-expr-bases ctx) args))]
         (ResultMacroCapturedValue.Ok
           (macro-captured-expr-clause-list-value
             ctx
@@ -100185,7 +99891,10 @@
         (tc-global-shared-view ty))
       (let
         [clauses : ast.AstExprBindingClauseList
-          (try (macro-expr-binding-clause-list-from-args args))]
+          (try
+            (macro-expr-binding-clause-list-from-args
+              (tc-context-expr-bases ctx)
+              args))]
         (ResultMacroCapturedValue.Ok
           (macro-captured-binding-clause-list-value
             ctx
@@ -100378,7 +100087,10 @@
               (tc-global-shared-view resolved-expected))
             (let
               [clause : ast.AstExprClause
-                (try (macro-expr-clause-from-arg arg-expr))]
+                (try
+                  (macro-expr-clause-from-arg
+                    (tc-context-expr-bases ctx)
+                    arg-expr))]
               (ResultMacroCapturedValue.Ok
                 (ctfe_support.CompilerCtfeValue.ExprClause
                   (macro-caller-origin-expr-clause ctx clause))))]
@@ -100386,7 +100098,10 @@
               (tc-global-shared-view resolved-expected))
             (let
               [clause : ast.AstExprBindingClause
-                (try (macro-expr-binding-clause-from-arg arg-expr))]
+                (try
+                  (macro-expr-binding-clause-from-arg
+                    (tc-context-expr-bases ctx)
+                    arg-expr))]
               (ResultMacroCapturedValue.Ok
                 (ctfe_support.CompilerCtfeValue.ExprBindingClause
                   (macro-captured-binding-clause
@@ -100558,6 +100273,7 @@
                   [clauses : ast.AstExprBindingClauseList
                     (try
                       (macro-expr-binding-clause-prefix-from-args
+                        (tc-context-expr-bases ctx)
                         args
                         arg-index))]
                   ;; Capture this definition-owned flag before typing a
@@ -100759,6 +100475,7 @@
                 fallback-module-id
                 pty)
                 (match (macro-expr-binding-clause-prefix-from-args
+                  (tc-context-expr-bases ctx)
                   args
                   arg-index)
                   [(ResultMacroBindingClauseList.Ok clauses)
@@ -102303,21 +102020,27 @@
 
 (define (macro-prepare-transformer-pools! [ctx : TcContext]) : unit
   ;; Argument normalization may extend the owned context while the global
-  ;; active pool still points at an older caller snapshot.
+  ;; active pool still points at an older caller snapshot. Outside the compat
+  ;; context the active pool's lengths are the pool globals that
+  ;; `ast-node-pool-context-capture-active` would copy, so they are read
+  ;; directly instead of through a fresh snapshot on every preparation.
   (if (ast.ast-node-pool-compat-context-active?)
     unit
     (let
       [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      [active-pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-capture-active)]
       (if (or
         (>
           (ast.ast-node-pool-context-expr-len owned-pools)
-          (ast.ast-node-pool-context-expr-len active-pools))
+          (ast.ast-node-pool-len))
         (>
           (ast.ast-node-pool-context-type-len owned-pools)
-          (ast.ast-node-pool-context-type-len active-pools)))
-        (tc-context-install-pools! ctx)
+          (ast.ty-node-pool-len)))
+        (begin
+          (cfg
+            compile-profile
+            (counters.bump! tc-profile-prepare-pools-installs)
+            unit)
+          (tc-context-install-pools! ctx))
         (tc-context-capture-active-pools! ctx)))))
 
 (define (macro-adopt-transformer-env-pools!
@@ -102638,8 +102361,8 @@
           [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
           [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)])])))
 
-(define (macro-binding-prefix-form? [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan expr)
+(define (macro-binding-prefix-form? [expr-bases : i64] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(ast.AstExpr.BracketClause _) true]
     [_ false]))
 
@@ -102724,7 +102447,9 @@
     (let
       [head-id : i64 (ast.ast-expr-list-get args index 0)]
       [head : ast.AstExpr (tc-context-expr-get ctx head-id)]
-      (if (macro-binding-prefix-form? (tc-global-shared-view head))
+      (if (macro-binding-prefix-form?
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view head))
         (match (macro-expand-binding-prefix-form
           ctx
           type-env
@@ -103962,7 +103687,9 @@
   (let
     [structural-session : cis.InternStructuralSessionHandle
       (tc-context-structural-session ctx)]
-    (match (ast.ast-expr-unspan func)
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-bases ctx)
+      func)
       [(ast.AstExpr.Var name)
         (if (or
           (macro-hygiene-global-id? structural-session name)
@@ -104139,6 +103866,7 @@
         [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
         [callee-maybe-macro : bool
           (macro-call-callee-maybe-macro?
+            (tc-context-expr-bases ctx)
             (tc-context-macro-state ctx)
             (tc-global-shared-view func))]
         (if callee-maybe-macro
@@ -105340,9 +105068,13 @@
   [call-expr : ast.AstExpr]) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
     (tc-global-shared-view call-expr)
-    (match (ast.ast-expr-unspan call-expr)
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-bases ctx)
+      call-expr)
       [(ast.AstExpr.Call head-id _)
-        (match (ast.ast-expr-unspan (tc-context-expr-get ctx head-id))
+        (match (ast.ast-expr-unspan-with-segment-bases
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx head-id))
           [(ast.AstExpr.Var name-id)
             (macro-call-not-macro-message ctx decls module-id name-id)]
           [_ "typecheck: module-scope macro call has a non-symbol head"])]
@@ -105844,9 +105576,13 @@
                                         [parse-dispatch : sym_i64_env.SymI64Env
                                           (parser.compiler-parse-dispatch-env-from-cfg
                                             cfgs)]
+                                        [sexpr-owner : MacroSexprOwner
+                                          (macro-sexpr-owner
+                                            (tc-context-expr-bases call-ctx)
+                                            (tc-context-structural-session
+                                              call-ctx))]
                                         (match (macro-decls-from-ctfe-value
-                                          (tc-context-structural-session
-                                            call-ctx)
+                                          (& sexpr-owner)
                                           (macro-hygiene-ctfe-output
                                             (tc-context-macro-state call-ctx)
                                             (ctfe_support.ctfe-env-syntax-pool-context
@@ -105902,6 +105638,7 @@
                                                         macro-name
                                                         definition-module)))
                                                   (macro-expr-span-or-zero
+                                                    (tc-context-expr-bases ctx)
                                                     (tc-global-shared-view
                                                       call-expr)))]
                                               (macro-decls-splice-with-memo
@@ -106126,9 +105863,14 @@
                                               [parse-dispatch : sym_i64_env.SymI64Env
                                                 (parser.compiler-parse-dispatch-env-from-cfg
                                                   cfgs)]
+                                              [sexpr-owner : MacroSexprOwner
+                                                (macro-sexpr-owner
+                                                  (tc-context-expr-bases
+                                                    call-ctx)
+                                                  (tc-context-structural-session
+                                                    call-ctx))]
                                               (match (macro-module-decls-from-ctfe-value
-                                                (tc-context-structural-session
-                                                  call-ctx)
+                                                (& sexpr-owner)
                                                 (macro-hygiene-ctfe-output
                                                   (tc-context-macro-state
                                                     call-ctx)
@@ -106893,13 +106635,20 @@
 ;; non-variable callees (which `macro-call-decl` also treats as non-macro).
 ;; Allocation-free for plain unqualified names -- the hot path for the pre-filter.
 (define (macro-call-callee-name
+  [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [func : ast.AstExpr]) : TcMaybeString
   (match func
     [(ast.AstExpr.Spanned inner-box _)
-      (macro-call-callee-name session (ast.ast-node-get inner-box))]
+      (macro-call-callee-name
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-call-callee-name session (ast.ast-node-get inner-box))]
+      (macro-call-callee-name
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Var name)
       (let
         [name-text : String (tc-env-key-display session name)]
@@ -106946,13 +106695,20 @@
     (or (string.eq base "when") (string.eq base "unless"))))
 
 (define (macro-call-callee-base-name-id
+  [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [func : ast.AstExpr]) : TcMaybeNameId
   (match func
     [(ast.AstExpr.Spanned inner-box _)
-      (macro-call-callee-base-name-id session (ast.ast-node-get inner-box))]
+      (macro-call-callee-base-name-id
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (macro-call-callee-base-name-id session (ast.ast-node-get inner-box))]
+      (macro-call-callee-base-name-id
+        expr-bases
+        session
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Var name-id)
       (cond
         [(csym.compiler-composite-triple-key-id? name-id)
@@ -106981,9 +106737,11 @@
     [_ TcMaybeNameId.No]))
 
 (define (macro-call-callee-maybe-macro?
+  [expr-bases : i64]
   [state : TcMacroState]
   [func : ast.AstExpr]) : bool
   (match (macro-call-callee-base-name-id
+    expr-bases
     (tc-macro-state-structural-session state)
     (tc-global-shared-view func))
     [(TcMaybeNameId.Some base-id)
@@ -106996,6 +106754,7 @@
           (= base-id cbi.compiler-builtin-id-fix-unless)))]
     [TcMaybeNameId.No
       (match (macro-call-callee-name
+        expr-bases
         (tc-macro-state-structural-session state)
         func)
         [(TcMaybeString.Some name) (macro-call-name-maybe-macro? name)]
@@ -107007,6 +106766,7 @@
   [func : ast.AstExpr]
   [call-expr : ast.AstExpr]) : bool
   (match (macro-call-callee-name
+    (tc-context-expr-bases ctx)
     (tc-context-structural-session ctx)
     (tc-global-shared-view func))
     [(TcMaybeString.Some name)
@@ -107015,6 +106775,7 @@
       ;; `string.length` on the cheap path while still resolving qualified macro
       ;; calls through `macro-call-decl`.
       (if (macro-call-callee-maybe-macro?
+        (tc-context-expr-bases ctx)
         (tc-context-macro-state ctx)
         (tc-global-shared-view func))
         (match (macro-call-decl ctx func decls call-expr)
@@ -107326,7 +107087,10 @@
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         (or
-          (macro-call-callee-maybe-macro? state (tc-global-shared-view func))
+          (macro-call-callee-maybe-macro?
+            expr-bases
+            state
+            (tc-global-shared-view func))
           (macro-expr-might-fire? state expr-bases func)
           (macro-expr-list-might-fire? state expr-bases args)))]
     [(ast.AstExpr.BracketClause items)
@@ -109028,11 +108792,12 @@
                         ;; with the newly loaded declarations, and continue the
                         ;; walk over the loaded content -- what the retired fixed-
                         ;; point loop's materialization + re-pass did, inline in
-                        ;; this pass. Source-file materialization remains a full
-                        ;; symbol/registry rebuild because it can add arbitrary
-                        ;; index-bearing declarations; the environment itself is
-                        ;; additive and can use the same refresh path as a macro
-                        ;; splice instead of retaining another whole-program env.
+                        ;; this pass. Source-file materialization that loads new
+                        ;; declarations remains a full symbol/registry rebuild
+                        ;; because it can add arbitrary index-bearing
+                        ;; declarations; the environment itself is additive and
+                        ;; can use the same refresh path as a macro splice instead
+                        ;; of retaining another whole-program env.
                         (begin
                           (macro-expand-program-structural-change-note!
                             macro-state
@@ -109073,14 +108838,50 @@
                                       walk-state
                                       (tc-global-shared-view materialized-decls)
                                       (tc-global-shared-view materialized-paths))]
-                                  ;; Source-file materialization is the explicit
-                                  ;; conservative fallback: arbitrary aliases and
-                                  ;; index-bearing declarations require fresh
-                                  ;; whole-program symbols and registries.
+                                  ;; An import of an already-loaded module loads
+                                  ;; nothing: it materializes only its alias
+                                  ;; markers, which take the same incremental
+                                  ;; symbol/registry append as a macro splice.
+                                  ;; Any other source-file materialization is the
+                                  ;; explicit conservative fallback: arbitrary
+                                  ;; aliases and index-bearing declarations
+                                  ;; require fresh whole-program symbols and
+                                  ;; registries.
+                                  [symbols-inserted : bool
+                                    (and
+                                      (macro-decls-imports-only?
+                                        (tc-global-shared-view
+                                          materialized-decls))
+                                      (csym.compiler-symbols-insert-aliases-self-contained?
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        (tc-global-shared-view
+                                          materialized-decls))
+                                      (macro-live-symbols-insert-decls!
+                                        (tc-context-macro-state cur-ctx)
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        cur-module-id))]
+                                  [incremental? : bool
+                                    (and
+                                      symbols-inserted
+                                      (macro-live-registries-append-decls!
+                                        (tc-context-macro-state cur-ctx)
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        (tc-global-shared-view
+                                          materialized-paths)
+                                        cur-module-id))]
                                   [flat-view : MacroSegmentedProgramFlatView
-                                    (macro-segmented-program-flatten-fallback
-                                      walk-state
-                                      2)]
+                                    (if incremental?
+                                      (MacroSegmentedProgramFlatView
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        (tc-global-shared-view
+                                          materialized-paths))
+                                      (macro-segmented-program-flatten-fallback
+                                        walk-state
+                                        2))]
                                   [next-decls : ast.AstDeclList flat-view.decls]
                                   [next-paths : ast.AstDeclPathList
                                     flat-view.paths]
@@ -109095,38 +108896,52 @@
                                     (set!
                                       cur-materialize-seen
                                       next-materialize-seen)
-                                    ;; The loaded file may add defmacros or
-                                    ;; expr-type macros: recompute the hoisted
-                                    ;; prescan over the new whole-program view
-                                    ;; before the context rebuild consumes its
-                                    ;; visible-name set.
-                                    (macro-live-symbols-invalidate!
-                                      (tc-context-macro-state cur-ctx))
-                                    ;; Source-file materialization can insert any
-                                    ;; index-bearing declaration or alias surface,
-                                    ;; so retain the full registry rebuild even
-                                    ;; when it contains no nominal declaration.
-                                    (macro-live-registries-invalidate!
-                                      (tc-context-macro-state cur-ctx))
-                                    (macro-live-prescan-ensure!
-                                      macro-state
-                                      (tc-global-shared-view next-decls))
-                                    (macro-expand-set-expr-type-macro-names!
-                                      macro-state
-                                      (tc-macro-walk-field
+                                    (cfg
+                                      compile-profile
+                                      (if incremental?
+                                        (counters.bump!
+                                          tc-profile-segment-incremental-imports)
+                                        unit)
+                                      unit)
+                                    (if incremental?
+                                      (macro-live-prescan-append-decls!
                                         macro-state
-                                        macro-live-prescan-expr-type-names))
-                                    (tc-macro-walk-set!
-                                      macro-state
-                                      ctfe-needs-metadata
-                                      (or
-                                        (tc-macro-walk-field
+                                        (tc-global-shared-view
+                                          materialized-decls)
+                                        cur-module-id)
+                                      (begin
+                                        ;; The loaded file may add defmacros or
+                                        ;; expr-type macros: recompute the hoisted
+                                        ;; prescan over the new whole-program view
+                                        ;; before the context rebuild consumes its
+                                        ;; visible-name set.
+                                        (macro-live-symbols-invalidate!
+                                          (tc-context-macro-state cur-ctx))
+                                        ;; Source-file materialization can insert
+                                        ;; any index-bearing declaration or alias
+                                        ;; surface, so retain the full registry
+                                        ;; rebuild even when it contains no
+                                        ;; nominal declaration.
+                                        (macro-live-registries-invalidate!
+                                          (tc-context-macro-state cur-ctx))
+                                        (macro-live-prescan-ensure!
                                           macro-state
-                                          ctfe-needs-metadata)
-                                        (tc-macro-walk-field
+                                          (tc-global-shared-view next-decls))
+                                        (macro-expand-set-expr-type-macro-names!
                                           macro-state
-                                          macro-live-prescan-has-defmacro)))
-                                    unit
+                                          (tc-macro-walk-field
+                                            macro-state
+                                            macro-live-prescan-expr-type-names))
+                                        (tc-macro-walk-set!
+                                          macro-state
+                                          ctfe-needs-metadata
+                                          (or
+                                            (tc-macro-walk-field
+                                              macro-state
+                                              ctfe-needs-metadata)
+                                            (tc-macro-walk-field
+                                              macro-state
+                                              macro-live-prescan-has-defmacro)))))
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
                                       (tc-global-shared-view next-decls)
@@ -109163,7 +108978,9 @@
                                               [_ unit])
                                             unit)
                                           (set! cur-ctx next-ctx)
-                                          (set! cur-orig-decls next-decls)
+                                          (if incremental?
+                                            unit
+                                            (set! cur-orig-decls next-decls))
                                           (set! cur-top-env next-top-env)
                                           unit)]
                                       [(ResultMacroSpliceRebuild.Err diag)
@@ -109387,6 +109204,20 @@
             rest
             when-id
             unless-id)))]))
+
+;; Whether every declaration is an import, as the materialization of an import
+;; of an already-loaded module is.
+(define (macro-decls-imports-only? [decls : ast.AstDeclList]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(ast.AstDeclListStep.Nil) true]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (let
+        [rest : ast.AstDeclList rest]
+        (and
+          (match decl
+            [(ast.AstDecl.Import _ _) true]
+            [_ false])
+          (macro-decls-imports-only? rest)))]))
 
 (define (macro-program-has-defmacro? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
@@ -111366,6 +111197,23 @@
         (set! data.fn-return-arena 0)
         (tc-scratch-arena-state-data-set! state data)))))
 
+;; A view of ENV for one function body: the parent's head, capabilities and
+;; chain index, but a store of its own, created in the current arena (the
+;; function scratch), whose binding and cache segments grow there too. Nothing
+;; the body binds lands in the parent's owner arena.
+(define (tc-type-env-fork-function-store [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [store : i64
+      (tc-type-env-store-handle-new-with-topenv-state-address
+        (__tl-project-field (tc-type-env-topenv-membership-state env) address)
+        (__tl-project-field (tc-type-env-structural-session env) address)
+        (__tl-project-field
+          (tc-type-env-type-resolution-cache-state env)
+          address))]
+    (begin
+      (tc-chain-state-set! store (tc-chain-state-address env.store))
+      (TcTypeEnv store env.head env.abi-pad))))
+
 ;; Function bodies dominate typecheck allocation and the check returns only
 ;; unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -111395,7 +111243,13 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
+          (tc-check-fn-decl-body
+            ctx
+            (tc-type-env-fork-function-store global-env)
+            name
+            params
+            ret
+            body-box)]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
@@ -111414,6 +111268,12 @@
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set new-enclosing))
+              ;; The function store and its nodes were just rewound: retire
+              ;; every memo keyed by a store handle or node address, and the
+              ;; unbound-name snapshot, which names a function-local env and
+              ;; was consumed above.
+              (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
+              (tc-unbound-suggestion-snapshot-reset!)
               ;; Single-entry name caches may hold strings allocated in the
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.

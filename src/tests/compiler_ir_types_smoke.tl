@@ -1630,6 +1630,72 @@
         (set! ok false))
       ok)))
 
+;; Arenas destroyed from here on are poisoned, so a read of a retired label
+;; generation traps instead of passing silently.
+(extern (tl_arena_poison_enable) : unit)
+
+(define (compiler-ir-smoke-label-spelling [index : i64]) : String
+  (str_cat.str-cat "ir-smoke-label-" (string.int->string index)))
+
+;; The label table across at least three generation boundaries (#8409): ids stay
+;; dense and in creation order, every spelling and every text view taken before
+;; a growth survive the retired generations, re-interning returns the same id,
+;; and `compiler-ir-label-existing` answers without creating an id.
+(define (compiler-ir-smoke-label-table-growth-ok?) : bool
+  (let
+    [first : i64
+      (compiler_ir_types.compiler-ir-label (compiler-ir-smoke-label-spelling 0))]
+    [first-text : String (compiler_ir_types.compiler-ir-label-text first)]
+    [base : i64 (- (compiler_ir_types.compiler-ir-label-count-value) 1)]
+    [total : i64 5000]
+    [index : i64 1]
+    [ok : bool true]
+    [past-end : String ""]
+    (begin
+      (tl_arena_poison_enable)
+      (while (< index total)
+        (begin
+          (unless
+            (=
+              (compiler_ir_types.compiler-ir-label
+                (compiler-ir-smoke-label-spelling index))
+              (+ base index))
+            (set! ok false))
+          (set! index (+ index 1))))
+      (unless (string.eq (& first-text) "ir-smoke-label-0") (set! ok false))
+      (set! index 0)
+      (while (< index total)
+        (let
+          [spelling : String (compiler-ir-smoke-label-spelling index)]
+          [text : String
+            (compiler_ir_types.compiler-ir-label-text (+ base index))]
+          (begin
+            (unless (string.eq (& text) (& spelling)) (set! ok false))
+            (unless
+              (=
+                (compiler_ir_types.compiler-ir-label-existing spelling)
+                (+ base index))
+              (set! ok false))
+            (set! index (+ index 1)))))
+      (and
+        ok
+        (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
+        ;; Re-interning an existing spelling returns its id and adds nothing.
+        (=
+          (compiler_ir_types.compiler-ir-label
+            (compiler-ir-smoke-label-spelling 4321))
+          (+ base 4321))
+        (=
+          (compiler_ir_types.compiler-ir-label-existing
+            "ir-smoke-label-never-created")
+          -1)
+        (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
+        (begin
+          (set!
+            past-end
+            (compiler_ir_types.compiler-ir-label-text (+ base total)))
+          (string.eq (& past-end) ""))))))
+
 ;; Build a spans table entirely inside a throwaway arena, escape it into the
 ;; enclosing arena, then destroy the throwaway arena and read the escape. Every
 ;; lookup below dereferences the escaped slot arrays, so a shallow escape that
@@ -4381,6 +4447,31 @@
       instr
       "  switch %9 base 4 [4:four, 5:five] default other")))
 
+;; Span entries are flat records: an array slot holds exactly the fields, with
+;; no outer variant tag (a function entry 32 bytes, an instruction entry 48).
+(define (compiler-ir-source-spans-entry-strides-pinned?) : bool
+  (let
+    [entries : (__tl_dyn-array compiler_ir_types.CompilerSourceSpansEntry)
+      (__tl_make-array compiler_ir_types.CompilerSourceSpansEntry 2)]
+    [instr-entries : (__tl_dyn-array
+      compiler_ir_types.CompilerSourceSpansInstrEntry)
+      (__tl_make-array compiler_ir_types.CompilerSourceSpansInstrEntry 2)]
+    (and
+      (=
+        (-
+          (unsafe
+            (ptr->int (ptr-offset (__tl_array-data entries) 1)))
+          (unsafe
+            (ptr->int (__tl_array-data entries))))
+        32)
+      (=
+        (-
+          (unsafe
+            (ptr->int (ptr-offset (__tl_array-data instr-entries) 1)))
+          (unsafe
+            (ptr->int (__tl_array-data instr-entries))))
+        48))))
+
 (define (compiler-ir-source-spans-entry-list-ok?) : bool
   (let
     [span1 : ast.AstSourceSpan (ast.ast-source-span 1 2 1 3)]
@@ -4414,8 +4505,8 @@
       (compiler_ir_types.compiler-source-spans-entry-list-append
         (compiler_ir_types.compiler-source-spans-entry-list-append
           (compiler_ir_types.compiler-source-spans-entry-list-empty)
-          (compiler_ir_types.CompilerSourceSpansEntry.Entry first 0 span1))
-        (compiler_ir_types.CompilerSourceSpansEntry.Entry second 0 span2))]
+          (compiler_ir_types.CompilerSourceSpansEntry first 0 span1))
+        (compiler_ir_types.CompilerSourceSpansEntry second 0 span2))]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert
         (compiler_ir_types.compiler-source-spans-insert
@@ -4478,7 +4569,7 @@
             grown-entries
             (compiler_ir_types.compiler-source-spans-entry-list-append
               grown-entries
-              (compiler_ir_types.CompilerSourceSpansEntry.Entry
+              (compiler_ir_types.CompilerSourceSpansEntry
                 grow
                 0
                 (if (= i 5)
@@ -5312,6 +5403,7 @@
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
     (unless (compiler-ir-switch-render-ok?) (return 1))
     (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
+    (unless (compiler-ir-source-spans-entry-strides-pinned?) (return 1))
     (unless (compiler-ir-instr-seq-dense-construction-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
@@ -5339,6 +5431,7 @@
     (unless (compiler-ir-smoke-derived-symbol-table-ok?) (return 9))
     (unless (compiler-ir-smoke-structural-lifetime-render-ok?) (return 10))
     (unless (compiler-ir-smoke-source-spans-escape-ok?) (return 11))
+    (unless (compiler-ir-smoke-label-table-growth-ok?) (return 28))
     (let
       [representation-failure : i64
         (compiler-ir-smoke-representation-index-failure)]

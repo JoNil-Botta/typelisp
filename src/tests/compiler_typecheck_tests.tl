@@ -3629,6 +3629,33 @@
     (tc_core.tc-type-copyable? ctx (ast.AstType.I64))
     (tc_core.tc-type-move-only? ctx (ast.AstType.String))))
 
+(define (compiler-typecheck-move-kind-memo
+  [ctx : tc_core.TcContext]
+  [name : String]) : i64
+  (tc_core.tc-type-handle-cache-move-kind
+    (tc_core.tc-job-state-nominal-cache (tc_core.tc-context-job-state ctx))
+    (tc_core.tc-context-symbols-ref (& ctx))
+    (ci.intern name)))
+
+;; A top-level nominal kind is memoized beside its type-handle slot; one reached
+;; only through another declaration's fields is not. `Scalar` has no nominal
+;; field and `Cycle` looks up only itself, so no other key can evict them
+;; between the query and the check. A second pass is answered from the memo and
+;; must agree with the first.
+(define (compiler-typecheck-move-kind-memo-ok? [ctx : tc_core.TcContext]) : bool
+  (and
+    (tc_core.tc-type-copyable? ctx (ast.AstType.Struct (ci.intern "Scalar")))
+    (= (compiler-typecheck-move-kind-memo ctx "Scalar") 1)
+    (tc_core.tc-type-move-only? ctx (ast.AstType.Struct (ci.intern "Cycle")))
+    (= (compiler-typecheck-move-kind-memo ctx "Cycle") 2)
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.AstType.Struct (ci.intern "NestedPoison")))
+    (= (compiler-typecheck-move-kind-memo ctx "TextPacket") 0)
+    (compiler-typecheck-move-kind-copyable-group-ok? ctx)
+    (compiler-typecheck-move-kind-move-only-group-ok? ctx)
+    (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))
+
 (define (compiler-typecheck-move-kind-fixture-tests-ok?) : bool
   (match (parser.parse-ast-source
     "(defstruct Scalar (value i64))
@@ -3670,10 +3697,130 @@
                 (and
                   (compiler-typecheck-move-kind-copyable-group-ok? ctx)
                   (compiler-typecheck-move-kind-move-only-group-ok? ctx)
-                  (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))]
+                  (compiler-typecheck-move-kind-wrapper-group-ok? ctx)
+                  (compiler-typecheck-move-kind-memo-ok? ctx)))]
             [(csym.ResultCompilerRegistries.Err _) false])]
         [(csym.ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
+
+;; Function bodies typecheck against a function-local fork of the module
+;; environment (#8375): zero and many parameters, shadows, arena and unsafe
+;; markers, CTFE and a body that crosses several binding segments, checked
+;; twice as two jobs. An invalid body is reported once while later functions
+;; still see every parent signature.
+(define (compiler-typecheck-function-store-fork-tests-ok?) : bool
+  (let
+    [ok-source : String
+      "(import stdlib.arena)
+(defstruct Pair (a i64) (b i64))
+(define (zero) : i64 7)
+(define (many [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64] [i : i64]) : i64 (+ a i))
+(define (shadow [x : i64]) : i64
+  (let [x : bool true] [x : i64 (zero)] (+ x (many x x x x x x x x x))))
+(define (marks [p : Pair]) : i64
+  (let [s (arena.make)]
+    (begin (in-arena s (Pair 1 2)) (arena.destroy-safe! s) (unsafe (+ p.a p.b)))))
+(define (folded) : i64 (comptime (+ 40 2)))
+(define (deep [n : i64]) : i64
+  (let
+    [a0 : i64 n]
+    [a1 : i64 a0]
+    [a2 : i64 a1]
+    [a3 : i64 a2]
+    [a4 : i64 a3]
+    [a5 : i64 a4]
+    [a6 : i64 a5]
+    [a7 : i64 a6]
+    [a8 : i64 a7]
+    [a9 : i64 a8]
+    [a10 : i64 a9]
+    [a11 : i64 a10]
+    [a12 : i64 a11]
+    [a13 : i64 a12]
+    [a14 : i64 a13]
+    [a15 : i64 a14]
+    [a16 : i64 a15]
+    [a17 : i64 a16]
+    [a18 : i64 a17]
+    [a19 : i64 a18]
+    [a20 : i64 a19]
+    [a21 : i64 a20]
+    [a22 : i64 a21]
+    [a23 : i64 a22]
+    [a24 : i64 a23]
+    [a25 : i64 a24]
+    [a26 : i64 a25]
+    [a27 : i64 a26]
+    [a28 : i64 a27]
+    [a29 : i64 a28]
+    [a30 : i64 a29]
+    [a31 : i64 a30]
+    [a32 : i64 a31]
+    [a33 : i64 a32]
+    [a34 : i64 a33]
+    [a35 : i64 a34]
+    [a36 : i64 a35]
+    [a37 : i64 a36]
+    [a38 : i64 a37]
+    [a39 : i64 a38]
+    [a40 : i64 a39]
+    [a41 : i64 a40]
+    [a42 : i64 a41]
+    [a43 : i64 a42]
+    [a44 : i64 a43]
+    [a45 : i64 a44]
+    [a46 : i64 a45]
+    [a47 : i64 a46]
+    [a48 : i64 a47]
+    [a49 : i64 a48]
+    [a50 : i64 a49]
+    [a51 : i64 a50]
+    [a52 : i64 a51]
+    [a53 : i64 a52]
+    [a54 : i64 a53]
+    [a55 : i64 a54]
+    [a56 : i64 a55]
+    [a57 : i64 a56]
+    [a58 : i64 a57]
+    [a59 : i64 a58]
+    [a60 : i64 a59]
+    [a61 : i64 a60]
+    [a62 : i64 a61]
+    [a63 : i64 a62]
+    [a64 : i64 a63]
+    [a65 : i64 a64]
+    [a66 : i64 a65]
+    [a67 : i64 a66]
+    [a68 : i64 a67]
+    [a69 : i64 a68]
+    [a70 : i64 a69]
+    [a71 : i64 a70]
+    [a72 : i64 a71]
+    [a73 : i64 a72]
+    [a74 : i64 a73]
+    [a75 : i64 a74]
+    [a76 : i64 a75]
+    [a77 : i64 a76]
+    [a78 : i64 a77]
+    [a79 : i64 a78]
+    a79))
+(define (main) : i64 (+ (shadow 1) (marks (Pair 3 4)) (deep 2) (zero) (folded)))"]
+    [bad-source : String
+      "(define (first [x : i64]) : i64 (+ x 1))
+(define (broken [y : i64]) : bool (+ y (first y)))
+(define (later [z : i64]) : i64 (first (first z)))
+(define (main) : i64 (later 1))"]
+    (and
+      (compiler-typecheck-ok? (stdlib.string.copy (& ok-source)))
+      (compiler-typecheck-ok? (stdlib.string.copy (& ok-source)))
+      (compiler-typecheck-error-count-ok?
+        (stdlib.string.copy (& bad-source))
+        "typecheck: return type mismatch: expected bool, found i64"
+        1)
+      (compiler-typecheck-error-count-ok?
+        bad-source
+        "typecheck: return type mismatch: expected bool, found i64"
+        1))))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
   (compiler-typecheck-move-kind-fixture-tests-ok?))
@@ -10299,6 +10446,9 @@
     (if (compiler-typecheck-move-kind-tests-ok?)
       unit
       (io.panic "typecheck: move-kind classifier tests failed"))
+    (if (compiler-typecheck-function-store-fork-tests-ok?)
+      unit
+      (io.panic "typecheck: function-local environment fork tests failed"))
     (if (compiler-typecheck-resource-with-tests-ok?)
       unit
       (io.panic "typecheck: resource with tests failed"))

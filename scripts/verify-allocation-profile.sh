@@ -95,6 +95,7 @@ validate_profile() {
         required["load/source-pools"] = 0
         required["load/state-surface-arena"] = 0
         required["load/ir-labels"] = 0
+        required["load/ir-label-index"] = 0
         required["load/load-provenance"] = 0
         required["load/lexer-token-buffer"] = 0
         required["load/reader-node-pool"] = 0

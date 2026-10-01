@@ -2218,10 +2218,13 @@ The relation is structural:
 - `(&mut source T)` is covariant in its outer lifetime `source` and invariant
   in referent type `T`; shortening the exclusive borrow does not permit changing
   what may be written through it.
-- `Box`, fixed `Array`, `Tuple`, struct and enum fields/payloads, immutable raw
-  `Ptr`, and native `Slice` are covariant through their contents. Compatibility
-  dynamic arrays remain invariant because they expose mutable element storage.
-  Mutable raw `MutPtr` is invariant through its referent.
+- `Box`, fixed `Array`, owned dynamic arrays, `Tuple`, struct and enum
+  fields/payloads, immutable raw `Ptr`, and native `Slice` are covariant through
+  their contents. A dynamic array is a move-only handle whose elements change
+  only through its owning place or a `&mut` to it, so shortening one moves the
+  handle and leaves no alias typed with the longer lifetime; through `&mut` its
+  element type stays invariant. Mutable raw `MutPtr` is invariant through its
+  referent.
 - Function parameters are contravariant and function results are covariant.
   Entering a parameter position flips the surrounding polarity; entering a
   result preserves it.
@@ -2787,8 +2790,15 @@ formed, and the result borrows its source like a Slice subview.
 ### 4.1 `(define name [: type] init)` — global variable
 
 Declares a global variable with a typed or inferred initializer. Scalar constant
-initializers can be emitted directly as static data. `String` and aggregate
-initializers, including struct, enum, tuple, fixed-array, and private
+initializers can be emitted directly as static data. A fixed array `(Array T N)`
+of a scalar `T` (an integer type, `f32`, `f64`, `bool` or `char`) whose
+initializer is an `(array ...)` literal of N constants of `T`'s kind is static
+data too: the global refers to writable storage holding the elements' exact
+bits, with no startup copy, and element writes, borrowed writes and whole
+assignment behave as for any fixed-array global. An element that is not such a
+constant (a call, another global, or a cast that converts between integer and
+float) keeps the runtime initializer. `String` and aggregate
+initializers, including struct, enum, tuple, other fixed-array, and private
 dynamic-buffer values, are lowered through generated runtime initializer
 functions when static data emission is not sufficient. Those initializer
 functions run before the selected `main`, in declaration order within a module
@@ -5838,6 +5848,28 @@ joined-user proof. Both calls are rejected while executing inside the same owner
 operation. They are also rejected while a live `with` cleanup owner (section
 5.19) carries the destroyed brand or the rewound phase generation: that owner
 is not merely made unusable, because its cleanup runs when its scope ends.
+
+**Owner moves:** a direct local owner tracked from `arena.make` or
+`arena.make-atomic` moves when it is stored. That covers:
+
+- copying it into another binding, including through an `if`, `let`, `match`
+  or `begin` result;
+- using it as an aggregate field or tuple element;
+- capturing it in a closure;
+- returning it.
+
+This holds for a bare-annotated owner too, whose `arena.Arena` handle is
+otherwise Copy: the copy would outlive the owner's destroy or rewind. A later
+`arena.destroy-safe!`, `arena.phase`, `arena.rewind-safe!` or `in-arena` on the
+original reports "use of moved value".
+
+Two cases do not move the owner:
+
+- Passing it as a call argument to a bare `arena.Arena` parameter is a
+  non-consuming borrow.
+- A closure that captures an atomic owner becomes one of the owner's
+  checker-visible users, which its destroy or rewind must see joined or
+  released.
 
 **Invalidation effects:** a helper that destroys a branded owner it receives
 declares `(:invalidate r)` on that parameter (section 3.3):

@@ -3388,7 +3388,8 @@
             true]
           ;; File-backed imports do not install symbol/registry aliases. The
           ;; macro walk materializes them immediately afterward; that path
-          ;; intentionally performs the conservative whole-program rebuild.
+          ;; performs the conservative whole-program rebuild unless the import
+          ;; loads no new declarations.
           [(ast.AstDecl.Import decl-meta _) true]
           [(ast.AstDecl.ModuleBody _ body-box)
             (compiler-symbols-insert-aliases-self-contained?
@@ -4197,54 +4198,6 @@
         symbols)]
     [(ResultCompilerSymbols.Err message) (ResultCompilerRegistries.Err message)]))
 
-(define (compiler-decl-list-at-index
-  [decls : ast.AstDeclList]
-  [target : i64]
-  [index : i64]) : parser.ResultAstDecl
-  (let
-    [slot : i64 0]
-    [logical-index : i64 index]
-    [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-offset : i64 decls.offset]
-    (begin
-      (while (< slot decl-count)
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-array-shared-view decls.slots (+ decl-offset slot))]
-          [decl-view : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
-          [return-view : ast.AstDecl
-            (compiler-symbols-decl-shared-view decl-view)]
-          (begin
-            (match decl
-              [(ast.AstDecl.Import decl-meta _) unit]
-              [(ast.AstDecl.IncludeStr _ _) unit]
-              [(ast.AstDecl.IncludeStrComptime _ _) unit]
-              [(ast.AstDecl.IncludeStrLzss _ _) unit]
-              [(ast.AstDecl.IncludeBin _ _) unit]
-              [(ast.AstDecl.Module _) unit]
-              [(ast.AstDecl.Test _ _ _ _) unit]
-              [_
-                (if (= target logical-index)
-                  (return
-                    (match decl-view
-                      [(ast.AstDecl.Unsafe inner-box)
-                        (let
-                          [inner : ast.AstDecl (deref inner-box)]
-                          (parser.ResultAstDecl.Ok inner))]
-                      [_ (parser.ResultAstDecl.Ok return-view)]))
-                  (set! logical-index (+ logical-index 1)))])
-            (set! slot (+ slot 1)))))
-      (parser.ResultAstDecl.Err "symbols: declaration index not found"))))
-
-(define (compiler-program-decl-at-index
-  [program : ast.AstProgram]
-  [target : i64]) : parser.ResultAstDecl
-  (match program
-    [(ast.AstProgram.Program decls-box)
-      (let
-        [decls : ast.AstDeclList (deref decls-box)]
-        (compiler-decl-list-at-index decls target 0))]))
-
 (define (compiler-symbols-decl-at-index
   [symbols : (& symbols CompilerSymbols)]
   [target : i64]) : parser.ResultAstDecl
@@ -4339,27 +4292,6 @@
             0)]
         [_ option_i64.None])]
     [(parser.ResultAstDecl.Err _) option_i64.None]))
-
-(define (compiler-registries-struct-field-type
-  [program : ast.AstProgram]
-  [handle : i64]) : parser.ResultAstType
-  (match (compiler-program-decl-at-index
-    program
-    (compiler-registry-handle-owner-index handle))
-    [(parser.ResultAstDecl.Ok decl)
-      (match decl
-        [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
-          (compiler-field-type-at-index
-            fields
-            (compiler-registry-handle-child-index handle)
-            0)]
-        [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
-          (compiler-field-type-at-index
-            fields
-            (compiler-registry-handle-child-index handle)
-            0)]
-        [_ (parser.ResultAstType.Err "symbols: field owner is not struct")])]
-    [(parser.ResultAstDecl.Err message) (parser.ResultAstType.Err message)]))
 
 (define (compiler-registries-struct-field-type-indexed
   [symbols : (& symbols CompilerSymbols)]

@@ -42,7 +42,7 @@ stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smok
 embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh
 stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh
 linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	-	gate_instruction_counts
-tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	bootstrap-fixpoint	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$STAGE2_BIN"
+tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	-	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	6144	-	scripts/verify-inline-tests.sh
 stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint	stage2	3328	-	env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
 embedded-stdlib-build-payload	all	embedded stdlib build payload	bootstrap-fixpoint	stage2	512	embedded-payload	scripts/verify-embedded-stdlib-payload.sh

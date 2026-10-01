@@ -9,6 +9,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import compiler_incremental_binary)
 (import stdlib.json)
 (import stdlib.sort)
 (import stdlib.vector)
@@ -16,6 +17,7 @@
 (import lex as lexer)
 (import read as reader)
 (import compiler_builtin_ids as cbi)
+(import compiler_module_name as module_name)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
 (import compiler_semantic_index)
@@ -333,6 +335,13 @@
   (line i64)
   (col i64)
   (code bool))
+
+;; A token at the end of an unfinished document may still extend to a valid
+;; identity. Only Complete can resolve an import; Prefix never changes grammar.
+(defenum LspDottedImportNameKind
+  (Complete)
+  (Prefix)
+  (Invalid))
 
 (defenum LspImportTarget
   (Found String i64 i64)
@@ -1836,47 +1845,57 @@
       [(and (>= code 97) (<= code 102)) (+ 10 (- code 97))]
       [else -1])))
 
+;; A file URI percent-encodes the path's bytes (#8376): `%XX` is the byte XX,
+;; not the code point U+00XX, so a non-ASCII name such as `%C3%A5` decodes to
+;; the two bytes of its UTF-8 spelling. That inverts `lsp-percent-encode-path`
+;; for every path it encodes. Decoded bytes that are not well-formed UTF-8, or
+;; that contain NUL, are refused rather than repaired.
 (define (lsp-percent-decode [text : String]) : LspStringResult
   (let
     [n : i64 (string.string-length text)]
+    ;; Decoding never lengthens the text.
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [len : i64 0]
     [i : i64 0]
-    [out : String ""]
-    [err : String ""]
-    [has-error : bool false]
+    [ok : bool true]
     (begin
-      (while (< i n)
-        (if (not has-error)
-          (if (= (string.string-ref text i) '%')
-            (if (< (+ i 2) n)
-              (let
-                [hi : i64 (lsp-hex-value (string.string-ref text (+ i 1)))]
-                [lo : i64 (lsp-hex-value (string.string-ref text (+ i 2)))]
-                (if (and (>= hi 0) (>= lo 0))
-                  (match (json.codepoint-string (+ (* hi 16) lo))
-                    [(json.OkJsonCodepointString decoded)
-                      (begin
-                        (set! out (str_cat.str-cat out decoded ""))
-                        (set! i (+ i 3)))]
-                    [(json.ErrJsonCodepointString message)
-                      (begin
-                        (set! err message)
-                        (set! has-error true)
-                        (set! i n))])
-                  (begin
-                    (set! err "lsp: invalid percent escape in file URI")
-                    (set! has-error true)
-                    (set! i n))))
+      (while (and ok (< i n))
+        (if (= (string.string-ref text i) '%')
+          (let
+            [hi : i64
+              (if (< (+ i 2) n)
+                (lsp-hex-value (string.string-ref text (+ i 1)))
+                -1)]
+            [lo : i64
+              (if (< (+ i 2) n)
+                (lsp-hex-value (string.string-ref text (+ i 2)))
+                -1)]
+            (if (and (>= hi 0) (>= lo 0))
               (begin
-                (set! err "lsp: invalid percent escape in file URI")
-                (set! has-error true)
-                (set! i n)))
-            (begin
-              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-              (set! i (+ i 1))))
-          (set! i n)))
-      (if (not has-error)
-        (LspStringResult.Ok out)
-        (LspStringResult.Err err)))))
+                (set! (array-ref bytes len) (cast (+ (* hi 16) lo) : u8))
+                (set! len (+ len 1))
+                (set! i (+ i 3)))
+              (set! ok false)))
+          (begin
+            (set! (array-ref bytes len) (cast (string.string-ref text i) : u8))
+            (set! len (+ len 1))
+            (set! i (+ i 1)))))
+      (cond
+        [(not ok)
+          (LspStringResult.Err "lsp: invalid percent escape in file URI")]
+        [(not
+            (compiler_incremental_binary.compiler-incremental-binary-utf8-range-valid?
+              (& bytes)
+              0
+              len))
+          (LspStringResult.Err "lsp: file URI path is not valid UTF-8")]
+        [(= len 0) (LspStringResult.Ok "")]
+        [else
+          (LspStringResult.Ok
+            (unsafe
+              (string-from-bytes
+                (ptr-cast (__tl_array-data bytes) : (Ptr u8))
+                len)))]))))
 
 (define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
   (let
@@ -4690,40 +4709,35 @@
               -1))
           -1)))))
 
-(define (lsp-dotted-import-tl-suffix? [name : (& name str)]) : bool
-  (let
-    [n : i64 (string.string-length name)]
-    (if (< n 3)
-      false
-      (string.eq (string.substring name (- n 3) 3) ".tl"))))
+(define (lsp-dotted-import-name-kind
+  [name : (& name str)]
+  [token-complete : bool]) : LspDottedImportNameKind
+  (cond
+    [(module_name.compiler-module-name-valid? name)
+      LspDottedImportNameKind.Complete]
+    [(not token-complete)
+      (let
+        [continued : String (str_cat.str-cat (string.copy name) "x" "")]
+        (if (module_name.compiler-module-name-valid? (& continued))
+          LspDottedImportNameKind.Prefix
+          LspDottedImportNameKind.Invalid))]
+    [else LspDottedImportNameKind.Invalid]))
 
-(define (lsp-dotted-import-name-valid? [name : (& name str)]) : bool
-  (let
-    [n : i64 (string.string-length name)]
-    [i : i64 0]
-    [ok : bool (and (> n 0) (not (lsp-dotted-import-tl-suffix? name)))]
-    [last-was-dot : bool true]
-    (begin
-      (while ok
-        (if (< i n)
-          (let
-            [c : char (string.string-ref name i)]
-            (if (or
-              (string.char-eq c '/')
-              (string.char-eq c '\\')
-              (string.char-eq c ':'))
-              (set! ok false)
-              (if (string.char-eq c '.')
-                (if last-was-dot
-                  (set! ok false)
-                  (begin
-                    (set! last-was-dot true)
-                    (set! i (+ i 1))))
-                (begin
-                  (set! last-was-dot false)
-                  (set! i (+ i 1))))))
-          (set! ok false)))
-      (and (= i n) (not last-was-dot)))))
+;; An identifier scanner stop at an unsupported byte is not a token boundary.
+(define (lsp-dotted-import-token-boundary? [text : (& text str)] [end : i64]) : bool
+  (if (= end (string.string-length text))
+    true
+    (let
+      [c : char (string.string-ref text end)]
+      (or
+        (source_text.source-text-space? c)
+        (= c '(')
+        (= c ')')
+        (= c '[')
+        (= c ']')
+        (= c '"')
+        (= c '\'')
+        (= c ';')))))
 
 (define (lsp-resolve-module-import-target
   [path : String]
@@ -4776,15 +4790,18 @@
                   text
                   operand-start
                   (- module-end operand-start))]
-              (if (lsp-dotted-import-name-valid? module-name)
-                (LspImportTarget.Found
-                  (lsp-resolve-module-import-target
-                    path
-                    module-name
-                    stdlib-roots)
-                  operand-start
-                  module-end)
-                LspImportTarget.Missing))]
+              (match (if (lsp-dotted-import-token-boundary? text module-end)
+                (lsp-dotted-import-name-kind (& module-name) (< module-end n))
+                LspDottedImportNameKind.Invalid)
+                [(LspDottedImportNameKind.Complete)
+                  (LspImportTarget.Found
+                    (lsp-resolve-module-import-target
+                      path
+                      module-name
+                      stdlib-roots)
+                    operand-start
+                    module-end)]
+                [_ LspImportTarget.Missing]))]
           [else LspImportTarget.Missing])))))
 
 ;; Collect every import target from the document, skipping strings and comments

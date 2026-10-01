@@ -955,6 +955,9 @@
       (lower_tests.compiler-lower-global-reference-initializer-shape-ok?)
       (io.panic "lower: global reference initializer smoke mismatch"))
     (unless
+      (lower_tests.compiler-lower-static-array-global-shape-ok?)
+      (io.panic "lower: static array global smoke mismatch"))
+    (unless
       (lower_tests.compiler-lower-function-value-contextual-init-ok?)
       (io.panic "lower: contextual function value smoke mismatch"))
     (unless

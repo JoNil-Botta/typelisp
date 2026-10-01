@@ -24,6 +24,7 @@
 (cfg test (import stdlib.profile))
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
+(import compiler_parse_core as parser)
 (import compiler_owned_view as owned_view)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
@@ -475,6 +476,84 @@
         [(tc_core.TcAggLayoutCacheSlot.Empty) true]
         [(tc_core.TcAggLayoutCacheSlot.Full _ _) false]))))
 
+(define (macro-prepare-test-ctx [pools : ast.AstNodePoolContext]) : tc_core.TcContext
+  (tc_core.tc-context-new
+    (ast.ast-program (ast.ast-decl-list-new))
+    (csym.compiler-symbols-empty)
+    (csym.compiler-registries-empty)
+    ""
+    cbi.compiler-builtin-id-fix-empty
+    pools))
+
+;; Preparing a transformer compares the owned pools with the installed pool's
+;; lengths (#7937). An owned context that argument normalisation extended past
+;; the installed one, in either pool, is installed; an owned context that is not
+;; longer takes a capture of the installed state; under an explicit
+;; compatibility context nothing changes.
+(test
+  macro-prepare-transformer-pools-length-decision
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [older : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [owned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx owned)]
+    [_older-root : i64
+      (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 1))]
+    [_owned-root : i64
+      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 2))]
+    [_owned-next : i64
+      (ast.ast-node-pool-context-expr-push owned (ast.AstExpr.Var 3))]
+    [_install-older : unit (ast.ast-node-pool-context-install! older)]
+    [_prepare-longer : unit (tc_core.macro-prepare-transformer-pools! ctx)]
+    [longer-installed? : bool (ast.ast-node-pool-context-expr-installed? owned)]
+    [_older-grows : i64
+      (begin
+        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 4))
+        (ast.ast-node-pool-context-expr-push older (ast.AstExpr.Var 5)))]
+    [_reinstall-older : unit (ast.ast-node-pool-context-install! older)]
+    [_prepare-shorter : unit (tc_core.macro-prepare-transformer-pools! ctx)]
+    [shorter-captured? : bool
+      (and
+        (ast.ast-node-pool-context-expr-installed? older)
+        (= (ast.ast-node-pool-context-expr-len owned) 3)
+        (= (ast.ast-node-pool-len) 3))]
+    [type-older : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [type-owned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [type-ctx : tc_core.TcContext (macro-prepare-test-ctx type-owned)]
+    [_type-owned-node : i64
+      (ast.ast-node-pool-context-type-push
+        type-owned
+        (ast.AstType.Array 0 7937))]
+    [_install-type-older : unit (ast.ast-node-pool-context-install! type-older)]
+    [_prepare-type : unit (tc_core.macro-prepare-transformer-pools! type-ctx)]
+    [type-longer-installed? : bool
+      (ast.ast-node-pool-context-expr-installed? type-owned)]
+    [_install-compat-older : unit (ast.ast-node-pool-context-install! older)]
+    [compat-unchanged? : bool
+      (begin
+        (ast.ast-node-pool-compat-context-use! type-older)
+        (tc_core.macro-prepare-transformer-pools! type-ctx)
+        (let
+          [unchanged? : bool
+            (not (ast.ast-node-pool-context-expr-installed? type-owned))]
+          (begin
+            (ast.ast-node-pool-compat-context-clear!)
+            unchanged?)))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if (and
+        longer-installed?
+        shorter-captured?
+        type-longer-installed?
+        compat-unchanged?)
+        unit
+        (io.panic "typecheck: macro transformer pool preparation failed")))))
+
 (test
   tc-context-expression-pool-isolation
   (let
@@ -529,14 +608,40 @@
         (let
           [ok?
             : bool
-            ;; Compatibility callers intentionally follow their selected pool,
-            ;; even when the TcContext argument names another owner.
-            (match (tc_core.tc-context-expr-get ctx-b root-a)
-              [(ast.AstExpr.Var name) (= name 101)]
-              [_ false])]
+            ;; A compatibility pool context does not redirect typechecker
+            ;; reads, and no typecheck context may be created under one.
+            (and
+              (match (tc_core.tc-context-expr-get ctx-b root-a)
+                [(ast.AstExpr.Var name) (= name 202)]
+                [_ false])
+              (=
+                (tc_core.tc-context-expr-bases ctx-b)
+                (ast.ast-node-pool-context-expr-segment-bases (& pools-b)))
+              (>
+                (string.string-length (tc_core.tc-context-compat-guard-message))
+                0))]
           (begin
             (ast.ast-node-pool-compat-context-clear!)
-            ok?)))]
+            (and
+              ok?
+              (=
+                (string.string-length (tc_core.tc-context-compat-guard-message))
+                0)))))]
+    [installed-ok? : bool
+      (let
+        [saved : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (begin
+          ;; Neither does an ordinary install of another pool.
+          (ast.ast-node-pool-context-install! pools-b)
+          (let
+            [ok? : bool
+              (match (tc_core.tc-context-expr-get ctx-a root-b)
+                [(ast.AstExpr.Var name) (= name 101)]
+                [_ false])]
+            (begin
+              (ast.ast-node-pool-context-install! saved)
+              ok?))))]
     (if (and
       (= root-a root-b)
       (= next-a next-b)
@@ -545,6 +650,7 @@
       a-next-ok?
       b-next-ok?
       compat-ok?
+      installed-ok?
       (= (ast.ast-node-pool-context-expr-len pools-a) 2)
       (= (ast.ast-node-pool-context-expr-len pools-b) 2)
       (= (ast.ast-node-pool-len) installed-len))
@@ -1003,6 +1109,122 @@
       (if ok?
         unit
         (io.panic "typecheck: diagnostic span pool isolation failed")))))
+
+;; One decoy-pool fixture for macro expression reads (#8199): `(head name 1)`
+;; whose name is a spanned child. Pools A and B push the same shapes, so ids
+;; collide, but A builds `(define alpha 1)` and B `(begin beta 1)`.
+(define (macro-read-pool-call
+  [pools : ast.AstNodePoolContext]
+  [head-id : i64]
+  [name-id : i64]) : i64
+  (let
+    [name : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name-id))]
+    [spanned : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned name (ast.ast-source-span 3 1 3 6)))]
+    [value : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "1")))]
+    [head : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var head-id))]
+    [args : ast.AstExprList (ast.ast-expr-list-new)]
+    (begin
+      (ast.ast-expr-list-push (&mut args) spanned)
+      (ast.ast-expr-list-push (&mut args) value)
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Call head args)))))
+
+;; The name id of the single `define` a macro output parses to, or -1.
+(define (macro-read-pool-parsed-name [parsed : tc_core.ResultMacroParsedDecls]) : i64
+  (match parsed
+    [(tc_core.ResultMacroParsedDecls.Ok decls)
+      (match (ast.ast-decl-list-step decls)
+        [(ast.AstDeclListStep.Cons decl _)
+          (match decl
+            [(ast.AstDecl.Def _ name _ _) name]
+            [_ -1])]
+        [(ast.AstDeclListStep.Nil) -1])]
+    [(tc_core.ResultMacroParsedDecls.Err _) -1]))
+
+;; With decoy pool B installed, macro call naming, sexpr conversion and output
+;; declaration parsing of A's nodes read A through its segment bases.
+(test
+  macro-expression-read-pool-isolation
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [alpha-id : i64 (ci.intern "macro-read-isolation/alpha")]
+    [beta-id : i64 (ci.intern "macro-read-isolation/beta")]
+    [call-a : i64 (macro-read-pool-call pools-a (ci.intern "define") alpha-id)]
+    [call-b : i64 (macro-read-pool-call pools-b (ci.intern "begin") beta-id)]
+    [ctx-a : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools-a)]
+    [session : cis.InternStructuralSessionHandle
+      (tc_core.tc-context-structural-session ctx-a)]
+    [dispatch : sym_i64_env.SymI64Env (parser.compiler-parse-dispatch-env)]
+    [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
+    [call-expr : ast.AstExpr (ast.ast-expr-segment-bases-get bases-a call-a)]
+    [owner : tc_core.MacroSexprOwner
+      (tc_core.macro-sexpr-owner bases-a session)]
+    ;; The spanned name is the define's first argument, pushed second.
+    [spanned-expr : ast.AstExpr
+      (ast.ast-expr-segment-bases-get bases-a (- call-a 3))]
+    ;; Parsing an output form installs the parser's pools, so the decoy is
+    ;; reinstalled before each read under test.
+    [_decoy-for-name : unit (ast.ast-node-pool-context-install! pools-b)]
+    [callee-name : String
+      (match (tc_core.macro-call-callee-name bases-a session spanned-expr)
+        [(tc_core.TcMaybeString.Some name) name]
+        [(tc_core.TcMaybeString.No) ""])]
+    [_decoy-for-sexpr : unit (ast.ast-node-pool-context-install! pools-b)]
+    [sexpr-name : i64
+      (match (tc_core.macro-expr-to-spanned-sexpr
+        (& owner)
+        (tc_core.tc-global-shared-view call-expr)
+        (tc_core.tc-global-shared-view call-expr))
+        [(tc_core.ResultMacroSexpr.Ok form)
+          (match (parser.parse-ast-decl-maybe dispatch form)
+            [(parser.ResultAstMaybeDecl.SomeDecl decl)
+              (match decl
+                [(ast.AstDecl.Def _ name _ _) name]
+                [_ -1])]
+            [_ -1])]
+        [(tc_core.ResultMacroSexpr.Err _) -1])]
+    [_decoy-for-parse : unit (ast.ast-node-pool-context-install! pools-b)]
+    [parsed-name : i64
+      (macro-read-pool-parsed-name
+        (tc_core.macro-parse-decls-from-expr
+          (& owner)
+          dispatch
+          (tc_core.tc-global-shared-view call-expr)
+          call-expr))]
+    [ok? : bool
+      (and
+        (= call-a call-b)
+        (string.eq callee-name "macro-read-isolation/alpha")
+        (string.eq
+          (tc_core.tc-env-key-display session sexpr-name)
+          "macro-read-isolation/alpha")
+        (string.eq
+          (tc_core.tc-env-key-display session parsed-name)
+          "macro-read-isolation/alpha"))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if ok?
+        unit
+        (io.panic "typecheck: macro expression read pool isolation failed")))))
 
 (define (tc-type-env-lookup-step [env : tc_core.TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
   (match (tc_core.tc-type-env-view env)
@@ -2032,6 +2254,113 @@
         (io.panic
           "typecheck: type-handle cache isolation/rebinding self-test failed")))))
 
+;; The first id after START whose cache slot equals KEY's, so a lookup of it
+;; evicts KEY's entry.
+(define (tc-type-handle-cache-colliding-id [key : i64] [start : i64]) : i64
+  (if (and
+    (not (= start key))
+    (=
+      (tc_core.tc-type-handle-cache-slot start)
+      (tc_core.tc-type-handle-cache-slot key)))
+    start
+    (tc-type-handle-cache-colliding-id key (+ start 1))))
+
+(cfg
+  test
+  (test
+    tc-type-handle-cache-move-kind-lane-follows-key-and-stamp
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state : tc_core.TcNominalCacheState
+        (tc_core.tc-job-state-nominal-cache job)]
+      [name-id : i64 137]
+      [map-key : i64 (csym.compiler-symbol-name-id-key name-id)]
+      [symbols-a : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id
+          (csym.compiler-symbols-empty)
+          map-key
+          101)]
+      [symbols-b : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id
+          (csym.compiler-symbols-empty)
+          map-key
+          202)]
+      ;; An unbound cache neither answers nor records a kind.
+      [unbound-set : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-a)
+          name-id
+          2)]
+      [unbound : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      [_bind : i64
+        (tc_core.tc-type-handle-lookup-id
+          state
+          (& symbols-a)
+          name-id
+          tc_core.tc-type-handle-lookup-caller-move-kind)]
+      [fresh : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      [_record : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-a)
+          name-id
+          2)]
+      [recorded : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      ;; A key that is not the slot's current key is not recorded.
+      [other-id : i64 (tc-type-handle-cache-colliding-id name-id 1)]
+      [_absent-set : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-a)
+          other-id
+          1)]
+      [still-recorded : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-a) name-id)]
+      ;; Another stamp neither sees the kind nor, once rebound, keeps it.
+      [other-stamp : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) name-id)]
+      [_rebind : i64
+        (tc_core.tc-type-handle-lookup-id
+          state
+          (& symbols-b)
+          name-id
+          tc_core.tc-type-handle-lookup-caller-move-kind)]
+      [rebound : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) name-id)]
+      [_record-b : unit
+        (tc_core.tc-type-handle-cache-move-kind-set!
+          state
+          (& symbols-b)
+          name-id
+          1)]
+      ;; Evicting the slot resets the kind for both the old and the new key.
+      [_evict : i64
+        (tc_core.tc-type-handle-lookup-id
+          state
+          (& symbols-b)
+          other-id
+          tc_core.tc-type-handle-lookup-caller-move-kind)]
+      [evicted : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) name-id)]
+      [evictor : i64
+        (tc_core.tc-type-handle-cache-move-kind state (& symbols-b) other-id)]
+      (if (and
+        (= unbound 0)
+        (= fresh 0)
+        (= recorded 2)
+        (= still-recorded 2)
+        (= other-stamp 0)
+        (= rebound 0)
+        (= evicted 0)
+        (= evictor 0))
+        unit
+        (io.panic
+          "typecheck: type-handle cache move-kind lane self-test failed")))))
+
 (define (tc-resolve-type-with-pools
   [ctx : tc_core.TcContext]
   [pools : ast.AstNodePoolContext]
@@ -2299,6 +2628,139 @@
                 base-alive?
                 grown-alive?
                 first-cache-alive?))))))))
+
+;; Entries in STORE-HANDLE's chain index, or -1 without one.
+(define (tc-type-env-chain-index-len [store-handle : i64]) : i64
+  (let
+    [address : i64 (tc_core.tc-chain-state-address store-handle)]
+    (if (> address 0)
+      (let
+        [state : tc_core.TcChainIndex (tc_core.tc-chain-state-read address)]
+        (tc_i64_i64_map.len (& state.map)))
+      -1)))
+
+;; A function-local store fork (#8375) grows its bindings, cache layers and
+;; chain index in the current scratch, sees every parent binding through the
+;; inherited head, shares the parent's index until its first layer, and leaves
+;; the parent's store, index and lookups unchanged after the scratch is
+;; rewound. A parent without an index keeps none.
+(define (tc-type-env-function-store-fork-smoke?) : bool
+  (let
+    [base-id : i64 (ci.intern "fork-parent-base")]
+    [kept-id : i64 (ci.intern "fork-parent-kept")]
+    [local-id : i64 (ci.intern "fork-local")]
+    [home : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make_small)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    [_owner-current : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [parent : tc_core.TcTypeEnv
+      (tc_core.tc-env-with-cache
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env)
+            base-id
+            (ast.AstType.String))
+          kept-id
+          (ast.AstType.I64)))]
+    [plain : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) base-id (ast.AstType.String))]
+    [parent-store : tc_core.TcTypeEnvStore
+      (tc_core.tc-type-env-store-read parent.store)]
+    [parent-chain : i64 (tc_core.tc-chain-state-address parent.store)]
+    [parent-chain-len : i64 (tc-type-env-chain-index-len parent.store)]
+    [fork-ok : bool false]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        [reader : tc_core.TcTypeEnv
+          (tc_core.tc-type-env-fork-function-store parent)]
+        [fork : tc_core.TcTypeEnv
+          (tc_core.tc-type-env-fork-function-store parent)]
+        [plain-fork : tc_core.TcTypeEnv
+          (tc_core.tc-env-with-cache
+            (tc_core.tc-type-env-fork-function-store plain))]
+        [index : i64 0]
+        (begin
+          ;; Shadow a parent name, then cross two binding segments and several
+          ;; cache segments.
+          (set! fork (tc_core.tc-bind-id fork base-id (ast.AstType.Bool)))
+          (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
+            (begin
+              (set! fork (tc_core.tc-bind-id fork local-id (ast.AstType.I64)))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
+            (begin
+              (set! fork (tc_core.tc-env-with-cache fork))
+              (set! index (+ index 1))))
+          (set!
+            fork-ok
+            (and
+              (match (tc_core.tc-lookup-id fork base-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id fork kept-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id fork local-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id reader base-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [_ false])
+              (= (tc_core.tc-chain-state-address reader.store) parent-chain)
+              (= (tc_core.tc-chain-store-owner fork.store) scratch)
+              (> (tc_core.tc-chain-state-address fork.store) 0)
+              (not (= (tc_core.tc-chain-state-address fork.store) parent-chain))
+              (>= (tc-type-env-chain-index-len fork.store) parent-chain-len)
+              (> (tc_core.tc-chain-state-address plain-fork.store) 0)
+              (match (tc_core.tc-lookup-id plain-fork base-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [_ false])))
+          (unsafe
+            (arena.tl_region_reset mark))))
+      (unsafe
+        (begin
+          (arena.tl_arena_set home)
+          (arena.tl_arena_destroy scratch)))
+      (let
+        [after : tc_core.TcTypeEnvStore
+          (tc_core.tc-type-env-store-read parent.store)]
+        [after-chain : i64 (tc_core.tc-chain-state-address parent.store)]
+        [result : bool
+          (and
+            fork-ok
+            (> parent-chain-len 0)
+            (= after.binding-len parent-store.binding-len)
+            (= after.cache-len parent-store.cache-len)
+            (= after-chain parent-chain)
+            (= (tc-type-env-chain-index-len parent.store) parent-chain-len)
+            (= (tc_core.tc-chain-state-address plain.store) 0)
+            (match (tc_core.tc-lookup-id parent base-id)
+              [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+              [_ false])
+            (match (tc_core.tc-lookup-id parent kept-id)
+              [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+              [_ false])
+            (match (tc_core.tc-lookup-id parent local-id)
+              [(tc_core.ResultTcType.Ok _) false]
+              [_ true]))]
+        (begin
+          (unsafe
+            (begin
+              (arena.tl_arena_set home)
+              (arena.tl_arena_destroy owner)))
+          result)))))
+
+(test
+  tc-type-env-function-store-fork
+  (test.assert-true
+    (tc-type-env-function-store-fork-smoke?)
+    "a function-local store fork never touches its parent's store or index"))
 
 (define (tc-type-env-segmented-snapshot-smoke?) : bool
   (let
@@ -4761,25 +5223,25 @@
             (tc_core.tc-float-literal-expr?
               ctx-a
               (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))))
-      ;; The explicit compatibility route intentionally selects its installed
-      ;; owner, even when the context argument names a different pool.
+      ;; A compatibility pool context does not redirect typechecker reads: the
+      ;; owner-A context still reads its integer literal at the shared id.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
         (and
-          (tc_core.tc-float-literal-expr?
+          (tc_core.tc-integer-literal-expr?
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b))
           (not
-            (tc_core.tc-integer-literal-expr?
+            (tc_core.tc-float-literal-expr?
               ctx-a
               (tc_core.tc-context-expr-get ctx-a root-b)))
-          (match (tc_core.tc-float-literal-expr-with-expected
+          (match (tc_core.tc-integer-literal-expr-with-expected
             ctx-a
             (tc_core.tc-context-expr-get ctx-a root-b)
-            (ast.AstType.F32))
+            (ast.AstType.I64))
             [(tc_core.ResultTcType.Ok ty)
-              (tc_core.tc-type-eq ty (ast.AstType.F32))]
+              (tc_core.tc-type-eq ty (ast.AstType.I64))]
             [_ false])))
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-install! saved)
@@ -5402,8 +5864,8 @@
               ctx-b
               (ast.AstExpr.MacroExpansion 6 0 0))
             0)))
-      ;; The explicit compatibility route intentionally selects its installed
-      ;; owner, even when the context argument names a different pool.
+      ;; A compatibility pool context does not redirect typechecker reads: the
+      ;; owner-A context keeps its own keys for the same ids.
       (ast.ast-node-pool-compat-context-use! pools-b)
       (set!
         compat-ok?
@@ -5412,12 +5874,12 @@
             (tc_core.tc-call-arg-fact-key
               ctx-a
               (ast.AstExpr.MacroExpansion 2 0 0))
-            0)
+            1)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a
               (ast.AstExpr.MacroExpansion 3 0 0))
-            1)
+            2)
           (=
             (tc_core.tc-call-arg-fact-key
               ctx-a

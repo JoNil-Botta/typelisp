@@ -9,6 +9,7 @@
 (import compiler_ast_types as ast)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
+(import stdlib.hash)
 (import stdlib.hashmap)
 (import stdlib.arena)
 (import stdlib.comptime)
@@ -214,34 +215,106 @@
 ;; CFG map is integer-keyed, which is what the optimizer, register allocator and
 ;; backend want. Only emission and diagnostics ask for the text back. `-1` is
 ;; the absent label, matching the symbol family's negative-id contract.
+;;
+;; Storage (#8409). Each spelling is copied once, into the label arena below,
+;; which is never released: `compiler-ir-label-text` hands out its descriptors.
+;; Everything that grows lives in one generation arena instead: `slots`, the
+;; descriptor of every id, and `index`, an open-addressing table of ids keyed by
+;; the spelling's hash and compared against `slots`. Growing both builds the
+;; replacement in a fresh arena, publishes it, then destroys the previous
+;; generation, so only the current one is live. Nothing holds a generation's
+;; arrays across a call: readers load the globals on every access.
 (define compiler-ir-label-slots : (__tl_dyn-array String)
-  (__tl_make-array String 1024))
+  (__tl_make-array String 0))
+
+;; Twice the capacity of `slots`, so it is at most half full; -1 is empty.
+(define compiler-ir-label-index : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
 (define compiler-ir-label-count : i64
   0)
-(define compiler-ir-label-ids : ir_label_map.Map
-  (ir_label_map.with-capacity 2048))
 (define compiler-ir-label-seeded : bool
   false)
+(define compiler-ir-label-generation-arena-handle : i64
+  0)
 
-(define (compiler-ir-label-grow!) : unit
+(define (compiler-ir-label-generation-arena-handle-value) : i64
+  compiler-ir-label-generation-arena-handle)
+
+;; A generation in its own arena: `capacity` slots holding the current ids'
+;; descriptors, and an index over them.
+(define (compiler-ir-label-generation-install! [capacity : i64]) : unit
   (let
-    [old-len : i64 (array-length compiler-ir-label-slots)]
-    [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
-    [index : i64 0]
+    [retired : i64 compiler-ir-label-generation-arena-handle]
+    [generation : i64 (arena.tl_arena_make)]
     (begin
-      (while (< index old-len)
-        (begin
-          (set!
-            (array-ref next index)
-            (array-ref compiler-ir-label-slots index))
-          (set! index (+ index 1))))
-      (set! compiler-ir-label-slots next))))
+      (in-arena
+        (arena.Arena generation)
+        (let
+          [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
+          [index : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 capacity))]
+          [position : i64 0]
+          [id : i64 0]
+          (begin
+            (while (< position (array-length index))
+              (begin
+                (set! (array-ref index position) -1)
+                (set! position (+ position 1))))
+            (while (< id compiler-ir-label-count)
+              (let
+                [text : String
+                  (compiler-ir-array-shared-view compiler-ir-label-slots id)]
+                (begin
+                  (set! (array-ref slots id) text)
+                  ;; Spellings are distinct, so each id takes the first empty
+                  ;; position of its probe sequence.
+                  (set! position (compiler-ir-label-home (& text) (& index)))
+                  (while (>= (array-ref index position) 0)
+                    (set!
+                      position
+                      (bit-and (+ position 1) (- (array-length index) 1))))
+                  (set! (array-ref index position) id)
+                  (set! id (+ id 1)))))
+            (set! compiler-ir-label-slots slots)
+            (set! compiler-ir-label-index index))))
+      (set! compiler-ir-label-generation-arena-handle generation)
+      (if (= retired 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
 
-;; The table outlives every lowering/optimizer scratch arena and every intern
-;; floor reset -- an id handed to the backend must still render -- so its slots,
-;; its map and its copies of the spellings are bound in a dedicated arena that
-;; is created once and only grows. This follows CONTRIBUTING.md's
-;; full-lifetime compiler arena ownership rule.
+;; `name`'s first probe position in `index`, whose length is a power of two.
+(define (compiler-ir-label-home
+  [name : (& name str)]
+  [index : (& index (__tl_dyn-array i64))]) : i64
+  (let
+    [hash : i64 (hash.string-key name)]
+    (bit-and (bit-xor hash (shr hash 15)) (- (array-length index) 1))))
+
+;; The index position holding `name`'s id, or the empty position where it
+;; would go.
+(define (compiler-ir-label-position [name : (& name str)]) : i64
+  (let
+    [mask : i64 (- (array-length compiler-ir-label-index) 1)]
+    [position : i64 (compiler-ir-label-home name (& compiler-ir-label-index))]
+    [found : bool false]
+    (begin
+      (while (not found)
+        (let
+          [id : i64 (array-ref compiler-ir-label-index position)]
+          (if (< id 0)
+            (set! found true)
+            (let
+              [text : String
+                (compiler-ir-array-shared-view compiler-ir-label-slots id)]
+              (if (string.eq (& text) name)
+                (set! found true)
+                (set! position (bit-and (+ position 1) mask)))))))
+      position)))
+
+;; The spellings outlive every lowering/optimizer scratch arena and every intern
+;; floor reset -- an id handed to the backend must still render -- so they are
+;; bound in a dedicated arena that is created once and only grows. This follows
+;; CONTRIBUTING.md's full-lifetime compiler arena ownership rule.
 (define compiler-ir-label-arena-handle : i64
   0)
 
@@ -258,13 +331,10 @@
 (define (compiler-ir-label-seed!) : unit
   (if compiler-ir-label-seeded
     unit
-    (in-arena
-      (arena.Arena (compiler-ir-label-arena))
-      (begin
-        (set! compiler-ir-label-slots (__tl_make-array String 1024))
-        (set! compiler-ir-label-ids (ir_label_map.with-capacity 2048))
-        (set! compiler-ir-label-count 0)
-        (set! compiler-ir-label-seeded true)))))
+    (begin
+      (set! compiler-ir-label-count 0)
+      (compiler-ir-label-generation-install! 1024)
+      (set! compiler-ir-label-seeded true))))
 
 (define (compiler-ir-label [name : String]) : i64
   (begin
@@ -272,29 +342,28 @@
     (compiler-ir-label-lookup name)))
 
 (define (compiler-ir-label-lookup [name : String]) : i64
-  (match (ir_label_map.get
-    (& compiler-ir-label-ids)
-    (compiler-ir-global-shared-view name))
-    [(ir_label_map.LookupFound id) id]
-    [(ir_label_map.LookupMissing)
+  (let
+    [position : i64 (compiler-ir-label-position (& name))]
+    [existing : i64 (array-ref compiler-ir-label-index position)]
+    (if (>= existing 0)
+      existing
       (let
         [id : i64 compiler-ir-label-count]
-        (in-arena
-          (arena.Arena (compiler-ir-label-arena))
-          (begin
-            (if (< id (array-length compiler-ir-label-slots))
-              unit
-              (compiler-ir-label-grow!))
-            (let
-              [owned : String (string.copy (& name))]
-              (begin
-                (set! (array-ref compiler-ir-label-slots id) owned)
-                (ir_label_map.insert-ref!
-                  (&mut compiler-ir-label-ids)
-                  (string.copy (& (array-ref compiler-ir-label-slots id)))
-                  id)))
-            (set! compiler-ir-label-count (+ id 1))
-            id)))]))
+        (begin
+          (if (< id (array-length compiler-ir-label-slots))
+            unit
+            (begin
+              (compiler-ir-label-generation-install!
+                (* 2 (array-length compiler-ir-label-slots)))
+              (set! position (compiler-ir-label-position (& name)))))
+          (set!
+            (array-ref compiler-ir-label-slots id)
+            (in-arena
+              (arena.Arena (compiler-ir-label-arena))
+              (string.copy (& name))))
+          (set! (array-ref compiler-ir-label-index position) id)
+          (set! compiler-ir-label-count (+ id 1))
+          id)))))
 
 ;: The id `name` already has, or -1 when it was never interned. Unlike
 ;: `compiler-ir-label` this never creates an id: a query that asks about a
@@ -304,9 +373,7 @@
 (define (compiler-ir-label-existing [name : String]) : i64
   (if (not compiler-ir-label-seeded)
     -1
-    (match (ir_label_map.get (& compiler-ir-label-ids) name)
-      [(ir_label_map.LookupFound id) id]
-      [(ir_label_map.LookupMissing) -1])))
+    (array-ref compiler-ir-label-index (compiler-ir-label-position (& name)))))
 
 ;: Number of distinct labels interned so far. Ids are dense in [0, count),
 ;: so a side table indexed by label id needs exactly this many slots.
@@ -510,7 +577,12 @@
   (Bytes String)
   ;; Runtime-initialized globals name their hidden initializer explicitly.
   (RuntimeGlobal i64)
-  (Unit))
+  (Unit)
+  ;; A global initializer only: a fixed array of constant scalars as its exact
+  ;; little-endian element bytes, laid out as `array-ref` addresses them. The
+  ;; global's cell points at its own writable copy of the bytes; the element
+  ;; type and count are the global's declared `(Array T N)` (#8369).
+  (StaticArray String))
 
 (defenum CompilerIrMaybeValue
   (No)
@@ -6065,6 +6137,8 @@
     [(CompilerIrValue.Char c) (CompilerIrValue.Char c)]
     [(CompilerIrValue.String s) (CompilerIrValue.String (string.copy s))]
     [(CompilerIrValue.Bytes s) (CompilerIrValue.Bytes (string.copy s))]
+    [(CompilerIrValue.StaticArray s)
+      (CompilerIrValue.StaticArray (string.copy s))]
     [(CompilerIrValue.RuntimeGlobal init)
       (CompilerIrValue.RuntimeGlobal (compiler-ir-symbol-clone init))]
     [(CompilerIrValue.Unit) (CompilerIrValue.Unit)]))
@@ -6849,7 +6923,8 @@
         ">")]
     [(CompilerIrValue.RuntimeGlobal init)
       (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init))]
-    [(CompilerIrValue.Unit) "unit"]))
+    [(CompilerIrValue.Unit) "unit"]
+    [(CompilerIrValue.StaticArray _) "<static-array>"]))
 
 (define (compiler-ir-value-seq-render-from
   [values : CompilerIrValueSeq]
@@ -8506,8 +8581,12 @@
   (No)
   (Some CompilerSourceLocation))
 
-(defenum CompilerSourceSpansEntry
-  (Entry CompilerIrSymbolId i64 ast.AstSourceSpan))
+;; A function's span: its symbol, the source path id and the span. Entries are
+;; plain inline records, so a slot costs exactly its fields.
+(defstruct CompilerSourceSpansEntry
+  (name CompilerIrSymbolId)
+  (path-id i64)
+  (span ast.AstSourceSpan))
 
 (defstruct CompilerSourceSpansEntryList
   (slots (__tl_dyn-array CompilerSourceSpansEntry))
@@ -8532,8 +8611,68 @@
 (define (compiler-source-spans-instr-key-size) : i64
   (comptime (size-of (type CompilerSourceSpansInstrKey))))
 
-(defenum CompilerSourceSpansInstrEntry
-  (Entry CompilerSourceSpansInstrKey i64 ast.AstSourceSpan))
+;; An instruction's span. The key is stored flat -- its function, its value,
+;; name or label id, and its variant as `kind` -- so the record's 44 bytes of
+;; fields fill a 48-byte slot instead of a 24-byte tagged key plus the rest.
+(defstruct CompilerSourceSpansInstrEntry
+  (function CompilerIrSymbolId)
+  (id i64)
+  (path-id i64)
+  (span ast.AstSourceSpan)
+  (kind i32))
+
+;; `kind` values of the key variants.
+(define (compiler-source-spans-instr-kind-value) : i32
+  (cast 0 : i32))
+
+(define (compiler-source-spans-instr-kind-store) : i32
+  (cast 1 : i32))
+
+(define (compiler-source-spans-instr-kind-bounds) : i32
+  (cast 2 : i32))
+
+(define (compiler-source-spans-instr-entry
+  [key : CompilerSourceSpansInstrKey]
+  [path-id : i64]
+  [span : ast.AstSourceSpan]) : CompilerSourceSpansInstrEntry
+  (match key
+    [(CompilerSourceSpansInstrKey.Value function id)
+      (CompilerSourceSpansInstrEntry
+        function
+        id
+        path-id
+        span
+        (compiler-source-spans-instr-kind-value))]
+    [(CompilerSourceSpansInstrKey.Store function id)
+      (CompilerSourceSpansInstrEntry
+        function
+        id
+        path-id
+        span
+        (compiler-source-spans-instr-kind-store))]
+    [(CompilerSourceSpansInstrKey.Bounds function id)
+      (CompilerSourceSpansInstrEntry
+        function
+        id
+        path-id
+        span
+        (compiler-source-spans-instr-kind-bounds))]))
+
+(define (compiler-source-spans-instr-entry-key
+  [entry : (& entry CompilerSourceSpansInstrEntry)]) : CompilerSourceSpansInstrKey
+  (cond
+    [(= entry.kind (compiler-source-spans-instr-kind-value))
+      (CompilerSourceSpansInstrKey.Value
+        (CompilerIrSymbolId entry.function.value)
+        entry.id)]
+    [(= entry.kind (compiler-source-spans-instr-kind-store))
+      (CompilerSourceSpansInstrKey.Store
+        (CompilerIrSymbolId entry.function.value)
+        entry.id)]
+    [else
+      (CompilerSourceSpansInstrKey.Bounds
+        (CompilerIrSymbolId entry.function.value)
+        entry.id)]))
 
 (defstruct CompilerSourceSpansInstrEntryList
   (slots (__tl_dyn-array CompilerSourceSpansInstrEntry))
@@ -8628,32 +8767,6 @@
           (set! (array-ref bigger len) entry)
           (CompilerSourceSpansEntryList bigger (+ len 1)))))))
 
-(define (compiler-source-spans-instr-key-eq?
-  [left : CompilerSourceSpansInstrKey]
-  [right : CompilerSourceSpansInstrKey]) : bool
-  (match left
-    [(CompilerSourceSpansInstrKey.Value left-function left-var)
-      (match right
-        [(CompilerSourceSpansInstrKey.Value right-function right-var)
-          (and
-            (= left-var right-var)
-            (compiler-ir-symbol-id-eq? left-function right-function))]
-        [_ false])]
-    [(CompilerSourceSpansInstrKey.Store left-function left-name)
-      (match right
-        [(CompilerSourceSpansInstrKey.Store right-function right-name)
-          (and
-            (= left-name right-name)
-            (compiler-ir-symbol-id-eq? left-function right-function))]
-        [_ false])]
-    [(CompilerSourceSpansInstrKey.Bounds left-function left-label)
-      (match right
-        [(CompilerSourceSpansInstrKey.Bounds right-function right-label)
-          (and
-            (= left-label right-label)
-            (compiler-ir-symbol-id-eq? left-function right-function))]
-        [_ false])]))
-
 (define (compiler-source-spans-instr-entry-list-copy-array-range!
   [dst : (&mut dst (__tl_dyn-array CompilerSourceSpansInstrEntry))]
   [src : (& src (__tl_dyn-array CompilerSourceSpansInstrEntry))]
@@ -8695,9 +8808,9 @@
 ;;
 ;; Copy a spans table into whichever arena is current at the call so it can
 ;; outlive the arena that produced it. Both entry kinds are flat inline
-;; aggregates over POD fields -- an interned symbol id, a path id, and the four
-;; i32 line/column words of `AstSourceSpan` -- and enum/struct payloads use the
-;; default inline layout, so duplicating the two slot arrays leaves no pointer
+;; records over POD fields -- an interned symbol id or instruction key, a path
+;; id, and the four i32 line/column words of `AstSourceSpan` -- in the default
+;; inline layout, so duplicating the two slot arrays leaves no pointer
 ;; back into the source arena. Only the live prefix is copied: an escaped table
 ;; is handed to consumers that clear or rebuild the instruction side, never to
 ;; one that appends onto the retained spare capacity.
@@ -8739,29 +8852,44 @@
         (compiler-source-spans-instr-entry-list-escape instr-entries)
         instr-count)]))
 
+;; The newest entry in `slots[0, index]` whose flat key is `function`, `id`
+;; and `kind`.
 (define (compiler-source-spans-instr-entry-array-lookup-location
   [slots : (__tl_dyn-array CompilerSourceSpansInstrEntry)]
   [index : i64]
-  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
+  [function : i64]
+  [id : i64]
+  [kind : i32]) : CompilerMaybeSourceLocation
   (if (< index 0)
     (CompilerMaybeSourceLocation.No)
-    (match (array-ref slots index)
-      [(CompilerSourceSpansInstrEntry.Entry entry-key path-id span)
-        (if (compiler-source-spans-instr-key-eq? entry-key key)
-          (CompilerMaybeSourceLocation.Some
-            (CompilerSourceLocation path-id span))
-          (compiler-source-spans-instr-entry-array-lookup-location
-            slots
-            (- index 1)
-            key))])))
+    (let
+      [span-entry : CompilerSourceSpansInstrEntry (array-ref slots index)]
+      (if (and
+        (= span-entry.id id)
+        (= span-entry.function.value function)
+        (= span-entry.kind kind))
+        (CompilerMaybeSourceLocation.Some
+          (CompilerSourceLocation span-entry.path-id span-entry.span))
+        (compiler-source-spans-instr-entry-array-lookup-location
+          slots
+          (- index 1)
+          function
+          id
+          kind)))))
 
 (define (compiler-source-spans-instr-entry-list-lookup
   [entries : CompilerSourceSpansInstrEntryList]
   [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceLocation
-  (compiler-source-spans-instr-entry-array-lookup-location
-    entries.slots
-    (- entries.len 1)
-    key))
+  ;; Flatten the key once; the scan compares scalars.
+  (let
+    [probe : CompilerSourceSpansInstrEntry
+      (compiler-source-spans-instr-entry key 0 (ast.ast-source-span 0 0 0 0))]
+    (compiler-source-spans-instr-entry-array-lookup-location
+      entries.slots
+      (- entries.len 1)
+      probe.function.value
+      probe.id
+      probe.kind)))
 
 ;; Record `name -> span`. Function names are unique in lowered programs. The
 ;; dense list stores new entries at the end, and lookup scans newest-to-oldest,
@@ -8775,7 +8903,7 @@
       (CompilerSourceSpans.Spans
         (compiler-source-spans-entry-list-append
           entries
-          (CompilerSourceSpansEntry.Entry name 0 span))
+          (CompilerSourceSpansEntry name 0 span))
         instr-entries
         instr-count)]))
 
@@ -8789,7 +8917,7 @@
       (CompilerSourceSpans.Spans
         (compiler-source-spans-entry-list-append
           entries
-          (CompilerSourceSpansEntry.Entry name path-id span))
+          (CompilerSourceSpansEntry name path-id span))
         instr-entries
         instr-count)]))
 
@@ -8799,11 +8927,13 @@
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceSpan
   (if (< index 0)
     (CompilerMaybeSourceSpan.No)
-    (match (array-ref slots index)
-      [(CompilerSourceSpansEntry.Entry entry-name _ span)
-        (if (compiler-ir-symbol-id-eq? entry-name name)
-          (CompilerMaybeSourceSpan.Some span)
-          (compiler-source-spans-entry-array-lookup slots (- index 1) name))])))
+    (let
+      [span-entry : CompilerSourceSpansEntry (array-ref slots index)]
+      [entry-name : CompilerIrSymbolId span-entry.name]
+      [span : ast.AstSourceSpan span-entry.span]
+      (if (compiler-ir-symbol-id-eq? entry-name name)
+        (CompilerMaybeSourceSpan.Some span)
+        (compiler-source-spans-entry-array-lookup slots (- index 1) name)))))
 
 (define (compiler-source-spans-entry-array-lookup-location
   [slots : (__tl_dyn-array CompilerSourceSpansEntry)]
@@ -8811,15 +8941,17 @@
   [name : CompilerIrSymbolId]) : CompilerMaybeSourceLocation
   (if (< index 0)
     (CompilerMaybeSourceLocation.No)
-    (match (array-ref slots index)
-      [(CompilerSourceSpansEntry.Entry entry-name path-id span)
-        (if (compiler-ir-symbol-id-eq? entry-name name)
-          (CompilerMaybeSourceLocation.Some
-            (CompilerSourceLocation path-id span))
-          (compiler-source-spans-entry-array-lookup-location
-            slots
-            (- index 1)
-            name))])))
+    (let
+      [span-entry : CompilerSourceSpansEntry (array-ref slots index)]
+      [entry-name : CompilerIrSymbolId span-entry.name]
+      [path-id : i64 span-entry.path-id]
+      [span : ast.AstSourceSpan span-entry.span]
+      (if (compiler-ir-symbol-id-eq? entry-name name)
+        (CompilerMaybeSourceLocation.Some (CompilerSourceLocation path-id span))
+        (compiler-source-spans-entry-array-lookup-location
+          slots
+          (- index 1)
+          name)))))
 
 (define (compiler-source-spans-entry-list-lookup
   [entries : CompilerSourceSpansEntryList]
@@ -8856,7 +8988,7 @@
         entries
         (compiler-source-spans-instr-entry-list-append
           instr-entries
-          (CompilerSourceSpansInstrEntry.Entry key 0 span))
+          (compiler-source-spans-instr-entry key 0 span))
         (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr-entry-located
@@ -8870,7 +9002,7 @@
         entries
         (compiler-source-spans-instr-entry-list-append
           instr-entries
-          (CompilerSourceSpansInstrEntry.Entry key path-id span))
+          (compiler-source-spans-instr-entry key path-id span))
         (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr
@@ -9099,36 +9231,42 @@
               complete-instr-entries.slots]
             (begin
               (while (< entry-index complete-entries.len)
-                (match (array-ref complete-entry-slots entry-index)
-                  [(CompilerSourceSpansEntry.Entry name path-id span)
-                    (begin
-                      (set!
-                        out
-                        (if (> path-id 0)
-                          (compiler-source-spans-insert-located
-                            out
-                            name
-                            path-id
-                            span)
-                          (compiler-source-spans-insert out name span)))
-                      (set! entry-index (+ entry-index 1)))]))
+                (let
+                  [span-entry : CompilerSourceSpansEntry
+                    (array-ref complete-entry-slots entry-index)]
+                  [name : CompilerIrSymbolId span-entry.name]
+                  [path-id : i64 span-entry.path-id]
+                  [span : ast.AstSourceSpan span-entry.span]
+                  (begin
+                    (set!
+                      out
+                      (if (> path-id 0)
+                        (compiler-source-spans-insert-located
+                          out
+                          name
+                          path-id
+                          span)
+                        (compiler-source-spans-insert out name span)))
+                    (set! entry-index (+ entry-index 1)))))
               (while (< instr-index complete-instr-entries.len)
-                (match (array-ref complete-instr-slots instr-index)
-                  [(CompilerSourceSpansInstrEntry.Entry key path-id span)
-                    (begin
-                      (set!
-                        out
-                        (if (> path-id 0)
-                          (compiler-source-spans-insert-instr-entry-located
-                            out
-                            key
-                            path-id
-                            span)
-                          (compiler-source-spans-insert-instr-entry
-                            out
-                            key
-                            span)))
-                      (set! instr-index (+ instr-index 1)))]))
+                (let
+                  [span-entry : CompilerSourceSpansInstrEntry
+                    (array-ref complete-instr-slots instr-index)]
+                  [key : CompilerSourceSpansInstrKey
+                    (compiler-source-spans-instr-entry-key (& span-entry))]
+                  [path-id : i64 span-entry.path-id]
+                  [span : ast.AstSourceSpan span-entry.span]
+                  (begin
+                    (set!
+                      out
+                      (if (> path-id 0)
+                        (compiler-source-spans-insert-instr-entry-located
+                          out
+                          key
+                          path-id
+                          span)
+                        (compiler-source-spans-insert-instr-entry out key span)))
+                    (set! instr-index (+ instr-index 1)))))
               out))])]))
 
 (defenum CompilerIrSummary

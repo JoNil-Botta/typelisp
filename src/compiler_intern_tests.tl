@@ -362,6 +362,179 @@
           (ptr-cast (__tl_array-data buf) : (Ptr u8))
           source-length)))))
 
+;; Record columns and the map grow into generation arenas (#8392). Growth
+;; keeps identities, kinds through 255, rendered names and generated-role
+;; handles; floor and full persistent resets release both generations; a
+;; logical reset keeps them for reuse; two states grow and reset independently.
+(define (intern-structural-generation-table
+  [state : (& state ci.InternCompatState)]) : ci.InternStructuralTable
+  (ci.intern-array-shared-view state.structural-table-cell 0))
+
+(define (intern-structural-generation-fill!
+  [state : (&mut state ci.InternCompatState)]
+  [base : i64]
+  [count : i64]) : i64
+  (let
+    [index : i64 0]
+    [first : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [raw : i64
+            (ci.intern-structural-table-intern
+              (&mut state.structural-table-cell)
+              (ci.intern-structural-kind-pair)
+              (+ base index)
+              0
+              (+ (* base 2) index))]
+          (begin
+            (when (= index 0) (set! first raw))
+            (set! index (+ index 1)))))
+      first)))
+
+(define (intern-structural-generation-tests-ok?) : bool
+  (let
+    [live : i64 (ci.intern-structural-generations-live)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [other : ci.InternCompatState (ci.intern-compat-state-new)]
+    [left : i64 (ci.intern-compat-state-intern (&mut state) "generation/left")]
+    [right : i64
+      (ci.intern-compat-state-intern (&mut state) "generation/right")]
+    [pair : i64
+      (ci.intern-compat-state-composite-pair-id (&mut state) left right)]
+    [_name : String
+      (ci.intern-compat-state-composite-rendered-name-record!
+        (&mut state)
+        pair
+        "generation/left+right")]
+    [wide : i64
+      (ci.intern-structural-table-intern
+        (&mut state.structural-table-cell)
+        255
+        left
+        7
+        right)]
+    [component : i64
+      (ci.intern-compat-state-intern (&mut state) "generation/component")]
+    [role : i64
+      (ci.intern-compat-state-generated-role-symbol-id
+        (&mut state)
+        (ci.intern-generated-symbol-role-lambda)
+        component)]
+    [other-pair : i64
+      (ci.intern-compat-state-composite-pair-id (&mut other) 3 4)]
+    [initial : ci.InternStructuralTable
+      (intern-structural-generation-table (& state))]
+    [initial-records : i64 initial.records-arena]
+    [initial-map : i64 initial.map-arena]
+    [first-raw : i64
+      (intern-structural-generation-fill! (&mut state) 1000000 3000)]
+    [first : ci.InternStructuralTable
+      (intern-structural-generation-table (& state))]
+    [first-records : i64 first.records-arena]
+    [first-map : i64 first.map-arena]
+    [first-capacity : i64 (array-length first.kinds)]
+    [first-live : i64 (ci.intern-structural-generations-live)]
+    [_more : i64 (intern-structural-generation-fill! (&mut state) 5000000 6000)]
+    ;; The other state grows over the same record indices in between.
+    [_other : i64
+      (intern-structural-generation-fill! (&mut other) 1000000 3000)]
+    [second : ci.InternStructuralTable
+      (intern-structural-generation-table (& state))]
+    [wide-index : i64
+      (- (bit-and wide (ci.intern-structural-key-index-mask)) 1)]
+    [grown-ok? : bool
+      (and
+        (= initial-records 0)
+        (= initial-map 0)
+        ;; Each grown table keeps exactly its current two generations.
+        (= first-live (+ live 2))
+        (= (ci.intern-structural-generations-live) (+ live 4))
+        (not (= first-records 0))
+        (not (= first-map 0))
+        ;; A released generation's address can be reused by a later one, so
+        ;; growth shows in the capacity, not in the handle.
+        (> (array-length second.kinds) first-capacity)
+        (>= (array-length second.kinds) 8192)
+        (=
+          (ci.intern-compat-state-composite-pair-id (&mut state) left right)
+          pair)
+        (ci.intern-private-string-eq
+          (ci.intern-compat-state-composite-rendered-name state pair)
+          "generation/left+right")
+        (=
+          (ci.intern-structural-table-intern
+            (&mut state.structural-table-cell)
+            255
+            left
+            7
+            right)
+          wide)
+        (= (cast (array-ref second.kinds wide-index) : i64) 255)
+        (=
+          (ci.intern-compat-state-generated-role-symbol-id
+            (&mut state)
+            (ci.intern-generated-symbol-role-lambda)
+            component)
+          role)
+        (=
+          (intern-structural-generation-fill! (&mut state) 1000000 1)
+          first-raw)
+        (=
+          (ci.intern-compat-state-composite-pair-id (&mut other) 3 4)
+          other-pair)
+        (not (= other-pair pair)))]
+    ;; A logical reset reuses the current generation.
+    [_logical : unit (ci.intern-compat-state-reset! (&mut state))]
+    [logical : ci.InternStructuralTable
+      (intern-structural-generation-table (& state))]
+    [logical-ok? : bool
+      (and
+        (= logical.len 0)
+        (= logical.records-arena second.records-arena)
+        (= logical.map-arena second.map-arena)
+        (= (ci.intern-structural-generations-live) (+ live 4)))]
+    ;; Floor and full persistent resets release both generations first. The
+    ;; floor is marked while the state's persistent arena is current, as the
+    ;; loader does.
+    [home : i64 (ci.tl_arena_current)]
+    [_mark : unit
+      (begin
+        (unsafe
+          (ci.tl_arena_set (ci.intern-compat-state-persistent-arena state)))
+        (ci.intern-compat-state-persistent-arena-floor-refresh! (&mut state))
+        (unsafe
+          (ci.tl_arena_set home)))]
+    [_regrow : i64
+      (intern-structural-generation-fill! (&mut state) 7000000 600)]
+    [_floor : unit
+      (ci.intern-compat-state-persistent-arena-reset-to-floor! (&mut state))]
+    [floor : ci.InternStructuralTable
+      (intern-structural-generation-table (& state))]
+    [floor-ok? : bool
+      (and
+        (= floor.len 0)
+        (= floor.records-arena 0)
+        (= floor.map-arena 0)
+        (= (ci.intern-structural-generations-live) (+ live 2))
+        (>= (intern-structural-generation-fill! (&mut state) 8000000 600) 0)
+        (= (ci.intern-structural-generations-live) (+ live 4)))]
+    [_full : unit (ci.intern-compat-state-persistent-arena-reset! (&mut state))]
+    [full : ci.InternStructuralTable
+      (intern-structural-generation-table (& state))]
+    [after-other : ci.InternStructuralTable
+      (intern-structural-generation-table (& other))]
+    (and
+      grown-ok?
+      logical-ok?
+      floor-ok?
+      (= full.len 0)
+      (= full.records-arena 0)
+      (= full.map-arena 0)
+      (= (ci.intern-structural-generations-live) (+ live 2))
+      (not (= after-other.records-arena 0))
+      (= (ci.intern-compat-state-composite-pair-id (&mut other) 3 4) other-pair))))
+
 (define (intern-compat-state-persistent-arena-growth-tests-ok?) : bool
   (let
     [home : i64 (ci.tl_arena_current)]
@@ -469,7 +642,6 @@
             (begin
               (ci.intern-structural-table-intern
                 (&mut state.structural-table-cell)
-                grown-arena
                 (ci.intern-structural-kind-pair)
                 (+ 1000000 structural-grow-index)
                 0
@@ -1090,6 +1262,7 @@
           (intern-generated-name-tests-ok?)
           (intern-persistent-arena-tests-ok?)
           (intern-compat-state-persistent-arena-growth-tests-ok?)
+          (intern-structural-generation-tests-ok?)
           (intern-reset-to-tests-ok?)
           (intern-persistent-floor-reset-tests-ok?)
           (intern-source-name-session-tests-ok?)

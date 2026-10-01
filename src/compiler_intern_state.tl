@@ -261,9 +261,6 @@
       [reset-generation-cell : (__tl_dyn-array i64)
         (unsafe
           (__tl-project-field (ptr-read session-ptr) reset-generation-cell))]
-      [persistent-arena-cell : (__tl_dyn-array i64)
-        (unsafe
-          (__tl-project-field (ptr-read session-ptr) persistent-arena-cell))]
       [structural-table-cell : (__tl_dyn-array ci.InternStructuralTable)
         (unsafe
           (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
@@ -297,14 +294,9 @@
         (not (= table-owner structural-owner)))
         (ci.tl_oob_abort)
         (let
-          [persistent-arena : i64
-            (unsafe
-              (ptr-read
-                (ptr-cast (__tl_array-data persistent-arena-cell) : (Ptr i64))))]
           [raw : i64
             (ci.intern-structural-table-intern
               (&mut structural-table-cell)
-              persistent-arena
               kind
               left-id
               middle-id

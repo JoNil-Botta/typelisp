@@ -3725,24 +3725,21 @@
 ;; address redefines the var without any instruction naming it as a dst, so
 ;; its single `mov` does not pin its value across the function: a pass that
 ;; forwards values by def must neither forward it nor forward through it.
-(define (opt-addr-taken-mark-instr!
-  [marks : (&mut marks (__tl_dyn-array bool))]
-  [instr : ir.CompilerIrInstr]) : unit
-  (match instr
-    [(ir.CompilerIrInstr.AddrOf _ src)
-      (if (and (>= src 0) (< src (array-length marks)))
-        (set! (array-ref marks src) true)
-        unit)]
-    [_ unit]))
-
+;; LICM's scan builds the marks, so a function without an `addr_of` gets an
+;; empty array; every reader goes through the bounds-checked
+;; `opt-addr-taken-var?`, so that reads as nothing marked.
 (define (opt-addr-taken-vars
   [vars : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
   (let
-    [marks : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+    [scan : OptFunctionAddrTakenScan
+      (OptFunctionAddrTakenScan
+        vars
+        (__tl_make-array bool 0)
+        (opt_dense_i64_vec.new))]
     (begin
-      (opt-blocks-visit blocks opt-addr-taken-mark-instr! (&mut marks))
-      marks)))
+      (opt-blocks-visit blocks opt-function-addr-taken-scan-instr! (&mut scan))
+      scan.marks)))
 
 (define (opt-addr-taken-var?
   [marks : (& marks (__tl_dyn-array bool))]
@@ -3755,6 +3752,22 @@
   (match value
     [(ir.CompilerIrValue.Var id) (opt-addr-taken-var? marks (deref id))]
     [_ false]))
+
+(define (opt-addr-taken-value-seq?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [values : (& values ir.CompilerIrValueSeq)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index (ir.compiler-ir-value-seq-count values)))
+        (let
+          [value : ir.CompilerIrValue
+            (ir.compiler-ir-value-seq-ref values index)]
+          (begin
+            (set! found (opt-addr-taken-value? marks (& value)))
+            (set! index (+ index 1)))))
+      found)))
 
 ;; Comparisons whose negation is another comparison on the same operands. Used
 ;; to turn `not (cmp a b)` into the inverted compare instead of a `xorq $1` over
@@ -7144,6 +7157,10 @@
         [(ir.CompilerIrValue.RuntimeGlobal ib)
           (ir.compiler-ir-symbol-eq? ia ib)]
         [_ false])]
+    [(ir.CompilerIrValue.StaticArray sa)
+      (match b
+        [(ir.CompilerIrValue.StaticArray sb) (string.eq sa sb)]
+        [_ false])]
     [(ir.CompilerIrValue.Unit)
       (match b
         [(ir.CompilerIrValue.Unit) true]
@@ -7428,6 +7445,7 @@
       (hash.combine 11 (hash.string-key (& value)))]
     [(ir.CompilerIrValue.RuntimeGlobal init)
       (hash.combine 12 (opt-symbol-hash init))]
+    [(ir.CompilerIrValue.StaticArray _) (hash.i64 13)]
     [(ir.CompilerIrValue.Unit) (hash.i64 10)]))
 
 (define (opt-expr-key-hash
@@ -8978,7 +8996,8 @@
     [(ir.CompilerIrValue.Global _) false]
     [(ir.CompilerIrValue.GlobalAddr _) false]
     [(ir.CompilerIrValue.Function _) false]
-    [(ir.CompilerIrValue.RuntimeGlobal _) false]))
+    [(ir.CompilerIrValue.RuntimeGlobal _) false]
+    [(ir.CompilerIrValue.StaticArray _) false]))
 
 (define (opt-copy-add-pack-word
   [env : OptCopyEnv]
@@ -9449,6 +9468,10 @@
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
 ;; defining instruction invalidates its destination. Stores and terminators
 ;; define no var, so the copy facts are unaffected (the env resets per block).
+;;
+;; No fact names an address-taken var, as destination or source (#7973): a call
+;; or store through the exposed address redefines it without naming it, and a
+;; call does not clear this env, so any fact about it could go stale.
 (define (opt-copy-update-env
   [env : OptCopyEnv]
   [instr : (& instr ir.CompilerIrInstr)]) : OptCopyEnv
@@ -9456,7 +9479,11 @@
     [(ir.CompilerIrInstr.Mov dst src ty)
       (let
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
-        (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
+        (if (and
+          (opt-copy-safe-source? src)
+          (not (opt-value-is-var? src dst))
+          (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst))
+          (not (opt-addr-taken-value? (& opt-function-addr-taken.marks) src)))
           (OptCopyEnv.Cons dst src (box e1))
           e1))]
     [(ir.CompilerIrInstr.AddrOf dst src)
@@ -9466,11 +9493,17 @@
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
         (if (and
           (opt-value-eq (compiler-opt-global-shared-view lhs) rhs)
-          (opt-copy-mask-source? lhs dst))
+          (opt-copy-mask-source? lhs dst)
+          (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst))
+          (not (opt-addr-taken-value? (& opt-function-addr-taken.marks) lhs)))
           (OptCopyEnv.Cons dst lhs (box e1))
           e1))]
     [(ir.CompilerIrInstr.Pack dst words _)
-      (opt-copy-update-pack-env env dst words)]
+      (if (or
+        (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)
+        (opt-addr-taken-value-seq? (& opt-function-addr-taken.marks) (& words)))
+        (opt-copy-invalidate-var env dst)
+        (opt-copy-update-pack-env env dst words))]
     [(ir.CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) (OptCopyEnv.Nil)]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
@@ -11988,94 +12021,78 @@
         [(option_i64.None) false])]
     [(option_i64.None) false]))
 
-(define (opt-cfg-frontier-has-reachable-pred-id?
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [label-id : i64]
-  [edge : i64]
-  [end : i64]) : bool
-  (if (>= edge end)
-    false
-    (let
-      [pred-id : i64 (array-ref index.preds.edges edge)]
-      (if (and
-        (array-ref index.reachable pred-id)
-        (opt-dom-info-dominates-id? doms label-id pred-id))
-        true
-        (opt-cfg-frontier-has-reachable-pred-id?
-          index
-          doms
-          label-id
-          (+ edge 1)
-          end)))))
-
-(define (opt-cfg-dominance-frontier-block?
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [label-id : i64]
-  [block-id : i64]) : bool
+;; Every block's dominance frontier, computed once per function (#8287) by the
+;; Cooper-Harvey-Kennedy runner walk: from each in-tree predecessor of a
+;; reachable block Y, Y joins the frontier of every block the walk passes up the
+;; dominator tree until it reaches one that strictly dominates Y. That is the
+;; frontier's definition -- X dominates a reachable predecessor of Y and does
+;; not strictly dominate Y -- read off the same tree `opt-dom-info-dominates-id?`
+;; answers from, so a block outside it (unreachable, or not reached by the idom
+;; fixpoint) has an empty frontier and contributes no predecessor. The cost is
+;; the predecessor edges plus the frontier sizes. Blocks are visited from the
+;; last id down and each frontier conses its newest label, so every set lists
+;; its blocks in increasing id order, with a repeated label kept at its
+;; highest-id block, as the per-label scan this replaces produced them.
+(define (opt-cfg-dominance-frontiers [context : (& context OptCfgContext)]) : (__tl_dyn-array
+    OptLabelSet)
   (let
+    [index (& context.index)]
+    [doms (& context.doms)]
     [preds (& index.preds)]
-    (and
-      (array-ref index.reachable block-id)
-      (opt-cfg-frontier-has-reachable-pred-id?
-        index
-        doms
-        label-id
-        (array-ref preds.offsets block-id)
-        (array-ref preds.offsets (+ block-id 1)))
-      (not
-        (and
-          (!= label-id block-id)
-          (opt-dom-info-dominates-id? doms label-id block-id))))))
+    [out : (__tl_dyn-array OptLabelSet)
+      (__tl_make-array OptLabelSet (opt-cfg-index-block-count index))]
+    [block : i64 (opt-cfg-index-block-count index)]
+    (begin
+      (while (> block 0)
+        (begin
+          (set! block (- block 1))
+          (when
+            (array-ref index.reachable block)
+            (let
+              [label : i64 (opt-cfg-index-label index block)]
+              [edge : i64 (array-ref preds.offsets block)]
+              (while (< edge (array-ref preds.offsets (+ block 1)))
+                (let
+                  [runner : i64 (array-ref preds.edges edge)]
+                  (begin
+                    (when
+                      (opt-dom-info-dominates-id? doms runner runner)
+                      (while (and
+                        (>= runner 0)
+                        (or
+                          (= runner block)
+                          (not (opt-dom-info-dominates-id? doms runner block))))
+                        (let
+                          [frontier : OptLabelSet (array-ref out runner)]
+                          (begin
+                            (set!
+                              (array-ref out runner)
+                              (cond
+                                [(and
+                                    (> (opt-label-count frontier) 0)
+                                    (= (opt-label-ref frontier 0) label))
+                                  frontier]
+                                [index.labels-unique
+                                  (opt-label-cons label frontier)]
+                                [else (opt-label-add frontier label)]))
+                            ;; The entry is the tree's root and its own idom.
+                            (set!
+                              runner
+                              (if (= (array-ref doms.idom runner) runner)
+                                -1
+                                (array-ref doms.idom runner)))))))
+                    (set! edge (+ edge 1)))))))))
+      out)))
 
-;; `remaining` starts as the block list `index` was built from, so the walk
-;; position is the block id.
-(define (opt-cfg-dominance-frontier-blocks
-  [remaining : (& remaining ir.CompilerIrBlockList)]
+;; The frontier of `label` from a table `opt-cfg-dominance-frontiers` built for
+;; the same context; an unknown label has none.
+(define (opt-cfg-dominance-frontier-of
   [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [label-id : i64]
-  [block-id : i64]) : OptLabelSet
-  (match (owned_view.compiler-owned-reference-shared-view remaining)
-    [(ir.CompilerIrBlockList.Nil) (OptLabelSet.Nil)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block block-label _)
-          (let
-            [tail : OptLabelSet
-              (opt-cfg-dominance-frontier-blocks
-                (deref rest)
-                index
-                doms
-                label-id
-                (+ block-id 1))]
-            (if (and
-              (< block-id (opt-cfg-index-block-count index))
-              (opt-cfg-dominance-frontier-block? index doms label-id block-id))
-              (opt-label-add tail block-label)
-              tail))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [remaining (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-cfg-dominance-frontier-blocks
-          remaining
-          index
-          doms
-          label-id
-          block-id))]))
-
-(define (opt-cfg-dominance-frontier-with-context
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [context : OptCfgContext]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [label : i64]) : OptLabelSet
-  (let
-    [index : OptCfgIndex (__tl-project-field context index)]
-    [label-id : i64
-      (match (opt-cfg-index-id index label)
-        [(option_i64.Some id) id]
-        [(option_i64.None) (- 0 1)])]
-    (opt-cfg-dominance-frontier-blocks blocks index context.doms label-id 0)))
+  (match (opt-cfg-index-id index label)
+    [(option_i64.Some id) (array-ref frontiers id)]
+    [(option_i64.None) (OptLabelSet.Nil)]))
 
 (defenum ResultCompilerOptimizeVerify
   (Ok)
@@ -14895,7 +14912,7 @@
 
 (define (opt-ssa-insert-phis-worklist
   [context : OptCfgContext]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [var : i64]
   [ty : ast.AstType]
   [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
@@ -14913,14 +14930,14 @@
             [label : i64 (opt-label-ref worklist 0)]
             (opt-ssa-insert-phis-worklist
               (compiler-opt-global-shared-view context)
-              blocks
+              frontiers
               var
               (compiler-opt-global-shared-view ty)
               (let
-                [frontier
-                  (opt-cfg-dominance-frontier-with-context
-                    blocks
-                    (compiler-opt-global-shared-view context)
+                [frontier : OptLabelSet
+                  (opt-cfg-dominance-frontier-of
+                    (& context.index)
+                    frontiers
                     label)]
                 (opt-ssa-phi-add-frontier
                   context.index
@@ -14936,7 +14953,7 @@
 
 (define (opt-ssa-insert-phis-for-var
   [context : OptCfgContext]
-  [blocks : ir.CompilerIrBlockList]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [defs : OptSsaVarBlocks]
   [state : OptSsaPhiInsertState]
   [var : i64]
@@ -14958,7 +14975,7 @@
           (opt-ssa-label-mark-members! index (&mut work-members) worklist)
           (opt-ssa-insert-phis-worklist
             (compiler-opt-global-shared-view context)
-            blocks
+            frontiers
             var
             ty
             (OptSsaPhiInsertState.State
@@ -14971,7 +14988,7 @@
 (define (opt-ssa-insert-phis-types
   [facts : OptSsaFacts]
   [context : OptCfgContext]
-  [blocks : ir.CompilerIrBlockList]
+  [frontiers : (& frontiers (__tl_dyn-array OptLabelSet))]
   [defs : OptSsaVarBlocks]
   [types : (& types OptSsaVarTypes)]
   [state : OptSsaPhiInsertState]
@@ -14985,18 +15002,18 @@
           (opt-ssa-insert-phis-types
             (compiler-opt-global-shared-view facts)
             (compiler-opt-global-shared-view context)
-            (compiler-opt-global-shared-view blocks)
+            frontiers
             (compiler-opt-global-shared-view defs)
             types
             (if (opt-ssa-candidate? facts var)
-              (opt-ssa-insert-phis-for-var context blocks defs state var ty)
+              (opt-ssa-insert-phis-for-var context frontiers defs state var ty)
               state)
             (+ index 1))]
         [(OptMaybeAstType.No)
           (opt-ssa-insert-phis-types
             facts
             context
-            blocks
+            frontiers
             defs
             types
             state
@@ -15014,10 +15031,12 @@
         [index : OptCfgIndex context.index]
         [work-members : (__tl_dyn-array bool) (opt-ssa-label-members-new index)]
         [site-members : (__tl_dyn-array bool) (opt-ssa-label-members-new index)]
+        [frontiers : (__tl_dyn-array OptLabelSet)
+          (opt-cfg-dominance-frontiers (& context))]
         (opt-ssa-insert-phis-types
           (compiler-opt-global-shared-view facts)
           (compiler-opt-global-shared-view context)
-          (compiler-opt-global-shared-view blocks)
+          (& frontiers)
           (opt-ssa-def-blocks-from-function
             index
             facts
@@ -21839,35 +21858,40 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-collect-defs-blocks (ir.compiler-ir-block-seq-to-list seq) set)]))
 
-;; Address-taken locals of the function LICM is rewriting (#7974). A write
-;; through the address -- in the loop body, or in a callee handed the address
-;; -- redefines the var without naming it as a dst, so no loop's def scan sees
-;; it, and a single `mov` outside the loop does not make its value invariant.
-;; LICM therefore counts every such var as defined in every loop
-;; (`opt-licm-loop-defs`): an instruction reading one is never invariant and a
-;; condition on one never unswitches. An instruction writing one is never
-;; hoisted either (`opt-licm-writes-addr-taken?`). Each LICM function entry
-;; installs the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
-;; before it examines one; a function without loops never reads it. `ids` lists
-;; the marked vars, so a loop pays for the few there are rather than for the
-;; whole frame.
-(defstruct OptLicmAddrTaken
+;; Address-taken locals of the function LICM or the block-local fold pipeline
+;; is rewriting (#7974, #7973). A write through the address -- in a loop body,
+;; or in a callee handed the address -- redefines the var without naming it as
+;; a dst.
+;; - LICM counts every such var as defined in every loop
+;;   (`opt-licm-loop-defs`): an instruction reading one is never invariant, a
+;;   condition on one never unswitches, and an instruction writing one is never
+;;   hoisted (`opt-licm-writes-addr-taken?`). Each LICM function entry installs
+;;   the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
+;;   before it examines one.
+;; - Fold keeps no copy or constant fact naming one (`opt-copy-update-env`,
+;;   `opt-const-forget-addr-taken!`); `optimize-block-list-for-function-pass`
+;;   installs the set before its block walk.
+;; Every reader runs after its own pass installed the set for the function it
+;; rewrites, so a set left from another function is never read. `ids` lists the
+;; marked vars, so a loop pays for the few there are rather than for the whole
+;; frame.
+(defstruct OptFunctionAddrTaken
   (marks (__tl_dyn-array bool))
   (ids opt_dense_i64_vec.Vec))
 
-(define opt-licm-addr-taken : OptLicmAddrTaken
-  (OptLicmAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
+(define opt-function-addr-taken : OptFunctionAddrTaken
+  (OptFunctionAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
 
 ;; One walk of the function: each `addr_of` source is marked and listed once.
 ;; The mark array is allocated at the first `addr_of`, so a function with none
 ;; allocates nothing and never scans its frame.
-(defstruct OptLicmAddrTakenScan
+(defstruct OptFunctionAddrTakenScan
   (frame i64)
   (marks (__tl_dyn-array bool))
   (ids opt_dense_i64_vec.Vec))
 
-(define (opt-licm-addr-taken-scan-instr!
-  [scan : (&mut scan OptLicmAddrTakenScan)]
+(define (opt-function-addr-taken-scan-instr!
+  [scan : (&mut scan OptFunctionAddrTakenScan)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
     [(ir.CompilerIrInstr.AddrOf _ src)
@@ -21884,18 +21908,18 @@
         unit)]
     [_ unit]))
 
-(define (opt-licm-addr-taken-install!
+(define (opt-function-addr-taken-install!
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : unit
   (let
-    [scan : OptLicmAddrTakenScan
-      (OptLicmAddrTakenScan
+    [scan : OptFunctionAddrTakenScan
+      (OptFunctionAddrTakenScan
         frame
         (__tl_make-array bool 0)
         (opt_dense_i64_vec.new))]
     (begin
-      (opt-blocks-visit blocks opt-licm-addr-taken-scan-instr! (&mut scan))
-      (set! opt-licm-addr-taken (OptLicmAddrTaken scan.marks scan.ids)))))
+      (opt-blocks-visit blocks opt-function-addr-taken-scan-instr! (&mut scan))
+      (set! opt-function-addr-taken (OptFunctionAddrTaken scan.marks scan.ids)))))
 
 (define (opt-licm-addr-taken-install-for-loops!
   [frame : i64]
@@ -21903,13 +21927,13 @@
   [loops : (& loops OptNaturalLoopList)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view loops)
     [(OptNaturalLoopList.Nil) unit]
-    [_ (opt-licm-addr-taken-install! frame blocks)]))
+    [_ (opt-function-addr-taken-install! frame blocks)]))
 
 (define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match (opt-instr-def-var
     (owned_view.compiler-owned-reference-shared-view instr))
     [(option_i64.Some dst)
-      (opt-addr-taken-var? (& opt-licm-addr-taken.marks) dst)]
+      (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
     [(option_i64.None) false]))
 
 ;; The vars a loop may redefine: its own defs plus every address-taken local.
@@ -21919,14 +21943,16 @@
       (opt-licm-collect-defs-blocks
         body
         (opt_i64_i64_map.with-capacity capacity))]
-    [count : i64 (opt_dense_i64_vec.len (& opt-licm-addr-taken.ids))]
+    [count : i64 (opt_dense_i64_vec.len (& opt-function-addr-taken.ids))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (set!
             defs
-            (opt-used-add defs (array-ref opt-licm-addr-taken.ids.slots index)))
+            (opt-used-add
+              defs
+              (array-ref opt-function-addr-taken.ids.slots index)))
           (set! index (+ index 1))))
       defs)))
 
@@ -52432,7 +52458,8 @@
       [(ir.CompilerIrValue.Global _) false]
       [(ir.CompilerIrValue.GlobalAddr _) false]
       [(ir.CompilerIrValue.Function _) false]
-      [(ir.CompilerIrValue.RuntimeGlobal _) false])))
+      [(ir.CompilerIrValue.RuntimeGlobal _) false]
+      [(ir.CompilerIrValue.StaticArray _) false])))
 
 (define (opt-gvn-sources-params-from
   [params : ir.CompilerIrParamSeq]
@@ -61997,6 +62024,20 @@
       blocks)
     blocks))
 
+;; Drops the constant fact a fold or strength step just bound for an
+;; address-taken var (#7973), for the reason `opt-copy-update-env` gives: a call
+;; through the exposed address does not clear this env either. A step binds at
+;; most one fact, its dst's, and `opt-const-bind` puts it at the head, so the
+;; head is the only fact a step can have added. Dropping it leaves the var
+;; unbound: no earlier step left a fact for it below.
+(define (opt-const-forget-addr-taken! [env : (&mut env OptConstEnv)]) : unit
+  (match (owned_view.compiler-owned-reference-shared-view env)
+    [(OptConstEnv.Cons var _ _ rest)
+      (if (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)
+        (set! (deref env) (deref rest))
+        unit)]
+    [_ unit]))
+
 (define (opt-fold-strength-cse-instr-seq-rewrite!
   [type-segment-bases : i64]
   [exprs : OptExprTable]
@@ -62044,6 +62085,12 @@
                         rewritten)
                       (set! fold-state next-fold)
                       (set! strength-state next-strength)
+                      ;; Empty marks: the function takes no address.
+                      (if (> (array-length opt-function-addr-taken.marks) 0)
+                        (begin
+                          (opt-const-forget-addr-taken! (&mut fold-state))
+                          (opt-const-forget-addr-taken! (&mut strength-state)))
+                        unit)
                       (set! cse-state next-cse)
                       (set! index (+ index 1)))])])]))
       store-count)))
@@ -63244,6 +63291,10 @@
           (opt-load-kinds-dense-work-with-size frame)]
         ;; One pair of block CSE tables per pass, cleared by each block's walk.
         [tables : OptBlockExprTables (opt-block-expr-tables-new)]
+        [_addr-taken : unit
+          (opt-function-addr-taken-install!
+            frame
+            (compiler-opt-global-shared-view blocks))]
         [next : ir.CompilerIrBlockList
           (match (compiler-opt-global-shared-view blocks)
             [(ir.CompilerIrBlockList.Array seq)
@@ -106234,6 +106285,18 @@
 (define opt-inline-census-slow-slots : (__tl_dyn-array bool)
   (__tl_make-array bool 64))
 
+;; INL-14 too: the versioner's GUARD, a `<header>__bce_guard` block or a block
+;; its chain was split into, whose header is another block of the same body.
+;; The guard runs once per entry to the loop it guards, which is one rung of
+;; the ladder below that loop. At or past opt-inline-census-depth-cap the
+;; ladder has no rung below, so it would charge the guard as much as the
+;; loop's own instructions -- a whole saturated nest's worth of guard code
+;; charged at its inner loop's weight, which can revert an inline whose merged
+;; loop the plan versioned (#8455). A guard there is charged one rung below
+;; the cap; below the cap its own depth already prices it once per entry.
+(define opt-inline-census-guard-slots : (__tl_dyn-array bool)
+  (__tl_make-array bool 64))
+
 (define (opt-inline-census-slow-reserve! [count : i64]) : unit
   (if (<= count (array-length opt-inline-census-slow-slots))
     unit
@@ -106244,7 +106307,9 @@
           (set! size (* size 2)))
         (in-arena
           (arena.Arena (ir.compiler-ir-label-arena))
-          (set! opt-inline-census-slow-slots (__tl_make-array bool size)))))))
+          (begin
+            (set! opt-inline-census-slow-slots (__tl_make-array bool size))
+            (set! opt-inline-census-guard-slots (__tl_make-array bool size))))))))
 
 (define (opt-inline-census-slow-clear! [count : i64]) : unit
   (let
@@ -106252,13 +106317,30 @@
     (while (< i count)
       (begin
         (set! (array-ref opt-inline-census-slow-slots i) false)
+        (set! (array-ref opt-inline-census-guard-slots i) false)
         (set! i (+ i 1))))))
 
+;; Only a label carrying the versioner's `__bce_` marker can be a slow copy's
+;; clone or a guard, and the marker is cached per label, so every other block
+;; costs one lookup.
 (define (opt-inline-census-slow-mark-label! [label : i64] [generation : i64]) : unit
+  (if (not (opt-label-has-marker? label (opt-label-marker-bce)))
+    unit
+    (opt-inline-census-versioned-mark-label! label generation)))
+
+(define (opt-inline-census-versioned-mark-label!
+  [label : i64]
+  [generation : i64]) : unit
   (let
     [prefix : String (opt-loop-call-versioned-prefix label)]
     (if (= (string.string-length (& prefix)) 0)
-      unit
+      (let
+        [guard : i64 (opt-inline-census-guard-position label generation)]
+        (if (and
+          (>= guard 0)
+          (< guard (array-length opt-inline-census-guard-slots)))
+          (set! (array-ref opt-inline-census-guard-slots guard) true)
+          unit))
       (let
         [slow : i64
           (opt-cfg-label-table-get (ir.compiler-ir-label prefix) generation)]
@@ -106267,6 +106349,39 @@
           (< slow (array-length opt-inline-census-slow-slots)))
           (set! (array-ref opt-inline-census-slow-slots slow) true)
           unit)))))
+
+;; The position of a guard block whose header is another block of the same
+;; body, or -1, for a label carrying the `__bce_` marker. Its label contains
+;; `__bce_guard`, and the text before its first `__bce_` names the header: the
+;; versioner appends its markers, and a later split of the chain appends its
+;; own.
+(define (opt-inline-census-guard-position [label : i64] [generation : i64]) : i64
+  (let
+    [text : String (ir.compiler-ir-label-text label)]
+    (if (not (string.contains (& text) "__bce_guard"))
+      -1
+      (let
+        [marker : String (opt-label-marker-text (opt-label-marker-bce))]
+        [n : i64 (string.string-length (& text))]
+        [m : i64 (string.string-length (& marker))]
+        [i : i64 0]
+        [start : i64 -1]
+        (begin
+          (while (and (< start 0) (<= (+ i m) n))
+            (begin
+              (if (string.eq (string.substring (& text) i m) marker)
+                (set! start i)
+                unit)
+              (set! i (+ i 1))))
+          (if (or
+            (<= start 0)
+            (<
+              (opt-cfg-label-table-get
+                (ir.compiler-ir-label (string.substring (& text) 0 start))
+                generation)
+              0))
+            -1
+            (opt-cfg-label-table-get label generation)))))))
 
 (define (opt-inline-census-slow-mark!
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -106296,6 +106411,22 @@
     (< position opt-inline-census-depth-count))
     (array-ref opt-inline-census-slow-slots position)
     false))
+
+;; What one instruction of the block at `position` weighs when the body sits at
+;; depth `offset` in its caller: its depth's rung, a guard at most one rung
+;; below the cap, a slow copy nothing (INL-14).
+(define (opt-inline-census-block-weight [position : i64] [offset : i64]) : i64
+  (let
+    [depth : i64 (+ offset (opt-inline-census-depth-at position))]
+    (cond
+      [(opt-inline-census-slow-at position) 0]
+      [(and
+          opt-inline-census-depth-active?
+          (< position opt-inline-census-depth-count)
+          (array-ref opt-inline-census-guard-slots position)
+          (>= depth (opt-inline-census-depth-cap)))
+        (opt-inline-census-depth-weight (- (opt-inline-census-depth-cap) 1))]
+      [else (opt-inline-census-depth-weight depth)])))
 
 (define (opt-inline-census-bump-map
   [map : opt_i64_i64_map.Map]
@@ -109382,6 +109513,8 @@
     [(ir.CompilerIrValue.RuntimeGlobal init)
       (ir.CompilerIrValue.RuntimeGlobal
         (ir.compiler-ir-symbol-clone (deref init)))]
+    [(ir.CompilerIrValue.StaticArray s)
+      (ir.CompilerIrValue.StaticArray (string.copy s))]
     [(ir.CompilerIrValue.Unit) (ir.CompilerIrValue.Unit)]))
 
 (define (opt-inline-remap-container-value
@@ -115243,14 +115376,11 @@
             (+ position 1)
             (+
               acc
-              ;; INL-14: a versioned loop's slow copy is cold, see
-              ;; opt-inline-census-slow-at.
-              (if (opt-inline-census-slow-at position)
-                0
-                (*
-                  (opt-inline-census-depth-weight
-                    (+ offset (opt-inline-census-depth-at position)))
-                  (ir.compiler-ir-instr-seq-count instrs)))))])]
+              ;; INL-14: a versioned loop's slow copy is cold and its guard
+              ;; runs once per entry, see opt-inline-census-block-weight.
+              (*
+                (opt-inline-census-block-weight position offset)
+                (ir.compiler-ir-instr-seq-count instrs))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-checked-weighted-instrs-from
         (ir.compiler-ir-block-seq-to-list seq)
@@ -115343,9 +115473,10 @@
     cost))
 
 ;; INL-15: the block weights of the tier's currency, for the allocator's cost
-;; model. Position `p` weighs opt-inline-census-depth-weight at the depth the
-;; body would sit at plus the block's own, and a versioned loop's slow copy
-;; weighs nothing (INL-14). The census must have been built for these blocks.
+;; model. Position `p` weighs opt-inline-census-block-weight at the depth the
+;; body would sit at plus the block's own: a versioned loop's slow copy weighs
+;; nothing and its guard at most one rung below the cap (INL-14). The census
+;; must have been built for these blocks.
 (define (opt-inline-checked-census-weights
   [blocks : ir.CompilerIrBlockList]
   [offset : i64]) : (__tl_dyn-array i64)
@@ -115356,12 +115487,7 @@
     (begin
       (while (< p count)
         (begin
-          (set!
-            (array-ref out p)
-            (if (opt-inline-census-slow-at p)
-              0
-              (opt-inline-census-depth-weight
-                (+ offset (opt-inline-census-depth-at p)))))
+          (set! (array-ref out p) (opt-inline-census-block-weight p offset))
           (set! p (+ p 1))))
       out)))
 

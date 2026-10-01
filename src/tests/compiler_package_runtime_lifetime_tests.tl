@@ -357,3 +357,86 @@
               (string.contains next "main:"))
             (io.panic "package SPMD function lost its retained IR storage"))
           (set! level (+ level 1)))))))
+
+;; One package job whose child interner grows its structural table across
+;; several record and map generations before the scope is released.
+(define (runtime-owner-structural-growth-job [count : i64]) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
+      (let
+        [scope : driver.CompilerDriverPackageRuntimeScope
+          (driver.compiler-driver-package-runtime-scope-new home)]
+        [first : i64 (ci.intern-composite-pair-id 11 12)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (let
+              [_raw : i64 (ci.intern-composite-pair-id 13 (+ 14 index))]
+              (set! index (+ index 1))))
+          (let
+            [same? : bool (= (ci.intern-composite-pair-id 11 12) first)]
+            (begin
+              (driver.compiler-driver-package-runtime-scope-release! scope)
+              same?)))))))
+
+(test
+  package-runtime-release-retires-structural-generations
+  (let
+    [table-id : i64 (ci.intern-active-table-id)]
+    [left : i64 (ci.intern "runtime-structural-parent-left")]
+    [right : i64 (ci.intern "runtime-structural-parent-right")]
+    [parent-pair : i64 (ci.intern-composite-pair-id left right)]
+    [warm : bool (runtime-owner-structural-growth-job 20000)]
+    [before : i64 (profile.alloc-live)]
+    [live : i64 (ci.intern-structural-generations-live)]
+    [made : i64 (ci.intern-structural-generations-made-count)]
+    [same? : bool warm]
+    [index : i64 0]
+    (begin
+      (while (< index 4)
+        (begin
+          (set! same? (and same? (runtime-owner-structural-growth-job 20000)))
+          (set! index (+ index 1))))
+      ;; An unreleased job keeps a 32768-record column generation and a map of
+      ;; at least 32768 slots, each larger than this bound.
+      (unless
+        (and
+          same?
+          (= table-id (ci.intern-active-table-id))
+          (= (ci.intern-structural-generations-live) live)
+          ;; Seven record and at least six map growths per job.
+          (>= (ci.intern-structural-generations-made-count) (+ made 52))
+          (= (ci.intern-composite-pair-id left right) parent-pair)
+          (< (- (profile.alloc-live) before) 1048576))
+        (io.panic "package runtime release retained structural generations")))))
+
+(test
+  package-runtime-structural-release-keeps-growing-parent
+  (let
+    [left : i64 (ci.intern "runtime-structural-interleave-left")]
+    [first : i64 (ci.intern-composite-pair-id left 1)]
+    [ok? : bool true]
+    [round : i64 0]
+    (begin
+      ;; The parent grows across its own generations between child jobs that
+      ;; grow and release theirs over the same record indices.
+      (while (< round 3)
+        (let
+          [index : i64 0]
+          (begin
+            (while (< index 5000)
+              (let
+                [_raw : i64
+                  (ci.intern-composite-pair-id left (+ (* round 5000) index 2))]
+                (set! index (+ index 1))))
+            (set! ok? (and ok? (runtime-owner-structural-growth-job 5000)))
+            (set! round (+ round 1)))))
+      (unless
+        (and
+          ok?
+          (= (ci.intern-composite-pair-id left 1) first)
+          (=
+            (ci.intern-composite-pair-id left 7002)
+            (ci.intern-composite-pair-id left 7002)))
+        (io.panic "child structural release disturbed the parent table")))))

@@ -36,13 +36,15 @@ implement issue #N: Title
 research/triage issue #N: Title
 ```
 
-When more than three non-draft PRs hold back implementation work and every
+When more than eight non-draft PRs hold back implementation work and every
 remaining lane is empty, the chooser exits successfully with one stable
 back-pressure line instead:
 
 ```text
 wait: queue saturated; review: N PRs in flight; implement: M ready issues held back; research/triage: C claimed
 ```
+
+At exactly eight non-draft PRs, implementation remains eligible.
 
 Malformed input and a genuinely empty `{"prs":[],"issues":[]}` snapshot remain
 errors. Missing or wrongly typed top-level `prs` and `issues` arrays are
@@ -107,6 +109,7 @@ issue at the same priority.
 `fixtures/chooser-queue.json` is an unchanged normalized historical snapshot
 used by `scripts/benchmark-cli-tools.sh` to benchmark chooser startup and
 selection; its missing PR labels exercise legacy compatibility. The claimed
-wait and malformed-label fixtures exercise the live payload contract through
+wait, malformed-label, and eight/nine-PR boundary fixtures exercise the live
+payload contract through
 `tests/cli/selfhost-build-run.cases` (gate
 `stage2-cli-build-run-and-chooser-smoke`) on Linux and Windows.

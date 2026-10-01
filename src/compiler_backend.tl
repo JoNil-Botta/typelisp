@@ -93530,6 +93530,253 @@
             (set! k (+ k 1)))))
       count)))
 
+;; Emitted lines (labels and blanks aside) in a sunk region that is placed at
+;; the nearest island rather than the function end. A slow-path stub (`call`)
+;; or a sentinel arm (one or two constant moves) fits. A longer cold region
+;; keeps the function end, so it does not lengthen the hot branches that would
+;; span it.
+(define compiler-backend-layout-island-line-cap : i64
+  2)
+
+(define (compiler-backend-layout-region-small?
+  [flags : (MutPtr i64)]
+  [rs : i64]
+  [q : i64]) : bool
+  (let
+    [skip-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-label
+        compiler-backend-layout-flag-blank)]
+    [count : i64 0]
+    [i : i64 rs]
+    (begin
+      (while (and (< i q) (<= count compiler-backend-layout-island-line-cap))
+        (begin
+          (when
+            (=
+              (bit-and
+                (unsafe
+                  (ptr-read (ptr-offset flags i)))
+                skip-bits)
+              0)
+            (set! count (+ count 1)))
+          (set! i (+ i 1))))
+      (<= count compiler-backend-layout-island-line-cap))))
+
+;; Does the `jmp` on line `u` reach the label run that starts at line `t`? The
+;; fallthrough peephole deletes such a `jmp`; a region placed between the two
+;; would keep it.
+(define (compiler-backend-layout-jmp-into-labels?
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [lines : i64]
+  [u : i64]
+  [t : i64]) : bool
+  (let
+    [dest : i64
+      (unsafe
+        (ptr-read (ptr-offset target u)))]
+    [i : i64 t]
+    [found : bool false]
+    (begin
+      (while (and
+        (not found)
+        (< i lines)
+        (not
+          (=
+            (bit-and
+              (unsafe
+                (ptr-read (ptr-offset flags i)))
+              (bit-or
+                compiler-backend-layout-flag-label
+                compiler-backend-layout-flag-blank))
+            0)))
+        (begin
+          (when (= i dest) (set! found true))
+          (set! i (+ i 1))))
+      found)))
+
+;; Is line `i` a `ret`? The line classifier flags `ret` only with an operand
+;; or as `retq`, since a bare `ret` reads the zero past its line, so a bare one
+;; is read from the text.
+(define (compiler-backend-layout-ret-line?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [i : i64]) : bool
+  (or
+    (not
+      (=
+        (bit-and
+          (unsafe
+            (ptr-read (ptr-offset flags i)))
+          compiler-backend-layout-flag-ret)
+        0))
+    (let
+      [e : i64
+        (-
+          (unsafe
+            (ptr-read (ptr-offset starts (+ i 1))))
+          1)]
+      [t : i64
+        (compiler-backend-layout-skip-spaces
+          data
+          (unsafe
+            (ptr-read (ptr-offset starts i)))
+          e)]
+      (and
+        (= (- e t) 3)
+        (= (compiler-backend-peephole-byte-at data t) 114)
+        (= (compiler-backend-peephole-byte-at data (+ t 1)) 101)
+        (= (compiler-backend-peephole-byte-at data (+ t 2)) 116)))))
+
+;; ISLAND PLACEMENT. A small sunk region goes in front of the first label after
+;; its join that control cannot fall into: the line emitted before it is an
+;; unconditional `jmp` (not one into that label run) or a `ret`, counted as the
+;; text reads once every sunk region has left. Every branch into the region and
+;; its jump back then spans a few blocks instead of the rest of the function,
+;; which keeps most of them in the short encoding. No island before the
+;; function end leaves the region there. `sink-class` records the choice: 1 for
+;; an island, 0 for the function end. Islands only move forward with the
+;; sinks, and so do function ends, so each class is placed by its own cursor.
+(define (compiler-backend-layout-place-islands!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [lines : i64]
+  [sinks : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sink-tail : (MutPtr i64)]
+  [sink-class : (MutPtr i64)]
+  [dups : i64]
+  [dup-p : (MutPtr i64)]
+  [dup-to : (MutPtr i64)]) : unit
+  (let
+    [k : i64 0]
+    [dup-start : i64 0]
+    (while (< k sinks)
+      (let
+        [p : i64
+          (unsafe
+            (ptr-read (ptr-offset sink-p k)))]
+        [q : i64
+          (unsafe
+            (ptr-read (ptr-offset sink-q k)))]
+        [tail : i64
+          (unsafe
+            (ptr-read (ptr-offset sink-tail k)))]
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset sink-class k) 0))
+          (when
+            (compiler-backend-layout-region-small? flags (+ p 1) q)
+            (let
+              ;; `prev` is the last line the text emits before line `i`, labels
+              ;; and blanks aside, or -1 when that is a label (a label run is
+              ;; one island). A `jmp` that is a duplication site is emitted as
+              ;; its copied run, so the run's terminating `jmp` (`dup-to`) is
+              ;; the one that must not reach the label run.
+              [prev : i64 -1]
+              [j : i64 (+ k 1)]
+              [d : i64
+                (begin
+                  (while (and
+                    (< dup-start dups)
+                    (<
+                      (unsafe
+                        (ptr-read (ptr-offset dup-p dup-start)))
+                      q))
+                    (set! dup-start (+ dup-start 1)))
+                  dup-start)]
+              [i : i64 (+ q 1)]
+              [done : bool false]
+              (while (and (not done) (< i tail))
+                (if (and
+                  (< j sinks)
+                  (=
+                    i
+                    (unsafe
+                      (ptr-read (ptr-offset sink-p j)))))
+                  ;; A later sunk region leaves together with its `jmp`.
+                  (begin
+                    (set!
+                      i
+                      (unsafe
+                        (ptr-read (ptr-offset sink-q j))))
+                    (set! j (+ j 1)))
+                  (let
+                    [line-flags : i64
+                      (unsafe
+                        (ptr-read (ptr-offset flags i)))]
+                    (begin
+                      (cond
+                        [(not
+                            (=
+                              (bit-and
+                                line-flags
+                                compiler-backend-layout-flag-label)
+                              0))
+                          (begin
+                            (when
+                              (and
+                                (>= prev 0)
+                                (or
+                                  (compiler-backend-layout-ret-line?
+                                    data
+                                    starts
+                                    flags
+                                    prev)
+                                  (and
+                                    (not
+                                      (=
+                                        (bit-and
+                                          (unsafe
+                                            (ptr-read (ptr-offset flags prev)))
+                                          compiler-backend-layout-flag-jmp)
+                                        0))
+                                    (not
+                                      (compiler-backend-layout-jmp-into-labels?
+                                        flags
+                                        target
+                                        lines
+                                        (begin
+                                          (while (and
+                                            (< d dups)
+                                            (<
+                                              (unsafe
+                                                (ptr-read (ptr-offset dup-p d)))
+                                              prev))
+                                            (set! d (+ d 1)))
+                                          (if (and
+                                            (< d dups)
+                                            (=
+                                              (unsafe
+                                                (ptr-read (ptr-offset dup-p d)))
+                                              prev))
+                                            (unsafe
+                                              (ptr-read (ptr-offset dup-to d)))
+                                            prev))
+                                        i)))))
+                              (begin
+                                (unsafe
+                                  (ptr-write! (ptr-offset sink-tail k) i))
+                                (unsafe
+                                  (ptr-write! (ptr-offset sink-class k) 1))
+                                (set! done true)))
+                            (set! prev -1))]
+                        [(not
+                            (=
+                              (bit-and
+                                line-flags
+                                compiler-backend-layout-flag-blank)
+                              0))
+                          unit]
+                        [else (set! prev i)])
+                      (set! i (+ i 1)))))))))
+        (set! k (+ k 1))))))
+
 ;; Choose the regions to lay out of line from the shape candidates, in emission
 ;; order. Accepted regions never overlap: a candidate whose `jmp` sits inside
 ;; one already taken is skipped, so each line moves at most once. An accepted
@@ -93856,11 +94103,71 @@
             (set! k (+ k 1)))))
       count)))
 
+;; Append sunk region `k` to the plan at `len`: its lines after the `jmp`, then
+;; the `jmp` itself when the region needs a jump back to its join. Returns the
+;; new length.
+(define (compiler-backend-layout-plan-region!
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sink-jump : (MutPtr i64)]
+  [k : i64]
+  [plan : (MutPtr i64)]
+  [len : i64]) : i64
+  (let
+    [p : i64
+      (unsafe
+        (ptr-read (ptr-offset sink-p k)))]
+    [q : i64
+      (unsafe
+        (ptr-read (ptr-offset sink-q k)))]
+    [out : i64 len]
+    [line : i64 (+ p 1)]
+    (begin
+      (while (< line q)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset plan out) line))
+          (set! out (+ out 1))
+          (set! line (+ line 1))))
+      (when
+        (=
+          (unsafe
+            (ptr-read (ptr-offset sink-jump k)))
+          1)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset plan out) p))
+          (set! out (+ out 1))))
+      out)))
+
+;; The next sink at or after `k` whose `sink-class` is `class`, or `sinks`.
+(define (compiler-backend-layout-next-of-class
+  [sink-class : (MutPtr i64)]
+  [sinks : i64]
+  [k : i64]
+  [class : i64]) : i64
+  (let
+    [i : i64 k]
+    (begin
+      (while (and
+        (< i sinks)
+        (not
+          (=
+            (unsafe
+              (ptr-read (ptr-offset sink-class i)))
+            class)))
+        (set! i (+ i 1)))
+      i)))
+
 ;; The output as a sequence of source lines: every entry names a line of the
 ;; input, so a duplicated run is that run's lines listed twice and an
 ;; out-of-lined region is its lines listed at the insertion point instead of
 ;; where they stood. The jump appended behind a moved region is the very `jmp T`
-;; line the move deleted, so no text is ever synthesized.
+;; line the move deleted, so no text is ever synthesized. A sunk region leaves
+;; its place with its `jmp` and is emitted in front of its tail line. Island tails and
+;; function-end tails each rise with the sinks (`place-islands!`), so one
+;; cursor per class finds every region whose tail is the current line, and a
+;; region is always emitted after its own `jmp` was skipped.
 (define (compiler-backend-layout-build-plan
   [flags : (MutPtr i64)]
   [lines : i64]
@@ -93868,6 +94175,7 @@
   [sink-q : (MutPtr i64)]
   [sink-tail : (MutPtr i64)]
   [sink-jump : (MutPtr i64)]
+  [sink-class : (MutPtr i64)]
   [sinks : i64]
   [dup-p : (MutPtr i64)]
   [dup-from : (MutPtr i64)]
@@ -93881,47 +94189,59 @@
         compiler-backend-layout-flag-blank)]
     [len : i64 0]
     [skipped : i64 0]
-    [placed : i64 0]
+    [island : i64 (compiler-backend-layout-next-of-class sink-class sinks 0 1)]
+    [ending : i64 (compiler-backend-layout-next-of-class sink-class sinks 0 0)]
     [di : i64 0]
     [i : i64 0]
     (begin
       (while (< i lines)
         (begin
           (while (and
-            (< placed skipped)
+            (< island skipped)
             (=
               (unsafe
-                (ptr-read (ptr-offset sink-tail placed)))
+                (ptr-read (ptr-offset sink-tail island)))
               i))
-            (let
-              [k : i64
-                (+
-                  (unsafe
-                    (ptr-read (ptr-offset sink-p placed)))
-                  1)]
-              (begin
-                (while (<
-                  k
-                  (unsafe
-                    (ptr-read (ptr-offset sink-q placed))))
-                  (begin
-                    (unsafe
-                      (ptr-write! (ptr-offset plan len) k))
-                    (set! len (+ len 1))
-                    (set! k (+ k 1))))
-                (when
-                  (=
-                    (unsafe
-                      (ptr-read (ptr-offset sink-jump placed)))
-                    1)
-                  (begin
-                    (unsafe
-                      (ptr-write!
-                        (ptr-offset plan len)
-                        (unsafe
-                          (ptr-read (ptr-offset sink-p placed)))))
-                    (set! len (+ len 1))))
-                (set! placed (+ placed 1)))))
+            (begin
+              (set!
+                len
+                (compiler-backend-layout-plan-region!
+                  sink-p
+                  sink-q
+                  sink-jump
+                  island
+                  plan
+                  len))
+              (set!
+                island
+                (compiler-backend-layout-next-of-class
+                  sink-class
+                  sinks
+                  (+ island 1)
+                  1))))
+          (while (and
+            (< ending skipped)
+            (=
+              (unsafe
+                (ptr-read (ptr-offset sink-tail ending)))
+              i))
+            (begin
+              (set!
+                len
+                (compiler-backend-layout-plan-region!
+                  sink-p
+                  sink-q
+                  sink-jump
+                  ending
+                  plan
+                  len))
+              (set!
+                ending
+                (compiler-backend-layout-next-of-class
+                  sink-class
+                  sinks
+                  (+ ending 1)
+                  0))))
           (cond
             [(and
                 (< skipped sinks)
@@ -93971,36 +94291,33 @@
                   (ptr-write! (ptr-offset plan len) i))
                 (set! len (+ len 1))
                 (set! i (+ i 1)))])))
-      (while (< placed skipped)
-        (let
-          [k : i64
-            (+
-              (unsafe
-                (ptr-read (ptr-offset sink-p placed)))
-              1)]
+      ;; Regions whose tail is the end of the text, in emission order. Each
+      ;; cursor stops only at its own class, so a sink is unplaced exactly when
+      ;; it lies at or after its class's cursor.
+      (let
+        [k : i64
+          (if (< island ending)
+            island
+            ending)]
+        (while (< k sinks)
           (begin
-            (while (<
-              k
-              (unsafe
-                (ptr-read (ptr-offset sink-q placed))))
-              (begin
-                (unsafe
-                  (ptr-write! (ptr-offset plan len) k))
-                (set! len (+ len 1))
-                (set! k (+ k 1))))
             (when
-              (=
+              (if (=
                 (unsafe
-                  (ptr-read (ptr-offset sink-jump placed)))
+                  (ptr-read (ptr-offset sink-class k)))
                 1)
-              (begin
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset plan len)
-                    (unsafe
-                      (ptr-read (ptr-offset sink-p placed)))))
-                (set! len (+ len 1))))
-            (set! placed (+ placed 1)))))
+                (>= k island)
+                (>= k ending))
+              (set!
+                len
+                (compiler-backend-layout-plan-region!
+                  sink-p
+                  sink-q
+                  sink-jump
+                  k
+                  plan
+                  len)))
+            (set! k (+ k 1)))))
       len)))
 
 ;; The analysis proper. Everything here is scratch except the two words the plan
@@ -94249,6 +94566,25 @@
                   dup-from-raw
                   dup-to-raw)
                 0)]
+            ;; `cand-shape` is spent once the sinks are chosen; it carries each
+            ;; sink's placement class from here on. Islands are chosen last
+            ;; because a duplication site changes which `jmp` precedes one.
+            [sink-class-raw : (MutPtr i64) cand-shape-raw]
+            [_islands : unit
+              (compiler-backend-layout-place-islands!
+                data
+                starts-raw
+                flags-raw
+                target-raw
+                lines
+                sinks
+                sink-p-raw
+                sink-q-raw
+                sink-tail-raw
+                sink-class-raw
+                dups
+                dup-p-raw
+                dup-to-raw)]
             (if (and (= sinks 0) (= dups 0))
               (CompilerBackendLayoutPlan starts (__tl_make-array i64 0) lines 0)
               (let
@@ -94268,6 +94604,7 @@
                     sink-q-raw
                     sink-tail-raw
                     sink-jump-raw
+                    sink-class-raw
                     sinks
                     dup-p-raw
                     dup-from-raw

@@ -5377,7 +5377,11 @@
       "typecheck.macro.walk_rewalk_zero_fire_calls")
     (tc-profile-rewalk-provenance-skips
       "typecheck.macro.walk_rewalk_provenance_skips")
-    (tc-profile-materialized-splices "typecheck.macro.walk_decl_sp_mat_count")))
+    (tc-profile-materialized-splices "typecheck.macro.walk_decl_sp_mat_count")
+    ;; Materialized generated imports that loaded nothing new and took the
+    ;; incremental append instead of a file fallback.
+    (tc-profile-segment-incremental-imports
+      "typecheck.macro.walk_segment_incremental_imports")))
 
 ;; Additive top-env splice accounting: candidates are unresolved cache entries
 ;; revisited against a new symbol surface, updates are entries whose type
@@ -109274,6 +109278,13 @@
                                     (set!
                                       cur-materialize-seen
                                       next-materialize-seen)
+                                    (cfg
+                                      compile-profile
+                                      (if incremental?
+                                        (counters.bump!
+                                          tc-profile-segment-incremental-imports)
+                                        unit)
+                                      unit)
                                     (if incremental?
                                       (macro-live-prescan-append-decls!
                                         macro-state

@@ -15,10 +15,6 @@
 (import compiler_surface_binary as binary)
 (import stdlib.byte_reader)
 
-(defmacro (surface-identity-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 (defmacro (surface-identity-string-array-shared-view
   [items : Expr]
   [index : Expr]) : Expr

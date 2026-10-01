@@ -25,6 +25,12 @@
 
 (cfg
   compiler-surface-selftest
+  (defmacro (surface-tests-shared-view [place : Expr]) : Expr
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-identity-test-macro-global-id
     [session : cis.InternStructuralSessionHandle]
     [module-id : i64]
@@ -136,7 +142,7 @@
       [key : surface_identity.SurfaceIdentityKey (surface-identity-test-key)]
       [payload : surface_identity.SurfaceIdentityPayload
         (surface_identity.surface-identity-capture
-          (surface_identity.surface-identity-shared-view key))]
+          (surface-tests-shared-view key))]
       [source-count : i64 (array-length payload.source-names)]
       [identity-count : i64 (+ source-count (array-length payload.generated))]
       [intern-state : ci.InternCompatState
@@ -212,13 +218,13 @@
       (if (not (= alpha 0))
         false
         (match (surface_identity.surface-identity-encode
-          (surface_identity.surface-identity-shared-view payload))
+          (surface-tests-shared-view payload))
           [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
           [(surface_identity.ResultSurfaceIdentityBytes.Ok bytes)
             (let
               [copy : (__tl_dyn-array u8)
                 (surface-identity-test-copy-bytes
-                  (surface_identity.surface-identity-shared-view bytes))]
+                  (surface-tests-shared-view bytes))]
               (begin
                 (ci.intern-reset!)
                 (let
@@ -233,8 +239,7 @@
                         hydration)
                       (let
                         [remap : (__tl_dyn-array i64)
-                          (surface_identity.surface-identity-shared-view
-                            hydration.remap)]
+                          (surface-tests-shared-view hydration.remap)]
                         [mapped-module : i64 (array-ref remap 1)]
                         [mapped-base : i64 (array-ref remap 2)]
                         [mapped-alpha : i64 (array-ref remap 0)]

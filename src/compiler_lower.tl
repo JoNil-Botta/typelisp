@@ -70183,8 +70183,8 @@
               variant-name
               (csym.compiler-symbols-missing-handle)))]
         (if (csym.compiler-symbols-handle-found? handle)
-          (match (csym.compiler-program-decl-at-index
-            (tc_core.tc-context-program ctx)
+          (match (csym.compiler-symbols-decl-at-index
+            (tc_core.tc-context-symbols ctx)
             (csym.compiler-symbol-handle-index handle))
             [(parser.ResultAstDecl.Ok decl)
               (lower-dispatch-lower-variant-decl

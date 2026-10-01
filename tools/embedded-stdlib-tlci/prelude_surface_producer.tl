@@ -238,11 +238,19 @@
     [job-state : tc.TcJobState (tc.tc-job-state-new)]
     [source-names : ci.InternSourceNameSessionHandle
       (ci.intern-source-name-session-capture-active-handle)]
-    (match (spec.gen-normalize-program-with-paths-and-pools
-      (ast.ast-program decls)
-      paths
-      ""
-      pools)
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [owner : spec.SpecOwnerContext
+      (spec.spec-owner-context-new pools intern-state)]
+    [generated-result : spec.ResultGenProgramWithPaths
+      (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+        (ast.ast-program decls)
+        paths
+        ""
+        owner)]
+    ;; Publish the owner's interner before the legacy expansion phase reads it.
+    [_publish : unit (ci.intern-compat-state-install! intern-state)]
+    (match generated-result
       [(spec.ResultGenProgramWithPaths.Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "

@@ -3918,10 +3918,10 @@
           [(ResultGenDeclsWithPaths.Err diag)
             (ResultGenProgramWithPaths.Err diag)]))]))
 
-;; Legacy normalization adapters. They capture the active compatibility views
-;; once, route all work through the owner entrypoint above, preserve the
+;; Legacy normalization adapter. It captures the active compatibility views
+;; once, routes all work through the owner entrypoint above, preserves the
 ;; owner's mutated pool cells while restoring the prior ambient context, and
-;; publish the owner's interner on both success and error paths.
+;; publishes the owner's interner on both success and error paths.
 (define (gen-normalize-program-with-pools
   [program : ast.AstProgram]
   [pools : ast.AstNodePoolContext]) : ResultGenProgram
@@ -3937,32 +3937,6 @@
         [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
         [result : ResultGenProgram
           (gen-normalize-program-with-pools-and-intern-state program owner)]
-        (begin
-          (ast.ast-node-pool-context-install! previous-pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
-
-(define (gen-normalize-program-with-paths-and-pools
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [fallback-path : String]
-  [pools : ast.AstNodePoolContext]) : ResultGenProgramWithPaths
-  (let
-    [previous-pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-capture-active)]
-    [intern-state : spec_ci.InternCompatState
-      (spec_ci.intern-compat-state-capture-active)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
-        [result : ResultGenProgramWithPaths
-          (gen-normalize-program-with-paths-and-pools-and-intern-state
-            program
-            paths
-            fallback-path
-            owner)]
         (begin
           (ast.ast-node-pool-context-install! previous-pools)
           (spec_ci.intern-compat-state-install! intern-state)

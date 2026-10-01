@@ -450,6 +450,18 @@ annotation would name, not the spelling: `(type other.Point)` through an import
 alias reaches the layout of its defining module's `Point` (#8112).
 
 
+An array allocation (`make-array`, `__tl_make-array`) whose element default
+is all-zero bytes lowers to `tl_array_zero`. That runtime fill skips memory
+the arena has never handed out. Other defaults lower to a per-element init
+loop. `lower-make-array-zero-fill-supported?` decides which applies:
+- scalars and raw pointers;
+- default-layout structs whose fields all qualify;
+- enums whose tag-0 variant's payload fields all qualify, including a
+  fieldless tag-0 variant (#8520).
+
+Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
+default, for one, is a live allocation.
+
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,

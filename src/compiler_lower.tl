@@ -40115,10 +40115,12 @@
             0)]
         [(parser.ResultAstFieldDefList.Err _) false]))))
 
-;; An enum can be zero-filled when its first variant (tag 0) is fieldless:
-;; the default value is then the zero tag word plus don't-care payload bytes,
-;; which zeroing satisfies. (A payloaded first variant could have a non-zero
-;; default, so those enums keep the init loop.)
+;; An enum can be zero-filled when its default value is all-zero bytes. That
+;; default (`lower-init-enum`) is the first variant -- tag 0 -- built from each
+;; payload field's own default, so it is all-zero bytes exactly when every
+;; payload field type is zero-fillable; a fieldless first variant is the empty
+;; case. Payload bytes past the variant's fields are don't-care. (A payload
+;; field with a non-zero default, such as a String, keeps the init loop.)
 (define (lower-make-array-zero-fill-enum-supported?
   [ctx : tc_core.TcContext]
   [enum-ty : ast.AstType]) : bool
@@ -40140,7 +40142,17 @@
                 0
                 (ast.ast-variant-def-fallback))
                 [(ast.AstVariantDef.Def _ fields _)
-                  (ast.ast-type-list-empty? (& fields))]))])]
+                  (or
+                    (ast.ast-type-list-empty? (& fields))
+                    (lower-make-array-zero-fill-type-list-supported?
+                      field-ctx
+                      (tc_core.tc-resolve-type-list
+                        field-ctx
+                        (lower-enum-constructor-fields-for-result
+                          field-ctx
+                          enum-ty
+                          fields))
+                      0))]))])]
       [(tc_core.ResultTcEnumDecl.Err _) false])))
 
 (define (lower-make-array-zero-fill

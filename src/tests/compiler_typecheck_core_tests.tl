@@ -2407,6 +2407,126 @@
                 grown-alive?
                 first-cache-alive?))))))))
 
+;; Entries in STORE-HANDLE's chain index, or -1 without one.
+(define (tc-type-env-chain-index-len [store-handle : i64]) : i64
+  (let
+    [address : i64 (tc_core.tc-chain-state-address store-handle)]
+    (if (> address 0)
+      (let
+        [state : tc_core.TcChainIndex (tc_core.tc-chain-state-read address)]
+        (tc_i64_i64_map.len (& state.map)))
+      -1)))
+
+;; A function-local store fork (#8375) grows its bindings, cache layers and
+;; chain index in the current scratch, sees every parent binding through the
+;; inherited head, and leaves the parent's store, index and lookups unchanged
+;; after the scratch is rewound.
+(define (tc-type-env-function-store-fork-smoke?) : bool
+  (let
+    [base-id : i64 (ci.intern "fork-parent-base")]
+    [kept-id : i64 (ci.intern "fork-parent-kept")]
+    [local-id : i64 (ci.intern "fork-local")]
+    [home : i64 (arena.tl_arena_current)]
+    [owner : i64 (arena.tl_arena_make_small)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    [_owner-current : unit
+      (unsafe
+        (arena.tl_arena_set owner))]
+    [parent : tc_core.TcTypeEnv
+      (tc_core.tc-env-with-cache
+        (tc_core.tc-bind-id
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env)
+            base-id
+            (ast.AstType.String))
+          kept-id
+          (ast.AstType.I64)))]
+    [parent-store : tc_core.TcTypeEnvStore
+      (tc_core.tc-type-env-store-read parent.store)]
+    [parent-chain : i64 (tc_core.tc-chain-state-address parent.store)]
+    [parent-chain-len : i64 (tc-type-env-chain-index-len parent.store)]
+    [fork-ok : bool false]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        [empty-params : tc_core.TcTypeEnv
+          (tc_core.tc-type-env-fork-function-store parent 0)]
+        [fork : tc_core.TcTypeEnv
+          (tc_core.tc-type-env-fork-function-store parent 5)]
+        [index : i64 0]
+        (begin
+          ;; Shadow a parent name, then cross both the first (parameter-sized)
+          ;; binding segment and an ordinary one, and several cache segments.
+          (set! fork (tc_core.tc-bind-id fork base-id (ast.AstType.Bool)))
+          (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
+            (begin
+              (set! fork (tc_core.tc-bind-id fork local-id (ast.AstType.I64)))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
+            (begin
+              (set! fork (tc_core.tc-env-with-cache fork))
+              (set! index (+ index 1))))
+          (set!
+            fork-ok
+            (and
+              (match (tc_core.tc-lookup-id fork base-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id fork kept-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id fork local-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+                [_ false])
+              (match (tc_core.tc-lookup-id empty-params base-id)
+                [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+                [_ false])
+              (= (tc_core.tc-chain-store-owner fork.store) scratch)
+              (> (tc_core.tc-chain-state-address fork.store) 0)
+              (not (= (tc_core.tc-chain-state-address fork.store) parent-chain))))
+          (unsafe
+            (arena.tl_region_reset mark))))
+      (unsafe
+        (begin
+          (arena.tl_arena_set home)
+          (arena.tl_arena_destroy scratch)))
+      (let
+        [after : tc_core.TcTypeEnvStore
+          (tc_core.tc-type-env-store-read parent.store)]
+        [after-chain : i64 (tc_core.tc-chain-state-address parent.store)]
+        [result : bool
+          (and
+            fork-ok
+            (> parent-chain-len 0)
+            (= after.binding-len parent-store.binding-len)
+            (= after.cache-len parent-store.cache-len)
+            (= after-chain parent-chain)
+            (= (tc-type-env-chain-index-len parent.store) parent-chain-len)
+            (match (tc_core.tc-lookup-id parent base-id)
+              [(tc_core.ResultTcType.Ok (ast.AstType.String)) true]
+              [_ false])
+            (match (tc_core.tc-lookup-id parent kept-id)
+              [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+              [_ false])
+            (match (tc_core.tc-lookup-id parent local-id)
+              [(tc_core.ResultTcType.Ok _) false]
+              [_ true]))]
+        (begin
+          (unsafe
+            (begin
+              (arena.tl_arena_set home)
+              (arena.tl_arena_destroy owner)))
+          result)))))
+
+(test
+  tc-type-env-function-store-fork
+  (test.assert-true
+    (tc-type-env-function-store-fork-smoke?)
+    "a function-local store fork never touches its parent's store or index"))
+
 (define (tc-type-env-segmented-snapshot-smoke?) : bool
   (let
     [branch-id : i64 (ci.intern "branch")]

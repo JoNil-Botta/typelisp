@@ -10166,12 +10166,19 @@
     (ptr-write! (int->ptr (cast addr : u64) : (MutPtr TcChainIndex)) state)))
 
 ;; The index cell and everything it points at live in the store's owner arena,
-;; exactly like the cache nodes whose addresses it records.
+;; exactly like the cache nodes whose addresses it records. A function-local
+;; store inherits its parent's index read-only; before its first write the
+;; index is copied into the local owner, so the parent's map never names a
+;; local layer.
 (define (tc-chain-state-ensure! [store-handle : i64]) : i64
   (let
     [existing : i64 (tc-chain-state-address store-handle)]
     (if (> existing 0)
-      existing
+      (if (=
+        (__tl-project-field (tc-chain-state-read existing) owner-arena)
+        (tc-chain-store-owner store-handle))
+        existing
+        (tc-chain-state-detach! store-handle existing))
       (let
         [owner : i64 (tc-chain-store-owner store-handle)]
         [cell : i64
@@ -10191,6 +10198,42 @@
         (begin
           (tc-chain-state-set! store-handle cell)
           cell)))))
+
+;; Copy the inherited index at PARENT-ADDR into STORE-HANDLE's owner arena and
+;; make the copy this store's index.
+(define (tc-chain-state-detach! [store-handle : i64] [parent-addr : i64]) : i64
+  (let
+    [owner : i64 (tc-chain-store-owner store-handle)]
+    [parent : TcChainIndex (tc-chain-state-read parent-addr)]
+    [cell : i64
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [map : tc_i64_i64_map.Map
+            (tc_i64_i64_map.with-capacity
+              (tc_i64_i64_map.capacity (& parent.map)))]
+          [remaining : i64 (tc_i64_i64_map.len (& parent.map))]
+          [index : i64 0]
+          [slots : (__tl_dyn-array TcChainIndex)
+            (__tl_make-array TcChainIndex 1)]
+          (begin
+            (while (> remaining 0)
+              (begin
+                (set! index (tc_i64_i64_map.next-occupied (& parent.map) index))
+                (match (tc_i64_i64_map.entry-at (& parent.map) index)
+                  [(tc_i64_i64_map.EntrySome key value)
+                    (tc_i64_i64_map.insert-ref! (&mut map) key value)]
+                  [(tc_i64_i64_map.EntryNone) unit])
+                (set! index (+ index 1))
+                (set! remaining (- remaining 1))))
+            (set! (array-ref slots 0) (TcChainIndex map parent.next-seq owner))
+            (unsafe
+              (cast
+                (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
+                : i64)))))]
+    (begin
+      (tc-chain-state-set! store-handle cell)
+      cell)))
 
 (define (tc-chain-jump-levels [depth : i64]) : i64
   (if (< depth 1)
@@ -111566,6 +111609,33 @@
 ;; overflow segments itself. The interner owns new spellings at insertion, so
 ;; its entries survive this rewind. Node pools already grow in the persistent
 ;; base arena.
+;; A view of ENV for one function body: the parent's head and capabilities,
+;; but a store of its own whose binding and cache segments grow in the current
+;; arena (the function scratch), so nothing the body binds lands in the
+;; parent's owner arena. The first segment holds the parameter and return
+;; environments the checker materializes at once; later ones use the ordinary
+;; segment growth.
+(define (tc-type-env-fork-function-store [env : TcTypeEnv] [param-count : i64]) : TcTypeEnv
+  (let
+    [store : TcTypeEnvStore (tc-type-env-store-read env.store)]
+    [capacity : i64 (* 2 (+ param-count 1))]
+    [cell : (__tl_dyn-array TcTypeEnvStore) (__tl_make-array TcTypeEnvStore 1)]
+    (begin
+      (set! store.bindings (__tl_make-array TcTypeEnvBinding capacity))
+      (set! store.binding-capacity capacity)
+      (set! store.binding-len 0)
+      (set! store.caches (__tl_make-array TcTypeEnvCache 1))
+      (set! store.cache-capacity 0)
+      (set! store.cache-len 0)
+      (set! store.owner-arena (arena.tl_arena_current))
+      (set! (array-ref cell 0) store)
+      (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
+      (TcTypeEnv
+        (unsafe
+          (cast (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr u8))) : i64))
+        env.head
+        env.abi-pad))))
+
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
@@ -111584,7 +111654,15 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
+          (tc-check-fn-decl-body
+            ctx
+            (tc-type-env-fork-function-store
+              global-env
+              (ast.ast-param-list-len (& params)))
+            name
+            params
+            ret
+            body-box)]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
@@ -111603,6 +111681,12 @@
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set new-enclosing))
+              ;; The function store and its nodes were just rewound: retire
+              ;; every memo keyed by a store handle or node address, and the
+              ;; unbound-name snapshot, which names a function-local env and
+              ;; was consumed above.
+              (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
+              (tc-unbound-suggestion-snapshot-reset!)
               ;; Single-entry name caches may hold strings allocated in the
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.

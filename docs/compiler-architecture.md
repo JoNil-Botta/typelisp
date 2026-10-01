@@ -915,6 +915,22 @@ library order and suppression, forced roots, aliases and mismatch keys belong
 to #7102, exports to #7125, delay loads to #7094, and the external-link
 preflight to #7423. Directive text is never forwarded to another tool.
 
+Linux profiles ship some `lib*.so` link inputs as tiny GNU ld scripts; glibc's
+`libc.so` is `OUTPUT_FORMAT` plus a `GROUP` with a nested `AS_NEEDED`.
+`src/linker_script_subset.tl` reads only that implicit subset: `OUTPUT_FORMAT`
+(one or three names), `INPUT`, `GROUP`, `AS_NEEDED` nested to a depth limit,
+`SEARCH_DIR`, `/* */` comments, quoted names and `-lNAME`. It produces the
+commands in order with line and column, and every `INPUT`/`GROUP` file in one
+ordered list that the commands index. Anything else is refused by name rather
+than partly executed: `SECTIONS`, `INCLUDE`, `INSERT`, `MEMORY`, `PHDRS`,
+`PROVIDE` and other GNU commands, assignments, expressions, unknown words,
+unbalanced parentheses, unterminated comments or quotes, NUL, control bytes,
+and non-ASCII outside quotes. Byte, token, token-length and nesting counts are
+bounded by caller limits. Reading is pure; resolving the names against profile
+roots and recording them in the link manifest belongs to #8304. The fixtures
+under `tests/fixtures/linker-scripts/` are real installed scripts with their
+provenance.
+
 The fresh-artifact pipeline prepares the runtime once for checked-surface
 capture, then passes that same result to artifact finishing. Finishers accept
 bytes and text, not AST/IR inputs; they cannot lower again or regenerate side

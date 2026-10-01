@@ -16,9 +16,10 @@
 ;#   Non-ASCII or percent-encoded non-ASCII input is `UrlInternationalizedHost`
 ;#   (IDNA conversion is a separate layer); other percent-encodings are
 ;#   rejected;
-;# - a name whose last label is all digits must be a strict dotted-quad IPv4
-;#   address, so `1.2.3` or `0177.0.0.1` cannot be read differently by another
-;#   URL parser;
+;# - a name whose last label is numeric (all digits, or `0x` followed only by
+;#   hex digits) must be a strict dotted-quad IPv4 address, so `1.2.3`,
+;#   `0177.0.0.1` or `0x7f000001` cannot be read differently by another URL
+;#   parser or address resolver;
 ;# - bracketed literals are IPv6 only (`stdlib.net.ip`); zone identifiers and
 ;#   IPvFuture are rejected;
 ;# - a port is 1-65535.
@@ -398,7 +399,7 @@
           (when
             (= (url-byte text (- end 1)) 45)
             (return (UrlAuthorityErr (url-error (UrlInvalidHost) (- end 1)))))
-          (if (url-all-digits? text last-label-start end)
+          (if (url-numeric-label? text last-label-start end)
             (match (ip.parse-ipv4-range text start end)
               [(ip.Ipv4Ok address)
                 (UrlAuthorityOk (UrlAuthority (UrlHostIpv4 address) -1))]
@@ -406,6 +407,24 @@
                 (UrlAuthorityErr (url-error (UrlInvalidIpv4) error.offset))])
             (UrlAuthorityOk
               (UrlAuthority (UrlHostName (byte_buf.to-string out)) -1)))))]))
+
+;: Whether `text[start, end)` is a label other URL parsers and address
+;: resolvers read as an IPv4 number: all ASCII digits, or `0x`/`0X` followed
+;: only by hex digits (possibly none).
+(define (url-numeric-label? [text : (& text str)] [start : i64] [end : i64]) : bool
+  (if (and
+    (>= (- end start) 2)
+    (= (url-byte text start) 48)
+    (= (url-lower (url-byte text (+ start 1))) 120))
+    (let
+      [index : i64 (+ start 2)]
+      (begin
+        (while (< index end)
+          (begin
+            (when (< (url-hex-value (url-byte text index)) 0) (return false))
+            (set! index (+ index 1))))
+        true))
+    (url-all-digits? text start end)))
 
 ;: Whether `text[start, end)` is non-empty and all ASCII digits.
 (define (url-all-digits? [text : (& text str)] [start : i64] [end : i64]) : bool

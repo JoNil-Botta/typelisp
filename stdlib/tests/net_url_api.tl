@@ -174,7 +174,9 @@
       "http://h/a:b@c!$&'()*+,;=/?q=/?#f/?"
       "http://h/a:b@c!$&'()*+,;=/?q=/?#f/?")
     (outcome "http://xn--bcher-kva.example/" "http://xn--bcher-kva.example/")
-    (outcome "http://a-b.c0/" "http://a-b.c0/")))
+    (outcome "http://a-b.c0/" "http://a-b.c0/")
+    (outcome "http://a.0xg/" "http://a.0xg/")
+    (outcome "http://0x1g.example/" "http://0x1g.example/")))
 
 (define (parse-http-ok [text : (& text str)]) : url.HttpUrl
   (match (url.parse-http-url text (url.default-url-limits))
@@ -358,6 +360,11 @@
     (outcome "http://01.2.3.4/" "invalid-ipv4@8")
     (outcome "http://1.2.3.4.5/" "invalid-ipv4@14")
     (outcome "http://a.1/" "invalid-ipv4@7")
+    (outcome "http://0x7f000001/" "invalid-ipv4@8")
+    (outcome "http://0X7F000001/" "invalid-ipv4@8")
+    (outcome "http://1.2.3.0x4/" "invalid-ipv4@14")
+    (outcome "http://0x/" "invalid-ipv4@8")
+    (outcome "http://a.0x10/" "invalid-ipv4@7")
     (outcome "http://a:65536/" "invalid-port@13")
     (outcome "http://a:99999999999999999999/" "invalid-port@13")
     (outcome "http://a:8a/" "invalid-port@10")

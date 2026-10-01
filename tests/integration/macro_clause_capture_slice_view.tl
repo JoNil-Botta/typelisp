@@ -12,8 +12,7 @@
   (let
     [total : i64 0]
     (begin
-      (for
-        [item (slice-view seq.slots 0 seq.len)]
+      (for [item (slice-view seq.slots 0 seq.len)]
         (set! total (+ total (deref item))))
       total)))
 
@@ -21,21 +20,24 @@
   (let
     [total : i64 0]
     (begin
-      (for [item (slice-view items 0 2)] (set! total (+ total (deref item))))
+      (for [item (slice-view items 0 2)]
+        (set! total (+ total (deref item))))
       total)))
 
 (define (sum-dyn-array-view [items : (& items (__tl_dyn-array i64))]) : i64
   (let
     [total : i64 0]
     (begin
-      (for [item (slice-view items 0 2)] (set! total (+ total (deref item))))
+      (for [item (slice-view items 0 2)]
+        (set! total (+ total (deref item))))
       total)))
 
 (define (sum-owned-dyn-array-view [items : (__tl_dyn-array i64)]) : i64
   (let
     [total : i64 0]
     (begin
-      (for [item (slice-view items 0 2)] (set! total (+ total (deref item))))
+      (for [item (slice-view items 0 2)]
+        (set! total (+ total (deref item))))
       total)))
 
 (define (main) : i64

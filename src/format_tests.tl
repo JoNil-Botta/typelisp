@@ -247,6 +247,27 @@
 (define (format-rules-flow-expected) : String
   "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))")
 
+(define (format-rules-loops-expected) : String
+  "(defmacro (all? [bindings : ExprBindingClause ...] [predicate : Expr ...]) : bool
+  true)
+
+(define (count-positive [xs : (& xs (Array i64 4))]) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (for [x xs]
+        (when (> (deref x) 0) (+= total 1)))
+      (for [left xs]
+        [right xs]
+        (+= total (deref left)))
+      (if (any? [x xs]
+        (= (deref x) 0))
+        total
+        (if (all? [x xs]
+          (> (deref x) 0))
+          total
+          0)))))")
+
 (define (format-rules-empty-let-expected) : String
   "(define (main) : i64
   (let
@@ -404,6 +425,10 @@
       (format-rules-render-source-width
         "(defmacro (all [first : bool] [rest : bool ...]) : bool first)"
         80)]
+    [loops : String
+      (format-rules-render-source-width
+        "(defmacro (all? [bindings : ExprBindingClause ...] [predicate : Expr ...]) : bool true) (define (count-positive [xs : (& xs (Array i64 4))]) : i64 (let [total : i64 0] (begin (for [x xs] (when (> (deref x) 0) (+= total 1))) (for [left xs] [right xs] (+= total (deref left))) (if (any? [x xs] (= (deref x) 0)) total (if (all? [x xs] (> (deref x) 0)) total 0)))))"
+        80)]
     [projection-suffix : String
       (format-rules-render-source-width
         "(define (main) : i64 (begin (array-ref items 0).value (tuple-ref items 0).value (deref item).inner.value))"
@@ -434,6 +459,7 @@
       (unless
         (string.eq projection-suffix (format-rules-projection-suffix-expected))
         (return 14))
+      (unless (string.eq loops (format-rules-loops-expected)) (return 15))
       (unless (format-rules-offset-slice-preserved?) (return 10))
       42)))
 

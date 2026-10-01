@@ -1143,6 +1143,26 @@
               "0")
             1)]
         [_ -1])]
+    [(compiler_ast_types.AstExpr.Break)
+      (begin
+        (embedded-native-template-push!
+          ops
+          ops-count
+          (tlci_core.tlci-host-callback-name expr-break)
+          "0"
+          "0"
+          "0")
+        1)]
+    [(compiler_ast_types.AstExpr.Continue)
+      (begin
+        (embedded-native-template-push!
+          ops
+          ops-count
+          (tlci_core.tlci-host-callback-name expr-continue)
+          "0"
+          "0"
+          "0")
+        1)]
     [(compiler_ast_types.AstExpr.Var name-id)
       (let
         [name : String (ci.intern-str name-id)]
@@ -6861,6 +6881,171 @@
                       [_ ""])))]
               [_ ""])])])))
 
+;; Stage a computed Expr and destructure a two-arm
+;; `[(Expr.Call callee args) => ...] [_ => ...]` match. The probe is
+;; data-valued; the two payload operations push the values interpreted matching
+;; binds (the callee Expr, then the argument ExprList) into their binding slots.
+;; The prelude `for` uses it to recognise a direct `range` call.
+(define (embedded-native-computed-local-call-match-code
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms compiler_ast_types.AstMatchArmList)]
+  [final : String]) : String
+  (if (not (= arms.len 2))
+    ""
+    (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
+      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
+        (match (owned_view.compiler-owned-array-element-shared-view
+          arms.slots
+          1)
+          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
+            (match first-pattern
+              [(compiler_ast_types.AstPattern.Variant name-id args-box)
+                (let
+                  [args : compiler_ast_types.AstPatternList (deref args-box)]
+                  (if (or
+                    (not
+                      (string.eq
+                        (embedded-native-expr-variant-name name-id)
+                        "Call"))
+                    (not (= args.len 2))
+                    (not
+                      (match second-pattern
+                        [(compiler_ast_types.AstPattern.Wildcard) true]
+                        [_ false])))
+                    ""
+                    (match (compiler_ast_types.ast-pattern-list-get
+                      (& args)
+                      0
+                      (compiler_ast_types.ast-pattern-fallback))
+                      [(compiler_ast_types.AstPattern.Binding callee-id)
+                        (match (compiler_ast_types.ast-pattern-list-get
+                          (& args)
+                          1
+                          (compiler_ast_types.ast-pattern-fallback))
+                          [(compiler_ast_types.AstPattern.Binding args-id)
+                            (embedded-native-computed-local-call-match-bound-code
+                              params
+                              scrutinee
+                              callee-id
+                              args-id
+                              first-body
+                              second-body
+                              final)]
+                          [_ ""])]
+                      [_ ""])))]
+              [_ ""])])])))
+
+(define (embedded-native-computed-local-call-match-bound-code
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [scrutinee : i64]
+  [callee-id : i64]
+  [args-id : i64]
+  [then-body : i64]
+  [else-body : i64]
+  [final : String]) : String
+  (let
+    [saved : i64 (array-ref embedded-native-local-len 0)]
+    [scrut-slot : i64 (embedded-native-local-push! "__tlci_call_match")]
+    [arm-saved : i64 (array-ref embedded-native-local-len 0)]
+    [callee-slot : i64 (embedded-native-local-push! (ci.intern-str callee-id))]
+    [args-slot : i64 (embedded-native-local-push! (ci.intern-str args-id))]
+    [then-code : String
+      (if (or (< scrut-slot 0) (< callee-slot 0) (< args-slot 0))
+        ""
+        (embedded-native-computed-expr-code
+          params
+          then-body
+          (owned_view.compiler-owned-shared-view final)))]
+    [_restore-arm : unit
+      (set! (array-ref embedded-native-local-len 0) arm-saved)]
+    [else-code : String
+      (if (< scrut-slot 0)
+        ""
+        (embedded-native-computed-expr-code
+          params
+          else-body
+          (owned_view.compiler-owned-shared-view final)))]
+    [scrut-code : String
+      (if (< scrut-slot 0)
+        ""
+        (embedded-native-computed-expr-code
+          params
+          scrutinee
+          (embedded-native-local-set-final scrut-slot)))]
+    [_restore : unit (set! (array-ref embedded-native-local-len 0) saved)]
+    (if (or
+      (string.eq scrut-code "")
+      (string.eq then-code "")
+      (string.eq else-code ""))
+      ""
+      (let
+        [probe : String (embedded-native-temp-name!)]
+        [scrut-text : String
+          (str_cat.str-cat "cm" (string.int->string scrut-slot))]
+        [callee-text : String
+          (str_cat.str-cat "cc" (string.int->string callee-slot))]
+        [args-text : String
+          (str_cat.str-cat "ca" (string.int->string args-slot))]
+        (str_cat.str-cat
+          "  (let ["
+          (owned_view.compiler-owned-shared-view scrut-text)
+          " : i64\n"
+          scrut-code
+          "] (if (not (= "
+          (owned_view.compiler-owned-shared-view scrut-text)
+          " 0)) "
+          (owned_view.compiler-owned-shared-view scrut-text)
+          "\n  (let ["
+          (owned_view.compiler-owned-shared-view probe)
+          " : i64 (comptime-host-"
+          (tlci_core.tlci-host-callback-name local-expr-call?)
+          " host session "
+          (string.int->string scrut-slot)
+          " 0 0)]\n  (if (< "
+          (owned_view.compiler-owned-shared-view probe)
+          " 0)\n  "
+          (string.int->string tlci_core.tlci-host-callback-status-bad-request)
+          "\n  (if (= "
+          (owned_view.compiler-owned-shared-view probe)
+          " 1)\n  (let ["
+          (owned_view.compiler-owned-shared-view callee-text)
+          " : i64\n"
+          (embedded-native-arm-block-with-final
+            (embedded-native-single-op-ops
+              (tlci_core.tlci-host-callback-name local-expr-call-callee)
+              (string.int->string scrut-slot)
+              "0"
+              "0")
+            1
+            1
+            (embedded-native-local-set-final callee-slot))
+          "] (if (not (= "
+          (owned_view.compiler-owned-shared-view callee-text)
+          " 0)) "
+          (owned_view.compiler-owned-shared-view callee-text)
+          "\n  (let ["
+          (owned_view.compiler-owned-shared-view args-text)
+          " : i64\n"
+          (embedded-native-arm-block-with-final
+            (embedded-native-single-op-ops
+              (tlci_core.tlci-host-callback-name local-expr-call-args)
+              (string.int->string scrut-slot)
+              "0"
+              "0")
+            1
+            1
+            (embedded-native-local-set-final args-slot))
+          "] (if (not (= "
+          (owned_view.compiler-owned-shared-view args-text)
+          " 0)) "
+          (owned_view.compiler-owned-shared-view args-text)
+          "\n"
+          then-code
+          "))))\n"
+          else-code
+          ")))))\n")))))
+
 ;; Stage a computed Expr and destructure a two-arm `Expr.Int`/wildcard match.
 ;; Unlike Expr.Begin/Expr.Var payloads, the integer binds as generated i64 data
 ;; so arithmetic and list indexing in the selected arm retain their normal
@@ -7087,28 +7272,36 @@
             (if (not (string.eq payload-text ""))
               payload-text
               (let
+                [call-text : String
+                  (embedded-native-computed-local-call-match-code
+                    params
+                    scrutinee
+                    (& arms)
+                    (owned_view.compiler-owned-shared-view final))]
                 [local-int-text : String
                   (embedded-native-computed-local-int-match-code
                     params
                     scrutinee
                     (& arms)
                     (owned_view.compiler-owned-shared-view final))]
-                (if (not (string.eq local-int-text ""))
-                  local-int-text
-                  (let
-                    [int-text : String
-                      (embedded-native-computed-int-match-code
-                        params
-                        scrutinee
-                        (& arms)
-                        (owned_view.compiler-owned-shared-view final))]
-                    (if (not (string.eq int-text ""))
-                      int-text
-                      (embedded-native-computed-string-match-code
-                        params
-                        scrutinee
-                        (& arms)
-                        final)))))))))]))
+                (if (not (string.eq call-text ""))
+                  call-text
+                  (if (not (string.eq local-int-text ""))
+                    local-int-text
+                    (let
+                      [int-text : String
+                        (embedded-native-computed-int-match-code
+                          params
+                          scrutinee
+                          (& arms)
+                          (owned_view.compiler-owned-shared-view final))]
+                      (if (not (string.eq int-text ""))
+                        int-text
+                        (embedded-native-computed-string-match-code
+                          params
+                          scrutinee
+                          (& arms)
+                          final))))))))))]))
 
 (define (embedded-native-computed-string-match-code
   [params : (& params compiler_ast_types.AstMacroParamList)]

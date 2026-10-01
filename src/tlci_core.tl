@@ -759,6 +759,11 @@
     compiler-comptime-host-callback-local-expr-var-name
     compiler-comptime-host-callback-local-expr-begin?
     compiler-comptime-host-callback-local-expr-begin-items
+    ;; The same staged-local destructuring for Expr.Call: a probe, then the
+    ;; callee Expr and the argument ExprList.
+    compiler-comptime-host-callback-local-expr-call?
+    compiler-comptime-host-callback-local-expr-call-callee
+    compiler-comptime-host-callback-local-expr-call-args
     compiler-comptime-host-callback-local-bool-value
     compiler-comptime-host-callback-value-bool
     ;; Remaining binder-free template node kinds (refs #5605, #6240):
@@ -905,6 +910,10 @@
     ;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
     compiler-comptime-host-callback-expr-tuple
     compiler-comptime-host-callback-expr-array
+    ;; Loop control in templates, such as the `break` that ends a prelude
+    ;; `any?` / `all?` scan: push the node the parser produces.
+    compiler-comptime-host-callback-expr-break
+    compiler-comptime-host-callback-expr-continue
     ;; run-ops replays a batch of status ops encoded as data: `a` points at the
     ;; batch and `b` is its byte length. The batch names each op it uses, so
     ;; it binds callbacks by name like an image import, and it calls each op

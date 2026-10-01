@@ -48,6 +48,12 @@ reject_diag() {
             printf 'typecheck: if condition must be bool' ;;
         stdlib/tests/core_macros_for_missing_protocol.tl)
             printf 'is missing protocol function into-iterator' ;;
+        stdlib/tests/core_macros_for_offset_slots_reject.tl)
+            printf 'is missing protocol function iterator' ;;
+        stdlib/tests/core_macros_for_owned_dyn_array_reject.tl)
+            printf 'sources must be borrowed: write (& source) or (&mut source)' ;;
+        stdlib/tests/core_macros_any_missing_predicate.tl)
+            printf 'any? expects one unannotated binding clause [name source] followed by one predicate' ;;
         stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl)
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl)

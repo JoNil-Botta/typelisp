@@ -1029,7 +1029,7 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Def _ _ ast.AstMaybeType.No value)
+    [(ast.AstDecl.Def _ _ (ast.AstMaybeType.No) value)
       (match (ast.ast-node-pool-context-expr-get pools value)
         [(ast.AstExpr.BinaryData text) (string.eq text "bytes")]
         [_ false])]

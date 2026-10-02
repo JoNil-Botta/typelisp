@@ -633,8 +633,16 @@
 (define compiler-registries-next-identity : i64
   0)
 
+;; Bumped by every declaration a symbol table indexes and by every new registry
+;; set, so an index derived from the tables (typecheck's bare-variant index)
+;; checks its freshness with one comparison instead of projecting a table out
+;; of its owner on every query.
+(define compiler-symbols-revision : i64
+  0)
+
 (define (compiler-registries-fresh-identity!) : i64
   (begin
+    (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
     (set!
       compiler-registries-next-identity
       (+ compiler-registries-next-identity 1))
@@ -2789,6 +2797,7 @@
       (let
         [indexed : ast.AstDecl (compiler-symbol-indexed-decl decl)]
         (begin
+          (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
           (set! (array-ref decls index) indexed)
           (set! (array-ref owner-module-ids index) module-id)
           (set!

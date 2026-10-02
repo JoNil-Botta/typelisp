@@ -3250,7 +3250,7 @@
     [(tc_core.TcTryQueryIncompatible
         (tc_core.TcTryCarrier _)
         (tc_core.TcTryCarrier _)
-        (tc_core.TcTryEarlyExitForbidden tc_core.TcTryEarlyExitForbiddenSpmd))
+        (tc_core.TcTryEarlyExitForbidden (tc_core.TcTryEarlyExitForbiddenSpmd)))
       true]
     [(tc_core.TcTryQueryIncompatible _ _ _) false]))
 
@@ -5391,6 +5391,78 @@
   (compiler-typecheck-with-io-source
     "(defenum E (A) (B))
 (define (main [e : E]) : i64 (match e [(A) 1] [(B) (io.panic \"no\")]))"))
+
+;; Both enums declare `Ok` and `Err`, in different orders, so a bare name that
+;; resolved to the other enum would also have the other tag.
+(define (compiler-typecheck-bare-variant-enums) : String
+  "(defenum ResA (Ok i64) (Err i64))
+(defenum ResB (Err i64) (Ok i64))
+(defenum Light (Off) (On))
+(defenum Switch (On) (Off))
+(defstruct Holder (result ResB) (light Light))
+(defenum Wrap (Outer ResB) (Nested Holder) (Empty))
+(define (take [r : ResB]) : i64 (match r [(Ok v) v] [(Err e) e]))
+")
+
+(define (compiler-typecheck-bare-variant-ok? [body : String]) : bool
+  (compiler-typecheck-ok?
+    (str_cat.str-cat (compiler-typecheck-bare-variant-enums) body)))
+
+;; SPEC 3.5.1: bare variant names resolve against the expected enum type; with
+;; none, two visible declaring enums make the name ambiguous.
+(define (compiler-typecheck-bare-variant-tests-ok?) : bool
+  (and
+    (compiler-typecheck-bare-variant-ok?
+      "(define (returned [x : i64]) : ResB (Ok x))
+(define (tail [b : bool] [x : i64]) : ResB
+  (if b
+    (begin (Ok x))
+    (let [y : i64 (+ x 1)] (match y [0 (Err 0)] [_ (Err y)]))))
+(define (light) : Light On)
+(define (switch) : Switch (On))")
+    (compiler-typecheck-bare-variant-ok?
+      "(define (main) : i64
+  (let
+    [typed : ResB (Ok 1)]
+    [holder : Holder (Holder (Err 2) Off)]
+    [wrapped : Wrap (Nested (Holder (Ok 3) On))]
+    [outer : Wrap (Outer (Err 4))]
+    (begin
+      (set! typed (Err 5))
+      (set! holder.result (Ok 6))
+      (set! holder.light On)
+      (+ (take typed) (take (Ok 7)) (take holder.result)))))")
+    ;; R1: a local binding of the name wins over the expected enum.
+    (compiler-typecheck-error-ok?
+      (str_cat.str-cat
+        (compiler-typecheck-bare-variant-enums)
+        "(define (keep [On : Switch]) : Light On)")
+      "typecheck: return type mismatch: expected Light, found Switch")
+    ;; One visible declaring enum keeps the ordinary unqualified lookup.
+    (compiler-typecheck-bare-variant-ok?
+      "(define (main) : i64 (let [light (Outer (ResB.Ok 1))] 0))")
+    (compiler-typecheck-error-location-ok?
+      (str_cat.str-cat
+        (compiler-typecheck-bare-variant-enums)
+        "(define (main) : i64 (let [r (Ok 1)] 0))")
+      "typecheck: ambiguous variant `Ok`; qualify as ResA.Ok or ResB.Ok"
+      8
+      31)
+    (compiler-typecheck-error-ok?
+      (str_cat.str-cat
+        (compiler-typecheck-bare-variant-enums)
+        "(define (main) : i64 (take (On)))")
+      "typecheck: ambiguous variant `On`; qualify as Light.On or Switch.On")
+    ;; A bare binder in a payload position may not spell a payload variant.
+    (compiler-typecheck-error-ok?
+      "(defenum Ty (I64) (U8))
+(defenum Instr (Mov i64 Ty) (Nop))
+(define (main [i : Instr]) : i64 (match i [(Mov d I64) d] [_ 0]))"
+      "typecheck: pattern binder `I64` spells a variant of the payload enum Ty; write `(I64)` to match that variant or rename the binder")
+    (compiler-typecheck-ok?
+      "(defenum Ty (I64) (U8))
+(defenum Instr (Mov i64 Ty) (Nop))
+(define (main [i : Instr]) : i64 (match i [(Mov d (I64)) d] [(Mov d ty) 1] [_ 0]))")))
 
 (define (compiler-typecheck-match-tests-ok?) : bool
   (and
@@ -8324,6 +8396,9 @@
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (io.panic "typecheck: match/pattern tests failed"))
+    (if (compiler-typecheck-bare-variant-tests-ok?)
+      unit
+      (io.panic "typecheck: bare variant resolution tests failed"))
     (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
       unit
       (io.panic "typecheck: spmd-reduce operator/type tests failed"))

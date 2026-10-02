@@ -606,8 +606,40 @@ Examples:
 - Variant constructors and patterns may be written as unqualified names
   (`Red`, `(Some x)`) or as enum-qualified names (`Color.Red`,
   `(Option.Some x)`). Duplicate variant base names are allowed across
-  different enums when uses are enum-qualified; duplicate variant names
-  within the same enum are rejected.
+  different enums; duplicate variant names within the same enum are rejected.
+- An unqualified variant name `V` resolves as follows:
+  1. A local binding named `V` (a `let`, parameter or lambda parameter,
+     hygiene-scoped) always means that binding.
+  2. A pattern resolves `V` against the scrutinee's enum (§5.13). A
+     constructor `V` or `(V args...)` in a position with an expected enum type
+     that declares `V` means that enum's variant, ahead of other enums'
+     variants, imports and module-level values. The expected-type positions
+     are the ones where contextual `(init)` works (§5.12.1); the expected enum
+     need not be imported by the current module. If a module-level function,
+     value or struct constructor named `V` is also visible unqualified there,
+     the reference is ambiguous and must be qualified.
+  3. Otherwise `V` is looked up among the enums the current module declares
+     or imports with `.*` (§4.4.3). Exactly one of them may declare it: two
+     make the name ambiguous (`qualify as A.V or B.V`), and the enums of
+     other loaded modules are never searched.
+- In a variant payload position of a pattern, a bare binder whose name spells
+  a variant of the payload's enum is rejected, because it would match every
+  payload. Write `(V)` to match that variant, or choose another binder name.
+
+```lisp test=run name=enum-expected-variant exit=42 stdout=""
+(defenum Reply (Ok i64) (Err i64))
+(defenum Probe (Err i64) (Ok i64))
+
+(define (reply [x : i64]) : Reply
+  (if (> x 0) (Ok x) (Err x)))      ; Reply.Ok and Reply.Err
+
+(define (probe) : Probe (Err 0))    ; Probe.Err
+
+(define (main) : i64
+  (match (reply 42)
+    [(Ok value) (+ value (match (probe) [(Err n) n] [(Ok n) n]))]
+    [(Err _) 0]))
+```
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
 - Returning an enum value never allocates. It is an ordinary by-value result,
   transported in registers or written into caller-owned result storage
@@ -3213,7 +3245,11 @@ Qualified source names use `.`: `alias.name` for one alias segment and
 `module.path.name` for a full canonical module path. Full canonical paths are
 accepted only when that module identity has been imported in the current module
 or when the use appears inside the same module. Unqualified lookup searches only
-local declarations and local bindings. It does not search imported modules.
+local declarations and local bindings. It does not search imported modules,
+except the items of `.*` and `.item` imports (§4.4). An unqualified enum variant
+name therefore sees the current module's enums and those imported with `.*`;
+it reaches any other enum only through an expected enum type (§3.5.1), never by
+searching the loaded modules.
 Slash-qualified source names such as `alias/name` are rejected; `/` is the
 ordinary division operator.
 
@@ -4851,6 +4887,11 @@ There are two source forms:
   literal element, array element assignment, or private `__tl_array-push!` position.
   Ambiguous `(init)`
   is rejected with a diagnostic asking for `(init : T)` or an annotation.
+
+An expected type reaches through the tails of `if`, `match`, `let`, `begin`
+and `unsafe`, and a `set!` of a typed place supplies its place's type. The same
+expected-type positions resolve bare enum variant constructors such as `(Ok x)`
+and `None` against the expected enum (§3.5.1).
 
 `init` is compatible with ordinary functions named `init`: `(init)` and
 `(init : T)` are parser-owned special forms, while `(init arg...)` is parsed

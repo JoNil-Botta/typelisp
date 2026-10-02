@@ -11220,6 +11220,18 @@
       (lower-reach-used-types-add-pattern-list-roots!
         lower-state
         (deref patterns-box))]
+    [(ast.AstPattern.Or patterns-box)
+      (lower-reach-used-types-add-pattern-list-roots!
+        lower-state
+        (deref patterns-box))]
+    [(ast.AstPattern.Fields patterns-box)
+      (lower-reach-used-types-add-pattern-list-roots!
+        lower-state
+        (deref patterns-box))]
+    [(ast.AstPattern.Field _ patterns-box)
+      (lower-reach-used-types-add-pattern-list-roots!
+        lower-state
+        (deref patterns-box))]
     [(ast.AstPattern.Wildcard) unit]
     [(ast.AstPattern.Binding _) unit]
     [(ast.AstPattern.Variant name patterns-box)
@@ -14263,6 +14275,27 @@
         module
         (deref patterns-box))]
     [(ast.AstPattern.Slice patterns-box _)
+      (lower-used-types-add-pattern-list
+        session
+        pools
+        used
+        module
+        (deref patterns-box))]
+    [(ast.AstPattern.Or patterns-box)
+      (lower-used-types-add-pattern-list
+        session
+        pools
+        used
+        module
+        (deref patterns-box))]
+    [(ast.AstPattern.Fields patterns-box)
+      (lower-used-types-add-pattern-list
+        session
+        pools
+        used
+        module
+        (deref patterns-box))]
+    [(ast.AstPattern.Field _ patterns-box)
       (lower-used-types-add-pattern-list
         session
         pools
@@ -20769,6 +20802,16 @@
             (deref args-box))
           (ResultLowerEnv.Err
             (box (lower-diagnostic "lower: unsupported refutable box pattern")))))]
+    [(ast.AstPattern.Fields entries-box)
+      (lower-bind-fields-pattern
+        ctx
+        state
+        env
+        type-env
+        (LowerBindMode.Owned)
+        value
+        inner-ty
+        (deref entries-box))]
     [_
       (ResultLowerEnv.Err
         (box (lower-diagnostic "lower: unsupported refutable box pattern")))]))
@@ -21291,6 +21334,50 @@
                           slice-state
                           slice-env
                           slice-type-env
+                          bind-mode
+                          base
+                          rest-patterns
+                          rest-types
+                          mode
+                          enum-id
+                          enum-name
+                          variant-name
+                          variant-name-id
+                          next-index
+                          next-cursor
+                          fail-label
+                          scrut-reg-group?)]
+                      [(ResultLowerEnv.Err message)
+                        (ResultLowerEnv.Err message)])])]
+              [(ast.AstPattern.Fields entries-box)
+                (match (lower-bind-payload-aggregate
+                  ctx
+                  state
+                  bind-mode
+                  (lower-global-shared-view base)
+                  enum-id
+                  offset
+                  (lower-global-shared-view resolved)
+                  scrut-reg-group?)
+                  [(LowerExpr.Expr field-state field-value _)
+                    (match (lower-bind-fields-pattern
+                      ctx
+                      field-state
+                      env
+                      type-env
+                      bind-mode
+                      field-value
+                      resolved
+                      (deref entries-box))
+                      [(ResultLowerEnv.Ok
+                          fields-state
+                          fields-env
+                          fields-type-env)
+                        (lower-bind-variant-payloads
+                          ctx
+                          fields-state
+                          fields-env
+                          fields-type-env
                           bind-mode
                           base
                           rest-patterns
@@ -21995,12 +22082,13 @@
         false)]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
-;; Literals, nested enum variants and slice patterns with a length test are
-;; refutable; `(box ...)` follows its inner pattern, while binding, var,
-;; wildcard, and tuple patterns always match.
+;; Literals, nested enum variants, or-patterns and slice patterns with a length
+;; test are refutable; `(box ...)` follows its inner pattern, while binding,
+;; var, wildcard, tuple and `(fields ...)` patterns always match.
 (define (lower-pattern-refutable? [pattern : ast.AstPattern]) : bool
   (match pattern
     [(ast.AstPattern.Literal _) true]
+    [(ast.AstPattern.Or _) true]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-box-pattern-name? name)
         (lower-pattern-list-refutable? (deref args-box))
@@ -22037,6 +22125,8 @@
     [(ast.AstPattern.Binding _) false]
     [(ast.AstPattern.Tuple _) false]
     [(ast.AstPattern.Array _) false]
+    [(ast.AstPattern.Fields _) false]
+    [(ast.AstPattern.Field _ _) false]
     [(ast.AstPattern.Literal _) true]
     [(ast.AstPattern.Slice items-box has-rest)
       (not
@@ -22045,6 +22135,7 @@
           (deref items-box)
           has-rest
           ty))]
+    [(ast.AstPattern.Or _) true]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
@@ -28174,6 +28265,18 @@
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (lower-pattern-list-bind-local-names env patterns))]
+    [(ast.AstPattern.Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (lower-pattern-list-bind-local-names env patterns))]
+    [(ast.AstPattern.Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (lower-pattern-list-bind-local-names env patterns))]
+    [(ast.AstPattern.Field _ patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (lower-pattern-list-bind-local-names env patterns))]
     [(ast.AstPattern.Binding name) (sym_i64_env.sym-i64-bind-id env name 0)]
     [(ast.AstPattern.Variant _ args-box)
       (let
@@ -28186,13 +28289,34 @@
   [env : sym_i64_env.SymI64Env]
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : sym_i64_env.SymI64Env
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
     [(ast.AstType.Enum _)
       (match pattern
         [(ast.AstPattern.Variant _ args-box)
           (let
             [args : ast.AstPatternList (deref args-box)]
             (lower-pattern-list-bind-local-names env args))]
+        [(ast.AstPattern.Or alternatives-box)
+          (let
+            [alternatives : ast.AstPatternList (deref alternatives-box)]
+            [out : sym_i64_env.SymI64Env env]
+            [index : i64 0]
+            (begin
+              (while (< index alternatives.len)
+                (begin
+                  (set!
+                    out
+                    (lower-match-pattern-bind-local-names
+                      ctx
+                      out
+                      (lower-global-shared-view scrut-ty)
+                      (ast.ast-pattern-list-get
+                        (& alternatives)
+                        index
+                        (ast.ast-pattern-fallback))))
+                  (set! index (+ index 1))))
+              out))]
         [_ env])]
     [_ (lower-pattern-bind-local-names env pattern)]))
 
@@ -46691,6 +46815,21 @@
           (deref patterns-box)
           scrut-lanes
           lane-locals)]
+      [(ast.AstPattern.Or patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (deref patterns-box)
+          scrut-lanes
+          lane-locals)]
+      [(ast.AstPattern.Fields patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (deref patterns-box)
+          scrut-lanes
+          lane-locals)]
+      [(ast.AstPattern.Field _ patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (deref patterns-box)
+          scrut-lanes
+          lane-locals)]
       [(ast.AstPattern.Binding name)
         (lower-masked-vector-lane-locals-bind-if-varying
           lane-locals
@@ -63898,6 +64037,12 @@
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [(ast.AstPattern.Slice patterns-box _)
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [(ast.AstPattern.Or patterns-box)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [(ast.AstPattern.Fields patterns-box)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [(ast.AstPattern.Field _ patterns-box)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [(ast.AstPattern.Variant _ patterns-box)
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [_ unit]))
@@ -64810,6 +64955,28 @@
           [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])
         (ResultLowerEnv.Err
           (box (lower-diagnostic "lower: unsupported struct field pattern"))))]
+    [(ast.AstPattern.Fields entries-box)
+      (match (lower-struct-get-named
+        ctx
+        state
+        base
+        struct-id
+        struct-name
+        field-name
+        (lower-global-shared-view field-ty))
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr field-state field-value _)
+              (lower-bind-fields-pattern
+                ctx
+                field-state
+                env
+                type-env
+                (LowerBindMode.Owned)
+                field-value
+                field-ty
+                (deref entries-box))])]
+        [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])]
     [_
       (ResultLowerEnv.Err
         (box (lower-diagnostic "lower: unsupported struct field pattern")))]))
@@ -64940,6 +65107,53 @@
     [(parser.ResultAstFieldDefList.Err message)
       (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
 
+;; Binds a `(fields ...)` pattern against a struct of type `struct-ty` as the
+;; positional struct pattern it stands for: `base` is the struct's loaded value
+;; when owned, and its address when borrowed.
+(define (lower-bind-fields-pattern
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
+  [base : ir.CompilerIrValue]
+  [struct-ty : ast.AstType]
+  [entries : ast.AstPatternList]) : ResultLowerEnv
+  (match (tc_core.tc-fields-pattern-resolve
+    ctx
+    (lower-global-shared-view struct-ty)
+    entries)
+    [(tc_core.ResultTcFieldsPattern.Ok positional _)
+      (let
+        [struct-name : String
+          (lower-struct-type-name-or-empty
+            (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx (lower-global-shared-view struct-ty))))]
+        (match bind-mode
+          [(LowerBindMode.Owned)
+            (lower-bind-struct-pattern
+              ctx
+              state
+              env
+              type-env
+              base
+              struct-ty
+              struct-name
+              positional)]
+          [(LowerBindMode.Borrowed borrow-lifetime)
+            (lower-bind-borrowed-struct-pattern
+              ctx
+              state
+              env
+              type-env
+              borrow-lifetime
+              base
+              struct-ty
+              struct-name
+              positional)]))]
+    [(tc_core.ResultTcFieldsPattern.Err message)
+      (ResultLowerEnv.Err (box (lower-diagnostic message)))]))
+
 ;; Binds one tuple, fixed-array or struct element: `value` is the element's
 ;; loaded value when owned, and its address when borrowed.
 (define (lower-bind-element-pattern
@@ -65031,6 +65245,16 @@
               (box
                 (lower-diagnostic
                   "lower: unsupported borrowed tuple element pattern"))))])]
+    [(ast.AstPattern.Fields entries-box)
+      (lower-bind-fields-pattern
+        ctx
+        state
+        env
+        type-env
+        bind-mode
+        value
+        elem-ty
+        (deref entries-box))]
     [_
       (ResultLowerEnv.Err
         (box
@@ -65568,6 +65792,16 @@
             (deref args-box))
           (ResultLowerEnv.Err
             (box (lower-diagnostic "lower: unsupported match pattern")))))]
+    [(ast.AstPattern.Fields entries-box)
+      (lower-bind-fields-pattern
+        ctx
+        state
+        env
+        type-env
+        (LowerBindMode.Owned)
+        (ir.CompilerIrValue.Var scrut-var)
+        scrut-ty
+        (deref entries-box))]
     [_ (ResultLowerEnv.Ok state env type-env)]))
 
 ;; The switch-form pass is deliberately the only place that may materialize
@@ -65886,7 +66120,7 @@
           [(ast.AstMatchArm.Arm pat body-box)
             (let
               [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-              (match pat
+              (match (lower-global-shared-view pat)
                 [(ast.AstPattern.Literal lit)
                   (lower-match-literal-arm
                     ctx
@@ -65910,6 +66144,30 @@
                     arm
                     cont)]
                 [(ast.AstPattern.Wildcard)
+                  (lower-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    cont)]
+                [(ast.AstPattern.Or _)
+                  (lower-match-or-arm
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    LowerOrScrutinee.Scalar
+                    (lower-global-shared-view pat)
+                    body
+                    rest
+                    cont
+                    false)]
+                [(ast.AstPattern.Fields _)
                   (lower-match-catch-all
                     ctx
                     state
@@ -65950,18 +66208,33 @@
                       arm
                       cont))]
                 [(ast.AstPattern.Slice items-box has-rest)
-                  (lower-match-slice-arm
-                    ctx
-                    state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    (deref items-box)
-                    has-rest
-                    body
-                    rest
-                    cont)]
+                  (if (lower-pattern-needs-or-expansion?
+                    (lower-global-shared-view pat))
+                    (lower-match-or-arm
+                      ctx
+                      state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      LowerOrScrutinee.Scalar
+                      (lower-global-shared-view pat)
+                      body
+                      rest
+                      cont
+                      false)
+                    (lower-match-slice-arm
+                      ctx
+                      state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      (deref items-box)
+                      has-rest
+                      body
+                      rest
+                      cont))]
                 [(ast.AstPattern.Variant variant-name _)
                   (if (lower-box-pattern-for-type?
                     ctx
@@ -66170,36 +66443,779 @@
     [(ast.AstMatchArm.Arm pat body-box)
       (let
         [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-        (match (match (lower-global-shared-view pat)
-          [(ast.AstPattern.Slice items-box has-rest)
-            (lower-bind-final-slice-arm
+        (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pat))
+          (lower-match-or-arm
+            ctx
+            state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            LowerOrScrutinee.Scalar
+            pat
+            body
+            (ast.ast-match-arm-list-new)
+            cont
+            false)
+          (match (match (lower-global-shared-view pat)
+            [(ast.AstPattern.Slice items-box has-rest)
+              (lower-bind-final-slice-arm
+                ctx
+                state
+                env
+                type-env
+                scrut-var
+                (lower-global-shared-view scrut-ty)
+                (deref items-box)
+                has-rest
+                (lower-global-shared-view cont))]
+            [_
+              (lower-bind-match-catch-all-pattern
+                ctx
+                state
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                pat)])
+            [(ResultLowerEnv.Ok body-start body-env body-type-env)
+              (lower-match-arm-final
+                ctx
+                body-start
+                body-env
+                body-type-env
+                body
+                cont)]
+            [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])))]))
+
+;; How an or-pattern arm tests its scrutinee: by the enum tag in `tag-var`
+;; (with the payload binding mode and register-group layout of the enum match),
+;; or by comparing literals or slice lengths for any other scrutinee.
+(defenum LowerOrScrutinee
+  (Enum i64 tc_core.TcMaybeNameId bool)
+  (Scalar))
+
+;; Whether an arm pattern lowers through `lower-match-or-arm`: an or-pattern,
+;; or a variant or slice pattern with one nested in its payload or elements.
+(define (lower-pattern-needs-or-expansion? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(ast.AstPattern.Or _) true]
+    [(ast.AstPattern.Variant _ args-box)
+      (lower-pattern-list-needs-or-expansion? (deref args-box))]
+    [(ast.AstPattern.Slice items-box _)
+      (lower-pattern-list-needs-or-expansion? (deref items-box))]
+    [_ false]))
+
+(define (lower-pattern-list-needs-or-expansion? [args : ast.AstPatternList]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index args.len)
+        (begin
+          (when
+            (lower-pattern-needs-or-expansion?
+              (ast.ast-pattern-list-get
+                (& args)
+                index
+                (ast.ast-pattern-fallback)))
+            (return true))
+          (set! index (+ index 1))))
+      false)))
+
+;; The or-free alternatives an arm pattern expands to, in the order they are
+;; tried: an or-pattern's alternatives, and for a variant or slice pattern with
+;; an or-pattern in its payload or elements, one pattern per combination of
+;; their alternatives (`(V (or a b) c)` tries `(V a c)`, then `(V b c)`). The
+;; typechecker admits or-patterns only in these refutable positions.
+(define (lower-pattern-or-alternatives [pattern : ast.AstPattern]) : ast.AstPatternList
+  (let
+    [out : ast.AstPatternList (ast.ast-pattern-list-new)]
+    (begin
+      (lower-pattern-or-alternatives-into! pattern (&mut out))
+      out)))
+
+(define (lower-pattern-or-alternatives-into!
+  [pattern : ast.AstPattern]
+  [out : (&mut out ast.AstPatternList)]) : unit
+  (match (lower-global-shared-view pattern)
+    [(ast.AstPattern.Or alternatives-box)
+      (let
+        [alternatives : ast.AstPatternList (deref alternatives-box)]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (begin
+            (lower-pattern-or-alternatives-into!
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback))
+              out)
+            (set! index (+ index 1)))))]
+    [(ast.AstPattern.Variant name args-box)
+      (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
+        (let
+          [combos : ast.AstPatternList
+            (lower-pattern-list-or-combinations (deref args-box))]
+          [index : i64 0]
+          (while (< index combos.len)
+            (begin
+              (ast.ast-pattern-list-push
+                out
+                (ast.ast-pat-variant-id
+                  name
+                  (lower-pattern-list-combination-items
+                    (ast.ast-pattern-list-get
+                      (& combos)
+                      index
+                      (ast.ast-pattern-fallback)))))
+              (set! index (+ index 1)))))
+        (ast.ast-pattern-list-push out pattern))]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
+        (let
+          [combos : ast.AstPatternList
+            (lower-pattern-list-or-combinations (deref items-box))]
+          [index : i64 0]
+          (while (< index combos.len)
+            (begin
+              (ast.ast-pattern-list-push
+                out
+                (ast.ast-pat-slice
+                  (lower-pattern-list-combination-items
+                    (ast.ast-pattern-list-get
+                      (& combos)
+                      index
+                      (ast.ast-pattern-fallback)))
+                  has-rest))
+              (set! index (+ index 1)))))
+        (ast.ast-pattern-list-push out pattern))]
+    [_ (ast.ast-pattern-list-push out pattern)]))
+
+;; Each combination of the or-free alternatives of `args`, in order, as a tuple
+;; pattern of the patterns chosen.
+(define (lower-pattern-list-or-combinations [args : ast.AstPatternList]) : ast.AstPatternList
+  (let
+    [combos : ast.AstPatternList (ast.ast-pattern-list-new)]
+    [arg-index : i64 0]
+    (begin
+      (ast.ast-pattern-list-push
+        (&mut combos)
+        (ast.ast-pat-tuple (ast.ast-pattern-list-new)))
+      (while (< arg-index args.len)
+        (let
+          [choices : ast.AstPatternList
+            (lower-pattern-or-alternatives
+              (ast.ast-pattern-list-get
+                (& args)
+                arg-index
+                (ast.ast-pattern-fallback)))]
+          [next : ast.AstPatternList (ast.ast-pattern-list-new)]
+          [prefix-index : i64 0]
+          (begin
+            (while (< prefix-index combos.len)
+              (let
+                [prefix : ast.AstPatternList
+                  (lower-pattern-list-combination-items
+                    (ast.ast-pattern-list-get
+                      (& combos)
+                      prefix-index
+                      (ast.ast-pattern-fallback)))]
+                [choice-index : i64 0]
+                (begin
+                  (while (< choice-index choices.len)
+                    (let
+                      [extended : ast.AstPatternList
+                        (ast.ast-pattern-list-with-capacity (+ prefix.len 1))]
+                      (begin
+                        (ast.ast-pattern-list-append-from
+                          (&mut extended)
+                          (& prefix)
+                          0)
+                        (ast.ast-pattern-list-push
+                          (&mut extended)
+                          (ast.ast-pattern-list-get
+                            (& choices)
+                            choice-index
+                            (ast.ast-pattern-fallback)))
+                        (ast.ast-pattern-list-push
+                          (&mut next)
+                          (ast.ast-pat-tuple extended))
+                        (set! choice-index (+ choice-index 1)))))
+                  (set! prefix-index (+ prefix-index 1)))))
+            (set! combos next)
+            (set! arg-index (+ arg-index 1)))))
+      combos)))
+
+(define (lower-pattern-list-combination-items [combo : ast.AstPattern]) : ast.AstPatternList
+  (match combo
+    [(ast.AstPattern.Tuple items-box) (deref items-box)]
+    [_ (ast.ast-pattern-list-new)]))
+
+;; Tests the enum tag of a variant alternative of an or-pattern arm (unless
+;; `test?` is false) and binds its payload; a failed test or refutable
+;; payload jumps to `fail-label`, which is a trap when `test?` is false.
+(define (lower-or-variant-alternative-bind
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [tag-var : i64]
+  [borrow-lifetime : tc_core.TcMaybeNameId]
+  [scrut-reg-group? : bool]
+  [variant-name-id : i64]
+  [args : ast.AstPatternList]
+  [test? : bool]
+  [fail-label : i64]) : ResultLowerEnv
+  (match (lower-variant-arm-resolution
+    ctx
+    (lower-state-function-state state)
+    (tc_core.tc-context-symbols-view ctx)
+    (lower-global-shared-view scrut-ty)
+    variant-name-id)
+    [(LowerVariantArmResolution.Missing variant-name)
+      (ResultLowerEnv.Err
+        (box
+          (lower-diagnostic
+            (str_cat.str-cat "lower: unknown variant " variant-name))))]
+    [(LowerVariantArmResolution.FieldsErr message)
+      (ResultLowerEnv.Err (box (lower-diagnostic message)))]
+    [(LowerVariantArmResolution.Some
+        variant-name
+        resolved-scrut-ty
+        handle
+        resolved-fields
+        handle-name-id)
+      (let
+        [bind-state : LowerState
+          (if test?
+            (match (lower-state-alloc-var state)
+              [(LowerAlloc.Alloc eq-alloc eq-var)
+                (match (lower-state-fresh-label
+                  (lower-state-emit
+                    eq-alloc
+                    (ir.CompilerIrInstr.BinOp
+                      eq-var
+                      ir.CompilerIrBinOp.Eq
+                      (ir.CompilerIrValue.Var tag-var)
+                      (ir.CompilerIrValue.I64
+                        (csym.compiler-registry-handle-child-index handle))
+                      (ast.AstType.I64)))
+                  "match_or_alt")
+                  [(LowerLabel.Label ok-state ok-label)
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        ok-state
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var eq-var)
+                          ok-label
+                          fail-label))
+                      ok-label)])])
+            state)]
+        (lower-bind-match-variant-payloads
+          ctx
+          bind-state
+          env
+          type-env
+          borrow-lifetime
+          (ir.CompilerIrValue.Var scrut-var)
+          args
+          resolved-fields
+          (lower-state-mode bind-state)
+          (lower-enum-type-name-id-or resolved-scrut-ty -1)
+          (lower-enum-type-name-or-empty resolved-scrut-ty)
+          variant-name
+          handle-name-id
+          0
+          8
+          fail-label
+          scrut-reg-group?))]))
+
+;; Tests and binds one or-free alternative of an or-pattern arm. `test?` is
+;; false only for the last alternative of a match's final arm, which matches
+;; once every earlier alternative failed, as a final arm always does.
+(define (lower-or-alternative-bind
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [scrutinee : LowerOrScrutinee]
+  [pattern : ast.AstPattern]
+  [test? : bool]
+  [fail-label : i64]) : ResultLowerEnv
+  (match scrutinee
+    [(LowerOrScrutinee.Enum tag-var borrow-lifetime scrut-reg-group?)
+      (match pattern
+        [(ast.AstPattern.Wildcard) (ResultLowerEnv.Ok state env type-env)]
+        [(ast.AstPattern.Binding variant-name)
+          (lower-or-variant-alternative-bind
+            ctx
+            state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            tag-var
+            borrow-lifetime
+            scrut-reg-group?
+            variant-name
+            (ast.ast-pattern-list-new)
+            test?
+            fail-label)]
+        [(ast.AstPattern.Variant variant-name args-box)
+          (lower-or-variant-alternative-bind
+            ctx
+            state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            tag-var
+            borrow-lifetime
+            scrut-reg-group?
+            variant-name
+            (deref args-box)
+            test?
+            fail-label)]
+        [_
+          (ResultLowerEnv.Err
+            (box (lower-diagnostic "lower: unsupported enum match pattern")))])]
+    [(LowerOrScrutinee.Scalar)
+      (match (lower-global-shared-view pattern)
+        [(ast.AstPattern.Literal lit)
+          (if test?
+            (match (lower-state-alloc-var state)
+              [(LowerAlloc.Alloc eq-alloc eq-var)
+                (match (lower-state-fresh-label
+                  (lower-state-emit
+                    eq-alloc
+                    (ir.CompilerIrInstr.BinOp
+                      eq-var
+                      ir.CompilerIrBinOp.Eq
+                      (ir.CompilerIrValue.Var scrut-var)
+                      (lower-literal-value-with-type
+                        (tc_core.tc-context-source-names ctx)
+                        lit
+                        (lower-global-shared-view scrut-ty))
+                      (lower-global-shared-view scrut-ty)))
+                  "match_or_alt")
+                  [(LowerLabel.Label ok-state ok-label)
+                    (ResultLowerEnv.Ok
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          ok-state
+                          (ir.CompilerIrInstr.Branch
+                            (ir.CompilerIrValue.Var eq-var)
+                            ok-label
+                            fail-label))
+                        ok-label)
+                      env
+                      type-env)])])
+            (ResultLowerEnv.Ok state env type-env))]
+        ;; An untested last alternative skips only the length test.
+        [(ast.AstPattern.Slice items-box has-rest)
+          (lower-bind-slice-pattern
+            ctx
+            state
+            env
+            type-env
+            (ir.CompilerIrValue.Var scrut-var)
+            (lower-global-shared-view scrut-ty)
+            (deref items-box)
+            has-rest
+            (lower-state-mode state)
+            fail-label
+            test?)]
+        [_
+          (lower-bind-match-catch-all-pattern
+            ctx
+            state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            pattern)])]))
+
+;; Whether an or-pattern alternative tests more than its top-level enum tag,
+;; slice length or literal: a refutable payload or element pattern, as an
+;; expanded nested or-pattern leaves. As the last alternative of a match's
+;; final arm, it skips only the top-level test.
+(define (lower-or-alternative-refutable-within?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [scrut-ty : ast.AstType]
+  [scrutinee : LowerOrScrutinee]
+  [pattern : ast.AstPattern]) : bool
+  (match (lower-global-shared-view pattern)
+    [(ast.AstPattern.Variant variant-name args-box)
+      (match scrutinee
+        [(LowerOrScrutinee.Enum _ _ _)
+          (match (lower-variant-arm-resolution
+            ctx
+            (lower-state-function-state state)
+            (tc_core.tc-context-symbols-view ctx)
+            (lower-global-shared-view scrut-ty)
+            variant-name)
+            [(LowerVariantArmResolution.Some _ _ _ resolved-fields _)
+              (lower-pattern-list-refutable-for-types?
+                ctx
+                (deref args-box)
+                resolved-fields)]
+            [_ false])]
+        [(LowerOrScrutinee.Scalar) false])]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (match (tc_core.tc-slice-pattern-scrutinee
+        ctx
+        (lower-global-shared-view scrut-ty))
+        [(tc_core.TcSlicePatternScrutinee.View _ _ elem-ty _)
+          (let
+            [items : ast.AstPatternList (deref items-box)]
+            (not
+              (tc_core.tc-slice-pattern-elements-irrefutable?
+                ctx
+                (& items)
+                (tc_core.tc-slice-pattern-element-count (& items) has-rest)
+                elem-ty)))]
+        [(tc_core.TcSlicePatternScrutinee.Invalid) false])]
+    [_ false]))
+
+;; Lowers an or-pattern arm's alternatives in order. Each one that matches
+;; binds its names and jumps to one shared body block, where each name is a
+;; phi of the alternatives' bindings; the body is lowered once. A failed last
+;; alternative jumps to `next-label`. In a match's final arm every alternative
+;; but the last is tested, as the final arm of an exhaustive match need not be.
+;; Refutable patterns left inside that last one by an expanded nested
+;; or-pattern still bind through their tests, which typecheck proves cannot
+;; fail; their failure edge aborts.
+;; Returns the state at the start of the body block.
+(define (lower-or-arm-body-start
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [scrutinee : LowerOrScrutinee]
+  [alternatives : ast.AstPatternList]
+  [final? : bool]
+  [next-label : i64]) : ResultLowerEnv
+  (let
+    [names : tc_core.TcNameIdList
+      (tc_core.tc-borrow-check-pattern-bound-names
+        ctx
+        (lower-global-shared-view scrut-ty)
+        (ast.ast-pattern-list-get (& alternatives) 0 (ast.ast-pattern-fallback)))]
+    [count : i64 (tc_core.tc-name-id-list-len names)]
+    [name-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType count)]
+    ;; Alternative-major: the var each alternative binds each name to.
+    [values : (__tl_dyn-array i64)
+      (__tl_make-array i64 (* alternatives.len count))]
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 alternatives.len)]
+    [cursor : tc_core.TcNameIdList names]
+    [name-index : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< name-index count)
+        (begin
+          (set!
+            (array-ref name-ids name-index)
+            (tc_core.tc-name-id-list-head cursor))
+          (set! cursor (tc_core.tc-name-id-list-rest cursor))
+          (set! name-index (+ name-index 1))))
+      (match (lower-state-fresh-label state "match_or_body")
+        [(LowerLabel.Label body-label-state body-label)
+          (let
+            [current : LowerState body-label-state]
+            [trap-label : i64 -1]
+            [trap? : bool
+              (and
+                final?
+                (lower-or-alternative-refutable-within?
+                  ctx
+                  body-label-state
+                  (lower-global-shared-view scrut-ty)
+                  (lower-global-shared-view scrutinee)
+                  (ast.ast-pattern-list-get
+                    (& alternatives)
+                    (- alternatives.len 1)
+                    (ast.ast-pattern-fallback))))]
+            (begin
+              (when
+                trap?
+                (match (lower-state-fresh-label current "match_or_unreachable")
+                  [(LowerLabel.Label trap-state label)
+                    (begin
+                      (set! current trap-state)
+                      (set! trap-label label))]))
+              (while (< index alternatives.len)
+                (let
+                  [last? : bool (= index (- alternatives.len 1))]
+                  [fail : LowerLabel
+                    (if last?
+                      (LowerLabel.Label
+                        current
+                        (cond
+                          [(not final?) next-label]
+                          [trap? trap-label]
+                          [else body-label]))
+                      (lower-state-fresh-label current "match_or_next"))]
+                  (match fail
+                    [(LowerLabel.Label fail-state fail-label)
+                      (match (lower-or-alternative-bind
+                        ctx
+                        fail-state
+                        env
+                        type-env
+                        scrut-var
+                        (lower-global-shared-view scrut-ty)
+                        scrutinee
+                        (ast.ast-pattern-list-get
+                          (& alternatives)
+                          index
+                          (ast.ast-pattern-fallback))
+                        (not (and last? final?))
+                        fail-label)
+                        [(ResultLowerEnv.Ok
+                            bound-state
+                            bound-env
+                            bound-type-env)
+                          (begin
+                            (set! name-index 0)
+                            (while (< name-index count)
+                              (let
+                                [name : i64 (array-ref name-ids name-index)]
+                                [var : i64
+                                  (sym_i64_env.sym-i64-lookup-id-or
+                                    bound-env
+                                    name
+                                    -1)]
+                                (begin
+                                  (when
+                                    (< var 0)
+                                    (return
+                                      (ResultLowerEnv.Err
+                                        (box
+                                          (lower-diagnostic
+                                            "lower: internal or-pattern alternative binding missing")))))
+                                  (set!
+                                    (array-ref
+                                      values
+                                      (+ (* index count) name-index))
+                                    var)
+                                  (if (= index 0)
+                                    (match (tc_core.tc-lookup-id
+                                      bound-type-env
+                                      name)
+                                      [(tc_core.ResultTcType.Ok ty)
+                                        (set! (array-ref types name-index) ty)]
+                                      [(tc_core.ResultTcType.Err message)
+                                        (return
+                                          (ResultLowerEnv.Err
+                                            (box (lower-diagnostic message))))])
+                                    unit)
+                                  (set! name-index (+ name-index 1)))))
+                            (set!
+                              (array-ref labels index)
+                              (lower-state-current-label bound-state))
+                            (let
+                              [jumped : LowerState
+                                (lower-state-emit
+                                  bound-state
+                                  (ir.CompilerIrInstr.Jump body-label))]
+                              (set!
+                                current
+                                (if last?
+                                  jumped
+                                  (lower-state-finish-block jumped fail-label))))
+                            (set! index (+ index 1)))]
+                        [(ResultLowerEnv.Err message)
+                          (return (ResultLowerEnv.Err message))])])))
+              (when
+                (>= trap-label 0)
+                (set!
+                  current
+                  (lower-state-emit
+                    (lower-oob-abort
+                      (lower-state-finish-block current trap-label))
+                    (ir.CompilerIrInstr.Jump trap-label))))
+              (lower-or-arm-phis
+                ctx
+                (lower-state-finish-block current body-label)
+                env
+                type-env
+                name-ids
+                types
+                values
+                labels)))]))))
+
+;; Binds each or-pattern name in the shared body block to a phi of the vars
+;; the alternatives bound it to.
+(define (lower-or-arm-phis
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [name-ids : (__tl_dyn-array i64)]
+  [types : (__tl_dyn-array ast.AstType)]
+  [values : (__tl_dyn-array i64)]
+  [labels : (__tl_dyn-array i64)]) : ResultLowerEnv
+  (let
+    [count : i64 (array-length name-ids)]
+    [current : LowerState state]
+    [body-env : sym_i64_env.SymI64Env env]
+    [body-type-env : tc_core.TcTypeEnv type-env]
+    [name-index : i64 0]
+    (begin
+      (while (< name-index count)
+        (let
+          [inputs : ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-phi-input-seq-empty)]
+          [alternative : i64 (- (array-length labels) 1)]
+          [ty : ast.AstType
+            (lower-global-array-element-shared-view types name-index)]
+          (begin
+            (while (>= alternative 0)
+              (begin
+                (set!
+                  inputs
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    (ir.CompilerIrValue.Var
+                      (array-ref values (+ (* alternative count) name-index)))
+                    (array-ref labels alternative)
+                    inputs))
+                (set! alternative (- alternative 1))))
+            (match (lower-state-alloc-var current)
+              [(LowerAlloc.Alloc allocated var-id)
+                (begin
+                  (set!
+                    current
+                    (lower-state-emit
+                      allocated
+                      (ir.CompilerIrInstr.Phi
+                        var-id
+                        inputs
+                        (lower-one-word-register-storage-type ctx ty))))
+                  (set!
+                    body-env
+                    (sym_i64_env.sym-i64-bind-id
+                      body-env
+                      (array-ref name-ids name-index)
+                      var-id))
+                  (set!
+                    body-type-env
+                    (tc_core.tc-bind-id
+                      body-type-env
+                      (array-ref name-ids name-index)
+                      ty)))])
+            (set! name-index (+ name-index 1)))))
+      (ResultLowerEnv.Ok current body-env body-type-env))))
+
+;; Lowers an arm whose pattern needs or-expansion: the shared body block, then
+;; the remaining arms from the label the last alternative fails to.
+(define (lower-match-or-arm
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [scrutinee : LowerOrScrutinee]
+  [pattern : ast.AstPattern]
+  [body : ast.AstExpr]
+  [rest : ast.AstMatchArmList]
+  [cont : LowerMatchCont]
+  [total-enum-switch? : bool]) : ResultLowerExpr
+  (let
+    [alternatives : ast.AstPatternList (lower-pattern-or-alternatives pattern)]
+    (if (ast.ast-match-arm-list-empty? (& rest))
+      (match (lower-or-arm-body-start
+        ctx
+        state
+        env
+        type-env
+        scrut-var
+        scrut-ty
+        scrutinee
+        alternatives
+        true
+        -1)
+        [(ResultLowerEnv.Ok body-start body-env body-type-env)
+          (lower-match-arm-final
+            ctx
+            body-start
+            body-env
+            body-type-env
+            body
+            cont)]
+        [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])
+      (let
+        [next-total-enum-switch? : bool
+          (match scrutinee
+            [(LowerOrScrutinee.Enum _ _ _)
+              (lower-total-enum-switch-next? total-enum-switch? (& rest))]
+            [(LowerOrScrutinee.Scalar) false])]
+        (match (lower-state-fresh-label
+          state
+          (lower-enum-match-next-label-base next-total-enum-switch? rest))
+          [(LowerLabel.Label next-state next-label)
+            (match (lower-or-arm-body-start
               ctx
-              state
+              next-state
               env
               type-env
               scrut-var
               (lower-global-shared-view scrut-ty)
-              (deref items-box)
-              has-rest
-              (lower-global-shared-view cont))]
-          [_
-            (lower-bind-match-catch-all-pattern
-              ctx
-              state
-              env
-              type-env
-              scrut-var
-              scrut-ty
-              pat)])
-          [(ResultLowerEnv.Ok body-start body-env body-type-env)
-            (lower-match-arm-final
-              ctx
-              body-start
-              body-env
-              body-type-env
-              body
-              cont)]
-          [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))]))
+              scrutinee
+              alternatives
+              false
+              next-label)
+              [(ResultLowerEnv.Ok body-start body-env body-type-env)
+                (match (lower-match-arm-body
+                  ctx
+                  body-start
+                  body-env
+                  body-type-env
+                  body
+                  cont)
+                  [(ResultLowerMatchArm.Ok body-state next-cont)
+                    (let
+                      [rest-state : LowerState
+                        (lower-state-finish-block body-state next-label)]
+                      (match scrutinee
+                        [(LowerOrScrutinee.Enum
+                            tag-var
+                            borrow-lifetime
+                            scrut-reg-group?)
+                          (lower-match-enum-arms
+                            ctx
+                            rest-state
+                            env
+                            type-env
+                            scrut-var
+                            scrut-ty
+                            tag-var
+                            rest
+                            next-cont
+                            borrow-lifetime
+                            scrut-reg-group?
+                            next-total-enum-switch?)]
+                        [(LowerOrScrutinee.Scalar)
+                          (lower-match-arms
+                            ctx
+                            rest-state
+                            env
+                            type-env
+                            scrut-var
+                            scrut-ty
+                            rest
+                            next-cont)]))]
+                  [(ResultLowerMatchArm.Err message)
+                    (ResultLowerExpr.Err message)])]
+              [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])])))))
 
 (define (lower-match-enum
   [ctx : tc_core.TcContext]
@@ -66418,36 +67434,56 @@
         [(ast.AstMatchArm.Arm pat body-box)
           (let
             [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-            (if (ast.ast-match-arm-list-empty? (& rest))
-              (lower-match-enum-final-pattern
-                ctx
-                state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                arm
-                pat
-                body
-                cont
-                borrow-lifetime
-                scrut-reg-group?)
-              (lower-match-enum-branch-pattern
-                ctx
-                state
-                env
-                type-env
-                scrut-var
-                scrut-ty
-                tag-var
-                arm
-                pat
-                body
-                rest
-                cont
-                borrow-lifetime
-                scrut-reg-group?
-                total-enum-switch?)))]))))
+            (cond
+              [(lower-pattern-needs-or-expansion?
+                  (lower-global-shared-view pat))
+                (lower-match-or-arm
+                  ctx
+                  state
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  (LowerOrScrutinee.Enum
+                    tag-var
+                    borrow-lifetime
+                    scrut-reg-group?)
+                  pat
+                  body
+                  rest
+                  cont
+                  total-enum-switch?)]
+              [(ast.ast-match-arm-list-empty? (& rest))
+                (lower-match-enum-final-pattern
+                  ctx
+                  state
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  arm
+                  pat
+                  body
+                  cont
+                  borrow-lifetime
+                  scrut-reg-group?)]
+              [else
+                (lower-match-enum-branch-pattern
+                  ctx
+                  state
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  tag-var
+                  arm
+                  pat
+                  body
+                  rest
+                  cont
+                  borrow-lifetime
+                  scrut-reg-group?
+                  total-enum-switch?)]))]))))
 
 (define (lower-match-variant-final
   [ctx : tc_core.TcContext]

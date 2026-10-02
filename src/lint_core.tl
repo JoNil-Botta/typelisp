@@ -2282,6 +2282,11 @@
     [(ast.AstPattern.Array items) (lint-pattern-list-names (deref items) names)]
     [(ast.AstPattern.Slice items _)
       (lint-pattern-list-names (deref items) names)]
+    [(ast.AstPattern.Or items) (lint-pattern-list-names (deref items) names)]
+    [(ast.AstPattern.Fields items)
+      (lint-pattern-list-names (deref items) names)]
+    [(ast.AstPattern.Field _ items)
+      (lint-pattern-list-names (deref items) names)]
     [(ast.AstPattern.Wildcard) names]
     [(ast.AstPattern.Binding _) names]
     [(ast.AstPattern.Variant name items)
@@ -3343,6 +3348,12 @@
     [(ast.AstPattern.Array items)
       (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Slice items _)
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(ast.AstPattern.Or items)
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(ast.AstPattern.Fields items)
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(ast.AstPattern.Field _ items)
       (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Wildcard) scope]
     [(ast.AstPattern.Binding name) (lint-unsafe-scope-add-id scope name)]
@@ -6525,6 +6536,12 @@
       (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(ast.AstPattern.Slice items _)
       (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(ast.AstPattern.Or items)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(ast.AstPattern.Fields items)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(ast.AstPattern.Field _ items)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(ast.AstPattern.Variant name items)
       (let
         [variant : LintNameCasePatternScan
@@ -6562,6 +6579,29 @@
         limit
         findings
         false)]
+    ;; Each alternative of a root or-pattern is itself a root.
+    [(ast.AstPattern.Or items)
+      (let
+        [alternatives : ast.AstPatternList (deref items)]
+        [scan : LintNameCasePatternScan
+          (LintNameCasePatternScan findings cursor)]
+        [index : i64 0]
+        (begin
+          (while (< index alternatives.len)
+            (begin
+              (set!
+                scan
+                (lint-name-case-match-pattern
+                  (ast.ast-pattern-list-get
+                    (& alternatives)
+                    index
+                    (ast.ast-pattern-fallback))
+                  source
+                  scan.next-index
+                  limit
+                  scan.findings))
+              (set! index (+ index 1))))
+          scan))]
     [_ (lint-name-case-pattern pattern source cursor limit findings)]))
 
 (defstruct LintNameCaseDeclState
@@ -7817,6 +7857,14 @@
       (lint-unused-variable-pattern-list-bindings
         (ast.ast-pattern-list-box-shared-view items)
         state)]
+    [(ast.AstPattern.Fields items)
+      (lint-unused-variable-pattern-list-bindings
+        (ast.ast-pattern-list-box-shared-view items)
+        state)]
+    [(ast.AstPattern.Field _ items)
+      (lint-unused-variable-pattern-list-bindings
+        (ast.ast-pattern-list-box-shared-view items)
+        state)]
     [(ast.AstPattern.Wildcard) state]
     [(ast.AstPattern.Binding name)
       (lint-unused-variable-add-to-current-frame
@@ -7830,6 +7878,18 @@
       (lint-unused-variable-pattern-list-bindings
         (ast.ast-pattern-list-box-shared-view items)
         state)]
+    ;; Every alternative binds the same names, so the first one stands for
+    ;; them all; adding each would leave the others' copies unused.
+    [(ast.AstPattern.Or items)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view items)]
+        (lint-unused-variable-pattern-bindings
+          (ast.ast-pattern-list-get
+            (& alternatives)
+            0
+            (ast.ast-pattern-fallback))
+          state))]
     [(ast.AstPattern.Literal _) state]))
 
 (define (lint-unused-variable-expr-list

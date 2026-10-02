@@ -61452,11 +61452,13 @@
     [(ResultLowerSpmdInlineHelper.Err message) (ResultLowerExpr.Err message)]))
 
 ;; Masked SPMD lowering has no vector conversion, so a cast may reach its
-;; operand only when the operand already has the destination's lane
-;; representation: a casted numeric literal, or a cast between identical
-;; numeric lanes. Every other cast is rejected at `origin` here, whatever a
-;; caller's census admitted: lowering its operand would load lanes in the
-;; source domain and store the same bits in the destination domain (#7306).
+;; operand only when lanes need no conversion: a cast between identical numeric
+;; lanes, or a casted numeric literal, a constant that keeps its existing
+;; lowering (#7306 leaves literals unchanged). An integer literal cast to a
+;; float lane is not converted here and fails closed in the backend (#8568).
+;; Every other cast is rejected at `origin` here, whatever a caller's census
+;; admitted: lowering its operand would load lanes in the source domain and
+;; store the same bits in the destination domain (#7306).
 (define (lower-avx512-masked-cast
   [ctx : tc_core.TcContext]
   [state : LowerState]

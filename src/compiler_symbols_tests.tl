@@ -502,6 +502,53 @@
 (defstruct Foo (x i64))"
       "Foo")))
 
+;; The bare-name handle a root declaration of `root-src` leaves behind when an
+;; imported module's `ResB` variants registered first, or -1 when the root
+;; declaration is rejected.
+(define (compiler-symbols-root-after-imported-variants-kind [root-src : String]) : i64
+  (match (parser.parse-ast-source
+    "(module lib)
+(defenum ResB (Err i64) (Ok i64))")
+    [(parser.ResultAstProgram.Ok base-program)
+      (match (csym.build-compiler-symbols base-program)
+        [(csym.ResultCompilerSymbols.Ok base-symbols)
+          (match (parser.parse-ast-source root-src)
+            [(parser.ResultAstProgram.Ok (ast.AstProgram.Program root-box))
+              (match (csym.compiler-symbols-insert-decls
+                base-symbols
+                (deref root-box)
+                (csym.compiler-symbol-root-module-id))
+                [(csym.ResultCompilerSymbols.Ok symbols)
+                  (match (csym.compiler-symbols-lookup-value-id
+                    (& symbols)
+                    (csym.compiler-symbols-decl-name-id-at-index symbols 1))
+                    [(option_i64.Some handle)
+                      (csym.compiler-symbol-handle-kind handle)]
+                    [(option_i64.None) -2])]
+                [(csym.ResultCompilerSymbols.Err _) -1])]
+            [_ -3])]
+        [(csym.ResultCompilerSymbols.Err _) -4])]
+    [(parser.ResultAstProgram.Err _) -5]))
+
+;; #8582: an imported enum's variants register bare-name aliases before the
+;; entry module's declarations. A root struct, function or value named like one
+;; of them replaces the alias, because the variant is owned by its enum's
+;; (non-root) module; a root enum's own variant still collides (above).
+(define (compiler-symbols-root-shadows-imported-variant-ok?) : bool
+  (and
+    (=
+      (compiler-symbols-root-after-imported-variants-kind
+        "(defstruct Ok (v i64))")
+      (csym.compiler-symbol-kind-defstruct))
+    (=
+      (compiler-symbols-root-after-imported-variants-kind
+        "(define (Ok [v : i64]) : i64 v)")
+      (csym.compiler-symbol-kind-function-define))
+    (=
+      (compiler-symbols-root-after-imported-variants-kind
+        "(define Err : i64 1)")
+      (csym.compiler-symbol-kind-value-define))))
+
 (define (compiler-symbols-struct-value-collisions-ok?) : bool
   (and
     (compiler-symbols-duplicate-value-error-ok?
@@ -2276,6 +2323,7 @@
                         (compiler-symbols-module-duplicate-diagnostics-ok?)
                         (compiler-symbols-module-duplicate-with-paths-ok?)
                         (compiler-symbols-variant-value-collisions-ok?)
+                        (compiler-symbols-root-shadows-imported-variant-ok?)
                         (compiler-symbols-struct-value-collisions-ok?)
                         (compiler-registries-duplicate-variant-ok?)
                         (compiler-registries-cross-enum-variant-ok?)

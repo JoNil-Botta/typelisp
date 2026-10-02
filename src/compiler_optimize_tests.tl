@@ -13406,12 +13406,76 @@
     [(not (compiler-optimize-scc-reverse-topo-ok?)) 3]
     [else 42]))
 
+;; `main` meets its callees as c, a, c, b (slots 3, 1, 3, 2), so building its row
+;; shifts earlier entries right and drops the repeat. The row must read back
+;; ascending, and next-child must step through it one callee at a time.
+(define (opt-callgraph-unsorted-functions [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrFunctionSeq
+  (ir.compiler-ir-function-seq-prepend
+    (opt-test-function-symbol
+      symbols.main
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Call
+          0
+          symbols.c
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Call
+          1
+          symbols.a
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Call
+          2
+          symbols.c
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.Call
+          3
+          symbols.b
+          ir.CompilerIrCallArgs.Nil
+          (ast.AstType.I64))
+        (irt.instr "return 0")))
+    (ir.compiler-ir-function-seq-prepend
+      (opt-test-function-symbol symbols.a (opt-callgraph-return-instrs))
+      (ir.compiler-ir-function-seq-prepend
+        (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs))
+        (ir.compiler-ir-function-seq-prepend
+          (opt-test-function-symbol symbols.c (opt-callgraph-return-instrs))
+          (ir.compiler-ir-function-seq-empty))))))
+
+(define (compiler-optimize-callgraph-sorted-rows-ok?) : bool
+  (let
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : ir.CompilerIrFunctionSeq
+      (opt-callgraph-unsorted-functions symbols)]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
+    [graph : opt.OptCallGraph (opt.opt-callgraph-build index)]
+    [main : i64 (opt-callgraph-test-slot (& index) symbols.main)]
+    [a : i64 (opt-callgraph-test-slot (& index) symbols.a)]
+    [b : i64 (opt-callgraph-test-slot (& index) symbols.b)]
+    [c : i64 (opt-callgraph-test-slot (& index) symbols.c)]
+    [start : i64 (opt.opt-callgraph-row-start (& graph) main)]
+    (cond
+      [(not (and (< main a) (< a b) (< b c))) false]
+      [(not (= (- (opt.opt-callgraph-row-end (& graph) main) start) 3)) false]
+      [(not (= (opt.opt-callgraph-target (& graph) start) a)) false]
+      [(not (= (opt.opt-callgraph-target (& graph) (+ start 1)) b)) false]
+      [(not (= (opt.opt-callgraph-target (& graph) (+ start 2)) c)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main -1) a)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main a) b)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main b) c)) false]
+      [(not (= (opt.opt-scc-next-child (& graph) main c) -1)) false]
+      [(not (opt.opt-callgraph-has-edge? (& graph) main b)) false]
+      [(opt.opt-callgraph-has-edge? (& graph) main main) false]
+      [(opt.opt-callgraph-has-edge? (& graph) a main) false]
+      [else true])))
+
 (define (compiler-optimize-callgraph-self-test) : i64
-  (if (compiler-optimize-callgraph-acyclic-ok?)
-    (if (compiler-optimize-callgraph-recursive-ok?)
-      42
-      2)
-    1))
+  (cond
+    [(not (compiler-optimize-callgraph-acyclic-ok?)) 1]
+    [(not (compiler-optimize-callgraph-recursive-ok?)) 2]
+    [(not (compiler-optimize-callgraph-sorted-rows-ok?)) 3]
+    [else 42]))
 
 (define (opt-inline-frame-params) : ir.CompilerIrParamSeq
   (irt.params "left=%0:i64, right=%1:i64"))

@@ -131,6 +131,20 @@ are checked; zero-length views are valid. For example:
   (middle-length (slice-view items 1 2)))      ; checked borrowed subview
 ```
 
+`match` takes a borrowed Slice, or a borrowed fixed array, apart by length:
+`(slice)` matches an empty view, `(slice a b)` exactly two elements, and
+`(slice x & rest)` at least one, binding the remaining elements to `rest` as a
+borrowed Slice without copying. Copy elements bind by value and other
+elements by reference. Element patterns may be refutable, but only arms whose
+element patterns are irrefutable count toward covering every length:
+
+```lisp
+(define (sum [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(slice) 0]
+    [(slice x & rest) (+ x (sum rest))]))
+```
+
 ### Abstraction: comptime, not generics
 
 TypeLisp does not plan source-level generics, traits, interfaces, `impl`
@@ -227,7 +241,8 @@ the server host and accepts `target` plus a string-array `cfg` in
 `if`, `when`, `unless`, `let`, scalar `for`, `while` (with unit
 `break`/`continue`),
 `begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
-struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
+struct patterns, `(slice ...)` length patterns over borrowed Slices, `_`),
+`ann`, `cast`, `return`, `try`, `foreach`,
 `foreach-active`, `spmd-reduce`, `spmd-scan`, `spmd-compact`; arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`
 `bit-or` `bit-xor` `shl` `shr`) operators. Unary operators are prefix forms

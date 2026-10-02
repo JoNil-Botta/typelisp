@@ -605,6 +605,24 @@ fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_
 fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
+slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
+slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch
+slice_match_pattern_missing_length_reject|check-fail|tests/safety/slice_match_pattern_missing_length_reject.tl|-|typecheck: match missing arm for slices of length 1
+slice_match_pattern_open_length_reject|check-fail|tests/safety/slice_match_pattern_open_length_reject.tl|-|typecheck: match missing arm for slices of length 2 or more
+slice_match_pattern_refutable_coverage_reject|check-fail|tests/safety/slice_match_pattern_refutable_coverage_reject.tl|-|typecheck: match missing arm for slices of length 1 or more
+slice_match_pattern_unreachable_reject|check-fail|tests/safety/slice_match_pattern_unreachable_reject.tl|-|earlier slice patterns already match every length it matches
+slice_match_pattern_after_catchall_reject|check-fail|tests/safety/slice_match_pattern_after_catchall_reject.tl|-|unreachable match arm after a slice pattern that matches every length
+slice_match_pattern_array_length_reject|check-fail|tests/safety/slice_match_pattern_array_length_reject.tl|-|slice pattern matches exactly 2 elements, but the fixed array has 3
+slice_match_pattern_rest_shared_reject|check-fail|tests/safety/slice_match_pattern_rest_shared_reject.tl|-|set! array element requires mutable array access
+slice_match_pattern_rest_mut_param_reject|check-fail|tests/safety/slice_match_pattern_rest_mut_param_reject.tl|-|expected (&mut (Slice i64)), found (& (Slice i64))
+slice_match_pattern_borrow_escape_reject|check-fail|tests/safety/slice_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+slice_match_pattern_borrow_conflict_reject|check-fail|tests/safety/slice_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[1]`
+slice_match_pattern_mut_borrow_conflict_reject|check-fail|tests/safety/slice_match_pattern_mut_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[1]`
+slice_match_pattern_mut_destructure_reject|check-fail|tests/safety/slice_match_pattern_mut_destructure_reject.tl|-|a mutable slice pattern binds a non-Copy element only to a name or `_`
+slice_match_pattern_rest_marker_reject|check-fail|tests/safety/slice_match_pattern_rest_marker_reject.tl|-|slice pattern `&` must be followed by exactly one rest binding or `_`
+slice_match_pattern_two_rest_reject|check-fail|tests/safety/slice_match_pattern_two_rest_reject.tl|-|slice pattern takes at most one `&` rest binding
+slice_match_pattern_glued_rest_reject|check-fail|tests/safety/slice_match_pattern_glued_rest_reject.tl|-|slice pattern rest needs a space after `&`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 type_expr_runtime_reject|check-fail|tests/safety/type_expr_runtime_reject.tl|-|typecheck: type-expr is compile-time only; wrap it in (comptime ...)

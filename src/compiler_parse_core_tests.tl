@@ -2384,6 +2384,30 @@
       "(define (main [b : (Box i64)]) : i64 (deref b b))"
       "parse: deref expects exactly one expression")))
 
+;; `(slice ...)` patterns take element patterns and at most one `& rest`
+;; binding or `_`, which must come last and be spelled apart from `&`.
+(define (compiler-parse-slice-pattern-tests-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice) 0] [(slice a) a] [(slice a & rest) a] [(slice & _) 0]))")
+    (compiler-parse-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice 1 (Some x) & _) x] [_ 0]))")
+    (compiler-parse-error-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice a & b c) a] [_ 0]))"
+      "parse: slice pattern `&` must be followed by exactly one rest binding or `_`")
+    (compiler-parse-error-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice a &) a] [_ 0]))"
+      "parse: slice pattern `&` must be followed by exactly one rest binding or `_`")
+    (compiler-parse-error-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice a & (Some b)) a] [_ 0]))"
+      "parse: slice pattern `&` must be followed by exactly one rest binding or `_`")
+    (compiler-parse-error-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice a & b & c) a] [_ 0]))"
+      "parse: slice pattern takes at most one `&` rest binding")
+    (compiler-parse-error-ok?
+      "(define (f [xs : (& (Slice i64))]) : i64 (match xs [(slice a &rest) a] [_ 0]))"
+      "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`")))
+
 (define (compiler-parse-place-migration-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -2635,6 +2659,7 @@
     [(not (compiler-parse-raw-pointer-error-tests-ok?)) false]
     [(not (compiler-parse-extern-metadata-error-tests-ok?)) false]
     [(not (compiler-parse-box-error-tests-ok?)) false]
+    [(not (compiler-parse-slice-pattern-tests-ok?)) false]
     [(not (compiler-parse-reference-error-tests-ok?)) false]
     [(not (compiler-parse-invalidate-error-tests-ok?)) false]
     [else true]))

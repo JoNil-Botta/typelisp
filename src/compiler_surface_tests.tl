@@ -14,6 +14,7 @@
   (import compiler_surface_ast_codec_core as codec))
 (cfg compiler-surface-selftest (import compiler_owned_view as owned_view))
 (cfg compiler-surface-selftest (import compiler_surface_ast as surface_ast))
+(cfg compiler-surface-selftest (import compiler_surface_ast_expr as expr_codec))
 (cfg compiler-surface-selftest (import compiler_surface_facts as surface_facts))
 (cfg
   compiler-surface-selftest
@@ -383,6 +384,61 @@
               [(ast.AstDeclMetaValue.Comptime _ markers)
                 (and (= markers expected-markers) comptime?)])))))))
 
+;; `(slice 3 _ & _)` keeps its rest flag and its items through tag 7.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-slice-pattern-roundtrip-ok?) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [structural-session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new structural-session 0 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      [items : ast.AstPatternList
+        (ast.ast-pattern-cons
+          (ast.AstPattern.Literal (ast.AstLiteral.Int 3 "3"))
+          (ast.ast-pattern-cons
+            ast.AstPattern.Wildcard
+            (ast.ast-pattern-cons
+              ast.AstPattern.Wildcard
+              (ast.ast-pattern-list-new))))]
+      (begin
+        (expr_codec.surface-ast-write-pattern!
+          (&mut out)
+          (&mut context)
+          (ast.ast-pat-slice items true))
+        (let
+          [bytes : (__tl_dyn-array u8)
+            (byte_buf_core.byte-buf-builder-finish-array (& out))]
+          [byte-count : i64 (array-length bytes)]
+          [reader : codec.SurfaceAstReader
+            (codec.surface-ast-reader-new
+              bytes
+              structural-session
+              (__tl_make-array i64 0))]
+          [decoded : ast.AstPattern
+            (expr_codec.surface-ast-read-pattern! (&mut reader))]
+          (and
+            (codec.surface-ast-reader-valid? (& reader))
+            (= (codec.surface-ast-reader-offset (& reader)) byte-count)
+            (match decoded
+              [(ast.AstPattern.Slice decoded-items has-rest)
+                (let
+                  [list : ast.AstPatternList (deref decoded-items)]
+                  (and
+                    has-rest
+                    (= list.len 3)
+                    (match (ast.ast-pattern-list-get
+                      (& list)
+                      0
+                      (ast.ast-pattern-fallback))
+                      [(ast.AstPattern.Literal (ast.AstLiteral.Int 3 _)) true]
+                      [_ false])))]
+              [_ false])))))))
+
 (cfg
   compiler-surface-selftest
   (define (surface-ast-decl-meta-invalid-flags-ok?) : bool
@@ -663,6 +719,7 @@
       (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.CVarargsOpen)
       (surface-ast-extern-abi-roundtrip-ok? ast.AstExternAbi.TypeLisp)
       (surface-ast-extern-abi-unknown-tag-rejected?)
+      (surface-ast-slice-pattern-roundtrip-ok?)
       (surface-ast-declared-align-tests-ok?)
       (surface-ast-old-schema-rejected?)
       (surface-ast-c-function-reference-decode-ok? 1)

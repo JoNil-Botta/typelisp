@@ -354,6 +354,8 @@ there is no public unsized `Array` alias.
   `(&mut lifetime (Slice T))` (with the lifetime elided in ordinary function
   signatures). A `Slice` element must otherwise be a valid sized runtime type;
   another unsized `Slice` cannot be nested as an element.
+- `(slice ...)` patterns match borrowed Slice views by length and bind their
+  elements and the remaining view (§5.13).
 - A borrowed Slice reference is allocation-free and drop-free. Its runtime
   value is a pair consisting of a data pointer followed by a non-negative
   signed `i64` length, with size 16 bytes and alignment 8. It is a view into
@@ -4915,6 +4917,50 @@ explicit constructors.
   from left to right; copyable arrays are copied. Matching a shared borrowed
   array binds element references carrying the scrutinee lifetime without
   moving the owner. The pattern introduces no run-time branch or allocation.
+- Borrowed views `(& (Slice T))` and `(&mut (Slice T))`, and borrowed fixed
+  arrays `(& (Array T N))` and `(&mut (Array T N))`, support the variable-length
+  `slice` pattern. `(slice)` matches a view of exactly 0 elements,
+  `(slice p1 ... pn)` a view of exactly n elements, and
+  `(slice p1 ... pk & rest)` a view of at least k elements. `rest` is a
+  binding or `_`; it binds the remaining elements as `(& lifetime (Slice T))`,
+  or `(&mut lifetime (Slice T))` for a mutable scrutinee, with the scrutinee's
+  lifetime. `&` is a separate symbol: `(slice x &rest)` is rejected rather than
+  read as a binding named `&rest`. The stdlib vector's `view` returns such a
+  Slice. Private dynamic buffers are not slice scrutinees, because their
+  storage length need not be a collection's live length; `slice-view` names
+  the live range.
+  - Element patterns are matched in order and may be refutable: literals,
+    enum variants, and nested `slice` patterns over Slice-reference elements.
+    An element of a `Copy` type binds by value. Any other element binds as an
+    immutable reference with the scrutinee's lifetime, as a payload matched
+    through `(& place)` does, and its own payload patterns follow the borrowed
+    enum rules below; a `String` element binds as `(& lifetime str)`. Through a
+    mutable scrutinee a non-`Copy` element binds as `(&mut lifetime T)`, and
+    only to a name or `_`. Sibling element and `rest` bindings are disjoint
+    borrows of the scrutinee.
+  - The pattern composes inside enum payload patterns whose payload is a
+    Slice reference; through a borrowed enum, only a shared Slice payload can
+    be matched.
+  - A match is exhaustive when its arms cover every length. An arm covers its
+    lengths when it is `_`, a binding, or a `slice` pattern whose element
+    patterns are all irrefutable, so `(slice)` and `(slice x & rest)` together
+    are complete. As for enum payloads, arms with refutable element patterns
+    do not combine into coverage. A borrowed fixed array needs only its length
+    N, and a `slice` pattern that cannot match N elements is rejected.
+  - A `slice` arm is unreachable when earlier covering arms already match
+    every length it can match, and any arm after an irrefutable `slice`
+    pattern, such as `(slice & rest)`, is unreachable like one after `_`.
+  - The pattern performs one length comparison (none for a fixed array) and
+    the element loads. `rest` is the advanced data pointer and the remaining
+    length; it copies no elements and allocates nothing.
+
+  ```lisp test=check name=slice-pattern-sum
+  (define (sum [xs : (& (Slice i64))]) : i64
+    (match xs
+      [(slice) 0]
+      [(slice x & rest) (+ x (sum rest))]))
+  ```
+
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
   the same variant, wildcard, literal payload, and nested variant pattern
   forms, but inspect the enum without moving the owner. Payload bindings are

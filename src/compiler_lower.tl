@@ -11239,6 +11239,10 @@
       (lower-reach-used-types-add-pattern-list-roots!
         lower-state
         (deref patterns-box))]
+    [(ast.AstPattern.Slice patterns-box _)
+      (lower-reach-used-types-add-pattern-list-roots!
+        lower-state
+        (deref patterns-box))]
     [(ast.AstPattern.Wildcard) unit]
     [(ast.AstPattern.Binding _) unit]
     [(ast.AstPattern.Variant name patterns-box)
@@ -14275,6 +14279,13 @@
         module
         (deref patterns-box))]
     [(ast.AstPattern.Array patterns-box)
+      (lower-used-types-add-pattern-list
+        session
+        pools
+        used
+        module
+        (deref patterns-box))]
+    [(ast.AstPattern.Slice patterns-box _)
       (lower-used-types-add-pattern-list
         session
         pools
@@ -21272,6 +21283,52 @@
                           scrut-reg-group?)]
                       [(ResultLowerEnv.Err message)
                         (ResultLowerEnv.Err message)])])]
+              ;; A borrowed Slice payload is a two-word view, read by value
+              ;; even through a borrowed enum; its slice pattern tests the
+              ;; length and branches to `fail-label` like a nested variant.
+              [(ast.AstPattern.Slice items-box has-rest)
+                (match (lower-bind-payload-value
+                  ctx
+                  state
+                  (lower-global-shared-view base)
+                  enum-id
+                  offset
+                  (lower-global-shared-view resolved)
+                  scrut-reg-group?)
+                  [(LowerExpr.Expr view-state view-value _)
+                    (match (lower-bind-slice-pattern
+                      ctx
+                      view-state
+                      env
+                      type-env
+                      view-value
+                      (lower-global-shared-view resolved)
+                      (deref items-box)
+                      has-rest
+                      (lower-global-shared-view mode)
+                      fail-label
+                      true)
+                      [(ResultLowerEnv.Ok slice-state slice-env slice-type-env)
+                        (lower-bind-variant-payloads
+                          ctx
+                          slice-state
+                          slice-env
+                          slice-type-env
+                          bind-mode
+                          base
+                          rest-patterns
+                          rest-types
+                          mode
+                          enum-id
+                          enum-name
+                          variant-name
+                          variant-name-id
+                          next-index
+                          next-cursor
+                          fail-label
+                          scrut-reg-group?)]
+                      [(ResultLowerEnv.Err message)
+                        (ResultLowerEnv.Err message)])])]
               [(ast.AstPattern.Literal lit)
                 (if (lower-literal-payload-supported?
                   (lower-global-shared-view lit))
@@ -21533,6 +21590,347 @@
                   (box
                     (lower-diagnostic "lower: unsupported enum payload pattern")))])))))))
 
+;; The element patterns of a slice pattern, without its rest item.
+(define (lower-slice-pattern-elements
+  [items : (& items ast.AstPatternList)]
+  [count : i64]) : ast.AstPatternList
+  (let
+    [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast.ast-pattern-list-push
+            (&mut out)
+            (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
+          (set! index (+ index 1))))
+      out)))
+
+;; Binds a name to the address of element `index`, typed `ref-ty`.
+(define (lower-bind-slice-element-address
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [data-ptr : ir.CompilerIrValue]
+  [index : i64]
+  [elem-ty : ast.AstType]
+  [name : i64]
+  [ref-ty : ast.AstType]) : ResultLowerEnv
+  (match (lower-gep-byte state data-ptr (* index (lower-type-size ctx elem-ty)))
+    [(LowerExpr.Expr addr-state (ir.CompilerIrValue.Var addr-var) _)
+      (ResultLowerEnv.Ok
+        addr-state
+        (sym_i64_env.sym-i64-bind-id env name addr-var)
+        (tc_core.tc-bind-id type-env name ref-ty))]
+    [_
+      (ResultLowerEnv.Err
+        (box (lower-diagnostic "lower: internal slice element address failed")))]))
+
+;; A mutable view binds each non-Copy element named by the pattern as a `&mut`
+;; reference to its storage; typecheck admits only names and `_` there.
+(define (lower-bind-slice-mut-elements-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [data-ptr : ir.CompilerIrValue]
+  [items : (& items ast.AstPatternList)]
+  [count : i64]
+  [lifetime : i64]
+  [elem-ty : ast.AstType]
+  [index : i64]) : ResultLowerEnv
+  (if (>= index count)
+    (ResultLowerEnv.Ok state env type-env)
+    (let
+      [name : i64
+        (match (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))
+          [(ast.AstPattern.Binding name) name]
+          [(ast.AstPattern.Var name _) name]
+          [(ast.AstPattern.Wildcard) -1]
+          [_ -2])]
+      (cond
+        [(= name -1)
+          (lower-bind-slice-mut-elements-at
+            ctx
+            state
+            env
+            type-env
+            data-ptr
+            items
+            count
+            lifetime
+            elem-ty
+            (+ index 1))]
+        [(= name -2)
+          (ResultLowerEnv.Err
+            (box
+              (lower-diagnostic
+                "lower: unsupported mutable slice element pattern")))]
+        [else
+          (match (lower-bind-slice-element-address
+            ctx
+            state
+            env
+            type-env
+            (lower-global-shared-view data-ptr)
+            index
+            (lower-global-shared-view elem-ty)
+            name
+            (ast.ast-ty-mut-ref
+              lifetime
+              (tc_core.tc-type-without-regions
+                (lower-global-shared-view elem-ty))))
+            [(ResultLowerEnv.Ok next-state next-env next-type-env)
+              (lower-bind-slice-mut-elements-at
+                ctx
+                next-state
+                next-env
+                next-type-env
+                data-ptr
+                items
+                count
+                lifetime
+                elem-ty
+                (+ index 1))]
+            [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]))))
+
+;; Binds `rest` to the view past the first `count` elements: the data pointer
+;; advanced by `count` elements and the length less `count`, with no copy.
+(define (lower-bind-slice-rest
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [data-ptr : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]
+  [count : i64]
+  [rest : ast.AstPattern]
+  [rest-ty : ast.AstType]
+  [elem-ty : ast.AstType]) : ResultLowerEnv
+  (let
+    [name : i64
+      (match rest
+        [(ast.AstPattern.Binding name) name]
+        [(ast.AstPattern.Var name _) name]
+        [_ -1])]
+    [offset : i64 (* count (lower-type-size ctx elem-ty))]
+    (if (< name 0)
+      (ResultLowerEnv.Ok state env type-env)
+      (match (if (= offset 0)
+        (LowerExpr.Expr state data-ptr (ast.AstType.U64))
+        (lower-gep-byte state data-ptr offset))
+        [(LowerExpr.Expr ptr-state rest-ptr _)
+          (match (if (= count 0)
+            (LowerExpr.Expr ptr-state len (ast.AstType.I64))
+            (lower-emit-binop
+              ptr-state
+              ir.CompilerIrBinOp.Sub
+              len
+              (ir.CompilerIrValue.I64 count)
+              (ast.AstType.I64)))
+            [(LowerExpr.Expr len-state rest-len _)
+              (match (lower-slice-view-pack
+                len-state
+                rest-ptr
+                rest-len
+                (lower-global-shared-view rest-ty))
+                [(LowerExpr.Expr pack-state (ir.CompilerIrValue.Var rest-var) _)
+                  (ResultLowerEnv.Ok
+                    pack-state
+                    (sym_i64_env.sym-i64-bind-id env name rest-var)
+                    (tc_core.tc-bind-id type-env name rest-ty))]
+                [_
+                  (ResultLowerEnv.Err
+                    (box
+                      (lower-diagnostic
+                        "lower: internal slice rest view failed")))])])]))))
+
+;; Emits the one length comparison of a slice arm: `len = count`, or
+;; `len >= count` with a rest binding, branching to `fail-label` when false.
+(define (lower-slice-length-test
+  [state : LowerState]
+  [len : ir.CompilerIrValue]
+  [count : i64]
+  [has-rest : bool]
+  [fail-label : i64]) : LowerState
+  (match (lower-emit-binop
+    state
+    (if has-rest
+      ir.CompilerIrBinOp.Ge
+      ir.CompilerIrBinOp.Eq)
+    len
+    (ir.CompilerIrValue.I64 count)
+    (ast.AstType.I64))
+    [(LowerExpr.Expr cmp-state len-ok _)
+      (match (lower-state-fresh-label cmp-state "slice_len_ok")
+        [(LowerLabel.Label label-state ok-label)
+          (lower-state-finish-block
+            (lower-state-emit
+              label-state
+              (ir.CompilerIrInstr.Branch len-ok ok-label fail-label))
+            ok-label)])]))
+
+;; Binds the element patterns of a slice arm. Copy elements bind by value and
+;; other elements by reference through the payload binder: its sequential
+;; layout (an empty enum name) places element i at i * size.
+(define (lower-bind-slice-elements
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [data-ptr : ir.CompilerIrValue]
+  [items : (& items ast.AstPatternList)]
+  [count : i64]
+  [lifetime : i64]
+  [mutable : bool]
+  [elem-ty : ast.AstType]
+  [mode : CompilerLowerMode]
+  [fail-label : i64]) : ResultLowerEnv
+  (let
+    [copyable : bool
+      (tc_core.tc-type-copyable? ctx (lower-global-shared-view elem-ty))]
+    (if (and mutable (not copyable))
+      (lower-bind-slice-mut-elements-at
+        ctx
+        state
+        env
+        type-env
+        data-ptr
+        items
+        count
+        lifetime
+        elem-ty
+        0)
+      (let
+        [elem-id : i64
+          (ast.ast-node-pool-context-type-push
+            (tc_core.tc-context-pools ctx)
+            (lower-global-shared-view elem-ty))]
+        [types : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (ast.ast-type-list-push (&mut types) elem-id)
+              (set! index (+ index 1))))
+          (lower-bind-variant-payloads
+            ctx
+            state
+            env
+            type-env
+            (if copyable
+              (LowerBindMode.Owned)
+              (LowerBindMode.Borrowed lifetime))
+            data-ptr
+            (lower-slice-pattern-elements items count)
+            types
+            mode
+            -1
+            ""
+            "slice"
+            -1
+            0
+            0
+            fail-label
+            false))))))
+
+;; Tests and binds `(slice p1 ... pk [& rest])` against a borrowed view
+;; (SPEC 5.13): one length comparison, then the element loads, and `rest` as a
+;; pointer and length. The comparison is skipped when `test?` is false (an
+;; exhaustive final arm) and for a borrowed fixed array, whose length
+;; typecheck already matched.
+(define (lower-bind-slice-pattern
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-value : ir.CompilerIrValue]
+  [scrut-ty : ast.AstType]
+  [items : ast.AstPatternList]
+  [has-rest : bool]
+  [mode : CompilerLowerMode]
+  [fail-label : i64]
+  [test? : bool]) : ResultLowerEnv
+  (match (tc_core.tc-slice-pattern-scrutinee
+    ctx
+    (lower-global-shared-view scrut-ty))
+    [(tc_core.TcSlicePatternScrutinee.View
+        lifetime
+        mutable
+        elem-ty
+        array-length)
+      (let
+        [count : i64
+          (tc_core.tc-slice-pattern-element-count (& items) has-rest)]
+        (match (if (>= array-length 0)
+          (lower-slice-view-static-source-fields
+            state
+            scrut-value
+            scrut-ty
+            (lower-global-shared-view elem-ty)
+            array-length)
+          (lower-slice-view-reference-slice-fields
+            ctx
+            state
+            scrut-value
+            scrut-ty
+            (lower-global-shared-view elem-ty)))
+          [(ResultLowerSliceViewSourceFields.Ok
+              (LowerSliceViewSourceFields.Fields fields-state data-ptr len _))
+            (match (lower-bind-slice-elements
+              ctx
+              (if (and test? (< array-length 0))
+                (lower-slice-length-test
+                  fields-state
+                  (lower-global-shared-view len)
+                  count
+                  has-rest
+                  fail-label)
+                fields-state)
+              env
+              type-env
+              (lower-global-shared-view data-ptr)
+              (& items)
+              count
+              lifetime
+              mutable
+              (lower-global-shared-view elem-ty)
+              mode
+              fail-label)
+              [(ResultLowerEnv.Ok elements-state elements-env elements-type-env)
+                (if has-rest
+                  (lower-bind-slice-rest
+                    ctx
+                    elements-state
+                    elements-env
+                    elements-type-env
+                    data-ptr
+                    len
+                    count
+                    (ast.ast-pattern-list-get
+                      (& items)
+                      count
+                      (ast.ast-pattern-fallback))
+                    (tc_core.tc-slice-pattern-rest-type
+                      ctx
+                      lifetime
+                      mutable
+                      (lower-global-shared-view elem-ty))
+                    elem-ty)
+                  (ResultLowerEnv.Ok
+                    elements-state
+                    elements-env
+                    elements-type-env))]
+              [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)])]
+          [(ResultLowerSliceViewSourceFields.Err message)
+            (ResultLowerEnv.Err message)]))]
+    [(tc_core.TcSlicePatternScrutinee.Invalid)
+      (ResultLowerEnv.Err
+        (box
+          (lower-diagnostic
+            "lower: slice pattern requires a borrowed Slice or fixed-array scrutinee")))]))
+
 (define (lower-bind-payload-name-failure [bind-mode : LowerBindMode]) : String
   (match bind-mode
     [(LowerBindMode.Owned) "lower: internal enum payload load failed"]
@@ -21620,8 +22018,9 @@
         false)]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
-;; Literals and nested enum variants are refutable; `(box ...)` follows its
-;; inner pattern, while binding, var, wildcard, and tuple patterns always match.
+;; Literals, nested enum variants and slice patterns with a length test are
+;; refutable; `(box ...)` follows its inner pattern, while binding, var,
+;; wildcard, and tuple patterns always match.
 (define (lower-pattern-refutable? [pattern : ast.AstPattern]) : bool
   (match pattern
     [(ast.AstPattern.Literal _) true]
@@ -21629,6 +22028,13 @@
       (if (lower-box-pattern-name? name)
         (lower-pattern-list-refutable? (deref args-box))
         true)]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (let
+        [items : ast.AstPatternList (deref items-box)]
+        (or
+          (not has-rest)
+          (> items.len 1)
+          (lower-pattern-list-refutable? items)))]
     [_ false]))
 
 (define (lower-pattern-list-refutable? [patterns : ast.AstPatternList]) : bool
@@ -21655,6 +22061,13 @@
     [(ast.AstPattern.Tuple _) false]
     [(ast.AstPattern.Array _) false]
     [(ast.AstPattern.Literal _) true]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (not
+        (tc_core.tc-slice-pattern-irrefutable?
+          ctx
+          (deref items-box)
+          has-rest
+          ty))]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList (deref args-box)]
@@ -27777,6 +28190,10 @@
         [patterns : ast.AstPatternList (deref patterns-box)]
         (lower-pattern-list-bind-local-names env patterns))]
     [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (lower-pattern-list-bind-local-names env patterns))]
+    [(ast.AstPattern.Slice patterns-box _)
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (lower-pattern-list-bind-local-names env patterns))]
@@ -46278,6 +46695,11 @@
           (deref patterns-box)
           scrut-lanes
           lane-locals)]
+      [(ast.AstPattern.Slice patterns-box _)
+        (lower-masked-vector-pattern-list-locals
+          (deref patterns-box)
+          scrut-lanes
+          lane-locals)]
       [(ast.AstPattern.Binding name)
         (lower-masked-vector-lane-locals-bind-if-varying
           lane-locals
@@ -63318,6 +63740,8 @@
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [(ast.AstPattern.Array patterns-box)
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
+    [(ast.AstPattern.Slice patterns-box _)
+      (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [(ast.AstPattern.Variant _ patterns-box)
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [_ unit]))
@@ -65369,6 +65793,19 @@
                       scrut-ty
                       arm
                       cont))]
+                [(ast.AstPattern.Slice items-box has-rest)
+                  (lower-match-slice-arm
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    (deref items-box)
+                    has-rest
+                    body
+                    rest
+                    cont)]
                 [(ast.AstPattern.Variant variant-name _)
                   (if (lower-box-pattern-for-type?
                     ctx
@@ -65469,6 +65906,101 @@
                     [(ResultLowerMatchArm.Err message)
                       (ResultLowerExpr.Err message)]))])]))]))
 
+;; A slice arm before the last: its length and element tests fall through to
+;; the next arm.
+(define (lower-match-slice-arm
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [items : ast.AstPatternList]
+  [has-rest : bool]
+  [body : ast.AstExpr]
+  [rest : ast.AstMatchArmList]
+  [cont : LowerMatchCont]) : ResultLowerExpr
+  (match (lower-state-fresh-label state "match_next")
+    [(LowerLabel.Label next-label-state next-label)
+      (match (lower-bind-slice-pattern
+        ctx
+        next-label-state
+        env
+        type-env
+        (ir.CompilerIrValue.Var scrut-var)
+        (lower-global-shared-view scrut-ty)
+        items
+        has-rest
+        (lower-state-mode next-label-state)
+        next-label
+        true)
+        [(ResultLowerEnv.Ok body-start body-env body-type-env)
+          (match (lower-match-arm-body
+            ctx
+            body-start
+            body-env
+            body-type-env
+            body
+            cont)
+            [(ResultLowerMatchArm.Ok body-state next-cont)
+              (lower-match-arms
+                ctx
+                (lower-state-finish-block body-state next-label)
+                env
+                type-env
+                scrut-var
+                scrut-ty
+                rest
+                next-cont)]
+            [(ResultLowerMatchArm.Err message) (ResultLowerExpr.Err message)])]
+        [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)])]))
+
+;; The last arm of an exhaustive slice match binds without its length test.
+;; Like a final enum arm, it has no next arm to fall through to, so its element
+;; patterns must be irrefutable.
+(define (lower-bind-final-slice-arm
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [items : ast.AstPatternList]
+  [has-rest : bool]
+  [cont : LowerMatchCont]) : ResultLowerEnv
+  (match (tc_core.tc-slice-pattern-scrutinee
+    ctx
+    (lower-global-shared-view scrut-ty))
+    [(tc_core.TcSlicePatternScrutinee.View _ _ elem-ty _)
+      (if (tc_core.tc-slice-pattern-elements-irrefutable?
+        ctx
+        (& items)
+        (tc_core.tc-slice-pattern-element-count (& items) has-rest)
+        elem-ty)
+        (lower-bind-slice-pattern
+          ctx
+          state
+          env
+          type-env
+          (ir.CompilerIrValue.Var scrut-var)
+          scrut-ty
+          items
+          has-rest
+          (lower-state-mode state)
+          (match cont
+            [(LowerMatchCont.Value merge-label _ _) merge-label]
+            [(LowerMatchCont.Tail _ _) (lower-state-current-label state)])
+          false)
+        (ResultLowerEnv.Err
+          (box
+            (lower-diagnostic
+              "lower: refutable slice element pattern in final match arm requires a trailing catch-all"))))]
+    [(tc_core.TcSlicePatternScrutinee.Invalid)
+      (ResultLowerEnv.Err
+        (box
+          (lower-diagnostic
+            "lower: slice pattern requires a borrowed Slice or fixed-array scrutinee")))]))
+
 (define (lower-match-catch-all
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -65482,14 +66014,27 @@
     [(ast.AstMatchArm.Arm pat body-box)
       (let
         [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-        (match (lower-bind-match-catch-all-pattern
-          ctx
-          state
-          env
-          type-env
-          scrut-var
-          scrut-ty
-          pat)
+        (match (match (lower-global-shared-view pat)
+          [(ast.AstPattern.Slice items-box has-rest)
+            (lower-bind-final-slice-arm
+              ctx
+              state
+              env
+              type-env
+              scrut-var
+              (lower-global-shared-view scrut-ty)
+              (deref items-box)
+              has-rest
+              (lower-global-shared-view cont))]
+          [_
+            (lower-bind-match-catch-all-pattern
+              ctx
+              state
+              env
+              type-env
+              scrut-var
+              scrut-ty
+              pat)])
           [(ResultLowerEnv.Ok body-start body-env body-type-env)
             (lower-match-arm-final
               ctx

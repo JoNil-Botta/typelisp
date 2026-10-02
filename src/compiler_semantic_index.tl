@@ -4298,6 +4298,18 @@
         ast.AstMaybeType.No
         search-start
         search-limit)]
+    [(ast.AstPattern.Slice items _)
+      (compiler-semantic-bind-pattern-list!
+        state
+        scope
+        env
+        fact-env
+        facts-available
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
     [(ast.AstPattern.Variant name items)
       (begin
         (compiler-semantic-record-variant-pattern-use!

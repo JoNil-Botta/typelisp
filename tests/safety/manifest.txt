@@ -903,7 +903,18 @@ float_exponent_overflow_f32|check-fail|tests/safety/float_exponent_overflow_f32.
 deref_shared_noncopy_move_reject|check-fail|tests/safety/deref_shared_noncopy_move_reject.tl|-|cannot move non-Copy value through shared reference
 deref_immutable_set_reject|check-fail|tests/safety/deref_immutable_set_reject.tl|-|set! deref requires mutable access
 deref_box_use_after_move_reject|check-fail|tests/safety/deref_box_use_after_move_reject.tl|-|use of moved value `outer`
-deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|deref requires Box or reference type
+deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
+# A raw-pointer deref is an unsafe place only as a struct-field projection
+# receiver; a (Ptr T) pointee is read-only.
+raw_pointer_field_set_safe_reject|check-fail|tests/safety/raw_pointer_field_set_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
+raw_pointer_field_read_safe_reject|check-fail|tests/safety/raw_pointer_field_read_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
+raw_pointer_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_nested_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_nested_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_field_element_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_element_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_whole_deref_read_reject|check-fail|tests/safety/raw_pointer_whole_deref_read_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field
+raw_pointer_whole_deref_set_reject|check-fail|tests/safety/raw_pointer_whole_deref_set_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field
+raw_pointer_field_replace_reject|check-fail|tests/safety/raw_pointer_field_replace_reject.tl|-|typecheck: replace! target cannot be reached through a raw pointer
+raw_pointer_field_borrow_reject|check-fail|tests/safety/raw_pointer_field_borrow_reject.tl|-|typecheck: deref borrow requires Box or reference place
 tuple_set_immutable_ref_reject|check-fail|tests/safety/tuple_set_immutable_ref_reject.tl|-|set! tuple element requires mutable tuple access
 lifetime_shortening_reverse_reject|check-fail|tests/safety/lifetime_shortening_reverse_reject.tl|-|source lifetime `inner` does not outlive required lifetime `outer`
 lifetime_shortening_mut_ref_referent_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ref_referent_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable reference referent type is invariant
@@ -943,7 +954,7 @@ array_take_removed_reject|check-fail|tests/safety/array_take_removed_reject.tl|-
 replace_reference_lifetime_ok|check-ok|tests/safety/replace_reference_lifetime_ok.tl|-|-
 replace_shared_ref_reject|check-fail|tests/safety/replace_shared_ref_reject.tl|-|set! array element requires mutable array access
 replace_fixed_array_shared_ref_reject|check-fail|tests/safety/replace_fixed_array_shared_ref_reject.tl|-|set! array element requires mutable array access
-replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|replace! target must be a storage place
+replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|typecheck: replace! target cannot be reached through a raw pointer
 replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|parse: replace! target must be a mutable place
 replace_fixed_array_temporary_reject|check-fail|tests/safety/replace_fixed_array_temporary_reject.tl|-|replace! target must be a storage place
 replace_moved_reject|check-fail|tests/safety/replace_moved_reject.tl|-|use of moved value `text`

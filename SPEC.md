@@ -4755,7 +4755,9 @@ guards.
 ### 5.10 `(set! place expr)` — mutation
 
 - Mutates an existing local, parameter, global, struct-field, tuple-element,
-  array-element, Box, or mutable-reference storage place.
+  array-element, Box, or mutable-reference storage place. Inside `unsafe`, a
+  struct field reached through a `(MutPtr T)`, as in
+  `(set! (deref p).field value)`, is also a place (section 5.20).
 - A function `define` or function `extern` declares a callable name, not a
   storage place. Assigning to it is rejected before checking the replacement,
   including through imports. Function-valued storage remains assignable.
@@ -6844,6 +6846,8 @@ The unsafe operation set:
 | `(ptr-null? p)` | Yes | raw pointer or `CFunc` -> `bool` | Does not dereference or call `p`; does not refine its type. |
 | `(ptr-read p)` | Unsafe | `(Ptr T)` or `(MutPtr T)` -> `T` | Reads `sizeof(T)` bytes at `p`; alignment, validity, initialization, and lifetime are caller obligations. |
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
+| `(deref p).field` | Unsafe | `(Ptr T)` or `(MutPtr T)` with struct `T` -> the field's type | Reads only that field, at its offset from `p`; the pointee is not copied. Further projections may follow, as in `(deref p).a.b` or `(array-ref (deref p).items i)`. |
+| `(set! (deref p).field value)` | Unsafe | `(MutPtr T)` with struct `T`, and the field's type -> `unit` | Stores only that field, at its offset from `p`. The nested places `(deref p).a.b`, `(tuple-ref (deref p).pair 0)` and `(array-ref (deref p).items i)` are assignable the same way; assigning through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
 | `(ptr-cast p : (Ptr T))` / `(ptr-cast p : (MutPtr T))` | Unsafe | raw pointer -> requested raw pointer type | Includes const/mutable pointer casts; there is no implicit `MutPtr` to `Ptr` coercion. |
 | `(ptr-addr-of place)` | Unsafe | addressable storage slot/place of type `T` -> `(MutPtr T)` | Produces a raw pointer to compiler-known storage without creating a checked borrow or lifetime pin. A whole reference-value slot is addressable, but projections through its referent are not. |
@@ -6852,6 +6856,17 @@ The unsafe operation set:
 | `(atomic-load p)`, `(atomic-store! p v)`, `(atomic-add! p d)`, `(atomic-fetch-add! p d)`, `(atomic-cas! p expected new)` | Unsafe | raw pointer atomics for `T` in `i32`, `i64`, `u32`, or `u64`; update forms require `(MutPtr T)` and matching values | Sequentially consistent x86-64 memory operations. Load returns `T`; store/add return `unit`; fetch-add and CAS return the previous value observed at `p`. |
 | `(volatile-load p)`, `(volatile-store! p v)` | Unsafe | raw pointer volatile access for `T` in `i32`, `i64`, `u32`, or `u64`; stores require `(MutPtr T)` and matching values | Emits exactly one load or store memory access for each source operation and prevents elision, reordering, common-subexpression elimination, loop-invariant hoisting, and folding of that operation. Volatile does not provide inter-thread memory ordering; use atomics for synchronization. |
 | `(syscall number arg0 ... arg5)` | Unsafe | integer operands -> `i64` | Issues a raw Linux x86_64 host syscall. The number plus up to six arguments are passed directly to the kernel ABI; argument validity, pointer lifetimes, platform availability, and side effects are caller obligations. |
+
+`deref` of a raw pointer is a place only as the receiver of a struct-field
+projection. A bare `(deref p)` is rejected: the whole pointee is read with
+`ptr-read` and written with `ptr-write!`. A raw field place follows the
+`ptr-read` / `ptr-write!` contract rather than the borrow and move rules. A read
+copies the field's representation without moving it out of the pointee, so a
+non-Copy field read this way aliases the stored value. A store overwrites the
+old field value without dropping it: no cleanup runs and no ownership check
+applies to the old value, and references stored through the pointer are not
+lifetime-checked. The pointer operand is evaluated before the stored value.
+`replace!` and borrows of a field reached through a raw pointer are rejected.
 
 `stdlib.ffi` provides caller-owned C string marshalling helpers on top of
 this raw-pointer surface. `ffi.c-bytes-required-bytes` computes
@@ -8422,9 +8437,14 @@ mutable, or valid for the requested type.
 - Pointer equality, ordering, provenance, and bounds are otherwise
   unspecified. Only null testing is part of the safe surface.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`,
-  `int->ptr`, raw pointer atomics, and volatile raw pointer access require
-  `(unsafe ...)` because the typechecker cannot prove their memory or ABI
-  preconditions.
+  `int->ptr`, raw pointer atomics, volatile raw pointer access, and raw field
+  places `(deref p).field` require `(unsafe ...)` because the typechecker
+  cannot prove their memory or ABI preconditions.
+- A raw field place reads or stores one field at its offset from the pointer,
+  without copying the pointee; only a `(MutPtr T)` field is assignable. Writes
+  through a raw pointer, `ptr-write!` and field assignment alike, overwrite the
+  old value without dropping it or checking its ownership. Discharging an
+  overwritten value that still owns a resource is the caller's obligation.
 - A raw pointer into memory reclaimed by `with-arena`/`tl_region_reset`
   becomes invalid when that region is reset. The typechecker does not track
   this for raw pointers.

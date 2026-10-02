@@ -29801,7 +29801,7 @@
     [(ast.AstExpr.StructGet receiver-box field)
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-        (lower-struct-get ctx state env type-env receiver field expr-ty))]
+        (lower-field-get ctx state env type-env receiver field expr-ty))]
     [(ast.AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -30771,60 +30771,247 @@
               [(LowerExpr.Expr ext-state ext-value _)
                 (ResultLowerExpr.Ok
                   (LowerExpr.Expr ext-state ext-value result-ty))]))
-          (match (lower-gep-byte state receiver-value offset)
-            [(LowerExpr.Expr ptr-state ptr _)
-              ;; A register-resident field is carried as a packed word,
-              ;; so its value is the LOADED word, never the field address --
-              ;; exclude it from the in-place pointer-return shape (otherwise a
-              ;; later `match`/`=` would read the address as if it were the tag).
-              ;; A genuine memory aggregate field still returns its in-place
-              ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
-              (cond
-                [(and
-                    (not
-                      (lower-type-register-resident?
-                        ctx
-                        (lower-global-shared-view field-ty)))
-                    (or
-                      (and
-                        (lower-struct-repr-c-id? ctx struct-id)
-                        (lower-repr-c-inline-field?
-                          ctx
-                          (lower-global-shared-view field-ty)))
-                      (lower-type-inline-storage? ctx field-ty)))
-                  (ResultLowerExpr.Ok (LowerExpr.Expr ptr-state ptr result-ty))]
-                [(lower-type-register-group?
-                    ctx
-                    (lower-global-shared-view field-ty))
-                  (match (lower-load-group-from-ptr ctx ptr-state ptr field-ty)
-                    [(LowerExpr.Expr g-state g-value _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr g-state g-value result-ty))])]
-                [(lower-type-register-resident?
-                    ctx
-                    (lower-global-shared-view field-ty))
-                  (match (lower-state-alloc-var ptr-state)
-                    [(LowerAlloc.Alloc allocated var-id)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit
-                            allocated
-                            (ir.CompilerIrInstr.Load
-                              var-id
-                              ptr
-                              (lower-register-word-type ctx field-ty 0)))
-                          (ir.CompilerIrValue.Var var-id)
-                          result-ty))])]
-                [else
-                  (match (lower-state-alloc-var ptr-state)
-                    [(LowerAlloc.Alloc allocated var-id)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit
-                            allocated
-                            (ir.CompilerIrInstr.Load var-id ptr field-ty))
-                          (ir.CompilerIrValue.Var var-id)
-                          result-ty))])])]))])))
+          (lower-struct-field-load-at-offset
+            ctx
+            state
+            receiver-value
+            struct-id
+            offset
+            field-ty
+            result-ty))])))
+
+;; Read the field of struct `struct-id` stored `offset` bytes from `base`.
+(define (lower-struct-field-load-at-offset
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [struct-id : i64]
+  [offset : i64]
+  [field-ty : ast.AstType]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-gep-byte state base offset)
+    [(LowerExpr.Expr ptr-state ptr _)
+      ;; A register-resident field is carried as a packed word,
+      ;; so its value is the LOADED word, never the field address --
+      ;; exclude it from the in-place pointer-return shape (otherwise a
+      ;; later `match`/`=` would read the address as if it were the tag).
+      ;; A genuine memory aggregate field still returns its in-place
+      ;; pointer. This mirrors `lower-load-inline-value-at-offset`.
+      (cond
+        [(and
+            (not
+              (lower-type-register-resident?
+                ctx
+                (lower-global-shared-view field-ty)))
+            (or
+              (and
+                (lower-struct-repr-c-id? ctx struct-id)
+                (lower-repr-c-inline-field?
+                  ctx
+                  (lower-global-shared-view field-ty)))
+              (lower-type-inline-storage? ctx field-ty)))
+          (ResultLowerExpr.Ok (LowerExpr.Expr ptr-state ptr result-ty))]
+        [(lower-type-register-group? ctx (lower-global-shared-view field-ty))
+          (match (lower-load-group-from-ptr ctx ptr-state ptr field-ty)
+            [(LowerExpr.Expr g-state g-value _)
+              (ResultLowerExpr.Ok (LowerExpr.Expr g-state g-value result-ty))])]
+        [(lower-type-register-resident? ctx (lower-global-shared-view field-ty))
+          (match (lower-state-alloc-var ptr-state)
+            [(LowerAlloc.Alloc allocated var-id)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-state-emit
+                    allocated
+                    (ir.CompilerIrInstr.Load
+                      var-id
+                      ptr
+                      (lower-register-word-type ctx field-ty 0)))
+                  (ir.CompilerIrValue.Var var-id)
+                  result-ty))])]
+        [else
+          (match (lower-state-alloc-var ptr-state)
+            [(LowerAlloc.Alloc allocated var-id)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-state-emit
+                    allocated
+                    (ir.CompilerIrInstr.Load var-id ptr field-ty))
+                  (ir.CompilerIrValue.Var var-id)
+                  result-ty))])])]))
+
+;; A struct-field read. A field place rooted at a raw-pointer `deref`, as in
+;; `(deref p).a.b`, loads just that field at its offset from `p`, so the
+;; pointee is never copied, even a struct otherwise carried in registers. Any
+;; other receiver is lowered as a value first.
+(define (lower-field-get
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [field : i64]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (if (lower-raw-deref-place?
+    ctx
+    state
+    env
+    type-env
+    (lower-global-shared-view receiver))
+    (let
+      [lowered : LowerExpr
+        (try (lower-raw-deref-place-address ctx state env type-env receiver))]
+      (match lowered
+        [(LowerExpr.Expr place-state base receiver-ty)
+          (match (tc_core.tc-type-strip-region
+            (tc_core.tc-resolve-type ctx receiver-ty))
+            [(ast.AstType.Struct struct-id)
+              (lower-raw-deref-field-load
+                ctx
+                place-state
+                base
+                struct-id
+                (tc_core.tc-env-key-name-text field)
+                result-ty)]
+            [(ast.AstType.StructArgs struct-id _)
+              (lower-raw-deref-field-load
+                ctx
+                place-state
+                base
+                struct-id
+                (tc_core.tc-env-key-name-text field)
+                result-ty)]
+            [_
+              (ResultLowerExpr.Err
+                (box
+                  (lower-diagnostic "lower: field projection requires struct")))])]))
+    (lower-struct-get ctx state env type-env receiver field result-ty)))
+
+;; Whether `place` is a struct-field place rooted at `(deref p)` over a raw
+;; pointer `p`. The typechecker admits such a deref only as a struct-field
+;; projection receiver (`tc-raw-deref-whole-message`).
+(define (lower-raw-deref-place?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : ast.AstExpr]) : bool
+  (match place
+    [(ast.AstExpr.Spanned inner-box _)
+      (lower-raw-deref-place?
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.StructGet receiver-box _)
+      (lower-raw-deref-place?
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx receiver-box))]
+    [(ast.AstExpr.BoxTake pointer-box)
+      (let
+        [pointer : ast.AstExpr (lower-context-expr-get ctx pointer-box)]
+        (match (lower-expr-result-type-or-check
+          ctx
+          env
+          type-env
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
+          pointer)
+          [(tc_core.ResultTcType.Ok pointer-ty)
+            (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx pointer-ty))
+              [(ast.AstType.Ptr _) true]
+              [(ast.AstType.MutPtr _) true]
+              [_ false])]
+          [(tc_core.ResultTcType.Err _) false]))]
+    [_ false]))
+
+;; The address of a field place rooted at a raw-pointer `deref`
+;; (`lower-raw-deref-place?`): the pointer plus each field's offset, typed as
+;; the place.
+(define (lower-raw-deref-place-address
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-global-shared-view place)
+    [(ast.AstExpr.Spanned inner-box _)
+      (lower-raw-deref-place-address
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.StructGet receiver-box field)
+      (let
+        [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
+        [lowered : LowerExpr
+          (try (lower-raw-deref-place-address ctx state env type-env receiver))]
+        (match lowered
+          [(LowerExpr.Expr receiver-state base receiver-ty)
+            (lower-struct-field-address-from-place
+              ctx
+              receiver-state
+              base
+              receiver-ty
+              (tc_core.tc-env-key-name-text field)
+              place)]))]
+    [(ast.AstExpr.BoxTake pointer-box)
+      (let
+        [pointer : ast.AstExpr (lower-context-expr-get ctx pointer-box)]
+        [lowered : LowerExpr (try (lower-expr ctx state env type-env pointer))]
+        (match lowered
+          [(LowerExpr.Expr pointer-state pointer-value pointer-ty)
+            (match (tc_core.tc-raw-pointer-elem
+              (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type ctx pointer-ty))
+              "lower: raw-pointer field place requires a raw pointer")
+              [(tc_core.ResultTcType.Ok elem-ty)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr
+                    pointer-state
+                    pointer-value
+                    (tc_core.tc-resolve-type ctx elem-ty)))]
+              [(tc_core.ResultTcType.Err message)
+                (ResultLowerExpr.Err
+                  (box (lower-diagnostic-at-expr ctx place message)))])]))]
+    [_
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            place
+            "lower: expected a field place rooted at a raw-pointer deref")))]))
+
+(define (lower-raw-deref-field-load
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [struct-id : i64]
+  [field : String]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [info : LowerFieldInfo
+      (try
+        (lower-struct-field-info
+          ctx
+          struct-id
+          (tc_core.tc-nominal-name-id-display struct-id)
+          field))]
+    (match info
+      [(LowerFieldInfo.Info offset field-ty)
+        (lower-struct-field-load-at-offset
+          ctx
+          state
+          base
+          struct-id
+          offset
+          field-ty
+          result-ty)])))
 
 (define (lower-struct-get-through-reference
   [ctx : tc_core.TcContext]
@@ -31153,6 +31340,15 @@
                 (ResultLowerExpr.Ok
                   (LowerExpr.Expr box-state box-value result-ty))]))]
         [(ast.AstType.MutRef _ _)
+          (let
+            [lowered : LowerExpr
+              (try (lower-expr ctx state env type-env box-expr))]
+            (match lowered
+              [(LowerExpr.Expr receiver-state receiver-value _)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr receiver-state receiver-value result-ty))]))]
+        ;; The raw pointer is the address of its pointee.
+        [(ast.AstType.MutPtr _)
           (let
             [lowered : LowerExpr
               (try (lower-expr ctx state env type-env box-expr))]
@@ -41745,7 +41941,16 @@
           (lower-state-function-state state)
           receiver)
           [(tc_core.ResultTcType.Ok receiver-ty)
-            (match (tc_core.tc-box-set-inner-type ctx receiver-ty)
+            (match (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type
+                ctx
+                (lower-global-shared-view receiver-ty)))
+              ;; A field assignment through a raw pointer stores at its offset
+              ;; from the pointer (`tc-raw-deref-whole-message`).
+              [(ast.AstType.MutPtr elem-ty)
+                (tc_core.ResultTcType.Ok
+                  (tc_core.tc-context-type-get ctx elem-ty))]
+              [_ (tc_core.tc-box-set-inner-type ctx receiver-ty)])
               [(tc_core.ResultTcType.Ok inner-ty)
                 (lower-box-storage-address
                   ctx
@@ -42229,13 +42434,21 @@
   [field-id : i64]
   [value : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-expr-result-type-or-check
+  (match (match (lower-expr-result-type-or-check
     ctx
     env
     type-env
     (lower-state-type-cache state)
     (lower-state-function-state state)
     receiver)
+    [(tc_core.ResultTcType.Ok receiver-ty)
+      (tc_core.ResultTcType.Ok receiver-ty)]
+    ;; A raw-pointer `deref` has a type only as a field receiver.
+    [(tc_core.ResultTcType.Err _)
+      (tc_core.tc-field-receiver-type
+        ctx
+        type-env
+        (lower-global-shared-view receiver))])
     [(tc_core.ResultTcType.Ok receiver-ty)
       (if (ast.ast-tuple-set-field-id? field-id)
         (lower-tuple-set

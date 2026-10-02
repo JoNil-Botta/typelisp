@@ -90,7 +90,9 @@ comparisons, and casts. Raw pointer types `(Ptr T)` / `(MutPtr T)` and
 [SPEC.md](../SPEC.md) sections 3.4, 4.3.1, and 5.20), including sequentially
 consistent raw-pointer atomics (`atomic-load`, `atomic-store!`,
 `atomic-add!`, `atomic-fetch-add!`, `atomic-cas!`) for 32/64-bit integer
-elements.
+elements. Inside `unsafe`, `(deref p).field` reads one field of a raw
+pointer's struct pointee in place, and `(set! (deref p).field v)` stores one
+through a `(MutPtr T)`; `ptr-read` and `ptr-write!` copy the whole pointee.
 
 Borrowed Slice references are not C `extern` parameter or return types. A C
 boundary must spell an explicit `(Ptr T)` or `(MutPtr T)` plus a scalar length;

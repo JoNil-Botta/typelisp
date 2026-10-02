@@ -1233,37 +1233,36 @@
 ;; The caller retains its intern capability, metrics and advisory sink.
 (define (compiler-backend-state-release-final-arenas!
   [state : CompilerBackendState]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [lazy-owner : i64 data.lazy-table-arena]
-    [representation-owner : i64 data.representation-arena]
-    (begin
-      (set! data.lazy-table-arena 0)
-      (set! data.slot-cache-values (__tl_make-array String 0))
-      (set! data.slot-cache-epochs (__tl_make-array i64 0))
-      (set! data.frame-offset-cache-values (__tl_make-array String 0))
-      (set! data.frame-offset-cache-epochs (__tl_make-array i64 0))
-      (set! data.immediate-cache-values (__tl_make-array String 0))
-      (set! data.immediate-cache-epochs (__tl_make-array i64 0))
-      (set! data.function-state-address 0)
-      (set! data.stream-state-address 0)
-      (set!
-        data.representations
-        (compiler_ir_types.compiler-ir-representation-index-empty))
-      (set! data.has-representations false)
-      (set! data.representation-arena 0)
-      (set! data.representation-mark 0)
-      (compiler-backend-state-data-set! state data)
-      (if (> lazy-owner 0)
-        (unsafe
-          (arena.tl_arena_destroy lazy-owner))
-        unit)
-      (if (and
-        (> representation-owner 0)
-        (not (= representation-owner lazy-owner)))
-        (unsafe
-          (arena.tl_arena_destroy representation-owner))
-        unit))))
+  (unsafe
+    (let
+      [data : (MutPtr CompilerBackendStateData)
+        (compiler-backend-state-ptr state)]
+      [lazy-owner : i64 (deref data).lazy-table-arena]
+      [representation-owner : i64 (deref data).representation-arena]
+      (begin
+        (set! (deref data).lazy-table-arena 0)
+        (set! (deref data).slot-cache-values (__tl_make-array String 0))
+        (set! (deref data).slot-cache-epochs (__tl_make-array i64 0))
+        (set! (deref data).frame-offset-cache-values (__tl_make-array String 0))
+        (set! (deref data).frame-offset-cache-epochs (__tl_make-array i64 0))
+        (set! (deref data).immediate-cache-values (__tl_make-array String 0))
+        (set! (deref data).immediate-cache-epochs (__tl_make-array i64 0))
+        (set! (deref data).function-state-address 0)
+        (set! (deref data).stream-state-address 0)
+        (set!
+          (deref data).representations
+          (compiler_ir_types.compiler-ir-representation-index-empty))
+        (set! (deref data).has-representations false)
+        (set! (deref data).representation-arena 0)
+        (set! (deref data).representation-mark 0)
+        (if (> lazy-owner 0)
+          (arena.tl_arena_destroy lazy-owner)
+          unit)
+        (if (and
+          (> representation-owner 0)
+          (not (= representation-owner lazy-owner)))
+          (arena.tl_arena_destroy representation-owner)
+          unit)))))
 
 (define (compiler-backend-state-new [intern-state : ci.InternCompatState]) : CompilerBackendState
   (compiler-backend-state-new-with-metrics
@@ -1273,62 +1272,59 @@
 
 (define (compiler-backend-state-emission-target-policy
   [state : CompilerBackendState]) : CompilerBackendTargetPolicy
-  (compiler-backend-state-data state).emission-target-policy)
+  (unsafe
+    (deref (compiler-backend-state-view state)).emission-target-policy))
 
 (define (compiler-backend-state-set-emission-target-policy!
   [state : CompilerBackendState]
   [policy : CompilerBackendTargetPolicy]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.emission-target-policy policy)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).emission-target-policy
+      policy)))
 
 (define (compiler-backend-state-set-representations!
   [state : CompilerBackendState]
   [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : unit
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.representations representations)
-      (set! data.has-representations true)
-      (compiler-backend-state-data-set! state data))))
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
+      (set! (deref data).representations representations)
+      (set! (deref data).has-representations true))))
 
 (define (compiler-backend-state-prepare-representation-arena!
   [state : CompilerBackendState]) : arena.Arena
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
     [home : arena.Arena (arena.current)]
-    (if (= data.representation-arena 0)
-      (let
-        [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
-        [_set-owner : unit
-          (unsafe
-            (arena.set! owner))]
-        [mark : arena.ArenaMark (arena.mark)]
-        (begin
-          (unsafe
-            (arena.set! home))
-          (set! data.representation-arena (arena.raw-handle owner))
-          (set! data.representation-mark (arena.mark-raw-handle mark))
-          (set! data.has-representations false)
-          (compiler-backend-state-data-set! state data)
-          owner))
-      (let
-        [owner : arena.Arena (arena.Arena data.representation-arena)]
-        [mark : arena.ArenaMark (arena.ArenaMark data.representation-mark)]
-        (begin
-          ;; Clear the validity bit before invalidating the old maps. The stale
-          ;; carrier is overwritten immediately after the replacement build and
-          ;; is never observed while `has-representations` is false.
-          (set! data.has-representations false)
-          (compiler-backend-state-data-set! state data)
-          (unsafe
+    (unsafe
+      (if (= (deref data).representation-arena 0)
+        (let
+          [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+          [_set-owner : unit (arena.set! owner)]
+          [mark : arena.ArenaMark (arena.mark)]
+          (begin
+            (arena.set! home)
+            (set! (deref data).representation-arena (arena.raw-handle owner))
+            (set! (deref data).representation-mark (arena.mark-raw-handle mark))
+            (set! (deref data).has-representations false)
+            owner))
+        (let
+          [owner : arena.Arena (arena.Arena (deref data).representation-arena)]
+          [mark : arena.ArenaMark
+            (arena.ArenaMark (deref data).representation-mark)]
+          (begin
+            ;; Clear the validity bit before invalidating the old maps. The stale
+            ;; carrier is overwritten immediately after the replacement build and
+            ;; is never observed while `has-representations` is false.
+            (set! (deref data).has-representations false)
             (begin
               (arena.set! owner)
               (arena.rewind mark)
-              (arena.set! home)))
-          owner)))))
+              (arena.set! home))
+            owner))))))
 
 (define (compiler-backend-state-representations
   [state : CompilerBackendState]
@@ -1336,15 +1332,26 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (if data.has-representations
-      data.representations
-      (compiler_ir_types.compiler-ir-representation-index-build
-        type-segment-bases
-        (compiler_ir_types.CompilerIrProgram.Program
-          (compiler_ir_types.compiler-ir-global-seq-empty)
-          functions
-          externs)))))
+    [data : (Ptr CompilerBackendStateData) (compiler-backend-state-view state)]
+    (unsafe
+      (if (deref data).has-representations
+        (deref data).representations
+        (compiler_ir_types.compiler-ir-representation-index-build
+          type-segment-bases
+          (compiler_ir_types.CompilerIrProgram.Program
+            (compiler_ir_types.compiler-ir-global-seq-empty)
+            functions
+            externs))))))
+
+(define (compiler-backend-state-ptr [state : CompilerBackendState]) : (MutPtr
+    CompilerBackendStateData)
+  (unsafe
+    (int->ptr (cast state.address : u64) : (MutPtr CompilerBackendStateData))))
+
+(define (compiler-backend-state-view [state : CompilerBackendState]) : (Ptr
+    CompilerBackendStateData)
+  (unsafe
+    (int->ptr (cast state.address : u64) : (Ptr CompilerBackendStateData))))
 
 (define (compiler-backend-state-data [state : CompilerBackendState]) : CompilerBackendStateData
   (unsafe
@@ -1360,43 +1367,37 @@
       data)))
 
 (define (compiler-backend-state-metrics [state : CompilerBackendState]) : profile_state.CompilerProfileMetrics
-  (__tl-project-field (compiler-backend-state-data state) metrics))
+  (unsafe
+    (deref (compiler-backend-state-view state)).metrics))
 
 (define (compiler-backend-state-advisory-sink [state : CompilerBackendState]) : compiler_diagnostic.CompilerAdvisorySink
-  (__tl-project-field (compiler-backend-state-data state) advisory-sink))
+  (unsafe
+    (deref (compiler-backend-state-view state)).advisory-sink))
 
 (define (compiler-backend-state-set-advisory-sink!
   [state : CompilerBackendState]
   [sink : compiler_diagnostic.CompilerAdvisorySink]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.advisory-sink sink)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).advisory-sink sink)))
 
 (define (compiler-backend-state-set-metrics!
   [state : CompilerBackendState]
   [metrics : profile_state.CompilerProfileMetrics]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.metrics metrics)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).metrics metrics)))
 
 (define (compiler-backend-state-inline-aggregate-globals
   [state : CompilerBackendState]) : backend_i64_i64_map.Map
-  (__tl-project-field
-    (compiler-backend-state-data state)
-    inline-aggregate-globals))
+  (unsafe
+    (deref (compiler-backend-state-view state)).inline-aggregate-globals))
 
 (define (compiler-backend-state-set-inline-aggregate-globals!
   [state : CompilerBackendState]
   [globals : backend_i64_i64_map.Map]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.inline-aggregate-globals globals)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).inline-aggregate-globals
+      globals)))
 
 ;; IAG-1: the inline byte size of `name`'s cell, or 0 when the global keeps the
 ;; boxed 8-byte pointer cell. This is the ONE predicate every emission site
@@ -1480,6 +1481,18 @@
         : (MutPtr i64))
       address)))
 
+(define (compiler-backend-stream-state-ptr [state : CompilerBackendStreamState]) : (MutPtr
+    CompilerBackendStreamStateData)
+  (unsafe
+    (int->ptr
+      (cast state.address : u64)
+      : (MutPtr CompilerBackendStreamStateData))))
+
+(define (compiler-backend-stream-state-view
+  [state : CompilerBackendStreamState]) : (Ptr CompilerBackendStreamStateData)
+  (unsafe
+    (int->ptr (cast state.address : u64) : (Ptr CompilerBackendStreamStateData))))
+
 (define (compiler-backend-stream-state-data
   [state : CompilerBackendStreamState]) : CompilerBackendStreamStateData
   (unsafe
@@ -1552,71 +1565,70 @@
 
 (define (compiler-backend-state-stream-state
   [backend-state : CompilerBackendState]) : CompilerBackendStreamState
-  (let
-    [data : CompilerBackendStateData
-      (compiler-backend-state-data backend-state)]
-    [address : i64 data.stream-state-address]
-    (if (= address 0)
-      (let
-        [owner : arena.Arena
-          (arena.Arena (compiler-backend-state-owner-arena backend-state))]
-        [stream-state : CompilerBackendStreamState
-          (in-arena owner (compiler-backend-stream-state-new))]
-        (begin
-          (set! data.stream-state-address stream-state.address)
-          (compiler-backend-state-data-set! backend-state data)
-          stream-state))
-      (CompilerBackendStreamState address))))
+  (unsafe
+    (let
+      [data : (MutPtr CompilerBackendStateData)
+        (compiler-backend-state-ptr backend-state)]
+      [address : i64 (deref data).stream-state-address]
+      (if (= address 0)
+        (let
+          [owner : arena.Arena
+            (arena.Arena (compiler-backend-state-owner-arena backend-state))]
+          [stream-state : CompilerBackendStreamState
+            (in-arena owner (compiler-backend-stream-state-new))]
+          (begin
+            (set! (deref data).stream-state-address stream-state.address)
+            stream-state))
+        (CompilerBackendStreamState address)))))
 
 (define (compiler-backend-assembly-stream-home-arena-handle-value
   [stream : CompilerBackendStreamState]) : i64
   (arena.raw-handle
-    (__tl-project-field
-      (compiler-backend-stream-state-data stream)
-      assembly-home-arena)))
+    (unsafe
+      (deref (compiler-backend-stream-state-view stream)).assembly-home-arena)))
 
 (define (compiler-backend-state-intern [state : CompilerBackendState]) : ci.InternCompatState
-  (__tl-project-field (compiler-backend-state-data state) intern-state))
+  (unsafe
+    (deref (compiler-backend-state-view state)).intern-state))
 
 (define (compiler-backend-state-exact-intern [state : CompilerBackendState]) : ci.InternCompatState
   (compiler-backend-state-intern state))
 
 (define (compiler-backend-state-owner-arena [state : CompilerBackendState]) : i64
-  (__tl-project-field (compiler-backend-state-data state) owner-arena))
+  (unsafe
+    (deref (compiler-backend-state-view state)).owner-arena))
 
 (define (compiler-backend-state-emission-arena [state : CompilerBackendState]) : i64
-  (__tl-project-field (compiler-backend-state-data state) emission-arena))
+  (unsafe
+    (deref (compiler-backend-state-view state)).emission-arena))
 
 (define (compiler-backend-state-set-emission-arena!
   [state : CompilerBackendState]
   [owner : arena.Arena]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.emission-arena (arena.raw-handle owner))
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).emission-arena
+      (arena.raw-handle owner))))
 
 (define (compiler-backend-state-ensure-emission-arena!
   [state : CompilerBackendState]) : arena.Arena
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [stored : i64 data.emission-arena]
-    (if (= stored 0)
-      (let
-        [current : arena.Arena (arena.current)]
-        (begin
-          (set! data.emission-arena (arena.raw-handle current))
-          (compiler-backend-state-data-set! state data)
-          current))
-      (arena.Arena stored))))
+  (unsafe
+    (let
+      [data : (MutPtr CompilerBackendStateData)
+        (compiler-backend-state-ptr state)]
+      [stored : i64 (deref data).emission-arena]
+      (if (= stored 0)
+        (let
+          [current : arena.Arena (arena.current)]
+          (begin
+            (set! (deref data).emission-arena (arena.raw-handle current))
+            current))
+        (arena.Arena stored)))))
 
 (define (compiler-backend-state-clear-emission-arena!
   [state : CompilerBackendState]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.emission-arena 0)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).emission-arena 0)))
 
 (define (compiler-backend-state-current-emission-arena
   [state : CompilerBackendState]) : arena.Arena
@@ -1635,43 +1647,41 @@
 ;; SIMD (Avx2/Avx512) functions always use register allocation regardless.
 (define (compiler-backend-state-scalar-registers-enabled?
   [state : CompilerBackendState]) : bool
-  (__tl-project-field
-    (compiler-backend-state-data state)
-    scalar-registers-enabled))
+  (unsafe
+    (deref (compiler-backend-state-view state)).scalar-registers-enabled))
 
 (define (compiler-backend-state-set-scalar-registers-enabled!
   [state : CompilerBackendState]
   [enabled : bool]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.scalar-registers-enabled enabled)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).scalar-registers-enabled
+      enabled)))
 
 ;; Public observations for the retained operand-render storage.  The backing
 ;; StateData remains opaque; capacities are reported from the actual arrays so
 ;; a fresh state (and a state that was only reset) is observably allocation-free.
 (define (compiler-backend-state-lazy-table-arena [state : CompilerBackendState]) : i64
-  (__tl-project-field (compiler-backend-state-data state) lazy-table-arena))
+  (unsafe
+    (deref (compiler-backend-state-view state)).lazy-table-arena))
 
 (define (compiler-backend-state-slot-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (__tl-project-field (compiler-backend-state-data state) slot-cache-values)))
+    (unsafe
+      (deref (compiler-backend-state-view state)).slot-cache-values)))
 
 (define (compiler-backend-state-frame-offset-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (__tl-project-field
-      (compiler-backend-state-data state)
-      frame-offset-cache-values)))
+    (unsafe
+      (deref (compiler-backend-state-view state)).frame-offset-cache-values)))
 
 (define (compiler-backend-state-immediate-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (__tl-project-field
-      (compiler-backend-state-data state)
-      immediate-cache-values)))
+    (unsafe
+      (deref (compiler-backend-state-view state)).immediate-cache-values)))
 
 (define (compiler-backend-state-operand-cache-retained-bytes
   [state : CompilerBackendState]) : i64
@@ -1697,16 +1707,14 @@
 
 (define (compiler-backend-state-user-symbol-cache-count
   [state : CompilerBackendState]) : i64
-  (__tl-project-field
-    (compiler-backend-state-data state)
-    user-symbol-cache-count))
+  (unsafe
+    (deref (compiler-backend-state-view state)).user-symbol-cache-count))
 
 (define (compiler-backend-state-user-symbol-cache-capacity
   [state : CompilerBackendState]) : i64
   (array-length
-    (__tl-project-field
-      (compiler-backend-state-data state)
-      user-symbol-cache-keys)))
+    (unsafe
+      (deref (compiler-backend-state-view state)).user-symbol-cache-keys)))
 
 (define (compiler-backend-state-user-symbol-cache-retained-bytes
   [state : CompilerBackendState]) : i64
@@ -1716,29 +1724,25 @@
 
 (define (compiler-backend-state-absolute-switch-ok?
   [state : CompilerBackendState]) : bool
-  (__tl-project-field (compiler-backend-state-data state) absolute-switch-ok))
+  (unsafe
+    (deref (compiler-backend-state-view state)).absolute-switch-ok))
 
 (define (compiler-backend-state-set-absolute-switch-ok!
   [state : CompilerBackendState]
   [ok : bool]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.absolute-switch-ok ok)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).absolute-switch-ok ok)))
 
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64
-  (__tl-project-field (compiler-backend-state-data state) abort-site-counter))
+  (unsafe
+    (deref (compiler-backend-state-view state)).abort-site-counter))
 
 (define (compiler-backend-state-set-abort-site-counter!
   [state : CompilerBackendState]
   [value : i64]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.abort-site-counter value)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).abort-site-counter value)))
 
 (define (compiler-backend-state-next-abort-site-counter!
   [state : CompilerBackendState]) : i64
@@ -2023,31 +2027,34 @@
 (define (compiler-backend-state-user-symbol-cache-reset!
   [state : CompilerBackendState]) : unit
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.user-symbol-cache-epoch (+ data.user-symbol-cache-epoch 1))
-      (set! data.user-symbol-cache-count 0)
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
       (set!
-        data.user-symbol-cache-generation
+        (deref data).user-symbol-cache-epoch
+        (+ (deref data).user-symbol-cache-epoch 1))
+      (set! (deref data).user-symbol-cache-count 0)
+      (set!
+        (deref data).user-symbol-cache-generation
         (compiler-backend-state-intern-generation state))
       (set!
-        data.user-symbol-cache-table-id
-        (compiler-backend-state-intern-table-id state))
-      (compiler-backend-state-data-set! state data))))
+        (deref data).user-symbol-cache-table-id
+        (compiler-backend-state-intern-table-id state)))))
 
 (define (compiler-backend-state-user-symbol-cache-ensure-current!
   [state : CompilerBackendState]) : unit
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (if (and
-      (=
-        data.user-symbol-cache-generation
-        (compiler-backend-state-intern-generation state))
-      (=
-        data.user-symbol-cache-table-id
-        (compiler-backend-state-intern-table-id state)))
-      unit
-      (compiler-backend-state-user-symbol-cache-reset! state))))
+    [data : (Ptr CompilerBackendStateData) (compiler-backend-state-view state)]
+    (unsafe
+      (if (and
+        (=
+          (deref data).user-symbol-cache-generation
+          (compiler-backend-state-intern-generation state))
+        (=
+          (deref data).user-symbol-cache-table-id
+          (compiler-backend-state-intern-table-id state)))
+        unit
+        (compiler-backend-state-user-symbol-cache-reset! state)))))
 
 (define (compiler-backend-state-user-symbol-cache-hash
   [id : i64]
@@ -2061,26 +2068,27 @@
 (define (compiler-backend-state-user-symbol-cache-allocate!
   [state : CompilerBackendState]
   [capacity : i64]) : unit
-  (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    [owner : arena.Arena (arena.Arena data.owner-arena)]
-    [keys : (__tl_dyn-array i64)
-      (in-arena owner (__tl_make-array i64 capacity))]
-    [values : (__tl_dyn-array String)
-      (in-arena owner (__tl_make-array String capacity))]
-    [epochs : (__tl_dyn-array i64)
-      (in-arena owner (__tl_make-array i64 capacity))]
-    [i : i64 0]
-    (begin
-      (while (< i capacity)
-        (begin
-          (set! (array-ref keys i) -1)
-          (set! (array-ref epochs i) 0)
-          (set! i (+ i 1))))
-      (set! data.user-symbol-cache-keys keys)
-      (set! data.user-symbol-cache-values values)
-      (set! data.user-symbol-cache-epochs epochs)
-      (compiler-backend-state-data-set! state data))))
+  (unsafe
+    (let
+      [data : (MutPtr CompilerBackendStateData)
+        (compiler-backend-state-ptr state)]
+      [owner : arena.Arena (arena.Arena (deref data).owner-arena)]
+      [keys : (__tl_dyn-array i64)
+        (in-arena owner (__tl_make-array i64 capacity))]
+      [values : (__tl_dyn-array String)
+        (in-arena owner (__tl_make-array String capacity))]
+      [epochs : (__tl_dyn-array i64)
+        (in-arena owner (__tl_make-array i64 capacity))]
+      [i : i64 0]
+      (begin
+        (while (< i capacity)
+          (begin
+            (set! (array-ref keys i) -1)
+            (set! (array-ref epochs i) 0)
+            (set! i (+ i 1))))
+        (set! (deref data).user-symbol-cache-keys keys)
+        (set! (deref data).user-symbol-cache-values values)
+        (set! (deref data).user-symbol-cache-epochs epochs)))))
 
 (define (compiler-backend-state-user-symbol-cache-rehash!
   [state : CompilerBackendState]
@@ -3757,9 +3765,13 @@
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (if (> (array-length data.carry-safe-offsets) 0)
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (if (>
+      (array-length
+        (unsafe
+          (deref data).carry-safe-offsets))
+      0)
       unit
       (let
         [owner : arena.Arena
@@ -3785,20 +3797,24 @@
                 (begin
                   (set! (array-ref offsets i) -1)
                   (set! i (+ i 1))))
-              (set! data.carry-safe-offsets offsets)
-              (set! data.carry-safe-lengths lengths)
-              (set! data.carry-safe-bytes bytes)
-              (set! data.carry-safe-bytes-count 0)
-              (compiler-backend-stream-state-data-set! stream data))))))))
+              (unsafe
+                (set! (deref data).carry-safe-offsets offsets)
+                (set! (deref data).carry-safe-lengths lengths)
+                (set! (deref data).carry-safe-bytes bytes)
+                (set! (deref data).carry-safe-bytes-count 0)))))))))
 
 (define (compiler-backend-peephole-carry-safe-table-grow!
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : bool
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [old-offsets : (__tl_dyn-array i64) data.carry-safe-offsets]
-    [old-lengths : (__tl_dyn-array i64) data.carry-safe-lengths]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    [old-offsets : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).carry-safe-offsets)]
+    [old-lengths : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).carry-safe-lengths)]
     [old-cap : i64 (array-length old-offsets)]
     [new-cap : i64
       (if (> (* old-cap 4) compiler-backend-peephole-carry-safe-capacity)
@@ -3815,7 +3831,8 @@
             [offsets : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
             [lengths : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
             [bytes : (__tl_dyn-array u8)
-              (compiler-backend-global-shared-view data.carry-safe-bytes)]
+              (unsafe
+                (deref data).carry-safe-bytes)]
             [i : i64 0]
             (begin
               (while (< i new-cap)
@@ -3848,9 +3865,9 @@
                           (set! (array-ref offsets slot) off)
                           (set! (array-ref lengths slot) len))))
                     (set! i (+ i 1)))))
-              (set! data.carry-safe-offsets offsets)
-              (set! data.carry-safe-lengths lengths)
-              (compiler-backend-stream-state-data-set! stream data)
+              (unsafe
+                (set! (deref data).carry-safe-offsets offsets)
+                (set! (deref data).carry-safe-lengths lengths))
               true)))))))
 
 (define (compiler-backend-peephole-carry-safe-bytes-grow!
@@ -3858,9 +3875,11 @@
   [stream : CompilerBackendStreamState]
   [required : i64]) : bool
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array u8) data.carry-safe-bytes]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    [old : (__tl_dyn-array u8)
+      (unsafe
+        (deref data).carry-safe-bytes)]
     [old-cap : i64 (array-length old)]
     [new-cap : i64 old-cap]
     (begin
@@ -3888,12 +3907,13 @@
                 (while (<
                   i
                   (compiler-backend-peephole-carry-safe-byte-count
-                    data.carry-safe-bytes-count))
+                    (unsafe
+                      (deref data).carry-safe-bytes-count)))
                   (begin
                     (set! (array-ref bytes i) (array-ref old i))
                     (set! i (+ i 1))))
-                (set! data.carry-safe-bytes bytes)
-                (compiler-backend-stream-state-data-set! stream data)
+                (unsafe
+                  (set! (deref data).carry-safe-bytes bytes))
                 true))))))))
 
 ;; Clear the table logically: mark every slot empty and reset the byte cursor.
@@ -3958,12 +3978,20 @@
   [klen : i64]
   [hash : i64]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [offsets : (__tl_dyn-array i64) data.carry-safe-offsets]
-    [lengths : (__tl_dyn-array i64) data.carry-safe-lengths]
-    [bytes : (__tl_dyn-array u8) data.carry-safe-bytes]
-    [packed-count : i64 data.carry-safe-bytes-count]
+    [data : (Ptr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-view stream)]
+    [offsets : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).carry-safe-offsets)]
+    [lengths : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).carry-safe-lengths)]
+    [bytes : (__tl_dyn-array u8)
+      (unsafe
+        (deref data).carry-safe-bytes)]
+    [packed-count : i64
+      (unsafe
+        (deref data).carry-safe-bytes-count)]
     [entry-count : i64
       (compiler-backend-peephole-carry-safe-entry-count packed-count)]
     [cap : i64 (array-length offsets)]
@@ -17880,85 +17908,86 @@
 (define (compiler-backend-state-lazy-table-arena-ensure!
   [state : CompilerBackendState]) : arena.Arena
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (if (= data.lazy-table-arena 0)
-      (let
-        [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
-        (begin
-          (set! data.lazy-table-arena (arena.raw-handle owner))
-          (compiler-backend-state-data-set! state data)
-          owner))
-      (arena.Arena data.lazy-table-arena))))
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
+      (if (= (deref data).lazy-table-arena 0)
+        (let
+          [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+          (begin
+            (set! (deref data).lazy-table-arena (arena.raw-handle owner))
+            owner))
+        (arena.Arena (deref data).lazy-table-arena)))))
 
 (define (compiler-backend-state-slot-frame-cache-storage-ensure!
   [state : CompilerBackendState]) : unit
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (if (and
-      (=
-        (array-length data.slot-cache-values)
-        compiler-backend-slot-cache-capacity)
-      (=
-        (array-length data.slot-cache-epochs)
-        compiler-backend-slot-cache-capacity)
-      (=
-        (array-length data.frame-offset-cache-values)
-        compiler-backend-slot-cache-capacity)
-      (=
-        (array-length data.frame-offset-cache-epochs)
-        compiler-backend-slot-cache-capacity))
-      unit
-      (let
-        [owner : arena.Arena
-          (compiler-backend-state-lazy-table-arena-ensure! state)]
-        (in-arena
-          owner
-          (let
-            [slot-values : (__tl_dyn-array String)
-              (__tl_make-array String compiler-backend-slot-cache-capacity)]
-            [slot-epochs : (__tl_dyn-array i64)
-              (__tl_make-array i64 compiler-backend-slot-cache-capacity)]
-            [frame-values : (__tl_dyn-array String)
-              (__tl_make-array String compiler-backend-slot-cache-capacity)]
-            [frame-epochs : (__tl_dyn-array i64)
-              (__tl_make-array i64 compiler-backend-slot-cache-capacity)]
-            (begin
-              (set! data.slot-cache-values slot-values)
-              (set! data.slot-cache-epochs slot-epochs)
-              (set! data.frame-offset-cache-values frame-values)
-              (set! data.frame-offset-cache-epochs frame-epochs)
-              ;; The arrays are allocated in the state owner arena, but `data`
-              ;; is a copied struct, so publish all four handles explicitly.
-              (compiler-backend-state-data-set! state data))))))))
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
+      (if (and
+        (=
+          (array-length (deref data).slot-cache-values)
+          compiler-backend-slot-cache-capacity)
+        (=
+          (array-length (deref data).slot-cache-epochs)
+          compiler-backend-slot-cache-capacity)
+        (=
+          (array-length (deref data).frame-offset-cache-values)
+          compiler-backend-slot-cache-capacity)
+        (=
+          (array-length (deref data).frame-offset-cache-epochs)
+          compiler-backend-slot-cache-capacity))
+        unit
+        (let
+          [owner : arena.Arena
+            (compiler-backend-state-lazy-table-arena-ensure! state)]
+          (in-arena
+            owner
+            (let
+              [slot-values : (__tl_dyn-array String)
+                (__tl_make-array String compiler-backend-slot-cache-capacity)]
+              [slot-epochs : (__tl_dyn-array i64)
+                (__tl_make-array i64 compiler-backend-slot-cache-capacity)]
+              [frame-values : (__tl_dyn-array String)
+                (__tl_make-array String compiler-backend-slot-cache-capacity)]
+              [frame-epochs : (__tl_dyn-array i64)
+                (__tl_make-array i64 compiler-backend-slot-cache-capacity)]
+              (begin
+                (set! (deref data).slot-cache-values slot-values)
+                (set! (deref data).slot-cache-epochs slot-epochs)
+                (set! (deref data).frame-offset-cache-values frame-values)
+                (set! (deref data).frame-offset-cache-epochs frame-epochs)))))))))
 
 (define (compiler-backend-state-immediate-cache-storage-ensure!
   [state : CompilerBackendState]) : unit
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (if (and
-      (= (array-length data.immediate-cache-values) 8192)
-      (= (array-length data.immediate-cache-epochs) 8192))
-      unit
-      (let
-        [owner : arena.Arena
-          (compiler-backend-state-lazy-table-arena-ensure! state)]
-        (in-arena
-          owner
-          (let
-            [values : (__tl_dyn-array String) (__tl_make-array String 8192)]
-            [epochs : (__tl_dyn-array i64) (__tl_make-array i64 8192)]
-            (begin
-              (set! data.immediate-cache-values values)
-              (set! data.immediate-cache-epochs epochs)
-              (compiler-backend-state-data-set! state data))))))))
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
+      (if (and
+        (= (array-length (deref data).immediate-cache-values) 8192)
+        (= (array-length (deref data).immediate-cache-epochs) 8192))
+        unit
+        (let
+          [owner : arena.Arena
+            (compiler-backend-state-lazy-table-arena-ensure! state)]
+          (in-arena
+            owner
+            (let
+              [values : (__tl_dyn-array String) (__tl_make-array String 8192)]
+              [epochs : (__tl_dyn-array i64) (__tl_make-array i64 8192)]
+              (begin
+                (set! (deref data).immediate-cache-values values)
+                (set! (deref data).immediate-cache-epochs epochs)))))))))
 
 (define (compiler-backend-state-slot-cache-epoch-bump!
   [state : CompilerBackendState]) : unit
   (let
-    [data : CompilerBackendStateData (compiler-backend-state-data state)]
-    (begin
-      (set! data.slot-cache-epoch (+ data.slot-cache-epoch 1))
-      (compiler-backend-state-data-set! state data))))
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
+      (set! (deref data).slot-cache-epoch (+ (deref data).slot-cache-epoch 1)))))
 
 (define (compiler-backend-state-slot-cache-reset!
   [state : CompilerBackendState]) : unit
@@ -17981,24 +18010,26 @@
     (if (and (>= var-id 0) (< var-id compiler-backend-slot-cache-capacity))
       (begin
         (compiler-backend-state-slot-frame-cache-storage-ensure! state)
-        (let
-          [data : CompilerBackendStateData (compiler-backend-state-data state)]
-          [epoch : i64 data.slot-cache-epoch]
-          [epochs : (__tl_dyn-array i64) data.slot-cache-epochs]
-          [values : (__tl_dyn-array String) data.slot-cache-values]
-          (if (= (array-ref epochs var-id) epoch)
-            (array-ref values var-id)
-            (let
-              [text : String
-                (in-arena
-                  (compiler-backend-state-lazy-table-arena-ensure! state)
-                  (str_cat.str-cat
-                    (string.int->string (- 0 (* 8 (+ var-id 1))))
-                    "(%rbp)"))]
-              (begin
-                (set! (array-ref values var-id) text)
-                (set! (array-ref epochs var-id) epoch)
-                text)))))
+        (unsafe
+          (let
+            [data : (Ptr CompilerBackendStateData)
+              (compiler-backend-state-view state)]
+            [epoch : i64 (deref data).slot-cache-epoch]
+            [epochs : (__tl_dyn-array i64) (deref data).slot-cache-epochs]
+            [values : (__tl_dyn-array String) (deref data).slot-cache-values]
+            (if (= (array-ref epochs var-id) epoch)
+              (array-ref values var-id)
+              (let
+                [text : String
+                  (in-arena
+                    (compiler-backend-state-lazy-table-arena-ensure! state)
+                    (str_cat.str-cat
+                      (string.int->string (- 0 (* 8 (+ var-id 1))))
+                      "(%rbp)"))]
+                (begin
+                  (set! (array-ref values var-id) text)
+                  (set! (array-ref epochs var-id) epoch)
+                  text))))))
       (str_cat.str-cat (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))))
 
 ;; The rendering alone. Both wrappers below record the reference first; nothing
@@ -18016,23 +18047,26 @@
         [idx : i64 (- (/ magnitude 8) 1)]
         (begin
           (compiler-backend-state-slot-frame-cache-storage-ensure! state)
-          (let
-            [data : CompilerBackendStateData
-              (compiler-backend-state-data state)]
-            [epoch : i64 data.slot-cache-epoch]
-            [epochs : (__tl_dyn-array i64) data.frame-offset-cache-epochs]
-            [values : (__tl_dyn-array String) data.frame-offset-cache-values]
-            (if (= (array-ref epochs idx) epoch)
-              (array-ref values idx)
-              (let
-                [text : String
-                  (in-arena
-                    (compiler-backend-state-lazy-table-arena-ensure! state)
-                    (str_cat.str-cat (string.int->string offset) "(%rbp)"))]
-                (begin
-                  (set! (array-ref values idx) text)
-                  (set! (array-ref epochs idx) epoch)
-                  text))))))
+          (unsafe
+            (let
+              [data : (Ptr CompilerBackendStateData)
+                (compiler-backend-state-view state)]
+              [epoch : i64 (deref data).slot-cache-epoch]
+              [epochs : (__tl_dyn-array i64)
+                (deref data).frame-offset-cache-epochs]
+              [values : (__tl_dyn-array String)
+                (deref data).frame-offset-cache-values]
+              (if (= (array-ref epochs idx) epoch)
+                (array-ref values idx)
+                (let
+                  [text : String
+                    (in-arena
+                      (compiler-backend-state-lazy-table-arena-ensure! state)
+                      (str_cat.str-cat (string.int->string offset) "(%rbp)"))]
+                  (begin
+                    (set! (array-ref values idx) text)
+                    (set! (array-ref epochs idx) epoch)
+                    text)))))))
       (str_cat.str-cat (string.int->string offset) "(%rbp)"))))
 
 (define (compiler-backend-frame-offset-with-backend-state
@@ -18069,23 +18103,25 @@
   (if (and (>= n -4096) (< n 4096))
     (begin
       (compiler-backend-state-immediate-cache-storage-ensure! state)
-      (let
-        [idx : i64 (+ n 4096)]
-        [data : CompilerBackendStateData (compiler-backend-state-data state)]
-        [epoch : i64 data.slot-cache-epoch]
-        [epochs : (__tl_dyn-array i64) data.immediate-cache-epochs]
-        [values : (__tl_dyn-array String) data.immediate-cache-values]
-        (if (= (array-ref epochs idx) epoch)
-          (array-ref values idx)
-          (let
-            [text : String
-              (in-arena
-                (compiler-backend-state-lazy-table-arena-ensure! state)
-                (str_cat.str-cat "$" (string.int->string n)))]
-            (begin
-              (set! (array-ref values idx) text)
-              (set! (array-ref epochs idx) epoch)
-              text)))))
+      (unsafe
+        (let
+          [idx : i64 (+ n 4096)]
+          [data : (Ptr CompilerBackendStateData)
+            (compiler-backend-state-view state)]
+          [epoch : i64 (deref data).slot-cache-epoch]
+          [epochs : (__tl_dyn-array i64) (deref data).immediate-cache-epochs]
+          [values : (__tl_dyn-array String) (deref data).immediate-cache-values]
+          (if (= (array-ref epochs idx) epoch)
+            (array-ref values idx)
+            (let
+              [text : String
+                (in-arena
+                  (compiler-backend-state-lazy-table-arena-ensure! state)
+                  (str_cat.str-cat "$" (string.int->string n)))]
+              (begin
+                (set! (array-ref values idx) text)
+                (set! (array-ref epochs idx) epoch)
+                text))))))
     (str_cat.str-cat "$" (string.int->string n))))
 
 (define (compiler-backend-immediate-i64
@@ -67978,32 +68014,32 @@
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (if (> (array-length data.sweep-sym-off) 0)
-      unit
-      (let
-        [owner : arena.Arena
-          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-        (in-arena
-          owner
-          (let
-            [cap : i64 compiler-backend-sweep-initial-capacity]
-            (begin
-              (set! data.sweep-sym-off (__tl_make-array i64 cap))
-              (set! data.sweep-sym-len (__tl_make-array i64 cap))
-              (set! data.sweep-lo-arr (__tl_make-array i64 cap))
-              (set! data.sweep-hi-arr (__tl_make-array i64 cap))
-              (set! data.sweep-disp-arr (__tl_make-array i64 cap))
-              (set! data.sweep-win64-arr (__tl_make-array i64 cap))
-              (set! data.sweep-em-lo-arr (__tl_make-array i64 cap))
-              (set! data.sweep-em-hi-arr (__tl_make-array i64 cap))
-              (set!
-                data.sweep-sym-bytes
-                (__tl_make-array
-                  u8
-                  compiler-backend-sweep-initial-bytes-capacity))
-              (compiler-backend-stream-state-data-set! stream data))))))))
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (if (> (array-length (deref data).sweep-sym-off) 0)
+        unit
+        (let
+          [owner : arena.Arena
+            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+          (in-arena
+            owner
+            (let
+              [cap : i64 compiler-backend-sweep-initial-capacity]
+              (begin
+                (set! (deref data).sweep-sym-off (__tl_make-array i64 cap))
+                (set! (deref data).sweep-sym-len (__tl_make-array i64 cap))
+                (set! (deref data).sweep-lo-arr (__tl_make-array i64 cap))
+                (set! (deref data).sweep-hi-arr (__tl_make-array i64 cap))
+                (set! (deref data).sweep-disp-arr (__tl_make-array i64 cap))
+                (set! (deref data).sweep-win64-arr (__tl_make-array i64 cap))
+                (set! (deref data).sweep-em-lo-arr (__tl_make-array i64 cap))
+                (set! (deref data).sweep-em-hi-arr (__tl_make-array i64 cap))
+                (set!
+                  (deref data).sweep-sym-bytes
+                  (__tl_make-array
+                    u8
+                    compiler-backend-sweep-initial-bytes-capacity))))))))))
 
 (define (compiler-backend-sweep-table-grow!
   [backend-state : CompilerBackendState]
@@ -68068,49 +68104,49 @@
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
   [required : i64]) : bool
-  (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array u8) data.sweep-sym-bytes]
-    [new-cap : i64 (array-length old)]
-    (begin
-      (while (and
-        (< new-cap required)
-        (< new-cap compiler-backend-sweep-bytes-capacity))
-        (set!
-          new-cap
-          (if (> (* new-cap 4) compiler-backend-sweep-bytes-capacity)
-            compiler-backend-sweep-bytes-capacity
-            (* new-cap 4))))
-      (if (< new-cap required)
-        false
-        (let
-          [owner : arena.Arena
-            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-          (in-arena
-            owner
-            (let
-              [bytes : (__tl_dyn-array u8) (__tl_make-array u8 new-cap)]
-              [i : i64 0]
-              (begin
-                (while (< i data.sweep-sym-bytes-count)
-                  (begin
-                    (set! (array-ref bytes i) (array-ref old i))
-                    (set! i (+ i 1))))
-                (set! data.sweep-sym-bytes bytes)
-                (compiler-backend-stream-state-data-set! stream data)
-                true))))))))
+  (unsafe
+    (let
+      [data : (MutPtr CompilerBackendStreamStateData)
+        (compiler-backend-stream-state-ptr stream)]
+      [old : (__tl_dyn-array u8) (deref data).sweep-sym-bytes]
+      [new-cap : i64 (array-length old)]
+      (begin
+        (while (and
+          (< new-cap required)
+          (< new-cap compiler-backend-sweep-bytes-capacity))
+          (set!
+            new-cap
+            (if (> (* new-cap 4) compiler-backend-sweep-bytes-capacity)
+              compiler-backend-sweep-bytes-capacity
+              (* new-cap 4))))
+        (if (< new-cap required)
+          false
+          (let
+            [owner : arena.Arena
+              (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+            (in-arena
+              owner
+              (let
+                [bytes : (__tl_dyn-array u8) (__tl_make-array u8 new-cap)]
+                [i : i64 0]
+                (begin
+                  (while (< i (deref data).sweep-sym-bytes-count)
+                    (begin
+                      (set! (array-ref bytes i) (array-ref old i))
+                      (set! i (+ i 1))))
+                  (set! (deref data).sweep-sym-bytes bytes)
+                  true)))))))))
 
 (define (compiler-backend-sweep-reset!
   [_backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
     (begin
-      (set! data.sweep-count 0)
-      (set! data.sweep-sym-bytes-count 0)
-      (compiler-backend-stream-state-data-set! stream data)
+      (unsafe
+        (set! (deref data).sweep-count 0)
+        (set! (deref data).sweep-sym-bytes-count 0))
       (cfg
         test
         (profile_state.compiler-profile-metrics-reset-range!
@@ -68134,20 +68170,31 @@
   (let
     [_storage : unit
       (compiler-backend-sweep-storage-ensure! backend-state stream)]
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
+    [data : (Ptr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-view stream)]
     [len : i64 (string.string-length symbol)]
     [sdata : (Ptr u8)
       (unsafe
         (string-data symbol))]
-    [start : i64 data.sweep-sym-bytes-count]
+    [start : i64
+      (unsafe
+        (deref data).sweep-sym-bytes-count)]
     [table-ok : bool
       (or
-        (< data.sweep-count (array-length data.sweep-sym-off))
+        (<
+          (unsafe
+            (deref data).sweep-count)
+          (array-length
+            (unsafe
+              (deref data).sweep-sym-off)))
         (compiler-backend-sweep-table-grow! backend-state stream))]
     [bytes-ok : bool
       (or
-        (<= (+ start len) (array-length data.sweep-sym-bytes))
+        (<=
+          (+ start len)
+          (array-length
+            (unsafe
+              (deref data).sweep-sym-bytes)))
         (compiler-backend-sweep-bytes-grow! backend-state stream (+ start len)))]
     (if (or (not table-ok) (not bytes-ok))
       (begin
@@ -68176,33 +68223,33 @@
               1)
             unit)
           unit))
-      (let
-        [current : CompilerBackendStreamStateData
-          (compiler-backend-stream-state-data stream)]
-        [j : i64 0]
-        [idx : i64 current.sweep-count]
-        (begin
-          (while (< j len)
-            (begin
-              (set!
-                (array-ref current.sweep-sym-bytes (+ start j))
-                (cast (compiler-backend-peephole-byte-at sdata j) : u8))
-              (set! j (+ j 1))))
-          (set! (array-ref current.sweep-sym-off idx) start)
-          (set! (array-ref current.sweep-sym-len idx) len)
-          (set! (array-ref current.sweep-lo-arr idx) lo)
-          (set! (array-ref current.sweep-hi-arr idx) hi)
-          (set! (array-ref current.sweep-disp-arr idx) disp)
-          (set!
-            (array-ref current.sweep-win64-arr idx)
-            (if win64
-              1
-              0))
-          (set! (array-ref current.sweep-em-lo-arr idx) em-lo)
-          (set! (array-ref current.sweep-em-hi-arr idx) em-hi)
-          (set! current.sweep-sym-bytes-count (+ start len))
-          (set! current.sweep-count (+ idx 1))
-          (compiler-backend-stream-state-data-set! stream current))))))
+      (unsafe
+        (let
+          [current : (MutPtr CompilerBackendStreamStateData)
+            (compiler-backend-stream-state-ptr stream)]
+          [j : i64 0]
+          [idx : i64 (deref current).sweep-count]
+          (begin
+            (while (< j len)
+              (begin
+                (set!
+                  (array-ref (deref current).sweep-sym-bytes (+ start j))
+                  (cast (compiler-backend-peephole-byte-at sdata j) : u8))
+                (set! j (+ j 1))))
+            (set! (array-ref (deref current).sweep-sym-off idx) start)
+            (set! (array-ref (deref current).sweep-sym-len idx) len)
+            (set! (array-ref (deref current).sweep-lo-arr idx) lo)
+            (set! (array-ref (deref current).sweep-hi-arr idx) hi)
+            (set! (array-ref (deref current).sweep-disp-arr idx) disp)
+            (set!
+              (array-ref (deref current).sweep-win64-arr idx)
+              (if win64
+                1
+                0))
+            (set! (array-ref (deref current).sweep-em-lo-arr idx) em-lo)
+            (set! (array-ref (deref current).sweep-em-hi-arr idx) em-hi)
+            (set! (deref current).sweep-sym-bytes-count (+ start len))
+            (set! (deref current).sweep-count (+ idx 1))))))))
 
 ;; Compute [lo, hi] (the VAR-REGION slot-start span in canonical delta-0
 ;; rsp-relative bytes) and disp (total prologue rsp displacement) for one
@@ -68407,28 +68454,31 @@
   [ls : i64]
   [le : i64]
   [idx : i64]) : bool
-  (let
-    [state-data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [off : i64 (array-ref state-data.sweep-sym-off idx)]
-    [len : i64 (array-ref state-data.sweep-sym-len idx)]
-    (if (not (= (- le ls) (+ len 1)))
-      false
-      (if (not (= (compiler-backend-peephole-byte-at data (- le 1)) 58))
+  (unsafe
+    (let
+      [state-data : (Ptr CompilerBackendStreamStateData)
+        (compiler-backend-stream-state-view stream)]
+      [off : i64 (array-ref (deref state-data).sweep-sym-off idx)]
+      [len : i64 (array-ref (deref state-data).sweep-sym-len idx)]
+      (if (not (= (- le ls) (+ len 1)))
         false
-        (let
-          [j : i64 0]
-          [ok : bool true]
-          (begin
-            (while (and ok (< j len))
-              (begin
-                (if (=
-                  (compiler-backend-peephole-byte-at data (+ ls j))
-                  (cast (array-ref state-data.sweep-sym-bytes (+ off j)) : i64))
-                  unit
-                  (set! ok false))
-                (set! j (+ j 1))))
-            ok))))))
+        (if (not (= (compiler-backend-peephole-byte-at data (- le 1)) 58))
+          false
+          (let
+            [j : i64 0]
+            [ok : bool true]
+            (begin
+              (while (and ok (< j len))
+                (begin
+                  (if (=
+                    (compiler-backend-peephole-byte-at data (+ ls j))
+                    (cast
+                      (array-ref (deref state-data).sweep-sym-bytes (+ off j))
+                      : i64))
+                    unit
+                    (set! ok false))
+                  (set! j (+ j 1))))
+              ok)))))))
 
 ;; First record at/after `start` whose trimmed content begins ".globl" (the next
 ;; function/helper boundary); returns that record's index, or `count`. The probe
@@ -68701,9 +68751,11 @@
   [stream : CompilerBackendStreamState]
   [required : i64]) : bool
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array i64) data.sweep-coverage-bits]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    [old : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).sweep-coverage-bits)]
     [new-cap : i64
       (if (= (array-length old) 0)
         64
@@ -68729,8 +68781,8 @@
               (let
                 [bits : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
                 (begin
-                  (set! data.sweep-coverage-bits bits)
-                  (compiler-backend-stream-state-data-set! stream data)
+                  (unsafe
+                    (set! (deref data).sweep-coverage-bits bits))
                   true)))))))))
 
 (define (compiler-backend-sweep-region-records!
@@ -69035,10 +69087,11 @@
                 backend-state
                 stream
                 words))]
-          [coverage-data : CompilerBackendStreamStateData
-            (compiler-backend-stream-state-data stream)]
+          [coverage-data : (Ptr CompilerBackendStreamStateData)
+            (compiler-backend-stream-state-view stream)]
           [coverage-bits : (__tl_dyn-array i64)
-            coverage-data.sweep-coverage-bits]
+            (unsafe
+              (deref coverage-data).sweep-coverage-bits)]
           (begin
             (if use-bitmap?
               (begin
@@ -69197,52 +69250,53 @@
   [v : (& v CompilerBackendPeepholeLineVec)]
   [start-cursor : i64]) : i64
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (if (>= start-cursor data.sweep-count)
-      start-cursor
-      (let
-        [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
-        [live : (__tl_dyn-array i64) v.live]
-        [count : i64 v.len]
-        [cursor : i64 start-cursor]
-        [i : i64 0]
-        (begin
-          (while (and (< i count) (< cursor data.sweep-count))
-            (let
-              [line : CompilerBackendPeepholeLineRecord
-                (compiler-backend-global-array-element-shared-view recs i)]
-              (if (compiler-backend-sweep-label-matches?
-                stream
-                (compiler-backend-peephole-record-data line)
-                (compiler-backend-peephole-record-start line)
-                (compiler-backend-peephole-record-end line)
-                cursor)
-                (let
-                  [rstart : i64 (+ i 1)]
-                  [rend : i64
-                    (compiler-backend-sweep-region-end-records
-                      (compiler-backend-global-shared-view recs)
-                      rstart
-                      count)]
-                  (begin
-                    (compiler-backend-sweep-region-records!
-                      backend-state
-                      stream
-                      (compiler-backend-global-shared-view recs)
-                      (&mut live)
-                      rstart
-                      rend
-                      (array-ref data.sweep-lo-arr cursor)
-                      (array-ref data.sweep-hi-arr cursor)
-                      (array-ref data.sweep-disp-arr cursor)
-                      (array-ref data.sweep-em-lo-arr cursor)
-                      (array-ref data.sweep-em-hi-arr cursor)
-                      (= (array-ref data.sweep-win64-arr cursor) 1))
-                    (set! cursor (+ cursor 1))
-                    (set! i rend)))
-                (set! i (+ i 1)))))
-          cursor)))))
+    [data : (Ptr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-view stream)]
+    (unsafe
+      (if (>= start-cursor (deref data).sweep-count)
+        start-cursor
+        (let
+          [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+          [live : (__tl_dyn-array i64) v.live]
+          [count : i64 v.len]
+          [cursor : i64 start-cursor]
+          [i : i64 0]
+          (begin
+            (while (and (< i count) (< cursor (deref data).sweep-count))
+              (let
+                [line : CompilerBackendPeepholeLineRecord
+                  (compiler-backend-global-array-element-shared-view recs i)]
+                (if (compiler-backend-sweep-label-matches?
+                  stream
+                  (compiler-backend-peephole-record-data line)
+                  (compiler-backend-peephole-record-start line)
+                  (compiler-backend-peephole-record-end line)
+                  cursor)
+                  (let
+                    [rstart : i64 (+ i 1)]
+                    [rend : i64
+                      (compiler-backend-sweep-region-end-records
+                        (compiler-backend-global-shared-view recs)
+                        rstart
+                        count)]
+                    (begin
+                      (compiler-backend-sweep-region-records!
+                        backend-state
+                        stream
+                        (compiler-backend-global-shared-view recs)
+                        (&mut live)
+                        rstart
+                        rend
+                        (array-ref (deref data).sweep-lo-arr cursor)
+                        (array-ref (deref data).sweep-hi-arr cursor)
+                        (array-ref (deref data).sweep-disp-arr cursor)
+                        (array-ref (deref data).sweep-em-lo-arr cursor)
+                        (array-ref (deref data).sweep-em-hi-arr cursor)
+                        (= (array-ref (deref data).sweep-win64-arr cursor) 1))
+                      (set! cursor (+ cursor 1))
+                      (set! i rend)))
+                  (set! i (+ i 1)))))
+            cursor))))))
 
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
@@ -75481,9 +75535,8 @@
   [backend-state : CompilerBackendState]) : unit
   (let
     [function-state-address : i64
-      (__tl-project-field
-        (compiler-backend-state-data backend-state)
-        function-state-address)]
+      (unsafe
+        (deref (compiler-backend-state-view backend-state)).function-state-address)]
     (when
       (not (= function-state-address 0))
       (compiler-backend-function-state-reset!
@@ -85308,9 +85361,13 @@
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (if (> (array-length data.owner-global-offsets) 0)
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (if (>
+      (array-length
+        (unsafe
+          (deref data).owner-global-offsets))
+      0)
       unit
       (let
         [owner : arena.Arena
@@ -85330,13 +85387,12 @@
               (__tl_make-array
                 u8
                 compiler-backend-peephole-owner-global-initial-bytes-capacity)]
-            (begin
-              (set! data.owner-global-offsets offsets)
-              (set! data.owner-global-lengths lengths)
-              (set! data.owner-global-bytes bytes)
-              (set! data.owner-global-bytes-count 0)
-              (set! data.owner-global-generation 1)
-              (compiler-backend-stream-state-data-set! stream data))))))))
+            (unsafe
+              (set! (deref data).owner-global-offsets offsets)
+              (set! (deref data).owner-global-lengths lengths)
+              (set! (deref data).owner-global-bytes bytes)
+              (set! (deref data).owner-global-bytes-count 0)
+              (set! (deref data).owner-global-generation 1))))))))
 
 (define (compiler-backend-peephole-owner-global-table-grow!
   [backend-state : CompilerBackendState]
@@ -85413,9 +85469,11 @@
   [stream : CompilerBackendStreamState]
   [required : i64]) : bool
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [old : (__tl_dyn-array u8) data.owner-global-bytes]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    [old : (__tl_dyn-array u8)
+      (unsafe
+        (deref data).owner-global-bytes)]
     [old-cap : i64 (array-length old)]
     [new-cap : i64 old-cap]
     (begin
@@ -85440,12 +85498,15 @@
               [bytes : (__tl_dyn-array u8) (__tl_make-array u8 new-cap)]
               [i : i64 0]
               (begin
-                (while (< i data.owner-global-bytes-count)
+                (while (<
+                  i
+                  (unsafe
+                    (deref data).owner-global-bytes-count))
                   (begin
                     (set! (array-ref bytes i) (array-ref old i))
                     (set! i (+ i 1))))
-                (set! data.owner-global-bytes bytes)
-                (compiler-backend-stream-state-data-set! stream data)
+                (unsafe
+                  (set! (deref data).owner-global-bytes bytes))
                 true))))))))
 
 (define (compiler-backend-peephole-owner-global-reset-with-backend-state!
@@ -85456,12 +85517,14 @@
       (compiler-backend-peephole-owner-global-storage-ensure-with-backend-state!
         backend-state
         stream)]
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
     (begin
-      (set! data.owner-global-generation (+ data.owner-global-generation 1))
-      (set! data.owner-global-bytes-count 0)
-      (compiler-backend-stream-state-data-set! stream data)
+      (unsafe
+        (set!
+          (deref data).owner-global-generation
+          (+ (deref data).owner-global-generation 1))
+        (set! (deref data).owner-global-bytes-count 0))
       unit)))
 
 (define (compiler-backend-peephole-owner-global-bytes-eq?
@@ -85498,13 +85561,20 @@
       (CompilerBackendStreamState context.stream-address)]
     [key-data : (Ptr u8) context.data]
     [hash : i64 (ci.intern-hash-words key-data operand-start symbol-len)]
-    [state-data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [offsets : (__tl_dyn-array i64) state-data.owner-global-offsets]
-    [lengths : (__tl_dyn-array i64) state-data.owner-global-lengths]
+    [state-data : (Ptr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-view stream)]
+    [offsets : (__tl_dyn-array i64)
+      (unsafe
+        (deref state-data).owner-global-offsets)]
+    [lengths : (__tl_dyn-array i64)
+      (unsafe
+        (deref state-data).owner-global-lengths)]
     [bytes : (__tl_dyn-array u8)
-      (compiler-backend-global-shared-view state-data.owner-global-bytes)]
-    [generation : i64 state-data.owner-global-generation]
+      (unsafe
+        (deref state-data).owner-global-bytes)]
+    [generation : i64
+      (unsafe
+        (deref state-data).owner-global-generation)]
     [cap : i64 (array-length offsets)]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
@@ -85517,21 +85587,25 @@
               generation
               entry))
             (let
-              [start : i64 state-data.owner-global-bytes-count]
+              [start : i64
+                (unsafe
+                  (deref state-data).owner-global-bytes-count)]
               (if (or
                 (<=
                   (+ start symbol-len)
-                  (array-length state-data.owner-global-bytes))
+                  (array-length
+                    (unsafe
+                      (deref state-data).owner-global-bytes)))
                 (compiler-backend-peephole-owner-global-bytes-grow!
                   backend-state
                   stream
                   (+ start symbol-len)))
                 (let
-                  [current : CompilerBackendStreamStateData
-                    (compiler-backend-stream-state-data stream)]
+                  [current : (MutPtr CompilerBackendStreamStateData)
+                    (compiler-backend-stream-state-ptr stream)]
                   [bytes : (__tl_dyn-array u8)
-                    (compiler-backend-global-shared-view
-                      current.owner-global-bytes)]
+                    (unsafe
+                      (deref current).owner-global-bytes)]
                   [j : i64 0]
                   (begin
                     (while (< j symbol-len)
@@ -85550,8 +85624,10 @@
                         generation
                         start))
                     (set! (array-ref lengths slot) symbol-len)
-                    (set! current.owner-global-bytes-count (+ start symbol-len))
-                    (compiler-backend-stream-state-data-set! stream current)
+                    (unsafe
+                      (set!
+                        (deref current).owner-global-bytes-count
+                        (+ start symbol-len)))
                     (return (- 0 (+ start 1)))))
                 (return (compiler-backend-peephole-owner-key-unknown))))
             (if (compiler-backend-peephole-owner-global-bytes-eq?
@@ -88187,23 +88263,18 @@
   (let
     [stream : CompilerBackendStreamState
       (CompilerBackendStreamState walk.stream-address)]
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.records-lines walk.lines)
-      (set! data.records-live walk.live)
-      (set! data.records-len walk.len)
-      (compiler-backend-stream-state-data-set! stream data))))
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (set! (deref data).records-lines walk.lines)
+      (set! (deref data).records-live walk.live)
+      (set! (deref data).records-len walk.len))))
 
 (define (compiler-backend-peephole-records-publish-len!
   [stream : CompilerBackendStreamState]
   [len : i64]) : unit
-  (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.records-len len)
-      (compiler-backend-stream-state-data-set! stream data))))
+  (unsafe
+    (set! (deref (compiler-backend-stream-state-ptr stream)).records-len len)))
 
 (define (compiler-backend-peephole-records-close
   [walk : CompilerBackendPeepholeWalkState]) : CompilerBackendPeepholeLineVec
@@ -88224,42 +88295,41 @@
 (define (compiler-backend-peephole-records-retire!
   [stream : CompilerBackendStreamState]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
       (set!
-        data.records-lines
+        (deref data).records-lines
         (__tl_make-array CompilerBackendPeepholeLineRecord 0))
-      (set! data.records-live (__tl_make-array i64 0))
-      (set! data.records-len 0)
-      (compiler-backend-stream-state-data-set! stream data))))
+      (set! (deref data).records-live (__tl_make-array i64 0))
+      (set! (deref data).records-len 0))))
 
 (define (compiler-backend-peephole-records-state-grow!
   [stream : CompilerBackendStreamState]) : unit
-  (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    [old-lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-      data.records-lines]
-    [old-live : (__tl_dyn-array i64) data.records-live]
-    [len : i64 data.records-len]
-    [new-cap : i64
-      (if (< (array-length old-lines) 1)
-        1
-        (* (array-length old-lines) 2))]
-    [lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
-      (__tl_make-array CompilerBackendPeepholeLineRecord new-cap)]
-    [live : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-    [k : i64 0]
-    (begin
-      (while (< k len)
-        (begin
-          (set! (array-ref lines k) (array-ref old-lines k))
-          (set! (array-ref live k) (array-ref old-live k))
-          (set! k (+ k 1))))
-      (set! data.records-lines lines)
-      (set! data.records-live live)
-      (compiler-backend-stream-state-data-set! stream data))))
+  (unsafe
+    (let
+      [data : (MutPtr CompilerBackendStreamStateData)
+        (compiler-backend-stream-state-ptr stream)]
+      [old-lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+        (deref data).records-lines]
+      [old-live : (__tl_dyn-array i64) (deref data).records-live]
+      [len : i64 (deref data).records-len]
+      [new-cap : i64
+        (if (< (array-length old-lines) 1)
+          1
+          (* (array-length old-lines) 2))]
+      [lines : (__tl_dyn-array CompilerBackendPeepholeLineRecord)
+        (__tl_make-array CompilerBackendPeepholeLineRecord new-cap)]
+      [live : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+      [k : i64 0]
+      (begin
+        (while (< k len)
+          (begin
+            (set! (array-ref lines k) (array-ref old-lines k))
+            (set! (array-ref live k) (array-ref old-live k))
+            (set! k (+ k 1))))
+        (set! (deref data).records-lines lines)
+        (set! (deref data).records-live live)))))
 
 (define (compiler-backend-peephole-records-grow!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]) : unit
@@ -91675,12 +91745,10 @@
   [home-arena : arena.Arena]) : unit
   ;; Rendering/appending the retained group can grow `home-arena`; its stable
   ;; root remains the owner used by every later flush.
-  (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.assembly-home-arena home-arena)
-      (compiler-backend-stream-state-data-set! stream data))))
+  (unsafe
+    (set!
+      (deref (compiler-backend-stream-state-ptr stream)).assembly-home-arena
+      home-arena)))
 
 ;; Flush one raw function group through the record pipeline. `scratch` is active
 ;; on entry and rewound before return: the chunk index, the line records and
@@ -91738,9 +91806,8 @@
 
 (define (compiler-backend-assembly-stream-active?
   [stream : CompilerBackendStreamState]) : bool
-  (__tl-project-field
-    (compiler-backend-stream-state-data stream)
-    assembly-active))
+  (unsafe
+    (deref (compiler-backend-stream-state-view stream)).assembly-active))
 
 (define (compiler-backend-assembly-stream-start!
   [stream : CompilerBackendStreamState]
@@ -91751,21 +91818,20 @@
   [home-arena : arena.Arena]) : unit
   (let
     [batch : text_buf.TextBuf (in-arena raw-arena (text_buf.empty))]
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.assembly-raw-arena raw-arena)
-      (set! data.assembly-raw-mark raw-mark)
-      (set! data.assembly-peephole-arena peephole-arena)
-      (set! data.assembly-peephole-mark peephole-mark)
-      (set! data.assembly-out (in-arena home-arena (text_buf.empty)))
-      (set! data.assembly-home-arena home-arena)
-      (set! data.assembly-sweep-cursor 0)
-      (set! data.assembly-batch batch)
-      (set! data.assembly-batch-count 0)
-      (set! data.assembly-raw-ready false)
-      (set! data.assembly-active true)
-      (compiler-backend-stream-state-data-set! stream data))))
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (set! (deref data).assembly-raw-arena raw-arena)
+      (set! (deref data).assembly-raw-mark raw-mark)
+      (set! (deref data).assembly-peephole-arena peephole-arena)
+      (set! (deref data).assembly-peephole-mark peephole-mark)
+      (set! (deref data).assembly-out (in-arena home-arena (text_buf.empty)))
+      (set! (deref data).assembly-home-arena home-arena)
+      (set! (deref data).assembly-sweep-cursor 0)
+      (set! (deref data).assembly-batch batch)
+      (set! (deref data).assembly-batch-count 0)
+      (set! (deref data).assembly-raw-ready false)
+      (set! (deref data).assembly-active true))))
 
 (define (compiler-backend-assembly-stream-begin-raw!
   [backend-state : CompilerBackendState]
@@ -91886,24 +91952,24 @@
       ;; RAW here can require one allocation larger than an arena segment before
       ;; the peephole pipeline has a chance to consume its chunks.
       (let
-        [data : CompilerBackendStreamStateData
-          (compiler-backend-stream-state-data stream)]
-        (begin
+        [data : (MutPtr CompilerBackendStreamStateData)
+          (compiler-backend-stream-state-ptr stream)]
+        (unsafe
           ;; The flush above leaves the batch empty, so moving RAW into it is
           ;; the chunk-preserving equivalent of appending to that empty batch.
-          (set! data.assembly-batch raw)
-          (set! data.assembly-batch-count 1)
-          (compiler-backend-stream-state-data-set! stream data)))
+          (set! (deref data).assembly-batch raw)
+          (set! (deref data).assembly-batch-count 1)))
       (compiler-backend-assembly-stream-flush-batch! backend-state stream))))
 
 (define (compiler-backend-assembly-stream-output
   [stream : CompilerBackendStreamState]) : text_buf.TextBuf
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (if data.assembly-active
-      data.assembly-out
-      (text_buf.empty))))
+    [data : (Ptr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-view stream)]
+    (unsafe
+      (if (deref data).assembly-active
+        (deref data).assembly-out
+        (text_buf.empty)))))
 
 (define (compiler-backend-assembly-stream-finish!
   [backend-state : CompilerBackendState]
@@ -91912,38 +91978,37 @@
     (compiler-backend-assembly-stream-flush-batch! backend-state stream)
     (let
       [out : text_buf.TextBuf (compiler-backend-assembly-stream-output stream)]
-      [data : CompilerBackendStreamStateData
-        (compiler-backend-stream-state-data stream)]
+      [data : (MutPtr CompilerBackendStreamStateData)
+        (compiler-backend-stream-state-ptr stream)]
       (begin
-        (set! data.assembly-active false)
-        (set! data.assembly-raw-arena (arena.Arena 0))
-        (set! data.assembly-raw-mark (arena.ArenaMark 0))
-        (set! data.assembly-peephole-arena (arena.Arena 0))
-        (set! data.assembly-peephole-mark (arena.ArenaMark 0))
-        (set! data.assembly-batch (text_buf.empty))
-        (set! data.assembly-batch-count 0)
-        (set! data.assembly-raw-ready false)
-        (compiler-backend-stream-state-data-set! stream data)
+        (unsafe
+          (set! (deref data).assembly-active false)
+          (set! (deref data).assembly-raw-arena (arena.Arena 0))
+          (set! (deref data).assembly-raw-mark (arena.ArenaMark 0))
+          (set! (deref data).assembly-peephole-arena (arena.Arena 0))
+          (set! (deref data).assembly-peephole-mark (arena.ArenaMark 0))
+          (set! (deref data).assembly-batch (text_buf.empty))
+          (set! (deref data).assembly-batch-count 0)
+          (set! (deref data).assembly-raw-ready false))
         out))))
 
 (define (compiler-backend-assembly-stream-abort!
   [stream : CompilerBackendStreamState]) : unit
   (let
-    [data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
-    (begin
-      (set! data.assembly-active false)
-      (set! data.assembly-raw-arena (arena.Arena 0))
-      (set! data.assembly-raw-mark (arena.ArenaMark 0))
-      (set! data.assembly-peephole-arena (arena.Arena 0))
-      (set! data.assembly-peephole-mark (arena.ArenaMark 0))
-      (set! data.assembly-home-arena (arena.Arena 0))
-      (set! data.assembly-out (text_buf.empty))
-      (set! data.assembly-sweep-cursor 0)
-      (set! data.assembly-batch (text_buf.empty))
-      (set! data.assembly-batch-count 0)
-      (set! data.assembly-raw-ready false)
-      (compiler-backend-stream-state-data-set! stream data))))
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (set! (deref data).assembly-active false)
+      (set! (deref data).assembly-raw-arena (arena.Arena 0))
+      (set! (deref data).assembly-raw-mark (arena.ArenaMark 0))
+      (set! (deref data).assembly-peephole-arena (arena.Arena 0))
+      (set! (deref data).assembly-peephole-mark (arena.ArenaMark 0))
+      (set! (deref data).assembly-home-arena (arena.Arena 0))
+      (set! (deref data).assembly-out (text_buf.empty))
+      (set! (deref data).assembly-sweep-cursor 0)
+      (set! (deref data).assembly-batch (text_buf.empty))
+      (set! (deref data).assembly-batch-count 0)
+      (set! (deref data).assembly-raw-ready false))))
 
 ;; Byte length of the emitted direct-jump prefix `"    jmp "`, shared by the
 ;; fallthrough-chain recognizer below and its operand-range computation so the
@@ -94672,13 +94737,16 @@
     [chunk-count : i64 chunks.count]
     [sink-capacity : i64
       (compiler-backend-peephole-line-vec-capacity-for chunks.total)]
-    [stream-data : CompilerBackendStreamStateData
-      (compiler-backend-stream-state-data stream)]
+    [stream-data : (Ptr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-view stream)]
     [carry-safe : CompilerBackendPeepholeCarrySafeView
       (CompilerBackendPeepholeCarrySafeView
-        stream-data.carry-safe-offsets
-        stream-data.carry-safe-lengths
-        stream-data.carry-safe-bytes)]
+        (unsafe
+          (deref stream-data).carry-safe-offsets)
+        (unsafe
+          (deref stream-data).carry-safe-lengths)
+        (unsafe
+          (deref stream-data).carry-safe-bytes))]
     [walk : CompilerBackendPeepholeWalkState
       (CompilerBackendPeepholeWalkState
         backend-state.address
@@ -95299,9 +95367,8 @@
                   [(ResultCompilerBackendBuffer.Ok _)
                     (let
                       [final-home-arena : arena.Arena
-                        (__tl-project-field
-                          (compiler-backend-stream-state-data stream)
-                          assembly-home-arena)]
+                        (unsafe
+                          (deref (compiler-backend-stream-state-view stream)).assembly-home-arena)]
                       [final : text_buf.TextBuf
                         (compiler-backend-assembly-stream-finish!
                           backend-state

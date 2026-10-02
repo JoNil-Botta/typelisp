@@ -8984,23 +8984,17 @@
             (set! storage.variant-outcomes variant-outcomes)
             (compiler-lower-function-memo-storage-set! state storage)))))))
 
-(define (compiler-lower-function-state-data
-  [state : CompilerLowerFunctionState]) : CompilerLowerFunctionStateData
+(define (compiler-lower-function-state-ptr [state : CompilerLowerFunctionState]) : (MutPtr
+    CompilerLowerFunctionStateData)
   (unsafe
-    (ptr-read
-      (int->ptr
-        (cast state.address : u64)
-        : (Ptr CompilerLowerFunctionStateData)))))
+    (int->ptr
+      (cast state.address : u64)
+      : (MutPtr CompilerLowerFunctionStateData))))
 
-(define (compiler-lower-function-state-data-set!
-  [state : CompilerLowerFunctionState]
-  [data : CompilerLowerFunctionStateData]) : unit
+(define (compiler-lower-function-state-view
+  [state : CompilerLowerFunctionState]) : (Ptr CompilerLowerFunctionStateData)
   (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast state.address : u64)
-        : (MutPtr CompilerLowerFunctionStateData))
-      data)))
+    (int->ptr (cast state.address : u64) : (Ptr CompilerLowerFunctionStateData))))
 
 (define (compiler-lower-function-state-new-with-stack
   [owner : CompilerLowerState]
@@ -9045,99 +9039,82 @@
 
 (define (compiler-lower-function-state-inline-helper-stack
   [state : CompilerLowerFunctionState]) : LowerIdSet
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    data.inline-helper-stack))
+  (unsafe
+    (deref (compiler-lower-function-state-view state)).inline-helper-stack))
 
 (define (compiler-lower-function-state-owner
   [state : CompilerLowerFunctionState]) : CompilerLowerState
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    (compiler-lower-state-from-address data.owner-address)))
+  (compiler-lower-state-from-address
+    (unsafe
+      (deref (compiler-lower-function-state-view state)).owner-address)))
 
 (define (compiler-lower-function-state-inline-helper-stack-set!
   [state : CompilerLowerFunctionState]
   [stack : LowerIdSet]) : unit
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    (begin
-      (set! data.inline-helper-stack stack)
-      (compiler-lower-function-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-lower-function-state-ptr state)).inline-helper-stack
+      stack)))
 
 (define (compiler-lower-function-state-recursion-detected?
   [state : CompilerLowerFunctionState]) : bool
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    data.inline-recursion-detected))
+  (unsafe
+    (deref (compiler-lower-function-state-view state)).inline-recursion-detected))
 
 (define (compiler-lower-function-state-recursion-detected-set!
   [state : CompilerLowerFunctionState]
   [detected : bool]) : unit
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    (begin
-      (set! data.inline-recursion-detected detected)
-      (compiler-lower-function-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-lower-function-state-ptr state)).inline-recursion-detected
+      detected)))
 
 (define (compiler-lower-function-state-fresh-local-id!
   [state : CompilerLowerFunctionState]
   [source-name-id : i64]) : i64
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    [next : i64 data.inline-next-temp]
-    [owner-address : i64 data.owner-address]
-    (begin
-      (set! data.inline-next-temp (+ next 1))
-      (compiler-lower-function-state-data-set! state data)
-      (let
-        [session : cis.InternStructuralSessionHandle
-          (compiler-lower-state-structural-session
-            (compiler-lower-state-from-address owner-address))]
-        (cis.intern-fresh-local-identity-raw
-          (cis.intern-structural-session-fresh-local-identity
-            session
-            next
-            (tc_core.macro-hygiene-global-source-name-id-or
+  (unsafe
+    (let
+      [data : (MutPtr CompilerLowerFunctionStateData)
+        (compiler-lower-function-state-ptr state)]
+      [next : i64 (deref data).inline-next-temp]
+      [owner-address : i64 (deref data).owner-address]
+      (begin
+        (set! (deref data).inline-next-temp (+ next 1))
+        (let
+          [session : cis.InternStructuralSessionHandle
+            (compiler-lower-state-structural-session
+              (compiler-lower-state-from-address owner-address))]
+          (cis.intern-fresh-local-identity-raw
+            (cis.intern-structural-session-fresh-local-identity
               session
-              source-name-id
-              source-name-id)))))))
+              next
+              (tc_core.macro-hygiene-global-source-name-id-or
+                session
+                source-name-id
+                source-name-id))))))))
 
 (define (compiler-lower-function-state-scalar-call-context
   [state : CompilerLowerFunctionState]) : LowerSpmdScalarCallContext
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    data.scalar-call-context))
+  (unsafe
+    (deref (compiler-lower-function-state-view state)).scalar-call-context))
 
 (define (compiler-lower-function-state-scalar-call-context-set!
   [state : CompilerLowerFunctionState]
   [context : LowerSpmdScalarCallContext]) : unit
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    (begin
-      (set! data.scalar-call-context context)
-      (compiler-lower-function-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-lower-function-state-ptr state)).scalar-call-context
+      context)))
 
 (define (compiler-lower-function-state-rtf-generation
   [state : CompilerLowerFunctionState]) : i64
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    data.rtf-generation))
+  (unsafe
+    (deref (compiler-lower-function-state-view state)).rtf-generation))
 
 (define (compiler-lower-function-state-variant-generation
   [state : CompilerLowerFunctionState]) : i64
-  (let
-    [data : CompilerLowerFunctionStateData
-      (compiler-lower-function-state-data state)]
-    data.variant-generation))
+  (unsafe
+    (deref (compiler-lower-function-state-view state)).variant-generation))
 
 ;; For the memo-size test in compiler_lower_tests: comptime size-of rejects a
 ;; type named through a module alias.

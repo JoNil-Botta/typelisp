@@ -38785,103 +38785,95 @@ b_keep:
 (define (compiler-backend-stream-state-carry-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      carry-safe-offsets)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)))
 
 (define (compiler-backend-stream-state-carry-bytes-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      carry-safe-bytes)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-bytes)))
 
 (define (compiler-backend-stream-state-owner-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      owner-global-offsets)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).owner-global-offsets)))
 
 (define (compiler-backend-stream-state-owner-bytes-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      owner-global-bytes)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)))
 
 (define (compiler-backend-stream-state-sweep-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      sweep-sym-off)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)))
 
 (define (compiler-backend-stream-state-sweep-bytes-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      sweep-sym-bytes)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-bytes)))
 
 (define (compiler-backend-stream-state-coverage-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      sweep-coverage-bits)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)))
 
 (define (compiler-backend-stream-state-record-capacity
   [stream : backend.CompilerBackendStreamState]) : i64
   (array-length
-    (__tl-project-field
-      (backend.compiler-backend-stream-state-data stream)
-      records-lines)))
+    (unsafe
+      (deref (backend.compiler-backend-stream-state-view stream)).records-lines)))
 
 (define (compiler-backend-stream-state-retained-table-bytes
   [stream : backend.CompilerBackendStreamState]) : i64
   (let
-    [data : backend.CompilerBackendStreamStateData
-      (backend.compiler-backend-stream-state-data stream)]
-    (+
-      (*
-        8
-        (+
-          (+
-            (array-length data.carry-safe-offsets)
-            (array-length data.carry-safe-lengths))
-          (+
-            (+
-              (+
-                (+
-                  (array-length data.sweep-sym-off)
-                  (array-length data.sweep-sym-len))
-                (+
-                  (array-length data.sweep-lo-arr)
-                  (array-length data.sweep-hi-arr)))
-              (+
-                (array-length data.sweep-disp-arr)
-                (array-length data.sweep-win64-arr)))
-            (+
-              (+
-                (array-length data.sweep-em-lo-arr)
-                (array-length data.sweep-em-hi-arr))
-              (+
-                (array-length data.sweep-coverage-bits)
-                (+
-                  (array-length data.owner-global-offsets)
-                  (array-length data.owner-global-lengths)))))))
+    [data : (Ptr backend.CompilerBackendStreamStateData)
+      (backend.compiler-backend-stream-state-view stream)]
+    (unsafe
       (+
+        (*
+          8
+          (+
+            (+
+              (array-length (deref data).carry-safe-offsets)
+              (array-length (deref data).carry-safe-lengths))
+            (+
+              (+
+                (+
+                  (+
+                    (array-length (deref data).sweep-sym-off)
+                    (array-length (deref data).sweep-sym-len))
+                  (+
+                    (array-length (deref data).sweep-lo-arr)
+                    (array-length (deref data).sweep-hi-arr)))
+                (+
+                  (array-length (deref data).sweep-disp-arr)
+                  (array-length (deref data).sweep-win64-arr)))
+              (+
+                (+
+                  (array-length (deref data).sweep-em-lo-arr)
+                  (array-length (deref data).sweep-em-hi-arr))
+                (+
+                  (array-length (deref data).sweep-coverage-bits)
+                  (+
+                    (array-length (deref data).owner-global-offsets)
+                    (array-length (deref data).owner-global-lengths)))))))
         (+
-          (array-length data.carry-safe-bytes)
-          (array-length data.sweep-sym-bytes))
-        (array-length data.owner-global-bytes)))))
+          (+
+            (array-length (deref data).carry-safe-bytes)
+            (array-length (deref data).sweep-sym-bytes))
+          (array-length (deref data).owner-global-bytes))))))
 
 (define (compiler-backend-state-slot-cache-epoch
   [state : backend.CompilerBackendState]) : i64
-  (__tl-project-field
-    (backend.compiler-backend-state-data state)
-    slot-cache-epoch))
+  (unsafe
+    (deref (backend.compiler-backend-state-view state)).slot-cache-epoch))
 
 (define (compiler-backend-set-current-fn-linux!
   [backend-state : backend.CompilerBackendState]) : unit
@@ -38903,20 +38895,21 @@ b_keep:
   [kstart : i64]
   [klen : i64]
   [hash : i64]) : bool
-  (let
-    [data : backend.CompilerBackendStreamStateData
-      (backend.compiler-backend-stream-state-data stream)]
-    [view : backend.CompilerBackendPeepholeCarrySafeView
-      (backend.CompilerBackendPeepholeCarrySafeView
-        data.carry-safe-offsets
-        data.carry-safe-lengths
-        data.carry-safe-bytes)]
-    (backend.compiler-backend-peephole-carry-safe-contains-view?
-      (& view)
-      key-data
-      kstart
-      klen
-      hash)))
+  (unsafe
+    (let
+      [data : (Ptr backend.CompilerBackendStreamStateData)
+        (backend.compiler-backend-stream-state-view stream)]
+      [view : backend.CompilerBackendPeepholeCarrySafeView
+        (backend.CompilerBackendPeepholeCarrySafeView
+          (deref data).carry-safe-offsets
+          (deref data).carry-safe-lengths
+          (deref data).carry-safe-bytes)]
+      (backend.compiler-backend-peephole-carry-safe-contains-view?
+        (& view)
+        key-data
+        kstart
+        klen
+        hash))))
 
 (define (compiler-backend-string-list-contains?
   [items : backend.BackendStringSeq]
@@ -41068,9 +41061,8 @@ b_keep:
 
 (define (state-assembly-stream-home-arena
   [stream : backend.CompilerBackendStreamState]) : arena.Arena
-  (__tl-project-field
-    (backend.compiler-backend-stream-state-data stream)
-    assembly-home-arena))
+  (unsafe
+    (deref (backend.compiler-backend-stream-state-view stream)).assembly-home-arena))
 
 (define (state-addr-of-forwarding-enabled
   [backend-state : backend.CompilerBackendState]) : bool
@@ -41240,21 +41232,18 @@ b_keep:
         (= (backend.compiler-backend-state-lazy-table-arena backend-state) 0)
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              carry-safe-offsets))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets))
           0)
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              owner-global-offsets))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).owner-global-offsets))
           0)
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              sweep-sym-off))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off))
           0)
         (= (backend.compiler-backend-state-slot-cache-capacity backend-state) 0)
         (=
@@ -41339,61 +41328,52 @@ b_keep:
       (and
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              carry-safe-offsets))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets))
           (* 4 backend.compiler-backend-peephole-carry-safe-initial-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              carry-safe-lengths))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-lengths))
           (* 4 backend.compiler-backend-peephole-carry-safe-initial-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              carry-safe-bytes))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-bytes))
           (*
             4
             backend.compiler-backend-peephole-carry-safe-initial-bytes-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              owner-global-offsets))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).owner-global-offsets))
           (* 2 backend.compiler-backend-peephole-owner-global-initial-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              owner-global-lengths))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).owner-global-lengths))
           (* 2 backend.compiler-backend-peephole-owner-global-initial-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              owner-global-bytes))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes))
           (*
             2
             backend.compiler-backend-peephole-owner-global-initial-bytes-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              sweep-sym-off))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off))
           (* 4 backend.compiler-backend-sweep-initial-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              sweep-sym-bytes))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-bytes))
           (* 4 backend.compiler-backend-sweep-initial-bytes-capacity))
         (=
           (array-length
-            (__tl-project-field
-              (backend.compiler-backend-stream-state-data stream)
-              sweep-coverage-bits))
+            (unsafe
+              (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits))
           128)
         (=
           (backend.compiler-backend-state-slot-cache-capacity backend-state)
@@ -41416,51 +41396,44 @@ b_keep:
       (arena.destroy-safe! scratch)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-stream-state-data stream)
-            carry-safe-offsets)
+          (unsafe
+            (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)
           0)
         17)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-stream-state-data stream)
-            owner-global-bytes)
+          (unsafe
+            (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)
           0)
         3)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-stream-state-data stream)
-            sweep-sym-off)
+          (unsafe
+            (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)
           0)
         29)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-stream-state-data stream)
-            sweep-coverage-bits)
+          (unsafe
+            (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)
           0)
         31)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-state-data backend-state)
-            slot-cache-epochs)
+          (unsafe
+            (deref (backend.compiler-backend-state-view backend-state)).slot-cache-epochs)
           0)
         47)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-state-data backend-state)
-            frame-offset-cache-epochs)
+          (unsafe
+            (deref (backend.compiler-backend-state-view backend-state)).frame-offset-cache-epochs)
           0)
         53)
       (set!
         (array-ref
-          (__tl-project-field
-            (backend.compiler-backend-state-data backend-state)
-            immediate-cache-epochs)
+          (unsafe
+            (deref (backend.compiler-backend-state-view backend-state)).immediate-cache-epochs)
           0)
         59)
       (let
@@ -41468,30 +41441,26 @@ b_keep:
           (and
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-stream-state-data stream)
-                  carry-safe-offsets)
+                (unsafe
+                  (deref (backend.compiler-backend-stream-state-view stream)).carry-safe-offsets)
                 0)
               17)
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-stream-state-data stream)
-                  owner-global-bytes)
+                (unsafe
+                  (deref (backend.compiler-backend-stream-state-view stream)).owner-global-bytes)
                 0)
               3)
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-stream-state-data stream)
-                  sweep-sym-off)
+                (unsafe
+                  (deref (backend.compiler-backend-stream-state-view stream)).sweep-sym-off)
                 0)
               29)
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-stream-state-data stream)
-                  sweep-coverage-bits)
+                (unsafe
+                  (deref (backend.compiler-backend-stream-state-view stream)).sweep-coverage-bits)
                 0)
               31)
             (string.eq slot-render "-8(%rbp)")
@@ -41499,23 +41468,20 @@ b_keep:
             (string.eq immediate-render "$17")
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-state-data backend-state)
-                  slot-cache-epochs)
+                (unsafe
+                  (deref (backend.compiler-backend-state-view backend-state)).slot-cache-epochs)
                 0)
               47)
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-state-data backend-state)
-                  frame-offset-cache-epochs)
+                (unsafe
+                  (deref (backend.compiler-backend-state-view backend-state)).frame-offset-cache-epochs)
                 0)
               53)
             (=
               (array-ref
-                (__tl-project-field
-                  (backend.compiler-backend-state-data backend-state)
-                  immediate-cache-epochs)
+                (unsafe
+                  (deref (backend.compiler-backend-state-view backend-state)).immediate-cache-epochs)
                 0)
               59))]
         (begin

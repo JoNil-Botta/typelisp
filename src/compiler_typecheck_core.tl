@@ -33463,7 +33463,30 @@
     ;; and can overwrite that same cache entry with a false miss.
     (< (tc-name-first-dot-id session name-id) 0)))
 
+;; A hygienic global (a macro template's name, or a bare variant typecheck
+;; qualified through its expected enum) names a constructor exactly when its
+;; source spelling does in its definition module.
 (define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
+  (if (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id)
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-context-structural-session ctx)]
+      [source-id : i64
+        (macro-hygiene-global-source-name-id-or session name-id -1)]
+      [module-id : i64 (macro-hygiene-global-module-id session name-id)]
+      (and
+        (>= source-id 0)
+        (tc-constructor-source-name-id?
+          (if (csym.compiler-symbol-root-module-id? module-id)
+            (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text module-id)
+              module-id))
+          source-id)))
+    (tc-constructor-source-name-id? ctx name-id)))
+
+(define (tc-constructor-source-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
     [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]

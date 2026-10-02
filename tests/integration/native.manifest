@@ -459,6 +459,7 @@ modules_main|all|-|tests/integration/modules_main.tl|30|-|-|modules_helper.tl|-
 dotted_nested_variant|all|-|tests/integration/dotted_nested_variant_main.tl|0|-|-|dotted_nested_variant_consumer.tl dotted_nested_variant_provider.tl|-
 legacy_dotted_enum|all|-|tests/integration/legacy_dotted_enum_main.tl|42|-|-|legacy_dotted_enum_bridge.tl legacy_dotted_enum_provider.tl|-
 variant_expected_resolution|all|-|tests/integration/variant_expected_resolution.tl|42|-|-|variant_expected_resolution_lib.tl stdlib/option.tl|-
+variant_root_clash|all|-,0|tests/integration/variant_root_clash.tl|42|-|-|variant_root_clash_mid.tl variant_root_clash_lib.tl|-
 mixed_global_annotation|all|-|tests/integration/mixed_global_annotation_main.tl|42|-|-|mixed_global_annotation_bridge.tl mixed_global_annotation_provider.tl|-
 narrow_div_mod|all|-|tests/integration/narrow_div_mod.tl|30|-|-|-|-
 nested_eval|all|-|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl|-

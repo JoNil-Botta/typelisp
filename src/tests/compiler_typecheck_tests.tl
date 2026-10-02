@@ -3435,6 +3435,16 @@
     (let [m : Maybe (Some h)]
       0)))"
       "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    ;; Two enums declare `Some`, so typecheck qualifies the constructor first.
+    (compiler-typecheck-error-ok?
+      "(defenum Maybe (Some i64))
+(defenum Other (Some i64))
+(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let [m : Maybe (Some h)]
+      0)))"
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
     (compiler-typecheck-error-ok?
       "(define (close [h : i64]) : unit unit)
 (define (main) : i64

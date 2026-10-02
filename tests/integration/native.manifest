@@ -125,6 +125,9 @@ vector_cleanup_consuming_iterator|all|-|tests/integration/vector_cleanup_consumi
 vector_bang_eval_once|all|-|tests/integration/vector_bang_eval_once.tl|42|-|-|stdlib/vector.tl|-
 dense_list_generated|all|-|tests/integration/dense_list_generated.tl|42|-|-|stdlib/dense_list.tl|-
 for_macro|all|-|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/string.tl stdlib/vector.tl|-
+macro_clause_capture_slice_view|all|-|tests/integration/macro_clause_capture_slice_view.tl|42|-|-|-|-
+macro_binder_pool_publication|all|-|tests/integration/macro_binder_pool_publication.tl|42|-|-|-|-
+macro_loop_control_operand|all|-|tests/integration/macro_loop_control_operand.tl|42|-|-|stdlib/iterator.tl|-
 two_phase_mutable_call_borrow|all|-|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-|-
 implicit_core_prelude|all|-|tests/integration/implicit_core_prelude.tl|42|-|-|-|-
 core_macros_headerless_prelude_import|all|-|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-|-
@@ -155,6 +158,7 @@ compile_profile_module_view_release|all|-,0,1,2|tests/integration/compile_profil
 compile_profile_vector_one_core|all|-|tests/integration/compile_profile_vector_one_core.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_vector_struct_full|all|-|tests/integration/compile_profile_vector_struct_full.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_layout_spec|all|-|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl|-
+decls_macro_scoped_forms|all|-,0,2|tests/integration/decls_macro_scoped_forms.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/profile.tl|-
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
@@ -572,7 +576,7 @@ macro_import_order_format_first|all|-|tests/integration/macro_import_order_forma
 macro_untaken_comptime_error|all|-|tests/integration/macro_untaken_comptime_error.tl|42|-|-|stdlib/comptime.tl|-
 stdlib_serialize|all|-|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl stdlib/option.tl stdlib/result.tl stdlib/serialize.tl stdlib/string.tl serialize_toy_format.tl serialize_enum_fixture.tl|-
 stdlib_byte_copy|all|-|tests/integration/stdlib_byte_copy.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/io.tl|-
-stdlib_text_buf|all|-|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl|-
+stdlib_text_buf|all|-|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl stdlib/profile.tl|-
 stdlib_string|all|-|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n0\n123456789\n-42\n9223372036854775807\n-9223372036854775808\n|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_str_cat_fixed_arity|all|-|tests/integration/stdlib_str_cat_fixed_arity.tl|42|-|-|stdlib/string.tl stdlib/str_cat.tl|-
 str_cat_native_arities|all|-|tests/integration/str_cat_native_arities.tl|42|-|-|stdlib/io.tl stdlib/string.tl stdlib/str_cat.tl|-

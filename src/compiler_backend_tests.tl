@@ -12787,6 +12787,7 @@ g:
 ")
     ;; An arm whose last line is a LABEL still needs the jump behind it: those
     ;; labels are entry points of their own and fell straight into the join.
+    ;; Two lines long, the arm takes the island behind the first `ret`.
     (compiler-backend-layout-case?
       backend.compiler-backend-layout-mode-sink
       ".globl g
@@ -12827,14 +12828,14 @@ g:
 .Lf1_join:
     movq %rcx, %rax
     ret
-.Lf1_other:
-    movq $7, %rax
-    ret
 .Lf1_else:
     xorl %ecx, %ecx
     jmp .Lf1_other
 .Lf1_alias:
     jmp .Lf1_join
+.Lf1_other:
+    movq $7, %rax
+    ret
     .size g, . - g
 ")))
 
@@ -13264,10 +13265,211 @@ g:
       (string.eq split-window-got split-window-input)
       (string.eq alu-only-got alu-only-input))))
 
+;; ISLAND PLACEMENT: a sunk arm of at most two emitted lines goes in front of
+;; the first label after its join that control cannot fall into, so its
+;; branches stay short; anything else keeps the function end.
+(define (compiler-backend-layout-island-ok?) : bool
+  (and
+    ;; The sentinel arm lands behind the `jmp .Lf0_exit` that ends the next
+    ;; block, in front of `.Lf0_other`.
+    (compiler-backend-layout-case?
+      backend.compiler-backend-layout-mode-sink
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_if_else.7:
+    movq $-1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    jne .Lf0_other
+    addq $1, %rcx
+    jmp .Lf0_exit
+.Lf0_other:
+    subq $1, %rcx
+.Lf0_exit:
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    jne .Lf0_other
+    addq $1, %rcx
+    jmp .Lf0_exit
+.Lf0_if_else.7:
+    movq $-1, %rcx
+    jmp .Lf0_cont
+.Lf0_other:
+    subq $1, %rcx
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
+    ;; A `jmp` into the label run right behind it is a fallthrough the
+    ;; peephole deletes, not an island: the arm keeps the function end.
+    (compiler-backend-layout-case?
+      backend.compiler-backend-layout-mode-sink
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_if_else.7:
+    movq $-1, %rcx
+.Lf0_cont:
+    addq $1, %rcx
+    jmp .Lf0_next
+.Lf0_alias:
+.Lf0_next:
+    ret
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    addq $1, %rcx
+    jmp .Lf0_next
+.Lf0_alias:
+.Lf0_next:
+    ret
+.Lf0_if_else.7:
+    movq $-1, %rcx
+    jmp .Lf0_cont
+    .size f, . - f
+")
+    ;; A three-line arm keeps the function end even with an island in reach,
+    ;; so a longer cold region never lengthens the hot branches across it.
+    (compiler-backend-layout-case?
+      backend.compiler-backend-layout-mode-sink
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf1_cont
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    jne .Lf1_other
+    jmp .Lf1_exit
+.Lf1_other:
+    subq $1, %rcx
+.Lf1_exit:
+    ret
+    .size g, . - g
+"
+      ".globl g
+    .type g,@function
+g:
+.Lf1_entry:
+    testq %rdi, %rdi
+    jl .Lf1_if_else.7
+.Lf1_if_then.0:
+    cmpq %r9, %rdi
+    jge .Lf1_if_else.7
+.Lf1_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf1_cont:
+    cmpq $40, %rcx
+    jne .Lf1_other
+    jmp .Lf1_exit
+.Lf1_other:
+    subq $1, %rcx
+.Lf1_exit:
+    ret
+.Lf1_if_else.7:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+    jmp .Lf1_cont
+    .size g, . - g
+")
+    ;; With both mechanisms, `jmp .Lf0_park` is a duplication site whose copied
+    ;; run ends in `jmp .Lf0_exit`, the label right behind it. That is no island,
+    ;; so the arm takes the next one, after `ret`.
+    (compiler-backend-layout-case?
+      backend.compiler-backend-layout-mode
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_if_else.7:
+    movq $-1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    jmp .Lf0_park
+.Lf0_exit:
+    ret
+.Lf0_park:
+    movq %rax, %rdi
+    jmp .Lf0_exit
+    .size f, . - f
+"
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_if_else.7
+.Lf0_if_then.6:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    movq %rax, %rdi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+.Lf0_if_else.7:
+    movq $-1, %rcx
+    jmp .Lf0_cont
+.Lf0_park:
+    movq %rax, %rdi
+    jmp .Lf0_exit
+    .size f, . - f
+")))
+
 (define (compiler-backend-layout-ok?) : bool
   (and
     (compiler-backend-layout-tail-duplication-ok?)
-    (compiler-backend-layout-cold-arm-ok?)))
+    (compiler-backend-layout-cold-arm-ok?)
+    (compiler-backend-layout-island-ok?)))
 
 (define (compiler-backend-peephole-ok?) : bool
   (and

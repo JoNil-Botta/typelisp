@@ -313,6 +313,39 @@
     [(CompilerRegTargetAbi.Linux) 0]
     [(CompilerRegTargetAbi.Windows) 32]))
 
+;; System V classifies a by-value aggregate into eightbytes: it travels in
+;; registers when its classes fit and is copied onto the stack otherwise. Win64
+;; passes any aggregate wider than eight bytes by reference instead.
+(define (compiler-abi-aggregate-eightbyte-classes? [abi : CompilerRegTargetAbi]) : bool
+  (match abi
+    [(CompilerRegTargetAbi.Linux) true]
+    [(CompilerRegTargetAbi.Windows) false]))
+
+;; System V variadic calls report the number of vector registers they use in
+;; `%al`. Win64 instead duplicates each floating variadic argument into its
+;; integer register.
+(define (compiler-abi-varargs-vector-count-in-al? [abi : CompilerRegTargetAbi]) : bool
+  (match abi
+    [(CompilerRegTargetAbi.Linux) true]
+    [(CompilerRegTargetAbi.Windows) false]))
+
+(define (compiler-abi-caller-saved-gp-register?
+  [abi : CompilerRegTargetAbi]
+  [reg-id : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and
+        (not found)
+        (< index (compiler-abi-caller-saved-gp-register-count abi)))
+        (begin
+          (set!
+            found
+            (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
+          (set! index (+ index 1))))
+      found)))
+
 (define (compiler-abi-stack-call-arg-for-banks?
   [abi : CompilerRegTargetAbi]
   [is-float : bool]

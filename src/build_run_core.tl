@@ -85,9 +85,7 @@
       env)))
 
 (define (source-tool-target-name [target : backend.CompilerBackendTarget]) : String
-  (match target
-    [(backend.CompilerBackendTarget.Linux) "linux-x86_64"]
-    [(backend.CompilerBackendTarget.Windows) "windows-x86_64"]))
+  (backend.compiler-backend-target-triple target))
 
 (define (source-tool-default-target) : backend.CompilerBackendTarget
   (if (string.eq (env.path-separator) ";")

@@ -24,6 +24,13 @@
       (define (package-unsafe-answer [value : i64]) : i64
         value))))
 
+;; A Decls macro whose template only splices its operands, so it compiles to a
+;; native transformer. The consumer's `in-arena` body therefore reaches the
+;; declaration-output conversion through the native route (#7918).
+(defmacro (package-wrap-decl [head : Expr] [body : Expr]) : Decls
+  `(define ,head : i64
+    ,body))
+
 ;; The definition probe sees an empty operand list. Real literal operands leave
 ;; errors before and after the selected match arms untaken on both native and
 ;; forced-source dependency routes.

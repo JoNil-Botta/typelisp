@@ -1,11 +1,16 @@
 (module spmd_consumer)
 
+(import stdlib.arena)
 (import fixture.src.lib as fixture)
 (import (fixture.package-module) as fixture-generated)
 
 (fixture.package-decls)
 
 (fixture.package-first-decls 39 1)
+
+(fixture.package-wrap-decl
+  (package-arena-answer [scope : arena.Arena] [value : i64])
+  (in-arena scope (+ value 1)))
 
 (define (fill [out : (__tl_dyn-array i64)] [n : i64]) : bool
   (begin
@@ -192,6 +197,7 @@
         (= (package-first-answer) 39)
         (= (fixture-generated.answer) 41)
         (= (package-decl-answer) 40)
+        (= (package-arena-answer (arena.current) 41) 42)
         (= (fixture.helper 2 3) 5)
         out-ok?
         masked-ok?

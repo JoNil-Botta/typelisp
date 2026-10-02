@@ -16,6 +16,19 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+Linux and Windows share one lowerer and one backend. Target choices live in
+four places:
+- the lowerer's target-aware C ABI shapes;
+- the target policy (`compiler-backend-target-policy-new`) and its facts;
+- the ABI tables in `compiler_abi.tl`;
+- the platform leaf modules (`compiler_backend_runtime_{linux,windows}.tl` and
+  `compiler_backend_object_target_{linux,windows}.tl`).
+
+Shared emission reads those facts and never tests the target itself.
+[`scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh)
+enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
+Codegen Parity*) describes its rules.
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;
@@ -180,6 +193,15 @@ Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
+
+The serial in-memory LSP transport keeps its arena handle, input snapshot,
+cursor, EOF flag and captured output in one `LspFrameMemoryState`
+(`src/lsp_frame_core.tl`). Install and reset replace the whole value; only the
+cursor, EOF flag and output fields change in place. The transcript runner copies
+captured output into its caller's arena, saves the transport handle, resets the
+state, then destroys the session and transport arenas, so no transport field
+stays globally reachable after its owner is gone. The LSP frame smoke covers
+reset and reinstall after the input was consumed and both outputs written.
 
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the
@@ -704,6 +726,20 @@ in-memory programs retain their provided module identity without becoming file
 requests. Generated import spans and declaration paths both refer to the macro
 call site; materialization failures preserve the dependency diagnostic and add
 that call site as a structured related location.
+
+Before that, the output is spelled back as syntax for the declaration parser.
+A quasiquote template's expression positions hold parsed AST nodes, so
+`macro-expr-to-spanned-sexpr` converts each node to the form the parser reads.
+That includes the scoped arena, scratch, escape and `with` forms, loop
+control, `comptime`, lambdas, `foreach` and the SPMD forms. Its match has no
+fallback arm, so a new `AstExpr` variant does not compile until it is given a
+spelling. The `macro-output-expression-forms-round-trip` test checks that every
+form converts to exactly the syntax it was written as and re-parses to the same
+kind of node. `tests/integration/decls_macro_scoped_forms.tl` runs the CTFE
+route. `scripts/verify-package-native-tlci.sh` runs the native dependency route,
+which splices a consumer's `in-arena` body into a Decls macro's output.
+Native transformers cannot yet build these forms from their own templates and
+fall back to CTFE for them (#8547).
 
 Write authority over globals (SPEC §4.4.2) is enforced in the move checker's
 write arms, so other nodes pay nothing. Each write-capable arm of

@@ -1045,6 +1045,49 @@
       (compiler_abi.compiler-abi-float-arg-register-count abi)
       (compiler_abi.compiler-abi-outgoing-shadow-space abi))))
 
+;; Facts for code that holds only a raw target. Each reads the target's policy,
+;; so `compiler-backend-target-policy-new` stays the one place a target is
+;; mapped to its ABI, unwind, object format and runtime choices.
+;; `scripts/check-codegen-target-dispatch.sh` keeps every other shared scope
+;; free of Linux/Windows tests (src/TESTING.md, Cross-Target Codegen Parity).
+(define (compiler-backend-target-object-format [target : CompilerBackendTarget]) : CompilerBackendObjectFormatPolicy
+  (compiler-backend-target-policy-new target).object-format)
+
+(define (compiler-backend-object-format-elf?
+  [format : CompilerBackendObjectFormatPolicy]) : bool
+  (match format
+    [(CompilerBackendObjectFormatPolicy.Elf) true]
+    [(CompilerBackendObjectFormatPolicy.Coff) false]))
+
+(define (compiler-backend-target-elf? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-object-format-elf?
+    (compiler-backend-target-object-format target)))
+
+(define (compiler-backend-target-coff? [target : CompilerBackendTarget]) : bool
+  (not (compiler-backend-target-elf? target)))
+
+(define (compiler-backend-target-seh-unwind? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-target-policy-new target).seh-unwind)
+
+(define (compiler-backend-target-stack-probe? [target : CompilerBackendTarget]) : bool
+  (compiler-backend-target-policy-new target).stack-probe)
+
+(define (compiler-backend-target-sysv-aggregates?
+  [target : CompilerBackendTarget]) : bool
+  (compiler_abi.compiler-abi-aggregate-eightbyte-classes?
+    (compiler-backend-target-abi target)))
+
+;; The target's name as diagnostics and fallback categories spell it.
+(define (compiler-backend-target-triple [target : CompilerBackendTarget]) : String
+  (match target
+    [(CompilerBackendTarget.Linux) "linux-x86_64"]
+    [(CompilerBackendTarget.Windows) "windows-x86_64"]))
+
+;; Raw `syscall` instructions are admitted only on Linux; other targets report
+;; this. A literal, so the diagnostic owns no allocation.
+(define (compiler-backend-raw-syscall-diagnostic) : String
+  "backend: syscall is only supported on the linux-x86_64 target")
+
 ;; A backend job owns one exact intern capability and the small mutable state
 ;; that is safe to share across its emission phases.  Keep the public carrier
 ;; opaque and one machine word; all mutable data lives in the owner arena cell
@@ -14751,19 +14794,19 @@
 (define (compiler-backend-emit-windows-seh-proc
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     (str_cat.str-cat ".seh_proc " symbol "\n" "")
     ""))
 
 (define (compiler-backend-emit-windows-seh-push-rbp
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_pushreg %rbp\n"
     ""))
 
 (define (compiler-backend-emit-windows-seh-set-rbp
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_setframe %rbp, 0\n"
     ""))
 
@@ -14842,7 +14885,10 @@
   [vars : i64]
   [frame : i64]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (>
+    (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+      (compiler-backend-target-abi target))
+    0)
     (compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
       vars
@@ -14905,7 +14951,7 @@
   [frame : i64]
   [end-prologue : bool]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     (str_cat.str-cat
       (if (> frame 0)
         (str_cat.str-cat
@@ -14930,7 +14976,7 @@
 
 (define (compiler-backend-emit-windows-seh-endproc
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-seh-unwind? target)
     "    .seh_endproc\n"
     ""))
 
@@ -14952,7 +14998,7 @@
 (define (compiler-backend-emit-function-type-directive
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-linux? target)
+  (if (compiler-backend-target-elf? target)
     (str_cat.str-cat "    .type " symbol ",@function\n")
     ""))
 
@@ -14961,7 +15007,7 @@
 (define (compiler-backend-emit-function-size-directive
   [target : CompilerBackendTarget]
   [symbol : (& symbol str)]) : String
-  (if (compiler-backend-target-linux? target)
+  (if (compiler-backend-target-elf? target)
     (str_cat.str-cat "    .size " symbol ", . - " symbol "\n")
     ""))
 
@@ -18784,7 +18830,7 @@
                 [path-id : i64 (array-ref paths path-index)]
                 [path : String
                   (compiler-backend-escape-string
-                    (if (compiler-backend-target-linux? target)
+                    (if (compiler-backend-target-elf? target)
                       (string.replace
                         (compiler_ir_types.compiler-debug-path-remap
                           (ci.intern-compat-state-str
@@ -18802,7 +18848,7 @@
                     buf
                     (text_buf.append
                       buf
-                      (if (compiler-backend-target-windows? target)
+                      (if (compiler-backend-target-coff? target)
                         (str_cat.str-cat
                           "    .cv_file "
                           file-number
@@ -18871,7 +18917,7 @@
   [span-index : CompilerBackendSourceSpanIndex]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
-    (if (compiler-backend-target-windows? target)
+    (if (compiler-backend-target-coff? target)
       (str_cat.str-cat
         "    .section .debug$S,\"dr\"\n"
         "    .long 4\n"
@@ -18900,7 +18946,7 @@
           [column : i64 (compiler_ast_types.ast-source-span-start-col span)]
           (if (or (<= file-number 0) (<= line 0))
             ""
-            (if (compiler-backend-target-windows? target)
+            (if (compiler-backend-target-coff? target)
               (match (compiler-backend-index-function-slot
                 program-index
                 function)
@@ -18973,7 +19019,7 @@
   [function : i64]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
-    (compiler-backend-target-windows? target))
+    (compiler-backend-target-coff? target))
     (match (compiler-backend-index-function-slot program-index function)
       [(backend_i64_i64_map.LookupFound function-id)
         (str_cat.str-cat
@@ -18989,7 +19035,7 @@
   [program-index : CompilerBackendProgramIndex]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
-    (compiler-backend-target-windows? target))
+    (compiler-backend-target-coff? target))
     (str_cat.str-cat
       "    .section .debug$S,\"dr\"\n"
       "    .cv_filechecksums\n"
@@ -18997,7 +19043,7 @@
       "    .text\n")
     (if (and
       (compiler_ir_types.compiler-debug-info-enabled?)
-      (compiler-backend-target-linux? target))
+      (compiler-backend-target-elf? target))
       "    .section .text.typelisp_runtime,\"ax\"\n"
       "")))
 
@@ -19011,13 +19057,13 @@
 ;; direct-object release builds therefore keep their existing section model.
 (define (compiler-backend-backtrace-map-section
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-coff? target)
     "    .section .rdata$TLBT,\"dr\"\n"
     "    .section .typelisp_backtrace,\"a\",@progbits\n"))
 
 (define (compiler-backend-backtrace-string-section
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
+  (if (compiler-backend-target-coff? target)
     "    .section .rdata$TLBS,\"dr\"\n"
     "    .section .rodata.typelisp_backtrace,\"a\",@progbits\n"))
 
@@ -19288,20 +19334,13 @@
 (define (compiler-backend-abort-arg-reg
   [backend-state : CompilerBackendState]
   [index : i64]) : String
-  (match (compiler-backend-function-state-abort-target
-    (compiler-backend-state-function-state backend-state))
-    [(CompilerBackendTarget.Linux)
-      (cond
-        [(= index 0) "%rdi"]
-        [(= index 1) "%rsi"]
-        [(= index 2) "%rdx"]
-        [else "%rcx"])]
-    [(CompilerBackendTarget.Windows)
-      (cond
-        [(= index 0) "%rcx"]
-        [(= index 1) "%rdx"]
-        [(= index 2) "%r8"]
-        [else "%r9"])]))
+  (compiler_abi.compiler-abi-gp-arg-register
+    (compiler-backend-target-abi
+      (compiler-backend-function-state-abort-target
+        (compiler-backend-state-function-state backend-state)))
+    (if (> index 3)
+      3
+      index)))
 
 (define (compiler-backend-abort-site-next-label
   [backend-state : CompilerBackendState]
@@ -23739,19 +23778,21 @@
     compiler_abi.compiler-reg-id-r8
     (compiler_regalloc.compiler-reg-id-seq-prepend
       compiler_abi.compiler-reg-id-r9
-      (match target
-        [(CompilerBackendTarget.Windows)
+      (let
+        [rbx : compiler_regalloc.CompilerRegIdSeq
           (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rbx
             (compiler_regalloc.compiler-reg-id-seq-empty))]
-        [(CompilerBackendTarget.Linux)
+        ;; rsi and rdi join where the ABI makes them caller-saved.
+        (if (compiler_abi.compiler-abi-caller-saved-gp-register?
+          (compiler-backend-target-abi target)
+          compiler_abi.compiler-reg-id-rsi)
           (compiler_regalloc.compiler-reg-id-seq-prepend
             compiler_abi.compiler-reg-id-rsi
             (compiler_regalloc.compiler-reg-id-seq-prepend
               compiler_abi.compiler-reg-id-rdi
-              (compiler_regalloc.compiler-reg-id-seq-prepend
-                compiler_abi.compiler-reg-id-rbx
-                (compiler_regalloc.compiler-reg-id-seq-empty))))]))))
+              rbx))
+          rbx)))))
 
 (define (compiler-backend-const-hoist-uses-reg-id-from?
   [function-state : CompilerBackendFunctionState]
@@ -37295,9 +37336,7 @@
         dst
         "_profile_done")]
     [usable-end-offset : String
-      (if (compiler-backend-target-windows? target)
-        "64"
-        "24")]
+      (compiler-backend-runtime-usable-end-offset target)]
     [scav : String
       (compiler-backend-scavenge-reg
         dst
@@ -38534,7 +38573,7 @@
     [w1-sse : bool
       (compiler-backend-group-word-sse? type-segment-bases program-index ty 1)]
     (and
-      (compiler-backend-target-linux? target)
+      (compiler-backend-target-sysv-aggregates? target)
       (not
         (compiler-backend-stack-call-arg-for-banks?
           target
@@ -39137,25 +39176,24 @@
       (compiler-backend-extern-call-info-fixed-count extern-call-info)]
     (if (< fixed-count 0)
       ""
-      (match target
-        [(CompilerBackendTarget.Linux)
-          (str_cat.str-cat
-            "    movb $"
-            (string.int->string
-              (compiler-backend-varargs-linux-vector-count
-                type-segment-bases
-                param-types
-                0
-                0))
-            ", %al\n"
-            ""
-            "")]
-        [(CompilerBackendTarget.Windows)
-          (compiler-backend-windows-vararg-dup-asm
-            type-segment-bases
-            param-types
-            fixed-count
-            0)]))))
+      (if (compiler_abi.compiler-abi-varargs-vector-count-in-al?
+        (compiler-backend-target-abi target))
+        (str_cat.str-cat
+          "    movb $"
+          (string.int->string
+            (compiler-backend-varargs-linux-vector-count
+              type-segment-bases
+              param-types
+              0
+              0))
+          ", %al\n"
+          ""
+          "")
+        (compiler-backend-windows-vararg-dup-asm
+          type-segment-bases
+          param-types
+          fixed-count
+          0)))))
 
 (define (compiler-backend-call-param-types-index
   [name : i64]
@@ -39557,7 +39595,7 @@
   [ty : compiler_ast_types.AstType]) : bool
   (and
     c-abi?
-    (compiler-backend-target-linux? target)
+    (compiler-backend-target-sysv-aggregates? target)
     (not
       (string.eq
         (compiler-backend-aggregate-type-name type-segment-bases ty)
@@ -39635,7 +39673,9 @@
       ;; `position` there), so counting a Windows group arg as one scalar slot
       ;; made tail-call stack accounting diverge from emission.
       (cond
-        [(and (compiler-backend-target-linux? target) (> private-memory-size 0))
+        [(and
+            (compiler-backend-target-sysv-aggregates? target)
+            (> private-memory-size 0))
           (compiler-backend-call-stack-arg-count
             type-segment-bases
             target
@@ -39710,7 +39750,7 @@
                 float1
                 pos1)]
             (if (and
-              (compiler-backend-target-linux? target)
+              (compiler-backend-target-sysv-aggregates? target)
               (not linux-group-fits))
               (compiler-backend-call-stack-arg-count
                 type-segment-bases
@@ -39827,7 +39867,7 @@
           type-segment-bases
           (compiler-backend-global-shared-view arg-ty))]
       (if (and
-        (compiler-backend-target-linux? target)
+        (compiler-backend-target-sysv-aggregates? target)
         (> private-memory-size 0))
         (compiler-backend-type-list-stack-arg-count-at
           type-segment-bases
@@ -39890,7 +39930,7 @@
                 float1
                 (+ position 1))]
             (if (and
-              (compiler-backend-target-linux? target)
+              (compiler-backend-target-sysv-aggregates? target)
               (not linux-group-fits))
               (compiler-backend-type-list-stack-arg-count-at
                 type-segment-bases
@@ -40287,10 +40327,8 @@
   [_program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-call-arg-space-from target))
 
-(define (compiler-backend-call-arg-space-from [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Windows) 0]
-    [(CompilerBackendTarget.Linux) 0]))
+(define (compiler-backend-call-arg-space-from [_target : CompilerBackendTarget]) : i64
+  0)
 
 (define (compiler-backend-closure-call-arg-space
   [target : CompilerBackendTarget]
@@ -41594,7 +41632,9 @@
       ;; two stack slots when either bank cannot fit the whole group. Windows
       ;; retains the existing unified-position group convention.
       (cond
-        [(and (compiler-backend-target-linux? target) (> private-memory-size 0))
+        [(and
+            (compiler-backend-target-sysv-aggregates? target)
+            (> private-memory-size 0))
           (match (compiler-backend-emit-c-memory-stack-arg
             type-segment-bases
             target
@@ -41710,7 +41750,7 @@
                 float1
                 (+ position 1))]
             (if (and
-              (compiler-backend-target-linux? target)
+              (compiler-backend-target-sysv-aggregates? target)
               (not linux-group-fits))
               (match (compiler-backend-emit-group-stack-arg
                 target
@@ -47511,31 +47551,34 @@
     (string.eq name "tl_atomic_i32_fetch_add_ptr")))
 
 (define (compiler-backend-atomic-ptr-reg [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "%rcx"
-    "%rdi"))
+  (compiler_abi.compiler-abi-gp-arg-register
+    (compiler-backend-target-abi target)
+    0))
 
 (define (compiler-backend-atomic-value-reg
   [target : CompilerBackendTarget]
   [i32? : bool]) : String
-  (if (compiler-backend-target-windows? target)
-    (if i32?
-      "%edx"
-      "%rdx")
-    (if i32?
-      "%esi"
-      "%rsi")))
+  (compiler-backend-atomic-arg-reg target 1 i32?))
 
 (define (compiler-backend-atomic-new-reg
   [target : CompilerBackendTarget]
   [i32? : bool]) : String
-  (if (compiler-backend-target-windows? target)
+  (compiler-backend-atomic-arg-reg target 2 i32?))
+
+;; An atomic builtin's operands arrive in the target ABI's integer argument
+;; registers, narrowed to their 32-bit names for the i32 forms.
+(define (compiler-backend-atomic-arg-reg
+  [target : CompilerBackendTarget]
+  [index : i64]
+  [i32? : bool]) : String
+  (let
+    [reg : String
+      (compiler_abi.compiler-abi-gp-arg-register
+        (compiler-backend-target-abi target)
+        index)]
     (if i32?
-      "%r8d"
-      "%r8")
-    (if i32?
-      "%edx"
-      "%rdx")))
+      (compiler-backend-reg-part reg 4)
+      reg)))
 
 (define (compiler-backend-atomic-rax [i32? : bool]) : String
   (if i32?
@@ -49243,7 +49286,7 @@
       (box
         (compiler_diagnostic.compiler-diagnostic-at-start
           ""
-          "backend: syscall is only supported on the linux-x86_64 target")))
+          (compiler-backend-raw-syscall-diagnostic))))
     (let
       [count : i64
         (compiler-backend-call-args-count
@@ -63488,7 +63531,7 @@
           ;; stack placement for mixed-bank aggregate words.
           (cond
             [(and
-                (compiler-backend-target-linux? target)
+                (compiler-backend-target-sysv-aggregates? target)
                 (> private-memory-size 0))
               (match (compiler-backend-emit-param-spills-from
                 type-segment-bases
@@ -63582,7 +63625,7 @@
                     float1
                     (+ position 1))]
                 (if (and
-                  (compiler-backend-target-linux? target)
+                  (compiler-backend-target-sysv-aggregates? target)
                   (not linux-group-fits))
                   (match (compiler-backend-emit-group-word-stack-param
                     type-segment-bases
@@ -68315,7 +68358,7 @@
             compiler-backend-scratch-i64-emergency-used-count)
           outgoing
           backend-state)]
-      [(and (compiler-backend-target-windows? target) rebase-ok)
+      [(and (compiler-backend-target-seh-unwind? target) rebase-ok)
         (compiler-backend-sweep-record-win64!
           backend-state
           (compiler-backend-state-stream-state backend-state)
@@ -76160,7 +76203,7 @@
                           "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
                           (if (and
                             (compiler_ir_types.compiler-debug-info-enabled?)
-                            (compiler-backend-target-linux? target))
+                            (compiler-backend-target-elf? target))
                             "    .cfi_endproc\n"
                             "")
                           "")
@@ -78363,21 +78406,15 @@
   [target : CompilerBackendTarget]
   [symbol : String]
   [size : i64]) : String
-  (match target
-    [(CompilerBackendTarget.Linux)
-      (str_cat.str-cat
-        "    .comm "
-        symbol
-        ", "
-        (string.int->string size)
-        ", 8\n")]
-    [(CompilerBackendTarget.Windows)
-      (str_cat.str-cat
-        "    .comm "
-        symbol
-        ", "
-        (string.int->string size)
-        ", 3\n")]))
+  ;; ELF `.comm` takes the alignment in bytes, COFF its base-2 logarithm.
+  (str_cat.str-cat
+    "    .comm "
+    symbol
+    ", "
+    (string.int->string size)
+    (if (compiler-backend-target-elf? target)
+      ", 8\n"
+      ", 3\n")))
 
 (define (compiler-backend-emit-global
   [type-segment-bases : i64]
@@ -79499,6 +79536,14 @@
     [(CompilerBackendTarget.Windows)
       (runtime_windows.compiler-backend-current-arena-load dst)]))
 
+(define (compiler-backend-runtime-usable-end-offset
+  [target : CompilerBackendTarget]) : String
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (runtime_linux.compiler-backend-runtime-usable-end-offset)]
+    [(CompilerBackendTarget.Windows)
+      (runtime_windows.compiler-backend-runtime-usable-end-offset)]))
+
 (define (compiler-backend-current-arena-store
   [target : CompilerBackendTarget]
   [src : String]) : String
@@ -80378,7 +80423,7 @@
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (and (not pic-emit?) (not (compiler-backend-target-windows? target))))
+      (and (not pic-emit?) (compiler-backend-target-elf? target)))
     (cfg
       test
       (profile_state.compiler-profile-metrics-reset-range!
@@ -80883,9 +80928,7 @@
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [probe : bool
-      (match target
-        [(CompilerBackendTarget.Windows) (>= frame-size 4096)]
-        [_ false])]
+      (and (compiler-backend-target-stack-probe? target) (>= frame-size 4096))]
     [remaining : i64 frame-size]
     (begin
       (compiler-backend-object-push-u8! (&mut out) 0x55)
@@ -81777,13 +81820,12 @@
 (define (compiler-backend-object-call-space
   [target : CompilerBackendTarget]
   [args : compiler_ir_types.CompilerIrCallArgs]) : i64
-  (match target
-    [(CompilerBackendTarget.Linux) 0]
-    [(CompilerBackendTarget.Windows)
-      (compiler-backend-round-up-16
-        (+
-          (compiler-backend-outgoing-shadow-space target)
-          (* 8 (compiler-backend-object-call-stack-word-count target args))))]))
+  (if (compiler-backend-object-stack-args? target)
+    (compiler-backend-round-up-16
+      (+
+        (compiler-backend-outgoing-shadow-space target)
+        (* 8 (compiler-backend-object-call-stack-word-count target args))))
+    0))
 
 (define (compiler-backend-object-call-stack-arg
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -81815,22 +81857,21 @@
       (compiler-backend-global-shared-view args)))
     parts
     (if (>= index (compiler-backend-object-call-reg-count target))
-      (match target
-        [(CompilerBackendTarget.Linux) parts]
-        [(CompilerBackendTarget.Windows)
-          (compiler-backend-object-call-arg-moves
-            (compiler-backend-object-call-stack-arg
-              parts
-              target
-              (compiler-backend-global-shared-view site)
-              (compiler-backend-call-arg-at args index)
-              (- index (compiler-backend-object-call-reg-count target))
-              program-index)
+      (if (compiler-backend-object-stack-args? target)
+        (compiler-backend-object-call-arg-moves
+          (compiler-backend-object-call-stack-arg
+            parts
             target
-            site
-            args
-            (+ index 1)
-            program-index)])
+            (compiler-backend-global-shared-view site)
+            (compiler-backend-call-arg-at args index)
+            (- index (compiler-backend-object-call-reg-count target))
+            program-index)
+          target
+          site
+          args
+          (+ index 1)
+          program-index)
+        parts)
       (compiler-backend-object-call-arg-moves
         (compiler-backend-object-load-value-to-reg
           parts
@@ -81893,21 +81934,20 @@
             (+ param-index 1))
           (if (>= int-index (compiler-backend-object-call-reg-count target))
             (compiler-backend-object-param-spills-from
-              (match target
-                [(CompilerBackendTarget.Linux) parts]
-                [(CompilerBackendTarget.Windows)
-                  (compiler-backend-object-store-reg-to-var
-                    (compiler-backend-object-add-nonempty-bytes
-                      parts
-                      (compiler-backend-object-load-rbp-disp-bytes
-                        (compiler-backend-incoming-stack-arg-offset
-                          target
-                          (-
-                            int-index
-                            (compiler-backend-object-call-reg-count target)))
-                        "%rax"))
-                    var-id
-                    "%rax")])
+              (if (compiler-backend-object-stack-args? target)
+                (compiler-backend-object-store-reg-to-var
+                  (compiler-backend-object-add-nonempty-bytes
+                    parts
+                    (compiler-backend-object-load-rbp-disp-bytes
+                      (compiler-backend-incoming-stack-arg-offset
+                        target
+                        (-
+                          int-index
+                          (compiler-backend-object-call-reg-count target)))
+                      "%rax"))
+                  var-id
+                  "%rax")
+                parts)
               target
               params
               (+ int-index 1)
@@ -84219,6 +84259,29 @@
   [context : CompilerBackendObjectAbiContext]) : CompilerDirectObjectFallbackReason
   (CompilerDirectObjectFallbackReason.UnsupportedAbi target context))
 
+;; The fallback category of an unsupported object ABI, per target and context.
+;; These are literals because callers keep categories past their own scratch.
+(define (compiler-backend-unsupported-object-abi-category
+  [target : CompilerBackendTarget]
+  [context : CompilerBackendObjectAbiContext]) : String
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          "unsupported-object-abi:linux-x86_64:call"]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          "unsupported-object-abi:linux-x86_64:function-entry"]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          "unsupported-object-abi:linux-x86_64:function-return"])]
+    [(CompilerBackendTarget.Windows)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          "unsupported-object-abi:windows-x86_64:call"]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          "unsupported-object-abi:windows-x86_64:function-entry"]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          "unsupported-object-abi:windows-x86_64:function-return"])]))
+
 (define (compiler-direct-object-fallback-category
   [reason : CompilerDirectObjectFallbackReason]) : String
   (match reason
@@ -84231,23 +84294,7 @@
     [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
       "unsupported-object-semantics"]
     [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
-      (match target
-        [(CompilerBackendTarget.Linux)
-          (match context
-            [(CompilerBackendObjectAbiContext.Call)
-              "unsupported-object-abi:linux-x86_64:call"]
-            [(CompilerBackendObjectAbiContext.FunctionEntry)
-              "unsupported-object-abi:linux-x86_64:function-entry"]
-            [(CompilerBackendObjectAbiContext.FunctionReturn)
-              "unsupported-object-abi:linux-x86_64:function-return"])]
-        [(CompilerBackendTarget.Windows)
-          (match context
-            [(CompilerBackendObjectAbiContext.Call)
-              "unsupported-object-abi:windows-x86_64:call"]
-            [(CompilerBackendObjectAbiContext.FunctionEntry)
-              "unsupported-object-abi:windows-x86_64:function-entry"]
-            [(CompilerBackendObjectAbiContext.FunctionReturn)
-              "unsupported-object-abi:windows-x86_64:function-return"])])]
+      (compiler-backend-unsupported-object-abi-category target context)]
     [(CompilerDirectObjectFallbackReason.ObjectEncoding)
       "unsupported-object-encoding"]
     [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)
@@ -84270,9 +84317,7 @@
     [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable target kind)
       (str_cat.str-cat
         "target="
-        (match target
-          [(CompilerBackendTarget.Linux) "linux-x86_64"]
-          [(CompilerBackendTarget.Windows) "windows-x86_64"])
+        (compiler-backend-target-triple target)
         "|kind="
         (match kind
           [(CompilerDirectObjectArtifactKind.Bin) "bin"]
@@ -84294,14 +84339,20 @@
       category
       (str_cat.str-cat category "|" context))))
 
+;; Whether this target's direct-object encoder passes arguments past the
+;; integer registers on the stack. COFF's positional path does; the legacy ELF
+;; path passes register arguments only (see compiler-backend-object-abi-capacity).
+(define (compiler-backend-object-stack-args? [target : CompilerBackendTarget]) : bool
+  (not (compiler-backend-target-elf? target)))
+
 (define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
-  (match target
-    ;; The legacy ELF object path has no incoming or outgoing stack-argument
-    ;; implementation. Six integer registers are its complete proven subset.
-    [(CompilerBackendTarget.Linux) 6]
-    ;; COFF has a tested positional GP stack path through the eleven-argument
-    ;; NtCreateFile fixture. Do not silently widen that legacy subset here.
-    [(CompilerBackendTarget.Windows) 11]))
+  ;; The legacy ELF object path has no incoming or outgoing stack-argument
+  ;; implementation. Six integer registers are its complete proven subset.
+  ;; COFF has a tested positional GP stack path through the eleven-argument
+  ;; NtCreateFile fixture. Do not silently widen either legacy subset here.
+  (if (compiler-backend-target-elf? target)
+    6
+    11))
 
 (define (compiler-backend-object-abi-type-supported?
   [ty : (& ty compiler_ast_types.AstType)]) : bool
@@ -84922,7 +84973,7 @@
     (begin
       (compiler-backend-state-set-absolute-switch-ok!
         backend-state
-        (not (compiler-backend-target-windows? target)))
+        (compiler-backend-target-elf? target))
       (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
         backend-state
         type-segment-bases
@@ -84964,7 +85015,7 @@
   (begin
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (not (compiler-backend-target-windows? target)))
+      (compiler-backend-target-elf? target))
     (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
       backend-state
       (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
@@ -93479,6 +93530,253 @@
             (set! k (+ k 1)))))
       count)))
 
+;; Emitted lines (labels and blanks aside) in a sunk region that is placed at
+;; the nearest island rather than the function end. A slow-path stub (`call`)
+;; or a sentinel arm (one or two constant moves) fits. A longer cold region
+;; keeps the function end, so it does not lengthen the hot branches that would
+;; span it.
+(define compiler-backend-layout-island-line-cap : i64
+  2)
+
+(define (compiler-backend-layout-region-small?
+  [flags : (MutPtr i64)]
+  [rs : i64]
+  [q : i64]) : bool
+  (let
+    [skip-bits : i64
+      (bit-or
+        compiler-backend-layout-flag-label
+        compiler-backend-layout-flag-blank)]
+    [count : i64 0]
+    [i : i64 rs]
+    (begin
+      (while (and (< i q) (<= count compiler-backend-layout-island-line-cap))
+        (begin
+          (when
+            (=
+              (bit-and
+                (unsafe
+                  (ptr-read (ptr-offset flags i)))
+                skip-bits)
+              0)
+            (set! count (+ count 1)))
+          (set! i (+ i 1))))
+      (<= count compiler-backend-layout-island-line-cap))))
+
+;; Does the `jmp` on line `u` reach the label run that starts at line `t`? The
+;; fallthrough peephole deletes such a `jmp`; a region placed between the two
+;; would keep it.
+(define (compiler-backend-layout-jmp-into-labels?
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [lines : i64]
+  [u : i64]
+  [t : i64]) : bool
+  (let
+    [dest : i64
+      (unsafe
+        (ptr-read (ptr-offset target u)))]
+    [i : i64 t]
+    [found : bool false]
+    (begin
+      (while (and
+        (not found)
+        (< i lines)
+        (not
+          (=
+            (bit-and
+              (unsafe
+                (ptr-read (ptr-offset flags i)))
+              (bit-or
+                compiler-backend-layout-flag-label
+                compiler-backend-layout-flag-blank))
+            0)))
+        (begin
+          (when (= i dest) (set! found true))
+          (set! i (+ i 1))))
+      found)))
+
+;; Is line `i` a `ret`? The line classifier flags `ret` only with an operand
+;; or as `retq`, since a bare `ret` reads the zero past its line, so a bare one
+;; is read from the text.
+(define (compiler-backend-layout-ret-line?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [i : i64]) : bool
+  (or
+    (not
+      (=
+        (bit-and
+          (unsafe
+            (ptr-read (ptr-offset flags i)))
+          compiler-backend-layout-flag-ret)
+        0))
+    (let
+      [e : i64
+        (-
+          (unsafe
+            (ptr-read (ptr-offset starts (+ i 1))))
+          1)]
+      [t : i64
+        (compiler-backend-layout-skip-spaces
+          data
+          (unsafe
+            (ptr-read (ptr-offset starts i)))
+          e)]
+      (and
+        (= (- e t) 3)
+        (= (compiler-backend-peephole-byte-at data t) 114)
+        (= (compiler-backend-peephole-byte-at data (+ t 1)) 101)
+        (= (compiler-backend-peephole-byte-at data (+ t 2)) 116)))))
+
+;; ISLAND PLACEMENT. A small sunk region goes in front of the first label after
+;; its join that control cannot fall into: the line emitted before it is an
+;; unconditional `jmp` (not one into that label run) or a `ret`, counted as the
+;; text reads once every sunk region has left. Every branch into the region and
+;; its jump back then spans a few blocks instead of the rest of the function,
+;; which keeps most of them in the short encoding. No island before the
+;; function end leaves the region there. `sink-class` records the choice: 1 for
+;; an island, 0 for the function end. Islands only move forward with the
+;; sinks, and so do function ends, so each class is placed by its own cursor.
+(define (compiler-backend-layout-place-islands!
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [target : (MutPtr i64)]
+  [lines : i64]
+  [sinks : i64]
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sink-tail : (MutPtr i64)]
+  [sink-class : (MutPtr i64)]
+  [dups : i64]
+  [dup-p : (MutPtr i64)]
+  [dup-to : (MutPtr i64)]) : unit
+  (let
+    [k : i64 0]
+    [dup-start : i64 0]
+    (while (< k sinks)
+      (let
+        [p : i64
+          (unsafe
+            (ptr-read (ptr-offset sink-p k)))]
+        [q : i64
+          (unsafe
+            (ptr-read (ptr-offset sink-q k)))]
+        [tail : i64
+          (unsafe
+            (ptr-read (ptr-offset sink-tail k)))]
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset sink-class k) 0))
+          (when
+            (compiler-backend-layout-region-small? flags (+ p 1) q)
+            (let
+              ;; `prev` is the last line the text emits before line `i`, labels
+              ;; and blanks aside, or -1 when that is a label (a label run is
+              ;; one island). A `jmp` that is a duplication site is emitted as
+              ;; its copied run, so the run's terminating `jmp` (`dup-to`) is
+              ;; the one that must not reach the label run.
+              [prev : i64 -1]
+              [j : i64 (+ k 1)]
+              [d : i64
+                (begin
+                  (while (and
+                    (< dup-start dups)
+                    (<
+                      (unsafe
+                        (ptr-read (ptr-offset dup-p dup-start)))
+                      q))
+                    (set! dup-start (+ dup-start 1)))
+                  dup-start)]
+              [i : i64 (+ q 1)]
+              [done : bool false]
+              (while (and (not done) (< i tail))
+                (if (and
+                  (< j sinks)
+                  (=
+                    i
+                    (unsafe
+                      (ptr-read (ptr-offset sink-p j)))))
+                  ;; A later sunk region leaves together with its `jmp`.
+                  (begin
+                    (set!
+                      i
+                      (unsafe
+                        (ptr-read (ptr-offset sink-q j))))
+                    (set! j (+ j 1)))
+                  (let
+                    [line-flags : i64
+                      (unsafe
+                        (ptr-read (ptr-offset flags i)))]
+                    (begin
+                      (cond
+                        [(not
+                            (=
+                              (bit-and
+                                line-flags
+                                compiler-backend-layout-flag-label)
+                              0))
+                          (begin
+                            (when
+                              (and
+                                (>= prev 0)
+                                (or
+                                  (compiler-backend-layout-ret-line?
+                                    data
+                                    starts
+                                    flags
+                                    prev)
+                                  (and
+                                    (not
+                                      (=
+                                        (bit-and
+                                          (unsafe
+                                            (ptr-read (ptr-offset flags prev)))
+                                          compiler-backend-layout-flag-jmp)
+                                        0))
+                                    (not
+                                      (compiler-backend-layout-jmp-into-labels?
+                                        flags
+                                        target
+                                        lines
+                                        (begin
+                                          (while (and
+                                            (< d dups)
+                                            (<
+                                              (unsafe
+                                                (ptr-read (ptr-offset dup-p d)))
+                                              prev))
+                                            (set! d (+ d 1)))
+                                          (if (and
+                                            (< d dups)
+                                            (=
+                                              (unsafe
+                                                (ptr-read (ptr-offset dup-p d)))
+                                              prev))
+                                            (unsafe
+                                              (ptr-read (ptr-offset dup-to d)))
+                                            prev))
+                                        i)))))
+                              (begin
+                                (unsafe
+                                  (ptr-write! (ptr-offset sink-tail k) i))
+                                (unsafe
+                                  (ptr-write! (ptr-offset sink-class k) 1))
+                                (set! done true)))
+                            (set! prev -1))]
+                        [(not
+                            (=
+                              (bit-and
+                                line-flags
+                                compiler-backend-layout-flag-blank)
+                              0))
+                          unit]
+                        [else (set! prev i)])
+                      (set! i (+ i 1)))))))))
+        (set! k (+ k 1))))))
+
 ;; Choose the regions to lay out of line from the shape candidates, in emission
 ;; order. Accepted regions never overlap: a candidate whose `jmp` sits inside
 ;; one already taken is skipped, so each line moves at most once. An accepted
@@ -93805,11 +94103,71 @@
             (set! k (+ k 1)))))
       count)))
 
+;; Append sunk region `k` to the plan at `len`: its lines after the `jmp`, then
+;; the `jmp` itself when the region needs a jump back to its join. Returns the
+;; new length.
+(define (compiler-backend-layout-plan-region!
+  [sink-p : (MutPtr i64)]
+  [sink-q : (MutPtr i64)]
+  [sink-jump : (MutPtr i64)]
+  [k : i64]
+  [plan : (MutPtr i64)]
+  [len : i64]) : i64
+  (let
+    [p : i64
+      (unsafe
+        (ptr-read (ptr-offset sink-p k)))]
+    [q : i64
+      (unsafe
+        (ptr-read (ptr-offset sink-q k)))]
+    [out : i64 len]
+    [line : i64 (+ p 1)]
+    (begin
+      (while (< line q)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset plan out) line))
+          (set! out (+ out 1))
+          (set! line (+ line 1))))
+      (when
+        (=
+          (unsafe
+            (ptr-read (ptr-offset sink-jump k)))
+          1)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset plan out) p))
+          (set! out (+ out 1))))
+      out)))
+
+;; The next sink at or after `k` whose `sink-class` is `class`, or `sinks`.
+(define (compiler-backend-layout-next-of-class
+  [sink-class : (MutPtr i64)]
+  [sinks : i64]
+  [k : i64]
+  [class : i64]) : i64
+  (let
+    [i : i64 k]
+    (begin
+      (while (and
+        (< i sinks)
+        (not
+          (=
+            (unsafe
+              (ptr-read (ptr-offset sink-class i)))
+            class)))
+        (set! i (+ i 1)))
+      i)))
+
 ;; The output as a sequence of source lines: every entry names a line of the
 ;; input, so a duplicated run is that run's lines listed twice and an
 ;; out-of-lined region is its lines listed at the insertion point instead of
 ;; where they stood. The jump appended behind a moved region is the very `jmp T`
-;; line the move deleted, so no text is ever synthesized.
+;; line the move deleted, so no text is ever synthesized. A sunk region leaves
+;; its place with its `jmp` and is emitted in front of its tail line. Island tails and
+;; function-end tails each rise with the sinks (`place-islands!`), so one
+;; cursor per class finds every region whose tail is the current line, and a
+;; region is always emitted after its own `jmp` was skipped.
 (define (compiler-backend-layout-build-plan
   [flags : (MutPtr i64)]
   [lines : i64]
@@ -93817,6 +94175,7 @@
   [sink-q : (MutPtr i64)]
   [sink-tail : (MutPtr i64)]
   [sink-jump : (MutPtr i64)]
+  [sink-class : (MutPtr i64)]
   [sinks : i64]
   [dup-p : (MutPtr i64)]
   [dup-from : (MutPtr i64)]
@@ -93830,47 +94189,59 @@
         compiler-backend-layout-flag-blank)]
     [len : i64 0]
     [skipped : i64 0]
-    [placed : i64 0]
+    [island : i64 (compiler-backend-layout-next-of-class sink-class sinks 0 1)]
+    [ending : i64 (compiler-backend-layout-next-of-class sink-class sinks 0 0)]
     [di : i64 0]
     [i : i64 0]
     (begin
       (while (< i lines)
         (begin
           (while (and
-            (< placed skipped)
+            (< island skipped)
             (=
               (unsafe
-                (ptr-read (ptr-offset sink-tail placed)))
+                (ptr-read (ptr-offset sink-tail island)))
               i))
-            (let
-              [k : i64
-                (+
-                  (unsafe
-                    (ptr-read (ptr-offset sink-p placed)))
-                  1)]
-              (begin
-                (while (<
-                  k
-                  (unsafe
-                    (ptr-read (ptr-offset sink-q placed))))
-                  (begin
-                    (unsafe
-                      (ptr-write! (ptr-offset plan len) k))
-                    (set! len (+ len 1))
-                    (set! k (+ k 1))))
-                (when
-                  (=
-                    (unsafe
-                      (ptr-read (ptr-offset sink-jump placed)))
-                    1)
-                  (begin
-                    (unsafe
-                      (ptr-write!
-                        (ptr-offset plan len)
-                        (unsafe
-                          (ptr-read (ptr-offset sink-p placed)))))
-                    (set! len (+ len 1))))
-                (set! placed (+ placed 1)))))
+            (begin
+              (set!
+                len
+                (compiler-backend-layout-plan-region!
+                  sink-p
+                  sink-q
+                  sink-jump
+                  island
+                  plan
+                  len))
+              (set!
+                island
+                (compiler-backend-layout-next-of-class
+                  sink-class
+                  sinks
+                  (+ island 1)
+                  1))))
+          (while (and
+            (< ending skipped)
+            (=
+              (unsafe
+                (ptr-read (ptr-offset sink-tail ending)))
+              i))
+            (begin
+              (set!
+                len
+                (compiler-backend-layout-plan-region!
+                  sink-p
+                  sink-q
+                  sink-jump
+                  ending
+                  plan
+                  len))
+              (set!
+                ending
+                (compiler-backend-layout-next-of-class
+                  sink-class
+                  sinks
+                  (+ ending 1)
+                  0))))
           (cond
             [(and
                 (< skipped sinks)
@@ -93920,36 +94291,33 @@
                   (ptr-write! (ptr-offset plan len) i))
                 (set! len (+ len 1))
                 (set! i (+ i 1)))])))
-      (while (< placed skipped)
-        (let
-          [k : i64
-            (+
-              (unsafe
-                (ptr-read (ptr-offset sink-p placed)))
-              1)]
+      ;; Regions whose tail is the end of the text, in emission order. Each
+      ;; cursor stops only at its own class, so a sink is unplaced exactly when
+      ;; it lies at or after its class's cursor.
+      (let
+        [k : i64
+          (if (< island ending)
+            island
+            ending)]
+        (while (< k sinks)
           (begin
-            (while (<
-              k
-              (unsafe
-                (ptr-read (ptr-offset sink-q placed))))
-              (begin
-                (unsafe
-                  (ptr-write! (ptr-offset plan len) k))
-                (set! len (+ len 1))
-                (set! k (+ k 1))))
             (when
-              (=
+              (if (=
                 (unsafe
-                  (ptr-read (ptr-offset sink-jump placed)))
+                  (ptr-read (ptr-offset sink-class k)))
                 1)
-              (begin
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset plan len)
-                    (unsafe
-                      (ptr-read (ptr-offset sink-p placed)))))
-                (set! len (+ len 1))))
-            (set! placed (+ placed 1)))))
+                (>= k island)
+                (>= k ending))
+              (set!
+                len
+                (compiler-backend-layout-plan-region!
+                  sink-p
+                  sink-q
+                  sink-jump
+                  k
+                  plan
+                  len)))
+            (set! k (+ k 1)))))
       len)))
 
 ;; The analysis proper. Everything here is scratch except the two words the plan
@@ -94198,6 +94566,25 @@
                   dup-from-raw
                   dup-to-raw)
                 0)]
+            ;; `cand-shape` is spent once the sinks are chosen; it carries each
+            ;; sink's placement class from here on. Islands are chosen last
+            ;; because a duplication site changes which `jmp` precedes one.
+            [sink-class-raw : (MutPtr i64) cand-shape-raw]
+            [_islands : unit
+              (compiler-backend-layout-place-islands!
+                data
+                starts-raw
+                flags-raw
+                target-raw
+                lines
+                sinks
+                sink-p-raw
+                sink-q-raw
+                sink-tail-raw
+                sink-class-raw
+                dups
+                dup-p-raw
+                dup-to-raw)]
             (if (and (= sinks 0) (= dups 0))
               (CompilerBackendLayoutPlan starts (__tl_make-array i64 0) lines 0)
               (let
@@ -94217,6 +94604,7 @@
                     sink-q-raw
                     sink-tail-raw
                     sink-jump-raw
+                    sink-class-raw
                     sinks
                     dup-p-raw
                     dup-from-raw

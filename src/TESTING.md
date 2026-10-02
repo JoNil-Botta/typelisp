@@ -550,14 +550,57 @@ small non-target-cfg corpus with `compile --emit-ir` for `linux-x86_64` and
 summaries. It also fails if target-specific tokens appear in
 `src/compiler_optimize.tl`, keeping the optimizer target-independent. A
 separate target-cfg probe confirms that `compile --emit-ir --target` is actually
-honoring the requested target. The same gate runs
+honoring the requested target.
+
+The same gate runs the target-dispatch boundary guard,
 [`../scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh),
-which checks the lowerer/backend target-dispatch inventory in
-[`../scripts/codegen-target-dispatch-allowlist.tsv`](../scripts/codegen-target-dispatch-allowlist.tsv).
-New Linux/Windows dispatch sites in the lowerer, the backend, its runtime
-emitters or its object-target modules must be classified there as `abi`, `runtime`,
-`target-cfg`, `backend-mode`, `entry`, `object-format`, `test-only`, or
-`transitional`; otherwise the parity gate fails.
+first with `--self-test` and then against the tree. The design it enforces:
+
+- **One shared x86-64 backend.** There are no Linux or Windows copies of the
+  backend or the lowerer.
+- **The lowerer's ABI shapes stay target-aware.** C aggregate classification
+  legitimately changes the IR, so `compiler_lower*` modules may name targets.
+- **Shared code reads facts, not targets.** Instruction selection, register
+  allocation, object encoding, runtime composition and peephole code ask the
+  target policy, the ABI tables (`compiler_abi.tl`), the object format or a
+  runtime leaf for the fact they need: shadow space, SEH unwind, ELF or COFF, a
+  register. They never test Linux or Windows themselves.
+- **Platform choices sit in named places.** A target is mapped to its policy
+  and facts in a few named policy scopes. A few named adapter scopes select a
+  platform leaf (the runtime and object-image modules) or one of two named
+  per-ABI computations.
+
+**Covered modules** are found by rule, not by list: every
+`src/compiler_{lower,backend,regalloc,optimize,liveness,parallel_move,abi,x64}*.tl`.
+A module's role follows from its name:
+
+| name | role |
+| --- | --- |
+| `*_tests.tl` | test |
+| `*_linux.tl`, `*_windows.tl` | leaf |
+| `compiler_lower*` | lower |
+| anything else | shared core |
+
+**Inventory.** Every target token in a covered module must match exactly one
+row of [`../scripts/codegen-target-dispatch-inventory.tsv`](../scripts/codegen-target-dispatch-inventory.tsv),
+with that row's exact count. A row has these fields: file, scope, boundary,
+category, token regex, count and rationale.
+
+- **Boundary:** `policy`, `adapter`, `lower`, `leaf` or `test`. A shared-core
+  module admits only `policy`, `adapter` and `test`; a leaf admits `leaf`, a
+  lowerer module `lower`, a test module `test`.
+- **Category:** `abi`, `runtime`, `target-cfg`, `backend-mode`, `entry`,
+  `object-format` or `test-only`. There is no `transitional`.
+- **Scope:** a test module may cover itself with one `*` row; every other row
+  names its scope.
+- **Optimizer:** it has no row at all.
+
+So moving a token, broadening a regex, adding a module to the family or
+matching two rows fails the gate. Before adding a policy or adapter row, prefer
+naming the fact in the policy or ABI tables. The self-test covers an
+unclassified token in shared core and in a leaf, ambiguous rows, a stale count,
+illegal categories and boundaries, a new module, an optimizer row, an uncovered
+file, and an allowed policy site.
 
 ```sh
 TYPELISP_BIN=target/stage0/typelisp scripts/check-codegen-target-parity.sh

@@ -4121,6 +4121,35 @@
         (ast-pool-cell-data pools.expr-pool))
       (ty-node-pool-state-capture-to-cell! (ast-pool-cell-data pools.type-pool)))))
 
+;; Publish whichever of `pools` and the installed globals is longer, per pool.
+;; Explicit pushes through `pools` advance only its cells while global pushers
+;; advance only the globals, so either side can be ahead. Capturing
+;; unconditionally rolls back nodes pushed through the cells, and installing
+;; unconditionally rolls back nodes pushed globally; either lets a later push
+;; overwrite a live node behind its dedup entry.
+(define (ast-node-pool-context-publish-newer! [pools : AstNodePoolContext]) : unit
+  (if ast-node-pool-compat-context-explicit?
+    unit
+    (let
+      [expr-state : AstExprNodePoolState
+        (ast-expr-pool-cell-read pools.expr-pool)]
+      [type-state : AstTypeNodePoolState
+        (ast-type-pool-cell-read pools.type-pool)]
+      (begin
+        (if (and
+          (= expr-state.segment-bases ast-node-pool-segment-bases)
+          (< expr-state.count ast-node-pool-count))
+          (ast-node-pool-state-capture-to-cell!
+            (ast-pool-cell-data pools.expr-pool))
+          unit)
+        (if (and
+          (= type-state.segment-bases ty-node-pool-segment-bases)
+          (< type-state.count ty-node-pool-count))
+          (ty-node-pool-state-capture-to-cell!
+            (ast-pool-cell-data pools.type-pool))
+          unit)
+        (ast-node-pool-context-install! pools)))))
+
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
 

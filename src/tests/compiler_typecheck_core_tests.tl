@@ -25,6 +25,8 @@
 (import sym_i64_env)
 (import compiler_typecheck_core as tc_core)
 (import compiler_parse_core as parser)
+(import read as reader)
+(import lex as lexer)
 (import compiler_owned_view as owned_view)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
@@ -1225,6 +1227,310 @@
       (if ok?
         unit
         (io.panic "typecheck: macro expression read pool isolation failed")))))
+
+;; --- #7918: expression forms in Decls/Module macro output -------------------
+;;
+;; A Decls or Module macro's output reaches the declaration parser through
+;; `macro-expr-to-spanned-sexpr`, which spells each expression node back as the
+;; syntax the parser reads. Its match has no fallback, so the typechecker keeps
+;; it total over `AstExpr`; this test checks that the spelling is right: every
+;; form below converts, re-parses as the same kind of expression, and converts
+;; again to the same syntax, with the expected head.
+;; Span-insensitive syntax equality.
+(define (macro-output-sexpr-eq?
+  [a : reader.SpannedSexpr]
+  [b : reader.SpannedSexpr]) : bool
+  (match (reader.spanned-sexpr-view a)
+    [(reader.SpannedSexprView.Int av _ _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Int bv _ _) (= av bv)]
+        [_ false])]
+    [(reader.SpannedSexprView.Sym as _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Sym bs _)
+          (= (ci.intern-syntax-id-value as) (ci.intern-syntax-id-value bs))]
+        [_ false])]
+    [(reader.SpannedSexprView.Nil _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Nil _) true]
+        [_ false])]
+    [(reader.SpannedSexprView.Cons ahead atail _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Cons bhead btail _)
+          (and
+            (macro-output-sexpr-eq? ahead bhead)
+            (macro-output-sexpr-eq? atail btail))]
+        [_ false])]
+    [(reader.SpannedSexprView.Str aid _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Str bid _)
+          (= (ci.intern-id-value aid) (ci.intern-id-value bid))]
+        [_ false])]
+    [(reader.SpannedSexprView.Char ac _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Char bc _) (= ac bc)]
+        [_ false])]
+    [(reader.SpannedSexprView.Float at _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.Float bt _) (string.eq at bt)]
+        [_ false])]
+    [(reader.SpannedSexprView.BracketList aitems _)
+      (match (reader.spanned-sexpr-view b)
+        [(reader.SpannedSexprView.BracketList bitems _)
+          (macro-output-sexpr-eq? aitems bitems)]
+        [_ false])]))
+
+(define (macro-output-sexpr-head? [form : reader.SpannedSexpr] [head : String]) : bool
+  (match (reader.spanned-sexpr-view form)
+    [(reader.SpannedSexprView.Cons first _ _)
+      (match (reader.spanned-sexpr-view first)
+        [(reader.SpannedSexprView.Sym name _)
+          (= (ci.intern-syntax-id-value name) (ci.intern head))]
+        [_ false])]
+    [_ false]))
+
+;; The body of `(define (probe) : i64 FORM)`, parsed into the active pools.
+(define (macro-output-probe-body [form : String]) : i64
+  (match (parser.parse-ast-source
+    (str_cat.str-cat "(define (probe) : i64 " form ")"))
+    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (match (ast.ast-decl-list-step (deref decls-box))
+        [(ast.AstDeclListStep.Cons (ast.AstDecl.DefFn _ _ _ _ body-box _) _)
+          body-box]
+        [_ -1])]
+    [(parser.ResultAstProgram.Err _) -1]))
+
+;; FORM as the reader reads it, or an empty list when it does not read.
+(define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
+  (match (lexer.spanned-result form)
+    [(lexer.ResultSpannedTokens.Ok toks)
+      (match (reader.spanned-result toks)
+        [(reader.ResultSpannedSexpr.Ok sexpr) sexpr]
+        [(reader.ResultSpannedSexpr.Err _)
+          (reader.spanned-sexpr-list-from-builder
+            (reader.spanned-sexpr-builder-new)
+            (token.SourceSpan 0 0 0 0))])]
+    [(lexer.ResultSpannedTokens.Err _)
+      (reader.spanned-sexpr-list-from-builder
+        (reader.spanned-sexpr-builder-new)
+        (token.SourceSpan 0 0 0 0))]))
+
+;; Probe PROBE's form converts to exactly the syntax it was written as, with
+;; the expected head; that re-parses as the same kind of expression and
+;; converts again to the same syntax.
+(define (macro-output-form-round-trips?
+  [session : cis.InternStructuralSessionHandle]
+  [probe : i64]) : bool
+  (let
+    [body-id : i64 (macro-output-probe-body (macro-output-form probe))]
+    (if (< body-id 0)
+      false
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+        [first-expr : ast.AstExpr
+          (ast.ast-expr-segment-bases-get bases body-id)]
+        [owner : tc_core.MacroSexprOwner
+          (tc_core.macro-sexpr-owner bases session)]
+        (match (tc_core.macro-expr-to-spanned-sexpr
+          (& owner)
+          (tc_core.tc-global-shared-view first-expr)
+          (tc_core.tc-global-shared-view first-expr))
+          [(tc_core.ResultMacroSexpr.Err _) false]
+          [(tc_core.ResultMacroSexpr.Ok first)
+            (match (parser.parse-ast-expr-with-pools
+              (parser.compiler-parse-dispatch-env)
+              pools
+              (tc_core.tc-global-shared-view first))
+              [(parser.ResultAstExpr.Err _) false]
+              [(parser.ResultAstExpr.Ok second-id)
+                (let
+                  [second-pools : ast.AstNodePoolContext
+                    (ast.ast-node-pool-context-capture-active)]
+                  [second-bases : i64
+                    (ast.ast-node-pool-context-expr-segment-bases
+                      (& second-pools))]
+                  [second-expr : ast.AstExpr
+                    (ast.ast-expr-segment-bases-get second-bases second-id)]
+                  [second-owner : tc_core.MacroSexprOwner
+                    (tc_core.macro-sexpr-owner second-bases session)]
+                  (match (tc_core.macro-expr-to-spanned-sexpr
+                    (& second-owner)
+                    (tc_core.tc-global-shared-view second-expr)
+                    (tc_core.tc-global-shared-view second-expr))
+                    [(tc_core.ResultMacroSexpr.Err _) false]
+                    [(tc_core.ResultMacroSexpr.Ok second)
+                      (and
+                        (macro-output-sexpr-head?
+                          (tc_core.tc-global-shared-view first)
+                          (macro-output-form-head probe))
+                        (macro-output-sexpr-eq?
+                          (tc_core.tc-global-shared-view first)
+                          (macro-output-source-sexpr (macro-output-form probe)))
+                        (macro-output-sexpr-eq? first second)
+                        (string.eq
+                          (ctfe_support.ctfe-describe-expr
+                            (ast.ast-expr-unspan-with-segment-bases
+                              bases
+                              first-expr))
+                          (ctfe_support.ctfe-describe-expr
+                            (ast.ast-expr-unspan-with-segment-bases
+                              second-bases
+                              second-expr))))]))])])))))
+
+;; The probed forms, in order; the last wraps a converted form in a `let`.
+(define (macro-output-form [i : i64]) : String
+  (cond
+    [(= i 0) "(in-arena a 41 42)"]
+    [(= i 1) "(with-escape s 42)"]
+    [(= i 2) "(with-scratch 41 42)"]
+    [(= i 3) "(with-arena r 41 42)"]
+    [(= i 4) "(with ([h (open-h) close-h] [g (open-g h) close-g]) (use h) 42)"]
+    [(= i 5) "(break)"]
+    [(= i 6) "(continue)"]
+    [(= i 7) "(comptime (+ 40 2))"]
+    [(= i 8) "(lambda ([x : i64] [y : i64]) : i64 (+ x y))"]
+    [(= i 9) "(lambda ([x : i64]) x)"]
+    [(= i 10) "(foreach ([i : i64 0 n]) (touch out i))"]
+    [(= i 11) "(foreach-active [lane : i64] (lane-value lane))"]
+    [(= i 12) "(spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i))"]
+    [(= i 13)
+      "(spmd-scan max ([i : i64 0 n] [acc : i64 0]) (array-ref xs i) (touch out i acc))"]
+    [(= i 14)
+      "(spmd-compact ([i : i64 0 n] [slot : i64 0]) (> (array-ref xs i) 0) (touch out slot i))"]
+    [(= i 15) "(spmd-broadcast v 0)"]
+    [(= i 16) "(spmd-shuffle v lane)"]
+    [(= i 17) "(program-index)"]
+    [(= i 18) "(program-count)"]
+    [(= i 19) "(lane-value v)"]
+    [(= i 20) "(__tl_for-owned-state src idx source body)"]
+    [(= i 21) "(__tl_for-owned-step src idx item done body)"]
+    [(= i 22) "(__tl_for-owned-step-typed src idx item (type i64) done body)"]
+    [else "(let [x : i64 41] (in-arena a (+ x 1)))"]))
+
+;; The head each probed form converts to.
+(define (macro-output-form-head [i : i64]) : String
+  (cond
+    [(= i 0) "in-arena"]
+    [(= i 1) "with-escape"]
+    [(= i 2) "with-scratch"]
+    [(= i 3) "with-arena"]
+    [(= i 4) "with"]
+    [(= i 5) "break"]
+    [(= i 6) "continue"]
+    [(= i 7) "comptime"]
+    [(= i 8) "lambda"]
+    [(= i 9) "lambda"]
+    [(= i 10) "foreach"]
+    [(= i 11) "foreach-active"]
+    [(= i 12) "spmd-reduce"]
+    [(= i 13) "spmd-scan"]
+    [(= i 14) "spmd-compact"]
+    [(= i 15) "spmd-broadcast"]
+    [(= i 16) "spmd-shuffle"]
+    [(= i 17) "program-index"]
+    [(= i 18) "program-count"]
+    [(= i 19) "lane-value"]
+    [(= i 20) "__tl_for-owned-state"]
+    [(= i 21) "__tl_for-owned-step"]
+    [(= i 22) "__tl_for-owned-step-typed"]
+    [else "let"]))
+
+(define (macro-output-forms-failed
+  [session : cis.InternStructuralSessionHandle]) : String
+  (let
+    [failed : String ""]
+    [i : i64 0]
+    (begin
+      (while (< i 24)
+        (begin
+          (if (macro-output-form-round-trips? session i)
+            unit
+            (set! failed (str_cat.str-cat failed " " (macro-output-form i))))
+          (set! i (+ i 1))))
+      failed)))
+
+;; A move-aware resource scope has no declaration spelling; converting one must
+;; fail instead of re-parsing as a plain `with` that keeps its cleanup armed.
+(define (macro-output-move-aware-rejected?
+  [session : cis.InternStructuralSessionHandle]) : bool
+  (let
+    [body-id : i64 (macro-output-probe-body (macro-output-form 4))]
+    (if (< body-id 0)
+      false
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools))]
+        [parsed : ast.AstExpr (ast.ast-expr-segment-bases-get bases body-id)]
+        [owner : tc_core.MacroSexprOwner
+          (tc_core.macro-sexpr-owner bases session)]
+        (match (ast.ast-expr-unspan-with-segment-bases bases parsed)
+          [(ast.AstExpr.WithResource resource-box)
+            (match (__tl-box-place resource-box)
+              [(ast.AstWithResource.WithResource bindings body)
+                (let
+                  [moved : ast.AstResourceBindingList
+                    (ast.ast-resource-binding-list-new)]
+                  [index : i64 0]
+                  (begin
+                    (while (<
+                      index
+                      (ast.ast-resource-binding-list-len (& bindings)))
+                      (begin
+                        (match (ast.ast-resource-binding-list-get
+                          (& bindings)
+                          index
+                          (ast.ast-resource-binding-fallback))
+                          [(ast.AstResourceBinding.Binding name init cleanup _)
+                            (ast.ast-resource-binding-list-push
+                              (&mut moved)
+                              (ast.AstResourceBinding.Binding
+                                name
+                                init
+                                cleanup
+                                true))])
+                        (set! index (+ index 1))))
+                    (let
+                      [move-aware : ast.AstExpr
+                        (ast.AstExpr.WithResource
+                          (box (ast.AstWithResource.WithResource moved body)))]
+                      (match (tc_core.macro-expr-to-spanned-sexpr
+                        (& owner)
+                        (tc_core.tc-global-shared-view move-aware)
+                        (tc_core.tc-global-shared-view move-aware))
+                        [(tc_core.ResultMacroSexpr.Err _) true]
+                        [(tc_core.ResultMacroSexpr.Ok _) false]))))])]
+          [_ false])))))
+
+(test
+  macro-output-expression-forms-round-trip
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active))]
+    [failed : String
+      (macro-output-forms-failed (tc_core.tc-context-structural-session ctx))]
+    [move-aware-rejected? : bool
+      (macro-output-move-aware-rejected?
+        (tc_core.tc-context-structural-session ctx))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (test.assert-string-eq
+        failed
+        ""
+        "every expression form the parser accepts in a function body -- the scoped arena, scratch, escape and resource forms, break and continue, comptime, typed and untyped lambdas, foreach and the SPMD forms, and the compiler-private owned-iteration steps in both spellings -- converts from Decls/Module macro output back to syntax that re-parses as the same kind of expression and converts again to the same syntax")
+      (test.assert-true
+        move-aware-rejected?
+        "a move-aware resource scope in Decls/Module macro output is rejected, not spelled as a plain `with` whose cleanup stays armed"))))
 
 (define (tc-type-env-lookup-step [env : tc_core.TcTypeEnv] [name-id : i64]) : TcTypeEnvLookupStep
   (match (tc_core.tc-type-env-view env)

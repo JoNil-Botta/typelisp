@@ -467,6 +467,7 @@ integer_literal_default_i32|all|-|tests/integration/integer_literal_default_i32.
 integer_literal_default_i32_and_wide_cast|all|-|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-|-
 integer_literal_boundary_matrix|all|-,0,2|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl|-
 integer_literal_u64_full_range|all|-|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|-
+if_literal_branch_join|all|-,0,2|tests/integration/if_literal_branch_join.tl|42|-|-|-|-
 inline_alloc_scavenge_live_through|all|-,2|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl|-
 parser|all|-|tests/integration/parser.tl|14|-|-|-|-
 process_runtime|all|-|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n

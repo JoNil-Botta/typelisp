@@ -396,6 +396,9 @@ while_when_break_lambda_boundary_reject|check-fail|tests/safety/while_when_break
 while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
 while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
+if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
+if_value_branch_join_reject|check-fail|tests/safety/if_value_branch_join_reject.tl|-|if branches must match
+if_bool_int_branch_join_reject|check-fail|tests/safety/if_bool_int_branch_join_reject.tl|-|if branches must match
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
 integer_literal_i64_overflow_reject|check-fail|tests/safety/integer_literal_i64_overflow_reject.tl|-|integer literal 9223372036854775808 does not fit expected type i64

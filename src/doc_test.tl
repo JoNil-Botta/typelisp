@@ -1449,6 +1449,14 @@
   [stdlib-roots : doc_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestMaybeFailure
   (let
+    ;; Each check-only example is its own program. The check resets its pools
+    ;; but not the interner, so reset that to the session floor first, as lint
+    ;; does per file: otherwise an example inherits what the previous one
+    ;; interned and generated, and after one instantiated
+    ;; `(vector.vector i64)` the next one's `push!` lost `push-ref!` (#8580).
+    ;; The session's program cache survives, so examples still share loaded
+    ;; dependencies. Runnable examples get the full driver reset instead.
+    [_reset : unit (compiler_check_core.compiler-check-reset-interns!)]
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
     [source-line : i64

@@ -66,6 +66,16 @@
                 : (Ptr CompilerCtfeMacroStateData))))
           : i64)))))
 
+(define (compiler-ctfe-macro-state-ptr [state : CompilerCtfeMacroState]) : (MutPtr
+    CompilerCtfeMacroStateData)
+  (unsafe
+    (int->ptr (cast state.address : u64) : (MutPtr CompilerCtfeMacroStateData))))
+
+(define (compiler-ctfe-macro-state-view [state : CompilerCtfeMacroState]) : (Ptr
+    CompilerCtfeMacroStateData)
+  (unsafe
+    (int->ptr (cast state.address : u64) : (Ptr CompilerCtfeMacroStateData))))
+
 (define (compiler-ctfe-macro-state-data [state : CompilerCtfeMacroState]) : CompilerCtfeMacroStateData
   (unsafe
     (ptr-read
@@ -84,24 +94,26 @@
 (define (compiler-ctfe-macro-state-bind-source-names!
   [state : CompilerCtfeMacroState]
   [source-names : ci.InternSourceNameSessionHandle]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.source-names source-names)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).source-names
+      source-names)))
 
 (define (compiler-ctfe-macro-state-structural-session
   [state : CompilerCtfeMacroState]) : cis.InternStructuralSessionHandle
   (cis.intern-structural-session-handle-from-source-names
-    (__tl-project-field (compiler-ctfe-macro-state-data state) source-names)))
+    (unsafe
+      (deref (compiler-ctfe-macro-state-view state)).source-names)))
 
 (define (compiler-ctfe-key-map-grow-for-state-if-needed!
   [state : CompilerCtfeMacroState]
   [map : (&mut map ctfe_key_map.Map)]) : unit
   (if (ctfe_key_map.needs-grow? map)
-    (let
-      [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-      (in-arena (arena.Arena data.map-storage-arena) (ctfe_key_map.grow! map)))
+    (in-arena
+      (arena.Arena
+        (unsafe
+          (deref (compiler-ctfe-macro-state-view state)).map-storage-arena))
+      (ctfe_key_map.grow! map))
     unit))
 
 ;; Standalone APIs and direct CTFE tests are serial compatibility surfaces.
@@ -117,26 +129,23 @@
 ;; expression-macro handoff so it can reuse the tree instead of cloning it.
 (define (ctfe-result-hygiene-free-reset-for-state!
   [state : CompilerCtfeMacroState]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.result-hygiene-free-node -1)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).result-hygiene-free-node
+      -1)))
 
 (define (ctfe-result-hygiene-free-note-for-state!
   [state : CompilerCtfeMacroState]
   [node : i64]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.result-hygiene-free-node node)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).result-hygiene-free-node
+      node)))
 
 (define (ctfe-result-hygiene-free-node-id-for-state
   [state : CompilerCtfeMacroState]) : i64
-  (__tl-project-field
-    (compiler-ctfe-macro-state-data state)
-    result-hygiene-free-node))
+  (unsafe
+    (deref (compiler-ctfe-macro-state-view state)).result-hygiene-free-node))
 
 (define (ctfe-result-hygiene-free-reset!) : unit
   (ctfe-result-hygiene-free-reset-for-state! (compiler-ctfe-serial-macro-state)))
@@ -177,25 +186,22 @@
 
 (define (ctfe-result-macro-provenance-reset-for-state!
   [state : CompilerCtfeMacroState]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.result-may-contain-macro false)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).result-may-contain-macro
+      false)))
 
 (define (ctfe-result-may-contain-macro-note-for-state!
   [state : CompilerCtfeMacroState]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.result-may-contain-macro true)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).result-may-contain-macro
+      true)))
 
 (define (ctfe-result-may-contain-macro-for-state?
   [state : CompilerCtfeMacroState]) : bool
-  (__tl-project-field
-    (compiler-ctfe-macro-state-data state)
-    result-may-contain-macro))
+  (unsafe
+    (deref (compiler-ctfe-macro-state-view state)).result-may-contain-macro))
 
 (define (ctfe-visible-macro-names-reset!) : unit
   (ctfe-visible-macro-names-reset-for-state! (compiler-ctfe-serial-macro-state)))
@@ -2422,11 +2428,10 @@
 (define (ctfe-module-value-reflection-enable-for-state!
   [state : CompilerCtfeMacroState]
   [enabled : bool]) : unit
-  (let
-    [data : CompilerCtfeMacroStateData (compiler-ctfe-macro-state-data state)]
-    (begin
-      (set! data.module-value-reflection-enabled enabled)
-      (compiler-ctfe-macro-state-data-set! state data))))
+  (unsafe
+    (set!
+      (deref (compiler-ctfe-macro-state-ptr state)).module-value-reflection-enabled
+      enabled)))
 
 (define (ctfe-module-value-reset-for-state! [state : CompilerCtfeMacroState]) : unit
   (let
@@ -10975,7 +10980,9 @@
               (CtfePatternMatch.No))]
           [_ (CtfePatternMatch.No)]))]
     [(ast.AstPattern.Tuple _) (CtfePatternMatch.No)]
-    [(ast.AstPattern.Array _) (CtfePatternMatch.No)]))
+    [(ast.AstPattern.Array _) (CtfePatternMatch.No)]
+    ;; Comptime values have no Slice representation.
+    [(ast.AstPattern.Slice _ _) (CtfePatternMatch.No)]))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -12202,6 +12209,10 @@
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (ast.ast-pat-array (ctfe-quote-pattern-list patterns env)))]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (let
+        [items : ast.AstPatternList (deref items-box)]
+        (ast.ast-pat-slice (ctfe-quote-pattern-list items env) has-rest))]
     [(ast.AstPattern.Wildcard) ast.AstPattern.Wildcard]
     [(ast.AstPattern.Binding name)
       (ast.AstPattern.Binding (ctfe-quote-name-id env name))]
@@ -13718,6 +13729,15 @@
         (match b
           [(ast.AstPattern.Array b-items-box)
             (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Slice a-items-box a-rest)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Slice b-items-box b-rest)
+            (and
+              (= a-rest b-rest)
+              (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box)))]
           [_ false]))]
     [(ast.AstPattern.Wildcard)
       (match b

@@ -16,6 +16,19 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+Linux and Windows share one lowerer and one backend. Target choices live in
+four places:
+- the lowerer's target-aware C ABI shapes;
+- the target policy (`compiler-backend-target-policy-new`) and its facts;
+- the ABI tables in `compiler_abi.tl`;
+- the platform leaf modules (`compiler_backend_runtime_{linux,windows}.tl` and
+  `compiler_backend_object_target_{linux,windows}.tl`).
+
+Shared emission reads those facts and never tests the target itself.
+[`scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh)
+enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
+Codegen Parity*) describes its rules.
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;
@@ -89,6 +102,13 @@ over every instruction) sizes the staging region to the largest request.
   no region.
 - Each staged route claims its bytes. A claim beyond the plan fails at its
   instruction, and the region the body used must equal the plan (#7497).
+
+A function body's blocks are one dense `CompilerIrBlockSeq`:
+`CompilerIrBlockList` has only its `Array` arm. Walkers borrow the live blocks
+as a slice (`compiler-ir-block-list-view`) and match it with slice patterns.
+Passes that rebuild a body push into one `CompilerIrBlockBuilder` sized from
+their input. Appending a list copies it, so a walk must not append each block's
+rewrite onto an already-built rest.
 
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
@@ -180,6 +200,15 @@ Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
+
+The serial in-memory LSP transport keeps its arena handle, input snapshot,
+cursor, EOF flag and captured output in one `LspFrameMemoryState`
+(`src/lsp_frame_core.tl`). Install and reset replace the whole value; only the
+cursor, EOF flag and output fields change in place. The transcript runner copies
+captured output into its caller's arena, saves the transport handle, resets the
+state, then destroys the session and transport arenas, so no transport field
+stays globally reachable after its owner is gone. The LSP frame smoke covers
+reset and reinstall after the input was consumed and both outputs written.
 
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the
@@ -286,6 +315,12 @@ expectations, are copied into the checker arena. Source bytes, line buffers,
 and fence-scanner temporaries are released before typechecking. Both source
 and file callers share the same extracted-example checker, preserving order,
 counts, diagnostics, and the existing adjacent-path deduplication rule.
+
+Every example is its own program.
+- **Runnable examples** compile after a full driver file-state reset.
+- **Check-only examples** reset the interner to the session floor first (`compiler-check-reset-interns!`, as lint does per file). So nothing an earlier example or file interned or generated reaches them. The session's program cache survives, so examples still share loaded dependencies.
+
+A batched run therefore gives each file the result it gets alone (#8580). `scripts/verify-doc-tests.sh` fails a batched run that fails while every file passes alone; its per-file probe only locates failures.
 
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
@@ -414,6 +449,18 @@ the structural module key of its canonical id, and comptime helper prefixes are
 compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
 still await migration are tracked in #4960.
+
+Each compile and each `compile --batch` entry resets the interner. Those resets
+cost what the compile used, not the tables' capacity (#8520).
+- **Hash maps.** The source and generated maps log every slot an insert fills.
+  The log travels with the map arrays: a state owns it, and it is installed and
+  captured with them. So `intern-compat-state-reset!`, `reset-to!` and the
+  installed-global resets empty only the logged slots.
+- **Fallback.** Past an eighth of a map's capacity the log saturates, and that
+  reset clears the whole map.
+- **Why a log.** An id range cannot stand in for it, because the state path and
+  the installed globals keep separate source cursors.
+- **Structural table.** Its reset clears by record in the same way.
 
 The move checker stores an ordinary cleanup-owning `let`'s obligation in its
 lexical locals entry and its discharge in the existing place-path facts.
@@ -548,9 +595,8 @@ These internal shallow reads require valid storage and an index below logical le
 The instruction helpers remain authoritative for effects and provenance. Root
 updates retain forward order and both existing passes; unresolved candidates and
 successful predicates stop before reading later blocks. No scanner mutates block
-storage or consumes spare capacity. The linked/dense/mixed differential fixture
-covers retained inputs, delayed definitions, unstable bindings and early exits;
-this traversal optimization leaves the wider block-storage migration in #5729 open.
+storage or consumes spare capacity. The `call-memory-dense-scan` test covers
+delayed definitions, unstable bindings and early exits.
 
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
@@ -561,6 +607,25 @@ snapshot, and the table dies before the function's optimizer arena is rewound.
 The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
+
+Block-local CSE (`opt-cse-instr`) and the Slice-word CSE in the load/copy walk
+reuse one table pair per function pass (`OptExprTable`), clearing each table
+before its block walk. The block walkers borrow the pair mutably. An empty
+carrier allocates storage only on its first insertion, and that walk stores the
+state back into the pass's pair, so every later block clears and reuses it with
+its capacity. Keys keep stable positions;
+parallel integer storage records results, live entries and collision links.
+Power-of-two bucket heads index expression hashes, and lookup checks structural
+equality within the chain.
+The index grows at half occupancy by relinking live positions. Lookup treats
+zero or one live entry directly; hashing starts with the second
+live key, so this constant-size path never scans a growing table. Once started,
+the index remains active until clear. Invalidation unlinks indexed dead entries
+and compacts only live positions. Calls, stores, shuffles
+and control-flow boundaries clear lengths and advance the bucket generation,
+retaining capacity without scanning it; generation rollover resets all stamps.
+Entries are added only after a lookup miss, so live keys are unique. No caller
+retains an older table or a view across vector growth.
 
 The level-2 inline stage rewrites each caller inside one phase of a scratch
 arena and keeps only the caller's final body, cloned through the job's explicit
@@ -579,12 +644,11 @@ no body the loop reads, and no second whole-program copy overlaps it. Level 1
 has no input arena and reads the tiny-leaf stage's arena in place.
 
 The checked inliner's literal-argument scan borrows dense block storage directly.
-It visits blocks and instructions in forward order without building linked
+It visits blocks and instructions in forward order without building
 copies. Its result includes every matching definition and the last integer
 literal, even after a duplicate makes specialization ineligible. Keep traversal
 separate from that admission decision; stopping the scan early changes its
-recorded result. This read-only path does not change block ownership or the
-remaining mixed block-list representation.
+recorded result. This read-only path does not change block ownership.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
@@ -686,6 +750,20 @@ requests. Generated import spans and declaration paths both refer to the macro
 call site; materialization failures preserve the dependency diagnostic and add
 that call site as a structured related location.
 
+Before that, the output is spelled back as syntax for the declaration parser.
+A quasiquote template's expression positions hold parsed AST nodes, so
+`macro-expr-to-spanned-sexpr` converts each node to the form the parser reads.
+That includes the scoped arena, scratch, escape and `with` forms, loop
+control, `comptime`, lambdas, `foreach` and the SPMD forms. Its match has no
+fallback arm, so a new `AstExpr` variant does not compile until it is given a
+spelling. The `macro-output-expression-forms-round-trip` test checks that every
+form converts to exactly the syntax it was written as and re-parses to the same
+kind of node. `tests/integration/decls_macro_scoped_forms.tl` runs the CTFE
+route. `scripts/verify-package-native-tlci.sh` runs the native dependency route,
+which splices a consumer's `in-arena` body into a Decls macro's output.
+Native transformers cannot yet build these forms from their own templates and
+fall back to CTFE for them (#8547).
+
 Write authority over globals (SPEC §4.4.2) is enforced in the move checker's
 write arms, so other nodes pay nothing. Each write-capable arm of
 `tc-move-check-expr` (plain and dotted `set!`, field/tuple/element/`deref`
@@ -745,8 +823,8 @@ Structured object branches reuse flags only from the immediately preceding
 integer comparison in the same IR block, when that comparison defines the
 branch operand. Its `setcc`, zero extension and frame store preserve flags;
 floating comparisons and intervening instructions invalidate this fact.
-Fallthrough uses the next block in emission order, including dense block
-sequences. The absent-next-block sentinel cannot match a branch target; an
+Fallthrough uses the next block in emission order. The absent-next-block
+sentinel cannot match a branch target; an
 invalid target must remain an unresolved edge for the serializer to reject.
 Phi copies remain edge-specific: a conditional jump selects the
 false copies, and the true copies must jump past them before entering their
@@ -914,6 +992,22 @@ option and token counts are bounded by caller limits. Reading is pure: default
 library order and suppression, forced roots, aliases and mismatch keys belong
 to #7102, exports to #7125, delay loads to #7094, and the external-link
 preflight to #7423. Directive text is never forwarded to another tool.
+
+Linux profiles ship some `lib*.so` link inputs as tiny GNU ld scripts; glibc's
+`libc.so` is `OUTPUT_FORMAT` plus a `GROUP` with a nested `AS_NEEDED`.
+`src/linker_script_subset.tl` reads only that implicit subset: `OUTPUT_FORMAT`
+(one or three names), `INPUT`, `GROUP`, `AS_NEEDED` nested to a depth limit,
+`SEARCH_DIR`, `/* */` comments, quoted names and `-lNAME`. It produces the
+commands in order with line and column, and every `INPUT`/`GROUP` file in one
+ordered list that the commands index. Anything else is refused by name rather
+than partly executed: `SECTIONS`, `INCLUDE`, `INSERT`, `MEMORY`, `PHDRS`,
+`PROVIDE` and other GNU commands, assignments, expressions, unknown words,
+unbalanced parentheses, unterminated comments or quotes, NUL, control bytes,
+and non-ASCII outside quotes. Byte, token, token-length and nesting counts are
+bounded by caller limits. Reading is pure; resolving the names against profile
+roots and recording them in the link manifest belongs to #8304. The fixtures
+under `tests/fixtures/linker-scripts/` are real installed scripts with their
+provenance.
 
 The fresh-artifact pipeline prepares the runtime once for checked-surface
 capture, then passes that same result to artifact finishing. Finishers accept

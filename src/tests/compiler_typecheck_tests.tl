@@ -2959,6 +2959,39 @@
       "(define (main) : i64 (deref 1))"
       "typecheck: deref requires Box or reference type")))
 
+;; A raw-pointer `deref` is an unsafe place only as a struct-field projection
+;; receiver, and only a `MutPtr` field is assignable.
+(define (compiler-typecheck-raw-deref-field-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(defstruct Inner (a i64) (b i64))
+(defstruct Point (x i64) (inner Inner) (items (Array i64 2)))
+(define (bump [p : (MutPtr Point)]) : i64
+  (unsafe
+    (begin
+      (set! (deref p).x (+ (deref p).x 1))
+      (set! (deref p).inner.b 2)
+      (set! (array-ref (deref p).items 1) 3)
+      (+ (deref p).inner.a (array-ref (deref p).items 0)))))
+(define (read [p : (Ptr Point)]) : i64
+  (unsafe (deref p).inner.b))
+(define (main) : i64 0)")
+    (compiler-typecheck-error-ok?
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (MutPtr Point)]) : unit
+  (set! (deref p).x 1))"
+      "typecheck: deref of a raw pointer requires unsafe context")
+    (compiler-typecheck-error-ok?
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (Ptr Point)]) : unit
+  (unsafe (set! (deref p).x 1)))"
+      (tc_core.tc-raw-deref-read-only-message))
+    (compiler-typecheck-error-ok?
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (MutPtr Point)]) : Point
+  (unsafe (deref p)))"
+      (tc_core.tc-raw-deref-whole-message))))
+
 (define (compiler-typecheck-init-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -3217,7 +3250,7 @@
     [(tc_core.TcTryQueryIncompatible
         (tc_core.TcTryCarrier _)
         (tc_core.TcTryCarrier _)
-        (tc_core.TcTryEarlyExitForbidden tc_core.TcTryEarlyExitForbiddenSpmd))
+        (tc_core.TcTryEarlyExitForbidden (tc_core.TcTryEarlyExitForbiddenSpmd)))
       true]
     [(tc_core.TcTryQueryIncompatible _ _ _) false]))
 
@@ -3396,6 +3429,16 @@
       "typecheck: cannot store cleanup-required resource in ordinary aggregate")
     (compiler-typecheck-error-ok?
       "(defenum Maybe (Some i64))
+(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let [m : Maybe (Some h)]
+      0)))"
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    ;; Two enums declare `Some`, so typecheck qualifies the constructor first.
+    (compiler-typecheck-error-ok?
+      "(defenum Maybe (Some i64))
+(defenum Other (Some i64))
 (define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
@@ -3646,6 +3689,24 @@
 (define (read) : TryPayloadedNone (SomePayloadedNone 1))
 (define (main) : i64
   (try (read)))"
+      "typecheck: try operand must be Result-like enum")
+    ;; A payload-free Ok yields unit, and the enclosing family's Ok may carry
+    ;; no payload or several; an operand's Ok still carries at most one.
+    (compiler-typecheck-ok?
+      "(defenum TryCheck (OkCheck) (ErrCheck i64))
+(defenum TryPair (OkPair i64 bool) (ErrPair i64))
+(define (check [flag : bool]) : TryCheck
+  (if flag OkCheck (ErrCheck 7)))
+(define (validate [flag : bool]) : TryCheck
+  (let [u : unit (try (check flag))] OkCheck))
+(define (main [flag : bool]) : TryPair
+  (begin (try (validate flag)) (OkPair 1 flag)))")
+    (compiler-typecheck-error-ok?
+      "(defenum TryPair (OkPair i64 bool) (ErrPair i64))
+(defenum TrySingle (OkSingle i64) (ErrSingle i64))
+(define (pair) : TryPair (OkPair 1 true))
+(define (main) : TrySingle
+  (OkSingle (try (pair))))"
       "typecheck: try operand must be Result-like enum")
     (compiler-typecheck-ok?
       (compiler-typecheck-with-io-source
@@ -5340,6 +5401,78 @@
   (compiler-typecheck-with-io-source
     "(defenum E (A) (B))
 (define (main [e : E]) : i64 (match e [(A) 1] [(B) (io.panic \"no\")]))"))
+
+;; Both enums declare `Ok` and `Err`, in different orders, so a bare name that
+;; resolved to the other enum would also have the other tag.
+(define (compiler-typecheck-bare-variant-enums) : String
+  "(defenum ResA (Ok i64) (Err i64))
+(defenum ResB (Err i64) (Ok i64))
+(defenum Light (Off) (On))
+(defenum Switch (On) (Off))
+(defstruct Holder (result ResB) (light Light))
+(defenum Wrap (Outer ResB) (Nested Holder) (Empty))
+(define (take [r : ResB]) : i64 (match r [(Ok v) v] [(Err e) e]))
+")
+
+(define (compiler-typecheck-bare-variant-ok? [body : String]) : bool
+  (compiler-typecheck-ok?
+    (str_cat.str-cat (compiler-typecheck-bare-variant-enums) body)))
+
+;; SPEC 3.5.1: bare variant names resolve against the expected enum type; with
+;; none, two visible declaring enums make the name ambiguous.
+(define (compiler-typecheck-bare-variant-tests-ok?) : bool
+  (and
+    (compiler-typecheck-bare-variant-ok?
+      "(define (returned [x : i64]) : ResB (Ok x))
+(define (tail [b : bool] [x : i64]) : ResB
+  (if b
+    (begin (Ok x))
+    (let [y : i64 (+ x 1)] (match y [0 (Err 0)] [_ (Err y)]))))
+(define (light) : Light On)
+(define (switch) : Switch (On))")
+    (compiler-typecheck-bare-variant-ok?
+      "(define (main) : i64
+  (let
+    [typed : ResB (Ok 1)]
+    [holder : Holder (Holder (Err 2) Off)]
+    [wrapped : Wrap (Nested (Holder (Ok 3) On))]
+    [outer : Wrap (Outer (Err 4))]
+    (begin
+      (set! typed (Err 5))
+      (set! holder.result (Ok 6))
+      (set! holder.light On)
+      (+ (take typed) (take (Ok 7)) (take holder.result)))))")
+    ;; R1: a local binding of the name wins over the expected enum.
+    (compiler-typecheck-error-ok?
+      (str_cat.str-cat
+        (compiler-typecheck-bare-variant-enums)
+        "(define (keep [On : Switch]) : Light On)")
+      "typecheck: return type mismatch: expected Light, found Switch")
+    ;; One visible declaring enum keeps the ordinary unqualified lookup.
+    (compiler-typecheck-bare-variant-ok?
+      "(define (main) : i64 (let [light (Outer (ResB.Ok 1))] 0))")
+    (compiler-typecheck-error-location-ok?
+      (str_cat.str-cat
+        (compiler-typecheck-bare-variant-enums)
+        "(define (main) : i64 (let [r (Ok 1)] 0))")
+      "typecheck: ambiguous variant `Ok`; qualify as ResA.Ok or ResB.Ok"
+      8
+      31)
+    (compiler-typecheck-error-ok?
+      (str_cat.str-cat
+        (compiler-typecheck-bare-variant-enums)
+        "(define (main) : i64 (take (On)))")
+      "typecheck: ambiguous variant `On`; qualify as Light.On or Switch.On")
+    ;; A bare binder in a payload position may not spell a payload variant.
+    (compiler-typecheck-error-ok?
+      "(defenum Ty (I64) (U8))
+(defenum Instr (Mov i64 Ty) (Nop))
+(define (main [i : Instr]) : i64 (match i [(Mov d I64) d] [_ 0]))"
+      "typecheck: pattern binder `I64` spells a variant of the payload enum Ty; write `(I64)` to match that variant or rename the binder")
+    (compiler-typecheck-ok?
+      "(defenum Ty (I64) (U8))
+(defenum Instr (Mov i64 Ty) (Nop))
+(define (main [i : Instr]) : i64 (match i [(Mov d (I64)) d] [(Mov d ty) 1] [_ 0]))")))
 
 (define (compiler-typecheck-match-tests-ok?) : bool
   (and
@@ -7486,7 +7619,49 @@
     (when true unit)
     (when true unit unit)
     (unless false unit)
-    (unless false unit unit)))")))
+    (unless false unit unit)))")
+    (compiler-typecheck-comptime-type-operand-tests-ok?)))
+
+;; A typed macro operand is checked before specialization rewrites its
+;; `[comptime T : type]` calls, so the check binds `T` from each `(type X)`.
+(define (compiler-typecheck-comptime-type-operand-source [main-body : String]) : String
+  (str_cat.str-cat
+    "(defmacro (ident [x : i64]) : i64 x)
+(defmacro (truthy [x : bool]) : bool x)
+(define (pick [comptime T : type] [x : T]) : T x)
+(define (first [comptime T : type] [xs : (& (Slice T))]) : T
+  (array-ref xs 0))
+(define (pair [comptime A : type] [comptime B : type] [a : A] [b : B]) : B b)
+(define (main) : i64
+"
+    main-body
+    ")"))
+
+(define (compiler-typecheck-comptime-type-operand-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (pick (type i64) 42))"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (ident (pair (type bool) (type i64) true 42)))"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(let [items : (Array i64 3) (array 1 2 3)]
+    (if (truthy (= (first (type i64) (slice-view items 0 3)) 1)) 42 0))"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (pick (type bool) true))")
+      "typecheck: macro operand type mismatch: expected i64, got bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (pick (type i64) true))")
+      "typecheck: call `pick` argument 2 (parameter `x`) type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(let [items : (Array bool 1) (array true)]
+    (ident (first (type i64) (slice-view items 0 1))))")
+      "typecheck: call `first` argument 2 (parameter `xs`) type mismatch: expected (& (Slice i64)), found (& items (Slice bool))")))
 
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
@@ -8231,6 +8406,9 @@
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (io.panic "typecheck: match/pattern tests failed"))
+    (if (compiler-typecheck-bare-variant-tests-ok?)
+      unit
+      (io.panic "typecheck: bare variant resolution tests failed"))
     (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
       unit
       (io.panic "typecheck: spmd-reduce operator/type tests failed"))
@@ -10614,6 +10792,9 @@
     (if (compiler-typecheck-box-tests-ok?)
       unit
       (io.panic "typecheck: box tests failed"))
+    (if (compiler-typecheck-raw-deref-field-tests-ok?)
+      unit
+      (io.panic "typecheck: raw-pointer field place tests failed"))
     (if (compiler-typecheck-init-tests-ok?)
       unit
       (io.panic "typecheck: init tests failed"))

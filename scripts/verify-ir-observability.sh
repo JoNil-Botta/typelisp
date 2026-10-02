@@ -262,7 +262,7 @@ if grep -F "<id:" "$MACRO_LIFETIME_IR" >/dev/null; then
     exit 1
 fi
 grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& chunk bytes)" >/dev/null
-grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& rendered bytes)" >/dev/null
+grep -F "as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& batch bytes)" >/dev/null
 
 # A scaled dump must render with memory proportional to the output, not by
 # quadratic recursive concatenation. 6000 tiny functions render ~1.5MB of IR

@@ -2280,6 +2280,8 @@
     [(ast.AstPattern.Var _ maybe-ty) (lint-maybe-type-names maybe-ty names)]
     [(ast.AstPattern.Tuple items) (lint-pattern-list-names (deref items) names)]
     [(ast.AstPattern.Array items) (lint-pattern-list-names (deref items) names)]
+    [(ast.AstPattern.Slice items _)
+      (lint-pattern-list-names (deref items) names)]
     [(ast.AstPattern.Wildcard) names]
     [(ast.AstPattern.Binding _) names]
     [(ast.AstPattern.Variant name items)
@@ -3339,6 +3341,8 @@
     [(ast.AstPattern.Tuple items)
       (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Array items)
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(ast.AstPattern.Slice items _)
       (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(ast.AstPattern.Wildcard) scope]
     [(ast.AstPattern.Binding name) (lint-unsafe-scope-add-id scope name)]
@@ -6519,6 +6523,8 @@
       (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(ast.AstPattern.Array items)
       (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(ast.AstPattern.Slice items _)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(ast.AstPattern.Variant name items)
       (let
         [variant : LintNameCasePatternScan
@@ -7807,6 +7813,10 @@
       (lint-unused-variable-pattern-list-bindings
         (ast.ast-pattern-list-box-shared-view items)
         state)]
+    [(ast.AstPattern.Slice items _)
+      (lint-unused-variable-pattern-list-bindings
+        (ast.ast-pattern-list-box-shared-view items)
+        state)]
     [(ast.AstPattern.Wildcard) state]
     [(ast.AstPattern.Binding name)
       (lint-unused-variable-add-to-current-frame
@@ -8346,6 +8356,11 @@
         (lint-unused-unsafe-finish-state
           (lint-unused-variable-expr-list exprs state)))]
     [(ast.AstExpr.Cast _ _)
+      (begin
+        (lint-unused-unsafe-block-mark-unknown!)
+        (lint-unused-variable-children node-id state span))]
+    ;; A `deref` needs unsafe only through a raw pointer, which takes types.
+    [(ast.AstExpr.BoxTake _)
       (begin
         (lint-unused-unsafe-block-mark-unknown!)
         (lint-unused-variable-children node-id state span))]

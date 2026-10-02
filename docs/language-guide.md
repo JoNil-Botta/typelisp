@@ -90,7 +90,9 @@ comparisons, and casts. Raw pointer types `(Ptr T)` / `(MutPtr T)` and
 [SPEC.md](../SPEC.md) sections 3.4, 4.3.1, and 5.20), including sequentially
 consistent raw-pointer atomics (`atomic-load`, `atomic-store!`,
 `atomic-add!`, `atomic-fetch-add!`, `atomic-cas!`) for 32/64-bit integer
-elements.
+elements. Inside `unsafe`, `(deref p).field` reads one field of a raw
+pointer's struct pointee in place, and `(set! (deref p).field v)` stores one
+through a `(MutPtr T)`; `ptr-read` and `ptr-write!` copy the whole pointee.
 
 Borrowed Slice references are not C `extern` parameter or return types. A C
 boundary must spell an explicit `(Ptr T)` or `(MutPtr T)` plus a scalar length;
@@ -129,6 +131,20 @@ are checked; zero-length views are valid. For example:
   (middle-length (slice-view items 1 2)))      ; checked borrowed subview
 ```
 
+`match` takes a borrowed Slice, or a borrowed fixed array, apart by length:
+`(slice)` matches an empty view, `(slice a b)` exactly two elements, and
+`(slice x & rest)` at least one, binding the remaining elements to `rest` as a
+borrowed Slice without copying. Copy elements bind by value and other
+elements by reference. Element patterns may be refutable, but only arms whose
+element patterns are irrefutable count toward covering every length:
+
+```lisp
+(define (sum [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(slice) 0]
+    [(slice x & rest) (+ x (sum rest))]))
+```
+
 ### Abstraction: comptime, not generics
 
 TypeLisp does not plan source-level generics, traits, interfaces, `impl`
@@ -143,7 +159,8 @@ pure safe TypeLisp — no `unsafe`, `extern`, or host I/O — bounded by
 deterministic fuel. Write hand-authored monomorphic declarations (such as a
 domain-specific `Result*` enum) when a generated family has not been
 requested; `(try expr)` is the propagation form over compatible concrete
-Result-like enums.
+Result-like enums, which may be different families as long as their `Err*`
+payload types are equal (SPEC.md section 9).
 
 ### Top-level forms
 
@@ -204,6 +221,21 @@ the value namespace. An enum type may share a name with one of its own
 variants. Module identity then qualifies both namespaces, so two modules can
 define the same local name without colliding.
 
+Enum variants can be written bare (`None`, `(Ok x)`) or enum-qualified
+(`Option.None`, `(json.Result.Ok x)`). A pattern resolves a bare variant
+against the scrutinee's enum. A constructor resolves it against the expected
+enum type wherever one is known: a declared return type (through `if`,
+`match`, `let` and `begin` tails), a typed `let`, a typed argument, a struct
+field or variant payload, and a `set!` of a typed place. So
+`(define (parse) : json.Result (Ok 1))` builds `json.Result.Ok` even when a
+local enum also declares `Ok`, and the imported enum's variants never need
+importing by name. A local binding of the same name wins; a module function,
+value or struct constructor of that name makes the reference ambiguous.
+Without an expected type, exactly one enum that the module declares or
+imports with `.*` must declare the bare name; otherwise qualify it. In a
+payload pattern, a bare name that spells a variant of the payload enum is
+rejected: write `(I64)` to match that variant, or pick another binder name.
+
 ### Conditional compilation
 
 `compile`, `run`, and `build` accept repeated `--cfg <name>` flags. Source
@@ -225,7 +257,8 @@ the server host and accepts `target` plus a string-array `cfg` in
 `if`, `when`, `unless`, `let`, scalar `for`, `while` (with unit
 `break`/`continue`),
 `begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
-struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
+struct patterns, `(slice ...)` length patterns over borrowed Slices, `_`),
+`ann`, `cast`, `return`, `try`, `foreach`,
 `foreach-active`, `spmd-reduce`, `spmd-scan`, `spmd-compact`; arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`
 `bit-or` `bit-xor` `shl` `shr`) operators. Unary operators are prefix forms

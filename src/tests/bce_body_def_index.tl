@@ -16,7 +16,7 @@
       (ir.CompilerIrValue.I64 7)
       (ast.AstType.I64))))
 
-(define (make-blocks [n : i64] [kind : i64] [storage : i64] [duplicate : bool]) : ir.CompilerIrBlockList
+(define (make-blocks [n : i64] [kind : i64] [duplicate : bool]) : ir.CompilerIrBlockList
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock n)]
@@ -48,51 +48,16 @@
               (array-ref slots i)
               (ir.CompilerIrBlock.Block i (ir.CompilerIrInstrSeq is 2)))
             (set! i (+ i 1)))))
-      (if (= storage 0)
-        (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots n))
-        (let
-          [tail : ir.CompilerIrBlockList (ir.CompilerIrBlockList.Nil)]
-          [k : i64 n]
-          (begin
-            (when
-              (and (= storage 2) (> n 2))
-              (let
-                [ts : (__tl_dyn-array ir.CompilerIrBlock)
-                  (__tl_make-array ir.CompilerIrBlock (- n 2))]
-                [j : i64 2]
-                (begin
-                  (while (< j n)
-                    (begin
-                      (set! (array-ref ts (- j 2)) (clone (array-ref slots j)))
-                      (set! j (+ j 1))))
-                  (set!
-                    tail
-                    (ir.CompilerIrBlockList.Array
-                      (ir.CompilerIrBlockSeq ts (- n 2))))
-                  (set! k 2))))
-            (while (> k 0)
-              (begin
-                (set! k (- k 1))
-                (set!
-                  tail
-                  (ir.CompilerIrBlockList.Cons
-                    (clone (array-ref slots k))
-                    (box tail)))))
-            tail))))))
+      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots n)))))
 
 (define (seed) : opt.OptBceMbVarList
   (opt.opt-bce-mb-var-list-prepend
     (opt.opt-bce-mb-var-list-prepend (opt.opt-bce-mb-var-list-new) 0)
     999999))
 
-(define (check
-  [n : i64]
-  [kind : i64]
-  [storage : i64]
-  [duplicate : bool]
-  [pattern : i64]) : unit
+(define (check [n : i64] [kind : i64] [duplicate : bool] [pattern : i64]) : unit
   (let
-    [bs (make-blocks n kind storage duplicate)]
+    [bs (make-blocks n kind duplicate)]
     [defs (opt.opt-bce-mb-body-defs (opt.compiler-opt-global-shared-view bs))]
     [uses (imap.with-capacity 16)]
     [i : i64 0]
@@ -119,7 +84,7 @@
       (let
         [old
           (opt.opt-bce-mb-wire-vars-blocks
-            (opt.compiler-opt-global-shared-view bs)
+            (ir.compiler-ir-block-list-view bs)
             uses
             (seed))]
         [new (opt.opt-bce-mb-body-defs-used defs bs uses (seed))]
@@ -157,23 +122,18 @@
                   [(= size 7) 32]
                   [(= size 8) 33]
                   [else 257])]
-              [storage : i64 0]
+              [pattern : i64 0]
               (begin
-                (while (< storage 3)
+                (while (< pattern 8)
                   (let
-                    [pattern : i64 0]
+                    [scope (arena.make)]
                     (begin
-                      (while (< pattern 8)
-                        (let
-                          [scope (arena.make)]
-                          (begin
-                            (in-arena
-                              scope
-                              (begin
-                                (check n kind storage false pattern)
-                                (check n kind storage true pattern)))
-                            (arena.destroy-safe! scope)
-                            (set! pattern (+ pattern 1)))))
-                      (set! storage (+ storage 1)))))
+                      (in-arena
+                        scope
+                        (begin
+                          (check n kind false pattern)
+                          (check n kind true pattern)))
+                      (arena.destroy-safe! scope)
+                      (set! pattern (+ pattern 1)))))
                 (set! size (+ size 1)))))
           (set! kind (+ kind 1)))))))

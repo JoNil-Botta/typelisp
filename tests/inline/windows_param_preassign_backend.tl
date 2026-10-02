@@ -75,7 +75,7 @@
             (ir.compiler-ir-param-seq-empty)))))
     (ast.AstType.Unit)
     4
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.compiler-ir-block
         (ir.compiler-ir-label "entry")
         (ir.compiler-ir-instr-seq5
@@ -95,8 +95,7 @@
             pd
             (ir.CompilerIrValue.Var 3)
             (ast.AstType.I64))
-          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
-      ir.CompilerIrBlockList.Nil)
+          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (win-param-preassign-program) : ir.CompilerIrProgram
@@ -124,7 +123,7 @@
         (ir.compiler-ir-param-seq-empty)))
     (ast.AstType.I64)
     3
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.compiler-ir-block
         (ir.compiler-ir-label "entry")
         (ir.compiler-ir-instr-seq2
@@ -135,8 +134,7 @@
             (ir.CompilerIrValue.I64 2)
             (ast.AstType.I64))
           (ir.CompilerIrInstr.Return
-            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
-      ir.CompilerIrBlockList.Nil)
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1))))))
     ir.CompilerIrFunctionAbi.Ordinary))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool

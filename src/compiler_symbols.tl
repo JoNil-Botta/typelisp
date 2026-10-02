@@ -633,8 +633,16 @@
 (define compiler-registries-next-identity : i64
   0)
 
+;; Bumped by every declaration a symbol table indexes and by every new registry
+;; set, so an index derived from the tables (typecheck's bare-variant index)
+;; checks its freshness with one comparison instead of projecting a table out
+;; of its owner on every query.
+(define compiler-symbols-revision : i64
+  0)
+
 (define (compiler-registries-fresh-identity!) : i64
   (begin
+    (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
     (set!
       compiler-registries-next-identity
       (+ compiler-registries-next-identity 1))
@@ -1130,15 +1138,27 @@
           (ResultCompilerSymbols.Ok
             (CompilerSymbols values types macros decls owner-names decl-count))))]))
 
+;; Whether `handle`'s declaration belongs to a module other than the root. A
+;; variant handle is a registry handle (enum index x child stride + variant), so
+;; its owner is the module of the `defenum` it belongs to, read through that
+;; enum's declaration handle; every other value, type or macro handle indexes
+;; its declaration directly.
 (define (compiler-symbols-handle-from-nonroot-owner?
   [symbols : (& symbols CompilerSymbols)]
   [handle : i64]) : bool
-  (not
-    (compiler-symbol-root-module-id?
-      (compiler-symbols-owner-module-id-at-index-or
-        symbols
-        (compiler-symbol-handle-index handle)
-        (compiler-symbol-root-module-id)))))
+  (let
+    [decl-handle : i64
+      (if (=
+        (compiler-symbol-handle-kind handle)
+        (compiler-symbol-kind-enum-variant))
+        (compiler-registry-variant-owner-handle handle)
+        handle)]
+    (not
+      (compiler-symbol-root-module-id?
+        (compiler-symbols-owner-module-id-at-index-or
+          symbols
+          (compiler-symbol-handle-index decl-handle)
+          (compiler-symbol-root-module-id))))))
 
 (define (compiler-symbols-add-root-macro-id
   [symbols : CompilerSymbols]
@@ -2777,6 +2797,7 @@
       (let
         [indexed : ast.AstDecl (compiler-symbol-indexed-decl decl)]
         (begin
+          (set! compiler-symbols-revision (+ compiler-symbols-revision 1))
           (set! (array-ref decls index) indexed)
           (set! (array-ref owner-module-ids index) module-id)
           (set!

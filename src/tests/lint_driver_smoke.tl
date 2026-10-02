@@ -762,6 +762,26 @@
   (unsafe (tls-current-arena-set! 1)))"
         (lint_svec.new)
         false)]
+    ;; Only types tell a raw-pointer `deref`, which needs unsafe, from a Box
+    ;; or reference one, which does not.
+    [raw-field : lint_core.LintFindings
+      (driver_tests.selfhost-lint-source-with-roots-and-options
+        "lint_driver_raw_field_unsafe.tl"
+        "(defstruct Point (x i64) (y i64))
+(define (main [p : (MutPtr Point)]) : i64
+  (begin
+    (unsafe (set! (deref p).x 1))
+    (unsafe (deref p).y)))"
+        (lint_svec.new)
+        false)]
+    [box-field : lint_core.LintFindings
+      (driver_tests.selfhost-lint-source-with-roots-and-options
+        "lint_driver_box_field_unsafe.tl"
+        "(defstruct Point (x i64) (y i64))
+(define (main [b : (Box Point)]) : i64
+  (unsafe (deref b).y))"
+        (lint_svec.new)
+        false)]
     (cond
       [(not
           (=
@@ -862,6 +882,14 @@
       [(not (= (lint_core.lint-findings-count let-shadow) 1)) 174]
       [(not (= (lint_core.lint-findings-count top-level-shadow) 1)) 175]
       [(not (= (lint_core.lint-findings-count tls-shadow) 1)) 176]
+      [(not (= (lint_core.lint-findings-count raw-field) 0)) 180]
+      [(not
+          (lint-driver-smoke-finding-rule-line-ok?
+            box-field
+            0
+            (lint_core.lint-rule-unused-unsafe-id)
+            3))
+        181]
       [(not
           (lint-driver-smoke-source-has-unused-unsafe-candidate?
             "lint_driver_unsafe_resource_snapshot.tl"
@@ -1050,6 +1078,15 @@
     (lint-driver-smoke-write-text
       "target/lint_unsafe_surface/type_error.tl"
       (lint-driver-smoke-unsafe-surface-type-error-source))
+    ;; Only types tell a raw-pointer field `deref`, which needs unsafe, from a
+    ;; Box or reference one, so the surface classifier defers it.
+    (lint-driver-smoke-write-text
+      "target/lint_unsafe_surface/raw_field.tl"
+      "(defstruct Point (x i64) (y i64))
+(define (main [p : (MutPtr Point)]) : i64
+  (begin
+    (unsafe (set! (deref p).x 1))
+    (unsafe (deref p).y)))")
     (let
       [_reset-direct : unit
         (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
@@ -1144,6 +1181,19 @@
           false
           false)]
       [dotted-fallbacks : i64
+        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-raw-field : unit
+        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+      [raw-field-status : i64
+        (lint_driver.selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/raw_field.tl"
+          (lint_svec.new)
+          true
+          false
+          false
+          false
+          false)]
+      [raw-field-fallbacks : i64
         (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
       [_direct-error-findings : lint_core.LintFindings
         (lint_driver.selfhost-lint-typed-unused-unsafe-findings
@@ -1250,6 +1300,8 @@
         [(not (= macro-status 1)) 178]
         [(not (= macro-fallbacks 1)) 104]
         [(not (= dotted-fallbacks 0)) 105]
+        [(not (= raw-field-status 0)) 186]
+        [(not (= raw-field-fallbacks 1)) 187]
         [(not (= batch-status 0)) 106]
         [(not
             (= (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count) 1))

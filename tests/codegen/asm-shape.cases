@@ -1225,3 +1225,60 @@ count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
 match ^[[:space:]]+addq \$3, %r[a-z0-9]+$
 count = 0 ^[[:space:]]+addq \$1, %r[a-z0-9]+$
+
+# A field place through a raw pointer, `(deref p).field`, reads and stores one
+# field of its own width at its offset from the pointer at every level: no
+# pointee copy, no wide move, and nested fields load from their final offset.
+case raw-pointer-field-place
+source tests/integration/raw_pointer_field_place.tl
+opt 0 1 2
+in fn _tl_raw_pointer_field_place_record_bang
+not-contains movups
+not-contains tl_memcpy
+count = 1 ^[[:space:]]+movl %[a-z0-9]+, -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\)$
+count = 2 ^[[:space:]]+movb %[a-z0-9]+, -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\)$
+in fn _tl_raw_pointer_field_place_score
+not-contains movups
+not-contains tl_memcpy
+count = 1 ^[[:space:]]+movslq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+movzbq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
+in fn _tl_raw_pointer_field_place_pair_sum
+count = 2 ^[[:space:]]+movslq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r
+
+# At opt 2 a raw field update is one read-modify-write at the field's offset,
+# without a frame.
+case raw-pointer-field-place-rmw
+source tests/integration/raw_pointer_field_place.tl
+in fn _tl_raw_pointer_field_place_record_bang
+not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
+match ^[[:space:]]+addq 88\(%r[a-z0-9]+\), %r[a-z0-9]+$
+match ^[[:space:]]+movq %r[a-z0-9]+, 88\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, 80\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movb %[a-z0-9]+, 84\(%r[a-z0-9]+\)$
+
+# A `try` error exit returns the enclosing family's Err like a returned
+# constructor: the 32-byte family is written straight into the caller's sret
+# slot (one tag store per exit) and the 16-byte family travels in the register
+# group, with no arena allocation on either path.
+case try-err-return-slot
+source tests/integration/try_propagation.tl
+opt 0 2
+in fn _tl_try_propagation_validate
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+count = 2 ^[[:space:]]+movq \$1, \(%r[a-z0-9]+\)$
+in fn _tl_try_propagation_word_sum
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+
+# A function that uses `try` still takes its caller's sret slot: the try error
+# exit builds its Err in that slot (#8563), so `forward` tail-jumps into
+# `checked` instead of calling into a temporary and copying the 32-byte result.
+case try-sret-forward
+source tests/integration/try_sret_forward.tl
+opt 0 1
+in fn _tl_try_sret_forward_forward
+match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
+not-contains movups
+not-match ^[[:space:]]+call[[:space:]]

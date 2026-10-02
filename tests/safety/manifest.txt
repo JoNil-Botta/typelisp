@@ -392,9 +392,13 @@ with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_rejec
 while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
 while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
 while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while
+while_when_break_lambda_boundary_reject|check-fail|tests/safety/while_when_break_lambda_boundary_reject.tl|-|typecheck: macro operand typecheck failed: typecheck: break requires enclosing scalar while
 while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
 while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
+if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
+if_value_branch_join_reject|check-fail|tests/safety/if_value_branch_join_reject.tl|-|if branches must match
+if_bool_int_branch_join_reject|check-fail|tests/safety/if_bool_int_branch_join_reject.tl|-|if branches must match
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
 integer_literal_i64_overflow_reject|check-fail|tests/safety/integer_literal_i64_overflow_reject.tl|-|integer literal 9223372036854775808 does not fit expected type i64
@@ -604,6 +608,24 @@ fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_
 fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
+slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
+slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch
+slice_match_pattern_missing_length_reject|check-fail|tests/safety/slice_match_pattern_missing_length_reject.tl|-|typecheck: match missing arm for slices of length 1
+slice_match_pattern_open_length_reject|check-fail|tests/safety/slice_match_pattern_open_length_reject.tl|-|typecheck: match missing arm for slices of length 2 or more
+slice_match_pattern_refutable_coverage_reject|check-fail|tests/safety/slice_match_pattern_refutable_coverage_reject.tl|-|typecheck: match missing arm for slices of length 1 or more
+slice_match_pattern_unreachable_reject|check-fail|tests/safety/slice_match_pattern_unreachable_reject.tl|-|earlier slice patterns already match every length it matches
+slice_match_pattern_after_catchall_reject|check-fail|tests/safety/slice_match_pattern_after_catchall_reject.tl|-|unreachable match arm after a slice pattern that matches every length
+slice_match_pattern_array_length_reject|check-fail|tests/safety/slice_match_pattern_array_length_reject.tl|-|slice pattern matches exactly 2 elements, but the fixed array has 3
+slice_match_pattern_rest_shared_reject|check-fail|tests/safety/slice_match_pattern_rest_shared_reject.tl|-|set! array element requires mutable array access
+slice_match_pattern_rest_mut_param_reject|check-fail|tests/safety/slice_match_pattern_rest_mut_param_reject.tl|-|expected (&mut (Slice i64)), found (& (Slice i64))
+slice_match_pattern_borrow_escape_reject|check-fail|tests/safety/slice_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+slice_match_pattern_borrow_conflict_reject|check-fail|tests/safety/slice_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[1]`
+slice_match_pattern_mut_borrow_conflict_reject|check-fail|tests/safety/slice_match_pattern_mut_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[1]`
+slice_match_pattern_mut_destructure_reject|check-fail|tests/safety/slice_match_pattern_mut_destructure_reject.tl|-|a mutable slice pattern binds a non-Copy element only to a name or `_`
+slice_match_pattern_rest_marker_reject|check-fail|tests/safety/slice_match_pattern_rest_marker_reject.tl|-|slice pattern `&` must be followed by exactly one rest binding or `_`
+slice_match_pattern_two_rest_reject|check-fail|tests/safety/slice_match_pattern_two_rest_reject.tl|-|slice pattern takes at most one `&` rest binding
+slice_match_pattern_glued_rest_reject|check-fail|tests/safety/slice_match_pattern_glued_rest_reject.tl|-|slice pattern rest needs a space after `&`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 type_expr_runtime_reject|check-fail|tests/safety/type_expr_runtime_reject.tl|-|typecheck: type-expr is compile-time only; wrap it in (comptime ...)
@@ -902,7 +924,18 @@ float_exponent_overflow_f32|check-fail|tests/safety/float_exponent_overflow_f32.
 deref_shared_noncopy_move_reject|check-fail|tests/safety/deref_shared_noncopy_move_reject.tl|-|cannot move non-Copy value through shared reference
 deref_immutable_set_reject|check-fail|tests/safety/deref_immutable_set_reject.tl|-|set! deref requires mutable access
 deref_box_use_after_move_reject|check-fail|tests/safety/deref_box_use_after_move_reject.tl|-|use of moved value `outer`
-deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|deref requires Box or reference type
+deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
+# A raw-pointer deref is an unsafe place only as a struct-field projection
+# receiver; a (Ptr T) pointee is read-only.
+raw_pointer_field_set_safe_reject|check-fail|tests/safety/raw_pointer_field_set_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
+raw_pointer_field_read_safe_reject|check-fail|tests/safety/raw_pointer_field_read_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
+raw_pointer_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_nested_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_nested_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_field_element_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_element_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_whole_deref_read_reject|check-fail|tests/safety/raw_pointer_whole_deref_read_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field
+raw_pointer_whole_deref_set_reject|check-fail|tests/safety/raw_pointer_whole_deref_set_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field
+raw_pointer_field_replace_reject|check-fail|tests/safety/raw_pointer_field_replace_reject.tl|-|typecheck: replace! target cannot be reached through a raw pointer
+raw_pointer_field_borrow_reject|check-fail|tests/safety/raw_pointer_field_borrow_reject.tl|-|typecheck: deref borrow requires Box or reference place
 tuple_set_immutable_ref_reject|check-fail|tests/safety/tuple_set_immutable_ref_reject.tl|-|set! tuple element requires mutable tuple access
 lifetime_shortening_reverse_reject|check-fail|tests/safety/lifetime_shortening_reverse_reject.tl|-|source lifetime `inner` does not outlive required lifetime `outer`
 lifetime_shortening_mut_ref_referent_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ref_referent_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable reference referent type is invariant
@@ -942,7 +975,7 @@ array_take_removed_reject|check-fail|tests/safety/array_take_removed_reject.tl|-
 replace_reference_lifetime_ok|check-ok|tests/safety/replace_reference_lifetime_ok.tl|-|-
 replace_shared_ref_reject|check-fail|tests/safety/replace_shared_ref_reject.tl|-|set! array element requires mutable array access
 replace_fixed_array_shared_ref_reject|check-fail|tests/safety/replace_fixed_array_shared_ref_reject.tl|-|set! array element requires mutable array access
-replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|replace! target must be a storage place
+replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|typecheck: replace! target cannot be reached through a raw pointer
 replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|parse: replace! target must be a mutable place
 replace_fixed_array_temporary_reject|check-fail|tests/safety/replace_fixed_array_temporary_reject.tl|-|replace! target must be a storage place
 replace_moved_reject|check-fail|tests/safety/replace_moved_reject.tl|-|use of moved value `text`
@@ -986,6 +1019,16 @@ loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_re
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+# A `try` operand keeps its own break, continue and return edges in the loop
+# move and borrow walkers.
+try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
+try_loop_carried_move_reject|check-fail|tests/safety/try_loop_carried_move_reject.tl|-|cannot move loop-carried owner value `t`
+try_loop_return_move_ok|run-exit|tests/safety/try_loop_return_move_ok.tl|42|-
+try_loop_return_borrow_ok|check-ok|tests/safety/try_loop_return_borrow_ok.tl|-|-
+# `try` shapes: quoted operands are checked, and the enclosing family's Ok
+# variant may carry several payloads.
+try_quasiquote_unquote_reject|check-fail|tests/safety/try_quasiquote_unquote_reject.tl|-|typecheck: unquote expects Expr
+try_multi_payload_return_ok|run-exit|tests/safety/try_multi_payload_return_ok.tl|42|-
 
 # Raw thread/sync effects stay on the adapters, including generated modules.
 thread_raw_spawn_safe_reject|check-fail|tests/safety/thread_raw_spawn_safe_reject.tl|-|thread/spawn requires unsafe context
@@ -1120,3 +1163,14 @@ function_set_wildcard_reject|check-fail|tests/safety/function_set_wildcard_rejec
 function_set_imported_extern_reject|check-fail|tests/safety/function_set_imported_extern_reject.tl|-|typecheck: cannot assign to function
 function_set_macro_reject|check-fail|tests/safety/function_set_macro_reject.tl|-|typecheck: cannot assign to function
 function_storage_assignment|run-exit|tests/safety/function_storage_assignment.tl|42|-
+
+# Bare variant names (SPEC 3.5.1, 4.4.3): an expected enum type resolves them,
+# even for an imported enum; without one they see only enums the module
+# declares or imports with `.*`. A same-named module function or struct
+# constructor, or a payload binder spelling a payload variant, is rejected.
+variant_expected_imported_ok|check-ok|tests/safety/variant_expected_imported_ok.tl|-|-
+variant_unimported_module_reject|check-fail|tests/safety/variant_unimported_module_reject.tl|-|typecheck: unbound name Pass
+variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_bare_reject.tl|-|typecheck: unbound name Pass
+variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
+variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
+variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder

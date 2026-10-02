@@ -166,10 +166,10 @@
               (ptr-cast (__tl_array-data cell) : (Ptr CompilerAdvisorySinkData))))
           : i64)))))
 
-(define (compiler-advisory-sink-data [sink : CompilerAdvisorySink]) : CompilerAdvisorySinkData
+(define (compiler-advisory-sink-view [sink : CompilerAdvisorySink]) : (Ptr
+    CompilerAdvisorySinkData)
   (unsafe
-    (ptr-read
-      (int->ptr (cast sink.address : u64) : (Ptr CompilerAdvisorySinkData)))))
+    (int->ptr (cast sink.address : u64) : (Ptr CompilerAdvisorySinkData))))
 
 (define (compiler-advisory-sink-data-set!
   [sink : CompilerAdvisorySink]
@@ -180,22 +180,22 @@
       data)))
 
 (define (compiler-advisory-sink-snapshot [sink : CompilerAdvisorySink]) : CompilerAdvisoryList
-  (compiler-advisory-sink-data sink).advisories)
+  (unsafe
+    (deref (compiler-advisory-sink-view sink)).advisories))
 
 (define (compiler-advisory-sink-reset! [sink : CompilerAdvisorySink]) : unit
   (let
-    [data : CompilerAdvisorySinkData (compiler-advisory-sink-data sink)]
-    (begin
-      (if (= data.payload-arena 0)
+    [data : (Ptr CompilerAdvisorySinkData) (compiler-advisory-sink-view sink)]
+    (unsafe
+      (if (= (deref data).payload-arena 0)
         unit
-        (unsafe
-          (arena.tl_arena_destroy data.payload-arena)))
+        (arena.tl_arena_destroy (deref data).payload-arena))
       (compiler-advisory-sink-data-set!
         sink
         (CompilerAdvisorySinkData
           0
           (compiler-advisory-list-empty)
-          (+ data.generation 1))))))
+          (+ (deref data).generation 1))))))
 
 (define (compiler-diagnostic-list-box-shared-view
   [value : (Box CompilerDiagnosticList)]) : CompilerDiagnosticList

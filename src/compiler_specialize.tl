@@ -825,6 +825,11 @@
       (set! (array-ref slots index) 0)
       (spec-template-shadow-fill-zero slots (+ index 1)))))
 
+(define (spec-template-shadow-state-view [state : SpecTemplateShadowState]) : (Ptr
+    SpecTemplateShadowStateData)
+  (unsafe
+    (int->ptr (cast state.address : u64) : (Ptr SpecTemplateShadowStateData))))
+
 (define (spec-template-shadow-state-data [state : SpecTemplateShadowState]) : SpecTemplateShadowStateData
   (unsafe
     (ptr-read
@@ -999,7 +1004,12 @@
   [slot : i64]) : bool
   (begin
     (spec-template-shadow-state-activate! state head)
-    (> (array-ref (spec-template-shadow-state-data state).counts slot) 0)))
+    (>
+      (array-ref
+        (unsafe
+          (deref (spec-template-shadow-state-view state)).counts)
+        slot)
+      0)))
 
 (define (spec-template-values-fill-empty
   [values : (&mut values (__tl_dyn-array SpecMaybeTemplate))]
@@ -1152,6 +1162,11 @@
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
     [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
+    [(ast.AstPattern.Slice patterns-box _)
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
@@ -4306,6 +4321,11 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-value-subst-remove-pattern-list subs patterns))]
+    [(ast.AstPattern.Slice patterns-box _)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-value-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Wildcard) (spec-value-subst-shared-view subs)]
     [(ast.AstPattern.Binding name) (spec-value-subst-remove-name subs name)]
     [(ast.AstPattern.Variant _ patterns-box)
@@ -4413,6 +4433,11 @@
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-type-subst-remove-pattern-list subs patterns))]
     [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-type-subst-remove-pattern-list subs patterns))]
+    [(ast.AstPattern.Slice patterns-box _)
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]

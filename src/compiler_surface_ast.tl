@@ -68,6 +68,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 15: AstPattern tag 7 adds the `(slice ...)` pattern: a rest flag, then
+  ;; the item list.
+  ;;
   ;; 14: extern ABI tag 3 marks a package dependency's TypeLisp function
   ;; (#8485).
   ;;
@@ -114,7 +117,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  14)
+  15)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

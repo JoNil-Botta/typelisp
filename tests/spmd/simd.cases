@@ -124,6 +124,63 @@ file inline_helper_masked_fault.tl
       (array-ref out 8))))
 end-file
 
+# Programs for the masked-cast shape cases below (#7306).
+
+file masked_cast_let.tl
+(define (fill [src : (& src (__tl_dyn-array i32))] [out : (&mut out (__tl_dyn-array f32))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (> (array-ref src i) (cast 0 : i32))
+      (let [x : f32 (cast (array-ref src i) : f32)]
+        (set! (array-ref out i) x))
+      unit)))
+
+(define (main) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 19)]
+       [out : (__tl_dyn-array f32) (__tl_make-array f32 19)]
+    (begin (fill (& src) (&mut out) 19) 0)))
+end-file
+
+file masked_cast_condition.tl
+(define (fill [src : (& src (__tl_dyn-array i32))] [out : (&mut out (__tl_dyn-array f32))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (> (cast (array-ref src i) : f32) (cast 0 : f32))
+      (set! (array-ref out i) (cast 1 : f32))
+      unit)))
+
+(define (main) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 19)]
+       [out : (__tl_dyn-array f32) (__tl_make-array f32 19)]
+    (begin (fill (& src) (&mut out) 19) 0)))
+end-file
+
+file masked_cast_if_value.tl
+(define (fill [src : (& src (__tl_dyn-array i32))] [out : (&mut out (__tl_dyn-array f32))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (set! (array-ref out i)
+      (if (> (array-ref src i) (cast 0 : i32))
+        (cast (array-ref src i) : f32)
+        (cast 0 : f32)))))
+
+(define (main) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 19)]
+       [out : (__tl_dyn-array f32) (__tl_make-array f32 19)]
+    (begin (fill (& src) (&mut out) 19) 0)))
+end-file
+
+file masked_cast_compare.tl
+(define (fill [src : (& src (__tl_dyn-array i32))] [lim : (& lim (__tl_dyn-array f32))] [out : (&mut out (__tl_dyn-array bool))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (> (array-ref src i) (cast 0 : i32))
+      (set! (array-ref out i) (< (cast (array-ref src i) : f32) (array-ref lim i)))
+      unit)))
+
+(define (main) : i64
+  (let [src : (__tl_dyn-array i32) (__tl_make-array i32 19)]
+       [lim : (__tl_dyn-array f32) (__tl_make-array f32 19)]
+       [out : (__tl_dyn-array bool) (__tl_make-array bool 19)]
+    (begin (fill (& src) (& lim) (&mut out) 19) 0)))
+end-file
+
 # ------------------------------------------------------------------ gathers
 
 case gather-read-opcodes
@@ -909,6 +966,74 @@ mode avx2
 contains _load_skip_
 contains _store_skip_
 not-match vpmaskmov|vmaskmov
+
+# Masked casts that change lane representation have no vector conversion until
+# #7162, and the masked emitter refuses them itself (#7306): each SIMD mode
+# must fail at the cast rather than load the operand's bits and store them in
+# the destination domain. Scalar `fill` converts. When #7162 enables a row,
+# change that row's SIMD exit and require its conversion instruction here
+# instead of deleting the row.
+case masked-cast-representation-change
+source tests/spmd/masked_cast_{{each}}_reject.tl
+each i32_f32 f32_i32 u32_f32 f32_u32
+mode scalar avx2 avx512
+exit scalar=0 avx2=1 avx512=1
+if-mode scalar
+in fn _tl_masked_cast_{{each}}_reject_fill
+contains-any cvtsi2ss || cvttss2si
+end-if
+if-mode avx2
+in stderr
+contains masked_cast_{{each}}_reject.tl:12:31
+contains is unsupported in masked control context for AVX2 backend
+end-if
+if-mode avx512
+in stderr
+contains masked_cast_{{each}}_reject.tl:12:31
+contains is unsupported in masked control context for AVX-512 backend
+end-if
+
+# The same refusal in a masked `let`, the masked condition, a masked `if`
+# value and a masked comparison, each reported at its cast.
+case masked-cast-let
+source {{work}}/masked_cast_let.tl
+mode scalar avx2 avx512
+exit scalar=0 avx2=1 avx512=1
+if-mode avx2 avx512
+in stderr
+contains masked_cast_let.tl:4:21
+contains lower: SPMD numeric conversion from i32 to f32 is unsupported in masked control context
+end-if
+
+case masked-cast-condition
+source {{work}}/masked_cast_condition.tl
+mode scalar avx2 avx512
+exit scalar=0 avx2=1 avx512=1
+if-mode avx2 avx512
+in stderr
+contains masked_cast_condition.tl:3:12
+contains lower: SPMD numeric conversion from i32 to f32 is unsupported in masked control context
+end-if
+
+case masked-cast-if-value
+source {{work}}/masked_cast_if_value.tl
+mode scalar avx2 avx512
+exit scalar=0 avx2=1 avx512=1
+if-mode avx2 avx512
+in stderr
+contains masked_cast_if_value.tl:5:9
+contains lower: SPMD numeric conversion from i32 to f32 is unsupported in masked control context
+end-if
+
+case masked-cast-compare
+source {{work}}/masked_cast_compare.tl
+mode scalar avx2 avx512
+exit scalar=0 avx2=1 avx512=1
+if-mode avx2 avx512
+in stderr
+contains masked_cast_compare.tl:4:34
+contains lower: SPMD numeric conversion from i32 to f32 is unsupported in masked control context
+end-if
 
 # ------------------------------------------------------------------- shifts
 

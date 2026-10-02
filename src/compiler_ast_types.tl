@@ -736,7 +736,11 @@
   (Binding i64)
   (Variant i64 (Box AstPatternList))
   (Literal AstLiteral)
-  (Array (Box AstPatternList)))
+  (Array (Box AstPatternList))
+  ;; `(slice p1 ... pk)` or `(slice p1 ... pk & rest)` over a borrowed Slice.
+  ;; With `true`, the last item is the rest pattern (a binding or `_`) and the
+  ;; items before it are the k element patterns.
+  (Slice (Box AstPatternList) bool))
 
 (defstruct AstPatternList
   (slots (__tl_dyn-array AstPattern))
@@ -1030,7 +1034,8 @@
   (BracketClause AstExprList)
   ;; Narrow Result-like propagation form `(try expr)`. The
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
-  ;; variant, each carrying exactly one payload.
+  ;; variant; the `Err*` variant carries exactly one payload and an operand's
+  ;; `Ok*` variant at most one.
   (Try i64)
   ;; General function-local early exit: `(return expr)` checks `expr` against
   ;; the enclosing function's return type and has the internal `never` type.
@@ -4121,6 +4126,35 @@
         (ast-pool-cell-data pools.expr-pool))
       (ty-node-pool-state-capture-to-cell! (ast-pool-cell-data pools.type-pool)))))
 
+;; Publish whichever of `pools` and the installed globals is longer, per pool.
+;; Explicit pushes through `pools` advance only its cells while global pushers
+;; advance only the globals, so either side can be ahead. Capturing
+;; unconditionally rolls back nodes pushed through the cells, and installing
+;; unconditionally rolls back nodes pushed globally; either lets a later push
+;; overwrite a live node behind its dedup entry.
+(define (ast-node-pool-context-publish-newer! [pools : AstNodePoolContext]) : unit
+  (if ast-node-pool-compat-context-explicit?
+    unit
+    (let
+      [expr-state : AstExprNodePoolState
+        (ast-expr-pool-cell-read pools.expr-pool)]
+      [type-state : AstTypeNodePoolState
+        (ast-type-pool-cell-read pools.type-pool)]
+      (begin
+        (if (and
+          (= expr-state.segment-bases ast-node-pool-segment-bases)
+          (< expr-state.count ast-node-pool-count))
+          (ast-node-pool-state-capture-to-cell!
+            (ast-pool-cell-data pools.expr-pool))
+          unit)
+        (if (and
+          (= type-state.segment-bases ty-node-pool-segment-bases)
+          (< type-state.count ty-node-pool-count))
+          (ty-node-pool-state-capture-to-cell!
+            (ast-pool-cell-data pools.type-pool))
+          unit)
+        (ast-node-pool-context-install! pools)))))
+
 (define (ast-node-pool-active-context-clear!) : unit
   (set! ast-node-pool-active-context-installed? false))
 
@@ -5393,8 +5427,19 @@
       (ast-lifetime-list-append-from (&mut out) (& rest) 0)
       out)))
 
+;; How many comptime parameters this process has built (#8578). Every one
+;; starts at `ast-comptime-param-id`; the rest are copies. While it is zero no
+;; call can pass a comptime argument, so the checker skips that work.
+(define ast-comptime-param-count : i64
+  0)
+
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param name ty is-comptime))
+
+(define (ast-comptime-param-id [name : i64] [ty : AstType]) : AstParam
+  (begin
+    (set! ast-comptime-param-count (+ ast-comptime-param-count 1))
+    (AstParam.Param name ty true)))
 
 (define (ast-param-fallback) : AstParam
   (AstParam.Param 0 (AstType.Unit) false))
@@ -6118,6 +6163,9 @@
 
 (define (ast-pat-array [items : AstPatternList]) : AstPattern
   (AstPattern.Array (box items)))
+
+(define (ast-pat-slice [items : AstPatternList] [has-rest : bool]) : AstPattern
+  (AstPattern.Slice (box items) has-rest))
 
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPattern.Variant name (box items)))
@@ -10811,6 +10859,10 @@
     [(AstPattern.Array items)
       (AstPattern.Array
         (box (ast-compaction-remap-pattern-list remap (deref items))))]
+    [(AstPattern.Slice items has-rest)
+      (AstPattern.Slice
+        (box (ast-compaction-remap-pattern-list remap (deref items)))
+        has-rest)]
     [(AstPattern.Wildcard) AstPattern.Wildcard]
     [(AstPattern.Binding name) (AstPattern.Binding name)]
     [(AstPattern.Variant name items)

@@ -366,6 +366,7 @@
     (expect-error "SEARCH_DIR(a, b)" "error ArgumentCount 1:13" "SEARCH_DIR")
     (expect-error "SEARCH_DIR()" "error ArgumentCount 1:12" "SEARCH_DIR")
     (expect-error "INPUT(café.so)" "error NonAscii 1:10" "non-ASCII")
+    (expect-error "/* café */ INPUT(a)" "error NonAscii 1:7" "non-ASCII")
     (let
       [control : (__tl_dyn-array u8) (bytes-of "INPUT(ab)")]
       (begin
@@ -373,7 +374,15 @@
         (expect
           (head (read-with control (script.default-limits)))
           "error ControlByte 1:8"
-          "control byte")))))
+          "control byte")
+        (let
+          [commented : (__tl_dyn-array u8) (bytes-of "/* ab */ INPUT(a)")]
+          (begin
+            (set! (array-ref commented 3) (cast 27 : u8))
+            (expect
+              (head (read-with commented (script.default-limits)))
+              "error ControlByte 1:4"
+              "control byte in a comment")))))))
 
 (test
   linker-script-byte-level-and-limits

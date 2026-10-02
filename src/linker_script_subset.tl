@@ -274,17 +274,6 @@
                     (let
                       [inner : i64 (byte-at data cursor.pos)]
                       (cond
-                        [(= inner 0)
-                          (begin
-                            (set! failed true)
-                            (set!
-                              failure
-                              (script-error
-                                source
-                                (LinkerScriptErrorKind.NulByte)
-                                cursor.line
-                                cursor.column
-                                "NUL byte")))]
                         [(and
                             (= inner (cast '*' : i64))
                             (< (+ cursor.pos 1) size)
@@ -292,7 +281,13 @@
                           (begin
                             (set! cursor (advance (advance cursor inner) 47))
                             (set! closed true))]
-                        [else (set! cursor (advance cursor inner))])))
+                        [else
+                          (match (check-plain-byte source inner cursor)
+                            [(Step.Err error)
+                              (begin
+                                (set! failed true)
+                                (set! failure error))]
+                            [(Step.Ok) (set! cursor (advance cursor inner))])])))
                   (when
                     (and (not failed) (not closed))
                     (set! failed true)

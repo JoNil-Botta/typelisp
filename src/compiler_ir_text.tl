@@ -1144,13 +1144,14 @@
       (ir-text-fail line "expected a block label"))))
 
 (define (ir-text-blocks! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrBlockList
-  (if (and
-    (ir-text-lines-more? doc)
-    (ir-text-label-line? (& (array-ref doc.lines doc.next))))
-    (let
-      [first : ir.CompilerIrBlock (ir-text-block! doc)]
-      (ir.compiler-ir-block-cons first (ir-text-blocks! doc)))
-    (ir.compiler-ir-block-list-empty)))
+  (let
+    [out : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
+    (begin
+      (while (and
+        (ir-text-lines-more? doc)
+        (ir-text-label-line? (& (array-ref doc.lines doc.next))))
+        (ir.compiler-ir-block-builder-push! (&mut out) (ir-text-block! doc)))
+      (ir.compiler-ir-block-builder-to-list out))))
 
 ;; `name=%var:type`, comma separated, up to the closing `close`.
 (define (ir-text-count-from

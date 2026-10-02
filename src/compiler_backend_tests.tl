@@ -2753,7 +2753,6 @@
 (define (compiler-backend-object-terminal-label-case-ok?
   [case-index : i64]
   [flags : bool]
-  [dense : bool]
   [target : backend.CompilerBackendTarget]) : bool
   (let
     [entry : i64 (ir.compiler-ir-label "entry")]
@@ -2799,9 +2798,7 @@
             (ir.compiler-ir-param-seq-empty)
             (ast.AstType.I64)
             1
-            (if dense
-              blocks
-              blocks)
+            blocks
             (ir.CompilerIrFunctionAbi.Ordinary))
           (ir.compiler-ir-function-seq-empty))
         (ir.compiler-ir-extern-seq-empty))]
@@ -2829,15 +2826,14 @@
     [index : i64 0]
     [ok : bool true]
     (begin
-      (while (and ok (< index 32))
+      (while (and ok (< index 16))
         (begin
           (set!
             ok
             (compiler-backend-object-terminal-label-case-ok?
               (% index 4)
               (= (% (/ index 4) 2) 1)
-              (= (% (/ index 8) 2) 1)
-              (if (< index 16)
+              (if (< index 8)
                 (backend.CompilerBackendTarget.Linux)
                 (backend.CompilerBackendTarget.Windows))))
           (set! index (+ index 1))))
@@ -24537,9 +24533,9 @@ f:
 
 (define (compiler-backend-gep-fold-test-entry-instrs
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrSeq
-  (match blocks
-    [(ir.CompilerIrBlockList.Cons block _)
-      (match block
+  (match (ir.compiler-ir-block-list-view blocks)
+    [(slice block & _)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs) instrs])]
     [_ (ir.compiler-ir-instr-seq-empty)]))
 

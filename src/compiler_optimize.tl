@@ -90,10 +90,9 @@
 
 ;; --- whole-body instruction walks -------------------------------------------
 ;;
-;; The instructions of a function body in block order, whichever block-list
-;; form carries them. Like the operand walkers of compiler_ir_types they expand
-;; to plain loops over a function name and its context arguments, never a
-;; closure:
+;; The instructions of a function body in block order. Like the operand walkers
+;; of compiler_ir_types they expand to plain loops over a function name and its
+;; context arguments, never a closure:
 ;;   opt-blocks-visit   (visitor ctx... instr)
 ;;   opt-blocks-fold    (folder ctx... acc instr), returning the next acc
 ;;   opt-blocks-every?  (pred ctx... instr), stopping at the first false
@@ -197,23 +196,17 @@
   [f : Expr]
   [contexts : Expr ...]) : unit
   `(let
-    [walk-cursor : ir.CompilerIrBlockList (opt-walk-source ,blocks)]
-    [walk-more : bool true]
-    (while (opt-walk-going ,mode ,var walk-more)
-      (match walk-cursor
-        [(ir.CompilerIrBlockList.Array walk-seq)
-          (let
-            [walk-count : i64 (ir.compiler-ir-block-seq-count walk-seq)]
-            [walk-index : i64 0]
-            (begin
-              (while (opt-walk-going ,mode ,var (< walk-index walk-count))
-                (let
-                  [walk-block : ir.CompilerIrBlock
-                    (ir.compiler-ir-block-seq-ref walk-seq walk-index)]
-                  (begin
-                    (opt-walk-block ,level ,mode ,var walk-block ,f ,@contexts)
-                    (set! walk-index (+ walk-index 1)))))
-              (set! walk-more false)))]))))
+    [walk-seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-list-seq (opt-walk-source ,blocks))]
+    [walk-count : i64 (ir.compiler-ir-block-seq-count walk-seq)]
+    [walk-index : i64 0]
+    (while (opt-walk-going ,mode ,var (< walk-index walk-count))
+      (let
+        [walk-block : ir.CompilerIrBlock
+          (ir.compiler-ir-block-seq-ref walk-seq walk-index)]
+        (begin
+          (opt-walk-block ,level ,mode ,var walk-block ,f ,@contexts)
+          (set! walk-index (+ walk-index 1)))))))
 
 ;; Every function of a `CompilerIrFunctionSeq` in list order.
 (defmacro (opt-functions-walk
@@ -350,14 +343,13 @@
 
 ;; --- whole-body block maps --------------------------------------------------
 ;;
-;; A fresh cons list of every block of a block list in order, each rewritten
-;; by a function over its context arguments:
+;; A fresh list of every block of a block list in order, each rewritten by a
+;; function over its context arguments:
 ;;   opt-blocks-map         (mapper ctx... block)
 ;;   opt-blocks-map-seq     (mapper ctx... instrs), keeping the label
 ;;   opt-blocks-map-at      (mapper ctx... block-id block)
 ;;   opt-blocks-map-seq-at  (mapper ctx... block-id instrs), keeping the label
-;; where `block-id` counts the blocks from 0 in list order. The -array form
-;; returns the blocks as one dense `Array` list instead.
+;; where `block-id` counts the blocks from 0 in list order.
 (defmacro (opt-map-block
   [level : Expr]
   [at : Expr]
@@ -381,96 +373,93 @@
         [_ `(,f ,@contexts ,block)])]
     [_ (comptime-error "opt-map-block: level must be a bare name")]))
 
-;; The mapped blocks `slots[0..count)` as a cons list (`out` `list`) or a dense
-;; `Array` list (`array`).
-(defmacro (opt-map-result [out : Expr] [slots : Expr] [count : Expr]) : Expr
-  (match out
-    [(Expr.Var name)
-      (match name
-        ["array"
-          `(ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq ,slots ,count))]
-        [_
-          `(ir.compiler-ir-block-seq-to-list-rev
-            ,slots
-            (- ,count 1)
-            (ir.compiler-ir-block-list-empty))])]
-    [_ (comptime-error "opt-map-result: out must be a bare name")]))
-
 (defmacro (opt-blocks-map-walk
   [level : Expr]
-  [out : Expr]
   [blocks : Expr]
   [f : Expr]
   [contexts : Expr ...]) : Expr
   `(let
-    [map-cursor : ir.CompilerIrBlockList (opt-walk-source ,blocks)]
+    [map-seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-list-seq (opt-walk-source ,blocks))]
+    [map-count : i64 (ir.compiler-ir-block-seq-count map-seq)]
     [map-out : (__tl_dyn-array ir.CompilerIrBlock)
-      (__tl_make-array
-        ir.CompilerIrBlock
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view map-cursor)))]
+      (__tl_make-array ir.CompilerIrBlock map-count)]
     [map-at : i64 0]
-    [map-more : bool true]
     (begin
-      (while map-more
-        (match map-cursor
-          [(ir.CompilerIrBlockList.Array map-seq)
-            (let
-              [map-count : i64 (ir.compiler-ir-block-seq-count map-seq)]
-              [map-index : i64 0]
-              (begin
-                (while (< map-index map-count)
-                  (begin
-                    (set!
-                      (array-ref map-out map-at)
-                      (opt-map-block
-                        ,level
-                        map-at
-                        (ir.compiler-ir-block-seq-ref map-seq map-index)
-                        ,f
-                        ,@contexts))
-                    (set! map-at (+ map-at 1))
-                    (set! map-index (+ map-index 1))))
-                (set! map-more false)))]))
-      (opt-map-result ,out map-out map-at))))
+      (while (< map-at map-count)
+        (begin
+          (set!
+            (array-ref map-out map-at)
+            (opt-map-block
+              ,level
+              map-at
+              (ir.compiler-ir-block-seq-ref map-seq map-at)
+              ,f
+              ,@contexts))
+          (set! map-at (+ map-at 1))))
+      (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq map-out map-count)))))
 
 (defmacro (opt-blocks-map [blocks : Expr] [mapper : Expr] [contexts : Expr ...]) : Expr
-  `(opt-blocks-map-walk block list ,blocks ,mapper ,@contexts))
+  `(opt-blocks-map-walk block ,blocks ,mapper ,@contexts))
 
 (defmacro (opt-blocks-map-seq
   [blocks : Expr]
   [mapper : Expr]
   [contexts : Expr ...]) : Expr
-  `(opt-blocks-map-walk seq list ,blocks ,mapper ,@contexts))
-
-(defmacro (opt-blocks-map-seq-array
-  [blocks : Expr]
-  [mapper : Expr]
-  [contexts : Expr ...]) : Expr
-  `(opt-blocks-map-walk seq array ,blocks ,mapper ,@contexts))
+  `(opt-blocks-map-walk seq ,blocks ,mapper ,@contexts))
 
 (defmacro (opt-blocks-map-at
   [blocks : Expr]
   [mapper : Expr]
   [contexts : Expr ...]) : Expr
-  `(opt-blocks-map-walk at list ,blocks ,mapper ,@contexts))
+  `(opt-blocks-map-walk at ,blocks ,mapper ,@contexts))
 
 (defmacro (opt-blocks-map-seq-at
   [blocks : Expr]
   [mapper : Expr]
   [contexts : Expr ...]) : Expr
-  `(opt-blocks-map-walk seq-at list ,blocks ,mapper ,@contexts))
+  `(opt-blocks-map-walk seq-at ,blocks ,mapper ,@contexts))
 
-;; `prefix`'s blocks consed in order onto `tail`.
+;; A fresh list built by a slice walker `(builder out blocks ctx...)` that
+;; pushes the result blocks into the builder `out` in order;
+;; `opt-blocks-collect` hands `(builder out ctx...)` an empty builder instead.
+(defmacro (opt-blocks-build
+  [blocks : Expr]
+  [builder : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [build-source : ir.CompilerIrBlockList (opt-walk-source ,blocks)]
+    [build-out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity
+        (ir.compiler-ir-block-list-count build-source))]
+    (begin
+      (,builder
+        (&mut build-out)
+        (ir.compiler-ir-block-list-view build-source)
+        ,@contexts)
+      (ir.compiler-ir-block-builder-to-list build-out))))
+
+(defmacro (opt-blocks-collect [builder : Expr] [contexts : Expr ...]) : Expr
+  `(let
+    [collect-out : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
+    (begin
+      (,builder (&mut collect-out) ,@contexts)
+      (ir.compiler-ir-block-builder-to-list collect-out))))
+
+;; `prefix`'s blocks followed by `tail`'s, as one fresh list.
 (define (opt-blocks-append
   [prefix : ir.CompilerIrBlockList]
   [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match prefix
-    [(ir.CompilerIrBlockList.Nil) tail]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons block (opt-blocks-append (deref rest) tail))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-blocks-append (ir.compiler-ir-block-seq-to-list seq) tail)]))
+  (let
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity
+        (+
+          (ir.compiler-ir-block-list-count prefix)
+          (ir.compiler-ir-block-list-count tail)))]
+    (begin
+      (ir.compiler-ir-block-builder-append-list! (&mut out) prefix)
+      (ir.compiler-ir-block-builder-append-list! (&mut out) tail)
+      (ir.compiler-ir-block-builder-to-list out))))
 
 (defenum ResultCompilerOptimizeLevel
   (Ok i64)
@@ -4329,7 +4318,7 @@
   [pools : ast.AstNodePoolContext]
   [items : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (opt-blocks-map-seq-array
+  (opt-blocks-map-seq
     blocks
     opt-dce-instr-seq-array-escape
     pools
@@ -8492,26 +8481,30 @@
   [type-segment-bases : i64]
   [a : (& a ir.CompilerIrBlockList)]
   [b : (& b ir.CompilerIrBlockList)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view a)
-    [(ir.CompilerIrBlockList.Nil)
+  (opt-block-slice-eq
+    type-segment-bases
+    (ir.compiler-ir-block-list-view a)
+    (ir.compiler-ir-block-list-view b)))
+
+(define (opt-block-slice-eq
+  [type-segment-bases : i64]
+  [a : (& a (Slice ir.CompilerIrBlock))]
+  [b : (& b (Slice ir.CompilerIrBlock))]) : bool
+  (match a
+    [(slice)
       (match b
-        [(ir.CompilerIrBlockList.Nil) true]
+        [(slice) true]
         [_ false])]
-    [(ir.CompilerIrBlockList.Cons ah at)
-      (match (owned_view.compiler-owned-reference-shared-view b)
-        [(ir.CompilerIrBlockList.Cons bh bt)
+    [(slice ah & at)
+      (match b
+        [(slice bh & bt)
           (and
-            (opt-block-eq type-segment-bases ah bh)
-            (opt-block-list-eq type-segment-bases (deref at) (deref bt)))]
-        [(ir.CompilerIrBlockList.Array seq)
-          (let
-            [b (ir.compiler-ir-block-seq-to-list seq)]
-            (opt-block-list-eq type-segment-bases a b))]
-        [_ false])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [a (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-block-list-eq type-segment-bases a b))]))
+            (opt-block-eq
+              type-segment-bases
+              (owned_view.compiler-owned-reference-shared-view ah)
+              (owned_view.compiler-owned-reference-shared-view bh))
+            (opt-block-slice-eq type-segment-bases at bt))]
+        [(slice) false])]))
 
 (define (opt-param-eq
   [type-segment-bases : i64]
@@ -10281,12 +10274,15 @@
     [(OptMaybeBlock.No) false]))
 
 (define (opt-cfg-entry-label [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
+  (opt-cfg-slice-entry-label (ir.compiler-ir-block-list-view blocks)))
+
+(define (opt-cfg-slice-entry-label
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : i64
   (match blocks
-    [(ir.CompilerIrBlockList.Array seq)
-      (if (> (ir.compiler-ir-block-seq-count seq) 0)
-        (match (ir.compiler-ir-block-seq-ref seq 0)
-          [(ir.CompilerIrBlock.Block label _) label])
-        (ir.compiler-ir-label-none))]))
+    [(slice) (ir.compiler-ir-label-none)]
+    [(slice block & _)
+      (match (owned_view.compiler-owned-reference-shared-view block)
+        [(ir.CompilerIrBlock.Block label _) label])]))
 
 ;; A hash-set seen-check; the incremental label-list scan made this
 ;; O(blocks^2) string comparisons on large functions.
@@ -15878,11 +15874,11 @@
       (not (ir.compiler-ir-label-some? entry))
       (opt-cfg-block-exists? blocks preheader))
       blocks
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks-with-tail
+        blocks
         (ir.CompilerIrBlock.Block
           preheader
-          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump entry)))
-        blocks))))
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump entry)))))))
 
 (define (opt-ssa-explicit-entry-available? [blocks : ir.CompilerIrBlockList]) : bool
   (let
@@ -17423,67 +17419,35 @@
     false))
 
 ;; `blocks` is the list `index` was built from, so the walk position is the
-;; block id. `opt-loop-body-member-array-contains-id?` range-checks it. At most
-;; `limit` blocks are members, so the walk stops at the last one instead of
-;; running to the end of the function; this runs once per loop.
+;; block id. `opt-loop-body-member-array-contains-id?` range-checks it; this
+;; runs once per loop.
 (define (opt-loop-body-blocks-from
   [members : (& members (__tl_dyn-array bool))]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [block-id : i64]
-  [limit : i64]) : ir.CompilerIrBlockList
+  [block-id : i64]) : ir.CompilerIrBlockList
   (match (owned_view.compiler-owned-reference-shared-view blocks)
     [(ir.CompilerIrBlockList.Array seq)
       (opt-loop-body-blocks-from-seq members seq block-id)]))
 
-;; Conses `seq`'s member blocks onto `acc` front to back, so they come out in
-;; reverse block order.
-(define (opt-loop-body-seq-members-onto
-  [members : (& members (__tl_dyn-array bool))]
-  [seq : ir.CompilerIrBlockSeq]
-  [block-id : i64]
-  [acc : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (let
-    [index : i64 0]
-    [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [out : ir.CompilerIrBlockList acc]
-    (begin
-      (while (< index count)
-        (begin
-          (if (opt-loop-body-member-array-contains-id?
-            members
-            (+ block-id index))
-            (set!
-              out
-              (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block-seq-ref seq index)
-                out))
-            unit)
-          (set! index (+ index 1))))
-      out)))
-
-;; Walks `seq` back to front so member blocks cons up in block order without
-;; first converting the whole function's block array into a list per loop.
+;; The member blocks of `seq`, in block order.
 (define (opt-loop-body-blocks-from-seq
   [members : (& members (__tl_dyn-array bool))]
   [seq : ir.CompilerIrBlockSeq]
   [block-id : i64]) : ir.CompilerIrBlockList
   (let
-    [index : i64 (- (ir.compiler-ir-block-seq-count seq) 1)]
-    [out : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
+    [index : i64 0]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [out : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
     (begin
-      (while (>= index 0)
+      (while (< index count)
         (begin
-          (if (opt-loop-body-member-array-contains-id?
-            members
-            (+ block-id index))
-            (set!
-              out
-              (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block-seq-ref seq index)
-                out))
-            unit)
-          (set! index (- index 1))))
-      out)))
+          (when
+            (opt-loop-body-member-array-contains-id? members (+ block-id index))
+            (ir.compiler-ir-block-builder-push!
+              (&mut out)
+              (ir.compiler-ir-block-seq-ref seq index)))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-block-builder-to-list out))))
 
 (define (opt-loop-body-build
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -17492,13 +17456,12 @@
   (let
     [members : (__tl_dyn-array bool)
       (__tl_make-array bool (opt-cfg-index-block-count index))]
-    [count : i64 (opt-label-count labels)]
     (begin
       (opt-loop-body-fill-members! index (&mut members) labels)
       (OptLoopBody
         labels
         (compiler-opt-global-shared-view members)
-        (opt-loop-body-blocks-from members blocks 0 count)))))
+        (opt-loop-body-blocks-from members blocks 0)))))
 
 (define (opt-loop-body-labels [body : OptLoopBody]) : OptLabelSet
   body.labels)
@@ -17930,11 +17893,11 @@
           (OptLoopPreheader.No))))))
 
 ;; The body's blocks for the id walk. `opt-loop-body-blocks-from-seq` walks the
-;; whole block array to cons the members up in block order; the id walk already
+;; whole block array to collect the members in block order; the id walk already
 ;; holds them -- the header, the latch and the recorded ids, which are exactly
-;; `marks` -- so a small body sorts those few ids and conses the same blocks in
-;; the same order without visiting the rest of the function. A large body, or
-;; a block list that is not an array, keeps the walk.
+;; `marks` -- so a small body sorts those few ids and collects the same blocks
+;; in the same order without visiting the rest of the function. A large body
+;; keeps the walk.
 (define (opt-loop-body-blocks-by-id
   [marks : (& marks (__tl_dyn-array bool))]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -17951,7 +17914,8 @@
           [ids : (__tl_dyn-array i64) (__tl_make-array i64 (+ found-count 2))]
           [k : i64 0]
           [i : i64 0]
-          [out : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
+          [out : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity (+ found-count 2))]
           (begin
             (when
               (>= header-id 0)
@@ -17981,16 +17945,14 @@
                       (set! j (- j 1))))
                   (set! (array-ref ids (+ j 1)) id)
                   (set! i (+ i 1)))))
-            (set! i (- k 1))
-            (while (>= i 0)
+            (set! i 0)
+            (while (< i k)
               (begin
-                (set!
-                  out
-                  (ir.compiler-ir-block-cons
-                    (ir.compiler-ir-block-seq-ref seq (array-ref ids i))
-                    out))
-                (set! i (- i 1))))
-            out)))]))
+                (ir.compiler-ir-block-builder-push!
+                  (&mut out)
+                  (ir.compiler-ir-block-seq-ref seq (array-ref ids i)))
+                (set! i (+ i 1))))
+            (ir.compiler-ir-block-builder-to-list out))))]))
 
 (define (opt-loop-body-sorted-id-limit) : i64
   32)
@@ -21194,8 +21156,10 @@
 (defenum OptLicmInstrsResult
   (Result ir.CompilerIrInstrSeq ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
 
+;; What filtering a loop body's blocks moved out, the hoisted map after it, and
+;; whether any block changed; the kept blocks go into the caller's builder.
 (defenum OptLicmBlocksResult
-  (Result ir.CompilerIrBlockList ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
+  (Result ir.CompilerIrInstrSeq opt_i64_i64_map.Map bool))
 
 ;; Result of applying LICM to a block list: the rewritten blocks plus whether
 ;; any loop actually hoisted. When nothing changed the caller can skip the
@@ -26796,10 +26760,11 @@
     deref-site
     hoisted))
 
-(define (opt-licm-filter-body-blocks
+(define (opt-licm-filter-body-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
   [type-segment-bases : i64]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [sources : (& sources OptValueSources)]
   [types : (& types OptSsaVarTypes)]
   [store-summary : OptLicmStoreSummary]
@@ -26814,15 +26779,14 @@
   [hot-uses : (& hot-uses (__tl_dyn-array i64))]
   [deref-site : (& deref-site OptLicmDerefSite)]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil)
+  (match blocks
+    [(slice)
       (OptLicmBlocksResult.Result
-        (ir.compiler-ir-block-list-empty)
         (ir.compiler-ir-instr-seq-empty)
         hoisted
         false)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (match (opt-licm-filter-instr-seq
             type-segment-bases
@@ -26843,88 +26807,65 @@
             deref-site
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
-              (match (opt-licm-filter-body-blocks
-                type-segment-bases
-                loop-defs
-                (deref rest)
-                sources
-                types
-                store-summary
-                legacy-store-summary
-                ptrs
-                roots
-                store-roots
-                any-call?
-                licm-mode
-                descriptor-header-hoist?
-                globals
-                hot-uses
-                deref-site
-                next-hoisted)
-                [(OptLicmBlocksResult.Result
-                    rest-blocks
-                    rest-moved
-                    final-hoisted
-                    rest-changed)
-                  (OptLicmBlocksResult.Result
-                    (ir.compiler-ir-block-cons
-                      (ir.CompilerIrBlock.Block label kept)
-                      rest-blocks)
-                    (opt-instr-seq-concat moved rest-moved)
-                    final-hoisted
-                    (or block-changed rest-changed))])])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-licm-filter-body-blocks
-          type-segment-bases
-          loop-defs
-          blocks
-          sources
-          types
-          store-summary
-          legacy-store-summary
-          ptrs
-          roots
-          store-roots
-          any-call?
-          licm-mode
-          descriptor-header-hoist?
-          globals
-          hot-uses
-          deref-site
-          hoisted))]))
+              (begin
+                (ir.compiler-ir-block-builder-push!
+                  out
+                  (ir.CompilerIrBlock.Block label kept))
+                (match (opt-licm-filter-body-blocks!
+                  out
+                  type-segment-bases
+                  loop-defs
+                  rest
+                  sources
+                  types
+                  store-summary
+                  legacy-store-summary
+                  ptrs
+                  roots
+                  store-roots
+                  any-call?
+                  licm-mode
+                  descriptor-header-hoist?
+                  globals
+                  hot-uses
+                  deref-site
+                  next-hoisted)
+                  [(OptLicmBlocksResult.Result
+                      rest-moved
+                      final-hoisted
+                      rest-changed)
+                    (OptLicmBlocksResult.Result
+                      (opt-instr-seq-concat moved rest-moved)
+                      final-hoisted
+                      (or block-changed rest-changed))]))])])]))
 
-(define (opt-licm-replace-body-blocks
-  [blocks : ir.CompilerIrBlockList]
-  [body-blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (compiler-opt-global-shared-view body-blocks)
-    [(ir.CompilerIrBlockList.Nil) blocks]
-    [(ir.CompilerIrBlockList.Cons replacement replacement-rest)
+(define (opt-licm-replace-body-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [body-blocks : (& body-blocks (Slice ir.CompilerIrBlock))]) : unit
+  (match body-blocks
+    [(slice) (ir.compiler-ir-block-builder-append-slice! out blocks)]
+    [(slice replacement & replacement-rest)
       (match blocks
-        [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-block-list-empty)]
-        [(ir.CompilerIrBlockList.Cons block rest)
-          (match (compiler-opt-global-shared-view block)
+        [(slice) unit]
+        [(slice block & rest)
+          (match (owned_view.compiler-owned-reference-shared-view block)
             [(ir.CompilerIrBlock.Block label _)
-              (match (compiler-opt-global-shared-view replacement)
+              (match (owned_view.compiler-owned-reference-shared-view
+                replacement)
                 [(ir.CompilerIrBlock.Block replacement-label _)
                   (if (= label replacement-label)
-                    (ir.compiler-ir-block-cons
-                      replacement
-                      (opt-licm-replace-body-blocks
-                        (deref rest)
-                        (deref replacement-rest)))
-                    (ir.compiler-ir-block-cons
-                      block
-                      (opt-licm-replace-body-blocks (deref rest) body-blocks)))])])]
-        [(ir.CompilerIrBlockList.Array seq)
-          (opt-licm-replace-body-blocks
-            (ir.compiler-ir-block-seq-to-list seq)
-            body-blocks)])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-licm-replace-body-blocks
-        blocks
-        (ir.compiler-ir-block-seq-to-list seq))]))
+                    (begin
+                      (ir.compiler-ir-block-builder-push!
+                        out
+                        (owned_view.compiler-owned-reference-shared-view
+                          replacement))
+                      (opt-licm-replace-body-blocks! out rest replacement-rest))
+                    (begin
+                      (ir.compiler-ir-block-builder-push!
+                        out
+                        (owned_view.compiler-owned-reference-shared-view block))
+                      (opt-licm-replace-body-blocks! out rest body-blocks)))])])])]))
 
 (define (opt-licm-insert-before-terminator
   [hoisted : ir.CompilerIrInstrSeq]
@@ -29118,10 +29059,14 @@
             ;; that may take guards (opt-licm-guard-loop?).
             (and opt-licm-guard-on late?)
             (compiler-opt-global-shared-view guard-plans))]
-        (match (opt-licm-filter-body-blocks
+        [filtered-out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity
+            (ir.compiler-ir-block-list-count body-blocks))]
+        (match (opt-licm-filter-body-blocks!
+          (&mut filtered-out)
           type-segment-bases
           loop-defs
-          body-blocks
+          (ir.compiler-ir-block-list-view body-blocks)
           sources
           types
           store-summary
@@ -29141,13 +29086,15 @@
           hot-uses
           deref-site
           (opt_i64_i64_map.with-capacity map-capacity))
-          [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
+          [(OptLicmBlocksResult.Result hoisted _ changed)
             ;; Loop-scope global operand promotion runs on what the hoist
             ;; filter LEFT in the loop, so it never rewrites an operand of an
             ;; instruction that is leaving anyway, and the filter's own
             ;; decisions still read the untouched body (nothing promotes when
             ;; the gate is closed, which keeps this byte-identical there).
             (let
+              [filtered-body : ir.CompilerIrBlockList
+                (ir.compiler-ir-block-builder-to-list filtered-out)]
               [promotion : OptLicmGlobalPromotion
                 (if (and
                   (not opt-licm-guard-on)
@@ -29203,7 +29150,10 @@
                     [(OptCopyEnv.Nil)
                       (OptBlockListPassResult.Result
                         (opt-blocks-build
-                          (opt-licm-replace-body-blocks blocks promoted-body)
+                          (opt-blocks-build
+                            blocks
+                            opt-licm-replace-body-blocks!
+                            (ir.compiler-ir-block-list-view promoted-body))
                           opt-licm-insert-preheader-blocks!
                           preheader
                           (opt-licm-preheader-instrs hoisted preheader-loads))
@@ -29211,9 +29161,16 @@
                     [_
                       (OptBlockListPassResult.Result
                         (opt-blocks-build
-                          (opt-licm-replace-body-blocks
-                            blocks
-                            (opt-licm-subst-body-blocks dedup-env promoted-body))
+                          (let
+                            [substituted : ir.CompilerIrBlockList
+                              (opt-blocks-build
+                                promoted-body
+                                opt-licm-subst-body-blocks!
+                                (compiler-opt-global-shared-view dedup-env))]
+                            (opt-blocks-build
+                              blocks
+                              opt-licm-replace-body-blocks!
+                              (ir.compiler-ir-block-list-view substituted)))
                           opt-licm-insert-preheader-blocks!
                           preheader
                           (opt-licm-preheader-instrs
@@ -32421,25 +32378,12 @@
       (let
         [feeders : opt_i64_i64_map.Map
           (opt-induction-gep-offset-vars-blocks loop-defs body-blocks)]
-        (match (compiler-opt-global-shared-view body-blocks)
-          [(ir.CompilerIrBlockList.Nil) (opt_i64_i64_map.with-capacity 17)]
-          [(ir.CompilerIrBlockList.Cons _ _)
-            (opt-induction-scaled-env-list-from
-              (deref phi-var)
-              (deref step)
-              feeders
-              (ir.compiler-ir-block-list-view body-blocks)
-              (opt_i64_i64_map.with-capacity 17))]
-          [(ir.CompilerIrBlockList.Array seq)
-            (let
-              [walked-blocks : ir.CompilerIrBlockList
-                (ir.compiler-ir-block-seq-to-list seq)]
-              (opt-induction-scaled-env-list-from
-                (deref phi-var)
-                (deref step)
-                feeders
-                (ir.compiler-ir-block-list-view walked-blocks)
-                (opt_i64_i64_map.with-capacity 17)))]))]))
+        (opt-induction-scaled-env-list-from
+          (deref phi-var)
+          (deref step)
+          feeders
+          (ir.compiler-ir-block-list-view body-blocks)
+          (opt_i64_i64_map.with-capacity 17)))]))
 
 ;; A stride the x86 addressing mode folds (1/2/4/8) makes the address free at
 ;; each use; a pointer IV there only adds a latch add and a loop-live range.
@@ -38110,75 +38054,74 @@
         plan.exit-label
         target))))
 
-(define (opt-flag-exit-gate-blocks
+(define (opt-flag-exit-gate-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
   [plan : OptFlagExitPlan]
   [edges : OptFlagExitEdgeList]
-  [pred : i64]
-  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  [pred : i64]) : unit
   (match (& edges)
-    [(OptFlagExitEdgeList.Nil) rest]
+    [(OptFlagExitEdgeList.Nil) unit]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
         [(OptFlagExitEdge.Edge found-pred target value fresh fresh-var)
-          (let
-            [tail : ir.CompilerIrBlockList
-              (opt-flag-exit-gate-blocks
-                (compiler-opt-global-shared-view plan)
-                (opt-flag-exit-edge-tail edges)
-                pred
-                rest)]
-            (if (or (not (= found-pred pred)) (< fresh 0))
-              tail
-              (ir.compiler-ir-block-cons
-                (opt-flag-exit-gate-block plan target value fresh fresh-var)
-                tail)))])]))
+          (begin
+            (unless
+              (or (not (= found-pred pred)) (< fresh 0))
+              (ir.compiler-ir-block-builder-push!
+                out
+                (opt-flag-exit-gate-block
+                  (compiler-opt-global-shared-view plan)
+                  target
+                  value
+                  fresh
+                  fresh-var)))
+            (opt-flag-exit-gate-blocks!
+              out
+              plan
+              (opt-flag-exit-edge-tail edges)
+              pred))])]))
 
-(define (opt-flag-exit-rewrite-blocks
-  [blocks : ir.CompilerIrBlockList]
+(define (opt-flag-exit-rewrite-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [body : (& body OptLoopBody)]
   [index : (& index OptCfgIndex)]
-  [plan : OptFlagExitPlan]) : ir.CompilerIrBlockList
+  [plan : OptFlagExitPlan]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-block-list-empty)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (if (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block label _)
-          (opt-label-contains plan.dropped label)])
-        (opt-flag-exit-rewrite-blocks (deref rest) body index plan)
-        (ir.compiler-ir-block-cons
-          (match (compiler-opt-global-shared-view block)
-            [(ir.CompilerIrBlock.Block label instrs)
+    [(slice) unit]
+    [(slice block & rest)
+      (begin
+        (match (owned_view.compiler-owned-reference-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (unless
+              (opt-label-contains plan.dropped label)
               (let
                 [in-body? : bool (opt-loop-body-label-member? body index label)]
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-flag-exit-rewrite-instrs-from
-                    instrs
-                    0
-                    label
-                    in-body?
-                    (opt-label-contains plan.clear-targets label)
-                    (opt-label-contains plan.clear-preds label)
-                    (= label plan.gate)
-                    (= label plan.exit-label)
-                    (and
-                      (not in-body?)
-                      (opt-flag-exit-minted? plan)
-                      (opt-flag-exit-xdom? plan.doms plan.exit-label label))
-                    (compiler-opt-global-shared-view plan))))])
-          (match block
-            [(ir.CompilerIrBlock.Block label _)
-              (opt-flag-exit-gate-blocks
-                (compiler-opt-global-shared-view plan)
-                (compiler-opt-global-shared-view plan.clears)
-                label
-                (opt-flag-exit-rewrite-blocks (deref rest) body index plan))])))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-flag-exit-rewrite-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        body
-        index
-        plan)]))
+                (begin
+                  (ir.compiler-ir-block-builder-push!
+                    out
+                    (ir.CompilerIrBlock.Block
+                      label
+                      (opt-flag-exit-rewrite-instrs-from
+                        instrs
+                        0
+                        label
+                        in-body?
+                        (opt-label-contains plan.clear-targets label)
+                        (opt-label-contains plan.clear-preds label)
+                        (= label plan.gate)
+                        (= label plan.exit-label)
+                        (and
+                          (not in-body?)
+                          (opt-flag-exit-minted? plan)
+                          (opt-flag-exit-xdom? plan.doms plan.exit-label label))
+                        (compiler-opt-global-shared-view plan))))
+                  (opt-flag-exit-gate-blocks!
+                    out
+                    (compiler-opt-global-shared-view plan)
+                    (compiler-opt-global-shared-view plan.clears)
+                    label))))])
+        (opt-flag-exit-rewrite-blocks! out rest body index plan))]))
 
 ;; --- per-candidate plan -------------------------------------------------------
 ;; C5, C6 and C7 in one place: everything that only needs the CFG and the block
@@ -38895,8 +38838,9 @@
             (OptFlagExitPassResult.Result
               (let
                 [body (opt-natural-loop-body-info loop)]
-                (opt-flag-exit-rewrite-blocks
+                (opt-blocks-build
                   seeded
+                  opt-flag-exit-rewrite-blocks!
                   body
                   context.index
                   (compiler-opt-global-shared-view plan)))
@@ -38934,8 +38878,9 @@
           (OptFlagExitPassResult.Result
             (let
               [body (opt-natural-loop-body-info loop)]
-              (opt-flag-exit-rewrite-blocks
+              (opt-blocks-build
                 blocks
+                opt-flag-exit-rewrite-blocks!
                 body
                 context.index
                 (compiler-opt-global-shared-view plan)))
@@ -46561,6 +46506,8 @@
               (opt-cfg-index-predecessors index merge-label)
               false)]))]))
 
+;; A round stops at the first block it threads; the cleanup and the next round
+;; see what that exposed.
 (define (opt-thread-scan-blocks!
   [budget : (&mut budget (__tl_dyn-array i64))]
   [type-segment-bases : i64]
@@ -46568,29 +46515,27 @@
   [doms : (& doms OptDomInfo)]
   [uses : (&mut uses (__tl_dyn-array i64))]
   [scratch : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockList]
-  [changed : bool]) : bool
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
   (match blocks
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [slot : i64 0]
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [any : bool changed]
-        (begin
-          (while (< slot count)
-            (begin
-              (when
-                (opt-thread-try-block!
-                  budget
-                  type-segment-bases
-                  index
-                  doms
-                  uses
-                  (compiler-opt-global-shared-view scratch)
-                  (ir.compiler-ir-block-seq-ref seq slot))
-                (set! any true))
-              (set! slot (+ slot 1))))
-          any))]))
+    [(slice) false]
+    [(slice block & rest)
+      (or
+        (opt-thread-try-block!
+          budget
+          type-segment-bases
+          index
+          doms
+          uses
+          (compiler-opt-global-shared-view scratch)
+          (owned_view.compiler-owned-reference-shared-view block))
+        (opt-thread-scan-blocks!
+          budget
+          type-segment-bases
+          index
+          doms
+          uses
+          scratch
+          rest))]))
 
 ;; --- per-round generations --------------------------------------------------
 ;; A fixpoint whose every round rebuilds the block list it carries would keep
@@ -46719,7 +46664,7 @@
 
 ;; A list moving between regions is copied with every block, instruction and
 ;; container it holds. Its types, values and symbols are shared: no round creates
-;; them, so they predate the regions. The copy keeps the list's representation.
+;; them, so they predate the regions.
 (define (opt-round-copy-instr-seq [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
@@ -46742,9 +46687,7 @@
       (ir.CompilerIrInstrSeq out count))))
 
 (define (opt-round-copy-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (compiler-opt-global-shared-view blocks)
-    [(ir.CompilerIrBlockList.Array _)
-      (opt-blocks-map-seq-array blocks opt-round-copy-instr-seq)]))
+  (opt-blocks-map-seq blocks opt-round-copy-instr-seq))
 
 ;; The dominator tree is what the live-out rule reads when a definition is not
 ;; edge-local (`opt-thread-def-blocked`); it is built once per round, from the
@@ -46771,8 +46714,7 @@
       doms
       (&mut uses)
       scratch
-      blocks
-      false)))
+      (ir.compiler-ir-block-list-view blocks))))
 
 ;; One round threads every edge it can prove, so the fixpoint only has to
 ;; re-run for the opportunities the previous round's cleanup exposed: a depth-2
@@ -49577,8 +49519,10 @@
   (No)
   (Some i64 i64 i64 i64 OptSwitchCandidateList i64))
 
+;; The labels still to skip after the walk, and whether it rewrote anything;
+;; the rewritten blocks go into the caller's builder.
 (defenum OptSwitchRewriteResult
-  (Result ir.CompilerIrBlockList OptLabelSet bool))
+  (Result OptLabelSet bool))
 
 (define (opt-switch-use-count
   [uses : (& uses (__tl_dyn-array i64))]
@@ -50058,9 +50002,6 @@
   (Unchanged ir.CompilerIrBlock)
   (Rewritten ir.CompilerIrBlock ir.CompilerIrBlock))
 
-(defenum OptLateTotalSwitchBlocks
-  (Result ir.CompilerIrBlockList ir.CompilerIrBlockList))
-
 (define (opt-late-total-switch-cases-from
   [cases : ir.CompilerIrSwitchCaseSeq]
   [expected : i64]
@@ -50177,34 +50118,27 @@
                 (OptLateTotalSwitchBlock.Unchanged block))]
             [_ (OptLateTotalSwitchBlock.Unchanged block)])))]))
 
-(define (opt-late-total-switch-blocks
-  [blocks : ir.CompilerIrBlockList]
+(define (opt-late-total-switch-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [traps : (&mut traps ir.CompilerIrBlockBuilder)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [occupied : (&mut occupied (__tl_dyn-array i64))]
-  [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : OptLateTotalSwitchBlocks
+  [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil)
-      (OptLateTotalSwitchBlocks.Result
-        (ir.compiler-ir-block-list-empty)
-        (ir.compiler-ir-block-list-empty))]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (opt-late-total-switch-block block occupied frame-cell)
-        [(OptLateTotalSwitchBlock.Unchanged unchanged)
-          (match (opt-late-total-switch-blocks (deref rest) occupied frame-cell)
-            [(OptLateTotalSwitchBlocks.Result tail traps)
-              (OptLateTotalSwitchBlocks.Result
-                (ir.compiler-ir-block-cons unchanged tail)
-                traps)])]
-        [(OptLateTotalSwitchBlock.Rewritten rewritten trap)
-          (match (opt-late-total-switch-blocks (deref rest) occupied frame-cell)
-            [(OptLateTotalSwitchBlocks.Result tail traps)
-              (OptLateTotalSwitchBlocks.Result
-                (ir.compiler-ir-block-cons rewritten tail)
-                (ir.compiler-ir-block-cons trap traps))])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-late-total-switch-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        occupied
-        frame-cell)]))
+    [(slice) unit]
+    [(slice block & rest)
+      (begin
+        (match (opt-late-total-switch-block
+          (owned_view.compiler-owned-reference-shared-view block)
+          occupied
+          frame-cell)
+          [(OptLateTotalSwitchBlock.Unchanged unchanged)
+            (ir.compiler-ir-block-builder-push! out unchanged)]
+          [(OptLateTotalSwitchBlock.Rewritten rewritten trap)
+            (begin
+              (ir.compiler-ir-block-builder-push! out rewritten)
+              (ir.compiler-ir-block-builder-push! traps trap))])
+        (opt-late-total-switch-blocks! out traps rest occupied frame-cell))]))
 
 ;; A late per-function rewrite paired with whether it changed anything. `false`
 ;; means the pass left the function's IR alone, so a fused traversal may keep
@@ -50235,21 +50169,25 @@
             (&mut occupied)
             0
             (ir.compiler-ir-param-seq-count params))]
-        [blocks-result : OptLateTotalSwitchBlocks
-          (opt-late-total-switch-blocks
-            blocks
+        [main-out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity
+            (ir.compiler-ir-block-list-count blocks))]
+        [trap-out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-new)]
+        [_rewrite : unit
+          (opt-late-total-switch-blocks!
+            (&mut main-out)
+            (&mut trap-out)
+            (ir.compiler-ir-block-list-view blocks)
             (&mut occupied)
             (&mut frame-cell))]
         ;; One trap block is appended per rewritten switch, so an empty trap
         ;; list is exactly "no switch in this function was rewritten".
-        [trap-count : i64
-          (match (compiler-opt-global-shared-view blocks-result)
-            [(OptLateTotalSwitchBlocks.Result _ trap-blocks)
-              (ir.compiler-ir-block-list-count trap-blocks)])]
+        [trap-count : i64 trap-out.len]
         [next-blocks : ir.CompilerIrBlockList
-          (match blocks-result
-            [(OptLateTotalSwitchBlocks.Result main-blocks trap-blocks)
-              (opt-blocks-append main-blocks trap-blocks)])]
+          (opt-blocks-append
+            (ir.compiler-ir-block-builder-to-list main-out)
+            (ir.compiler-ir-block-builder-to-list trap-out))]
         [rewritten : ir.CompilerIrFunction
           (ir.CompilerIrFunction.Function
             name
@@ -50711,30 +50649,28 @@
                   default-label))))]
         [(OptMaybeSwitchChain.No) block])]))
 
-(define (opt-switch-rewrite-blocks-from
-  [remaining : (& remaining ir.CompilerIrBlockList)]
+(define (opt-switch-rewrite-blocks-from!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [remaining : (& remaining (Slice ir.CompilerIrBlock))]
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
   [skip : OptLabelSet]) : OptSwitchRewriteResult
-  (match (owned_view.compiler-owned-reference-shared-view remaining)
-    [(ir.CompilerIrBlockList.Nil)
-      (OptSwitchRewriteResult.Result
-        (ir.compiler-ir-block-list-empty)
-        skip
-        false)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
+  (match remaining
+    [(slice) (OptSwitchRewriteResult.Result skip false)]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block label _)
           (if (opt-label-contains skip label)
-            (match (opt-switch-rewrite-blocks-from
-              (deref rest)
+            (match (opt-switch-rewrite-blocks-from!
+              out
+              rest
               all-blocks
               index
               uses
               skip)
-              [(OptSwitchRewriteResult.Result tail next-skip _)
-                (OptSwitchRewriteResult.Result tail next-skip true)])
+              [(OptSwitchRewriteResult.Result next-skip _)
+                (OptSwitchRewriteResult.Result next-skip true)])
             (match (opt-switch-collect-chain
               all-blocks
               index
@@ -50756,43 +50692,39 @@
                 (let
                   [next-skip : OptLabelSet
                     (opt-switch-skip-candidate-labels items label skip)]
-                  (match (opt-switch-rewrite-blocks-from
-                    (deref rest)
+                  (begin
+                    (ir.compiler-ir-block-builder-push!
+                      out
+                      (opt-switch-rewrite-block
+                        (owned_view.compiler-owned-reference-shared-view block)
+                        (OptMaybeSwitchChain.Some
+                          index-var
+                          min-tag
+                          max-tag
+                          default-label
+                          items
+                          head-prefix)))
+                    (match (opt-switch-rewrite-blocks-from!
+                      out
+                      rest
+                      all-blocks
+                      index
+                      uses
+                      next-skip)
+                      [(OptSwitchRewriteResult.Result final-skip _)
+                        (OptSwitchRewriteResult.Result final-skip true)])))]
+              [(OptMaybeSwitchChain.No)
+                (begin
+                  (ir.compiler-ir-block-builder-push!
+                    out
+                    (owned_view.compiler-owned-reference-shared-view block))
+                  (opt-switch-rewrite-blocks-from!
+                    out
+                    rest
                     all-blocks
                     index
                     uses
-                    next-skip)
-                    [(OptSwitchRewriteResult.Result tail final-skip _)
-                      (OptSwitchRewriteResult.Result
-                        (ir.compiler-ir-block-cons
-                          (opt-switch-rewrite-block
-                            block
-                            (OptMaybeSwitchChain.Some
-                              index-var
-                              min-tag
-                              max-tag
-                              default-label
-                              items
-                              head-prefix))
-                          tail)
-                        final-skip
-                        true)]))]
-              [(OptMaybeSwitchChain.No)
-                (match (opt-switch-rewrite-blocks-from
-                  (deref rest)
-                  all-blocks
-                  index
-                  uses
-                  skip)
-                  [(OptSwitchRewriteResult.Result tail final-skip changed)
-                    (OptSwitchRewriteResult.Result
-                      (ir.compiler-ir-block-cons block tail)
-                      final-skip
-                      changed)])]))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [remaining (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-switch-rewrite-blocks-from remaining all-blocks index uses skip))]))
+                    skip))]))])]))
 
 ;; A switch chain can only start from a two-instruction compare-and-branch
 ;; block. Most functions have none, so scan for that shape before paying for
@@ -50834,15 +50766,21 @@
             (opt-collect-blocks-uses-array frame blocks)]
           [index : OptCfgIndex
             (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
+          [rewritten-out : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity
+              (ir.compiler-ir-block-list-count blocks))]
           [rewrite : OptSwitchRewriteResult
-            (opt-switch-rewrite-blocks-from
-              blocks
+            (opt-switch-rewrite-blocks-from!
+              (&mut rewritten-out)
+              (ir.compiler-ir-block-list-view blocks)
               blocks
               index
               uses
               (OptLabelSet.Nil))]
+          [rewritten : ir.CompilerIrBlockList
+            (ir.compiler-ir-block-builder-to-list rewritten-out)]
           (match rewrite
-            [(OptSwitchRewriteResult.Result rewritten _ changed)
+            [(OptSwitchRewriteResult.Result _ changed)
               (opt-function-pass-commit
                 func
                 (OptBlockRewriteResult.Result
@@ -62707,8 +62645,8 @@
         (owned_view.compiler-owned-reference-shared-view seed-facts)
         (opt-alias-empty))]))
 
-;; Both block containers share ONE dense workspace per pass, so the walker takes
-;; the workspace and the generation its first block should use instead of
+;; The blocks of a pass share ONE dense workspace, so the walker takes the
+;; workspace and the generation its first block should use instead of
 ;; allocating either. Block `i` of a walk that starts at `base` consumes the
 ;; generation pair `(base + 2i, base + 2i + 1)`; `base` starts at 1 because a
 ;; freshly allocated stamp array reads as generation 0.
@@ -62763,36 +62701,6 @@
             (set! index (+ index 1)))))
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots count)))))
 
-;; Cons-list arm of the same walk. It exists because the block-local pipeline is
-;; reached with a cons list far more often than with an `.Array`; the two arms
-;; share the dense workspace and otherwise run identical per-block work.
-(define (optimize-block-list-hs-dense
-  [profile-state : profile_state.CompilerProfileMetrics]
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [hs : OptLoadHeaderSet]
-  [entry-label : i64]
-  [seed-facts : OptAliasFacts]
-  [scan-work : (__tl_dyn-array i64)]
-  [tables : (&mut tables OptBlockExprTables)]
-  [work : OptLoadKindsDenseWork]
-  [generation : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Array seq)
-      (optimize-block-seq-hs-dense-from
-        profile-state
-        pools
-        type-segment-bases
-        hs
-        entry-label
-        seed-facts
-        scan-work
-        tables
-        work
-        generation
-        seq)]))
-
 (define (optimize-block-list-has-work?
   [scan-work : (__tl_dyn-array i64)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
@@ -62843,8 +62751,8 @@
         [entry-label : i64 (opt-cfg-entry-label blocks)]
         [seed-facts : OptAliasFacts
           (opt-alias-seed-params type-segment-bases params)]
-        ;; One frame-sized dense workspace per pass, for either block container,
-        ;; rather than sparse per-block tables that would be allocated even for
+        ;; One frame-sized dense workspace per pass, rather than sparse
+        ;; per-block tables that would be allocated even for
         ;; the blocks `opt-block-scan-skippable?` then skips.
         [work : OptLoadKindsDenseWork
           (opt-load-kinds-dense-work-with-size frame)]
@@ -66876,36 +66784,34 @@
     [(OptUnrollCascade.Some _ _ _ cunrolled-label _ _ _ _)
       (deref cunrolled-label)]))
 
-;; The blocks that replace B, in emission order: the first level's guard and
-;; group, then -- when the ladder stepped down -- the cascade's guard and
+;; Push the blocks that replace B, in emission order: the first level's guard
+;; and group, then -- when the ladder stepped down -- the cascade's guard and
 ;; group, then B itself as the final remainder loop.
-(define (opt-unroll-new-blocks
+(define (opt-unroll-new-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
   [guard-block : ir.CompilerIrBlock]
   [unrolled-block : ir.CompilerIrBlock]
   [sum-exit : (& sum-exit OptMaybeBlock)]
   [cascade : (& cascade OptUnrollCascade)]
-  [tail-block : ir.CompilerIrBlock]
-  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (let
-    [tail : ir.CompilerIrBlockList
-      (match (owned_view.compiler-owned-reference-shared-view cascade)
-        [(OptUnrollCascade.No) (ir.compiler-ir-block-cons tail-block rest)]
-        [(OptUnrollCascade.Some cguard cunrolled _ _ _ _ _ _)
-          (ir.compiler-ir-block-cons
-            cguard
-            (ir.compiler-ir-block-cons
-              cunrolled
-              (ir.compiler-ir-block-cons tail-block rest)))])]
-    (ir.compiler-ir-block-cons
-      guard-block
-      (ir.compiler-ir-block-cons
-        unrolled-block
-        (match (owned_view.compiler-owned-reference-shared-view sum-exit)
-          [(OptMaybeBlock.No) tail]
-          [(OptMaybeBlock.Some block) (ir.compiler-ir-block-cons block tail)])))))
+  [tail-block : ir.CompilerIrBlock]) : unit
+  (begin
+    (ir.compiler-ir-block-builder-push! out guard-block)
+    (ir.compiler-ir-block-builder-push! out unrolled-block)
+    (match (owned_view.compiler-owned-reference-shared-view sum-exit)
+      [(OptMaybeBlock.No) unit]
+      [(OptMaybeBlock.Some block)
+        (ir.compiler-ir-block-builder-push! out block)])
+    (match (owned_view.compiler-owned-reference-shared-view cascade)
+      [(OptUnrollCascade.No) unit]
+      [(OptUnrollCascade.Some cguard cunrolled _ _ _ _ _ _)
+        (begin
+          (ir.compiler-ir-block-builder-push! out cguard)
+          (ir.compiler-ir-block-builder-push! out cunrolled))])
+    (ir.compiler-ir-block-builder-push! out tail-block)))
 
-(define (opt-unroll-rewrite-blocks
-  [blocks : ir.CompilerIrBlockList]
+(define (opt-unroll-rewrite-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [pred-label : i64]
   [loop-label : i64]
   [guard-block : ir.CompilerIrBlock]
@@ -66913,56 +66819,39 @@
   [sum-exit : (& sum-exit OptMaybeBlock)]
   [cascade : (& cascade OptUnrollCascade)]
   [tail-block : ir.CompilerIrBlock]
-  [guard-label : i64]) : ir.CompilerIrBlockList
+  [guard-label : i64]) : unit
   (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-block-list-empty)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
-        [(ir.CompilerIrBlock.Block label instrs)
-          (if (= label loop-label)
-            (opt-unroll-new-blocks
-              (compiler-opt-global-shared-view guard-block)
-              (compiler-opt-global-shared-view unrolled-block)
-              sum-exit
-              cascade
-              (compiler-opt-global-shared-view tail-block)
-              (opt-unroll-rewrite-blocks
-                (deref rest)
-                pred-label
-                loop-label
-                guard-block
-                unrolled-block
+    [(slice) unit]
+    [(slice block & rest)
+      (begin
+        (match (owned_view.compiler-owned-reference-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (if (= label loop-label)
+              (opt-unroll-new-blocks!
+                out
+                (compiler-opt-global-shared-view guard-block)
+                (compiler-opt-global-shared-view unrolled-block)
                 sum-exit
                 cascade
-                tail-block
-                guard-label))
-            (ir.compiler-ir-block-cons
-              (if (= label pred-label)
-                (ir.CompilerIrBlock.Block
-                  label
-                  (opt-unroll-retarget-instrs instrs loop-label guard-label))
-                block)
-              (opt-unroll-rewrite-blocks
-                (deref rest)
-                pred-label
-                loop-label
-                guard-block
-                unrolled-block
-                sum-exit
-                cascade
-                tail-block
-                guard-label)))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-unroll-rewrite-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        pred-label
-        loop-label
-        guard-block
-        unrolled-block
-        sum-exit
-        cascade
-        tail-block
-        guard-label)]))
+                (compiler-opt-global-shared-view tail-block))
+              (ir.compiler-ir-block-builder-push!
+                out
+                (if (= label pred-label)
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-unroll-retarget-instrs instrs loop-label guard-label))
+                  (owned_view.compiler-owned-reference-shared-view block))))])
+        (opt-unroll-rewrite-blocks!
+          out
+          rest
+          pred-label
+          loop-label
+          guard-block
+          unrolled-block
+          sum-exit
+          cascade
+          tail-block
+          guard-label))]))
 
 (define (opt-unroll-apply
   [type-segment-bases : i64]
@@ -67339,8 +67228,9 @@
               (opt-unroll-cascade-entry cascade guard-label)
               (opt-unroll-cascade-exit cascade sum-exit-label)))]
         (OptUnrollResult.Result
-          (opt-unroll-rewrite-blocks
+          (opt-blocks-build
             blocks
+            opt-unroll-rewrite-blocks!
             pred-label
             label
             guard-block
@@ -70850,8 +70740,9 @@
                       (let
                         [sum-exit (OptMaybeBlock.No)]
                         [cascade (OptUnrollCascade.No)]
-                        (opt-unroll-rewrite-blocks
+                        (opt-blocks-build
                           blocks
+                          opt-unroll-rewrite-blocks!
                           pred-label
                           label
                           guard-block
@@ -81227,39 +81118,56 @@
   [defs : OptBceMbBodyDefs]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [stubs : OptLabelSet]) : OptBceMbWiring
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil)
-      (OptBceMbWiring.Some (ir.compiler-ir-block-list-empty) stubs)]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [blocks (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-bce-mb-wire-exits
-          pred-map
-          blocks
-          all-blocks
-          body-labels
-          body-blocks
-          defs
-          cell
-          stubs))]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (compiler-opt-global-shared-view block)
+  (let
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity
+        (ir.compiler-ir-block-list-count blocks))]
+    (match (opt-bce-mb-wire-exit-blocks!
+      (&mut out)
+      pred-map
+      (ir.compiler-ir-block-list-view blocks)
+      all-blocks
+      body-labels
+      body-blocks
+      defs
+      cell
+      stubs)
+      [(OptBceMbMaybeLabels.No) (OptBceMbWiring.No)]
+      [(OptBceMbMaybeLabels.Some wired-stubs)
+        (OptBceMbWiring.Some
+          (ir.compiler-ir-block-builder-to-list out)
+          wired-stubs)])))
+
+(define (opt-bce-mb-wire-exit-blocks!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [pred-map : (& pred-map OptPredMap)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : OptBceMbBodyDefs]
+  [cell : (&mut cell (__tl_dyn-array i64))]
+  [stubs : OptLabelSet]) : OptBceMbMaybeLabels
+  (match blocks
+    [(slice) (OptBceMbMaybeLabels.Some stubs)]
+    [(slice block & rest)
+      (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (if (opt-label-contains body-labels label)
-            (match (opt-bce-mb-wire-exits
-              pred-map
-              (deref rest)
-              all-blocks
-              body-labels
-              body-blocks
-              defs
-              cell
-              stubs)
-              [(OptBceMbWiring.No) (OptBceMbWiring.No)]
-              [(OptBceMbWiring.Some wired-tail wired-stubs)
-                (OptBceMbWiring.Some
-                  (ir.compiler-ir-block-cons block wired-tail)
-                  wired-stubs)])
+            (begin
+              (ir.compiler-ir-block-builder-push!
+                out
+                (owned_view.compiler-owned-reference-shared-view block))
+              (opt-bce-mb-wire-exit-blocks!
+                out
+                pred-map
+                rest
+                all-blocks
+                body-labels
+                body-blocks
+                defs
+                cell
+                stubs))
             (let
               [uses : opt_i64_i64_map.Map
                 (opt-bce-mb-nonphi-uses-seq
@@ -81276,37 +81184,35 @@
                 instrs
                 uses
                 cell)
-                [(OptBceMbWireBlock.No) (OptBceMbWiring.No)]
+                [(OptBceMbWireBlock.No) (OptBceMbMaybeLabels.No)]
                 [(OptBceMbWireBlock.Same)
-                  (match (opt-bce-mb-wire-exits
-                    pred-map
-                    (deref rest)
-                    all-blocks
-                    body-labels
-                    body-blocks
-                    defs
-                    cell
-                    stubs)
-                    [(OptBceMbWiring.No) (OptBceMbWiring.No)]
-                    [(OptBceMbWiring.Some wired-tail wired-stubs)
-                      (OptBceMbWiring.Some
-                        (ir.compiler-ir-block-cons block wired-tail)
-                        wired-stubs)])]
+                  (begin
+                    (ir.compiler-ir-block-builder-push!
+                      out
+                      (owned_view.compiler-owned-reference-shared-view block))
+                    (opt-bce-mb-wire-exit-blocks!
+                      out
+                      pred-map
+                      rest
+                      all-blocks
+                      body-labels
+                      body-blocks
+                      defs
+                      cell
+                      stubs))]
                 [(OptBceMbWireBlock.Some wired-block block-stubs)
-                  (match (opt-bce-mb-wire-exits
-                    pred-map
-                    (deref rest)
-                    all-blocks
-                    body-labels
-                    body-blocks
-                    defs
-                    cell
-                    (opt-bce-mb-labels-union block-stubs stubs))
-                    [(OptBceMbWiring.No) (OptBceMbWiring.No)]
-                    [(OptBceMbWiring.Some wired-tail wired-stubs)
-                      (OptBceMbWiring.Some
-                        (ir.compiler-ir-block-cons wired-block wired-tail)
-                        wired-stubs)])])))])]))
+                  (begin
+                    (ir.compiler-ir-block-builder-push! out wired-block)
+                    (opt-bce-mb-wire-exit-blocks!
+                      out
+                      pred-map
+                      rest
+                      all-blocks
+                      body-labels
+                      body-blocks
+                      defs
+                      cell
+                      (opt-bce-mb-labels-union block-stubs stubs)))])))])]))
 
 ;; --- exit-stub phi escapes ----------------------------------------------------
 ;;
@@ -82246,20 +82152,6 @@
       (opt-bce-mb-labels-union
         (opt-label-tail labels)
         (opt-label-add acc (opt-label-ref labels 0)))]))
-
-(define (opt-bce-mb-blocks-append
-  [first : (& first ir.CompilerIrBlockList)]
-  [second : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (owned_view.compiler-owned-reference-shared-view first)
-    [(ir.CompilerIrBlockList.Nil) second]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        block
-        (opt-bce-mb-blocks-append (deref rest) second))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (let
-        [first (ir.compiler-ir-block-seq-to-list seq)]
-        (opt-bce-mb-blocks-append first second))]))
 
 ;; --- guard condition derivation ------------------------------------------------
 ;; Seed equality for the bounded header phi: both seeds are preheader-edge
@@ -86851,18 +86743,6 @@
               facts
               keep))])]))
 
-(define (opt-bce-mb-blocks-cons-onto
-  [fast-blocks : ir.CompilerIrBlockList]
-  [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match fast-blocks
-    [(ir.CompilerIrBlockList.Nil) tail]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        block
-        (opt-bce-mb-blocks-cons-onto (deref rest) tail))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-bce-mb-blocks-cons-onto (ir.compiler-ir-block-seq-to-list seq) tail)]))
-
 (define (opt-bce-mb-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -87178,7 +87058,9 @@
             [clone-labels : OptLabelSet
               (opt-bce-mb-labels-union stub-labels body-labels)]
             [clone-blocks : ir.CompilerIrBlockList
-              (opt-bce-mb-blocks-append body-blocks stub-blocks)]
+              (opt-blocks-append
+                (compiler-opt-global-shared-view body-blocks)
+                stub-blocks)]
             [clone-defs : opt_i64_i64_map.Map
               (opt-bce-mb-collect-defs
                 (ir.compiler-ir-block-list-view clone-blocks)
@@ -87230,8 +87112,8 @@
                       [wide-labels : OptLabelSet
                         (opt-bce-mb-labels-union phi-stubs clone-labels)]
                       [wide-blocks : ir.CompilerIrBlockList
-                        (opt-bce-mb-blocks-append
-                          clone-blocks
+                        (opt-blocks-append
+                          (compiler-opt-global-shared-view clone-blocks)
                           (opt-blocks-build
                             wired-blocks
                             opt-bce-mb-stub-blocks-from!
@@ -88356,10 +88238,9 @@
   [header : i64]
   [base : i64]
   [cur : ir.CompilerIrValue]
-  [ty : ast.AstType]
-  [tail : ir.CompilerIrBlockList]) : unit
+  [ty : ast.AstType]) : unit
   (if (>= step count)
-    (ir.compiler-ir-block-builder-append-list! out tail)
+    unit
     (let
       [length : ir.CompilerIrValue
         (match (ir.compiler-ir-instr-seq-ref checks step)
@@ -88419,8 +88300,7 @@
           header
           base
           (ir.CompilerIrValue.Var join-var)
-          ty
-          tail)))))
+          ty)))))
 
 ;; The preheader, with the first-iteration checks appended and its jump aimed at
 ;; the min chain.
@@ -88627,18 +88507,19 @@
                       instrs
                       (opt-bce-tighten-checks-at edit.checks edit.seed false)
                       (opt-bce-tighten-step-label edit.header "__pred_min." 0))))
-                (ir.compiler-ir-block-builder-append-list!
+                (opt-bce-tighten-min-blocks!
                   out
-                  (opt-blocks-collect
-                    opt-bce-tighten-min-blocks!
-                    edit.checks
-                    0
-                    edit.count
-                    edit.header
-                    edit.base
-                    edit.limit
-                    edit.ty
-                    tail)))]
+                  edit.checks
+                  0
+                  edit.count
+                  edit.header
+                  edit.base
+                  edit.limit
+                  edit.ty)
+                (opt-bce-tighten-rewrite-blocks!
+                  out
+                  rest
+                  (compiler-opt-global-shared-view edit)))]
             [(= label edit.header)
               (begin
                 (ir.compiler-ir-block-builder-push!
@@ -92690,24 +92571,34 @@
             [_ (OptBlockPassResult.Result block false)])))]))
 
 (define (opt-cmp-sink-blocks-pass [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
-  (match (compiler-opt-global-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) (OptBlockListPassResult.Result blocks false)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match (opt-cmp-sink-block-pass block)
+  (let
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity
+        (ir.compiler-ir-block-list-count blocks))]
+    [changed : bool
+      (opt-cmp-sink-blocks-pass!
+        (&mut out)
+        (ir.compiler-ir-block-list-view blocks))]
+    (if changed
+      (OptBlockListPassResult.Result
+        (ir.compiler-ir-block-builder-to-list out)
+        true)
+      (OptBlockListPassResult.Result blocks false))))
+
+(define (opt-cmp-sink-blocks-pass!
+  [out : (&mut out ir.CompilerIrBlockBuilder)]
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
+  (match blocks
+    [(slice) false]
+    [(slice block & rest)
+      (match (opt-cmp-sink-block-pass
+        (owned_view.compiler-owned-reference-shared-view block))
         [(OptBlockPassResult.Result next-block block-changed)
-          (match (opt-cmp-sink-blocks-pass (deref rest))
-            [(OptBlockListPassResult.Result next-rest rest-changed)
-              (if (or block-changed rest-changed)
-                (OptBlockListPassResult.Result
-                  (ir.compiler-ir-block-cons next-block next-rest)
-                  true)
-                (OptBlockListPassResult.Result blocks false))])])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (match (opt-cmp-sink-blocks-pass (ir.compiler-ir-block-seq-to-list seq))
-        [(OptBlockListPassResult.Result next changed)
-          (if changed
-            (OptBlockListPassResult.Result next true)
-            (OptBlockListPassResult.Result blocks false))])]))
+          (begin
+            (ir.compiler-ir-block-builder-push! out next-block)
+            (let
+              [rest-changed : bool (opt-cmp-sink-blocks-pass! out rest)]
+              (or block-changed rest-changed)))])]))
 
 (define (opt-cmp-sink-blocks [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (opt-cmp-sink-blocks-pass blocks)
@@ -102279,26 +102170,23 @@
 
 ;; The slow arms go last in the block list, out of the loop body's straight-line
 ;; run: the fast edge then falls through and only the cold arm pays a jump back.
-(define (opt-bg-slow-blocks
-  [plans : (& plans OptBgPlanList)]
-  [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+;; They follow the plan list's order, so the block list traverses newest-first.
+(define (opt-bg-slow-blocks [plans : (& plans OptBgPlanList)]) : ir.CompilerIrBlockList
   (let
-    [cursor : i64 (- (opt-bg-plan-list-count plans) 1)]
-    [blocks : ir.CompilerIrBlockList tail]
+    [count : i64 (opt-bg-plan-list-count plans)]
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    [cursor : i64 0]
     (begin
-      ;; Prepend from the oldest logical plan back toward the newest so the
-      ;; resulting block list traverses newest-first.
-      (while (>= cursor 0)
+      (while (< cursor count)
         (let
           [plan : OptBgPlan (opt-bg-plan-list-ref plans cursor)]
           (begin
-            (set!
-              blocks
-              (ir.compiler-ir-block-cons
-                (ir.CompilerIrBlock.Block plan.slow plan.slow-instrs)
-                blocks))
-            (set! cursor (- cursor 1)))))
-      blocks)))
+            (ir.compiler-ir-block-builder-push!
+              (&mut out)
+              (ir.CompilerIrBlock.Block plan.slow plan.slow-instrs))
+            (set! cursor (+ cursor 1)))))
+      (ir.compiler-ir-block-builder-to-list out))))
 
 (define (opt-bg-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -102306,9 +102194,7 @@
   [plans : (& plans OptBgPlanList)]) : unit
   (match remaining
     [(slice)
-      (ir.compiler-ir-block-builder-append-list!
-        out
-        (opt-bg-slow-blocks plans (ir.compiler-ir-block-list-empty)))]
+      (ir.compiler-ir-block-builder-append-list! out (opt-bg-slow-blocks plans))]
     [(slice block & rest)
       (match (owned_view.compiler-owned-reference-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
@@ -106060,8 +105946,6 @@
   [blocks : ir.CompilerIrBlockList]
   [position : i64]) : OptInlineCensus
   (match blocks
-    ;; Read-only: scan the sequence instead of materialising a block cons
-    ;; chain to walk once.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -106626,8 +106510,6 @@
   [blocks : ir.CompilerIrBlockList]
   [position : i64]) : unit
   (match blocks
-    ;; Read-only: scan the sequence instead of materialising a block cons chain
-    ;; to walk once.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -107625,8 +107507,6 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [labels : OptLabelSet]) : OptLabelSet
   (match (owned_view.compiler-owned-reference-shared-view blocks)
-    ;; Read-only: scan the sequence instead of materialising a block cons
-    ;; chain to walk once.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -116675,9 +116555,9 @@
                       ;; The clone recorded its own exits' spans, so
                       ;; nothing is added here.
                       (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                        (ir.compiler-ir-block-cons
-                          (ir.CompilerIrBlock.Block head-label prefix-instrs2)
-                          cloned-blocks)
+                        (ir.compiler-ir-blocks-with-tail
+                          cloned-blocks
+                          (ir.CompilerIrBlock.Block head-label prefix-instrs2))
                         vars2
                         added2
                         spans3)
@@ -116749,11 +116629,11 @@
                                       (opt-inline-pred-renames-shared-view)))
                                   unit)]
                               (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                                (ir.compiler-ir-block-cons
+                                (ir.compiler-ir-blocks-with-tail
+                                  (opt-blocks-append cloned-blocks cont-blocks)
                                   (ir.CompilerIrBlock.Block
                                     head-label
-                                    prefix-instrs2)
-                                  (opt-blocks-append cloned-blocks cont-blocks))
+                                    prefix-instrs2))
                                 vars3
                                 added3
                                 spans5))]
@@ -117125,7 +117005,7 @@
               out-spans))))]))
 
 (define (opt-inline-blocks-with-spans
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [blocks : ir.CompilerIrBlockList]
   [phi-predecessors : OptLabelSet]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -117137,58 +117017,53 @@
   [caller-scc : i64]
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanBlocks
-  (match blocks
-    [(slice)
+  (let
+    [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    [at : i64 0]
+    [vars-now : i64 vars]
+    [added-now : i64 added-so-far]
+    [spans-now : ir.CompilerSourceSpans out-spans]
+    (begin
+      (while (< at count)
+        (match (opt-inline-rewrite-block-with-spans
+          (ir.compiler-ir-block-seq-ref seq at)
+          (compiler-opt-global-shared-view phi-predecessors)
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          func-name
+          vars-now
+          caller-blocks
+          added-now
+          (compiler-opt-global-shared-view scc-result)
+          caller-scc
+          (compiler-opt-global-shared-view source-spans)
+          (compiler-opt-global-shared-view spans-now))
+          [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+              rewritten
+              vars2
+              added2
+              spans2)
+            (begin
+              (ir.compiler-ir-block-builder-append-list! (&mut out) rewritten)
+              (set! vars-now vars2)
+              (set! added-now added2)
+              (set! spans-now spans2)
+              (set! at (+ at 1)))]
+          ;; The walk ends at a block left as it was, which keeps it.
+          [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
+            (begin
+              (ir.compiler-ir-block-builder-push!
+                (&mut out)
+                (ir.compiler-ir-block-seq-ref seq at))
+              (set! at count))]))
       (OptInlineSpanBlocks.Blocks
-        (ir.compiler-ir-block-list-empty)
-        vars
-        added-so-far
-        out-spans)]
-    [(slice block & rest)
-      (match (opt-inline-rewrite-block-with-spans
-        (owned_view.compiler-owned-reference-shared-view block)
-        phi-predecessors
-        (compiler-opt-global-shared-view index)
-        (compiler-opt-global-shared-view census)
-        func-name
-        vars
-        caller-blocks
-        added-so-far
-        (compiler-opt-global-shared-view scc-result)
-        caller-scc
-        (compiler-opt-global-shared-view source-spans)
-        (compiler-opt-global-shared-view out-spans))
-        [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-            rewritten
-            vars2
-            added2
-            spans2)
-          (match (opt-inline-blocks-with-spans
-            rest
-            phi-predecessors
-            index
-            census
-            func-name
-            vars2
-            caller-blocks
-            added2
-            scc-result
-            caller-scc
-            source-spans
-            spans2)
-            [(OptInlineSpanBlocks.Blocks rest-blocks vars3 added3 spans3)
-              (OptInlineSpanBlocks.Blocks
-                (opt-blocks-append rewritten rest-blocks)
-                vars3
-                added3
-                spans3)])]
-        [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
-          (OptInlineSpanBlocks.Blocks
-            (ir.compiler-ir-blocks
-              (owned_view.compiler-owned-reference-shared-view block))
-            vars
-            added-so-far
-            out-spans)])]))
+        (ir.compiler-ir-block-builder-to-list out)
+        vars-now
+        added-now
+        spans-now))))
 
 (define (opt-inline-bounds-labels-unique-instrs-from
   [instrs : ir.CompilerIrInstrSeq]
@@ -117437,7 +117312,7 @@
               (array-ref opt-inline-pred-renames 0)
               (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks-with-spans
-          (ir.compiler-ir-block-list-view blocks)
+          blocks
           phi-predecessors
           index
           census
@@ -118096,44 +117971,43 @@
               spans2)]))]))
 
 (define (opt-inline-tiny-leaf-blocks-with-spans
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [blocks : ir.CompilerIrBlockList]
   [index : (& index OptFunctionIndex)]
   [flags : (__tl_dyn-array bool)]
   [func-name : i64]
   [vars : i64]
   [source-spans : (& source-spans ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanBlocks
-  (match blocks
-    [(slice)
-      (OptInlineSpanBlocks.Blocks
-        (ir.compiler-ir-block-list-empty)
-        vars
-        0
-        out-spans)]
-    [(slice block & rest)
-      (match (opt-inline-tiny-leaf-rewrite-block-with-spans
-        (owned_view.compiler-owned-reference-shared-view block)
-        index
-        (compiler-opt-global-shared-view flags)
-        func-name
-        vars
-        source-spans
-        out-spans)
-        [(OptInlineSpanBlocks.Blocks rewritten vars2 _ spans2)
-          (match (opt-inline-tiny-leaf-blocks-with-spans
-            rest
+  (let
+    [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [out : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    [at : i64 0]
+    [vars-now : i64 vars]
+    [spans-now : ir.CompilerSourceSpans out-spans]
+    (begin
+      (while (< at count)
+        (begin
+          (match (opt-inline-tiny-leaf-rewrite-block-with-spans
+            (ir.compiler-ir-block-seq-ref seq at)
             index
-            flags
+            (compiler-opt-global-shared-view flags)
             func-name
-            vars2
+            vars-now
             source-spans
-            spans2)
-            [(OptInlineSpanBlocks.Blocks rest-blocks vars3 _ spans3)
-              (OptInlineSpanBlocks.Blocks
-                (opt-blocks-append rewritten rest-blocks)
-                vars3
-                0
-                spans3)])])]))
+            (compiler-opt-global-shared-view spans-now))
+            [(OptInlineSpanBlocks.Blocks rewritten vars2 _ spans2)
+              (begin
+                (ir.compiler-ir-block-builder-append-list! (&mut out) rewritten)
+                (set! vars-now vars2)
+                (set! spans-now spans2))])
+          (set! at (+ at 1))))
+      (OptInlineSpanBlocks.Blocks
+        (ir.compiler-ir-block-builder-to-list out)
+        vars-now
+        0
+        spans-now))))
 
 (define (opt-inline-tiny-leaf-function-with-spans
   [func : ir.CompilerIrFunction]
@@ -118156,7 +118030,7 @@
         (begin
           (set! opt-inline-caller-site-count 0)
           (match (opt-inline-tiny-leaf-blocks-with-spans
-            (ir.compiler-ir-block-list-view blocks)
+            blocks
             index
             flags
             name
@@ -120193,11 +120067,6 @@
   (match (opt_i64_i64_map.get map id)
     [(opt_i64_i64_map.LookupFound n) n]
     [(opt_i64_i64_map.LookupMissing) 0]))
-
-(define (opt-cl-blocks-to-list [blocks : (& blocks ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (match (owned_view.compiler-owned-reference-shared-view blocks)
-    [(ir.CompilerIrBlockList.Array seq) (ir.compiler-ir-block-seq-to-list seq)]
-    [_ (owned_view.compiler-owned-reference-shared-view blocks)]))
 
 ;; First walk of one function: every `Global` occurrence counted, every
 ;; literal-offset gep off a global recorded (its dst var -> the global), a
@@ -127896,22 +127765,23 @@
   [hoists : (__tl_dyn-array ir.CompilerIrInstr)]
   [hoist-count : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) (ir.compiler-ir-block-list-empty)]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        (opt-global-cell-entry-block
-          (compiler-opt-global-shared-view plan)
-          hoists
-          hoist-count
-          block)
-        (opt-global-cell-rewrite-nonentry-blocks plan (deref rest)))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-global-cell-rewrite-blocks
-        plan
-        hoists
-        hoist-count
-        (ir.compiler-ir-block-seq-to-list seq))]))
+  (opt-blocks-map-at
+    blocks
+    opt-global-cell-rewrite-block-at
+    (compiler-opt-global-shared-view plan)
+    (compiler-opt-global-shared-view hoists)
+    hoist-count))
+
+;; Block 0 is the entry block, which also loads the hoisted cells.
+(define (opt-global-cell-rewrite-block-at
+  [plan : opt_i64_i64_map.Map]
+  [hoists : (__tl_dyn-array ir.CompilerIrInstr)]
+  [hoist-count : i64]
+  [block-id : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (if (= block-id 0)
+    (opt-global-cell-entry-block plan hoists hoist-count block)
+    (opt-global-cell-rewrite-block plan block)))
 
 (define (opt-global-cell-rewrite-nonentry-blocks
   [plan : opt_i64_i64_map.Map]
@@ -128120,8 +127990,8 @@
   [function : ir.CompilerIrSymbolId]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerSourceSpans
   (match blocks
-    ;; Read-only walk over the blocks (the spans accumulator is threaded
-    ;; forward exactly as the cons walk threads it).
+    ;; Read-only walk over the blocks; the spans accumulator is threaded
+    ;; forward.
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]

@@ -11929,22 +11929,6 @@
           [_ unit])
         (set! index (+ index 1))))))
 
-(define (compiler-reg-collect-remat-blocks!
-  [blocks : ir.CompilerIrBlockList]
-  [def-counts : (__tl_dyn-array i64)]
-  [flags : (&mut flags (__tl_dyn-array i64))]
-  [vals : (&mut vals (__tl_dyn-array ir.CompilerIrValue))]
-  [cells-clean : bool]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Array seq)
-      (compiler-reg-collect-remat-seq-from!
-        seq
-        0
-        def-counts
-        flags
-        vals
-        cells-clean)]))
-
 (define (compiler-reg-collect-remat-seq-from!
   [blocks : ir.CompilerIrBlockSeq]
   [index : i64]
@@ -34920,7 +34904,8 @@
           (live.compiler-live-ir-block-list-to-seq blocks)]
         [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
         [nblocks : i64 seq.len]
-        [out-rev : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
+        [out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity nblocks)]
         [b : i64 0]
         (begin
           (compiler-reg-call-region-fill-arrays!
@@ -35004,11 +34989,9 @@
                       ;; nothing active from an earlier block and no region
                       ;; starts here -> keep the block untouched
                       (begin
-                        (set!
-                          out-rev
-                          (ir.compiler-ir-block-cons
-                            (ir.CompilerIrBlock.Block label instrs)
-                            out-rev))
+                        (ir.compiler-ir-block-builder-push!
+                          (&mut out)
+                          (ir.CompilerIrBlock.Block label instrs))
                         (set! point (+ point span)))
                       (let
                         [islots : (__tl_dyn-array ir.CompilerIrInstr)
@@ -35225,18 +35208,14 @@
                                       (array-ref active j)
                                       (array-ref active active-n)))
                                   (set! j (+ j 1))))))
-                          (set!
-                            out-rev
-                            (ir.compiler-ir-block-cons
-                              (ir.CompilerIrBlock.Block
-                                label
-                                (ir.compiler-ir-instr-builder-to-seq builder))
-                              out-rev))))))])
+                          (ir.compiler-ir-block-builder-push!
+                            (&mut out)
+                            (ir.CompilerIrBlock.Block
+                              label
+                              (ir.compiler-ir-instr-builder-to-seq builder)))))))])
               (set! b (+ b 1))))
           (CompilerRegCallSaveRewrite.Rewrite
-            (ir.compiler-ir-block-list-reverse-onto
-              out-rev
-              (ir.compiler-ir-block-list-empty))
+            (ir.compiler-ir-block-builder-to-list out)
             vars
             next-var
             extra-assignments

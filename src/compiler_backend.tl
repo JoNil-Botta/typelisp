@@ -49452,15 +49452,6 @@
             0
             buf))])))
 
-(define (compiler-backend-emit-switch-tables-blocks-into
-  [function : String]
-  [targets : BackendSymbolSeq]
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-switch-tables-seq-into function targets seq 0 buf)]))
-
 (define (compiler-backend-emit-switch-tables-functions-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
@@ -62036,12 +62027,6 @@
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-instr-count-seq seq 0 0)]))
 
-(define (compiler-backend-next-block-label
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendMaybeLabel
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-next-block-label-seq seq 0)]))
-
 (define (compiler-backend-next-block-label-seq
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]) : CompilerBackendMaybeLabel
@@ -65200,19 +65185,6 @@
             out
             (compiler_optimize.opt-label-tail labels))))]))
 
-;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
-;; (explicit Jump / Branch / Switch targets PLUS the
-;; implicit fall-through to the layout-next block), reusing the optimizer's own
-;; successor enumeration so jump-table (switch) case + default targets are all
-;; included. Under-counting an edge is the only way carry could go wrong, and
-;; this enumeration is complete (those are the only label-bearing terminators).
-(define (compiler-backend-peephole-predcount-build
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-predcount-build-seq seq 0 counts)]))
-
 (define (compiler-backend-block-seq-label-or-empty
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]) : i64
@@ -65221,6 +65193,12 @@
     (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
       [(compiler_ir_types.CompilerIrBlock.Block label _) label])))
 
+;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
+;; (explicit Jump / Branch / Switch targets PLUS the
+;; implicit fall-through to the layout-next block), reusing the optimizer's own
+;; successor enumeration so jump-table (switch) case + default targets are all
+;; included. Under-counting an edge is the only way carry could go wrong, and
+;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build-seq
   [blocks : compiler_ir_types.CompilerIrBlockSeq]
   [index : i64]
@@ -65305,28 +65283,6 @@
 ;;       splits-edge?), which would insert a synthetic edge-copy block between
 ;;       prev and B and reach B via an explicit jcc rather than fall-through --
 ;;       so B's running map would be the OTHER edge's, not prev's exit.
-(define (compiler-backend-peephole-carry-safe-scan
-  [backend-state : CompilerBackendState]
-  [stream : CompilerBackendStreamState]
-  [function-state : CompilerBackendFunctionState]
-  [label-scope : String]
-  [entry-label : i64]
-  [predcount : backend_label_i64_map.Map]
-  [prev : compiler_ir_types.CompilerIrBlock]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-carry-safe-scan-seq
-        backend-state
-        stream
-        function-state
-        label-scope
-        entry-label
-        predcount
-        prev
-        seq
-        0)]))
-
 (define (compiler-backend-peephole-carry-safe-scan-seq
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
@@ -69477,11 +69433,8 @@
     [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
       (__tl_make-array compiler_ir_types.CompilerIrBlock (array-length barr))]
     [b : i64 0]
-    [out : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-block-list-empty)]
-    [r : i64 (- (array-length barr) 1)]
     (begin
-      ;; forward pass keeps the ordinal cursor in walk order ...
+      ;; forward pass keeps the ordinal cursor in walk order
       (while (< b (array-length barr))
         (begin
           (match (compiler-backend-global-array-element-shared-view barr b)
@@ -69502,16 +69455,8 @@
                     kind-table
                     scale-table)))])
           (set! b (+ b 1))))
-      ;; ... and the list is assembled back-to-front.
-      (while (>= r 0)
-        (begin
-          (set!
-            out
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler-backend-global-array-element-shared-view rebuilt r)
-              out))
-          (set! r (- r 1))))
-      out)))
+      (compiler_ir_types.CompilerIrBlockList.Array
+        (compiler_ir_types.CompilerIrBlockSeq rebuilt (array-length barr))))))
 
 ;; Cheap prescan: a variable-index gep at all? Most functions have none; the
 ;; full pass only runs when one exists.
@@ -81667,15 +81612,6 @@
   (compiler-backend-function-scratch-i64
     (compiler-backend-state-function-state program-index.backend-state)
     compiler-backend-scratch-i64-object-next-label))
-
-(define (compiler-backend-object-block-list-first-label
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (if (> (compiler_ir_types.compiler-ir-block-seq-count seq) 0)
-        (match (compiler_ir_types.compiler-ir-block-seq-ref seq 0)
-          [(compiler_ir_types.CompilerIrBlock.Block label _) label])
-        -1)]))
 
 (define (compiler-backend-object-set-next-label!
   [program-index : CompilerBackendProgramIndex]

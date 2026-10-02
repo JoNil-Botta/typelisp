@@ -168,17 +168,13 @@
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
   [index : i64]
   [want : i64]) : bool
-  (let
-    [blocks : compiler_ir_types.CompilerIrBlockList
-      (owned_view.compiler-owned-reference-shared-view blocks)]
-    (match blocks
-      [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-        (if (= index 0)
-          (match block
-            [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)])
-          (compiler-ir-smoke-block-list-label-at? (deref rest) (- index 1) want))]
-      [(compiler_ir_types.CompilerIrBlockList.Nil) false]
-      [(compiler_ir_types.CompilerIrBlockList.Array _) false])))
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (and
+        (>= index 0)
+        (< index (compiler_ir_types.compiler-ir-block-seq-count seq))
+        (match (compiler_ir_types.compiler-ir-block-seq-ref seq index)
+          [(compiler_ir_types.CompilerIrBlock.Block label _) (= label want)]))]))
 
 (define (compiler-ir-smoke-param-seq-entry-i64?
   [seq : compiler_ir_types.CompilerIrParamSeq]
@@ -461,16 +457,11 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "third")
         (compiler_ir_types.compiler-ir-instr-seq-empty))]
-    [reversed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_ir_types.compiler-ir-blocks
-        third-block
-        second-block
-        first-block)]
     [compact-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler-ir-block-list-compact-reversed reversed-blocks)]
-    [array-reversed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler-ir-block-list-compact-reversed
-        (compiler_ir_types.compiler-ir-global-shared-view compact-blocks))]
+      (compiler_ir_types.compiler-ir-blocks
+        first-block
+        second-block
+        third-block)]
     [first-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first-func")
@@ -527,14 +518,6 @@
         compact-blocks
         2
         (compiler_ir_types.compiler-ir-label "third"))
-      (compiler-ir-smoke-block-list-label-at?
-        array-reversed-blocks
-        0
-        (compiler_ir_types.compiler-ir-label "third"))
-      (compiler-ir-smoke-block-list-label-at?
-        array-reversed-blocks
-        2
-        (compiler_ir_types.compiler-ir-label "first"))
       (= (compiler_ir_types.compiler-ir-function-seq-count compact-functions) 3)
       (compiler-ir-smoke-function-seq-name-at? compact-functions 0 "first-func")
       (compiler-ir-smoke-function-seq-name-at?
@@ -3654,11 +3637,6 @@
     [(compiler_ir_types.CompilerIrInstr.Return _) true]
     [_ false]))
 
-(define (compiler-ir-block-list-compact-reversed
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
-  (compiler_ir_types.CompilerIrBlockList.Array
-    (compiler_ir_types.compiler-ir-block-seq-from-reversed-list blocks)))
-
 (define (compiler-ir-function-abi [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionAbi
   (match func
     [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ _ function-abi)
@@ -4765,7 +4743,7 @@
           (string.eq (compiler_ir_types.compiler-ir-label-text label) want)])]
     [(slice) false]))
 
-(define (compiler-ir-block-list-label-at-cons?
+(define (compiler-ir-block-slice-label-at?
   [blocks : (& blocks (Slice compiler_ir_types.CompilerIrBlock))]
   [index : i64]
   [want : String]) : bool
@@ -4776,18 +4754,16 @@
         (match (owned_view.compiler-owned-reference-shared-view block)
           [(compiler_ir_types.CompilerIrBlock.Block label _)
             (string.eq (compiler_ir_types.compiler-ir-label-text label) want)])
-        (compiler-ir-block-list-label-at-cons? rest (- index 1) want))]))
+        (compiler-ir-block-slice-label-at? rest (- index 1) want))]))
 
 (define (compiler-ir-block-list-label-at?
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [index : i64]
   [want : String]) : bool
-  (let
-    [walked-blocks : compiler_ir_types.CompilerIrBlockList blocks]
-    (compiler-ir-block-list-label-at-cons?
-      (compiler_ir_types.compiler-ir-block-list-view walked-blocks)
-      index
-      want)))
+  (compiler-ir-block-slice-label-at?
+    (compiler_ir_types.compiler-ir-block-list-view blocks)
+    index
+    want))
 
 (define (compiler-ir-function-seq-name-at?
   [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]

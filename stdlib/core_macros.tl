@@ -231,8 +231,7 @@
             `(let
               [__any_found false]
               (begin
-                (for
-                  [,item ,source]
+                (for [,item ,source]
                   (if ,test
                     (begin
                       (set! __any_found true)
@@ -267,8 +266,7 @@
             `(let
               [__all_hold true]
               (begin
-                (for
-                  [,item ,source]
+                (for [,item ,source]
                   (if ,test
                     unit
                     (begin
@@ -1189,9 +1187,7 @@
                     (if (= __for_index __for_end)
                       (set! __for_live false)
                       (set! __for_index (+ __for_index 1)))
-                    (begin
-                      (set! __for_index (+ __for_index 1))
-                      (set! __for_live (< __for_index __for_end))))
+                    (set! __for_index (+ __for_index 1)))
                   `(set! __for_index (+ __for_index 1)))]
               [step-body : comptime.Expr
                 `(begin
@@ -1226,8 +1222,15 @@
                     [__for_live
                       (if __for_inclusive
                         (<= __for_index __for_end)
-                        (< __for_index __for_end))]
-                    (while __for_live
+                        true)]
+                    ;; A half-open range keeps `index < end` as the loop test,
+                    ;; so once `inclusive` folds to false (an inlined `range`
+                    ;; call) this is the plain counting loop the optimizer
+                    ;; bounds-checks and unrolls; an inclusive range follows
+                    ;; the flag.
+                    (while (if __for_inclusive
+                      __for_live
+                      (< __for_index __for_end))
                       ,step)))
                 `(let
                   [__for_source ,lean-source]

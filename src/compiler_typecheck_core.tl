@@ -4429,6 +4429,12 @@
     unit
     (ast.ast-node-pool-context-install! (tc-context-pools-live ctx))))
 
+;; Install `ctx` after first adopting any pool the globals are further along.
+;; Use it where either side may be ahead, such as after a check that pushed
+;; through both `ctx` and the global pushers.
+(define (tc-context-publish-newer-pools! [ctx : TcContext]) : unit
+  (ast.ast-node-pool-context-publish-newer! (tc-context-pools-live ctx)))
+
 (define (tc-install-pools! [pools : ast.AstNodePoolContext]) : unit
   (if (ast.ast-node-pool-compat-context-active?)
     unit
@@ -100073,22 +100079,29 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arg : ast.AstExpr]) : ast.AstType
-  (match (tc-expr-discarding-errors ctx env arg)
-    [(ResultTcType.Ok actual)
-      (begin
-        ;; Binding-clause initializers can append structural referent types
-        ;; after the context snapshot used to begin macro expansion. Refresh
-        ;; before pushing the wrapper so those type IDs cannot alias.
-        (tc-context-capture-active-pools! ctx)
-        (let
-          [captured : ast.AstType
-            (macro-captured-expr-type-with-context
-              ctx
-              (tc-resolve-type ctx actual))]
-          (begin
-            (tc-context-install-pools! ctx)
-            captured)))]
-    [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)]))
+  (begin
+    ;; As in `macro-captured-expr-produced-type`: the clause list and earlier
+    ;; clauses' caller-origin wrappers were appended through `ctx`. Publish
+    ;; them before the speculative check pushes through the global pushers, or
+    ;; a fresh structural type such as a `Slice` element reuses an id those
+    ;; nodes hold and type resolution recurses forever.
+    (tc-context-publish-newer-pools! ctx)
+    (match (tc-expr-discarding-errors ctx env arg)
+      [(ResultTcType.Ok actual)
+        (begin
+          ;; Binding-clause initializers can append structural referent types
+          ;; after the context snapshot used to begin macro expansion. Refresh
+          ;; before pushing the wrapper so those type IDs cannot alias.
+          (tc-context-capture-active-pools! ctx)
+          (let
+            [captured : ast.AstType
+              (macro-captured-expr-type-with-context
+                ctx
+                (tc-resolve-type ctx actual))]
+            (begin
+              (tc-context-install-pools! ctx)
+              captured)))]
+      [(ResultTcType.Err _) (ctfe_support.ctfe-untyped-expr-type)])))
 
 (define (macro-captured-binding-clause
   [ctx : TcContext]
@@ -104039,6 +104052,15 @@
                       (tc-global-shared-view maybe-ty)
                       ninit)
                     (ast.ast-let-binding-list-new)))]
+              ;; Expansion checks the binders that enclose a macro call (here,
+              ;; for `with` bindings and for `match` scrutinees) so the call
+              ;; sees their types. The check pushes through both `ctx`'s cells
+              ;; and the global pushers, and the next transformer install
+              ;; would roll back whichever side is ahead: later pushes then
+              ;; overwrite checked types behind their dedup entries, and a
+              ;; parameter of type `(& a S)` reads back as `bool`. Neither an
+              ;; install before the check nor a capture after it is enough.
+              [_publish : unit (tc-context-publish-newer-pools! ctx)]
               let-bind-result)
               [(ResultTcEnv.Ok next-env)
                 (begin
@@ -104115,7 +104137,9 @@
                     (ast.ast-resource-binding-cons
                       binding
                       (ast.ast-resource-binding-list-new))]
-                  (match (tc-resource-bindings ctx env single)
+                  [checked : ResultTcEnv (tc-resource-bindings ctx env single)]
+                  [_publish : unit (tc-context-publish-newer-pools! ctx)]
+                  (match checked
                     [(ResultTcEnv.Ok next-env)
                       (begin
                         (ast.ast-resource-binding-list-push out binding)
@@ -104504,6 +104528,7 @@
                   (let
                     [scrut-ty-result : ResultTcType
                       (tc-expr ctx env (tc-context-expr-get ctx nscrut))]
+                    [_publish : unit (tc-context-publish-newer-pools! ctx)]
                     (match scrut-ty-result
                       [(ResultTcType.Ok scrut-ty)
                         (match (macro-expand-arms
@@ -104530,7 +104555,14 @@
     [(ast.AstExpr.While cond-box body-box)
       (match (macro-expand-node ctx env decls depth cond-box)
         [(ResultMacroExpr.Ok ncond)
-          (match (macro-expand-node ctx env decls depth body-box)
+          ;; As in `tc-expr`: the body is a loop target, so a macro operand
+          ;; such as `(when done (break))` checks its `break` / `continue`.
+          (match (macro-expand-node
+            ctx
+            (tc-enter-loop-target env)
+            decls
+            depth
+            body-box)
             [(ResultMacroExpr.Ok nbody)
               (ResultMacroExpr.Ok (ast.ast-expr-while ncond nbody))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
@@ -104662,14 +104694,15 @@
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (match (macro-expand-node
             ctx
+            ;; A lambda body is not inside the enclosing loop.
             (match (tc-global-shared-view maybe-ret)
               [(ast.AstMaybeType.Some ret)
                 (tc-bind-return-type
-                  (tc-bind-params ctx env params)
+                  (tc-bind-params ctx (tc-clear-loop-target env) params)
                   (tc-resolve-type ctx ret))]
               [(ast.AstMaybeType.No)
                 (tc-bind-return-type
-                  (tc-bind-params ctx env params)
+                  (tc-bind-params ctx (tc-clear-loop-target env) params)
                   (ast.AstType.Never))])
             decls
             depth

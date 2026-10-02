@@ -8048,6 +8048,147 @@
         "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in map-fused reduction context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend"))
     "SPMD numeric failures report their matrix row at the operator or cast"))
 
+;; A masked store of `value` from a `source` array into a `destination` array,
+;; guarded by a casted-literal comparison. The stored value starts on line 6,
+;; column 9.
+(define (compiler-lower-masked-cast-source
+  [source : String]
+  [destination : String]
+  [value : String]) : String
+  (str_cat.str-cat
+    "(define (fill [src : (__tl_dyn-array "
+    (clone source)
+    ")] [out : (__tl_dyn-array "
+    destination
+    ")] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (> (array-ref src i) (cast 0 : "
+    source
+    "))
+      (set! (array-ref out i)
+        "
+    value
+    ")
+      unit)))"))
+
+(define (compiler-lower-masked-cast-value-source
+  [source : String]
+  [destination : String]) : String
+  (compiler-lower-masked-cast-source
+    source
+    (clone destination)
+    (str_cat.str-cat "(cast (array-ref src i) : " destination ")")))
+
+;; The masked-control conversion row for `source -> destination` must reject
+;; in `mode`, at the cast.
+(define (compiler-lower-masked-cast-rejected?
+  [source : String]
+  [destination : String]
+  [mode : lower.CompilerLowerMode]
+  [backend : String]) : bool
+  (let
+    [want : String
+      (str_cat.str-cat
+        "lower: SPMD numeric conversion from "
+        (clone source)
+        " to "
+        (clone destination)
+        " is unsupported in masked control context for "
+        backend
+        " backend; SIMD cross-lane conversion has no implemented strategy; use scalar backend")]
+    (match (lower.lower-compiler-source-with-mode
+      (compiler-lower-masked-cast-value-source
+        (clone source)
+        (clone destination))
+      mode)
+      [(lower.ResultCompilerLower.Err diag-box)
+        (let
+          [diag : cdiag.CompilerDiagnostic
+            (cdiag.compiler-diagnostic-box-shared-view diag-box)]
+          (if (and
+            (string.eq (cdiag.compiler-diagnostic-message diag) want)
+            (= (cdiag.compiler-diagnostic-line diag) 6)
+            (= (cdiag.compiler-diagnostic-col diag) 9))
+            true
+            (io.panic
+              (str_cat.str-cat
+                "masked cast diagnostic mismatch: got `"
+                (cdiag.compiler-diagnostic-message diag)
+                "` at "
+                (string.int->string (cdiag.compiler-diagnostic-line diag))
+                ":"
+                (string.int->string (cdiag.compiler-diagnostic-col diag))
+                ", expected `"
+                want
+                "` at 6:9"))))]
+      [(lower.ResultCompilerLower.Ok _ _)
+        (io.panic
+          (str_cat.str-cat
+            "masked cast from "
+            source
+            " to "
+            destination
+            " unexpectedly lowered"))])))
+
+;; `src` lowers in `mode` through the masked emitter: its store is predicated.
+(define (compiler-lower-masked-cast-vectorized?
+  [src : String]
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower-test-functions (lower.lower-compiler-source-with-mode src mode))
+    [(LowerTestFunctions.Some functions)
+      (> (lower-test-count functions "fill" (LowerTestInstr.PredicatedStore)) 0)]
+    [(LowerTestFunctions.No) false]))
+
+(define (compiler-lower-masked-cast-rows-ok?
+  [mode : lower.CompilerLowerMode]
+  [backend : String]) : bool
+  (and
+    ;; Both directions of every representation-changing 32-bit row, and a
+    ;; same-width signedness change, which has no checked classification.
+    (compiler-lower-masked-cast-rejected? "i32" "f32" mode (clone backend))
+    (compiler-lower-masked-cast-rejected? "f32" "i32" mode (clone backend))
+    (compiler-lower-masked-cast-rejected? "u32" "f32" mode (clone backend))
+    (compiler-lower-masked-cast-rejected? "f32" "u32" mode (clone backend))
+    (compiler-lower-masked-cast-rejected? "i32" "u32" mode backend)
+    ;; An identity cast and a casted literal still lower as masked vectors.
+    (compiler-lower-masked-cast-vectorized?
+      (compiler-lower-masked-cast-value-source "i32" "i32")
+      mode)
+    (compiler-lower-masked-cast-vectorized?
+      (compiler-lower-masked-cast-source "f32" "f32" "(cast 1 : f32)")
+      mode)))
+
+(test
+  compiler-lower-spmd-masked-cast-fail-closed
+  (test.assert-true
+    (and
+      (compiler-lower-ok? (compiler-lower-masked-cast-value-source "i32" "f32"))
+      (compiler-lower-ok? (compiler-lower-masked-cast-value-source "f32" "u32"))
+      (compiler-lower-masked-cast-rows-ok?
+        (lower.CompilerLowerMode.Avx2)
+        "AVX2")
+      (compiler-lower-masked-cast-rows-ok?
+        (lower.CompilerLowerMode.Avx512)
+        "AVX-512")
+      ;; With the census forced to admit every cast, the masked emitter itself
+      ;; must reject the same rows at the cast.
+      (begin
+        (lower.lower-masked-census-admit-every-cast! true)
+        (let
+          [ok : bool
+            (and
+              (compiler-lower-masked-cast-rows-ok?
+                (lower.CompilerLowerMode.Avx2)
+                "AVX2")
+              (compiler-lower-masked-cast-rows-ok?
+                (lower.CompilerLowerMode.Avx512)
+                "AVX-512"))]
+          (begin
+            (lower.lower-masked-census-admit-every-cast! false)
+            ok))))
+    "masked SPMD casts that change lane representation reject at the cast, in the census and in the emitter"))
+
 (define (compiler-lower-avx2-foreach-map-source-shape-ok?
   [src : String]
   [elem-ty : ast.AstType]

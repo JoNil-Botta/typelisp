@@ -656,7 +656,7 @@
           (if has-rest
             (str_cat.str-cat
               "(slice"
-              (surface-ast-pattern-list-text-to list (- list.len 1))
+              (surface-ast-pattern-list-text-to (& list) (- list.len 1))
               " & "
               (surface-ast-pattern-text
                 (ast.ast-pattern-list-get
@@ -666,7 +666,7 @@
               ")")
             (str_cat.str-cat
               "(slice"
-              (surface-ast-pattern-list-text-to list list.len)
+              (surface-ast-pattern-list-text-to (& list) list.len)
               ")")))]
       [(ast.AstPattern.Fields items)
         (str_cat.str-cat
@@ -687,13 +687,13 @@
 (cfg
   compiler-surface-selftest
   (define (surface-ast-pattern-list-text [patterns : ast.AstPatternList]) : String
-    (surface-ast-pattern-list-text-to patterns patterns.len)))
+    (surface-ast-pattern-list-text-to (& patterns) patterns.len)))
 
 ;; The first `end` patterns of a list, each after a space.
 (cfg
   compiler-surface-selftest
   (define (surface-ast-pattern-list-text-to
-    [patterns : ast.AstPatternList]
+    [patterns : (& patterns ast.AstPatternList)]
     [end : i64]) : String
     (let
       [text : String ""]
@@ -708,7 +708,7 @@
                 " "
                 (surface-ast-pattern-text
                   (ast.ast-pattern-list-get
-                    (& patterns)
+                    patterns
                     index
                     (ast.ast-pattern-fallback)))))
             (set! index (+ index 1))))
@@ -739,7 +739,10 @@
           (begin
             (set! (array-ref remap index) index)
             (set! index (+ index 1))))
-        (expr_codec.surface-ast-write-pattern! (&mut out) (&mut context) pattern)
+        (expr_codec.surface-ast-write-pattern!
+          (&mut out)
+          (&mut context)
+          pattern)
         (let
           [bytes : (__tl_dyn-array u8)
             (byte_buf_core.byte-buf-builder-finish-array (& out))]
@@ -814,7 +817,9 @@
       [alternatives : ast.AstPatternList (ast.ast-pattern-list-new)]
       (begin
         (ast.ast-pattern-list-push (&mut items) (ast.ast-pat-binding-id x-id))
-        (ast.ast-pattern-list-push (&mut items) (ast.ast-pat-binding-id rest-id))
+        (ast.ast-pattern-list-push
+          (&mut items)
+          (ast.ast-pat-binding-id rest-id))
         (ast.ast-pattern-list-push
           (&mut alternatives)
           (ast.ast-pat-slice (ast.ast-pattern-list-new) false))

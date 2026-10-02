@@ -136,7 +136,9 @@ are checked; zero-length views are valid. For example:
 `(slice x & rest)` at least one, binding the remaining elements to `rest` as a
 borrowed Slice without copying. Copy elements bind by value and other
 elements by reference. Element patterns may be refutable, but only arms whose
-element patterns are irrefutable count toward covering every length:
+element patterns are irrefutable count toward covering every length. An
+`(or ...)` of slice patterns covers the union of their lengths, so
+`[(or (slice) (slice _)) 0]` handles every view of at most one element:
 
 ```lisp
 (define (sum [xs : (& (Slice i64))]) : i64

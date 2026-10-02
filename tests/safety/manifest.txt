@@ -636,6 +636,12 @@ slice_match_pattern_mut_destructure_reject|check-fail|tests/safety/slice_match_p
 slice_match_pattern_rest_marker_reject|check-fail|tests/safety/slice_match_pattern_rest_marker_reject.tl|-|slice pattern `&` must be followed by exactly one rest binding or `_`
 slice_match_pattern_two_rest_reject|check-fail|tests/safety/slice_match_pattern_two_rest_reject.tl|-|slice pattern takes at most one `&` rest binding
 slice_match_pattern_glued_rest_reject|check-fail|tests/safety/slice_match_pattern_glued_rest_reject.tl|-|slice pattern rest needs a space after `&`
+or_pattern_slice_exhaustive_ok|check-ok|tests/safety/or_pattern_slice_exhaustive_ok.tl|-|-
+or_pattern_slice_non_exhaustive_reject|check-fail|tests/safety/or_pattern_slice_non_exhaustive_reject.tl|-|typecheck: match missing arm for slices of length 3 or more
+or_pattern_slice_unreachable_alternative_reject|check-fail|tests/safety/or_pattern_slice_unreachable_alternative_reject.tl|-|unreachable or-pattern alternative 2: earlier slice patterns already match every length it matches
+or_pattern_slice_after_catchall_reject|check-fail|tests/safety/or_pattern_slice_after_catchall_reject.tl|-|unreachable or-pattern alternative 2 after a slice pattern that matches every length
+or_pattern_slice_rest_binding_reject|check-fail|tests/safety/or_pattern_slice_rest_binding_reject.tl|-|or-pattern alternative 2 binds `rest` but alternative 1 does not
+or_pattern_slice_binding_type_reject|check-fail|tests/safety/or_pattern_slice_binding_type_reject.tl|-|or-pattern binding `x` has type i64 in alternative 1 but (& (Slice i64)) in alternative 2
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 type_expr_runtime_reject|check-fail|tests/safety/type_expr_runtime_reject.tl|-|typecheck: type-expr is compile-time only; wrap it in (comptime ...)

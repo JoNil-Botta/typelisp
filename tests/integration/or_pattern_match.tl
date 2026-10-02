@@ -208,6 +208,76 @@
     [(comptime.Expr.Var _) (comptime.expr-int 2)]
     [_ (comptime.expr-int 3)]))
 
+;; Or-patterns over slice patterns match the union of their alternatives'
+;; lengths; a rest view bound by every alternative merges into the shared body.
+(define (slice-sum [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(slice) 0]
+    [(slice x & rest) (+ x (slice-sum rest))]))
+
+(define (slice-short [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(or (slice) (slice _)) 0]
+    [(slice a b & _) (+ a b)]))
+
+;; A final or arm tests every alternative but the last: `(slice x)` checks the
+;; length, and `(slice _ x)` matches all that is left.
+(define (slice-last [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(slice) -1]
+    [(slice _ _ _ & rest) (* 100 (array-length rest))]
+    [(or (slice x) (slice _ x)) x]))
+
+(define (slice-skip [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(or (slice 0 & rest) (slice 9 9 & rest)) (+ 100 (slice-sum rest))]
+    [_ (slice-sum xs)]))
+
+;; A borrowed fixed array has one length, so only the elements are tested.
+(define (array-pick [items : (& (Array i64 3))]) : i64
+  (match items
+    [(or (slice 1 b _) (slice _ b 1)) b]
+    [(slice a _ _) a]))
+
+;; An or-pattern in a slice element expands like one in an enum payload. The
+;; last expansion of the final arm keeps its element test, which typecheck
+;; proves cannot fail.
+(define (flag-count [flags : (& (Slice bool))]) : i64
+  (match flags
+    [(slice) 0]
+    [(slice (or true false) & rest) (+ 1 (flag-count rest))]))
+
+(define (small-head [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(slice (or 1 2) & _) 12]
+    [_ 0]))
+
+;; Slice patterns nested in or'd enum payloads. The final arm's or-pattern
+;; covers every length of `Twos` only as a union.
+(defenum Run
+  (:lifetimes source)
+  (Ones (& source (Slice i64)))
+  (Twos (& source (Slice i64)))
+  (Blank))
+
+(define (run-score [run : (Run source)]) : i64
+  (match run
+    [(or (Ones (slice x & _)) (Twos (slice _ x & _))) x]
+    [(or (Ones _) Blank) -1]
+    [(Twos (or (slice) (slice _ & _))) -2]))
+
+(define (run-borrowed [run : (& (Run source))]) : i64
+  (match run
+    [(or (Ones (slice x & rest)) (Twos (slice _ x & rest)))
+      (+ x (slice-sum rest))]
+    [_ 0]))
+
+;; The last expansion of a final arm's nested or-pattern tests its payload.
+(define (pair-side [pair : Pair]) : i64
+  (match pair
+    [(or (Left _) Empty) 0]
+    [(Right (or (Num _) (Flag _) (Blank))) 1]))
+
 (define (main) : i64
   (let
     [select : Instr (Select (box (SelectPayload 0 38 "sel")))]
@@ -268,4 +338,39 @@
       (unless (= (located-borrowed (At (Span 40 50) 2)) 42) (return 48))
       (unless (= (generated-dst (EntryArgc 5)) 5) (return 49))
       (unless (= (generated-start (At (Span 6 9) 1)) 6) (return 50))
+      (unless (= (pair-side (Right (Flag true))) 1) (return 51))
+      (unless (= (pair-side Empty) 0) (return 52))
+      (slice-cases))))
+
+(define (slice-cases) : i64
+  (let
+    [items : (Array i64 5) (array 9 9 4 5 6)]
+    [zeros : (Array i64 3) (array 0 7 8)]
+    [flags : (Array bool 3) (array true false true)]
+    [picks : (Array i64 3) (array 5 6 1)]
+    [ones : (Array i64 3) (array 7 30 2)]
+    [run : (Run items) (Run.Twos (slice-view items 1 3))]
+    (begin
+      (unless (= (slice-short (slice-view items 0 0)) 0) (return 60))
+      (unless (= (slice-short (slice-view items 2 1)) 0) (return 61))
+      (unless (= (slice-short (slice-view items 2 3)) 9) (return 62))
+      (unless (= (slice-last (slice-view items 0 0)) -1) (return 63))
+      (unless (= (slice-last (slice-view items 2 1)) 4) (return 64))
+      (unless (= (slice-last (slice-view items 3 2)) 6) (return 65))
+      (unless (= (slice-last (& items)) 200) (return 66))
+      (unless (= (slice-skip (& items)) 115) (return 67))
+      (unless (= (slice-skip (& zeros)) 115) (return 68))
+      (unless (= (slice-skip (slice-view items 2 3)) 15) (return 69))
+      (unless (= (array-pick (& picks)) 6) (return 70))
+      (unless (= (array-pick (& ones)) 7) (return 71))
+      (unless (= (flag-count (& flags)) 3) (return 72))
+      (unless (= (small-head (slice-view picks 2 1)) 12) (return 73))
+      (unless (= (small-head (& picks)) 0) (return 74))
+      (unless (= (run-score (Run.Ones (slice-view items 2 3))) 4) (return 75))
+      (unless (= (run-score (Run.Twos (slice-view items 2 3))) 5) (return 76))
+      (unless (= (run-score (Run.Ones (slice-view items 0 0))) -1) (return 77))
+      (unless (= (run-score (Run.Twos (slice-view items 2 1))) -2) (return 78))
+      (unless (= (run-score (Run.Twos (slice-view items 0 0))) -2) (return 79))
+      (unless (= (run-score Run.Blank) -1) (return 80))
+      (unless (= (run-borrowed (& run)) 9) (return 81))
       42)))

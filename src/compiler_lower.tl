@@ -66490,7 +66490,7 @@
 
 ;; How an or-pattern arm tests its scrutinee: by the enum tag in `tag-var`
 ;; (with the payload binding mode and register-group layout of the enum match),
-;; or by comparing literals for any other scrutinee.
+;; or by comparing literals or slice lengths for any other scrutinee.
 (defenum LowerOrScrutinee
   (Enum i64 tc_core.TcMaybeNameId bool)
   (Scalar))
@@ -66514,7 +66514,10 @@
         (begin
           (when
             (lower-pattern-needs-or-expansion?
-              (ast.ast-pattern-list-get (& args) index (ast.ast-pattern-fallback)))
+              (ast.ast-pattern-list-get
+                (& args)
+                index
+                (ast.ast-pattern-fallback)))
             (return true))
           (set! index (+ index 1))))
       false)))
@@ -66650,7 +66653,7 @@
 
 ;; Tests the enum tag of a variant alternative of an or-pattern arm (unless
 ;; `test?` is false) and binds its payload; a failed test or refutable
-;; payload jumps to `fail-label`.
+;; payload jumps to `fail-label`, which is a trap when `test?` is false.
 (define (lower-or-variant-alternative-bind
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -66684,57 +66687,50 @@
         handle
         resolved-fields
         handle-name-id)
-      (if (and
-        (not test?)
-        (lower-pattern-list-refutable-for-types? ctx args resolved-fields))
-        (ResultLowerEnv.Err
-          (box
-            (lower-diagnostic
-              "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
-        (let
-          [bind-state : LowerState
-            (if test?
-              (match (lower-state-alloc-var state)
-                [(LowerAlloc.Alloc eq-alloc eq-var)
-                  (match (lower-state-fresh-label
-                    (lower-state-emit
-                      eq-alloc
-                      (ir.CompilerIrInstr.BinOp
-                        eq-var
-                        ir.CompilerIrBinOp.Eq
-                        (ir.CompilerIrValue.Var tag-var)
-                        (ir.CompilerIrValue.I64
-                          (csym.compiler-registry-handle-child-index handle))
-                        (ast.AstType.I64)))
-                    "match_or_alt")
-                    [(LowerLabel.Label ok-state ok-label)
-                      (lower-state-finish-block
-                        (lower-state-emit
-                          ok-state
-                          (ir.CompilerIrInstr.Branch
-                            (ir.CompilerIrValue.Var eq-var)
-                            ok-label
-                            fail-label))
-                        ok-label)])])
-              state)]
-          (lower-bind-match-variant-payloads
-            ctx
-            bind-state
-            env
-            type-env
-            borrow-lifetime
-            (ir.CompilerIrValue.Var scrut-var)
-            args
-            resolved-fields
-            (lower-state-mode bind-state)
-            (lower-enum-type-name-id-or resolved-scrut-ty -1)
-            (lower-enum-type-name-or-empty resolved-scrut-ty)
-            variant-name
-            handle-name-id
-            0
-            8
-            fail-label
-            scrut-reg-group?)))]))
+      (let
+        [bind-state : LowerState
+          (if test?
+            (match (lower-state-alloc-var state)
+              [(LowerAlloc.Alloc eq-alloc eq-var)
+                (match (lower-state-fresh-label
+                  (lower-state-emit
+                    eq-alloc
+                    (ir.CompilerIrInstr.BinOp
+                      eq-var
+                      ir.CompilerIrBinOp.Eq
+                      (ir.CompilerIrValue.Var tag-var)
+                      (ir.CompilerIrValue.I64
+                        (csym.compiler-registry-handle-child-index handle))
+                      (ast.AstType.I64)))
+                  "match_or_alt")
+                  [(LowerLabel.Label ok-state ok-label)
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        ok-state
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var eq-var)
+                          ok-label
+                          fail-label))
+                      ok-label)])])
+            state)]
+        (lower-bind-match-variant-payloads
+          ctx
+          bind-state
+          env
+          type-env
+          borrow-lifetime
+          (ir.CompilerIrValue.Var scrut-var)
+          args
+          resolved-fields
+          (lower-state-mode bind-state)
+          (lower-enum-type-name-id-or resolved-scrut-ty -1)
+          (lower-enum-type-name-or-empty resolved-scrut-ty)
+          variant-name
+          handle-name-id
+          0
+          8
+          fail-label
+          scrut-reg-group?))]))
 
 ;; Tests and binds one or-free alternative of an or-pattern arm. `test?` is
 ;; false only for the last alternative of a match's final arm, which matches
@@ -66819,8 +66815,7 @@
                       env
                       type-env)])])
             (ResultLowerEnv.Ok state env type-env))]
-        ;; The length test is skipped only for an untested last alternative,
-        ;; whose element patterns are then irrefutable.
+        ;; An untested last alternative skips only the length test.
         [(ast.AstPattern.Slice items-box has-rest)
           (lower-bind-slice-pattern
             ctx
@@ -66846,8 +66841,8 @@
 
 ;; Whether an or-pattern alternative tests more than its top-level enum tag,
 ;; slice length or literal: a refutable payload or element pattern, as an
-;; expanded nested or-pattern leaves. Such an alternative keeps its tests even
-;; as the last alternative of a match's final arm.
+;; expanded nested or-pattern leaves. As the last alternative of a match's
+;; final arm, it skips only the top-level test.
 (define (lower-or-alternative-refutable-within?
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -66891,9 +66886,10 @@
 ;; binds its names and jumps to one shared body block, where each name is a
 ;; phi of the alternatives' bindings; the body is lowered once. A failed last
 ;; alternative jumps to `next-label`. In a match's final arm every alternative
-;; but the last is tested, as the final arm of an exhaustive match need not be;
-;; when the last one still has refutable patterns inside (left by an expanded
-;; nested or-pattern), it is tested too and its unreachable failure aborts.
+;; but the last is tested, as the final arm of an exhaustive match need not be.
+;; Refutable patterns left inside that last one by an expanded nested
+;; or-pattern still bind through their tests, which typecheck proves cannot
+;; fail; their failure edge aborts.
 ;; Returns the state at the start of the body block.
 (define (lower-or-arm-body-start
   [ctx : tc_core.TcContext]
@@ -66935,22 +66931,21 @@
           (let
             [current : LowerState body-label-state]
             [trap-label : i64 -1]
-            [untested-last? : bool
+            [trap? : bool
               (and
                 final?
-                (not
-                  (lower-or-alternative-refutable-within?
-                    ctx
-                    body-label-state
-                    (lower-global-shared-view scrut-ty)
-                    (lower-global-shared-view scrutinee)
-                    (ast.ast-pattern-list-get
-                      (& alternatives)
-                      (- alternatives.len 1)
-                      (ast.ast-pattern-fallback)))))]
+                (lower-or-alternative-refutable-within?
+                  ctx
+                  body-label-state
+                  (lower-global-shared-view scrut-ty)
+                  (lower-global-shared-view scrutinee)
+                  (ast.ast-pattern-list-get
+                    (& alternatives)
+                    (- alternatives.len 1)
+                    (ast.ast-pattern-fallback))))]
             (begin
               (when
-                (and final? (not untested-last?))
+                trap?
                 (match (lower-state-fresh-label current "match_or_unreachable")
                   [(LowerLabel.Label trap-state label)
                     (begin
@@ -66965,8 +66960,8 @@
                         current
                         (cond
                           [(not final?) next-label]
-                          [untested-last? body-label]
-                          [else trap-label]))
+                          [trap? trap-label]
+                          [else body-label]))
                       (lower-state-fresh-label current "match_or_next"))]
                   (match fail
                     [(LowerLabel.Label fail-state fail-label)
@@ -66982,7 +66977,7 @@
                           (& alternatives)
                           index
                           (ast.ast-pattern-fallback))
-                        (not (and last? untested-last?))
+                        (not (and last? final?))
                         fail-label)
                         [(ResultLowerEnv.Ok
                             bound-state
@@ -67044,7 +67039,8 @@
                 (set!
                   current
                   (lower-state-emit
-                    (lower-oob-abort (lower-state-finish-block current trap-label))
+                    (lower-oob-abort
+                      (lower-state-finish-block current trap-label))
                     (ir.CompilerIrInstr.Jump trap-label))))
               (lower-or-arm-phis
                 ctx

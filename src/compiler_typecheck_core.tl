@@ -57119,7 +57119,8 @@
                         (tc-global-shared-view pattern)
                         0
                         (&mut alternatives)))
-                    (while (< alt-index
+                    (while (<
+                      alt-index
                       (if or-arm?
                         alternatives.len
                         1))

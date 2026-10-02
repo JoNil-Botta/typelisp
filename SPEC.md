@@ -4985,20 +4985,27 @@ explicit constructors.
   at least one entry; naming a field the struct does not declare, or naming a
   field twice, is rejected. Positional struct patterns are unchanged.
 - `(or p1 p2 ...)` matches when any of its two or more alternatives does,
-  trying them left to right. It may be an arm's whole pattern or an enum
-  payload sub-pattern at any depth, such as `(Move dst (or (Small) (Large)))`.
-  Struct field, `(fields ...)` entry, `(box ...)`, tuple slot, and array
-  element sub-patterns must stay irrefutable, so an or-pattern there is
-  rejected. Every alternative must bind exactly the same names, each at the
-  same type; the arm body sees the names bound by whichever alternative
-  matched. At the top of an enum arm each alternative is itself a top-level
-  pattern, so a bare identifier there names a nullary variant:
+  trying them left to right. It may be an arm's whole pattern, an enum
+  payload sub-pattern at any depth, such as `(Move dst (or (Small) (Large)))`,
+  or a `slice` element pattern. Struct field, `(fields ...)` entry,
+  `(box ...)`, tuple slot, and array element sub-patterns must stay
+  irrefutable, so an or-pattern there is rejected. Every alternative must
+  bind exactly the same names, each at the same type, including a `slice`
+  pattern's `rest`; the arm body sees the names bound by whichever
+  alternative matched. At the top of an enum arm each alternative is itself a
+  top-level pattern, so a bare identifier there names a nullary variant:
   `[(or Red Green) ...]`. An alternative that follows one matching every value
-  is rejected as unreachable, as an arm after `_` is. Exhaustiveness treats an
-  or-pattern as the union of its alternatives: an arm covers a variant when one
-  alternative does, and a nested or-pattern is irrefutable when one
+  is rejected as unreachable, as an arm after `_` is. Exhaustiveness and
+  reachability treat an or-pattern as the union of its alternatives, as if
+  each were an arm of its own: an arm covers a variant when one alternative
+  does, `slice` alternatives cover the union of their lengths (so
+  `[(or (slice) (slice _)) ...]` and `[(slice _ _ & _) ...]` are complete), and
+  a `slice` alternative whose lengths earlier arms and alternatives already
+  cover is unreachable. A nested or-pattern is irrefutable when one
   alternative is or when its alternatives cover the payload type the way a
-  match's arms would. All alternatives jump to one shared arm body; a nested
+  match's arms would. All alternatives jump to one shared arm body. In a
+  match's final arm every alternative but the last is tested, so the last
+  `slice` alternative there performs no length comparison. A nested
   or-pattern is tested as the whole-arm alternatives it expands to, so
   `(V (or a b) c)` tries `(V a c)` and then `(V b c)`. A varying `foreach`
   match does not accept or-patterns.
@@ -5038,6 +5045,21 @@ explicit constructors.
 
 Every alternative binds `dst`, from a positional payload or by name from the
 boxed payload struct, and all of them share the one arm body.
+
+```lisp test=run name=or-slice-pattern-lengths exit=42 stdout=""
+(define (pair-sum [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(or (slice) (slice _)) 0]
+    [(slice a b & _) (+ a b)]))
+
+(define (main) : i64
+  (let
+    [items : (Array i64 3) (array 40 2 7)]
+    (+ (pair-sum (& items)) (pair-sum (slice-view items 2 1)))))
+```
+
+The first arm covers views of zero and one element and the second every
+longer view, so the match is exhaustive without `_`.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 

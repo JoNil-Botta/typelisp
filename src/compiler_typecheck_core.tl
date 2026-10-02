@@ -23891,6 +23891,11 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(ast.AstPattern.Slice patterns-box _)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
     [(ast.AstPattern.Variant _ patterns-box)
       (let
         [patterns : ast.AstPatternList
@@ -46292,6 +46297,11 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
+    [(ast.AstPattern.Slice patterns-box _)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
     [(ast.AstPattern.Wildcard) bound]
     [(ast.AstPattern.Binding name)
       (tc-string-list-add bound (tc-env-key-name-text name))]
@@ -46330,6 +46340,10 @@
         (ast.ast-pattern-list-box-shared-view patterns-box)
         bound)]
     [(ast.AstPattern.Array patterns-box)
+      (tc-pattern-list-add-bound-name-ids
+        (ast.ast-pattern-list-box-shared-view patterns-box)
+        bound)]
+    [(ast.AstPattern.Slice patterns-box _)
       (tc-pattern-list-add-bound-name-ids
         (ast.ast-pattern-list-box-shared-view patterns-box)
         bound)]
@@ -47313,6 +47327,11 @@
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-source-ids session patterns bound))]
     [(ast.AstPattern.Array patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-source-ids session patterns bound))]
+    [(ast.AstPattern.Slice patterns-box _)
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
@@ -52177,6 +52196,8 @@
             "typecheck: box pattern requires Box scrutinee"))
         (ResultTcEnv.Err
           "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
+    [(ast.AstPattern.Slice _ _)
+      (ResultTcEnv.Err (tc-slice-pattern-scrutinee-message))]
     [_
       (ResultTcEnv.Err
         "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))
@@ -52342,6 +52363,238 @@
     [elem-types : ast.AstTypeList
       (try (tc-tuple-pattern-element-types ctx tuple-ty))]
     (tc-bind-pattern-list ctx env mode patterns elem-types)))
+
+;; The borrowed scrutinee a `(slice ...)` pattern matches (SPEC 5.13): the
+;; borrow's lifetime and mutability, the element type, and the static length
+;; of a borrowed fixed array (-1 for a Slice, whose length is read at run time).
+(defenum TcSlicePatternScrutinee
+  (Invalid)
+  (View i64 bool ast.AstType i64))
+
+(define (tc-slice-pattern-referent
+  [ctx : TcContext]
+  [lifetime : i64]
+  [mutable : bool]
+  [referent-id : i64]) : TcSlicePatternScrutinee
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-context-type-get ctx referent-id)))
+    [(ast.AstType.Slice elem)
+      (TcSlicePatternScrutinee.View
+        lifetime
+        mutable
+        (tc-resolve-type ctx (tc-context-type-get ctx elem))
+        -1)]
+    [(ast.AstType.Array elem count)
+      (TcSlicePatternScrutinee.View
+        lifetime
+        mutable
+        (tc-resolve-type ctx (tc-context-type-get ctx elem))
+        count)]
+    [_ (TcSlicePatternScrutinee.Invalid)]))
+
+(define (tc-slice-pattern-scrutinee [ctx : TcContext] [scrut-ty : ast.AstType]) : TcSlicePatternScrutinee
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-global-shared-view scrut-ty)))
+    [(ast.AstType.Ref lifetime referent-id)
+      (tc-slice-pattern-referent ctx lifetime false referent-id)]
+    [(ast.AstType.MutRef lifetime referent-id)
+      (tc-slice-pattern-referent ctx lifetime true referent-id)]
+    [_ (TcSlicePatternScrutinee.Invalid)]))
+
+;; The number of element patterns before an optional `& rest`.
+(define (tc-slice-pattern-element-count
+  [items : (& items ast.AstPatternList)]
+  [has-rest : bool]) : i64
+  (if has-rest
+    (- (ast.ast-pattern-list-len items) 1)
+    (ast.ast-pattern-list-len items)))
+
+;; `rest` borrows the remaining elements with the scrutinee's lifetime and
+;; mutability.
+(define (tc-slice-pattern-rest-type
+  [ctx : TcContext]
+  [lifetime : i64]
+  [mutable : bool]
+  [elem-ty : ast.AstType]) : ast.AstType
+  (let
+    [referent : ast.AstType
+      (ast.ast-ty-slice-with-pools (tc-context-pools ctx) elem-ty)]
+    (if mutable
+      (ast.ast-ty-mut-ref-with-pools (tc-context-pools ctx) lifetime referent)
+      (ast.ast-ty-ref-with-pools (tc-context-pools ctx) lifetime referent))))
+
+;; Copy elements bind by value and take any payload pattern. Other elements
+;; bind as references with the scrutinee's lifetime, as through `(& place)`; a
+;; mutable view binds them as `&mut` references, by name or `_` only.
+(define (tc-bind-slice-element-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [mutable : bool]
+  [pattern : ast.AstPattern]
+  [elem-ty : ast.AstType]) : ResultTcEnv
+  (if (tc-type-copyable? ctx (tc-global-shared-view elem-ty))
+    (tc-bind-sub-pattern ctx env pattern elem-ty)
+    (if mutable
+      (match pattern
+        [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+        [(ast.AstPattern.Binding name)
+          (ResultTcEnv.Ok
+            (tc-bind-id
+              env
+              name
+              (ast.ast-ty-mut-ref lifetime (tc-type-without-regions elem-ty))))]
+        [(ast.AstPattern.Var name _)
+          (ResultTcEnv.Ok
+            (tc-bind-id
+              env
+              name
+              (ast.ast-ty-mut-ref lifetime (tc-type-without-regions elem-ty))))]
+        [_
+          (ResultTcEnv.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.Pattern)
+              "typecheck: a mutable slice pattern binds a non-Copy element only to a name or `_`; match the element through its reference"))])
+      (tc-bind-borrowed-sub-pattern ctx env lifetime pattern elem-ty))))
+
+(define (tc-bind-slice-elements-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [mutable : bool]
+  [items : (& items ast.AstPatternList)]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [index : i64]) : ResultTcEnv
+  (if (>= index count)
+    (ResultTcEnv.Ok env)
+    (let
+      [element-ty : ast.AstType (tc-global-shared-view elem-ty)]
+      [next-env : TcTypeEnv
+        (try
+          (tc-bind-slice-element-pattern
+            ctx
+            env
+            lifetime
+            mutable
+            (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))
+            element-ty))]
+      (tc-bind-slice-elements-at
+        ctx
+        next-env
+        lifetime
+        mutable
+        items
+        elem-ty
+        count
+        (+ index 1)))))
+
+(define (tc-slice-pattern-array-length-message
+  [count : i64]
+  [has-rest : bool]
+  [length : i64]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Pattern)
+    (str_cat.str-cat
+      (if has-rest
+        "typecheck: slice pattern needs at least "
+        "typecheck: slice pattern matches exactly ")
+      (string.int->string count)
+      " elements, but the fixed array has "
+      (string.int->string length))))
+
+(define (tc-bind-slice-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : ast.AstType]
+  [items : ast.AstPatternList]
+  [has-rest : bool]) : ResultTcEnv
+  (match (tc-slice-pattern-scrutinee ctx scrut-ty)
+    [(TcSlicePatternScrutinee.View lifetime mutable elem-ty length)
+      (let
+        [count : i64 (tc-slice-pattern-element-count (& items) has-rest)]
+        (if (and
+          (>= length 0)
+          (if has-rest
+            (> count length)
+            (not (= count length))))
+          (ResultTcEnv.Err
+            (tc-slice-pattern-array-length-message count has-rest length))
+          (let
+            [element-ty : ast.AstType (tc-global-shared-view elem-ty)]
+            [elements-env : TcTypeEnv
+              (try
+                (tc-bind-slice-elements-at
+                  ctx
+                  env
+                  lifetime
+                  mutable
+                  (& items)
+                  element-ty
+                  count
+                  0))]
+            (if has-rest
+              (match (ast.ast-pattern-list-get
+                (& items)
+                count
+                (ast.ast-pattern-fallback))
+                [(ast.AstPattern.Binding name)
+                  (ResultTcEnv.Ok
+                    (tc-bind-id
+                      elements-env
+                      name
+                      (tc-slice-pattern-rest-type ctx lifetime mutable elem-ty)))]
+                [(ast.AstPattern.Var name _)
+                  (ResultTcEnv.Ok
+                    (tc-bind-id
+                      elements-env
+                      name
+                      (tc-slice-pattern-rest-type ctx lifetime mutable elem-ty)))]
+                [_ (ResultTcEnv.Ok elements-env)])
+              (ResultTcEnv.Ok elements-env)))))]
+    [(TcSlicePatternScrutinee.Invalid)
+      (ResultTcEnv.Err (tc-slice-pattern-scrutinee-message))]))
+
+(define (tc-slice-pattern-scrutinee-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Pattern)
+    "typecheck: slice pattern requires a borrowed Slice or fixed-array scrutinee, `(& (Slice T))` or `(&mut (Slice T))`"))
+
+;; A matched shared Slice reference inside a borrowed payload is read through
+;; the outer borrow; its own lifetime carries the elements' provenance.
+(define (tc-bind-borrowed-slice-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [field-ty : ast.AstType]
+  [items : ast.AstPatternList]
+  [has-rest : bool]) : ResultTcEnv
+  (match (tc-slice-pattern-scrutinee ctx (tc-global-shared-view field-ty))
+    [(TcSlicePatternScrutinee.View _ mutable _ _)
+      (if mutable
+        (ResultTcEnv.Err
+          (tc-kind-message
+            (cdiag.CompilerTypecheckKind.BorrowViolation)
+            "typecheck: a slice pattern cannot match a mutable Slice reference through a shared borrow"))
+        (tc-bind-slice-pattern ctx env field-ty items has-rest))]
+    [(TcSlicePatternScrutinee.Invalid)
+      (ResultTcEnv.Err (tc-slice-pattern-scrutinee-message))]))
+
+;; Owned and borrowed slice scrutinees: a `(slice ...)` pattern binds through
+;; the view; any other pattern keeps the scalar rules.
+(define (tc-bind-slice-scrutinee-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : ast.AstType]
+  [pattern : ast.AstPattern]) : ResultTcEnv
+  (match (tc-global-shared-view pattern)
+    [(ast.AstPattern.Slice items-box has-rest)
+      (tc-bind-slice-pattern
+        ctx
+        env
+        scrut-ty
+        (ast.ast-pattern-list-box-shared-view items-box)
+        has-rest)]
+    [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))
 
 (define (tc-bind-tuple-sub-pattern
   [ctx : TcContext]
@@ -52815,6 +53068,13 @@
           TcPatternListMode.Element
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
+      [(ast.AstPattern.Slice items-box has-rest)
+        (tc-bind-slice-pattern
+          ctx
+          env
+          ty
+          (ast.ast-pattern-list-box-shared-view items-box)
+          has-rest)]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList
@@ -53077,6 +53337,13 @@
           (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
+      [(ast.AstPattern.Slice items-box has-rest)
+        (tc-bind-borrowed-slice-pattern
+          ctx
+          env
+          ty
+          (ast.ast-pattern-list-box-shared-view items-box)
+          has-rest)]
       [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList
@@ -53261,11 +53528,20 @@
                   (TcPatternListMode.BorrowedElement lifetime)
                   referent-ty
                   (ast.ast-pattern-list-box-shared-view patterns-box))]
+              [(ast.AstPattern.Slice items-box has-rest)
+                (tc-bind-slice-pattern
+                  ctx
+                  env
+                  scrut-ty
+                  (ast.ast-pattern-list-box-shared-view items-box)
+                  has-rest)]
               [_
                 (ResultTcEnv.Err
                   (tc-kind-message
                     (cdiag.CompilerTypecheckKind.Pattern)
-                    "typecheck: borrowed fixed-array match requires (array ...), binding, or wildcard pattern"))])]
+                    "typecheck: borrowed fixed-array match requires (array ...), (slice ...), binding, or wildcard pattern"))])]
+          [(ast.AstType.Slice _)
+            (tc-bind-slice-scrutinee-pattern ctx env scrut-ty pattern)]
           [(ast.AstType.Box _)
             (match pattern
               [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -53285,6 +53561,8 @@
                 (ResultTcEnv.Err
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
           [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))]
+    [(ast.AstType.MutRef _ _)
+      (tc-bind-slice-scrutinee-pattern ctx env scrut-ty pattern)]
     [(ast.AstType.Enum enum-name)
       (match pattern
         [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -54728,6 +55006,12 @@
         ctx
         (ast.ast-pattern-list-box-shared-view patterns-box)
         field-ty)]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (tc-slice-pattern-irrefutable?
+        ctx
+        (ast.ast-pattern-list-box-shared-view items-box)
+        has-rest
+        field-ty)]
     [(ast.AstPattern.Variant name args-box)
       (let
         [args : ast.AstPatternList
@@ -55112,7 +55396,7 @@
               (tc-match-arms-cover-bool-at? arms want (+ index 1)))]
           [_ (tc-match-arms-cover-bool-at? arms want (+ index 1))])])))
 
-(define (tc-match-pattern-catchall-for-type?
+(define (tc-match-pattern-catchall-for-shape?
   [ctx : TcContext]
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : bool
@@ -55263,7 +55547,299 @@
   [ctx : TcContext]
   [scrut-ty : ast.AstType]
   [arms : ast.AstMatchArmList]) : ResultTcUnit
-  (tc-match-arm-reachability-loop ctx scrut-ty arms false))
+  (match (tc-slice-match-arm-reachability-ok
+    ctx
+    (tc-global-shared-view scrut-ty)
+    (& arms))
+    [(ResultTcUnit.Ok) (tc-match-arm-reachability-loop ctx scrut-ty arms false)]
+    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
+
+;; Whether every element pattern of a slice arm is irrefutable, so the arm
+;; matches every view whose length it accepts.
+(define (tc-slice-pattern-elements-irrefutable?
+  [ctx : TcContext]
+  [items : (& items ast.AstPatternList)]
+  [count : i64]
+  [elem-ty : ast.AstType]) : bool
+  (let
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (set!
+            ok
+            (tc-sub-pattern-irrefutable?
+              ctx
+              (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))
+              (tc-global-shared-view elem-ty)))
+          (set! index (+ index 1))))
+      ok)))
+
+;; A slice pattern is irrefutable when it accepts every length the scrutinee
+;; can have (`(slice & rest)`, or a fixed array's exact length) and every
+;; element pattern is irrefutable.
+(define (tc-slice-pattern-irrefutable?
+  [ctx : TcContext]
+  [items : ast.AstPatternList]
+  [has-rest : bool]
+  [scrut-ty : ast.AstType]) : bool
+  (match (tc-slice-pattern-scrutinee ctx scrut-ty)
+    [(TcSlicePatternScrutinee.View _ _ elem-ty length)
+      (let
+        [count : i64 (tc-slice-pattern-element-count (& items) has-rest)]
+        (and
+          (if (>= length 0)
+            (if has-rest
+              (<= count length)
+              (= count length))
+            (and has-rest (= count 0)))
+          (tc-slice-pattern-elements-irrefutable? ctx (& items) count elem-ty)))]
+    [(TcSlicePatternScrutinee.Invalid) false]))
+
+(define (tc-match-pattern-catchall-for-type?
+  [ctx : TcContext]
+  [scrut-ty : ast.AstType]
+  [pattern : ast.AstPattern]) : bool
+  (match (tc-global-shared-view pattern)
+    [(ast.AstPattern.Slice items-box has-rest)
+      (tc-slice-pattern-irrefutable?
+        ctx
+        (ast.ast-pattern-list-box-shared-view items-box)
+        has-rest
+        scrut-ty)]
+    [_ (tc-match-pattern-catchall-for-shape? ctx scrut-ty pattern)]))
+
+;; The most element patterns any slice arm has, or -1 without slice arms.
+(define (tc-slice-arms-max-count [arms : (& arms ast.AstMatchArmList)]) : i64
+  (let
+    [index : i64 0]
+    [most : i64 -1]
+    (begin
+      (while (< index arms.len)
+        (begin
+          (match (ast.ast-match-arm-list-get
+            arms
+            index
+            (ast.ast-match-arm-fallback))
+            [(ast.AstMatchArm.Arm (ast.AstPattern.Slice items-box has-rest) _)
+              (let
+                [items : ast.AstPatternList
+                  (ast.ast-pattern-list-box-shared-view items-box)]
+                [count : i64
+                  (tc-slice-pattern-element-count (& items) has-rest)]
+                (when (> count most) (set! most count)))]
+            [_ unit])
+          (set! index (+ index 1))))
+      most)))
+
+;; Records the lengths a slice arm covers when its element patterns are all
+;; irrefutable: an exact arm marks `exact`, and the result is the smallest
+;; `& rest` element count so far (-1 when there is none).
+(define (tc-slice-cover-add-arm!
+  [ctx : TcContext]
+  [exact : (&mut exact (__tl_dyn-array bool))]
+  [rest-min : i64]
+  [items : (& items ast.AstPatternList)]
+  [count : i64]
+  [has-rest : bool]
+  [elem-ty : ast.AstType]) : i64
+  (cond
+    [(not (tc-slice-pattern-elements-irrefutable? ctx items count elem-ty))
+      rest-min]
+    [has-rest
+      (if (or (< rest-min 0) (< count rest-min))
+        count
+        rest-min)]
+    [else
+      (begin
+        (set! (array-ref exact count) true)
+        rest-min)]))
+
+;; Whether earlier slice arms with irrefutable elements match every view of
+;; `length`: `exact` marks `(slice p1 ... pn)` lengths and `rest-min` is the
+;; smallest `& rest` arm's element count (-1 when there is none).
+(define (tc-slice-length-covered?
+  [exact : (& exact (__tl_dyn-array bool))]
+  [rest-min : i64]
+  [length : i64]) : bool
+  (or
+    (and (>= rest-min 0) (>= length rest-min))
+    (and (< length (array-length exact)) (array-ref exact length))))
+
+;; Whether every length from `count` up is already covered.
+(define (tc-slice-lengths-from-covered?
+  [exact : (& exact (__tl_dyn-array bool))]
+  [rest-min : i64]
+  [count : i64]) : bool
+  (if (< rest-min 0)
+    false
+    (let
+      [length : i64 count]
+      [ok : bool true]
+      (begin
+        (while (and ok (< length rest-min))
+          (begin
+            (set! ok (tc-slice-length-covered? exact rest-min length))
+            (set! length (+ length 1))))
+        ok))))
+
+(define (tc-slice-unreachable-arm-message [after-catchall : bool]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Pattern)
+    (if after-catchall
+      "typecheck: unreachable match arm after a slice pattern that matches every length"
+      "typecheck: unreachable match arm: earlier slice patterns already match every length it matches")))
+
+;; Length coverage of a slice match (SPEC 5.13). An arm is unreachable when
+;; earlier arms with irrefutable element patterns already match every length it
+;; can match; any arm after an irrefutable slice pattern, such as
+;; `(slice & rest)`, is unreachable like one after `_`. Arms after `_` are left
+;; to `tc-match-arm-reachability-ok`.
+(define (tc-slice-match-arm-reachability-ok
+  [ctx : TcContext]
+  [scrut-ty : ast.AstType]
+  [arms : (& arms ast.AstMatchArmList)]) : ResultTcUnit
+  ;; A match without slice arms skips resolving its scrutinee type.
+  (match (if (< (tc-slice-arms-max-count arms) 0)
+    (TcSlicePatternScrutinee.Invalid)
+    (tc-slice-pattern-scrutinee ctx (tc-global-shared-view scrut-ty)))
+    [(TcSlicePatternScrutinee.View _ _ elem-ty _)
+      (let
+        [exact : (__tl_dyn-array bool)
+          (__tl_make-array bool (+ (tc-slice-arms-max-count arms) 1))]
+        [rest-min : i64 -1]
+        [catchall : bool false]
+        [index : i64 0]
+        (begin
+          (while (< index arms.len)
+            (begin
+              (when
+                catchall
+                (return
+                  (ResultTcUnit.Err (tc-slice-unreachable-arm-message true))))
+              (match (ast.ast-match-arm-list-get
+                arms
+                index
+                (ast.ast-match-arm-fallback))
+                [(ast.AstMatchArm.Arm
+                    (ast.AstPattern.Slice items-box has-rest)
+                    _)
+                  (let
+                    [items : ast.AstPatternList
+                      (ast.ast-pattern-list-box-shared-view items-box)]
+                    [count : i64
+                      (tc-slice-pattern-element-count (& items) has-rest)]
+                    (begin
+                      (when
+                        (if has-rest
+                          (tc-slice-lengths-from-covered?
+                            (& exact)
+                            rest-min
+                            count)
+                          (tc-slice-length-covered? (& exact) rest-min count))
+                        (return
+                          (ResultTcUnit.Err
+                            (tc-slice-unreachable-arm-message false))))
+                      (set!
+                        catchall
+                        (tc-slice-pattern-irrefutable?
+                          ctx
+                          (tc-global-shared-view items)
+                          has-rest
+                          (tc-global-shared-view scrut-ty)))
+                      (set!
+                        rest-min
+                        (tc-slice-cover-add-arm!
+                          ctx
+                          (&mut exact)
+                          rest-min
+                          (& items)
+                          count
+                          has-rest
+                          (tc-global-shared-view elem-ty)))))]
+                [_ unit])
+              (set! index (+ index 1))))
+          ResultTcUnit.Ok))]
+    [(TcSlicePatternScrutinee.Invalid) ResultTcUnit.Ok]))
+
+(define (tc-slice-match-missing-length-message [length : i64] [open : bool]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+    (str_cat.str-cat
+      "typecheck: match missing arm for slices of length "
+      (string.int->string length)
+      (if open
+        " or more"
+        ""))))
+
+;; A slice match without a catch-all arm is exhaustive when its arms with
+;; irrefutable element patterns cover every length: lengths below the smallest
+;; `& rest` arm each need an exact arm. A borrowed fixed array only needs its
+;; own length.
+(define (tc-slice-match-exhaustive-ok
+  [ctx : TcContext]
+  [elem-ty : ast.AstType]
+  [array-length : i64]
+  [arms : (& arms ast.AstMatchArmList)]) : ResultTcUnit
+  (let
+    [most : i64 (tc-slice-arms-max-count arms)]
+    [exact : (__tl_dyn-array bool) (__tl_make-array bool (+ most 1))]
+    [rest-min : i64 -1]
+    [index : i64 0]
+    (begin
+      (while (< index arms.len)
+        (begin
+          (match (ast.ast-match-arm-list-get
+            arms
+            index
+            (ast.ast-match-arm-fallback))
+            [(ast.AstMatchArm.Arm (ast.AstPattern.Slice items-box has-rest) _)
+              (let
+                [items : ast.AstPatternList
+                  (ast.ast-pattern-list-box-shared-view items-box)]
+                [count : i64
+                  (tc-slice-pattern-element-count (& items) has-rest)]
+                (set!
+                  rest-min
+                  (tc-slice-cover-add-arm!
+                    ctx
+                    (&mut exact)
+                    rest-min
+                    (& items)
+                    count
+                    has-rest
+                    (tc-global-shared-view elem-ty))))]
+            [_ unit])
+          (set! index (+ index 1))))
+      (if (>= array-length 0)
+        (if (tc-slice-length-covered? (& exact) rest-min array-length)
+          ResultTcUnit.Ok
+          (ResultTcUnit.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+              "typecheck: non-exhaustive match")))
+        (let
+          [length : i64 0]
+          [limit : i64
+            (if (< rest-min 0)
+              (+ most 1)
+              rest-min)]
+          (begin
+            (while (< length limit)
+              (begin
+                (unless
+                  (tc-slice-length-covered? (& exact) rest-min length)
+                  (return
+                    (ResultTcUnit.Err
+                      (tc-slice-match-missing-length-message
+                        length
+                        (and (< rest-min 0) (= length most))))))
+                (set! length (+ length 1))))
+            (if (< rest-min 0)
+              (ResultTcUnit.Err
+                (tc-slice-match-missing-length-message (+ most 1) true))
+              ResultTcUnit.Ok)))))))
 
 (define (tc-match-coverage-type [ctx : TcContext] [scrut-ty : ast.AstType]) : ast.AstType
   (match (tc-type-strip-region
@@ -55333,12 +55909,19 @@
                 "typecheck: non-exhaustive match"))]))]
     [(ast.AstType.Bool) (tc-match-bool-exhaustive-ok arms)]
     [_
-      (if (tc-match-arms-have-catchall-for-type? ctx scrut-ty arms)
+      (if (tc-match-arms-have-catchall-for-type?
+        ctx
+        (tc-global-shared-view scrut-ty)
+        (tc-global-shared-view arms))
         ResultTcUnit.Ok
-        (ResultTcUnit.Err
-          (tc-kind-message
-            (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
-            "typecheck: non-exhaustive match")))]))
+        (match (tc-slice-pattern-scrutinee ctx scrut-ty)
+          [(TcSlicePatternScrutinee.View _ _ elem-ty array-length)
+            (tc-slice-match-exhaustive-ok ctx elem-ty array-length (& arms))]
+          [(TcSlicePatternScrutinee.Invalid)
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.NonExhaustiveMatch)
+                "typecheck: non-exhaustive match"))]))]))
 
 (define (tc-match-expr
   [ctx : TcContext]
@@ -90848,6 +91431,47 @@
           (reader.spanned-sexpr-builder-discard! builder)
           (ResultMacroSexpr.Err diag))])))
 
+;; `(slice p1 ... pk)`, with the `&` marker restored before a rest item.
+(define (macro-slice-pattern-to-spanned-sexpr
+  [session : cis.InternStructuralSessionHandle]
+  [items : ast.AstPatternList]
+  [has-rest : bool]
+  [span : token.SourceSpan]
+  [origin : ast.AstExpr]) : ResultMacroSexpr
+  (let
+    [builder : reader.SpannedSexprBuilder
+      (reader.spanned-sexpr-builder-push
+        (reader.spanned-sexpr-builder-new)
+        (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "slice") span))]
+    [index : i64 0]
+    (begin
+      (while (< index items.len)
+        (begin
+          (when
+            (and has-rest (= index (- items.len 1)))
+            (set!
+              builder
+              (reader.spanned-sexpr-builder-push
+                builder
+                (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "&") span))))
+          (match (macro-pattern-to-spanned-sexpr
+            session
+            (ast.ast-pattern-list-get
+              (& items)
+              index
+              (ast.ast-pattern-fallback))
+            span
+            (tc-global-shared-view origin))
+            [(ResultMacroSexpr.Ok item)
+              (set! builder (reader.spanned-sexpr-builder-push builder item))]
+            [(ResultMacroSexpr.Err diag)
+              (begin
+                (reader.spanned-sexpr-builder-discard! builder)
+                (return (ResultMacroSexpr.Err diag)))])
+          (set! index (+ index 1))))
+      (ResultMacroSexpr.Ok
+        (reader.spanned-sexpr-list-from-builder builder span)))))
+
 (define (macro-pattern-to-spanned-sexpr
   [session : cis.InternStructuralSessionHandle]
   [pattern : ast.AstPattern]
@@ -90911,6 +91535,13 @@
             (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "array") span)
             patterns
             span)))]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (macro-slice-pattern-to-spanned-sexpr
+        session
+        (ast.ast-pattern-list-box-shared-view items-box)
+        has-rest
+        span
+        origin)]
     [(ast.AstPattern.Var _ _)
       (ResultMacroSexpr.Err
         (box
@@ -95873,6 +96504,15 @@
         (match (macro-hygiene-pattern-list patterns env macro-name depth)
           [(MacroHygienePatternList.PatternList npatterns next-env)
             (MacroHygienePattern.Pattern (ast.ast-pat-array npatterns) next-env)]))]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (let
+        [items : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view items-box)]
+        (match (macro-hygiene-pattern-list items env macro-name depth)
+          [(MacroHygienePatternList.PatternList nitems next-env)
+            (MacroHygienePattern.Pattern
+              (ast.ast-pat-slice nitems has-rest)
+              next-env)]))]
     [(ast.AstPattern.Wildcard)
       (MacroHygienePattern.Pattern ast.AstPattern.Wildcard env)]
     [(ast.AstPattern.Binding name)

@@ -10975,7 +10975,9 @@
               (CtfePatternMatch.No))]
           [_ (CtfePatternMatch.No)]))]
     [(ast.AstPattern.Tuple _) (CtfePatternMatch.No)]
-    [(ast.AstPattern.Array _) (CtfePatternMatch.No)]))
+    [(ast.AstPattern.Array _) (CtfePatternMatch.No)]
+    ;; Comptime values have no Slice representation.
+    [(ast.AstPattern.Slice _ _) (CtfePatternMatch.No)]))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -12202,6 +12204,10 @@
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (ast.ast-pat-array (ctfe-quote-pattern-list patterns env)))]
+    [(ast.AstPattern.Slice items-box has-rest)
+      (let
+        [items : ast.AstPatternList (deref items-box)]
+        (ast.ast-pat-slice (ctfe-quote-pattern-list items env) has-rest))]
     [(ast.AstPattern.Wildcard) ast.AstPattern.Wildcard]
     [(ast.AstPattern.Binding name)
       (ast.AstPattern.Binding (ctfe-quote-name-id env name))]
@@ -13718,6 +13724,15 @@
         (match b
           [(ast.AstPattern.Array b-items-box)
             (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Slice a-items-box a-rest)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Slice b-items-box b-rest)
+            (and
+              (= a-rest b-rest)
+              (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box)))]
           [_ false]))]
     [(ast.AstPattern.Wildcard)
       (match b

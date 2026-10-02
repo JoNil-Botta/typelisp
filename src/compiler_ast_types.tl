@@ -736,7 +736,11 @@
   (Binding i64)
   (Variant i64 (Box AstPatternList))
   (Literal AstLiteral)
-  (Array (Box AstPatternList)))
+  (Array (Box AstPatternList))
+  ;; `(slice p1 ... pk)` or `(slice p1 ... pk & rest)` over a borrowed Slice.
+  ;; With `true`, the last item is the rest pattern (a binding or `_`) and the
+  ;; items before it are the k element patterns.
+  (Slice (Box AstPatternList) bool))
 
 (defstruct AstPatternList
   (slots (__tl_dyn-array AstPattern))
@@ -6148,6 +6152,9 @@
 (define (ast-pat-array [items : AstPatternList]) : AstPattern
   (AstPattern.Array (box items)))
 
+(define (ast-pat-slice [items : AstPatternList] [has-rest : bool]) : AstPattern
+  (AstPattern.Slice (box items) has-rest))
+
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPattern.Variant name (box items)))
 
@@ -10840,6 +10847,10 @@
     [(AstPattern.Array items)
       (AstPattern.Array
         (box (ast-compaction-remap-pattern-list remap (deref items))))]
+    [(AstPattern.Slice items has-rest)
+      (AstPattern.Slice
+        (box (ast-compaction-remap-pattern-list remap (deref items)))
+        has-rest)]
     [(AstPattern.Wildcard) AstPattern.Wildcard]
     [(AstPattern.Binding name) (AstPattern.Binding name)]
     [(AstPattern.Variant name items)

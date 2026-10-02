@@ -6396,6 +6396,98 @@
       [(ResultAstPatternListBuild.Err message)
         (ResultAstPatternList.Err message)])))
 
+;; Whether `pattern` is the `&` marker that separates a slice pattern's element
+;; patterns from its rest binding.
+(define (parse-ast-slice-rest-marker? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(ast.AstPattern.Binding name) (= name (cbi.compiler-builtin-ctfe "&"))]
+    [_ false]))
+
+;; `&rest` reads as one symbol; inside a slice pattern it is a missing space
+;; rather than a binder name.
+(define (parse-ast-slice-glued-rest?
+  [intern-state : (& intern-state ci.InternCompatState)]
+  [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(ast.AstPattern.Binding name)
+      (let
+        [text : String
+          (ci.intern-compat-state-syntax-name-text-or intern-state name "")]
+        (and (> (string.string-length text) 1) (= (string.char-at text 0) '&')))]
+    [_ false]))
+
+(define (parse-ast-slice-rest-target? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(ast.AstPattern.Binding name)
+      (not (= name (cbi.compiler-builtin-ctfe "&")))]
+    [(ast.AstPattern.Wildcard) true]
+    [_ false]))
+
+;; `(slice p1 ... pk)` keeps its items; `(slice p1 ... pk & rest)` drops the
+;; `&` marker and keeps `rest` as the last item (AstPattern.Slice's flag).
+(define (parse-ast-slice-pattern
+  [dispatch : sym_i64_env.SymI64Env]
+  [items : ast.AstPatternList]) : ResultAstPattern
+  (let
+    [intern-state : ci.InternCompatState
+      (compiler-parse-dispatch-intern-state dispatch)]
+    [count : i64 (ast.ast-pattern-list-len (& items))]
+    [marker : i64 -1]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (parse-ast-slice-rest-marker?
+              (ast.ast-pattern-list-get
+                (& items)
+                index
+                (ast.ast-pattern-fallback)))
+            (if (< marker 0)
+              (set! marker index)
+              (return
+                (ResultAstPattern.Err
+                  "parse: slice pattern takes at most one `&` rest binding"))))
+          (when
+            (parse-ast-slice-glued-rest?
+              (& intern-state)
+              (ast.ast-pattern-list-get
+                (& items)
+                index
+                (ast.ast-pattern-fallback)))
+            (return
+              (ResultAstPattern.Err
+                "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`")))
+          (set! index (+ index 1))))
+      (if (< marker 0)
+        (ResultAstPattern.Ok (ast.ast-pat-slice items false))
+        (if (and
+          (= marker (- count 2))
+          (parse-ast-slice-rest-target?
+            (ast.ast-pattern-list-get
+              (& items)
+              (- count 1)
+              (ast.ast-pattern-fallback))))
+          (let
+            [out : ast.AstPatternList
+              (ast.ast-pattern-list-with-capacity (- count 1))]
+            [copy : i64 0]
+            (begin
+              (while (< copy count)
+                (begin
+                  (unless
+                    (= copy marker)
+                    (ast.ast-pattern-list-push
+                      (&mut out)
+                      (ast.ast-pattern-list-get
+                        (& items)
+                        copy
+                        (ast.ast-pattern-fallback))))
+                  (set! copy (+ copy 1))))
+              (ResultAstPattern.Ok (ast.ast-pat-slice out true))))
+          (ResultAstPattern.Err
+            "parse: slice pattern `&` must be followed by exactly one rest binding or `_`"))))))
+
 (define (parse-ast-pattern
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -6438,6 +6530,8 @@
                     (ResultAstPattern.Ok (ast.ast-pat-tuple parsed-args))]
                   [(= tag (compiler-parse-tag-expr-array))
                     (ResultAstPattern.Ok (ast.ast-pat-array parsed-args))]
+                  [(= name-id (cbi.compiler-builtin-ctfe "slice"))
+                    (parse-ast-slice-pattern dispatch parsed-args)]
                   [else
                     (ResultAstPattern.Ok
                       (ast.ast-pat-variant-id name-id parsed-args))]))]
@@ -6473,7 +6567,10 @@
                   (ci.intern-syntax-id-value name))]
               (if (or
                 (= tag (compiler-parse-tag-expr-tuple))
-                (= tag (compiler-parse-tag-expr-array)))
+                (= tag (compiler-parse-tag-expr-array))
+                (=
+                  (ci.intern-syntax-id-value name)
+                  (cbi.compiler-builtin-ctfe "slice")))
                 unit
                 (compiler-parse-semantic-origin-push-components!
                   name
@@ -6491,7 +6588,8 @@
         (if (or
           (= tag (compiler-parse-tag-pattern-wildcard))
           (= tag (compiler-parse-tag-lit-true))
-          (= tag (compiler-parse-tag-lit-false)))
+          (= tag (compiler-parse-tag-lit-false))
+          (= (ci.intern-syntax-id-value name) (cbi.compiler-builtin-ctfe "&")))
           unit
           (compiler-parse-semantic-origin-push-components!
             name

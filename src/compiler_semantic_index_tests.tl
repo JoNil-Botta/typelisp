@@ -2128,6 +2128,70 @@
           false)]
       [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+;; Slice pattern binders are ordinary locals: element binders take the element
+;; type and the rest binder the borrowed view's type.
+(define (compiler-check-semantic-index-slice-pattern-locals-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_slice_pattern_locals.tl"]
+    [source : String
+      "(define (slice-probe [items : (& (Slice i64))]) : i64
+  (match items
+    [(slice) 0]
+    [(slice head & tail) (+ head (array-length tail))]))"]
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
+      [(sem.ResultCompilerCheckWithSemanticIndex.Ok _ first)
+        (let
+          [head-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "head"
+              sem.CompilerSemanticRecordRole.Definition
+              0)]
+          [tail-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& first)
+              path
+              "tail"
+              sem.CompilerSemanticRecordRole.Definition
+              0)]
+          (if (or (< head-index 0) (< tail-index 0))
+            (begin
+              (sem.compiler-semantic-source-index-release! (&mut first))
+              false)
+            (let
+              [head : sem.CompilerSemanticRecord
+                (sem.compiler-semantic-source-index-get (& first) head-index)]
+              [tail : sem.CompilerSemanticRecord
+                (sem.compiler-semantic-source-index-get (& first) tail-index)]
+              [head-use-index : i64
+                (sem.compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  head.symbol
+                  sem.CompilerSemanticRecordRole.Use)]
+              [tail-use-index : i64
+                (sem.compiler-semantic-source-index-find-symbol-role
+                  (& first)
+                  tail.symbol
+                  sem.CompilerSemanticRecordRole.Use)]
+              [ok : bool
+                (and
+                  (>= head-use-index 0)
+                  (>= tail-use-index 0)
+                  (string.eq head.resolved-type "i64")
+                  (string.eq tail.resolved-type "(& (Slice i64))"))]
+              (begin
+                (sem.compiler-semantic-source-index-release! (&mut first))
+                ok))))]
+      [(sem.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (sem.compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(sem.ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-retained-transitions-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_retained_transitions.tl"]
@@ -4394,7 +4458,10 @@
           0
           1))]
     [locals-start : i64 (compiler-semantic-index-smoke-timing-start)]
-    [locals-ok : bool (compiler-check-semantic-index-inferred-locals-ok?)]
+    [locals-ok : bool
+      (and
+        (compiler-check-semantic-index-inferred-locals-ok?)
+        (compiler-check-semantic-index-slice-pattern-locals-ok?))]
     [locals-timing-ok : bool
       (compiler-semantic-index-smoke-timing-record
         "semantic-inferred-locals"

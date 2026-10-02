@@ -148,6 +148,11 @@
         (begin
           (codec.surface-ast-write-i64! out 6)
           (surface-ast-write-pattern-list! out context (deref items)))]
+      [(ast.AstPattern.Slice items has-rest)
+        (begin
+          (codec.surface-ast-write-i64! out 7)
+          (codec.surface-ast-write-bool! out has-rest)
+          (surface-ast-write-pattern-list! out context (deref items)))]
       [(ast.AstPattern.Wildcard) (codec.surface-ast-write-i64! out 2)]
       [(ast.AstPattern.Binding name)
         (begin
@@ -198,6 +203,12 @@
         (ast.AstPattern.Literal (codec.surface-ast-read-literal! reader))]
       [(= tag 6)
         (ast.AstPattern.Array (box (surface-ast-read-pattern-list! reader)))]
+      [(= tag 7)
+        (let
+          [has-rest : bool (codec.surface-ast-read-bool! reader)]
+          (ast.AstPattern.Slice
+            (box (surface-ast-read-pattern-list! reader))
+            has-rest))]
       [else
         (begin
           (codec.surface-ast-reader-fail!

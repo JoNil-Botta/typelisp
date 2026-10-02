@@ -2017,6 +2017,23 @@
         limit
         buf)]))
 
+;; A loop ends with a body expression after its bracketed binding clauses. A
+;; signature that only declares bracketed parameters, such as the prelude's own
+;; `(defmacro (for [bindings : ExprBindingClause ...] [body : Expr ...]) ...)`,
+;; keeps the ordinary call layout. Trailing comments do not decide.
+(define (format-rules-loop-form-from?
+  [items : (& items cst.FormatCstList)]
+  [ends-in-body : bool]) : bool
+  (match (cst.fmt-cst-list-step items)
+    [(cst.FormatCstListStep.Empty) ends-in-body]
+    [(cst.FormatCstListStep.Item node tail)
+      (format-rules-loop-form-from?
+        tail
+        (match node
+          [(cst.FormatCst.BracketList _) false]
+          [(cst.FormatCst.Comment _) ends-in-body]
+          [_ true]))]))
+
 (define (format-rules-layout-special-list
   [head : cst.FormatCst]
   [rest : cst.FormatCstList]
@@ -2108,6 +2125,24 @@
       [(string.eq head-name "while")
         (format-rules-layout-first-or-line-form
           "while"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      ;; The prelude loops keep their first binding clause beside the head and
+      ;; their body below it, like `while`.
+      [(and
+          (or
+            (string.eq head-name "for")
+            (string.eq head-name "any?")
+            (string.eq head-name "all?"))
+          (format-rules-loop-form-from? rest false))
+        (format-rules-layout-first-or-line-form
+          head-name
           rest
           emit
           width

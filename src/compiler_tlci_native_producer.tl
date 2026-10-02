@@ -1143,6 +1143,26 @@
               "0")
             1)]
         [_ -1])]
+    [(compiler_ast_types.AstExpr.Break)
+      (begin
+        (embedded-native-template-push!
+          ops
+          ops-count
+          (tlci_core.tlci-host-callback-name expr-break)
+          "0"
+          "0"
+          "0")
+        1)]
+    [(compiler_ast_types.AstExpr.Continue)
+      (begin
+        (embedded-native-template-push!
+          ops
+          ops-count
+          (tlci_core.tlci-host-callback-name expr-continue)
+          "0"
+          "0"
+          "0")
+        1)]
     [(compiler_ast_types.AstExpr.Var name-id)
       (let
         [name : String (ci.intern-str name-id)]

@@ -10,7 +10,9 @@
 ;# consuming traversal. Consuming construction uses an ordinary by-value
 ;# parameter, so the non-`Copy` source moves exactly once and cannot be reused. Scalar ranges
 ;# implement the same canonical consuming protocol through `into-iterator` /
-;# `into-next`, which is the pair the scalar `for` macro selects.
+;# `into-next`, which is the pair the scalar `for` macro selects. A single
+;# unannotated `for` clause over an owned `I64Range` counts through its fields
+;# in place, following the same sequence without the iterator state.
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning

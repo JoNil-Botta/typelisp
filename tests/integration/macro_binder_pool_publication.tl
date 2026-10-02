@@ -30,7 +30,8 @@
     [view (slice-view seq.slots 0 seq.len)]
     [total : i64 0]
     (begin
-      (for [item view] (set! total (+ total (deref item))))
+      (for [item view]
+        (set! total (+ total (deref item))))
       total)))
 
 (define (match-binder-length [seq : (& seq Seq)]) : i64

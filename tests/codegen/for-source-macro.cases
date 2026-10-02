@@ -1,6 +1,6 @@
 # Scalar `for` is an ordinary source transformer (run by scripts/verify-stdlib.sh):
-# no native identity hooks remain, and an exact copy of its body still works
-# after changing only its name.
+# no native identity hooks remain, an exact copy of its body still works
+# after changing only its name, and an owned range counts in place.
 
 file copied-for.tl
 (import stdlib.iterator)
@@ -13,6 +13,50 @@ file copied-for.tl
       (copied.for-copy [item (iterator.range 0 3)]
         (set! total (+ total item)))
       (+ total 39))))
+end-file
+
+file range-for.tl
+(import stdlib.iterator)
+
+(defstruct Seq
+  (slots (__tl_dyn-array i64))
+  (len i64))
+
+(define (sum-below [limit : i64]) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (for [index (iterator.range 0 limit)]
+        (+= total index))
+      total)))
+
+(define (sum-seq [seq : (& seq Seq)]) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (for [item seq]
+        (+= total (deref item)))
+      total)))
+
+(define (main) : i64
+  (let
+    [seq : Seq (Seq (__tl_make-array i64 4) 2)]
+    (+ (sum-below 9) (+ (sum-seq (& seq)) 6))))
+end-file
+
+file range-protocol.tl
+(import stdlib.iterator)
+
+(define (sum-below [limit : i64]) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (for [index : i64 (iterator.range 0 limit)]
+        (+= total index))
+      total)))
+
+(define (main) : i64
+  (sum-below 9))
 end-file
 
 # The bracketed letters keep this row from matching itself.
@@ -33,3 +77,27 @@ args --stdlib-root {{work}}/stdlib-root --stdlib-root {{root}}/stdlib
 exit 42
 in file {{work}}/stdlib-root/for_copy_macros.tl
 match \(defmacro \(for-copy[ ]
+
+# A `range` call and a borrowed slots/len struct expand to one counting
+# `while`: at -O2 nothing references the range iterator protocol. The
+# annotated clause of the control still steps `into-next`, which stays out of
+# line (#8555).
+case range-counts-in-place
+source {{work}}/range-for.tl
+opt 2
+in asm
+not-contains into_next
+not-contains into_iterator
+
+case range-protocol-control
+source {{work}}/range-protocol.tl
+opt 2
+in asm
+contains call _tl_stdlib_iterator_stdlib_iterator_into_next
+
+case range-counts-runs
+source {{work}}/range-for.tl
+do tl-run
+target -
+opt 0 2
+exit 42

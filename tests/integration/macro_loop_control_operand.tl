@@ -23,8 +23,7 @@
   (let
     [total : i64 0]
     (begin
-      (for
-        [index (iterator.range 0 10)]
+      (for [index (iterator.range 0 10)]
         (when (= index 1) (continue))
         (when (= index 4) (break))
         (set! total (+ total index)))

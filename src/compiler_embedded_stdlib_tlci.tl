@@ -2601,6 +2601,26 @@
         (compiler-comptime-host-session-pools)
         (ast.AstExpr.Literal (ast.AstLiteral.Unit))))))
 
+(define (compiler-comptime-host-callback-expr-break
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-push-expr!
+      (ast.ast-expr-break-with-pools (compiler-comptime-host-session-pools)))))
+
+(define (compiler-comptime-host-callback-expr-continue
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-push-expr!
+      (ast.ast-expr-continue-with-pools (compiler-comptime-host-session-pools)))))
+
 ;; Computed-body locals: local-set pops one value into the named session
 ;; slot; local-get pushes the slot's value.
 (define (compiler-comptime-host-callback-local-set

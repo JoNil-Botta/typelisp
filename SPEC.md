@@ -1918,30 +1918,76 @@ acquisition order. The same item scopes unwind on `break`, `continue`, and
 `return`; moving an item in the body transfers that responsibility and suppresses
 its loop cleanup.
 
-Fixed arrays and borrowed native `Slice` values use built-in scalar planning
-instead of nominal protocol lookup:
+Fixed arrays, borrowed native `Slice` and `__tl_dyn-array` values, and
+borrowed slots/len structs use built-in scalar planning instead of nominal
+protocol lookup:
 
 - An owned `(Array T N)` evaluates into hidden loop state and yields each `T`
   by value. A non-`Copy` source is consumed once; moving an item transfers that
   element to the body. A structurally `Copy` source remains reusable.
-- A shared reference to `(Array T N)` or `(Slice T)` yields `(& source T)`.
-- A mutable reference to `(Array T N)` or `(Slice T)` yields a lending
-  `(&mut source T)` whose item cannot escape or remain live across the next
-  step.
+- A shared reference to `(Array T N)`, `(Slice T)` or `(__tl_dyn-array T)`
+  yields `(& source T)`.
+- A mutable reference to `(Array T N)`, `(Slice T)` or `(__tl_dyn-array T)`
+  yields a lending `(&mut source T)` whose item cannot escape or remain live
+  across the next step.
+- An owned `Slice` or `__tl_dyn-array` is rejected with a diagnostic asking
+  for `(& source)` or `(&mut source)`.
+- A shared or mutable reference to a slots/len struct, one whose first field
+  is `slots : (__tl_dyn-array T)` and whose second field is `len : i64`, walks
+  the first `len` slots, yielding `(& source T)` or a lending
+  `(&mut source T)` borrowed in place: items are never cloned, and `len` is
+  read once before the first step. A struct with another field between them,
+  such as a `start` offset, is not a slots/len struct. This applies only when
+  the struct's defining module defines no `iterator` (for a shared source) or
+  `iterator-mut` (for a mutable source); otherwise that protocol is used. An
+  owned slots/len struct still needs `into-iterator`.
 
 Native sources preserve the same single-evaluation, annotation, empty-loop,
 zip-shortest, nested-loop, `break`, and `return` rules. Fixed-array length is a
-reflected constant; Slice length is read from the borrowed view. The same
-scalar behavior is valid inside the scalar reference lowering of SPMD
-`foreach`; this does not turn scalar `for` into an SPMD gang loop.
+reflected constant; Slice and `__tl_dyn-array` length is read from the borrowed
+view. The same scalar behavior is valid inside the scalar reference lowering of
+SPMD `foreach`; this does not turn scalar `for` into an SPMD gang loop.
+
+**Counted ranges.** A single unannotated clause whose source is an owned
+`stdlib.iterator.I64Range`, such as a `range` or `range-inclusive` call or a
+range-valued local, counts in place: the source is evaluated once, and the
+item takes each value from its `start` to its `end`, excluding `end` unless the
+range is inclusive. This is exactly the `stdlib.iterator` protocol's sequence,
+including an inclusive range that ends at the largest `i64`, but no iterator
+state is constructed and no protocol function is called per item. An annotated
+clause uses the protocol.
+
+A single unannotated clause over a counted range or a borrowed array, `Slice`,
+`__tl_dyn-array`, or slots/len struct expands to one index-driven `while`
+whose body advances the index before the user body, so `continue` moves to the
+next item. Other single clauses and every multi-clause loop use the general
+zip expansion above; both produce the same observable behavior.
+
+**Searching and updating.** The prelude also defines four helpers built from
+ordinary syntax:
+
+- `(any? [item source] predicate)` is `true` when `predicate` holds for some
+  item and stops at the first such item; an empty source yields `false`.
+  `(all? [item source] predicate)` is `true` when `predicate` holds for every
+  item and stops at the first item where it fails; an empty source yields
+  `true`. Each takes exactly one unannotated binding clause over any source
+  `for` accepts, followed by exactly one predicate expression; they expand to
+  a `for` whose body `break`s, so items are borrowed exactly as in `for`.
+  Both produce `bool`.
+- `(+= place delta)` and `(-= place delta)` add `delta` to, or subtract it
+  from, the numeric value in `place` and produce `unit`. A variable or dotted
+  field path such as `stats.count` is read and assigned directly. Any other
+  assignable place, such as `(array-ref items (next-index))` or
+  `(deref cell)`, is borrowed mutably once, so its operands are evaluated
+  exactly once. `delta` is evaluated once, after the place.
 
 The scalar expansion is the ordinary checked-in `defmacro` in
 `stdlib/core_macros.tl`. Nominal sources use only the public `stdlib.comptime`
 syntax and reflection operations described in section 3.7.1. Native fixed
 arrays use private compiler-owned state/step construction hooks so ownership
 transfer is represented directly rather than encoded as a public nominal
-protocol. Borrowed arrays and Slice values expand to ordinary checked element
-borrows. There is no user-visible native `for` syntax node or protocol name.
+protocol. Borrowed arrays, Slice and `__tl_dyn-array` values, and slots/len
+structs expand to ordinary checked element borrows. There is no user-visible native `for` syntax node or protocol name.
 Bare and explicitly qualified imports execute the same transformer body, as
 does a renamed copy.
 
@@ -3261,14 +3307,15 @@ ordinary imports (sections 4.4 and 4.4.1); there is no separate macro search
 path.
 
 The compile driver loads `stdlib.core_macros` as an implicit macro prelude.
-Bare `when`, `unless`, `and`, `or`, scalar `for`, and bracket-arm `cond`
-resolve to the prelude macros of `stdlib.core_macros` unless a local or
-imported macro with the same name takes precedence. The core `cond` surface is
+Bare `when`, `unless`, `and`, `or`, scalar `for`, `any?`, `all?`, `+=`, `-=`,
+and bracket-arm `cond` resolve to the prelude macros of `stdlib.core_macros`
+unless a local or imported macro with the same name takes precedence. The core `cond` surface is
 `(cond [test expr] ... [else fallback])`; flat
 `(cond test expr ... fallback)` calls are rejected. The module can also be
 imported explicitly, for example `(import stdlib.core_macros as core)`, and its
 macros called through the alias: `core.when`, `core.unless`, `core.and`,
-`core.or`, `core.cond`, and `core.for`.
+`core.or`, `core.cond`, `core.for`, `core.any?`, `core.all?`, `core.+=`, and
+`core.-=`.
 
 Before expanding a module's non-import forms, the loader collects its import
 declarations, recursively loads imported modules, and builds the imported macro

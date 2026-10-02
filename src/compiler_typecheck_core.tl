@@ -38402,7 +38402,28 @@
                                 arity-msg
                                 thread-spawn-args)]))]
                       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-                [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
+                ;; A `(type X)` argument types as an error. It fills a
+                ;; `[comptime T : type]` parameter, and reaches here only before
+                ;; specialization removes it from the call.
+                [(ResultTcType.Err message)
+                  (if (and
+                    (tc-macro-type-param-kind? (tc-global-shared-view want))
+                    (match (ast.ast-expr-unspan-with-segment-bases
+                      (tc-context-expr-bases ctx)
+                      (tc-global-shared-view arg))
+                      [(ast.AstExpr.TypeLiteral _) true]
+                      [_ false]))
+                    (tc-check-call-args-with-message-at
+                      ctx
+                      env
+                      args
+                      params
+                      (+ index 1)
+                      allow-region-args
+                      constructor-target
+                      arity-msg
+                      thread-spawn-args)
+                    (ResultTcUnit.Err message))]))]
           [(ResultTcExpr.Err message)
             (ResultTcUnit.Err
               (tc-locate-error-at-expr (tc-context-expr-bases ctx) arg message))])))))
@@ -38555,6 +38576,206 @@
                     (ast.ty-node-get result))]
                 [_ (ResultTcType.Err "typecheck: invalid C function signature")])]))])))
 
+;; The `(type X)` arguments a call passes to `[comptime T : type]` parameters,
+;; keyed by parameter name.
+(defstruct TcComptimeTypeArgs
+  (names (__tl_dyn-array i64))
+  (types (__tl_dyn-array ast.AstType))
+  (len i64))
+
+(define (tc-comptime-type-args-empty) : TcComptimeTypeArgs
+  (TcComptimeTypeArgs (__tl_make-array i64 0) (__tl_make-array ast.AstType 0) 0))
+
+;; A call to a function with `[comptime T : type]` parameters is typed against
+;; the signature its specialization gets: each such `T` replaced by the call's
+;; `(type X)` argument. Specialization rewrites these calls only after macro
+;; expansion, so the expansion-time checks of macro operands and results see
+;; the unspecialized call.
+(define (tc-call-comptime-type-args
+  [ctx : TcContext]
+  [func : ast.AstExpr]
+  [args : (& args ast.AstExprList)]) : TcComptimeTypeArgs
+  (let
+    [handle : i64 (tc-call-direct-value-handle ctx func)]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (match (csym.compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        (csym.compiler-symbol-handle-index handle))
+        [(parser.ResultAstDecl.Ok decl)
+          (tc-decl-comptime-type-args ctx decl args)]
+        [(parser.ResultAstDecl.Err _) (tc-comptime-type-args-empty)])
+      (tc-comptime-type-args-empty))))
+
+;; Until a comptime parameter exists no call can need substitution, so an
+;; ordinary call pays one counter test (see `ast-comptime-param-count`).
+(defmacro (tc-comptime-params-present?) : Expr
+  `(not (= ast.ast-comptime-param-count 0)))
+
+(define (tc-call-comptime-function-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]) : ResultTcType
+  (let
+    [comptime-args : TcComptimeTypeArgs
+      (tc-call-comptime-type-args
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view func)
+        (& args))]
+    (if (= comptime-args.len 0)
+      (tc-call-function-type ctx env func args params ret)
+      (tc-call-function-type
+        ctx
+        env
+        func
+        args
+        (tc-type-list-subst-comptime (& comptime-args) params)
+        (tc-type-subst-comptime (& comptime-args) ret)))))
+
+(define (tc-call-has-type-literal-arg?
+  [ctx : TcContext]
+  [args : (& args ast.AstExprList)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index args.len))
+        (begin
+          (match (ast.ast-expr-unspan-with-segment-bases
+            (tc-context-expr-bases ctx)
+            (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+            [(ast.AstExpr.TypeLiteral _) (set! found true)]
+            [_ unit])
+          (set! index (+ index 1))))
+      found)))
+
+(define (tc-decl-comptime-type-args
+  [ctx : TcContext]
+  [decl : ast.AstDecl]
+  [args : (& args ast.AstExprList)]) : TcComptimeTypeArgs
+  (match decl
+    [(ast.AstDecl.DefFn _ _ params _ _ _)
+      (tc-param-comptime-type-args ctx (& params) args)]
+    [(ast.AstDecl.Unsafe inner-box)
+      (tc-decl-comptime-type-args
+        ctx
+        (ast.ast-decl-box-shared-view inner-box)
+        args)]
+    [_ (tc-comptime-type-args-empty)]))
+
+(define (tc-param-comptime-type-args
+  [ctx : TcContext]
+  [params : (& params ast.AstParamList)]
+  [args : (& args ast.AstExprList)]) : TcComptimeTypeArgs
+  (let
+    [count : i64 (ast.ast-param-list-len params)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType count)]
+    [len : i64 0]
+    [index : i64 0]
+    (begin
+      (while (and (< index count) (< index args.len))
+        (begin
+          (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+            [(ast.AstParam.Param name ty comptime?)
+              (when
+                (and comptime? (tc-macro-type-param-kind? ty))
+                (match (ast.ast-expr-unspan-with-segment-bases
+                  (tc-context-expr-bases ctx)
+                  (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+                  [(ast.AstExpr.TypeLiteral ty-id)
+                    (begin
+                      (set! (array-ref names len) name)
+                      (set!
+                        (array-ref types len)
+                        (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
+                      (set! len (+ len 1)))]
+                  [_ unit]))])
+          (set! index (+ index 1))))
+      (TcComptimeTypeArgs names types len))))
+
+(define (tc-type-subst-comptime
+  [subst : (& subst TcComptimeTypeArgs)]
+  [ty : ast.AstType]) : ast.AstType
+  (match (tc-global-shared-view ty)
+    [(ast.AstType.Func params ret)
+      (ast.ast-ty-func
+        (tc-type-list-subst-comptime
+          subst
+          (ast.ast-type-list-box-shared-view params))
+        (tc-type-subst-comptime subst (ast.ty-node-get ret)))]
+    [(ast.AstType.Tuple elems)
+      (ast.ast-ty-tuple
+        (tc-type-list-subst-comptime
+          subst
+          (ast.ast-type-list-box-shared-view elems)))]
+    [(ast.AstType.Array elem len)
+      (ast.ast-ty-array
+        (tc-type-subst-comptime subst (ast.ty-node-get elem))
+        len)]
+    [(ast.AstType.DynArray elem)
+      (ast.ast-ty-dyn-array
+        (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+    [(ast.AstType.Slice elem)
+      (ast.ast-ty-slice (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+    [(ast.AstType.Box elem)
+      (ast.ast-ty-box (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+    [(ast.AstType.Ptr elem)
+      (ast.ast-ty-ptr (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+    [(ast.AstType.MutPtr elem)
+      (ast.ast-ty-mut-ptr (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+    [(ast.AstType.Ref region inner)
+      (ast.ast-ty-ref
+        region
+        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+    [(ast.AstType.MutRef region inner)
+      (ast.ast-ty-mut-ref
+        region
+        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+    [(ast.AstType.Region region inner)
+      (ast.ast-ty-region
+        region
+        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+    [(ast.AstType.Invalidate lifetime inner)
+      (ast.ast-ty-invalidate
+        lifetime
+        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+    [(ast.AstType.Var name)
+      (let
+        [index : i64 0]
+        [found : i64 -1]
+        (begin
+          (while (and (< found 0) (< index subst.len))
+            (begin
+              (when (= (array-ref subst.names index) name) (set! found index))
+              (set! index (+ index 1))))
+          (if (< found 0)
+            ty
+            (owned_view.compiler-owned-array-element-shared-view
+              subst.types
+              found))))]
+    [_ ty]))
+
+(define (tc-type-list-subst-comptime
+  [subst : (& subst TcComptimeTypeArgs)]
+  [types : ast.AstTypeList]) : ast.AstTypeList
+  (tc-type-list-subst-comptime-at subst (& types) 0))
+
+(define (tc-type-list-subst-comptime-at
+  [subst : (& subst TcComptimeTypeArgs)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : ast.AstTypeList
+  (if (>= index (ast.ast-type-list-len types))
+    (ast.ast-type-list-new)
+    (ast.ast-type-cons
+      (tc-type-subst-comptime
+        subst
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+      (tc-type-list-subst-comptime-at subst types (+ index 1)))))
+
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -38583,13 +38804,25 @@
               [(ast.AstType.CFunc signature mode)
                 (tc-call-c-function-type ctx env func args signature mode)]
               [(ast.AstType.Func params ret)
-                (tc-call-function-type
-                  ctx
-                  env
-                  func
-                  args
-                  (ast.ast-type-list-box-shared-view params)
-                  (ast.ty-node-get ret))]
+                (if (and
+                  (tc-comptime-params-present?)
+                  (tc-call-has-type-literal-arg?
+                    (tc-global-shared-view ctx)
+                    (& args)))
+                  (tc-call-comptime-function-type
+                    ctx
+                    env
+                    func
+                    args
+                    (ast.ast-type-list-box-shared-view params)
+                    (ast.ty-node-get ret))
+                  (tc-call-function-type
+                    ctx
+                    env
+                    func
+                    args
+                    (ast.ast-type-list-box-shared-view params)
+                    (ast.ty-node-get ret)))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
                   [(ast.AstType.CFunc signature mode)
@@ -38872,13 +39105,25 @@
               [(ast.AstType.CFunc signature mode)
                 (tc-call-c-function-type ctx env func args signature mode)]
               [(ast.AstType.Func params ret)
-                (tc-call-function-type
-                  ctx
-                  env
-                  func
-                  args
-                  (ast.ast-type-list-box-shared-view params)
-                  (ast.ty-node-get ret))]
+                (if (and
+                  (tc-comptime-params-present?)
+                  (tc-call-has-type-literal-arg?
+                    (tc-global-shared-view ctx)
+                    (& args)))
+                  (tc-call-comptime-function-type
+                    ctx
+                    env
+                    func
+                    args
+                    (ast.ast-type-list-box-shared-view params)
+                    (ast.ty-node-get ret))
+                  (tc-call-function-type
+                    ctx
+                    env
+                    func
+                    args
+                    (ast.ast-type-list-box-shared-view params)
+                    (ast.ty-node-get ret)))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
                   [(ast.AstType.CFunc signature mode)

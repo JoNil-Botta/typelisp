@@ -7519,7 +7519,49 @@
     (when true unit)
     (when true unit unit)
     (unless false unit)
-    (unless false unit unit)))")))
+    (unless false unit unit)))")
+    (compiler-typecheck-comptime-type-operand-tests-ok?)))
+
+;; A typed macro operand is checked before specialization rewrites its
+;; `[comptime T : type]` calls, so the check binds `T` from each `(type X)`.
+(define (compiler-typecheck-comptime-type-operand-source [main-body : String]) : String
+  (str_cat.str-cat
+    "(defmacro (ident [x : i64]) : i64 x)
+(defmacro (truthy [x : bool]) : bool x)
+(define (pick [comptime T : type] [x : T]) : T x)
+(define (first [comptime T : type] [xs : (& (Slice T))]) : T
+  (array-ref xs 0))
+(define (pair [comptime A : type] [comptime B : type] [a : A] [b : B]) : B b)
+(define (main) : i64
+"
+    main-body
+    ")"))
+
+(define (compiler-typecheck-comptime-type-operand-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (pick (type i64) 42))"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (ident (pair (type bool) (type i64) true 42)))"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(let [items : (Array i64 3) (array 1 2 3)]
+    (if (truthy (= (first (type i64) (slice-view items 0 3)) 1)) 42 0))"))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (pick (type bool) true))")
+      "typecheck: macro operand type mismatch: expected i64, got bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(ident (pick (type i64) true))")
+      "typecheck: call `pick` argument 2 (parameter `x`) type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-comptime-type-operand-source
+        "(let [items : (Array bool 1) (array true)]
+    (ident (first (type i64) (slice-view items 0 1))))")
+      "typecheck: call `first` argument 2 (parameter `xs`) type mismatch: expected (& (Slice i64)), found (& items (Slice bool))")))
 
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
